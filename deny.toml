@@ -1,0 +1,36 @@
+# cargo-deny configuration for license checking
+# Run: cargo deny check
+
+[licenses]
+# Allow these license types
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+]
+
+# Review unclear/dual licenses
+confidence-threshold = 0.8
+
+# Allow specific exceptions
+exceptions = []
+
+# TODO: Add clarifications as needed
+# [[licenses.clarify]]
+# name = "some-crate"
+# expression = "MIT"
+# license-files = [{ path = "LICENSE", hash = 0x00000000 }]
+
+[bans]
+# Warn on multiple versions of the same crate
+multiple-versions = "warn"
+# Deny specific crates (security or legal issues)
+deny = []
+
+[sources]
+# Ensure all dependencies come from crates.io or known Git repos
+unknown-registry = "deny"
+unknown-git = "deny"

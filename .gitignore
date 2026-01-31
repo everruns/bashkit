@@ -1,0 +1,18 @@
+# Rust
+/target/
+Cargo.lock
+
+# Environment
+.env
+.env.*
+.envrc
+
+# Local files
+local*
+
+# IDE
+.vscode/
+*.swp
+
+# OS
+.DS_Store
