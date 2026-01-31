@@ -1,5 +1,6 @@
 //! Error types for BashKit
 
+use crate::limits::LimitExceeded;
 use thiserror::Error;
 
 /// Result type alias using BashKit's Error.
@@ -26,5 +27,5 @@ pub enum Error {
 
     /// Resource limit exceeded.
     #[error("resource limit exceeded: {0}")]
-    ResourceLimit(String),
+    ResourceLimit(#[from] LimitExceeded),
 }
