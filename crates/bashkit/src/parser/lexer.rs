@@ -265,7 +265,8 @@ impl<'a> Lexer<'a> {
             self.advance();
         }
 
-        Some(Token::Word(content))
+        // Single-quoted strings are literal - no variable expansion
+        Some(Token::LiteralWord(content))
     }
 
     fn read_double_quoted_string(&mut self) -> Option<Token> {
@@ -391,9 +392,10 @@ mod tests {
         let mut lexer = Lexer::new("echo 'hello world'");
 
         assert_eq!(lexer.next_token(), Some(Token::Word("echo".to_string())));
+        // Single-quoted strings return LiteralWord (no variable expansion)
         assert_eq!(
             lexer.next_token(),
-            Some(Token::Word("hello world".to_string()))
+            Some(Token::LiteralWord("hello world".to_string()))
         );
         assert_eq!(lexer.next_token(), None);
     }

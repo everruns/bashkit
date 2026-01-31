@@ -47,6 +47,16 @@ impl ExecResult {
         }
     }
 
+    /// Create a result with stdout and custom exit code.
+    pub fn with_code(stdout: impl Into<String>, exit_code: i32) -> Self {
+        Self {
+            stdout: stdout.into(),
+            stderr: String::new(),
+            exit_code,
+            control_flow: ControlFlow::None,
+        }
+    }
+
     /// Create a result with a control flow signal
     pub fn with_control_flow(control_flow: ControlFlow) -> Self {
         Self {

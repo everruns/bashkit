@@ -280,7 +280,10 @@ mod tests {
         mfs.mount("/mnt/data", mounted.clone()).unwrap();
 
         // Access through mountable fs
-        let content = mfs.read_file(Path::new("/mnt/data/data.txt")).await.unwrap();
+        let content = mfs
+            .read_file(Path::new("/mnt/data/data.txt"))
+            .await
+            .unwrap();
         assert_eq!(content, b"mounted data");
     }
 
@@ -330,7 +333,10 @@ mod tests {
         assert_eq!(content, b"outer");
 
         // Access nested mount
-        let content = mfs.read_file(Path::new("/mnt/nested/inner.txt")).await.unwrap();
+        let content = mfs
+            .read_file(Path::new("/mnt/nested/inner.txt"))
+            .await
+            .unwrap();
         assert_eq!(content, b"inner");
     }
 

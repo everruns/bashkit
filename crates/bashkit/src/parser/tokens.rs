@@ -7,8 +7,11 @@
 /// Token types produced by the lexer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    /// A word (command name, argument, etc.)
+    /// A word (command name, argument, etc.) - may contain variable expansions
     Word(String),
+
+    /// A literal word (single-quoted) - no variable expansion
+    LiteralWord(String),
 
     /// Newline character
     Newline,

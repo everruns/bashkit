@@ -1,23 +1,31 @@
 //! Built-in shell commands
 
+mod awk;
 mod cat;
 mod echo;
 mod export;
 mod flow;
+mod grep;
+mod jq;
 mod navigation;
 mod printf;
 mod read;
+mod sed;
 mod source;
 mod test;
 mod vars;
 
+pub use awk::Awk;
 pub use cat::Cat;
 pub use echo::Echo;
 pub use export::Export;
 pub use flow::{Break, Continue, Exit, False, Return, True};
+pub use grep::Grep;
+pub use jq::Jq;
 pub use navigation::{Cd, Pwd};
 pub use printf::Printf;
 pub use read::Read;
+pub use sed::Sed;
 pub use source::Source;
 pub use test::{Bracket, Test};
 pub use vars::{Local, Set, Shift, Unset};
