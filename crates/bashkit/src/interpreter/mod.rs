@@ -11,6 +11,7 @@ use std::sync::Arc;
 use crate::builtins::{self, Builtin};
 use crate::error::{Error, Result};
 use crate::fs::FileSystem;
+use crate::limits::{ExecutionCounters, ExecutionLimits};
 use crate::parser::{
     AssignmentValue, CaseCommand, Command, CommandList, CompoundCommand, ForCommand, FunctionDef,
     IfCommand, ListOperator, ParameterOp, Pipeline, Redirect, RedirectKind, Script, SimpleCommand,
@@ -42,6 +43,10 @@ pub struct Interpreter {
     functions: HashMap<String, FunctionDef>,
     /// Call stack for local variable scoping
     call_stack: Vec<CallFrame>,
+    /// Resource limits
+    limits: ExecutionLimits,
+    /// Execution counters for resource tracking
+    counters: ExecutionCounters,
 }
 
 impl Interpreter {
@@ -82,7 +87,14 @@ impl Interpreter {
             builtins,
             functions: HashMap::new(),
             call_stack: Vec::new(),
+            limits: ExecutionLimits::default(),
+            counters: ExecutionCounters::new(),
         }
+    }
+
+    /// Set execution limits.
+    pub fn set_limits(&mut self, limits: ExecutionLimits) {
+        self.limits = limits;
     }
 
     /// Set an environment variable.
@@ -122,6 +134,9 @@ impl Interpreter {
         command: &'a Command,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
+            // Check command count limit
+            self.counters.tick_command(&self.limits)?;
+
             match command {
                 Command::Simple(simple) => self.execute_simple_command(simple, None).await,
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
@@ -195,7 +210,13 @@ impl Interpreter {
             Vec::new()
         };
 
+        // Reset loop counter for this loop
+        self.counters.reset_loop();
+
         for value in values {
+            // Check loop iteration limit
+            self.counters.tick_loop(&self.limits)?;
+
             // Set loop variable
             self.variables
                 .insert(for_cmd.variable.clone(), value.clone());
@@ -261,7 +282,13 @@ impl Interpreter {
         let mut stderr = String::new();
         let mut exit_code = 0;
 
+        // Reset loop counter for this loop
+        self.counters.reset_loop();
+
         loop {
+            // Check loop iteration limit
+            self.counters.tick_loop(&self.limits)?;
+
             // Check condition
             let condition_result = self.execute_command_sequence(&while_cmd.condition).await?;
             if condition_result.exit_code != 0 {
@@ -326,7 +353,13 @@ impl Interpreter {
         let mut stderr = String::new();
         let mut exit_code = 0;
 
+        // Reset loop counter for this loop
+        self.counters.reset_loop();
+
         loop {
+            // Check loop iteration limit
+            self.counters.tick_loop(&self.limits)?;
+
             // Check condition
             let condition_result = self.execute_command_sequence(&until_cmd.condition).await?;
             if condition_result.exit_code == 0 {
@@ -660,6 +693,9 @@ impl Interpreter {
 
         // Check for functions first
         if let Some(func_def) = self.functions.get(&name).cloned() {
+            // Check function depth limit
+            self.counters.push_function(&self.limits)?;
+
             // Push call frame with positional parameters
             self.call_stack.push(CallFrame {
                 name: name.clone(),
@@ -668,13 +704,14 @@ impl Interpreter {
             });
 
             // Execute function body
-            let result = self.execute_command(&func_def.body).await?;
+            let result = self.execute_command(&func_def.body).await;
 
-            // Pop call frame
+            // Pop call frame and function counter
             self.call_stack.pop();
+            self.counters.pop_function();
 
             // Handle output redirections
-            return self.apply_redirections(result, &command.redirects).await;
+            return self.apply_redirections(result?, &command.redirects).await;
         }
 
         // Check for builtins

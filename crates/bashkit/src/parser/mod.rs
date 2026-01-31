@@ -1,6 +1,14 @@
 //! Parser module for BashKit
 //!
 //! Implements a recursive descent parser for bash scripts.
+//!
+//! # Known Issues
+//!
+//! TODO(parser): Fix handling of reserved words as arguments after compound commands.
+//! E.g., `for i in 1; do echo $i; done; echo done` hangs because "done" is treated
+//! as a keyword instead of a regular word when it appears as an argument to echo.
+//! The parser needs to properly distinguish between keywords in command position
+//! vs regular words in argument position.
 
 mod ast;
 mod lexer;

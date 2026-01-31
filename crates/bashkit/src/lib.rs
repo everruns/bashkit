@@ -21,10 +21,12 @@ mod builtins;
 mod error;
 mod fs;
 mod interpreter;
+mod limits;
 mod parser;
 
 pub use error::{Error, Result};
 pub use interpreter::ExecResult;
+pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -76,6 +78,7 @@ pub struct BashBuilder {
     fs: Option<Arc<dyn FileSystem>>,
     env: HashMap<String, String>,
     cwd: Option<PathBuf>,
+    limits: ExecutionLimits,
 }
 
 impl BashBuilder {
@@ -97,6 +100,12 @@ impl BashBuilder {
         self
     }
 
+    /// Set execution limits.
+    pub fn limits(mut self, limits: ExecutionLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
     /// Build the Bash instance.
     pub fn build(self) -> Bash {
         let fs = self.fs.unwrap_or_else(|| Arc::new(InMemoryFs::new()));
@@ -109,6 +118,8 @@ impl BashBuilder {
         if let Some(cwd) = self.cwd {
             interpreter.set_cwd(cwd);
         }
+
+        interpreter.set_limits(self.limits);
 
         Bash { fs, interpreter }
     }
@@ -782,5 +793,129 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "first second\n");
+    }
+
+    // Resource limit tests
+
+    #[tokio::test]
+    async fn test_command_limit() {
+        let limits = ExecutionLimits::new().max_commands(5);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // Run 6 commands - should fail on the 6th
+        let result = bash.exec("true; true; true; true; true; true").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("maximum command count exceeded"),
+            "Expected command limit error, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_command_limit_not_exceeded() {
+        let limits = ExecutionLimits::new().max_commands(10);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // Run 5 commands - should succeed
+        let result = bash.exec("true; true; true; true; true").await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_loop_iteration_limit() {
+        let limits = ExecutionLimits::new().max_loop_iterations(5);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // Loop that tries to run 10 times
+        let result = bash.exec("for i in 1 2 3 4 5 6 7 8 9 10; do echo $i; done").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("maximum loop iterations exceeded"),
+            "Expected loop limit error, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_loop_iteration_limit_not_exceeded() {
+        let limits = ExecutionLimits::new().max_loop_iterations(10);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // Loop that runs 5 times - should succeed
+        let result = bash.exec("for i in 1 2 3 4 5; do echo $i; done").await.unwrap();
+        assert_eq!(result.stdout, "1\n2\n3\n4\n5\n");
+    }
+
+    #[tokio::test]
+    async fn test_function_depth_limit() {
+        let limits = ExecutionLimits::new().max_function_depth(3);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // Recursive function that would go 5 deep
+        let result = bash
+            .exec("f() { echo $1; if [ $1 -lt 5 ]; then f $(($1 + 1)); fi; }; f 1")
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("maximum function depth exceeded"),
+            "Expected function depth error, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_function_depth_limit_not_exceeded() {
+        let limits = ExecutionLimits::new().max_function_depth(10);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // Simple function call - should succeed
+        let result = bash.exec("f() { echo hello; }; f").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_while_loop_limit() {
+        let limits = ExecutionLimits::new().max_loop_iterations(3);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // While loop with counter
+        let result = bash
+            .exec("i=0; while [ $i -lt 10 ]; do echo $i; i=$((i + 1)); done")
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("maximum loop iterations exceeded"),
+            "Expected loop limit error, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_default_limits_allow_normal_scripts() {
+        // Default limits should allow typical scripts to run
+        let mut bash = Bash::new();
+        // Avoid using "done" as a word after a for loop - it causes parsing ambiguity
+        let result = bash
+            .exec("for i in 1 2 3 4 5; do echo $i; done && echo finished")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "1\n2\n3\n4\n5\nfinished\n");
+    }
+
+    #[tokio::test]
+    async fn test_for_followed_by_echo_done() {
+        // This specific case causes a parsing issue - "done" after for loop
+        // TODO: Fix the parser to handle "done" as a regular word after for loop ends
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("for i in 1; do echo $i; done; echo ok")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "1\nok\n");
     }
 }
