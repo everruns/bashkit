@@ -25,26 +25,22 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      # TODO: Uncomment when Cargo.toml exists
-      # - name: Cache cargo
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: |
-      #       ~/.cargo/registry
-      #       ~/.cargo/git
-      #       target
-      #     key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      #     restore-keys: |
-      #       ${{ runner.os }}-cargo-
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-      # - name: Check formatting
-      #   run: cargo fmt --all -- --check
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-      # - name: Run clippy
-      #   run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
-      # - name: Run tests
-      #   run: cargo test --all-features
-
-      - name: Placeholder
-        run: echo "CI ready - uncomment cargo steps when Cargo.toml exists"
+      - name: Run tests
+        run: cargo test --all-features
