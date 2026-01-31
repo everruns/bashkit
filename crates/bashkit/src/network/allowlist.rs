@@ -187,10 +187,7 @@ mod tests {
     #[test]
     fn test_allow_all() {
         let allowlist = NetworkAllowlist::allow_all();
-        assert_eq!(
-            allowlist.check("https://example.com"),
-            UrlMatch::Allowed
-        );
+        assert_eq!(allowlist.check("https://example.com"), UrlMatch::Allowed);
         assert_eq!(
             allowlist.check("http://localhost:8080/anything"),
             UrlMatch::Allowed

@@ -259,7 +259,7 @@ impl<'a> Parser<'a> {
 
         // Expect variable name
         let variable = match &self.current_token {
-            Some(tokens::Token::Word(w)) => w.clone(),
+            Some(tokens::Token::Word(w)) | Some(tokens::Token::LiteralWord(w)) => w.clone(),
             _ => {
                 return Err(Error::Parse(
                     "expected variable name in for loop".to_string(),
@@ -279,6 +279,12 @@ impl<'a> Parser<'a> {
                     Some(tokens::Token::Word(w)) if w == "do" => break,
                     Some(tokens::Token::Word(w)) => {
                         words.push(self.parse_word(w.clone()));
+                        self.advance();
+                    }
+                    Some(tokens::Token::LiteralWord(w)) => {
+                        words.push(Word {
+                            parts: vec![WordPart::Literal(w.clone())],
+                        });
                         self.advance();
                     }
                     Some(tokens::Token::Newline) | Some(tokens::Token::Semicolon) => {
@@ -701,7 +707,10 @@ impl<'a> Parser<'a> {
 
         loop {
             match &self.current_token {
-                Some(tokens::Token::Word(w)) => {
+                Some(tokens::Token::Word(w)) | Some(tokens::Token::LiteralWord(w)) => {
+                    let is_literal =
+                        matches!(&self.current_token, Some(tokens::Token::LiteralWord(_)));
+
                     // Stop if this word cannot start a command (like 'then', 'fi', etc.)
                     if words.is_empty() && Self::is_non_command_word(w) {
                         break;
@@ -711,8 +720,8 @@ impl<'a> Parser<'a> {
                         break;
                     }
 
-                    // Check for assignment (only before the command name)
-                    if words.is_empty() {
+                    // Check for assignment (only before the command name, not for literal words)
+                    if words.is_empty() && !is_literal {
                         let w_clone = w.clone();
                         if let Some((name, index, value)) = Self::is_assignment(&w_clone) {
                             let name = name.to_string();
@@ -741,9 +750,20 @@ impl<'a> Parser<'a> {
                                                 self.advance();
                                                 break;
                                             }
-                                            Some(tokens::Token::Word(elem)) => {
+                                            Some(tokens::Token::Word(elem))
+                                            | Some(tokens::Token::LiteralWord(elem)) => {
                                                 let elem_clone = elem.clone();
-                                                elements.push(self.parse_word(elem_clone));
+                                                let word = if matches!(
+                                                    &self.current_token,
+                                                    Some(tokens::Token::LiteralWord(_))
+                                                ) {
+                                                    Word {
+                                                        parts: vec![WordPart::Literal(elem_clone)],
+                                                    }
+                                                } else {
+                                                    self.parse_word(elem_clone)
+                                                };
+                                                elements.push(word);
                                                 self.advance();
                                             }
                                             None => break,
@@ -780,7 +800,14 @@ impl<'a> Parser<'a> {
                         }
                     }
 
-                    words.push(self.parse_word(w.clone()));
+                    let word = if is_literal {
+                        Word {
+                            parts: vec![WordPart::Literal(w.clone())],
+                        }
+                    } else {
+                        self.parse_word(w.clone())
+                    };
+                    words.push(word);
                     self.advance();
                 }
                 Some(tokens::Token::RedirectOut) => {
@@ -884,7 +911,47 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(word)
             }
+            Some(tokens::Token::LiteralWord(w)) => {
+                // Single-quoted: no variable expansion
+                let word = Word {
+                    parts: vec![WordPart::Literal(w.clone())],
+                };
+                self.advance();
+                Ok(word)
+            }
             _ => Err(Error::Parse("expected word".to_string())),
+        }
+    }
+
+    // Helper methods for word handling - kept for potential future use
+    #[allow(dead_code)]
+    /// Convert current word token to Word (handles both Word and LiteralWord)
+    fn current_word_to_word(&self) -> Option<Word> {
+        match &self.current_token {
+            Some(tokens::Token::Word(w)) => Some(self.parse_word(w.clone())),
+            Some(tokens::Token::LiteralWord(w)) => Some(Word {
+                parts: vec![WordPart::Literal(w.clone())],
+            }),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    /// Check if current token is a word (either Word or LiteralWord)
+    fn is_current_word(&self) -> bool {
+        matches!(
+            &self.current_token,
+            Some(tokens::Token::Word(_)) | Some(tokens::Token::LiteralWord(_))
+        )
+    }
+
+    #[allow(dead_code)]
+    /// Get the string content if current token is a word
+    fn current_word_str(&self) -> Option<String> {
+        match &self.current_token {
+            Some(tokens::Token::Word(w)) => Some(w.clone()),
+            Some(tokens::Token::LiteralWord(w)) => Some(w.clone()),
+            _ => None,
         }
     }
 
