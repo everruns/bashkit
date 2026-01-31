@@ -168,7 +168,10 @@ impl<'a> Parser<'a> {
                 "function" => return self.parse_function_keyword().map(Some),
                 _ => {
                     // Check for POSIX-style function: name() { body }
-                    if matches!(self.peek_next(), Some(tokens::Token::LeftParen)) {
+                    // Don't match if word contains '=' (that's an assignment like arr=(a b c))
+                    if !word.contains('=')
+                        && matches!(self.peek_next(), Some(tokens::Token::LeftParen))
+                    {
                         return self.parse_function_posix().map(Some);
                     }
                 }
@@ -629,28 +632,53 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Check if a word is an assignment (NAME=value)
-    fn is_assignment(word: &str) -> Option<(&str, &str)> {
+    /// Check if a word is an assignment (NAME=value or NAME[index]=value)
+    /// Returns (name, optional_index, value)
+    fn is_assignment(word: &str) -> Option<(&str, Option<&str>, &str)> {
         // Find the first =
         if let Some(eq_pos) = word.find('=') {
-            let name = &word[..eq_pos];
+            let lhs = &word[..eq_pos];
             let value = &word[eq_pos + 1..];
 
-            // Name must be valid identifier: starts with letter or _, followed by alnum or _
-            if name.is_empty() {
-                return None;
-            }
-            let mut chars = name.chars();
-            let first = chars.next().unwrap();
-            if !first.is_ascii_alphabetic() && first != '_' {
-                return None;
-            }
-            for c in chars {
-                if !c.is_ascii_alphanumeric() && c != '_' {
+            // Check for array subscript: name[index]
+            if let Some(bracket_pos) = lhs.find('[') {
+                let name = &lhs[..bracket_pos];
+                // Validate name
+                if name.is_empty() {
                     return None;
                 }
+                let mut chars = name.chars();
+                let first = chars.next().unwrap();
+                if !first.is_ascii_alphabetic() && first != '_' {
+                    return None;
+                }
+                for c in chars {
+                    if !c.is_ascii_alphanumeric() && c != '_' {
+                        return None;
+                    }
+                }
+                // Extract index (everything between [ and ])
+                if lhs.ends_with(']') {
+                    let index = &lhs[bracket_pos + 1..lhs.len() - 1];
+                    return Some((name, Some(index), value));
+                }
+            } else {
+                // Name must be valid identifier: starts with letter or _, followed by alnum or _
+                if lhs.is_empty() {
+                    return None;
+                }
+                let mut chars = lhs.chars();
+                let first = chars.next().unwrap();
+                if !first.is_ascii_alphabetic() && first != '_' {
+                    return None;
+                }
+                for c in chars {
+                    if !c.is_ascii_alphanumeric() && c != '_' {
+                        return None;
+                    }
+                }
+                return Some((lhs, None, value));
             }
-            return Some((name, value));
         }
         None
     }
@@ -677,10 +705,67 @@ impl<'a> Parser<'a> {
 
                     // Check for assignment (only before the command name)
                     if words.is_empty() {
-                        if let Some((name, value)) = Self::is_assignment(w) {
+                        let w_clone = w.clone();
+                        if let Some((name, index, value)) = Self::is_assignment(&w_clone) {
+                            let name = name.to_string();
+                            let index = index.map(|s| s.to_string());
+                            let value_str = value.to_string();
+
+                            // Check for array literal: arr=(a b c)
+                            let assignment_value = if value_str.starts_with('(')
+                                && value_str.ends_with(')')
+                            {
+                                let inner = &value_str[1..value_str.len() - 1];
+                                let elements: Vec<Word> = inner
+                                    .split_whitespace()
+                                    .map(|s| self.parse_word(s.to_string()))
+                                    .collect();
+                                AssignmentValue::Array(elements)
+                            } else if value_str.is_empty() {
+                                // Check if next token is ( for arr=(...) syntax
+                                self.advance();
+                                if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
+                                    self.advance(); // consume '('
+                                    let mut elements = Vec::new();
+                                    loop {
+                                        match &self.current_token {
+                                            Some(tokens::Token::RightParen) => {
+                                                self.advance();
+                                                break;
+                                            }
+                                            Some(tokens::Token::Word(elem)) => {
+                                                let elem_clone = elem.clone();
+                                                elements.push(self.parse_word(elem_clone));
+                                                self.advance();
+                                            }
+                                            None => break,
+                                            _ => {
+                                                self.advance();
+                                            }
+                                        }
+                                    }
+                                    assignments.push(Assignment {
+                                        name,
+                                        index,
+                                        value: AssignmentValue::Array(elements),
+                                    });
+                                    continue;
+                                } else {
+                                    // Empty assignment: VAR=
+                                    assignments.push(Assignment {
+                                        name,
+                                        index,
+                                        value: AssignmentValue::Scalar(Word::literal("")),
+                                    });
+                                    continue;
+                                }
+                            } else {
+                                AssignmentValue::Scalar(self.parse_word(value_str))
+                            };
                             assignments.push(Assignment {
-                                name: name.to_string(),
-                                value: self.parse_word(value.to_string()),
+                                name,
+                                index,
+                                value: assignment_value,
                             });
                             self.advance();
                             continue;
@@ -864,18 +949,44 @@ impl<'a> Parser<'a> {
                     // ${VAR} format with possible parameter expansion
                     chars.next(); // consume '{'
 
-                    // Check for ${#var} - length expansion
+                    // Check for ${#var} or ${#arr[@]} - length expansion
                     if chars.peek() == Some(&'#') {
                         chars.next(); // consume '#'
                         let mut var_name = String::new();
                         while let Some(&c) = chars.peek() {
-                            if c == '}' {
-                                chars.next();
+                            if c == '}' || c == '[' {
                                 break;
                             }
                             var_name.push(chars.next().unwrap());
                         }
-                        parts.push(WordPart::Length(var_name));
+                        // Check for array length ${#arr[@]} or ${#arr[*]}
+                        if chars.peek() == Some(&'[') {
+                            chars.next(); // consume '['
+                            let mut index = String::new();
+                            while let Some(&c) = chars.peek() {
+                                if c == ']' {
+                                    chars.next();
+                                    break;
+                                }
+                                index.push(chars.next().unwrap());
+                            }
+                            // Consume closing }
+                            if chars.peek() == Some(&'}') {
+                                chars.next();
+                            }
+                            if index == "@" || index == "*" {
+                                parts.push(WordPart::ArrayLength(var_name));
+                            } else {
+                                // ${#arr[n]} - length of element (same as ${#arr[n]})
+                                parts.push(WordPart::Length(format!("{}[{}]", var_name, index)));
+                            }
+                        } else {
+                            // Consume closing }
+                            if chars.peek() == Some(&'}') {
+                                chars.next();
+                            }
+                            parts.push(WordPart::Length(var_name));
+                        }
                     } else {
                         // Read variable name
                         let mut var_name = String::new();
@@ -887,8 +998,27 @@ impl<'a> Parser<'a> {
                             }
                         }
 
-                        // Check for operator
-                        if let Some(&c) = chars.peek() {
+                        // Check for array access ${arr[index]}
+                        if chars.peek() == Some(&'[') {
+                            chars.next(); // consume '['
+                            let mut index = String::new();
+                            while let Some(&c) = chars.peek() {
+                                if c == ']' {
+                                    chars.next();
+                                    break;
+                                }
+                                index.push(chars.next().unwrap());
+                            }
+                            // Consume closing }
+                            if chars.peek() == Some(&'}') {
+                                chars.next();
+                            }
+                            parts.push(WordPart::ArrayAccess {
+                                name: var_name,
+                                index,
+                            });
+                        } else if let Some(&c) = chars.peek() {
+                            // Check for operator
                             let (operator, operand) = match c {
                                 ':' => {
                                     chars.next(); // consume ':'

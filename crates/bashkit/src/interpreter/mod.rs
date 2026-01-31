@@ -12,8 +12,8 @@ use crate::builtins::{self, Builtin};
 use crate::error::{Error, Result};
 use crate::fs::FileSystem;
 use crate::parser::{
-    CaseCommand, Command, CommandList, CompoundCommand, ForCommand, FunctionDef, IfCommand,
-    ListOperator, ParameterOp, Pipeline, Redirect, RedirectKind, Script, SimpleCommand,
+    AssignmentValue, CaseCommand, Command, CommandList, CompoundCommand, ForCommand, FunctionDef,
+    IfCommand, ListOperator, ParameterOp, Pipeline, Redirect, RedirectKind, Script, SimpleCommand,
     UntilCommand, WhileCommand, Word, WordPart,
 };
 
@@ -33,6 +33,8 @@ pub struct Interpreter {
     fs: Arc<dyn FileSystem>,
     env: HashMap<String, String>,
     variables: HashMap<String, String>,
+    /// Arrays - stored as name -> index -> value
+    arrays: HashMap<String, HashMap<usize, String>>,
     cwd: PathBuf,
     last_exit_code: i32,
     builtins: HashMap<&'static str, Box<dyn Builtin>>,
@@ -74,6 +76,7 @@ impl Interpreter {
             fs,
             env: HashMap::new(),
             variables: HashMap::new(),
+            arrays: HashMap::new(),
             cwd: PathBuf::from("/home/user"),
             last_exit_code: 0,
             builtins,
@@ -600,8 +603,29 @@ impl Interpreter {
     ) -> Result<ExecResult> {
         // Process variable assignments first
         for assignment in &command.assignments {
-            let value = self.expand_word(&assignment.value).await?;
-            self.variables.insert(assignment.name.clone(), value);
+            match &assignment.value {
+                AssignmentValue::Scalar(word) => {
+                    let value = self.expand_word(word).await?;
+                    if let Some(index_str) = &assignment.index {
+                        // arr[index]=value - set array element
+                        let index: usize =
+                            self.evaluate_arithmetic(index_str).try_into().unwrap_or(0);
+                        let arr = self.arrays.entry(assignment.name.clone()).or_default();
+                        arr.insert(index, value);
+                    } else {
+                        self.variables.insert(assignment.name.clone(), value);
+                    }
+                }
+                AssignmentValue::Array(words) => {
+                    // arr=(a b c) - set whole array
+                    let mut arr = HashMap::new();
+                    for (i, word) in words.iter().enumerate() {
+                        let value = self.expand_word(word).await?;
+                        arr.insert(i, value);
+                    }
+                    self.arrays.insert(assignment.name.clone(), arr);
+                }
+            }
         }
 
         let name = self.expand_word(&command.name).await?;
@@ -792,6 +816,36 @@ impl Interpreter {
                     let value = self.expand_variable(name);
                     let expanded = self.apply_parameter_op(&value, name, operator, operand);
                     result.push_str(&expanded);
+                }
+                WordPart::ArrayAccess { name, index } => {
+                    if index == "@" || index == "*" {
+                        // ${arr[@]} or ${arr[*]} - expand to all elements
+                        if let Some(arr) = self.arrays.get(name) {
+                            let mut indices: Vec<_> = arr.keys().collect();
+                            indices.sort();
+                            let values: Vec<_> =
+                                indices.iter().filter_map(|i| arr.get(i)).collect();
+                            result.push_str(
+                                &values.into_iter().cloned().collect::<Vec<_>>().join(" "),
+                            );
+                        }
+                    } else {
+                        // ${arr[n]} - get specific element
+                        let idx: usize = self.evaluate_arithmetic(index).try_into().unwrap_or(0);
+                        if let Some(arr) = self.arrays.get(name) {
+                            if let Some(value) = arr.get(&idx) {
+                                result.push_str(value);
+                            }
+                        }
+                    }
+                }
+                WordPart::ArrayLength(name) => {
+                    // ${#arr[@]} - number of elements
+                    if let Some(arr) = self.arrays.get(name) {
+                        result.push_str(&arr.len().to_string());
+                    } else {
+                        result.push('0');
+                    }
                 }
             }
         }

@@ -188,6 +188,8 @@ impl fmt::Display for Word {
                     write!(f, "${{{}{}{}}}", name, op_str, operand)?
                 }
                 WordPart::Length(name) => write!(f, "${{#{}}}", name)?,
+                WordPart::ArrayAccess { name, index } => write!(f, "${{{}[{}]}}", name, index)?,
+                WordPart::ArrayLength(name) => write!(f, "${{#{}[@]}}", name)?,
             }
         }
         Ok(())
@@ -213,6 +215,10 @@ pub enum WordPart {
     },
     /// Length expansion ${#var}
     Length(String),
+    /// Array element access ${arr[index]} or ${arr[@]} or ${arr[*]}
+    ArrayAccess { name: String, index: String },
+    /// Array length ${#arr[@]} or ${#arr[*]}
+    ArrayLength(String),
 }
 
 /// Parameter expansion operators
@@ -272,5 +278,16 @@ pub enum RedirectKind {
 #[derive(Debug, Clone)]
 pub struct Assignment {
     pub name: String,
-    pub value: Word,
+    /// Optional array index for indexed assignments like arr[0]=value
+    pub index: Option<String>,
+    pub value: AssignmentValue,
+}
+
+/// Value in an assignment - scalar or array
+#[derive(Debug, Clone)]
+pub enum AssignmentValue {
+    /// Scalar value: VAR=value
+    Scalar(Word),
+    /// Array value: VAR=(a b c)
+    Array(Vec<Word>),
 }

@@ -745,4 +745,42 @@ mod tests {
         let result = bash.exec("X=file.tar.gz; echo ${X%.*}").await.unwrap();
         assert_eq!(result.stdout, "file.tar\n");
     }
+
+    #[tokio::test]
+    async fn test_array_basic() {
+        let mut bash = Bash::new();
+        // Basic array declaration and access
+        let result = bash.exec("arr=(a b c); echo ${arr[1]}").await.unwrap();
+        assert_eq!(result.stdout, "b\n");
+    }
+
+    #[tokio::test]
+    async fn test_array_all_elements() {
+        let mut bash = Bash::new();
+        // ${arr[@]} - all elements
+        let result = bash
+            .exec("arr=(one two three); echo ${arr[@]}")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "one two three\n");
+    }
+
+    #[tokio::test]
+    async fn test_array_length() {
+        let mut bash = Bash::new();
+        // ${#arr[@]} - number of elements
+        let result = bash.exec("arr=(a b c d e); echo ${#arr[@]}").await.unwrap();
+        assert_eq!(result.stdout, "5\n");
+    }
+
+    #[tokio::test]
+    async fn test_array_indexed_assignment() {
+        let mut bash = Bash::new();
+        // arr[n]=value assignment
+        let result = bash
+            .exec("arr[0]=first; arr[1]=second; echo ${arr[0]} ${arr[1]}")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "first second\n");
+    }
 }
