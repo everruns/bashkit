@@ -2,13 +2,21 @@
 
 mod cat;
 mod echo;
+mod export;
 mod flow;
 mod navigation;
+mod printf;
+mod read;
+mod test;
 
 pub use cat::Cat;
 pub use echo::Echo;
-pub use flow::{Exit, False, True};
+pub use export::Export;
+pub use flow::{Break, Continue, Exit, False, Return, True};
 pub use navigation::{Cd, Pwd};
+pub use printf::Printf;
+pub use read::Read;
+pub use test::{Bracket, Test};
 
 use async_trait::async_trait;
 use std::collections::HashMap;

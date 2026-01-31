@@ -1,5 +1,18 @@
 //! Interpreter state types
 
+/// Control flow signals from commands like break, continue, return
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ControlFlow {
+    #[default]
+    None,
+    /// Break out of a loop (with optional level count)
+    Break(u32),
+    /// Continue to next iteration (with optional level count)
+    Continue(u32),
+    /// Return from a function (with exit code)
+    Return(i32),
+}
+
 /// Result of executing a bash script.
 #[derive(Debug, Clone, Default)]
 pub struct ExecResult {
@@ -9,6 +22,8 @@ pub struct ExecResult {
     pub stderr: String,
     /// Exit code
     pub exit_code: i32,
+    /// Control flow signal (break, continue, return)
+    pub control_flow: ControlFlow,
 }
 
 impl ExecResult {
@@ -18,6 +33,7 @@ impl ExecResult {
             stdout: stdout.into(),
             stderr: String::new(),
             exit_code: 0,
+            control_flow: ControlFlow::None,
         }
     }
 
@@ -27,6 +43,17 @@ impl ExecResult {
             stdout: String::new(),
             stderr: stderr.into(),
             exit_code,
+            control_flow: ControlFlow::None,
+        }
+    }
+
+    /// Create a result with a control flow signal
+    pub fn with_control_flow(control_flow: ControlFlow) -> Self {
+        Self {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+            control_flow,
         }
     }
 
