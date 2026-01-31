@@ -1,0 +1,21 @@
+# BashKit CLI - Command line interface for bashkit
+# Run bash scripts in a sandboxed environment
+
+[package]
+name = "bashkit-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Command line interface for BashKit sandboxed bash interpreter"
+
+[[bin]]
+name = "bashkit"
+path = "src/main.rs"
+
+[dependencies]
+bashkit = { path = "../bashkit" }
+tokio.workspace = true
+clap.workspace = true
+anyhow.workspace = true
