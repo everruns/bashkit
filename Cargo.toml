@@ -1,0 +1,56 @@
+# BashKit - Sandboxed bash interpreter for multi-tenant environments
+# Part of the Everruns ecosystem
+# See specs/ for design decisions
+
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Everruns"]
+repository = "https://github.com/everruns/bashkit"
+description = "Sandboxed bash interpreter for multi-tenant environments"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# JSON processing (jq) - verified embeddable
+jaq-core = "2"
+jaq-std = "2"
+
+# Text search (grep) - verified supports search_slice() for in-memory
+grep = "0.3"
+grep-regex = "0.1"
+grep-searcher = "0.1"
+
+# HTTP client (for curl)
+reqwest = { version = "0.12", features = ["stream"] }
+
+# Glob matching
+globset = "0.4"
+
+# Regex
+regex = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Testing
+tokio-test = "0.4"
+tempfile = "3"
+pretty_assertions = "1"
+insta = "1"

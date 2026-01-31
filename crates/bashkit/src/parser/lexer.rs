@@ -1,0 +1,334 @@
+//! Lexer for bash scripts
+//!
+//! Tokenizes input into a stream of tokens.
+
+use super::tokens::Token;
+
+/// Lexer for bash scripts.
+pub struct Lexer<'a> {
+    #[allow(dead_code)] // Stored for error reporting in future
+    input: &'a str,
+    #[allow(dead_code)] // Will be used for position tracking
+    pos: usize,
+    chars: std::iter::Peekable<std::str::Chars<'a>>,
+}
+
+impl<'a> Lexer<'a> {
+    /// Create a new lexer for the given input.
+    pub fn new(input: &'a str) -> Self {
+        Self {
+            input,
+            pos: 0,
+            chars: input.chars().peekable(),
+        }
+    }
+
+    /// Get the next token from the input.
+    pub fn next_token(&mut self) -> Option<Token> {
+        self.skip_whitespace();
+
+        let ch = self.peek_char()?;
+
+        match ch {
+            '\n' => {
+                self.advance();
+                Some(Token::Newline)
+            }
+            ';' => {
+                self.advance();
+                Some(Token::Semicolon)
+            }
+            '|' => {
+                self.advance();
+                if self.peek_char() == Some('|') {
+                    self.advance();
+                    Some(Token::Or)
+                } else {
+                    Some(Token::Pipe)
+                }
+            }
+            '&' => {
+                self.advance();
+                if self.peek_char() == Some('&') {
+                    self.advance();
+                    Some(Token::And)
+                } else {
+                    Some(Token::Background)
+                }
+            }
+            '>' => {
+                self.advance();
+                if self.peek_char() == Some('>') {
+                    self.advance();
+                    Some(Token::RedirectAppend)
+                } else {
+                    Some(Token::RedirectOut)
+                }
+            }
+            '<' => {
+                self.advance();
+                if self.peek_char() == Some('<') {
+                    self.advance();
+                    if self.peek_char() == Some('<') {
+                        self.advance();
+                        Some(Token::HereString)
+                    } else {
+                        Some(Token::HereDoc)
+                    }
+                } else {
+                    Some(Token::RedirectIn)
+                }
+            }
+            '(' => {
+                self.advance();
+                Some(Token::LeftParen)
+            }
+            ')' => {
+                self.advance();
+                Some(Token::RightParen)
+            }
+            '{' => {
+                self.advance();
+                Some(Token::LeftBrace)
+            }
+            '}' => {
+                self.advance();
+                Some(Token::RightBrace)
+            }
+            '[' => {
+                self.advance();
+                if self.peek_char() == Some('[') {
+                    self.advance();
+                    Some(Token::DoubleLeftBracket)
+                } else {
+                    // Single [ is a command (test)
+                    Some(Token::Word("[".to_string()))
+                }
+            }
+            ']' => {
+                self.advance();
+                if self.peek_char() == Some(']') {
+                    self.advance();
+                    Some(Token::DoubleRightBracket)
+                } else {
+                    Some(Token::Word("]".to_string()))
+                }
+            }
+            '\'' => self.read_single_quoted_string(),
+            '"' => self.read_double_quoted_string(),
+            '#' => {
+                // Comment - skip to end of line
+                self.skip_comment();
+                self.next_token()
+            }
+            _ => self.read_word(),
+        }
+    }
+
+    fn peek_char(&mut self) -> Option<char> {
+        self.chars.peek().copied()
+    }
+
+    fn advance(&mut self) -> Option<char> {
+        let ch = self.chars.next();
+        if ch.is_some() {
+            self.pos += 1;
+        }
+        ch
+    }
+
+    fn skip_whitespace(&mut self) {
+        while let Some(ch) = self.peek_char() {
+            if ch == ' ' || ch == '\t' {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn skip_comment(&mut self) {
+        while let Some(ch) = self.peek_char() {
+            if ch == '\n' {
+                break;
+            }
+            self.advance();
+        }
+    }
+
+    fn read_word(&mut self) -> Option<Token> {
+        let mut word = String::new();
+
+        while let Some(ch) = self.peek_char() {
+            if self.is_word_char(ch) {
+                word.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        if word.is_empty() {
+            None
+        } else {
+            Some(Token::Word(word))
+        }
+    }
+
+    fn read_single_quoted_string(&mut self) -> Option<Token> {
+        self.advance(); // consume opening '
+        let mut content = String::new();
+
+        while let Some(ch) = self.peek_char() {
+            if ch == '\'' {
+                self.advance(); // consume closing '
+                break;
+            }
+            content.push(ch);
+            self.advance();
+        }
+
+        Some(Token::Word(content))
+    }
+
+    fn read_double_quoted_string(&mut self) -> Option<Token> {
+        self.advance(); // consume opening "
+        let mut content = String::new();
+
+        while let Some(ch) = self.peek_char() {
+            match ch {
+                '"' => {
+                    self.advance(); // consume closing "
+                    break;
+                }
+                '\\' => {
+                    self.advance();
+                    if let Some(next) = self.peek_char() {
+                        // Handle escape sequences
+                        match next {
+                            '"' | '\\' | '$' | '`' | '\n' => {
+                                content.push(next);
+                                self.advance();
+                            }
+                            _ => {
+                                content.push('\\');
+                                content.push(next);
+                                self.advance();
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    content.push(ch);
+                    self.advance();
+                }
+            }
+        }
+
+        Some(Token::Word(content))
+    }
+
+    fn is_word_char(&self, ch: char) -> bool {
+        !matches!(
+            ch,
+            ' ' | '\t'
+                | '\n'
+                | ';'
+                | '|'
+                | '&'
+                | '>'
+                | '<'
+                | '('
+                | ')'
+                | '{'
+                | '}'
+                | '\''
+                | '"'
+                | '#'
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simple_words() {
+        let mut lexer = Lexer::new("echo hello world");
+
+        assert_eq!(lexer.next_token(), Some(Token::Word("echo".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Word("hello".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Word("world".to_string())));
+        assert_eq!(lexer.next_token(), None);
+    }
+
+    #[test]
+    fn test_single_quoted_string() {
+        let mut lexer = Lexer::new("echo 'hello world'");
+
+        assert_eq!(lexer.next_token(), Some(Token::Word("echo".to_string())));
+        assert_eq!(
+            lexer.next_token(),
+            Some(Token::Word("hello world".to_string()))
+        );
+        assert_eq!(lexer.next_token(), None);
+    }
+
+    #[test]
+    fn test_double_quoted_string() {
+        let mut lexer = Lexer::new("echo \"hello world\"");
+
+        assert_eq!(lexer.next_token(), Some(Token::Word("echo".to_string())));
+        assert_eq!(
+            lexer.next_token(),
+            Some(Token::Word("hello world".to_string()))
+        );
+        assert_eq!(lexer.next_token(), None);
+    }
+
+    #[test]
+    fn test_operators() {
+        let mut lexer = Lexer::new("a | b && c || d; e &");
+
+        assert_eq!(lexer.next_token(), Some(Token::Word("a".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Pipe));
+        assert_eq!(lexer.next_token(), Some(Token::Word("b".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::And));
+        assert_eq!(lexer.next_token(), Some(Token::Word("c".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Or));
+        assert_eq!(lexer.next_token(), Some(Token::Word("d".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Semicolon));
+        assert_eq!(lexer.next_token(), Some(Token::Word("e".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Background));
+        assert_eq!(lexer.next_token(), None);
+    }
+
+    #[test]
+    fn test_redirects() {
+        let mut lexer = Lexer::new("a > b >> c < d << e <<< f");
+
+        assert_eq!(lexer.next_token(), Some(Token::Word("a".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::RedirectOut));
+        assert_eq!(lexer.next_token(), Some(Token::Word("b".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::RedirectAppend));
+        assert_eq!(lexer.next_token(), Some(Token::Word("c".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::RedirectIn));
+        assert_eq!(lexer.next_token(), Some(Token::Word("d".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::HereDoc));
+        assert_eq!(lexer.next_token(), Some(Token::Word("e".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::HereString));
+        assert_eq!(lexer.next_token(), Some(Token::Word("f".to_string())));
+    }
+
+    #[test]
+    fn test_comment() {
+        let mut lexer = Lexer::new("echo hello # this is a comment\necho world");
+
+        assert_eq!(lexer.next_token(), Some(Token::Word("echo".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Word("hello".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Newline));
+        assert_eq!(lexer.next_token(), Some(Token::Word("echo".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Word("world".to_string())));
+    }
+}
