@@ -58,6 +58,11 @@ impl Interpreter {
         builtins.insert("break", Box::new(builtins::Break));
         builtins.insert("continue", Box::new(builtins::Continue));
         builtins.insert("return", Box::new(builtins::Return));
+        builtins.insert("test", Box::new(builtins::Test));
+        builtins.insert("[", Box::new(builtins::Bracket));
+        builtins.insert("printf", Box::new(builtins::Printf));
+        builtins.insert("export", Box::new(builtins::Export));
+        builtins.insert("read", Box::new(builtins::Read));
 
         Self {
             fs,
@@ -586,12 +591,36 @@ impl Interpreter {
         command: &SimpleCommand,
         stdin: Option<String>,
     ) -> Result<ExecResult> {
+        // Process variable assignments first
+        for assignment in &command.assignments {
+            let value = self.expand_word(&assignment.value)?;
+            self.variables.insert(assignment.name.clone(), value);
+        }
+
         let name = self.expand_word(&command.name)?;
-        let args: Vec<String> = command
-            .args
-            .iter()
-            .map(|w| self.expand_word(w))
-            .collect::<Result<_>>()?;
+
+        // If name is empty, this is an assignment-only command
+        if name.is_empty() {
+            return Ok(ExecResult::ok(String::new()));
+        }
+
+        // Expand arguments with glob expansion
+        let mut args: Vec<String> = Vec::new();
+        for word in &command.args {
+            let expanded = self.expand_word(word)?;
+            // Check if the word contains glob characters
+            if self.contains_glob_chars(&expanded) {
+                let glob_matches = self.expand_glob(&expanded).await?;
+                if glob_matches.is_empty() {
+                    // No matches - keep original pattern (bash behavior)
+                    args.push(expanded);
+                } else {
+                    args.extend(glob_matches);
+                }
+            } else {
+                args.push(expanded);
+            }
+        }
 
         // Handle input redirections first
         let stdin = self
@@ -801,5 +830,78 @@ impl Interpreter {
         if let Some(frame) = self.call_stack.last_mut() {
             frame.locals.insert(name.to_string(), value.to_string());
         }
+    }
+
+    /// Check if a string contains glob characters
+    fn contains_glob_chars(&self, s: &str) -> bool {
+        s.contains('*') || s.contains('?') || s.contains('[')
+    }
+
+    /// Expand a glob pattern against the filesystem
+    async fn expand_glob(&self, pattern: &str) -> Result<Vec<String>> {
+        let mut matches = Vec::new();
+
+        // Split pattern into directory and filename parts
+        let path = Path::new(pattern);
+        let (dir, file_pattern) = if path.is_absolute() {
+            let parent = path.parent().unwrap_or(Path::new("/"));
+            let name = path.file_name().map(|s| s.to_string_lossy().to_string());
+            (parent.to_path_buf(), name)
+        } else {
+            // Relative path - use cwd
+            let parent = path.parent();
+            let name = path.file_name().map(|s| s.to_string_lossy().to_string());
+            if let Some(p) = parent {
+                if p.as_os_str().is_empty() {
+                    (self.cwd.clone(), name)
+                } else {
+                    (self.cwd.join(p), name)
+                }
+            } else {
+                (self.cwd.clone(), name)
+            }
+        };
+
+        let file_pattern = match file_pattern {
+            Some(p) => p,
+            None => return Ok(matches),
+        };
+
+        // Check if the directory exists
+        if !self.fs.exists(&dir).await.unwrap_or(false) {
+            return Ok(matches);
+        }
+
+        // Read directory entries
+        let entries = match self.fs.read_dir(&dir).await {
+            Ok(e) => e,
+            Err(_) => return Ok(matches),
+        };
+
+        // Match each entry against the pattern
+        for entry in entries {
+            if self.glob_match(&entry.name, &file_pattern) {
+                // Construct the full path
+                let full_path = if path.is_absolute() {
+                    dir.join(&entry.name).to_string_lossy().to_string()
+                } else {
+                    // For relative patterns, return relative path
+                    if let Some(parent) = path.parent() {
+                        if parent.as_os_str().is_empty() {
+                            entry.name.clone()
+                        } else {
+                            format!("{}/{}", parent.to_string_lossy(), entry.name)
+                        }
+                    } else {
+                        entry.name.clone()
+                    }
+                };
+                matches.push(full_path);
+            }
+        }
+
+        // Sort matches alphabetically (bash behavior)
+        matches.sort();
+        Ok(matches)
     }
 }

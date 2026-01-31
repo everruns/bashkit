@@ -629,10 +629,37 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Check if a word is an assignment (NAME=value)
+    fn is_assignment(word: &str) -> Option<(&str, &str)> {
+        // Find the first =
+        if let Some(eq_pos) = word.find('=') {
+            let name = &word[..eq_pos];
+            let value = &word[eq_pos + 1..];
+
+            // Name must be valid identifier: starts with letter or _, followed by alnum or _
+            if name.is_empty() {
+                return None;
+            }
+            let mut chars = name.chars();
+            let first = chars.next().unwrap();
+            if !first.is_ascii_alphabetic() && first != '_' {
+                return None;
+            }
+            for c in chars {
+                if !c.is_ascii_alphanumeric() && c != '_' {
+                    return None;
+                }
+            }
+            return Some((name, value));
+        }
+        None
+    }
+
     /// Parse a simple command with redirections
     fn parse_simple_command(&mut self) -> Result<Option<SimpleCommand>> {
         self.skip_newlines();
 
+        let mut assignments = Vec::new();
         let mut words = Vec::new();
         let mut redirects = Vec::new();
 
@@ -647,6 +674,19 @@ impl<'a> Parser<'a> {
                     if !words.is_empty() && Self::is_terminating_word(w) {
                         break;
                     }
+
+                    // Check for assignment (only before the command name)
+                    if words.is_empty() {
+                        if let Some((name, value)) = Self::is_assignment(w) {
+                            assignments.push(Assignment {
+                                name: name.to_string(),
+                                value: self.parse_word(value.to_string()),
+                            });
+                            self.advance();
+                            continue;
+                        }
+                    }
+
                     words.push(self.parse_word(w.clone()));
                     self.advance();
                 }
@@ -696,6 +736,17 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Handle assignment-only commands (VAR=value with no command)
+        if words.is_empty() && !assignments.is_empty() {
+            // Create a "noop" command that just does the assignments
+            return Ok(Some(SimpleCommand {
+                name: Word::literal(""),
+                args: Vec::new(),
+                redirects,
+                assignments,
+            }));
+        }
+
         if words.is_empty() {
             return Ok(None);
         }
@@ -707,7 +758,7 @@ impl<'a> Parser<'a> {
             name,
             args,
             redirects,
-            assignments: Vec::new(),
+            assignments,
         }))
     }
 
