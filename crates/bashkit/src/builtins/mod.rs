@@ -7,7 +7,7 @@ mod navigation;
 
 pub use cat::Cat;
 pub use echo::Echo;
-pub use flow::{Exit, False, True};
+pub use flow::{Break, Continue, Exit, False, Return, True};
 pub use navigation::{Cd, Pwd};
 
 use async_trait::async_trait;

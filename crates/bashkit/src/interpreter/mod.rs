@@ -2,7 +2,7 @@
 
 mod state;
 
-pub use state::ExecResult;
+pub use state::{ControlFlow, ExecResult};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -12,9 +12,21 @@ use crate::builtins::{self, Builtin};
 use crate::error::{Error, Result};
 use crate::fs::FileSystem;
 use crate::parser::{
-    Command, CommandList, CompoundCommand, ForCommand, IfCommand, ListOperator, Pipeline, Redirect,
-    RedirectKind, Script, SimpleCommand, UntilCommand, WhileCommand, Word, WordPart,
+    CaseCommand, Command, CommandList, CompoundCommand, ForCommand, FunctionDef, IfCommand,
+    ListOperator, Pipeline, Redirect, RedirectKind, Script, SimpleCommand, UntilCommand,
+    WhileCommand, Word, WordPart,
 };
+
+/// A frame in the call stack for local variable scoping
+#[derive(Debug, Clone)]
+struct CallFrame {
+    /// Function name
+    name: String,
+    /// Local variables in this scope
+    locals: HashMap<String, String>,
+    /// Positional parameters ($1, $2, etc.)
+    positional: Vec<String>,
+}
 
 /// Interpreter state.
 pub struct Interpreter {
@@ -24,6 +36,10 @@ pub struct Interpreter {
     cwd: PathBuf,
     last_exit_code: i32,
     builtins: HashMap<&'static str, Box<dyn Builtin>>,
+    /// Defined functions
+    functions: HashMap<String, FunctionDef>,
+    /// Call stack for local variable scoping
+    call_stack: Vec<CallFrame>,
 }
 
 impl Interpreter {
@@ -39,6 +55,9 @@ impl Interpreter {
         builtins.insert("cd", Box::new(builtins::Cd));
         builtins.insert("pwd", Box::new(builtins::Pwd));
         builtins.insert("cat", Box::new(builtins::Cat));
+        builtins.insert("break", Box::new(builtins::Break));
+        builtins.insert("continue", Box::new(builtins::Continue));
+        builtins.insert("return", Box::new(builtins::Return));
 
         Self {
             fs,
@@ -47,6 +66,8 @@ impl Interpreter {
             cwd: PathBuf::from("/home/user"),
             last_exit_code: 0,
             builtins,
+            functions: HashMap::new(),
+            call_stack: Vec::new(),
         }
     }
 
@@ -78,6 +99,7 @@ impl Interpreter {
             stdout,
             stderr,
             exit_code,
+            control_flow: ControlFlow::None,
         })
     }
 
@@ -91,11 +113,11 @@ impl Interpreter {
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
                 Command::List(list) => self.execute_list(list).await,
                 Command::Compound(compound) => self.execute_compound(compound).await,
-                Command::Function(_) => {
-                    // TODO: Implement function definition
-                    Err(Error::Execution(
-                        "function definitions not yet implemented".to_string(),
-                    ))
+                Command::Function(func_def) => {
+                    // Store the function definition
+                    self.functions
+                        .insert(func_def.name.clone(), func_def.clone());
+                    Ok(ExecResult::ok(String::new()))
                 }
             }
         })
@@ -110,9 +132,7 @@ impl Interpreter {
             CompoundCommand::Until(until_cmd) => self.execute_until(until_cmd).await,
             CompoundCommand::Subshell(commands) => self.execute_command_sequence(commands).await,
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
-            CompoundCommand::Case(_) => Err(Error::Execution(
-                "case statements not yet implemented".to_string(),
-            )),
+            CompoundCommand::Case(case_cmd) => self.execute_case(case_cmd).await,
         }
     }
 
@@ -170,12 +190,53 @@ impl Interpreter {
             stdout.push_str(&result.stdout);
             stderr.push_str(&result.stderr);
             exit_code = result.exit_code;
+
+            // Check for break/continue
+            match result.control_flow {
+                ControlFlow::Break(n) => {
+                    if n <= 1 {
+                        break;
+                    } else {
+                        // Propagate break with decremented count
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Break(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Continue(n) => {
+                    if n <= 1 {
+                        continue;
+                    } else {
+                        // Propagate continue with decremented count
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Continue(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Return(code) => {
+                    // Propagate return
+                    return Ok(ExecResult {
+                        stdout,
+                        stderr,
+                        exit_code: code,
+                        control_flow: ControlFlow::Return(code),
+                    });
+                }
+                ControlFlow::None => {}
+            }
         }
 
         Ok(ExecResult {
             stdout,
             stderr,
             exit_code,
+            control_flow: ControlFlow::None,
         })
     }
 
@@ -197,12 +258,50 @@ impl Interpreter {
             stdout.push_str(&result.stdout);
             stderr.push_str(&result.stderr);
             exit_code = result.exit_code;
+
+            // Check for break/continue
+            match result.control_flow {
+                ControlFlow::Break(n) => {
+                    if n <= 1 {
+                        break;
+                    } else {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Break(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Continue(n) => {
+                    if n <= 1 {
+                        continue;
+                    } else {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Continue(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Return(code) => {
+                    return Ok(ExecResult {
+                        stdout,
+                        stderr,
+                        exit_code: code,
+                        control_flow: ControlFlow::Return(code),
+                    });
+                }
+                ControlFlow::None => {}
+            }
         }
 
         Ok(ExecResult {
             stdout,
             stderr,
             exit_code,
+            control_flow: ControlFlow::None,
         })
     }
 
@@ -224,13 +323,134 @@ impl Interpreter {
             stdout.push_str(&result.stdout);
             stderr.push_str(&result.stderr);
             exit_code = result.exit_code;
+
+            // Check for break/continue
+            match result.control_flow {
+                ControlFlow::Break(n) => {
+                    if n <= 1 {
+                        break;
+                    } else {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Break(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Continue(n) => {
+                    if n <= 1 {
+                        continue;
+                    } else {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Continue(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Return(code) => {
+                    return Ok(ExecResult {
+                        stdout,
+                        stderr,
+                        exit_code: code,
+                        control_flow: ControlFlow::Return(code),
+                    });
+                }
+                ControlFlow::None => {}
+            }
         }
 
         Ok(ExecResult {
             stdout,
             stderr,
             exit_code,
+            control_flow: ControlFlow::None,
         })
+    }
+
+    /// Execute a case statement
+    async fn execute_case(&mut self, case_cmd: &CaseCommand) -> Result<ExecResult> {
+        let word_value = self.expand_word(&case_cmd.word)?;
+
+        // Try each case item in order
+        for case_item in &case_cmd.cases {
+            for pattern in &case_item.patterns {
+                let pattern_str = self.expand_word(pattern)?;
+                if self.pattern_matches(&word_value, &pattern_str) {
+                    return self.execute_command_sequence(&case_item.commands).await;
+                }
+            }
+        }
+
+        // No pattern matched - return success with no output
+        Ok(ExecResult::ok(String::new()))
+    }
+
+    /// Check if a value matches a shell pattern
+    fn pattern_matches(&self, value: &str, pattern: &str) -> bool {
+        // Handle special case of * (match anything)
+        if pattern == "*" {
+            return true;
+        }
+
+        // Simple pattern matching - for now just literal matching
+        // TODO: Implement full glob pattern matching (*, ?, [])
+        if pattern.contains('*') || pattern.contains('?') || pattern.contains('[') {
+            // Simple wildcard matching
+            self.glob_match(value, pattern)
+        } else {
+            // Literal match
+            value == pattern
+        }
+    }
+
+    /// Simple glob pattern matching
+    fn glob_match(&self, value: &str, pattern: &str) -> bool {
+        // Convert pattern to a simple regex-like matching
+        let mut value_chars = value.chars().peekable();
+        let mut pattern_chars = pattern.chars().peekable();
+
+        loop {
+            match (pattern_chars.peek(), value_chars.peek()) {
+                (None, None) => return true,
+                (None, Some(_)) => return false,
+                (Some('*'), _) => {
+                    pattern_chars.next();
+                    // * matches zero or more characters
+                    if pattern_chars.peek().is_none() {
+                        return true; // * at end matches everything
+                    }
+                    // Try matching from each position
+                    while value_chars.peek().is_some() {
+                        let remaining_value: String = value_chars.clone().collect();
+                        let remaining_pattern: String = pattern_chars.clone().collect();
+                        if self.glob_match(&remaining_value, &remaining_pattern) {
+                            return true;
+                        }
+                        value_chars.next();
+                    }
+                    // Also try with empty match
+                    let remaining_pattern: String = pattern_chars.collect();
+                    return self.glob_match("", &remaining_pattern);
+                }
+                (Some('?'), Some(_)) => {
+                    pattern_chars.next();
+                    value_chars.next();
+                }
+                (Some('?'), None) => return false,
+                (Some(p), Some(v)) => {
+                    if *p == *v {
+                        pattern_chars.next();
+                        value_chars.next();
+                    } else {
+                        return false;
+                    }
+                }
+                (Some(_), None) => return false,
+            }
+        }
     }
 
     /// Execute a sequence of commands
@@ -245,12 +465,23 @@ impl Interpreter {
             stderr.push_str(&result.stderr);
             exit_code = result.exit_code;
             self.last_exit_code = exit_code;
+
+            // Propagate control flow
+            if result.control_flow != ControlFlow::None {
+                return Ok(ExecResult {
+                    stdout,
+                    stderr,
+                    exit_code,
+                    control_flow: result.control_flow,
+                });
+            }
         }
 
         Ok(ExecResult {
             stdout,
             stderr,
             exit_code,
+            control_flow: ControlFlow::None,
         })
     }
 
@@ -293,12 +524,29 @@ impl Interpreter {
 
     /// Execute a command list (cmd1 && cmd2 || cmd3)
     async fn execute_list(&mut self, list: &CommandList) -> Result<ExecResult> {
-        let mut result = self.execute_command(&list.first).await?;
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code;
+        let result = self.execute_command(&list.first).await?;
+        stdout.push_str(&result.stdout);
+        stderr.push_str(&result.stderr);
+        exit_code = result.exit_code;
+        let mut control_flow = result.control_flow;
+
+        // If first command signaled control flow, return immediately
+        if control_flow != ControlFlow::None {
+            return Ok(ExecResult {
+                stdout,
+                stderr,
+                exit_code,
+                control_flow,
+            });
+        }
 
         for (op, cmd) in &list.rest {
             let should_execute = match op {
-                ListOperator::And => result.exit_code == 0,
-                ListOperator::Or => result.exit_code != 0,
+                ListOperator::And => exit_code == 0,
+                ListOperator::Or => exit_code != 0,
                 ListOperator::Semicolon => true,
                 ListOperator::Background => {
                     // TODO: Implement background execution
@@ -307,11 +555,30 @@ impl Interpreter {
             };
 
             if should_execute {
-                result = self.execute_command(cmd).await?;
+                let result = self.execute_command(cmd).await?;
+                stdout.push_str(&result.stdout);
+                stderr.push_str(&result.stderr);
+                exit_code = result.exit_code;
+                control_flow = result.control_flow;
+
+                // If command signaled control flow, return immediately
+                if control_flow != ControlFlow::None {
+                    return Ok(ExecResult {
+                        stdout,
+                        stderr,
+                        exit_code,
+                        control_flow,
+                    });
+                }
             }
         }
 
-        Ok(result)
+        Ok(ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+            control_flow: ControlFlow::None,
+        })
     }
 
     async fn execute_simple_command(
@@ -330,6 +597,25 @@ impl Interpreter {
         let stdin = self
             .process_input_redirections(stdin, &command.redirects)
             .await?;
+
+        // Check for functions first
+        if let Some(func_def) = self.functions.get(&name).cloned() {
+            // Push call frame with positional parameters
+            self.call_stack.push(CallFrame {
+                name: name.clone(),
+                locals: HashMap::new(),
+                positional: args.clone(),
+            });
+
+            // Execute function body
+            let result = self.execute_command(&func_def.body).await?;
+
+            // Pop call frame
+            self.call_stack.pop();
+
+            // Handle output redirections
+            return self.apply_redirections(result, &command.redirects).await;
+        }
 
         // Check for builtins
         if let Some(builtin) = self.builtins.get(name.as_str()) {
@@ -434,13 +720,7 @@ impl Interpreter {
             match part {
                 WordPart::Literal(s) => result.push_str(s),
                 WordPart::Variable(name) => {
-                    // Check shell variables first, then environment
-                    if let Some(value) = self.variables.get(name) {
-                        result.push_str(value);
-                    } else if let Some(value) = self.env.get(name) {
-                        result.push_str(value);
-                    }
-                    // If not found, expand to empty string (bash behavior)
+                    result.push_str(&self.expand_variable(name));
                 }
                 WordPart::CommandSubstitution(_) => {
                     // TODO: Implement command substitution
@@ -452,5 +732,74 @@ impl Interpreter {
         }
 
         Ok(result)
+    }
+
+    /// Expand a variable by name, checking local scope, positional params, shell vars, then env
+    fn expand_variable(&self, name: &str) -> String {
+        // Check for special parameters
+        match name {
+            "?" => return self.last_exit_code.to_string(),
+            "#" => {
+                // Number of positional parameters
+                if let Some(frame) = self.call_stack.last() {
+                    return frame.positional.len().to_string();
+                }
+                return "0".to_string();
+            }
+            "@" | "*" => {
+                // All positional parameters
+                if let Some(frame) = self.call_stack.last() {
+                    return frame.positional.join(" ");
+                }
+                return String::new();
+            }
+            _ => {}
+        }
+
+        // Check for numeric positional parameter ($1, $2, etc.)
+        if let Ok(n) = name.parse::<usize>() {
+            if n == 0 {
+                // $0 is the script/function name
+                if let Some(frame) = self.call_stack.last() {
+                    return frame.name.clone();
+                }
+                return "bash".to_string();
+            }
+            // $1, $2, etc. (1-indexed)
+            if let Some(frame) = self.call_stack.last() {
+                if n > 0 && n <= frame.positional.len() {
+                    return frame.positional[n - 1].clone();
+                }
+            }
+            return String::new();
+        }
+
+        // Check local variables in call stack (top to bottom)
+        for frame in self.call_stack.iter().rev() {
+            if let Some(value) = frame.locals.get(name) {
+                return value.clone();
+            }
+        }
+
+        // Check shell variables
+        if let Some(value) = self.variables.get(name) {
+            return value.clone();
+        }
+
+        // Check environment
+        if let Some(value) = self.env.get(name) {
+            return value.clone();
+        }
+
+        // Not found - expand to empty string (bash behavior)
+        String::new()
+    }
+
+    /// Set a local variable in the current call frame
+    #[allow(dead_code)]
+    fn set_local(&mut self, name: &str, value: &str) {
+        if let Some(frame) = self.call_stack.last_mut() {
+            frame.locals.insert(name.to_string(), value.to_string());
+        }
     }
 }

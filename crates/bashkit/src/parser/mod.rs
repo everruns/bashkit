@@ -15,6 +15,8 @@ use crate::error::{Error, Result};
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     current_token: Option<tokens::Token>,
+    /// Lookahead token for function parsing
+    peeked_token: Option<tokens::Token>,
 }
 
 impl<'a> Parser<'a> {
@@ -25,6 +27,7 @@ impl<'a> Parser<'a> {
         Self {
             lexer,
             current_token,
+            peeked_token: None,
         }
     }
 
@@ -46,7 +49,19 @@ impl<'a> Parser<'a> {
     }
 
     fn advance(&mut self) {
-        self.current_token = self.lexer.next_token();
+        if let Some(peeked) = self.peeked_token.take() {
+            self.current_token = Some(peeked);
+        } else {
+            self.current_token = self.lexer.next_token();
+        }
+    }
+
+    /// Peek at the next token without consuming the current one
+    fn peek_next(&mut self) -> Option<&tokens::Token> {
+        if self.peeked_token.is_none() {
+            self.peeked_token = self.lexer.next_token();
+        }
+        self.peeked_token.as_ref()
     }
 
     fn skip_newlines(&mut self) {
@@ -141,14 +156,22 @@ impl<'a> Parser<'a> {
     fn parse_command(&mut self) -> Result<Option<Command>> {
         self.skip_newlines();
 
-        // Check for compound commands
+        // Check for compound commands and function keyword
         if let Some(tokens::Token::Word(w)) = &self.current_token {
-            match w.as_str() {
+            let word = w.clone();
+            match word.as_str() {
                 "if" => return self.parse_if().map(|c| Some(Command::Compound(c))),
                 "for" => return self.parse_for().map(|c| Some(Command::Compound(c))),
                 "while" => return self.parse_while().map(|c| Some(Command::Compound(c))),
                 "until" => return self.parse_until().map(|c| Some(Command::Compound(c))),
-                _ => {}
+                "case" => return self.parse_case().map(|c| Some(Command::Compound(c))),
+                "function" => return self.parse_function_keyword().map(Some),
+                _ => {
+                    // Check for POSIX-style function: name() { body }
+                    if matches!(self.peek_next(), Some(tokens::Token::LeftParen)) {
+                        return self.parse_function_posix().map(Some);
+                    }
+                }
             }
         }
 
@@ -320,6 +343,97 @@ impl<'a> Parser<'a> {
         Ok(CompoundCommand::Until(UntilCommand { condition, body }))
     }
 
+    /// Parse a case statement: case WORD in pattern) commands ;; ... esac
+    fn parse_case(&mut self) -> Result<CompoundCommand> {
+        self.advance(); // consume 'case'
+        self.skip_newlines();
+
+        // Get the word to match against
+        let word = self.expect_word()?;
+        self.skip_newlines();
+
+        // Expect 'in'
+        self.expect_keyword("in")?;
+        self.skip_newlines();
+
+        // Parse case items
+        let mut cases = Vec::new();
+        while !self.is_keyword("esac") && self.current_token.is_some() {
+            self.skip_newlines();
+            if self.is_keyword("esac") {
+                break;
+            }
+
+            // Parse patterns (pattern1 | pattern2 | ...)
+            // Optional leading (
+            if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
+                self.advance();
+            }
+
+            let mut patterns = Vec::new();
+            while let Some(tokens::Token::Word(w)) = &self.current_token {
+                patterns.push(self.parse_word(w.clone()));
+                self.advance();
+
+                // Check for | between patterns
+                if matches!(self.current_token, Some(tokens::Token::Pipe)) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+
+            // Expect )
+            if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
+                return Err(Error::Parse("expected ')' after case pattern".to_string()));
+            }
+            self.advance();
+            self.skip_newlines();
+
+            // Parse commands until ;; or esac
+            let mut commands = Vec::new();
+            while !self.is_case_terminator()
+                && !self.is_keyword("esac")
+                && self.current_token.is_some()
+            {
+                if let Some(cmd) = self.parse_command_list()? {
+                    commands.push(cmd);
+                }
+                self.skip_newlines();
+            }
+
+            cases.push(CaseItem { patterns, commands });
+
+            // Consume ;; if present
+            if self.is_case_terminator() {
+                self.advance_double_semicolon();
+            }
+            self.skip_newlines();
+        }
+
+        // Expect 'esac'
+        self.expect_keyword("esac")?;
+
+        Ok(CompoundCommand::Case(CaseCommand { word, cases }))
+    }
+
+    /// Check if current token is ;; (case terminator)
+    fn is_case_terminator(&self) -> bool {
+        // The lexer returns Semicolon for ; but we need ;;
+        // For now, check for two semicolons
+        matches!(self.current_token, Some(tokens::Token::Semicolon))
+    }
+
+    /// Advance past ;; (double semicolon)
+    fn advance_double_semicolon(&mut self) {
+        if matches!(self.current_token, Some(tokens::Token::Semicolon)) {
+            self.advance();
+            if matches!(self.current_token, Some(tokens::Token::Semicolon)) {
+                self.advance();
+            }
+        }
+    }
+
     /// Parse a subshell (commands in parentheses)
     fn parse_subshell(&mut self) -> Result<CompoundCommand> {
         self.advance(); // consume '('
@@ -368,6 +482,84 @@ impl<'a> Parser<'a> {
         self.advance(); // consume '}'
 
         Ok(CompoundCommand::BraceGroup(commands))
+    }
+
+    /// Parse function definition with 'function' keyword: function name { body }
+    fn parse_function_keyword(&mut self) -> Result<Command> {
+        self.advance(); // consume 'function'
+        self.skip_newlines();
+
+        // Get function name
+        let name = match &self.current_token {
+            Some(tokens::Token::Word(w)) => w.clone(),
+            _ => return Err(Error::Parse("expected function name".to_string())),
+        };
+        self.advance();
+        self.skip_newlines();
+
+        // Optional () after name
+        if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
+            self.advance(); // consume '('
+            if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
+                return Err(Error::Parse(
+                    "expected ')' in function definition".to_string(),
+                ));
+            }
+            self.advance(); // consume ')'
+            self.skip_newlines();
+        }
+
+        // Expect { for body
+        if !matches!(self.current_token, Some(tokens::Token::LeftBrace)) {
+            return Err(Error::Parse("expected '{' for function body".to_string()));
+        }
+
+        // Parse body as brace group
+        let body = self.parse_brace_group()?;
+
+        Ok(Command::Function(FunctionDef {
+            name,
+            body: Box::new(Command::Compound(body)),
+        }))
+    }
+
+    /// Parse POSIX-style function definition: name() { body }
+    fn parse_function_posix(&mut self) -> Result<Command> {
+        // Get function name
+        let name = match &self.current_token {
+            Some(tokens::Token::Word(w)) => w.clone(),
+            _ => return Err(Error::Parse("expected function name".to_string())),
+        };
+        self.advance();
+
+        // Consume ()
+        if !matches!(self.current_token, Some(tokens::Token::LeftParen)) {
+            return Err(Error::Parse(
+                "expected '(' in function definition".to_string(),
+            ));
+        }
+        self.advance(); // consume '('
+
+        if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
+            return Err(Error::Parse(
+                "expected ')' in function definition".to_string(),
+            ));
+        }
+        self.advance(); // consume ')'
+        self.skip_newlines();
+
+        // Expect { for body
+        if !matches!(self.current_token, Some(tokens::Token::LeftBrace)) {
+            return Err(Error::Parse("expected '{' for function body".to_string()));
+        }
+
+        // Parse body as brace group
+        let body = self.parse_brace_group()?;
+
+        Ok(Command::Function(FunctionDef {
+            name,
+            body: Box::new(Command::Compound(body)),
+        }))
     }
 
     /// Parse commands until a terminating keyword
@@ -559,22 +751,30 @@ impl<'a> Parser<'a> {
                     if !var_name.is_empty() {
                         parts.push(WordPart::Variable(var_name));
                     }
-                } else {
-                    // $VAR format
-                    let mut var_name = String::new();
-                    while let Some(&c) = chars.peek() {
-                        if c.is_ascii_alphanumeric() || c == '_' {
-                            var_name.push(chars.next().unwrap());
+                } else if let Some(&c) = chars.peek() {
+                    // Check for special single-character variables ($?, $#, $@, $*, $!, $$, $-, $0-$9)
+                    if matches!(c, '?' | '#' | '@' | '*' | '!' | '$' | '-') || c.is_ascii_digit() {
+                        parts.push(WordPart::Variable(chars.next().unwrap().to_string()));
+                    } else {
+                        // $VAR format
+                        let mut var_name = String::new();
+                        while let Some(&c) = chars.peek() {
+                            if c.is_ascii_alphanumeric() || c == '_' {
+                                var_name.push(chars.next().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                        if !var_name.is_empty() {
+                            parts.push(WordPart::Variable(var_name));
                         } else {
-                            break;
+                            // Just a literal $
+                            current.push('$');
                         }
                     }
-                    if !var_name.is_empty() {
-                        parts.push(WordPart::Variable(var_name));
-                    } else {
-                        // Just a literal $
-                        current.push('$');
-                    }
+                } else {
+                    // Just a literal $ at end
+                    current.push('$');
                 }
             } else {
                 current.push(ch);

@@ -316,4 +316,115 @@ mod tests {
         let result = bash.exec("{ echo hello; }").await.unwrap();
         assert_eq!(result.stdout, "hello\n");
     }
+
+    #[tokio::test]
+    async fn test_function_keyword() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("function greet { echo hello; }; greet")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_function_posix() {
+        let mut bash = Bash::new();
+        let result = bash.exec("greet() { echo hello; }; greet").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_function_args() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("greet() { echo $1 $2; }; greet world foo")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "world foo\n");
+    }
+
+    #[tokio::test]
+    async fn test_function_arg_count() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("count() { echo $#; }; count a b c")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "3\n");
+    }
+
+    #[tokio::test]
+    async fn test_case_literal() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("case foo in foo) echo matched ;; esac")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "matched\n");
+    }
+
+    #[tokio::test]
+    async fn test_case_wildcard() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("case bar in *) echo default ;; esac")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "default\n");
+    }
+
+    #[tokio::test]
+    async fn test_case_no_match() {
+        let mut bash = Bash::new();
+        let result = bash.exec("case foo in bar) echo no ;; esac").await.unwrap();
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_case_multiple_patterns() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("case foo in bar|foo|baz) echo matched ;; esac")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "matched\n");
+    }
+
+    #[tokio::test]
+    async fn test_break_as_command() {
+        let mut bash = Bash::new();
+        // Just run break alone - should not error
+        let result = bash.exec("break").await.unwrap();
+        // break outside of loop returns success with no output
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_for_one_item() {
+        let mut bash = Bash::new();
+        // Simple for loop with one item
+        let result = bash.exec("for i in a; do echo $i; done").await.unwrap();
+        assert_eq!(result.stdout, "a\n");
+    }
+
+    #[tokio::test]
+    async fn test_for_with_break() {
+        let mut bash = Bash::new();
+        // For loop with break
+        let result = bash.exec("for i in a; do break; done").await.unwrap();
+        assert_eq!(result.stdout, "");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_for_echo_break() {
+        let mut bash = Bash::new();
+        // For loop with echo then break - tests the semicolon command list in body
+        let result = bash
+            .exec("for i in a b c; do echo $i; break; done")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "a\n");
+    }
 }
