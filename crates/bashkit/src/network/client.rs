@@ -167,10 +167,7 @@ mod tests {
 
         let result = client.get("https://example.com").await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("access denied"));
+        assert!(result.unwrap_err().to_string().contains("access denied"));
     }
 
     #[tokio::test]
@@ -180,10 +177,7 @@ mod tests {
 
         let result = client.get("https://blocked.com").await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("access denied"));
+        assert!(result.unwrap_err().to_string().contains("access denied"));
     }
 
     // Note: Integration tests that actually make network requests

@@ -76,6 +76,10 @@ impl Interpreter {
         builtins.insert("local", Box::new(builtins::Local));
         builtins.insert("source", Box::new(builtins::Source::new(fs.clone())));
         builtins.insert(".", Box::new(builtins::Source::new(fs.clone())));
+        builtins.insert("jq", Box::new(builtins::Jq));
+        builtins.insert("grep", Box::new(builtins::Grep));
+        builtins.insert("sed", Box::new(builtins::Sed));
+        builtins.insert("awk", Box::new(builtins::Awk));
 
         Self {
             fs,

@@ -436,7 +436,10 @@ mod tests {
         let overlay = OverlayFs::new(lower.clone());
 
         // Delete through overlay
-        overlay.remove(Path::new("/tmp/test.txt"), false).await.unwrap();
+        overlay
+            .remove(Path::new("/tmp/test.txt"), false)
+            .await
+            .unwrap();
 
         // Should not be visible through overlay
         assert!(!overlay.exists(Path::new("/tmp/test.txt")).await.unwrap());
@@ -456,7 +459,10 @@ mod tests {
         let overlay = OverlayFs::new(lower);
 
         // Delete
-        overlay.remove(Path::new("/tmp/test.txt"), false).await.unwrap();
+        overlay
+            .remove(Path::new("/tmp/test.txt"), false)
+            .await
+            .unwrap();
         assert!(!overlay.exists(Path::new("/tmp/test.txt")).await.unwrap());
 
         // Recreate

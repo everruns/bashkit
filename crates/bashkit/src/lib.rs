@@ -34,11 +34,11 @@ pub use network::NetworkAllowlist;
 #[cfg(feature = "network")]
 pub use network::HttpClient;
 
+use interpreter::Interpreter;
+use parser::Parser;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use interpreter::Interpreter;
-use parser::Parser;
 
 /// Main entry point for BashKit.
 ///
@@ -833,7 +833,9 @@ mod tests {
         let mut bash = Bash::builder().limits(limits).build();
 
         // Loop that tries to run 10 times
-        let result = bash.exec("for i in 1 2 3 4 5 6 7 8 9 10; do echo $i; done").await;
+        let result = bash
+            .exec("for i in 1 2 3 4 5 6 7 8 9 10; do echo $i; done")
+            .await;
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -849,7 +851,10 @@ mod tests {
         let mut bash = Bash::builder().limits(limits).build();
 
         // Loop that runs 5 times - should succeed
-        let result = bash.exec("for i in 1 2 3 4 5; do echo $i; done").await.unwrap();
+        let result = bash
+            .exec("for i in 1 2 3 4 5; do echo $i; done")
+            .await
+            .unwrap();
         assert_eq!(result.stdout, "1\n2\n3\n4\n5\n");
     }
 

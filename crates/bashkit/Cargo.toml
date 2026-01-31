@@ -36,6 +36,11 @@ reqwest = { workspace = true, optional = true }
 # URL parsing
 url = "2"
 
+# JSON processing (jq)
+jaq-core = { workspace = true }
+jaq-std = { workspace = true }
+jaq-json = { workspace = true }
+
 [features]
 default = []
 network = ["reqwest"]
