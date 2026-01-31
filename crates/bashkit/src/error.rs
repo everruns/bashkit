@@ -28,4 +28,8 @@ pub enum Error {
     /// Resource limit exceeded.
     #[error("resource limit exceeded: {0}")]
     ResourceLimit(#[from] LimitExceeded),
+
+    /// Network error.
+    #[error("network error: {0}")]
+    Network(String),
 }

@@ -30,6 +30,16 @@ regex = { workspace = true }
 # Glob matching
 globset = { workspace = true }
 
+# HTTP client (for curl) - optional, enabled with network feature
+reqwest = { workspace = true, optional = true }
+
+# URL parsing
+url = "2"
+
+[features]
+default = []
+network = ["reqwest"]
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 pretty_assertions = { workspace = true }
