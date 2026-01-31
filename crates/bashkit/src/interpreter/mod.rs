@@ -13,8 +13,8 @@ use crate::error::{Error, Result};
 use crate::fs::FileSystem;
 use crate::parser::{
     CaseCommand, Command, CommandList, CompoundCommand, ForCommand, FunctionDef, IfCommand,
-    ListOperator, Pipeline, Redirect, RedirectKind, Script, SimpleCommand, UntilCommand,
-    WhileCommand, Word, WordPart,
+    ListOperator, ParameterOp, Pipeline, Redirect, RedirectKind, Script, SimpleCommand,
+    UntilCommand, WhileCommand, Word, WordPart,
 };
 
 /// A frame in the call stack for local variable scoping
@@ -63,6 +63,12 @@ impl Interpreter {
         builtins.insert("printf", Box::new(builtins::Printf));
         builtins.insert("export", Box::new(builtins::Export));
         builtins.insert("read", Box::new(builtins::Read));
+        builtins.insert("set", Box::new(builtins::Set));
+        builtins.insert("unset", Box::new(builtins::Unset));
+        builtins.insert("shift", Box::new(builtins::Shift));
+        builtins.insert("local", Box::new(builtins::Local));
+        builtins.insert("source", Box::new(builtins::Source::new(fs.clone())));
+        builtins.insert(".", Box::new(builtins::Source::new(fs.clone())));
 
         Self {
             fs,
@@ -690,6 +696,11 @@ impl Interpreter {
                     let content = self.expand_word(&redirect.target).await?;
                     stdin = Some(format!("{}\n", content));
                 }
+                RedirectKind::HereDoc => {
+                    // << EOF - use the heredoc content as stdin
+                    let content = self.expand_word(&redirect.target).await?;
+                    stdin = Some(content);
+                }
                 _ => {
                     // Output redirections handled separately
                 }
@@ -768,10 +779,208 @@ impl Interpreter {
                     let value = self.evaluate_arithmetic(expr);
                     result.push_str(&value.to_string());
                 }
+                WordPart::Length(name) => {
+                    // ${#var} - length of variable value
+                    let value = self.expand_variable(name);
+                    result.push_str(&value.len().to_string());
+                }
+                WordPart::ParameterExpansion {
+                    name,
+                    operator,
+                    operand,
+                } => {
+                    let value = self.expand_variable(name);
+                    let expanded = self.apply_parameter_op(&value, name, operator, operand);
+                    result.push_str(&expanded);
+                }
             }
         }
 
         Ok(result)
+    }
+
+    /// Apply parameter expansion operator
+    fn apply_parameter_op(
+        &mut self,
+        value: &str,
+        name: &str,
+        operator: &ParameterOp,
+        operand: &str,
+    ) -> String {
+        match operator {
+            ParameterOp::UseDefault => {
+                // ${var:-default} - use default if unset/empty
+                if value.is_empty() {
+                    operand.to_string()
+                } else {
+                    value.to_string()
+                }
+            }
+            ParameterOp::AssignDefault => {
+                // ${var:=default} - assign default if unset/empty
+                if value.is_empty() {
+                    self.variables.insert(name.to_string(), operand.to_string());
+                    operand.to_string()
+                } else {
+                    value.to_string()
+                }
+            }
+            ParameterOp::UseReplacement => {
+                // ${var:+replacement} - use replacement if set
+                if !value.is_empty() {
+                    operand.to_string()
+                } else {
+                    String::new()
+                }
+            }
+            ParameterOp::Error => {
+                // ${var:?error} - error if unset/empty
+                if value.is_empty() {
+                    // In real bash this would exit, we just return empty
+                    String::new()
+                } else {
+                    value.to_string()
+                }
+            }
+            ParameterOp::RemovePrefixShort => {
+                // ${var#pattern} - remove shortest prefix match
+                self.remove_pattern(value, operand, true, false)
+            }
+            ParameterOp::RemovePrefixLong => {
+                // ${var##pattern} - remove longest prefix match
+                self.remove_pattern(value, operand, true, true)
+            }
+            ParameterOp::RemoveSuffixShort => {
+                // ${var%pattern} - remove shortest suffix match
+                self.remove_pattern(value, operand, false, false)
+            }
+            ParameterOp::RemoveSuffixLong => {
+                // ${var%%pattern} - remove longest suffix match
+                self.remove_pattern(value, operand, false, true)
+            }
+        }
+    }
+
+    /// Remove prefix/suffix pattern from value
+    fn remove_pattern(&self, value: &str, pattern: &str, prefix: bool, longest: bool) -> String {
+        // Simple pattern matching with * glob
+        if pattern.is_empty() {
+            return value.to_string();
+        }
+
+        if prefix {
+            // Remove from beginning
+            if pattern == "*" {
+                if longest {
+                    return String::new();
+                } else if !value.is_empty() {
+                    return value.chars().skip(1).collect();
+                } else {
+                    return value.to_string();
+                }
+            }
+
+            // Check if pattern contains *
+            if let Some(star_pos) = pattern.find('*') {
+                let prefix_part = &pattern[..star_pos];
+                let suffix_part = &pattern[star_pos + 1..];
+
+                if prefix_part.is_empty() {
+                    // Pattern is "*suffix" - find suffix and remove everything before it
+                    if longest {
+                        // Find last occurrence of suffix
+                        if let Some(pos) = value.rfind(suffix_part) {
+                            return value[pos + suffix_part.len()..].to_string();
+                        }
+                    } else {
+                        // Find first occurrence of suffix
+                        if let Some(pos) = value.find(suffix_part) {
+                            return value[pos + suffix_part.len()..].to_string();
+                        }
+                    }
+                } else if suffix_part.is_empty() {
+                    // Pattern is "prefix*" - match prefix and any chars after
+                    if let Some(rest) = value.strip_prefix(prefix_part) {
+                        if longest {
+                            return String::new();
+                        } else {
+                            return rest.to_string();
+                        }
+                    }
+                } else {
+                    // Pattern is "prefix*suffix" - more complex matching
+                    if let Some(rest) = value.strip_prefix(prefix_part) {
+                        if longest {
+                            if let Some(pos) = rest.rfind(suffix_part) {
+                                return rest[pos + suffix_part.len()..].to_string();
+                            }
+                        } else if let Some(pos) = rest.find(suffix_part) {
+                            return rest[pos + suffix_part.len()..].to_string();
+                        }
+                    }
+                }
+            } else if let Some(rest) = value.strip_prefix(pattern) {
+                return rest.to_string();
+            }
+        } else {
+            // Remove from end (suffix)
+            if pattern == "*" {
+                if longest {
+                    return String::new();
+                } else if !value.is_empty() {
+                    let mut s = value.to_string();
+                    s.pop();
+                    return s;
+                } else {
+                    return value.to_string();
+                }
+            }
+
+            // Check if pattern contains *
+            if let Some(star_pos) = pattern.find('*') {
+                let prefix_part = &pattern[..star_pos];
+                let suffix_part = &pattern[star_pos + 1..];
+
+                if suffix_part.is_empty() {
+                    // Pattern is "prefix*" - find prefix and remove from there to end
+                    if longest {
+                        // Find first occurrence of prefix
+                        if let Some(pos) = value.find(prefix_part) {
+                            return value[..pos].to_string();
+                        }
+                    } else {
+                        // Find last occurrence of prefix
+                        if let Some(pos) = value.rfind(prefix_part) {
+                            return value[..pos].to_string();
+                        }
+                    }
+                } else if prefix_part.is_empty() {
+                    // Pattern is "*suffix" - match any chars before suffix
+                    if let Some(before) = value.strip_suffix(suffix_part) {
+                        if longest {
+                            return String::new();
+                        } else {
+                            return before.to_string();
+                        }
+                    }
+                } else {
+                    // Pattern is "prefix*suffix" - more complex matching
+                    if let Some(before_suffix) = value.strip_suffix(suffix_part) {
+                        if longest {
+                            if let Some(pos) = before_suffix.find(prefix_part) {
+                                return value[..pos].to_string();
+                            }
+                        } else if let Some(pos) = before_suffix.rfind(prefix_part) {
+                            return value[..pos].to_string();
+                        }
+                    }
+                }
+            } else if let Some(before) = value.strip_suffix(pattern) {
+                return before.to_string();
+            }
+        }
+
+        value.to_string()
     }
 
     /// Evaluate a simple arithmetic expression

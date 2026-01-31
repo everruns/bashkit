@@ -7,7 +7,9 @@ mod flow;
 mod navigation;
 mod printf;
 mod read;
+mod source;
 mod test;
+mod vars;
 
 pub use cat::Cat;
 pub use echo::Echo;
@@ -16,7 +18,9 @@ pub use flow::{Break, Continue, Exit, False, Return, True};
 pub use navigation::{Cd, Pwd};
 pub use printf::Printf;
 pub use read::Read;
+pub use source::Source;
 pub use test::{Bracket, Test};
+pub use vars::{Local, Set, Shift, Unset};
 
 use async_trait::async_trait;
 use std::collections::HashMap;

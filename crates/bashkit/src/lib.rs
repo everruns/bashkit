@@ -663,4 +663,86 @@ mod tests {
         let result = bash.exec("echo $((2 + 3 * 4))").await.unwrap();
         assert_eq!(result.stdout, "14\n");
     }
+
+    #[tokio::test]
+    async fn test_heredoc_simple() {
+        let mut bash = Bash::new();
+        let result = bash.exec("cat <<EOF\nhello\nworld\nEOF").await.unwrap();
+        assert_eq!(result.stdout, "hello\nworld\n");
+    }
+
+    #[tokio::test]
+    async fn test_heredoc_single_line() {
+        let mut bash = Bash::new();
+        let result = bash.exec("cat <<END\ntest\nEND").await.unwrap();
+        assert_eq!(result.stdout, "test\n");
+    }
+
+    #[tokio::test]
+    async fn test_unset() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("FOO=bar; unset FOO; echo \"x${FOO}y\"")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "xy\n");
+    }
+
+    #[tokio::test]
+    async fn test_local_basic() {
+        let mut bash = Bash::new();
+        // Test that local command runs without error
+        let result = bash.exec("local X=test; echo $X").await.unwrap();
+        assert_eq!(result.stdout, "test\n");
+    }
+
+    #[tokio::test]
+    async fn test_set_option() {
+        let mut bash = Bash::new();
+        let result = bash.exec("set -e; echo ok").await.unwrap();
+        assert_eq!(result.stdout, "ok\n");
+    }
+
+    #[tokio::test]
+    async fn test_param_default() {
+        let mut bash = Bash::new();
+        // ${var:-default} when unset
+        let result = bash.exec("echo ${UNSET:-default}").await.unwrap();
+        assert_eq!(result.stdout, "default\n");
+
+        // ${var:-default} when set
+        let result = bash.exec("X=value; echo ${X:-default}").await.unwrap();
+        assert_eq!(result.stdout, "value\n");
+    }
+
+    #[tokio::test]
+    async fn test_param_assign_default() {
+        let mut bash = Bash::new();
+        // ${var:=default} assigns when unset
+        let result = bash.exec("echo ${NEW:=assigned}; echo $NEW").await.unwrap();
+        assert_eq!(result.stdout, "assigned\nassigned\n");
+    }
+
+    #[tokio::test]
+    async fn test_param_length() {
+        let mut bash = Bash::new();
+        let result = bash.exec("X=hello; echo ${#X}").await.unwrap();
+        assert_eq!(result.stdout, "5\n");
+    }
+
+    #[tokio::test]
+    async fn test_param_remove_prefix() {
+        let mut bash = Bash::new();
+        // ${var#pattern} - remove shortest prefix
+        let result = bash.exec("X=hello.world.txt; echo ${X#*.}").await.unwrap();
+        assert_eq!(result.stdout, "world.txt\n");
+    }
+
+    #[tokio::test]
+    async fn test_param_remove_suffix() {
+        let mut bash = Bash::new();
+        // ${var%pattern} - remove shortest suffix
+        let result = bash.exec("X=file.tar.gz; echo ${X%.*}").await.unwrap();
+        assert_eq!(result.stdout, "file.tar\n");
+    }
 }

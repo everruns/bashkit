@@ -324,6 +324,52 @@ impl<'a> Lexer<'a> {
                 | '#'
         )
     }
+
+    /// Read here document content until the delimiter line is found
+    pub fn read_heredoc(&mut self, delimiter: &str) -> String {
+        let mut content = String::new();
+        let mut current_line = String::new();
+
+        // Skip to end of current line first (after the delimiter on command line)
+        while let Some(ch) = self.peek_char() {
+            self.advance();
+            if ch == '\n' {
+                break;
+            }
+        }
+
+        // Read lines until we find the delimiter
+        loop {
+            match self.peek_char() {
+                Some('\n') => {
+                    self.advance();
+                    // Check if current line matches delimiter
+                    if current_line.trim() == delimiter {
+                        break;
+                    }
+                    content.push_str(&current_line);
+                    content.push('\n');
+                    current_line.clear();
+                }
+                Some(ch) => {
+                    current_line.push(ch);
+                    self.advance();
+                }
+                None => {
+                    // End of input - check last line
+                    if current_line.trim() == delimiter {
+                        break;
+                    }
+                    if !current_line.is_empty() {
+                        content.push_str(&current_line);
+                    }
+                    break;
+                }
+            }
+        }
+
+        content
+    }
 }
 
 #[cfg(test)]
@@ -428,5 +474,35 @@ mod tests {
         assert_eq!(lexer.next_token(), Some(Token::Pipe));
         assert_eq!(lexer.next_token(), Some(Token::Word("cat".to_string())));
         assert_eq!(lexer.next_token(), None);
+    }
+
+    #[test]
+    fn test_read_heredoc() {
+        // Simulate state after reading "cat <<EOF" - positioned at newline before content
+        let mut lexer = Lexer::new("\nhello\nworld\nEOF");
+        let content = lexer.read_heredoc("EOF");
+        assert_eq!(content, "hello\nworld\n");
+    }
+
+    #[test]
+    fn test_read_heredoc_single_line() {
+        let mut lexer = Lexer::new("\ntest\nEOF");
+        let content = lexer.read_heredoc("EOF");
+        assert_eq!(content, "test\n");
+    }
+
+    #[test]
+    fn test_read_heredoc_full_scenario() {
+        // Full scenario: "cat <<EOF\nhello\nworld\nEOF"
+        let mut lexer = Lexer::new("cat <<EOF\nhello\nworld\nEOF");
+
+        // Parser would read these tokens
+        assert_eq!(lexer.next_token(), Some(Token::Word("cat".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::HereDoc));
+        assert_eq!(lexer.next_token(), Some(Token::Word("EOF".to_string())));
+
+        // Now read heredoc content
+        let content = lexer.read_heredoc("EOF");
+        assert_eq!(content, "hello\nworld\n");
     }
 }

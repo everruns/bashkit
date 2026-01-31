@@ -726,6 +726,27 @@ impl<'a> Parser<'a> {
                         target,
                     });
                 }
+                Some(tokens::Token::HereDoc) => {
+                    self.advance();
+                    // Get the delimiter word
+                    let delimiter = match &self.current_token {
+                        Some(tokens::Token::Word(w)) => w.clone(),
+                        _ => return Err(Error::Parse("expected delimiter after <<".to_string())),
+                    };
+                    // Don't advance - let read_heredoc consume directly from lexer position
+
+                    // Read the here document content (reads until delimiter line)
+                    let content = self.lexer.read_heredoc(&delimiter);
+
+                    // Now advance to get the next token after the heredoc
+                    self.advance();
+
+                    redirects.push(Redirect {
+                        fd: None,
+                        kind: RedirectKind::HereDoc,
+                        target: Word::literal(content),
+                    });
+                }
                 Some(tokens::Token::Newline)
                 | Some(tokens::Token::Semicolon)
                 | Some(tokens::Token::Pipe)
@@ -840,18 +861,112 @@ impl<'a> Parser<'a> {
                         }
                     }
                 } else if chars.peek() == Some(&'{') {
-                    // ${VAR} format
+                    // ${VAR} format with possible parameter expansion
                     chars.next(); // consume '{'
-                    let mut var_name = String::new();
-                    while let Some(&c) = chars.peek() {
-                        if c == '}' {
-                            chars.next(); // consume '}'
-                            break;
+
+                    // Check for ${#var} - length expansion
+                    if chars.peek() == Some(&'#') {
+                        chars.next(); // consume '#'
+                        let mut var_name = String::new();
+                        while let Some(&c) = chars.peek() {
+                            if c == '}' {
+                                chars.next();
+                                break;
+                            }
+                            var_name.push(chars.next().unwrap());
                         }
-                        var_name.push(chars.next().unwrap());
-                    }
-                    if !var_name.is_empty() {
-                        parts.push(WordPart::Variable(var_name));
+                        parts.push(WordPart::Length(var_name));
+                    } else {
+                        // Read variable name
+                        let mut var_name = String::new();
+                        while let Some(&c) = chars.peek() {
+                            if c.is_ascii_alphanumeric() || c == '_' {
+                                var_name.push(chars.next().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+
+                        // Check for operator
+                        if let Some(&c) = chars.peek() {
+                            let (operator, operand) = match c {
+                                ':' => {
+                                    chars.next(); // consume ':'
+                                    match chars.peek() {
+                                        Some(&'-') => {
+                                            chars.next();
+                                            let op = self.read_brace_operand(&mut chars);
+                                            (Some(ParameterOp::UseDefault), op)
+                                        }
+                                        Some(&'=') => {
+                                            chars.next();
+                                            let op = self.read_brace_operand(&mut chars);
+                                            (Some(ParameterOp::AssignDefault), op)
+                                        }
+                                        Some(&'+') => {
+                                            chars.next();
+                                            let op = self.read_brace_operand(&mut chars);
+                                            (Some(ParameterOp::UseReplacement), op)
+                                        }
+                                        Some(&'?') => {
+                                            chars.next();
+                                            let op = self.read_brace_operand(&mut chars);
+                                            (Some(ParameterOp::Error), op)
+                                        }
+                                        _ => (None, String::new()),
+                                    }
+                                }
+                                '#' => {
+                                    chars.next();
+                                    if chars.peek() == Some(&'#') {
+                                        chars.next();
+                                        let op = self.read_brace_operand(&mut chars);
+                                        (Some(ParameterOp::RemovePrefixLong), op)
+                                    } else {
+                                        let op = self.read_brace_operand(&mut chars);
+                                        (Some(ParameterOp::RemovePrefixShort), op)
+                                    }
+                                }
+                                '%' => {
+                                    chars.next();
+                                    if chars.peek() == Some(&'%') {
+                                        chars.next();
+                                        let op = self.read_brace_operand(&mut chars);
+                                        (Some(ParameterOp::RemoveSuffixLong), op)
+                                    } else {
+                                        let op = self.read_brace_operand(&mut chars);
+                                        (Some(ParameterOp::RemoveSuffixShort), op)
+                                    }
+                                }
+                                '}' => {
+                                    chars.next();
+                                    (None, String::new())
+                                }
+                                _ => {
+                                    // Unknown, consume until }
+                                    while let Some(&ch) = chars.peek() {
+                                        if ch == '}' {
+                                            chars.next();
+                                            break;
+                                        }
+                                        chars.next();
+                                    }
+                                    (None, String::new())
+                                }
+                            };
+
+                            if let Some(op) = operator {
+                                parts.push(WordPart::ParameterExpansion {
+                                    name: var_name,
+                                    operator: op,
+                                    operand,
+                                });
+                            } else if !var_name.is_empty() {
+                                parts.push(WordPart::Variable(var_name));
+                            }
+                        } else if !var_name.is_empty() {
+                            parts.push(WordPart::Variable(var_name));
+                        }
                     }
                 } else if let Some(&c) = chars.peek() {
                     // Check for special single-character variables ($?, $#, $@, $*, $!, $$, $-, $0-$9)
@@ -894,6 +1009,28 @@ impl<'a> Parser<'a> {
         }
 
         Word { parts }
+    }
+
+    /// Read operand for brace expansion (everything until closing brace)
+    fn read_brace_operand(&self, chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
+        let mut operand = String::new();
+        let mut depth = 1; // Track nested braces
+        while let Some(&c) = chars.peek() {
+            if c == '{' {
+                depth += 1;
+                operand.push(chars.next().unwrap());
+            } else if c == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    chars.next(); // consume closing }
+                    break;
+                }
+                operand.push(chars.next().unwrap());
+            } else {
+                operand.push(chars.next().unwrap());
+            }
+        }
+        operand
     }
 }
 
