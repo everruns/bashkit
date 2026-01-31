@@ -25,14 +25,13 @@ mod limits;
 mod parser;
 
 pub use error::{Error, Result};
+pub use fs::{FileSystem, InMemoryFs, MountableFs, OverlayFs};
 pub use interpreter::ExecResult;
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-
-use fs::{FileSystem, InMemoryFs};
 use interpreter::Interpreter;
 use parser::Parser;
 
