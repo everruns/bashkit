@@ -3,10 +3,13 @@
 //! Usage:
 //!   bashkit -c 'echo hello'        # Execute a command string
 //!   bashkit script.sh              # Execute a script file
-//!   bashkit                         # Interactive REPL (not yet implemented)
+//!   bashkit mcp                    # Run as MCP server
+//!   bashkit                        # Interactive REPL (not yet implemented)
+
+mod mcp;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 /// BashKit - Sandboxed bash interpreter
@@ -25,11 +28,25 @@ struct Args {
     /// Arguments to pass to the script
     #[arg(trailing_var_arg = true)]
     args: Vec<String>,
+
+    #[command(subcommand)]
+    subcommand: Option<SubCmd>,
+}
+
+#[derive(Subcommand, Debug)]
+enum SubCmd {
+    /// Run as MCP (Model Context Protocol) server
+    Mcp,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+
+    // Handle subcommands first
+    if let Some(SubCmd::Mcp) = args.subcommand {
+        return mcp::run().await;
+    }
 
     let mut bash = bashkit::Bash::new();
 
@@ -61,6 +78,6 @@ async fn main() -> Result<()> {
 
     // Interactive REPL (not yet implemented)
     eprintln!("bashkit: interactive mode not yet implemented");
-    eprintln!("Usage: bashkit -c 'command' or bashkit script.sh");
+    eprintln!("Usage: bashkit -c 'command' or bashkit script.sh or bashkit mcp");
     std::process::exit(1);
 }
