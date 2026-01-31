@@ -22,12 +22,17 @@ mod error;
 mod fs;
 mod interpreter;
 mod limits;
+mod network;
 mod parser;
 
 pub use error::{Error, Result};
 pub use fs::{FileSystem, InMemoryFs, MountableFs, OverlayFs};
 pub use interpreter::ExecResult;
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
+pub use network::NetworkAllowlist;
+
+#[cfg(feature = "network")]
+pub use network::HttpClient;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
