@@ -133,4 +133,106 @@ mod tests {
         assert_eq!(result.stdout, "hello world\n");
         assert_eq!(result.exit_code, 0);
     }
+
+    #[tokio::test]
+    async fn test_variable_expansion() {
+        let mut bash = Bash::builder().env("HOME", "/home/user").build();
+        let result = bash.exec("echo $HOME").await.unwrap();
+        assert_eq!(result.stdout, "/home/user\n");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_variable_brace_expansion() {
+        let mut bash = Bash::builder().env("USER", "testuser").build();
+        let result = bash.exec("echo ${USER}").await.unwrap();
+        assert_eq!(result.stdout, "testuser\n");
+    }
+
+    #[tokio::test]
+    async fn test_undefined_variable_expands_to_empty() {
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $UNDEFINED_VAR").await.unwrap();
+        assert_eq!(result.stdout, "\n");
+    }
+
+    #[tokio::test]
+    async fn test_pipeline() {
+        let mut bash = Bash::new();
+        let result = bash.exec("echo hello | cat").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_three_commands() {
+        let mut bash = Bash::new();
+        let result = bash.exec("echo hello | cat | cat").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_redirect_output() {
+        let mut bash = Bash::new();
+        let result = bash.exec("echo hello > /tmp/test.txt").await.unwrap();
+        assert_eq!(result.stdout, "");
+        assert_eq!(result.exit_code, 0);
+
+        // Read the file back
+        let result = bash.exec("cat /tmp/test.txt").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_redirect_append() {
+        let mut bash = Bash::new();
+        bash.exec("echo hello > /tmp/append.txt").await.unwrap();
+        bash.exec("echo world >> /tmp/append.txt").await.unwrap();
+
+        let result = bash.exec("cat /tmp/append.txt").await.unwrap();
+        assert_eq!(result.stdout, "hello\nworld\n");
+    }
+
+    #[tokio::test]
+    async fn test_command_list_and() {
+        let mut bash = Bash::new();
+        let result = bash.exec("true && echo success").await.unwrap();
+        assert_eq!(result.stdout, "success\n");
+    }
+
+    #[tokio::test]
+    async fn test_command_list_and_short_circuit() {
+        let mut bash = Bash::new();
+        let result = bash.exec("false && echo should_not_print").await.unwrap();
+        assert_eq!(result.stdout, "");
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_command_list_or() {
+        let mut bash = Bash::new();
+        let result = bash.exec("false || echo fallback").await.unwrap();
+        assert_eq!(result.stdout, "fallback\n");
+    }
+
+    #[tokio::test]
+    async fn test_command_list_or_short_circuit() {
+        let mut bash = Bash::new();
+        let result = bash.exec("true || echo should_not_print").await.unwrap();
+        assert_eq!(result.stdout, "");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// Phase 1 target test: `echo $HOME | cat > /tmp/out && cat /tmp/out`
+    #[tokio::test]
+    async fn test_phase1_target() {
+        let mut bash = Bash::builder().env("HOME", "/home/testuser").build();
+
+        let result = bash
+            .exec("echo $HOME | cat > /tmp/out && cat /tmp/out")
+            .await
+            .unwrap();
+
+        assert_eq!(result.stdout, "/home/testuser\n");
+        assert_eq!(result.exit_code, 0);
+    }
 }

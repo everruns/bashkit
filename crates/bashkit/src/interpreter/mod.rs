@@ -5,13 +5,16 @@ mod state;
 pub use state::ExecResult;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::builtins::{self, Builtin};
 use crate::error::{Error, Result};
 use crate::fs::FileSystem;
-use crate::parser::{Command, Script, SimpleCommand, Word, WordPart};
+use crate::parser::{
+    Command, CommandList, ListOperator, Pipeline, Redirect, RedirectKind, Script, SimpleCommand,
+    Word, WordPart,
+};
 
 /// Interpreter state.
 pub struct Interpreter {
@@ -35,6 +38,7 @@ impl Interpreter {
         builtins.insert("exit", Box::new(builtins::Exit));
         builtins.insert("cd", Box::new(builtins::Cd));
         builtins.insert("pwd", Box::new(builtins::Pwd));
+        builtins.insert("cat", Box::new(builtins::Cat));
 
         Self {
             fs,
@@ -77,37 +81,96 @@ impl Interpreter {
         })
     }
 
-    async fn execute_command(&mut self, command: &Command) -> Result<ExecResult> {
-        match command {
-            Command::Simple(simple) => self.execute_simple_command(simple).await,
-            Command::Pipeline(_) => {
-                // TODO: Implement pipeline execution
-                Err(Error::Execution(
-                    "pipelines not yet implemented".to_string(),
-                ))
+    fn execute_command<'a>(
+        &'a mut self,
+        command: &'a Command,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
+            match command {
+                Command::Simple(simple) => self.execute_simple_command(simple, None).await,
+                Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
+                Command::List(list) => self.execute_list(list).await,
+                Command::Compound(_) => {
+                    // TODO: Implement compound command execution
+                    Err(Error::Execution(
+                        "compound commands not yet implemented".to_string(),
+                    ))
+                }
+                Command::Function(_) => {
+                    // TODO: Implement function definition
+                    Err(Error::Execution(
+                        "function definitions not yet implemented".to_string(),
+                    ))
+                }
             }
-            Command::List(_) => {
-                // TODO: Implement command list execution
-                Err(Error::Execution(
-                    "command lists not yet implemented".to_string(),
-                ))
-            }
-            Command::Compound(_) => {
-                // TODO: Implement compound command execution
-                Err(Error::Execution(
-                    "compound commands not yet implemented".to_string(),
-                ))
-            }
-            Command::Function(_) => {
-                // TODO: Implement function definition
-                Err(Error::Execution(
-                    "function definitions not yet implemented".to_string(),
-                ))
-            }
-        }
+        })
     }
 
-    async fn execute_simple_command(&mut self, command: &SimpleCommand) -> Result<ExecResult> {
+    /// Execute a pipeline (cmd1 | cmd2 | cmd3)
+    async fn execute_pipeline(&mut self, pipeline: &Pipeline) -> Result<ExecResult> {
+        let mut stdin_data: Option<String> = None;
+        let mut last_result = ExecResult::ok(String::new());
+
+        for (i, command) in pipeline.commands.iter().enumerate() {
+            let is_last = i == pipeline.commands.len() - 1;
+
+            match command {
+                Command::Simple(simple) => {
+                    let result = self
+                        .execute_simple_command(simple, stdin_data.take())
+                        .await?;
+
+                    if is_last {
+                        last_result = result;
+                    } else {
+                        // Pass stdout to next command's stdin
+                        stdin_data = Some(result.stdout);
+                    }
+                }
+                _ => {
+                    return Err(Error::Execution(
+                        "only simple commands supported in pipeline".to_string(),
+                    ))
+                }
+            }
+        }
+
+        // Handle negation
+        if pipeline.negated {
+            last_result.exit_code = if last_result.exit_code == 0 { 1 } else { 0 };
+        }
+
+        Ok(last_result)
+    }
+
+    /// Execute a command list (cmd1 && cmd2 || cmd3)
+    async fn execute_list(&mut self, list: &CommandList) -> Result<ExecResult> {
+        let mut result = self.execute_command(&list.first).await?;
+
+        for (op, cmd) in &list.rest {
+            let should_execute = match op {
+                ListOperator::And => result.exit_code == 0,
+                ListOperator::Or => result.exit_code != 0,
+                ListOperator::Semicolon => true,
+                ListOperator::Background => {
+                    // TODO: Implement background execution
+                    true
+                }
+            };
+
+            if should_execute {
+                result = self.execute_command(cmd).await?;
+            }
+        }
+
+        Ok(result)
+    }
+
+    async fn execute_simple_command(
+        &mut self,
+        command: &SimpleCommand,
+        stdin: Option<String>,
+    ) -> Result<ExecResult> {
         let name = self.expand_word(&command.name)?;
         let args: Vec<String> = command
             .args
@@ -123,14 +186,66 @@ impl Interpreter {
                 variables: &mut self.variables,
                 cwd: &mut self.cwd,
                 fs: Arc::clone(&self.fs),
+                stdin: stdin.as_deref(),
             };
 
-            return builtin.execute(ctx).await;
+            let result = builtin.execute(ctx).await?;
+
+            // Handle redirections
+            return self.apply_redirections(result, &command.redirects).await;
         }
 
         // Check for external commands
         // TODO: Implement command lookup and execution
         Err(Error::CommandNotFound(name))
+    }
+
+    /// Apply redirections to command output
+    async fn apply_redirections(
+        &self,
+        mut result: ExecResult,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        for redirect in redirects {
+            let target_path = self.expand_word(&redirect.target)?;
+            let path = self.resolve_path(&target_path);
+
+            match redirect.kind {
+                RedirectKind::Output => {
+                    // Write stdout to file
+                    self.fs.write_file(&path, result.stdout.as_bytes()).await?;
+                    result.stdout = String::new();
+                }
+                RedirectKind::Append => {
+                    // Append stdout to file
+                    self.fs.append_file(&path, result.stdout.as_bytes()).await?;
+                    result.stdout = String::new();
+                }
+                RedirectKind::Input => {
+                    // Read file to stdin (handled in command execution)
+                    // This is handled before command execution in execute_simple_command
+                }
+                RedirectKind::HereString => {
+                    // Here string is handled as stdin
+                    // Already handled in parsing/command setup
+                }
+                _ => {
+                    // TODO: Handle other redirect types (HereDoc, DupOutput, DupInput, OutputBoth)
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Resolve a path relative to cwd
+    fn resolve_path(&self, path: &str) -> PathBuf {
+        let p = Path::new(path);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.cwd.join(p)
+        }
     }
 
     fn expand_word(&self, word: &Word) -> Result<String> {

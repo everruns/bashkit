@@ -160,7 +160,35 @@ impl<'a> Lexer<'a> {
         let mut word = String::new();
 
         while let Some(ch) = self.peek_char() {
-            if self.is_word_char(ch) {
+            if ch == '$' {
+                // Handle variable references
+                word.push(ch);
+                self.advance();
+
+                // Check for ${VAR} format
+                if self.peek_char() == Some('{') {
+                    word.push('{');
+                    self.advance();
+                    // Read until closing }
+                    while let Some(c) = self.peek_char() {
+                        word.push(c);
+                        self.advance();
+                        if c == '}' {
+                            break;
+                        }
+                    }
+                } else {
+                    // Read variable name (alphanumeric + _)
+                    while let Some(c) = self.peek_char() {
+                        if c.is_ascii_alphanumeric() || c == '_' {
+                            word.push(c);
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            } else if self.is_word_char(ch) {
                 word.push(ch);
                 self.advance();
             } else {
@@ -330,5 +358,26 @@ mod tests {
         assert_eq!(lexer.next_token(), Some(Token::Newline));
         assert_eq!(lexer.next_token(), Some(Token::Word("echo".to_string())));
         assert_eq!(lexer.next_token(), Some(Token::Word("world".to_string())));
+    }
+
+    #[test]
+    fn test_variable_words() {
+        let mut lexer = Lexer::new("echo $HOME $USER");
+
+        assert_eq!(lexer.next_token(), Some(Token::Word("echo".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Word("$HOME".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Word("$USER".to_string())));
+        assert_eq!(lexer.next_token(), None);
+    }
+
+    #[test]
+    fn test_pipeline_tokens() {
+        let mut lexer = Lexer::new("echo hello | cat");
+
+        assert_eq!(lexer.next_token(), Some(Token::Word("echo".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Word("hello".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Pipe));
+        assert_eq!(lexer.next_token(), Some(Token::Word("cat".to_string())));
+        assert_eq!(lexer.next_token(), None);
     }
 }
