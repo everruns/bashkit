@@ -1,9 +1,11 @@
 //! Built-in shell commands
 
+mod cat;
 mod echo;
 mod flow;
 mod navigation;
 
+pub use cat::Cat;
 pub use echo::Echo;
 pub use flow::{Exit, False, True};
 pub use navigation::{Cd, Pwd};
@@ -30,6 +32,8 @@ pub struct Context<'a> {
     pub cwd: &'a mut PathBuf,
     /// Filesystem
     pub fs: Arc<dyn FileSystem>,
+    /// Standard input (from pipeline)
+    pub stdin: Option<&'a str>,
 }
 
 /// Trait for builtin commands.
