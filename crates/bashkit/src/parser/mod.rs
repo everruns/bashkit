@@ -787,8 +787,59 @@ impl<'a> Parser<'a> {
                     parts.push(WordPart::Literal(std::mem::take(&mut current)));
                 }
 
-                // Parse variable name
-                if chars.peek() == Some(&'{') {
+                // Check for $( - command substitution or arithmetic
+                if chars.peek() == Some(&'(') {
+                    chars.next(); // consume first '('
+
+                    // Check for $(( - arithmetic expansion
+                    if chars.peek() == Some(&'(') {
+                        chars.next(); // consume second '('
+                        let mut expr = String::new();
+                        let mut depth = 2;
+                        for c in chars.by_ref() {
+                            if c == '(' {
+                                depth += 1;
+                                expr.push(c);
+                            } else if c == ')' {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                                expr.push(c);
+                            } else {
+                                expr.push(c);
+                            }
+                        }
+                        // Remove trailing ) if present
+                        if expr.ends_with(')') {
+                            expr.pop();
+                        }
+                        parts.push(WordPart::ArithmeticExpansion(expr));
+                    } else {
+                        // Command substitution $(...)
+                        let mut cmd_str = String::new();
+                        let mut depth = 1;
+                        for c in chars.by_ref() {
+                            if c == '(' {
+                                depth += 1;
+                                cmd_str.push(c);
+                            } else if c == ')' {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                                cmd_str.push(c);
+                            } else {
+                                cmd_str.push(c);
+                            }
+                        }
+                        // Parse the command inside
+                        let inner_parser = Parser::new(&cmd_str);
+                        if let Ok(script) = inner_parser.parse() {
+                            parts.push(WordPart::CommandSubstitution(script.commands));
+                        }
+                    }
+                } else if chars.peek() == Some(&'{') {
                     // ${VAR} format
                     chars.next(); // consume '{'
                     let mut var_name = String::new();
