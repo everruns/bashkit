@@ -19,7 +19,14 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 
 `specs/` contains feature specifications. New code should comply with these or propose changes.
 
-<!-- TODO: Add specs as project evolves -->
+### BashKit Principles
+
+- All design decisions in `specs/` - no undocumented choices
+- Everything runnable and testable - no theoretical code
+- Don't stop until e2e works - verify before declaring done
+- Examples tested in CI - must pass
+- No silent deferral - `TODO` or `WTF` comment with explanation
+- Verify crate assumptions before planning to use them
 
 ### Cloud Agent Setup
 
