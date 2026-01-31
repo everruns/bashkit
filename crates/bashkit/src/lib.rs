@@ -235,4 +235,85 @@ mod tests {
         assert_eq!(result.stdout, "/home/testuser\n");
         assert_eq!(result.exit_code, 0);
     }
+
+    #[tokio::test]
+    async fn test_redirect_input() {
+        let mut bash = Bash::new();
+        // Create a file first
+        bash.exec("echo hello > /tmp/input.txt").await.unwrap();
+
+        // Read it using input redirection
+        let result = bash.exec("cat < /tmp/input.txt").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_here_string() {
+        let mut bash = Bash::new();
+        let result = bash.exec("cat <<< hello").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_if_true() {
+        let mut bash = Bash::new();
+        let result = bash.exec("if true; then echo yes; fi").await.unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_if_false() {
+        let mut bash = Bash::new();
+        let result = bash.exec("if false; then echo yes; fi").await.unwrap();
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_if_else() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("if false; then echo yes; else echo no; fi")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "no\n");
+    }
+
+    #[tokio::test]
+    async fn test_if_elif() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("if false; then echo one; elif true; then echo two; else echo three; fi")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "two\n");
+    }
+
+    #[tokio::test]
+    async fn test_for_loop() {
+        let mut bash = Bash::new();
+        let result = bash.exec("for i in a b c; do echo $i; done").await.unwrap();
+        assert_eq!(result.stdout, "a\nb\nc\n");
+    }
+
+    #[tokio::test]
+    async fn test_while_loop() {
+        let mut bash = Bash::new();
+        // While with false condition - executes 0 times
+        let result = bash.exec("while false; do echo loop; done").await.unwrap();
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_subshell() {
+        let mut bash = Bash::new();
+        let result = bash.exec("(echo hello)").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_brace_group() {
+        let mut bash = Bash::new();
+        let result = bash.exec("{ echo hello; }").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
 }

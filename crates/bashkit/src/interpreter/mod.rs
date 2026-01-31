@@ -12,8 +12,8 @@ use crate::builtins::{self, Builtin};
 use crate::error::{Error, Result};
 use crate::fs::FileSystem;
 use crate::parser::{
-    Command, CommandList, ListOperator, Pipeline, Redirect, RedirectKind, Script, SimpleCommand,
-    Word, WordPart,
+    Command, CommandList, CompoundCommand, ForCommand, IfCommand, ListOperator, Pipeline, Redirect,
+    RedirectKind, Script, SimpleCommand, UntilCommand, WhileCommand, Word, WordPart,
 };
 
 /// Interpreter state.
@@ -90,12 +90,7 @@ impl Interpreter {
                 Command::Simple(simple) => self.execute_simple_command(simple, None).await,
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
                 Command::List(list) => self.execute_list(list).await,
-                Command::Compound(_) => {
-                    // TODO: Implement compound command execution
-                    Err(Error::Execution(
-                        "compound commands not yet implemented".to_string(),
-                    ))
-                }
+                Command::Compound(compound) => self.execute_compound(compound).await,
                 Command::Function(_) => {
                     // TODO: Implement function definition
                     Err(Error::Execution(
@@ -103,6 +98,159 @@ impl Interpreter {
                     ))
                 }
             }
+        })
+    }
+
+    /// Execute a compound command (if, for, while, etc.)
+    async fn execute_compound(&mut self, compound: &CompoundCommand) -> Result<ExecResult> {
+        match compound {
+            CompoundCommand::If(if_cmd) => self.execute_if(if_cmd).await,
+            CompoundCommand::For(for_cmd) => self.execute_for(for_cmd).await,
+            CompoundCommand::While(while_cmd) => self.execute_while(while_cmd).await,
+            CompoundCommand::Until(until_cmd) => self.execute_until(until_cmd).await,
+            CompoundCommand::Subshell(commands) => self.execute_command_sequence(commands).await,
+            CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
+            CompoundCommand::Case(_) => Err(Error::Execution(
+                "case statements not yet implemented".to_string(),
+            )),
+        }
+    }
+
+    /// Execute an if statement
+    async fn execute_if(&mut self, if_cmd: &IfCommand) -> Result<ExecResult> {
+        // Execute condition
+        let condition_result = self.execute_command_sequence(&if_cmd.condition).await?;
+
+        if condition_result.exit_code == 0 {
+            // Condition succeeded, execute then branch
+            return self.execute_command_sequence(&if_cmd.then_branch).await;
+        }
+
+        // Check elif branches
+        for (elif_condition, elif_body) in &if_cmd.elif_branches {
+            let elif_result = self.execute_command_sequence(elif_condition).await?;
+            if elif_result.exit_code == 0 {
+                return self.execute_command_sequence(elif_body).await;
+            }
+        }
+
+        // Execute else branch if present
+        if let Some(else_branch) = &if_cmd.else_branch {
+            return self.execute_command_sequence(else_branch).await;
+        }
+
+        // No branch executed, return success
+        Ok(ExecResult::ok(String::new()))
+    }
+
+    /// Execute a for loop
+    async fn execute_for(&mut self, for_cmd: &ForCommand) -> Result<ExecResult> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        // Get iteration values
+        let values: Vec<String> = if let Some(words) = &for_cmd.words {
+            words
+                .iter()
+                .map(|w| self.expand_word(w))
+                .collect::<Result<_>>()?
+        } else {
+            // TODO: Use positional parameters
+            Vec::new()
+        };
+
+        for value in values {
+            // Set loop variable
+            self.variables
+                .insert(for_cmd.variable.clone(), value.clone());
+
+            // Execute body
+            let result = self.execute_command_sequence(&for_cmd.body).await?;
+            stdout.push_str(&result.stdout);
+            stderr.push_str(&result.stderr);
+            exit_code = result.exit_code;
+        }
+
+        Ok(ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+        })
+    }
+
+    /// Execute a while loop
+    async fn execute_while(&mut self, while_cmd: &WhileCommand) -> Result<ExecResult> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        loop {
+            // Check condition
+            let condition_result = self.execute_command_sequence(&while_cmd.condition).await?;
+            if condition_result.exit_code != 0 {
+                break;
+            }
+
+            // Execute body
+            let result = self.execute_command_sequence(&while_cmd.body).await?;
+            stdout.push_str(&result.stdout);
+            stderr.push_str(&result.stderr);
+            exit_code = result.exit_code;
+        }
+
+        Ok(ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+        })
+    }
+
+    /// Execute an until loop
+    async fn execute_until(&mut self, until_cmd: &UntilCommand) -> Result<ExecResult> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        loop {
+            // Check condition
+            let condition_result = self.execute_command_sequence(&until_cmd.condition).await?;
+            if condition_result.exit_code == 0 {
+                break;
+            }
+
+            // Execute body
+            let result = self.execute_command_sequence(&until_cmd.body).await?;
+            stdout.push_str(&result.stdout);
+            stderr.push_str(&result.stderr);
+            exit_code = result.exit_code;
+        }
+
+        Ok(ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+        })
+    }
+
+    /// Execute a sequence of commands
+    async fn execute_command_sequence(&mut self, commands: &[Command]) -> Result<ExecResult> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        for command in commands {
+            let result = self.execute_command(command).await?;
+            stdout.push_str(&result.stdout);
+            stderr.push_str(&result.stderr);
+            exit_code = result.exit_code;
+            self.last_exit_code = exit_code;
+        }
+
+        Ok(ExecResult {
+            stdout,
+            stderr,
+            exit_code,
         })
     }
 
@@ -178,6 +326,11 @@ impl Interpreter {
             .map(|w| self.expand_word(w))
             .collect::<Result<_>>()?;
 
+        // Handle input redirections first
+        let stdin = self
+            .process_input_redirections(stdin, &command.redirects)
+            .await?;
+
         // Check for builtins
         if let Some(builtin) = self.builtins.get(name.as_str()) {
             let ctx = builtins::Context {
@@ -191,7 +344,7 @@ impl Interpreter {
 
             let result = builtin.execute(ctx).await?;
 
-            // Handle redirections
+            // Handle output redirections
             return self.apply_redirections(result, &command.redirects).await;
         }
 
@@ -200,34 +353,60 @@ impl Interpreter {
         Err(Error::CommandNotFound(name))
     }
 
-    /// Apply redirections to command output
+    /// Process input redirections (< file, <<< string)
+    async fn process_input_redirections(
+        &self,
+        existing_stdin: Option<String>,
+        redirects: &[Redirect],
+    ) -> Result<Option<String>> {
+        let mut stdin = existing_stdin;
+
+        for redirect in redirects {
+            match redirect.kind {
+                RedirectKind::Input => {
+                    let target_path = self.expand_word(&redirect.target)?;
+                    let path = self.resolve_path(&target_path);
+                    let content = self.fs.read_file(&path).await?;
+                    stdin = Some(String::from_utf8_lossy(&content).to_string());
+                }
+                RedirectKind::HereString => {
+                    // <<< string - use the target as stdin content
+                    let content = self.expand_word(&redirect.target)?;
+                    stdin = Some(format!("{}\n", content));
+                }
+                _ => {
+                    // Output redirections handled separately
+                }
+            }
+        }
+
+        Ok(stdin)
+    }
+
+    /// Apply output redirections to command output
     async fn apply_redirections(
         &self,
         mut result: ExecResult,
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         for redirect in redirects {
-            let target_path = self.expand_word(&redirect.target)?;
-            let path = self.resolve_path(&target_path);
-
             match redirect.kind {
                 RedirectKind::Output => {
+                    let target_path = self.expand_word(&redirect.target)?;
+                    let path = self.resolve_path(&target_path);
                     // Write stdout to file
                     self.fs.write_file(&path, result.stdout.as_bytes()).await?;
                     result.stdout = String::new();
                 }
                 RedirectKind::Append => {
+                    let target_path = self.expand_word(&redirect.target)?;
+                    let path = self.resolve_path(&target_path);
                     // Append stdout to file
                     self.fs.append_file(&path, result.stdout.as_bytes()).await?;
                     result.stdout = String::new();
                 }
-                RedirectKind::Input => {
-                    // Read file to stdin (handled in command execution)
-                    // This is handled before command execution in execute_simple_command
-                }
-                RedirectKind::HereString => {
-                    // Here string is handled as stdin
-                    // Already handled in parsing/command setup
+                RedirectKind::Input | RedirectKind::HereString => {
+                    // Input redirections handled in process_input_redirections
                 }
                 _ => {
                     // TODO: Handle other redirect types (HereDoc, DupOutput, DupInput, OutputBoth)
