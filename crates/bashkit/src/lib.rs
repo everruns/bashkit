@@ -235,4 +235,376 @@ mod tests {
         assert_eq!(result.stdout, "/home/testuser\n");
         assert_eq!(result.exit_code, 0);
     }
+
+    #[tokio::test]
+    async fn test_redirect_input() {
+        let mut bash = Bash::new();
+        // Create a file first
+        bash.exec("echo hello > /tmp/input.txt").await.unwrap();
+
+        // Read it using input redirection
+        let result = bash.exec("cat < /tmp/input.txt").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_here_string() {
+        let mut bash = Bash::new();
+        let result = bash.exec("cat <<< hello").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_if_true() {
+        let mut bash = Bash::new();
+        let result = bash.exec("if true; then echo yes; fi").await.unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_if_false() {
+        let mut bash = Bash::new();
+        let result = bash.exec("if false; then echo yes; fi").await.unwrap();
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_if_else() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("if false; then echo yes; else echo no; fi")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "no\n");
+    }
+
+    #[tokio::test]
+    async fn test_if_elif() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("if false; then echo one; elif true; then echo two; else echo three; fi")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "two\n");
+    }
+
+    #[tokio::test]
+    async fn test_for_loop() {
+        let mut bash = Bash::new();
+        let result = bash.exec("for i in a b c; do echo $i; done").await.unwrap();
+        assert_eq!(result.stdout, "a\nb\nc\n");
+    }
+
+    #[tokio::test]
+    async fn test_while_loop() {
+        let mut bash = Bash::new();
+        // While with false condition - executes 0 times
+        let result = bash.exec("while false; do echo loop; done").await.unwrap();
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_subshell() {
+        let mut bash = Bash::new();
+        let result = bash.exec("(echo hello)").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_brace_group() {
+        let mut bash = Bash::new();
+        let result = bash.exec("{ echo hello; }").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_function_keyword() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("function greet { echo hello; }; greet")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_function_posix() {
+        let mut bash = Bash::new();
+        let result = bash.exec("greet() { echo hello; }; greet").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_function_args() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("greet() { echo $1 $2; }; greet world foo")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "world foo\n");
+    }
+
+    #[tokio::test]
+    async fn test_function_arg_count() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("count() { echo $#; }; count a b c")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "3\n");
+    }
+
+    #[tokio::test]
+    async fn test_case_literal() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("case foo in foo) echo matched ;; esac")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "matched\n");
+    }
+
+    #[tokio::test]
+    async fn test_case_wildcard() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("case bar in *) echo default ;; esac")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "default\n");
+    }
+
+    #[tokio::test]
+    async fn test_case_no_match() {
+        let mut bash = Bash::new();
+        let result = bash.exec("case foo in bar) echo no ;; esac").await.unwrap();
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_case_multiple_patterns() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("case foo in bar|foo|baz) echo matched ;; esac")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "matched\n");
+    }
+
+    #[tokio::test]
+    async fn test_break_as_command() {
+        let mut bash = Bash::new();
+        // Just run break alone - should not error
+        let result = bash.exec("break").await.unwrap();
+        // break outside of loop returns success with no output
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_for_one_item() {
+        let mut bash = Bash::new();
+        // Simple for loop with one item
+        let result = bash.exec("for i in a; do echo $i; done").await.unwrap();
+        assert_eq!(result.stdout, "a\n");
+    }
+
+    #[tokio::test]
+    async fn test_for_with_break() {
+        let mut bash = Bash::new();
+        // For loop with break
+        let result = bash.exec("for i in a; do break; done").await.unwrap();
+        assert_eq!(result.stdout, "");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_for_echo_break() {
+        let mut bash = Bash::new();
+        // For loop with echo then break - tests the semicolon command list in body
+        let result = bash
+            .exec("for i in a b c; do echo $i; break; done")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "a\n");
+    }
+
+    #[tokio::test]
+    async fn test_test_string_empty() {
+        let mut bash = Bash::new();
+        let result = bash.exec("test -z '' && echo yes").await.unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_test_string_not_empty() {
+        let mut bash = Bash::new();
+        let result = bash.exec("test -n 'hello' && echo yes").await.unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_test_string_equal() {
+        let mut bash = Bash::new();
+        let result = bash.exec("test foo = foo && echo yes").await.unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_test_string_not_equal() {
+        let mut bash = Bash::new();
+        let result = bash.exec("test foo != bar && echo yes").await.unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_test_numeric_equal() {
+        let mut bash = Bash::new();
+        let result = bash.exec("test 5 -eq 5 && echo yes").await.unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_test_numeric_less_than() {
+        let mut bash = Bash::new();
+        let result = bash.exec("test 3 -lt 5 && echo yes").await.unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_bracket_form() {
+        let mut bash = Bash::new();
+        let result = bash.exec("[ foo = foo ] && echo yes").await.unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_if_with_test() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("if [ 5 -gt 3 ]; then echo bigger; fi")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "bigger\n");
+    }
+
+    #[tokio::test]
+    async fn test_variable_assignment() {
+        let mut bash = Bash::new();
+        let result = bash.exec("FOO=bar; echo $FOO").await.unwrap();
+        assert_eq!(result.stdout, "bar\n");
+    }
+
+    #[tokio::test]
+    async fn test_variable_assignment_inline() {
+        let mut bash = Bash::new();
+        // Assignment before command
+        let result = bash.exec("MSG=hello; echo $MSG world").await.unwrap();
+        assert_eq!(result.stdout, "hello world\n");
+    }
+
+    #[tokio::test]
+    async fn test_variable_assignment_only() {
+        let mut bash = Bash::new();
+        // Assignment without command should succeed silently
+        let result = bash.exec("FOO=bar").await.unwrap();
+        assert_eq!(result.stdout, "");
+        assert_eq!(result.exit_code, 0);
+
+        // Verify the variable was set
+        let result = bash.exec("echo $FOO").await.unwrap();
+        assert_eq!(result.stdout, "bar\n");
+    }
+
+    #[tokio::test]
+    async fn test_multiple_assignments() {
+        let mut bash = Bash::new();
+        let result = bash.exec("A=1; B=2; C=3; echo $A $B $C").await.unwrap();
+        assert_eq!(result.stdout, "1 2 3\n");
+    }
+
+    #[tokio::test]
+    async fn test_printf_string() {
+        let mut bash = Bash::new();
+        let result = bash.exec("printf '%s' hello").await.unwrap();
+        assert_eq!(result.stdout, "hello");
+    }
+
+    #[tokio::test]
+    async fn test_printf_newline() {
+        let mut bash = Bash::new();
+        let result = bash.exec("printf 'hello\\n'").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_printf_multiple_args() {
+        let mut bash = Bash::new();
+        let result = bash.exec("printf '%s %s\\n' hello world").await.unwrap();
+        assert_eq!(result.stdout, "hello world\n");
+    }
+
+    #[tokio::test]
+    async fn test_printf_integer() {
+        let mut bash = Bash::new();
+        let result = bash.exec("printf '%d' 42").await.unwrap();
+        assert_eq!(result.stdout, "42");
+    }
+
+    #[tokio::test]
+    async fn test_export() {
+        let mut bash = Bash::new();
+        let result = bash.exec("export FOO=bar; echo $FOO").await.unwrap();
+        assert_eq!(result.stdout, "bar\n");
+    }
+
+    #[tokio::test]
+    async fn test_read_basic() {
+        let mut bash = Bash::new();
+        let result = bash.exec("echo hello | read VAR; echo $VAR").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_read_multiple_vars() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("echo 'a b c' | read X Y Z; echo $X $Y $Z")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "a b c\n");
+    }
+
+    #[tokio::test]
+    async fn test_glob_star() {
+        let mut bash = Bash::new();
+        // Create some files
+        bash.exec("echo a > /tmp/file1.txt").await.unwrap();
+        bash.exec("echo b > /tmp/file2.txt").await.unwrap();
+        bash.exec("echo c > /tmp/other.log").await.unwrap();
+
+        // Glob for *.txt files
+        let result = bash.exec("echo /tmp/*.txt").await.unwrap();
+        assert_eq!(result.stdout, "/tmp/file1.txt /tmp/file2.txt\n");
+    }
+
+    #[tokio::test]
+    async fn test_glob_question_mark() {
+        let mut bash = Bash::new();
+        // Create some files
+        bash.exec("echo a > /tmp/a1.txt").await.unwrap();
+        bash.exec("echo b > /tmp/a2.txt").await.unwrap();
+        bash.exec("echo c > /tmp/a10.txt").await.unwrap();
+
+        // Glob for a?.txt (single character)
+        let result = bash.exec("echo /tmp/a?.txt").await.unwrap();
+        assert_eq!(result.stdout, "/tmp/a1.txt /tmp/a2.txt\n");
+    }
+
+    #[tokio::test]
+    async fn test_glob_no_match() {
+        let mut bash = Bash::new();
+        // Glob that doesn't match anything should return the pattern
+        let result = bash.exec("echo /nonexistent/*.xyz").await.unwrap();
+        assert_eq!(result.stdout, "/nonexistent/*.xyz\n");
+    }
 }

@@ -178,13 +178,23 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 } else {
-                    // Read variable name (alphanumeric + _)
-                    while let Some(c) = self.peek_char() {
-                        if c.is_ascii_alphanumeric() || c == '_' {
+                    // Check for special single-character variables ($?, $#, $@, $*, $!, $$, $-, $0-$9)
+                    if let Some(c) = self.peek_char() {
+                        if matches!(c, '?' | '#' | '@' | '*' | '!' | '$' | '-')
+                            || c.is_ascii_digit()
+                        {
                             word.push(c);
                             self.advance();
                         } else {
-                            break;
+                            // Read variable name (alphanumeric + _)
+                            while let Some(c) = self.peek_char() {
+                                if c.is_ascii_alphanumeric() || c == '_' {
+                                    word.push(c);
+                                    self.advance();
+                                } else {
+                                    break;
+                                }
+                            }
                         }
                     }
                 }

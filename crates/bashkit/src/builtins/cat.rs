@@ -41,11 +41,7 @@ impl Builtin for Cat {
                             output.push_str(&text);
                         }
                         Err(e) => {
-                            return Ok(ExecResult {
-                                stdout: String::new(),
-                                stderr: format!("cat: {}: {}\n", arg, e),
-                                exit_code: 1,
-                            });
+                            return Ok(ExecResult::err(format!("cat: {}: {}\n", arg, e), 1));
                         }
                     }
                 }

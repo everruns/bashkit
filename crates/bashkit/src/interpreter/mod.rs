@@ -2,7 +2,7 @@
 
 mod state;
 
-pub use state::ExecResult;
+pub use state::{ControlFlow, ExecResult};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -12,9 +12,21 @@ use crate::builtins::{self, Builtin};
 use crate::error::{Error, Result};
 use crate::fs::FileSystem;
 use crate::parser::{
-    Command, CommandList, ListOperator, Pipeline, Redirect, RedirectKind, Script, SimpleCommand,
-    Word, WordPart,
+    CaseCommand, Command, CommandList, CompoundCommand, ForCommand, FunctionDef, IfCommand,
+    ListOperator, Pipeline, Redirect, RedirectKind, Script, SimpleCommand, UntilCommand,
+    WhileCommand, Word, WordPart,
 };
+
+/// A frame in the call stack for local variable scoping
+#[derive(Debug, Clone)]
+struct CallFrame {
+    /// Function name
+    name: String,
+    /// Local variables in this scope
+    locals: HashMap<String, String>,
+    /// Positional parameters ($1, $2, etc.)
+    positional: Vec<String>,
+}
 
 /// Interpreter state.
 pub struct Interpreter {
@@ -24,6 +36,10 @@ pub struct Interpreter {
     cwd: PathBuf,
     last_exit_code: i32,
     builtins: HashMap<&'static str, Box<dyn Builtin>>,
+    /// Defined functions
+    functions: HashMap<String, FunctionDef>,
+    /// Call stack for local variable scoping
+    call_stack: Vec<CallFrame>,
 }
 
 impl Interpreter {
@@ -39,6 +55,14 @@ impl Interpreter {
         builtins.insert("cd", Box::new(builtins::Cd));
         builtins.insert("pwd", Box::new(builtins::Pwd));
         builtins.insert("cat", Box::new(builtins::Cat));
+        builtins.insert("break", Box::new(builtins::Break));
+        builtins.insert("continue", Box::new(builtins::Continue));
+        builtins.insert("return", Box::new(builtins::Return));
+        builtins.insert("test", Box::new(builtins::Test));
+        builtins.insert("[", Box::new(builtins::Bracket));
+        builtins.insert("printf", Box::new(builtins::Printf));
+        builtins.insert("export", Box::new(builtins::Export));
+        builtins.insert("read", Box::new(builtins::Read));
 
         Self {
             fs,
@@ -47,6 +71,8 @@ impl Interpreter {
             cwd: PathBuf::from("/home/user"),
             last_exit_code: 0,
             builtins,
+            functions: HashMap::new(),
+            call_stack: Vec::new(),
         }
     }
 
@@ -78,6 +104,7 @@ impl Interpreter {
             stdout,
             stderr,
             exit_code,
+            control_flow: ControlFlow::None,
         })
     }
 
@@ -90,19 +117,376 @@ impl Interpreter {
                 Command::Simple(simple) => self.execute_simple_command(simple, None).await,
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
                 Command::List(list) => self.execute_list(list).await,
-                Command::Compound(_) => {
-                    // TODO: Implement compound command execution
-                    Err(Error::Execution(
-                        "compound commands not yet implemented".to_string(),
-                    ))
-                }
-                Command::Function(_) => {
-                    // TODO: Implement function definition
-                    Err(Error::Execution(
-                        "function definitions not yet implemented".to_string(),
-                    ))
+                Command::Compound(compound) => self.execute_compound(compound).await,
+                Command::Function(func_def) => {
+                    // Store the function definition
+                    self.functions
+                        .insert(func_def.name.clone(), func_def.clone());
+                    Ok(ExecResult::ok(String::new()))
                 }
             }
+        })
+    }
+
+    /// Execute a compound command (if, for, while, etc.)
+    async fn execute_compound(&mut self, compound: &CompoundCommand) -> Result<ExecResult> {
+        match compound {
+            CompoundCommand::If(if_cmd) => self.execute_if(if_cmd).await,
+            CompoundCommand::For(for_cmd) => self.execute_for(for_cmd).await,
+            CompoundCommand::While(while_cmd) => self.execute_while(while_cmd).await,
+            CompoundCommand::Until(until_cmd) => self.execute_until(until_cmd).await,
+            CompoundCommand::Subshell(commands) => self.execute_command_sequence(commands).await,
+            CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
+            CompoundCommand::Case(case_cmd) => self.execute_case(case_cmd).await,
+        }
+    }
+
+    /// Execute an if statement
+    async fn execute_if(&mut self, if_cmd: &IfCommand) -> Result<ExecResult> {
+        // Execute condition
+        let condition_result = self.execute_command_sequence(&if_cmd.condition).await?;
+
+        if condition_result.exit_code == 0 {
+            // Condition succeeded, execute then branch
+            return self.execute_command_sequence(&if_cmd.then_branch).await;
+        }
+
+        // Check elif branches
+        for (elif_condition, elif_body) in &if_cmd.elif_branches {
+            let elif_result = self.execute_command_sequence(elif_condition).await?;
+            if elif_result.exit_code == 0 {
+                return self.execute_command_sequence(elif_body).await;
+            }
+        }
+
+        // Execute else branch if present
+        if let Some(else_branch) = &if_cmd.else_branch {
+            return self.execute_command_sequence(else_branch).await;
+        }
+
+        // No branch executed, return success
+        Ok(ExecResult::ok(String::new()))
+    }
+
+    /// Execute a for loop
+    async fn execute_for(&mut self, for_cmd: &ForCommand) -> Result<ExecResult> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        // Get iteration values
+        let values: Vec<String> = if let Some(words) = &for_cmd.words {
+            words
+                .iter()
+                .map(|w| self.expand_word(w))
+                .collect::<Result<_>>()?
+        } else {
+            // TODO: Use positional parameters
+            Vec::new()
+        };
+
+        for value in values {
+            // Set loop variable
+            self.variables
+                .insert(for_cmd.variable.clone(), value.clone());
+
+            // Execute body
+            let result = self.execute_command_sequence(&for_cmd.body).await?;
+            stdout.push_str(&result.stdout);
+            stderr.push_str(&result.stderr);
+            exit_code = result.exit_code;
+
+            // Check for break/continue
+            match result.control_flow {
+                ControlFlow::Break(n) => {
+                    if n <= 1 {
+                        break;
+                    } else {
+                        // Propagate break with decremented count
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Break(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Continue(n) => {
+                    if n <= 1 {
+                        continue;
+                    } else {
+                        // Propagate continue with decremented count
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Continue(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Return(code) => {
+                    // Propagate return
+                    return Ok(ExecResult {
+                        stdout,
+                        stderr,
+                        exit_code: code,
+                        control_flow: ControlFlow::Return(code),
+                    });
+                }
+                ControlFlow::None => {}
+            }
+        }
+
+        Ok(ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+            control_flow: ControlFlow::None,
+        })
+    }
+
+    /// Execute a while loop
+    async fn execute_while(&mut self, while_cmd: &WhileCommand) -> Result<ExecResult> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        loop {
+            // Check condition
+            let condition_result = self.execute_command_sequence(&while_cmd.condition).await?;
+            if condition_result.exit_code != 0 {
+                break;
+            }
+
+            // Execute body
+            let result = self.execute_command_sequence(&while_cmd.body).await?;
+            stdout.push_str(&result.stdout);
+            stderr.push_str(&result.stderr);
+            exit_code = result.exit_code;
+
+            // Check for break/continue
+            match result.control_flow {
+                ControlFlow::Break(n) => {
+                    if n <= 1 {
+                        break;
+                    } else {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Break(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Continue(n) => {
+                    if n <= 1 {
+                        continue;
+                    } else {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Continue(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Return(code) => {
+                    return Ok(ExecResult {
+                        stdout,
+                        stderr,
+                        exit_code: code,
+                        control_flow: ControlFlow::Return(code),
+                    });
+                }
+                ControlFlow::None => {}
+            }
+        }
+
+        Ok(ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+            control_flow: ControlFlow::None,
+        })
+    }
+
+    /// Execute an until loop
+    async fn execute_until(&mut self, until_cmd: &UntilCommand) -> Result<ExecResult> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        loop {
+            // Check condition
+            let condition_result = self.execute_command_sequence(&until_cmd.condition).await?;
+            if condition_result.exit_code == 0 {
+                break;
+            }
+
+            // Execute body
+            let result = self.execute_command_sequence(&until_cmd.body).await?;
+            stdout.push_str(&result.stdout);
+            stderr.push_str(&result.stderr);
+            exit_code = result.exit_code;
+
+            // Check for break/continue
+            match result.control_flow {
+                ControlFlow::Break(n) => {
+                    if n <= 1 {
+                        break;
+                    } else {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Break(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Continue(n) => {
+                    if n <= 1 {
+                        continue;
+                    } else {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Continue(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Return(code) => {
+                    return Ok(ExecResult {
+                        stdout,
+                        stderr,
+                        exit_code: code,
+                        control_flow: ControlFlow::Return(code),
+                    });
+                }
+                ControlFlow::None => {}
+            }
+        }
+
+        Ok(ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+            control_flow: ControlFlow::None,
+        })
+    }
+
+    /// Execute a case statement
+    async fn execute_case(&mut self, case_cmd: &CaseCommand) -> Result<ExecResult> {
+        let word_value = self.expand_word(&case_cmd.word)?;
+
+        // Try each case item in order
+        for case_item in &case_cmd.cases {
+            for pattern in &case_item.patterns {
+                let pattern_str = self.expand_word(pattern)?;
+                if self.pattern_matches(&word_value, &pattern_str) {
+                    return self.execute_command_sequence(&case_item.commands).await;
+                }
+            }
+        }
+
+        // No pattern matched - return success with no output
+        Ok(ExecResult::ok(String::new()))
+    }
+
+    /// Check if a value matches a shell pattern
+    fn pattern_matches(&self, value: &str, pattern: &str) -> bool {
+        // Handle special case of * (match anything)
+        if pattern == "*" {
+            return true;
+        }
+
+        // Simple pattern matching - for now just literal matching
+        // TODO: Implement full glob pattern matching (*, ?, [])
+        if pattern.contains('*') || pattern.contains('?') || pattern.contains('[') {
+            // Simple wildcard matching
+            self.glob_match(value, pattern)
+        } else {
+            // Literal match
+            value == pattern
+        }
+    }
+
+    /// Simple glob pattern matching
+    fn glob_match(&self, value: &str, pattern: &str) -> bool {
+        // Convert pattern to a simple regex-like matching
+        let mut value_chars = value.chars().peekable();
+        let mut pattern_chars = pattern.chars().peekable();
+
+        loop {
+            match (pattern_chars.peek(), value_chars.peek()) {
+                (None, None) => return true,
+                (None, Some(_)) => return false,
+                (Some('*'), _) => {
+                    pattern_chars.next();
+                    // * matches zero or more characters
+                    if pattern_chars.peek().is_none() {
+                        return true; // * at end matches everything
+                    }
+                    // Try matching from each position
+                    while value_chars.peek().is_some() {
+                        let remaining_value: String = value_chars.clone().collect();
+                        let remaining_pattern: String = pattern_chars.clone().collect();
+                        if self.glob_match(&remaining_value, &remaining_pattern) {
+                            return true;
+                        }
+                        value_chars.next();
+                    }
+                    // Also try with empty match
+                    let remaining_pattern: String = pattern_chars.collect();
+                    return self.glob_match("", &remaining_pattern);
+                }
+                (Some('?'), Some(_)) => {
+                    pattern_chars.next();
+                    value_chars.next();
+                }
+                (Some('?'), None) => return false,
+                (Some(p), Some(v)) => {
+                    if *p == *v {
+                        pattern_chars.next();
+                        value_chars.next();
+                    } else {
+                        return false;
+                    }
+                }
+                (Some(_), None) => return false,
+            }
+        }
+    }
+
+    /// Execute a sequence of commands
+    async fn execute_command_sequence(&mut self, commands: &[Command]) -> Result<ExecResult> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        for command in commands {
+            let result = self.execute_command(command).await?;
+            stdout.push_str(&result.stdout);
+            stderr.push_str(&result.stderr);
+            exit_code = result.exit_code;
+            self.last_exit_code = exit_code;
+
+            // Propagate control flow
+            if result.control_flow != ControlFlow::None {
+                return Ok(ExecResult {
+                    stdout,
+                    stderr,
+                    exit_code,
+                    control_flow: result.control_flow,
+                });
+            }
+        }
+
+        Ok(ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+            control_flow: ControlFlow::None,
         })
     }
 
@@ -145,12 +529,29 @@ impl Interpreter {
 
     /// Execute a command list (cmd1 && cmd2 || cmd3)
     async fn execute_list(&mut self, list: &CommandList) -> Result<ExecResult> {
-        let mut result = self.execute_command(&list.first).await?;
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code;
+        let result = self.execute_command(&list.first).await?;
+        stdout.push_str(&result.stdout);
+        stderr.push_str(&result.stderr);
+        exit_code = result.exit_code;
+        let mut control_flow = result.control_flow;
+
+        // If first command signaled control flow, return immediately
+        if control_flow != ControlFlow::None {
+            return Ok(ExecResult {
+                stdout,
+                stderr,
+                exit_code,
+                control_flow,
+            });
+        }
 
         for (op, cmd) in &list.rest {
             let should_execute = match op {
-                ListOperator::And => result.exit_code == 0,
-                ListOperator::Or => result.exit_code != 0,
+                ListOperator::And => exit_code == 0,
+                ListOperator::Or => exit_code != 0,
                 ListOperator::Semicolon => true,
                 ListOperator::Background => {
                     // TODO: Implement background execution
@@ -159,11 +560,30 @@ impl Interpreter {
             };
 
             if should_execute {
-                result = self.execute_command(cmd).await?;
+                let result = self.execute_command(cmd).await?;
+                stdout.push_str(&result.stdout);
+                stderr.push_str(&result.stderr);
+                exit_code = result.exit_code;
+                control_flow = result.control_flow;
+
+                // If command signaled control flow, return immediately
+                if control_flow != ControlFlow::None {
+                    return Ok(ExecResult {
+                        stdout,
+                        stderr,
+                        exit_code,
+                        control_flow,
+                    });
+                }
             }
         }
 
-        Ok(result)
+        Ok(ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+            control_flow: ControlFlow::None,
+        })
     }
 
     async fn execute_simple_command(
@@ -171,12 +591,60 @@ impl Interpreter {
         command: &SimpleCommand,
         stdin: Option<String>,
     ) -> Result<ExecResult> {
+        // Process variable assignments first
+        for assignment in &command.assignments {
+            let value = self.expand_word(&assignment.value)?;
+            self.variables.insert(assignment.name.clone(), value);
+        }
+
         let name = self.expand_word(&command.name)?;
-        let args: Vec<String> = command
-            .args
-            .iter()
-            .map(|w| self.expand_word(w))
-            .collect::<Result<_>>()?;
+
+        // If name is empty, this is an assignment-only command
+        if name.is_empty() {
+            return Ok(ExecResult::ok(String::new()));
+        }
+
+        // Expand arguments with glob expansion
+        let mut args: Vec<String> = Vec::new();
+        for word in &command.args {
+            let expanded = self.expand_word(word)?;
+            // Check if the word contains glob characters
+            if self.contains_glob_chars(&expanded) {
+                let glob_matches = self.expand_glob(&expanded).await?;
+                if glob_matches.is_empty() {
+                    // No matches - keep original pattern (bash behavior)
+                    args.push(expanded);
+                } else {
+                    args.extend(glob_matches);
+                }
+            } else {
+                args.push(expanded);
+            }
+        }
+
+        // Handle input redirections first
+        let stdin = self
+            .process_input_redirections(stdin, &command.redirects)
+            .await?;
+
+        // Check for functions first
+        if let Some(func_def) = self.functions.get(&name).cloned() {
+            // Push call frame with positional parameters
+            self.call_stack.push(CallFrame {
+                name: name.clone(),
+                locals: HashMap::new(),
+                positional: args.clone(),
+            });
+
+            // Execute function body
+            let result = self.execute_command(&func_def.body).await?;
+
+            // Pop call frame
+            self.call_stack.pop();
+
+            // Handle output redirections
+            return self.apply_redirections(result, &command.redirects).await;
+        }
 
         // Check for builtins
         if let Some(builtin) = self.builtins.get(name.as_str()) {
@@ -191,7 +659,7 @@ impl Interpreter {
 
             let result = builtin.execute(ctx).await?;
 
-            // Handle redirections
+            // Handle output redirections
             return self.apply_redirections(result, &command.redirects).await;
         }
 
@@ -200,34 +668,60 @@ impl Interpreter {
         Err(Error::CommandNotFound(name))
     }
 
-    /// Apply redirections to command output
+    /// Process input redirections (< file, <<< string)
+    async fn process_input_redirections(
+        &self,
+        existing_stdin: Option<String>,
+        redirects: &[Redirect],
+    ) -> Result<Option<String>> {
+        let mut stdin = existing_stdin;
+
+        for redirect in redirects {
+            match redirect.kind {
+                RedirectKind::Input => {
+                    let target_path = self.expand_word(&redirect.target)?;
+                    let path = self.resolve_path(&target_path);
+                    let content = self.fs.read_file(&path).await?;
+                    stdin = Some(String::from_utf8_lossy(&content).to_string());
+                }
+                RedirectKind::HereString => {
+                    // <<< string - use the target as stdin content
+                    let content = self.expand_word(&redirect.target)?;
+                    stdin = Some(format!("{}\n", content));
+                }
+                _ => {
+                    // Output redirections handled separately
+                }
+            }
+        }
+
+        Ok(stdin)
+    }
+
+    /// Apply output redirections to command output
     async fn apply_redirections(
         &self,
         mut result: ExecResult,
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         for redirect in redirects {
-            let target_path = self.expand_word(&redirect.target)?;
-            let path = self.resolve_path(&target_path);
-
             match redirect.kind {
                 RedirectKind::Output => {
+                    let target_path = self.expand_word(&redirect.target)?;
+                    let path = self.resolve_path(&target_path);
                     // Write stdout to file
                     self.fs.write_file(&path, result.stdout.as_bytes()).await?;
                     result.stdout = String::new();
                 }
                 RedirectKind::Append => {
+                    let target_path = self.expand_word(&redirect.target)?;
+                    let path = self.resolve_path(&target_path);
                     // Append stdout to file
                     self.fs.append_file(&path, result.stdout.as_bytes()).await?;
                     result.stdout = String::new();
                 }
-                RedirectKind::Input => {
-                    // Read file to stdin (handled in command execution)
-                    // This is handled before command execution in execute_simple_command
-                }
-                RedirectKind::HereString => {
-                    // Here string is handled as stdin
-                    // Already handled in parsing/command setup
+                RedirectKind::Input | RedirectKind::HereString => {
+                    // Input redirections handled in process_input_redirections
                 }
                 _ => {
                     // TODO: Handle other redirect types (HereDoc, DupOutput, DupInput, OutputBoth)
@@ -255,13 +749,7 @@ impl Interpreter {
             match part {
                 WordPart::Literal(s) => result.push_str(s),
                 WordPart::Variable(name) => {
-                    // Check shell variables first, then environment
-                    if let Some(value) = self.variables.get(name) {
-                        result.push_str(value);
-                    } else if let Some(value) = self.env.get(name) {
-                        result.push_str(value);
-                    }
-                    // If not found, expand to empty string (bash behavior)
+                    result.push_str(&self.expand_variable(name));
                 }
                 WordPart::CommandSubstitution(_) => {
                     // TODO: Implement command substitution
@@ -273,5 +761,147 @@ impl Interpreter {
         }
 
         Ok(result)
+    }
+
+    /// Expand a variable by name, checking local scope, positional params, shell vars, then env
+    fn expand_variable(&self, name: &str) -> String {
+        // Check for special parameters
+        match name {
+            "?" => return self.last_exit_code.to_string(),
+            "#" => {
+                // Number of positional parameters
+                if let Some(frame) = self.call_stack.last() {
+                    return frame.positional.len().to_string();
+                }
+                return "0".to_string();
+            }
+            "@" | "*" => {
+                // All positional parameters
+                if let Some(frame) = self.call_stack.last() {
+                    return frame.positional.join(" ");
+                }
+                return String::new();
+            }
+            _ => {}
+        }
+
+        // Check for numeric positional parameter ($1, $2, etc.)
+        if let Ok(n) = name.parse::<usize>() {
+            if n == 0 {
+                // $0 is the script/function name
+                if let Some(frame) = self.call_stack.last() {
+                    return frame.name.clone();
+                }
+                return "bash".to_string();
+            }
+            // $1, $2, etc. (1-indexed)
+            if let Some(frame) = self.call_stack.last() {
+                if n > 0 && n <= frame.positional.len() {
+                    return frame.positional[n - 1].clone();
+                }
+            }
+            return String::new();
+        }
+
+        // Check local variables in call stack (top to bottom)
+        for frame in self.call_stack.iter().rev() {
+            if let Some(value) = frame.locals.get(name) {
+                return value.clone();
+            }
+        }
+
+        // Check shell variables
+        if let Some(value) = self.variables.get(name) {
+            return value.clone();
+        }
+
+        // Check environment
+        if let Some(value) = self.env.get(name) {
+            return value.clone();
+        }
+
+        // Not found - expand to empty string (bash behavior)
+        String::new()
+    }
+
+    /// Set a local variable in the current call frame
+    #[allow(dead_code)]
+    fn set_local(&mut self, name: &str, value: &str) {
+        if let Some(frame) = self.call_stack.last_mut() {
+            frame.locals.insert(name.to_string(), value.to_string());
+        }
+    }
+
+    /// Check if a string contains glob characters
+    fn contains_glob_chars(&self, s: &str) -> bool {
+        s.contains('*') || s.contains('?') || s.contains('[')
+    }
+
+    /// Expand a glob pattern against the filesystem
+    async fn expand_glob(&self, pattern: &str) -> Result<Vec<String>> {
+        let mut matches = Vec::new();
+
+        // Split pattern into directory and filename parts
+        let path = Path::new(pattern);
+        let (dir, file_pattern) = if path.is_absolute() {
+            let parent = path.parent().unwrap_or(Path::new("/"));
+            let name = path.file_name().map(|s| s.to_string_lossy().to_string());
+            (parent.to_path_buf(), name)
+        } else {
+            // Relative path - use cwd
+            let parent = path.parent();
+            let name = path.file_name().map(|s| s.to_string_lossy().to_string());
+            if let Some(p) = parent {
+                if p.as_os_str().is_empty() {
+                    (self.cwd.clone(), name)
+                } else {
+                    (self.cwd.join(p), name)
+                }
+            } else {
+                (self.cwd.clone(), name)
+            }
+        };
+
+        let file_pattern = match file_pattern {
+            Some(p) => p,
+            None => return Ok(matches),
+        };
+
+        // Check if the directory exists
+        if !self.fs.exists(&dir).await.unwrap_or(false) {
+            return Ok(matches);
+        }
+
+        // Read directory entries
+        let entries = match self.fs.read_dir(&dir).await {
+            Ok(e) => e,
+            Err(_) => return Ok(matches),
+        };
+
+        // Match each entry against the pattern
+        for entry in entries {
+            if self.glob_match(&entry.name, &file_pattern) {
+                // Construct the full path
+                let full_path = if path.is_absolute() {
+                    dir.join(&entry.name).to_string_lossy().to_string()
+                } else {
+                    // For relative patterns, return relative path
+                    if let Some(parent) = path.parent() {
+                        if parent.as_os_str().is_empty() {
+                            entry.name.clone()
+                        } else {
+                            format!("{}/{}", parent.to_string_lossy(), entry.name)
+                        }
+                    } else {
+                        entry.name.clone()
+                    }
+                };
+                matches.push(full_path);
+            }
+        }
+
+        // Sort matches alphabetically (bash behavior)
+        matches.sort();
+        Ok(matches)
     }
 }
