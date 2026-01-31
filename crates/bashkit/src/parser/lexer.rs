@@ -161,12 +161,51 @@ impl<'a> Lexer<'a> {
 
         while let Some(ch) = self.peek_char() {
             if ch == '$' {
-                // Handle variable references
+                // Handle variable references and command substitution
                 word.push(ch);
                 self.advance();
 
-                // Check for ${VAR} format
-                if self.peek_char() == Some('{') {
+                // Check for $( - command substitution or arithmetic
+                if self.peek_char() == Some('(') {
+                    word.push('(');
+                    self.advance();
+
+                    // Check for $(( - arithmetic expansion
+                    if self.peek_char() == Some('(') {
+                        word.push('(');
+                        self.advance();
+                        // Read until ))
+                        let mut depth = 2;
+                        while let Some(c) = self.peek_char() {
+                            word.push(c);
+                            self.advance();
+                            if c == '(' {
+                                depth += 1;
+                            } else if c == ')' {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        // Command substitution $(...) - track nested parens
+                        let mut depth = 1;
+                        while let Some(c) = self.peek_char() {
+                            word.push(c);
+                            self.advance();
+                            if c == '(' {
+                                depth += 1;
+                            } else if c == ')' {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                } else if self.peek_char() == Some('{') {
+                    // ${VAR} format
                     word.push('{');
                     self.advance();
                     // Read until closing }

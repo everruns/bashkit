@@ -176,10 +176,11 @@ impl Interpreter {
 
         // Get iteration values
         let values: Vec<String> = if let Some(words) = &for_cmd.words {
-            words
-                .iter()
-                .map(|w| self.expand_word(w))
-                .collect::<Result<_>>()?
+            let mut vals = Vec::new();
+            for w in words {
+                vals.push(self.expand_word(w).await?);
+            }
+            vals
         } else {
             // TODO: Use positional parameters
             Vec::new()
@@ -377,12 +378,12 @@ impl Interpreter {
 
     /// Execute a case statement
     async fn execute_case(&mut self, case_cmd: &CaseCommand) -> Result<ExecResult> {
-        let word_value = self.expand_word(&case_cmd.word)?;
+        let word_value = self.expand_word(&case_cmd.word).await?;
 
         // Try each case item in order
         for case_item in &case_cmd.cases {
             for pattern in &case_item.patterns {
-                let pattern_str = self.expand_word(pattern)?;
+                let pattern_str = self.expand_word(pattern).await?;
                 if self.pattern_matches(&word_value, &pattern_str) {
                     return self.execute_command_sequence(&case_item.commands).await;
                 }
@@ -593,11 +594,11 @@ impl Interpreter {
     ) -> Result<ExecResult> {
         // Process variable assignments first
         for assignment in &command.assignments {
-            let value = self.expand_word(&assignment.value)?;
+            let value = self.expand_word(&assignment.value).await?;
             self.variables.insert(assignment.name.clone(), value);
         }
 
-        let name = self.expand_word(&command.name)?;
+        let name = self.expand_word(&command.name).await?;
 
         // If name is empty, this is an assignment-only command
         if name.is_empty() {
@@ -607,7 +608,7 @@ impl Interpreter {
         // Expand arguments with glob expansion
         let mut args: Vec<String> = Vec::new();
         for word in &command.args {
-            let expanded = self.expand_word(word)?;
+            let expanded = self.expand_word(word).await?;
             // Check if the word contains glob characters
             if self.contains_glob_chars(&expanded) {
                 let glob_matches = self.expand_glob(&expanded).await?;
@@ -670,7 +671,7 @@ impl Interpreter {
 
     /// Process input redirections (< file, <<< string)
     async fn process_input_redirections(
-        &self,
+        &mut self,
         existing_stdin: Option<String>,
         redirects: &[Redirect],
     ) -> Result<Option<String>> {
@@ -679,14 +680,14 @@ impl Interpreter {
         for redirect in redirects {
             match redirect.kind {
                 RedirectKind::Input => {
-                    let target_path = self.expand_word(&redirect.target)?;
+                    let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     let content = self.fs.read_file(&path).await?;
                     stdin = Some(String::from_utf8_lossy(&content).to_string());
                 }
                 RedirectKind::HereString => {
                     // <<< string - use the target as stdin content
-                    let content = self.expand_word(&redirect.target)?;
+                    let content = self.expand_word(&redirect.target).await?;
                     stdin = Some(format!("{}\n", content));
                 }
                 _ => {
@@ -700,21 +701,21 @@ impl Interpreter {
 
     /// Apply output redirections to command output
     async fn apply_redirections(
-        &self,
+        &mut self,
         mut result: ExecResult,
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         for redirect in redirects {
             match redirect.kind {
                 RedirectKind::Output => {
-                    let target_path = self.expand_word(&redirect.target)?;
+                    let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     // Write stdout to file
                     self.fs.write_file(&path, result.stdout.as_bytes()).await?;
                     result.stdout = String::new();
                 }
                 RedirectKind::Append => {
-                    let target_path = self.expand_word(&redirect.target)?;
+                    let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     // Append stdout to file
                     self.fs.append_file(&path, result.stdout.as_bytes()).await?;
@@ -742,7 +743,7 @@ impl Interpreter {
         }
     }
 
-    fn expand_word(&self, word: &Word) -> Result<String> {
+    async fn expand_word(&mut self, word: &Word) -> Result<String> {
         let mut result = String::new();
 
         for part in &word.parts {
@@ -751,16 +752,136 @@ impl Interpreter {
                 WordPart::Variable(name) => {
                     result.push_str(&self.expand_variable(name));
                 }
-                WordPart::CommandSubstitution(_) => {
-                    // TODO: Implement command substitution
+                WordPart::CommandSubstitution(commands) => {
+                    // Execute the commands and capture stdout
+                    let mut stdout = String::new();
+                    for cmd in commands {
+                        let cmd_result = self.execute_command(cmd).await?;
+                        stdout.push_str(&cmd_result.stdout);
+                    }
+                    // Remove trailing newline (bash behavior)
+                    let trimmed = stdout.trim_end_matches('\n');
+                    result.push_str(trimmed);
                 }
-                WordPart::ArithmeticExpansion(_) => {
-                    // TODO: Implement arithmetic expansion
+                WordPart::ArithmeticExpansion(expr) => {
+                    // Evaluate arithmetic expression
+                    let value = self.evaluate_arithmetic(expr);
+                    result.push_str(&value.to_string());
                 }
             }
         }
 
         Ok(result)
+    }
+
+    /// Evaluate a simple arithmetic expression
+    fn evaluate_arithmetic(&self, expr: &str) -> i64 {
+        // Simple arithmetic evaluation - handles basic operations
+        let expr = expr.trim();
+
+        // First expand any variables in the expression
+        let expanded = self.expand_arithmetic_vars(expr);
+
+        // Parse and evaluate
+        self.parse_arithmetic(&expanded)
+    }
+
+    /// Expand variables in arithmetic expression (no $ needed in $((...)))
+    fn expand_arithmetic_vars(&self, expr: &str) -> String {
+        let mut result = String::new();
+        let mut chars = expr.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch.is_ascii_alphabetic() || ch == '_' {
+                // Could be a variable name
+                let mut name = String::new();
+                name.push(ch);
+                while let Some(&c) = chars.peek() {
+                    if c.is_ascii_alphanumeric() || c == '_' {
+                        name.push(chars.next().unwrap());
+                    } else {
+                        break;
+                    }
+                }
+                // Expand the variable
+                let value = self.expand_variable(&name);
+                if value.is_empty() {
+                    result.push('0');
+                } else {
+                    result.push_str(&value);
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+
+        result
+    }
+
+    /// Parse and evaluate a simple arithmetic expression
+    fn parse_arithmetic(&self, expr: &str) -> i64 {
+        let expr = expr.trim();
+
+        // Handle parentheses
+        if expr.starts_with('(') && expr.ends_with(')') {
+            return self.parse_arithmetic(&expr[1..expr.len() - 1]);
+        }
+
+        // Try to find lowest precedence operator from right to left
+        // Addition/Subtraction (lowest precedence)
+        let mut depth = 0;
+        let chars: Vec<char> = expr.chars().collect();
+        for i in (0..chars.len()).rev() {
+            match chars[i] {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                '+' | '-' if depth == 0 && i > 0 => {
+                    let left = self.parse_arithmetic(&expr[..i]);
+                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    return if chars[i] == '+' {
+                        left + right
+                    } else {
+                        left - right
+                    };
+                }
+                _ => {}
+            }
+        }
+
+        // Multiplication/Division/Modulo (higher precedence)
+        depth = 0;
+        for i in (0..chars.len()).rev() {
+            match chars[i] {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                '*' | '/' | '%' if depth == 0 => {
+                    let left = self.parse_arithmetic(&expr[..i]);
+                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    return match chars[i] {
+                        '*' => left * right,
+                        '/' => {
+                            if right != 0 {
+                                left / right
+                            } else {
+                                0
+                            }
+                        }
+                        '%' => {
+                            if right != 0 {
+                                left % right
+                            } else {
+                                0
+                            }
+                        }
+                        _ => 0,
+                    };
+                }
+                _ => {}
+            }
+        }
+
+        // Parse as number
+        expr.trim().parse().unwrap_or(0)
     }
 
     /// Expand a variable by name, checking local scope, positional params, shell vars, then env

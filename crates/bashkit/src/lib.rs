@@ -607,4 +607,60 @@ mod tests {
         let result = bash.exec("echo /nonexistent/*.xyz").await.unwrap();
         assert_eq!(result.stdout, "/nonexistent/*.xyz\n");
     }
+
+    #[tokio::test]
+    async fn test_command_substitution() {
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $(echo hello)").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_command_substitution_in_string() {
+        let mut bash = Bash::new();
+        let result = bash.exec("echo \"result: $(echo 42)\"").await.unwrap();
+        assert_eq!(result.stdout, "result: 42\n");
+    }
+
+    #[tokio::test]
+    async fn test_command_substitution_pipeline() {
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $(echo hello | cat)").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_command_substitution_variable() {
+        let mut bash = Bash::new();
+        let result = bash.exec("VAR=$(echo test); echo $VAR").await.unwrap();
+        assert_eq!(result.stdout, "test\n");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_simple() {
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $((1 + 2))").await.unwrap();
+        assert_eq!(result.stdout, "3\n");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_multiply() {
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $((3 * 4))").await.unwrap();
+        assert_eq!(result.stdout, "12\n");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_with_variable() {
+        let mut bash = Bash::new();
+        let result = bash.exec("X=5; echo $((X + 3))").await.unwrap();
+        assert_eq!(result.stdout, "8\n");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_complex() {
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $((2 + 3 * 4))").await.unwrap();
+        assert_eq!(result.stdout, "14\n");
+    }
 }
