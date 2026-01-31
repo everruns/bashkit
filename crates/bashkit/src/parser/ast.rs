@@ -170,6 +170,24 @@ impl fmt::Display for Word {
                 WordPart::Variable(name) => write!(f, "${}", name)?,
                 WordPart::CommandSubstitution(cmd) => write!(f, "$({:?})", cmd)?,
                 WordPart::ArithmeticExpansion(expr) => write!(f, "$(({}))", expr)?,
+                WordPart::ParameterExpansion {
+                    name,
+                    operator,
+                    operand,
+                } => {
+                    let op_str = match operator {
+                        ParameterOp::UseDefault => ":-",
+                        ParameterOp::AssignDefault => ":=",
+                        ParameterOp::UseReplacement => ":+",
+                        ParameterOp::Error => ":?",
+                        ParameterOp::RemovePrefixShort => "#",
+                        ParameterOp::RemovePrefixLong => "##",
+                        ParameterOp::RemoveSuffixShort => "%",
+                        ParameterOp::RemoveSuffixLong => "%%",
+                    };
+                    write!(f, "${{{}{}{}}}", name, op_str, operand)?
+                }
+                WordPart::Length(name) => write!(f, "${{#{}}}", name)?,
             }
         }
         Ok(())
@@ -187,6 +205,35 @@ pub enum WordPart {
     CommandSubstitution(Vec<Command>),
     /// Arithmetic expansion ($((...)))
     ArithmeticExpansion(String),
+    /// Parameter expansion with operator ${var:-default}, ${var:=default}, etc.
+    ParameterExpansion {
+        name: String,
+        operator: ParameterOp,
+        operand: String,
+    },
+    /// Length expansion ${#var}
+    Length(String),
+}
+
+/// Parameter expansion operators
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParameterOp {
+    /// :- use default if unset/empty
+    UseDefault,
+    /// := assign default if unset/empty
+    AssignDefault,
+    /// :+ use replacement if set
+    UseReplacement,
+    /// :? error if unset/empty
+    Error,
+    /// # remove prefix (shortest)
+    RemovePrefixShort,
+    /// ## remove prefix (longest)
+    RemovePrefixLong,
+    /// % remove suffix (shortest)
+    RemoveSuffixShort,
+    /// %% remove suffix (longest)
+    RemoveSuffixLong,
 }
 
 /// I/O redirection.
