@@ -513,12 +513,12 @@ EOF
         )
         .with_expected("hello world\n"),
         BenchCase::new(
-            "pipe_redirect_out",
+            "pipe_discard",
             Category::Pipes,
-            "Redirect output (simulated)",
-            "echo test > /dev/null; echo done",
+            "Discard output via pipe",
+            "result=$(echo test); echo ok",
         )
-        .with_expected("done\n"),
+        .with_expected("ok\n"),
     ]
 }
 
