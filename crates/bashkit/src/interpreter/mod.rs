@@ -83,6 +83,8 @@ impl Interpreter {
         builtins.insert("sleep", Box::new(builtins::Sleep));
         builtins.insert("head", Box::new(builtins::Head));
         builtins.insert("tail", Box::new(builtins::Tail));
+        builtins.insert("basename", Box::new(builtins::Basename));
+        builtins.insert("dirname", Box::new(builtins::Dirname));
 
         Self {
             fs,

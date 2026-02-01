@@ -6,7 +6,7 @@
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 26 | 22 | 48 |
+| Shell Builtins | 28 | 20 | 48 |
 | Text Processing | 4 | 8 | 12 |
 | File Operations | 1 | 6 | 7 |
 | Network | 0 | 2 | 2 |
@@ -47,6 +47,8 @@
 | `sleep` | `N`, `N.N` | Pause execution (max 60s) |
 | `head` | `-n N`, `-N` | First N lines (default 10) |
 | `tail` | `-n N`, `-N` | Last N lines (default 10) |
+| `basename` | `NAME [SUFFIX]` | Strip directory from path |
+| `dirname` | `NAME` | Strip last path component |
 
 ### Not Implemented
 
@@ -63,8 +65,6 @@
 | `uniq` | Medium | Planned |
 | `cut` | Medium | Planned |
 | `tr` | Medium | Planned |
-| `basename` | Medium | Planned |
-| `dirname` | Medium | Planned |
 | `date` | Medium | Planned |
 | `curl` | Medium | Planned |
 | `wget` | Medium | Planned |
