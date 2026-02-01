@@ -1,0 +1,2755 @@
+{
+  "moniker": "runsc-linux-x86_64",
+  "timestamp": "1769970640",
+  "system": {
+    "hostname": "runsc",
+    "os": "linux",
+    "arch": "x86_64",
+    "cpus": 16,
+    "moniker": "runsc-linux-x86_64"
+  },
+  "iterations": 3,
+  "warmup": 1,
+  "prewarm_cases": 3,
+  "runners": [
+    "bashkit",
+    "bash"
+  ],
+  "results": [
+    {
+      "runner": "bashkit",
+      "case_name": "startup_empty",
+      "category": "startup",
+      "iterations": 3,
+      "times_ns": [
+        3740,
+        2876,
+        3647
+      ],
+      "mean_ns": 3421.0,
+      "stddev_ns": 387.2389443224945,
+      "min_ns": 2876,
+      "max_ns": 3740,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "startup_empty",
+      "category": "startup",
+      "iterations": 3,
+      "times_ns": [
+        7798608,
+        8687410,
+        9076613
+      ],
+      "mean_ns": 8520877.0,
+      "stddev_ns": 534867.0395983162,
+      "min_ns": 7798608,
+      "max_ns": 9076613,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "startup_true",
+      "category": "startup",
+      "iterations": 3,
+      "times_ns": [
+        4766,
+        4413,
+        2848
+      ],
+      "mean_ns": 4009.0,
+      "stddev_ns": 833.5038492212658,
+      "min_ns": 2848,
+      "max_ns": 4766,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "startup_true",
+      "category": "startup",
+      "iterations": 3,
+      "times_ns": [
+        8490376,
+        9708562,
+        9619175
+      ],
+      "mean_ns": 9272704.333333334,
+      "stddev_ns": 554391.9941667829,
+      "min_ns": 8490376,
+      "max_ns": 9708562,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "startup_echo",
+      "category": "startup",
+      "iterations": 3,
+      "times_ns": [
+        5829,
+        4671,
+        4980
+      ],
+      "mean_ns": 5160.0,
+      "stddev_ns": 489.5855390021237,
+      "min_ns": 4671,
+      "max_ns": 5829,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "startup_echo",
+      "category": "startup",
+      "iterations": 3,
+      "times_ns": [
+        10714565,
+        9653224,
+        9493890
+      ],
+      "mean_ns": 9953893.0,
+      "stddev_ns": 541795.3177950754,
+      "min_ns": 9493890,
+      "max_ns": 10714565,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "startup_exit",
+      "category": "startup",
+      "iterations": 3,
+      "times_ns": [
+        3841,
+        3094,
+        3096
+      ],
+      "mean_ns": 3343.6666666666665,
+      "stddev_ns": 351.66872037315017,
+      "min_ns": 3094,
+      "max_ns": 3841,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "startup_exit",
+      "category": "startup",
+      "iterations": 3,
+      "times_ns": [
+        9288300,
+        8701358,
+        9056992
+      ],
+      "mean_ns": 9015550.0,
+      "stddev_ns": 241403.26891462482,
+      "min_ns": 8701358,
+      "max_ns": 9288300,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "var_assign_simple",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        6089,
+        5018,
+        4159
+      ],
+      "mean_ns": 5088.666666666667,
+      "stddev_ns": 789.5020934459615,
+      "min_ns": 4159,
+      "max_ns": 6089,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "var_assign_simple",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        8926133,
+        8569886,
+        10104883
+      ],
+      "mean_ns": 9200300.666666666,
+      "stddev_ns": 655962.3361069512,
+      "min_ns": 8569886,
+      "max_ns": 10104883,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "var_assign_many",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        15069,
+        15583,
+        12484
+      ],
+      "mean_ns": 14378.666666666666,
+      "stddev_ns": 1356.0654687571525,
+      "min_ns": 12484,
+      "max_ns": 15583,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "var_assign_many",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        8407470,
+        8822078,
+        8405252
+      ],
+      "mean_ns": 8544933.333333334,
+      "stddev_ns": 195972.96510374986,
+      "min_ns": 8405252,
+      "max_ns": 8822078,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "var_default",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        5120,
+        3684,
+        3907
+      ],
+      "mean_ns": 4237.0,
+      "stddev_ns": 630.9775484648139,
+      "min_ns": 3684,
+      "max_ns": 5120,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "var_default",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        8698104,
+        8351992,
+        8170486
+      ],
+      "mean_ns": 8406860.666666666,
+      "stddev_ns": 218865.4326556744,
+      "min_ns": 8170486,
+      "max_ns": 8698104,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "var_length",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        6198,
+        4703,
+        4516
+      ],
+      "mean_ns": 5139.0,
+      "stddev_ns": 752.7075572004486,
+      "min_ns": 4516,
+      "max_ns": 6198,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "var_length",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        8131900,
+        8796944,
+        8393492
+      ],
+      "mean_ns": 8440778.666666666,
+      "stddev_ns": 273554.2628892646,
+      "min_ns": 8131900,
+      "max_ns": 8796944,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "var_substring",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        6923,
+        5561,
+        5055
+      ],
+      "mean_ns": 5846.333333333333,
+      "stddev_ns": 788.8461334266792,
+      "min_ns": 5055,
+      "max_ns": 6923,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "var_substring",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        8824116,
+        8435913,
+        8853937
+      ],
+      "mean_ns": 8704655.333333334,
+      "stddev_ns": 190419.1067169702,
+      "min_ns": 8435913,
+      "max_ns": 8853937,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "var_replace",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        7322,
+        5223,
+        4726
+      ],
+      "mean_ns": 5757.0,
+      "stddev_ns": 1125.0691830579428,
+      "min_ns": 4726,
+      "max_ns": 7322,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "var_replace",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        8278742,
+        13374651,
+        9197224
+      ],
+      "mean_ns": 10283539.0,
+      "stddev_ns": 2217676.312943949,
+      "min_ns": 8278742,
+      "max_ns": 13374651,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "var_nested",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        8733,
+        6142,
+        5712
+      ],
+      "mean_ns": 6862.333333333333,
+      "stddev_ns": 1334.3588556140194,
+      "min_ns": 5712,
+      "max_ns": 8733,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "var_nested",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        12913906,
+        9273303,
+        8887528
+      ],
+      "mean_ns": 10358245.666666666,
+      "stddev_ns": 1813974.529807651,
+      "min_ns": 8887528,
+      "max_ns": 12913906,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "var_export",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        6608,
+        4851,
+        4872
+      ],
+      "mean_ns": 5443.666666666667,
+      "stddev_ns": 823.3526313527852,
+      "min_ns": 4851,
+      "max_ns": 6608,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "var_export",
+      "category": "variables",
+      "iterations": 3,
+      "times_ns": [
+        8672280,
+        8606845,
+        8530628
+      ],
+      "mean_ns": 8603251.0,
+      "stddev_ns": 57885.000377184646,
+      "min_ns": 8530628,
+      "max_ns": 8672280,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "arith_basic",
+      "category": "arithmetic",
+      "iterations": 3,
+      "times_ns": [
+        7349,
+        4786,
+        4982
+      ],
+      "mean_ns": 5705.666666666667,
+      "stddev_ns": 1164.7638768818722,
+      "min_ns": 4786,
+      "max_ns": 7349,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "arith_basic",
+      "category": "arithmetic",
+      "iterations": 3,
+      "times_ns": [
+        8458049,
+        8402765,
+        8895406
+      ],
+      "mean_ns": 8585406.666666666,
+      "stddev_ns": 220361.47601056666,
+      "min_ns": 8402765,
+      "max_ns": 8895406,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "arith_complex",
+      "category": "arithmetic",
+      "iterations": 3,
+      "times_ns": [
+        7609,
+        6147,
+        5452
+      ],
+      "mean_ns": 6402.666666666667,
+      "stddev_ns": 898.9572972184063,
+      "min_ns": 5452,
+      "max_ns": 7609,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "arith_complex",
+      "category": "arithmetic",
+      "iterations": 3,
+      "times_ns": [
+        9008696,
+        9393572,
+        8633077
+      ],
+      "mean_ns": 9011781.666666666,
+      "stddev_ns": 310478.45041734463,
+      "min_ns": 8633077,
+      "max_ns": 9393572,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "arith_variables",
+      "category": "arithmetic",
+      "iterations": 3,
+      "times_ns": [
+        8832,
+        6906,
+        6301
+      ],
+      "mean_ns": 7346.333333333333,
+      "stddev_ns": 1079.1695366757203,
+      "min_ns": 6301,
+      "max_ns": 8832,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "arith_variables",
+      "category": "arithmetic",
+      "iterations": 3,
+      "times_ns": [
+        8759739,
+        8779975,
+        9057169
+      ],
+      "mean_ns": 8865627.666666666,
+      "stddev_ns": 135691.89537412405,
+      "min_ns": 8759739,
+      "max_ns": 9057169,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "arith_increment",
+      "category": "arithmetic",
+      "iterations": 3,
+      "times_ns": [
+        1000000000,
+        1000000000,
+        1000000000
+      ],
+      "mean_ns": 1000000000.0,
+      "stddev_ns": 0.0,
+      "min_ns": 1000000000,
+      "max_ns": 1000000000,
+      "errors": 3,
+      "error_messages": [
+        "command not found: x++",
+        "command not found: x++",
+        "command not found: x++"
+      ],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "arith_increment",
+      "category": "arithmetic",
+      "iterations": 3,
+      "times_ns": [
+        8027656,
+        9144961,
+        9264994
+      ],
+      "mean_ns": 8812537.0,
+      "stddev_ns": 557153.8497237545,
+      "min_ns": 8027656,
+      "max_ns": 9264994,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "arith_modulo",
+      "category": "arithmetic",
+      "iterations": 3,
+      "times_ns": [
+        7969,
+        5685,
+        4667
+      ],
+      "mean_ns": 6107.0,
+      "stddev_ns": 1380.6674714306362,
+      "min_ns": 4667,
+      "max_ns": 7969,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "arith_modulo",
+      "category": "arithmetic",
+      "iterations": 3,
+      "times_ns": [
+        8013348,
+        14543882,
+        9831255
+      ],
+      "mean_ns": 10796161.666666666,
+      "stddev_ns": 2751999.5443098377,
+      "min_ns": 8013348,
+      "max_ns": 14543882,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "arith_loop_sum",
+      "category": "arithmetic",
+      "iterations": 3,
+      "times_ns": [
+        27180,
+        17120,
+        15474
+      ],
+      "mean_ns": 19924.666666666668,
+      "stddev_ns": 5174.116693268094,
+      "min_ns": 15474,
+      "max_ns": 27180,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "arith_loop_sum",
+      "category": "arithmetic",
+      "iterations": 3,
+      "times_ns": [
+        8444516,
+        8607019,
+        8194789
+      ],
+      "mean_ns": 8415441.333333334,
+      "stddev_ns": 169543.29910347058,
+      "min_ns": 8194789,
+      "max_ns": 8607019,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "ctrl_if_simple",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        5933,
+        4877,
+        4469
+      ],
+      "mean_ns": 5093.0,
+      "stddev_ns": 616.882484757024,
+      "min_ns": 4469,
+      "max_ns": 5933,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "ctrl_if_simple",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        9225661,
+        8809108,
+        7960633
+      ],
+      "mean_ns": 8665134.0,
+      "stddev_ns": 526384.1086146124,
+      "min_ns": 7960633,
+      "max_ns": 9225661,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "ctrl_if_else",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        7715,
+        6100,
+        5239
+      ],
+      "mean_ns": 6351.333333333333,
+      "stddev_ns": 1026.3268918277884,
+      "min_ns": 5239,
+      "max_ns": 7715,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "ctrl_if_else",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        9552299,
+        8306858,
+        8014974
+      ],
+      "mean_ns": 8624710.333333334,
+      "stddev_ns": 666640.6419555357,
+      "min_ns": 8014974,
+      "max_ns": 9552299,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "ctrl_for_list",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        13144,
+        9719,
+        8721
+      ],
+      "mean_ns": 10528.0,
+      "stddev_ns": 1894.1300553728265,
+      "min_ns": 8721,
+      "max_ns": 13144,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "ctrl_for_list",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        8471297,
+        8684855,
+        9043961
+      ],
+      "mean_ns": 8733371.0,
+      "stddev_ns": 236292.70819049835,
+      "min_ns": 8471297,
+      "max_ns": 9043961,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "ctrl_for_range",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        1000000000,
+        1000000000,
+        1000000000
+      ],
+      "mean_ns": 1000000000.0,
+      "stddev_ns": 0.0,
+      "min_ns": 1000000000,
+      "max_ns": 1000000000,
+      "errors": 3,
+      "error_messages": [
+        "parse error: expected variable name in for loop",
+        "parse error: expected variable name in for loop",
+        "parse error: expected variable name in for loop"
+      ],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "ctrl_for_range",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        9231296,
+        10761907,
+        9852593
+      ],
+      "mean_ns": 9948598.666666666,
+      "stddev_ns": 628546.1130547401,
+      "min_ns": 9231296,
+      "max_ns": 10761907,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "ctrl_while",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        19336,
+        17144,
+        22851
+      ],
+      "mean_ns": 19777.0,
+      "stddev_ns": 2350.648562985685,
+      "min_ns": 17144,
+      "max_ns": 22851,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "ctrl_while",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        8827277,
+        7890440,
+        9356333
+      ],
+      "mean_ns": 8691350.0,
+      "stddev_ns": 606117.5264798073,
+      "min_ns": 7890440,
+      "max_ns": 9356333,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "ctrl_case",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        9876,
+        8034,
+        7018
+      ],
+      "mean_ns": 8309.333333333334,
+      "stddev_ns": 1182.9052746897737,
+      "min_ns": 7018,
+      "max_ns": 9876,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "ctrl_case",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        12393838,
+        10089455,
+        8440374
+      ],
+      "mean_ns": 10307889.0,
+      "stddev_ns": 1621368.6521148318,
+      "min_ns": 8440374,
+      "max_ns": 12393838,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "ctrl_function",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        12377,
+        8799,
+        8090
+      ],
+      "mean_ns": 9755.333333333334,
+      "stddev_ns": 1876.2591031683824,
+      "min_ns": 8090,
+      "max_ns": 12377,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "ctrl_function",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        9358616,
+        8818626,
+        9863054
+      ],
+      "mean_ns": 9346765.333333334,
+      "stddev_ns": 426468.27980623476,
+      "min_ns": 8818626,
+      "max_ns": 9863054,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "ctrl_function_return",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        13448,
+        10407,
+        8519
+      ],
+      "mean_ns": 10791.333333333334,
+      "stddev_ns": 2030.5244533261734,
+      "min_ns": 8519,
+      "max_ns": 13448,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "ctrl_function_return",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        13500927,
+        21692042,
+        13546432
+      ],
+      "mean_ns": 16246467.0,
+      "stddev_ns": 3850647.823135305,
+      "min_ns": 13500927,
+      "max_ns": 21692042,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "ctrl_nested_loops",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        20539,
+        18054,
+        12089
+      ],
+      "mean_ns": 16894.0,
+      "stddev_ns": 3545.8731881818144,
+      "min_ns": 12089,
+      "max_ns": 20539,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "ctrl_nested_loops",
+      "category": "control",
+      "iterations": 3,
+      "times_ns": [
+        8772198,
+        9251110,
+        8407541
+      ],
+      "mean_ns": 8810283.0,
+      "stddev_ns": 345436.9357388794,
+      "min_ns": 8407541,
+      "max_ns": 9251110,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "str_concat",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        1000000000,
+        1000000000,
+        1000000000
+      ],
+      "mean_ns": 1000000000.0,
+      "stddev_ns": 0.0,
+      "min_ns": 1000000000,
+      "max_ns": 1000000000,
+      "errors": 3,
+      "error_messages": [
+        "command not found: Hello",
+        "command not found: Hello",
+        "command not found: Hello"
+      ],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "str_concat",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        8987980,
+        8794000,
+        8528870
+      ],
+      "mean_ns": 8770283.333333334,
+      "stddev_ns": 188179.62736586432,
+      "min_ns": 8528870,
+      "max_ns": 8987980,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "str_printf",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        7044,
+        5389,
+        5753
+      ],
+      "mean_ns": 6062.0,
+      "stddev_ns": 710.1018706260861,
+      "min_ns": 5389,
+      "max_ns": 7044,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "str_printf",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        8659447,
+        8444630,
+        9013004
+      ],
+      "mean_ns": 8705693.666666666,
+      "stddev_ns": 234330.7016480958,
+      "min_ns": 8444630,
+      "max_ns": 9013004,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "str_printf_pad",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        5637,
+        4376,
+        4002
+      ],
+      "mean_ns": 4671.666666666667,
+      "stddev_ns": 699.4618566361492,
+      "min_ns": 4002,
+      "max_ns": 5637,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "str_printf_pad",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        9637115,
+        9121336,
+        9150635
+      ],
+      "mean_ns": 9303028.666666666,
+      "stddev_ns": 236537.3352353117,
+      "min_ns": 9121336,
+      "max_ns": 9637115,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "str_echo_escape",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        5927,
+        4010,
+        3792
+      ],
+      "mean_ns": 4576.333333333333,
+      "stddev_ns": 959.2032573385522,
+      "min_ns": 3792,
+      "max_ns": 5927,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "str_echo_escape",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        9619113,
+        9005469,
+        10109524
+      ],
+      "mean_ns": 9578035.333333334,
+      "stddev_ns": 451663.5117579851,
+      "min_ns": 9005469,
+      "max_ns": 10109524,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "str_prefix_strip",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        7750,
+        4939,
+        4859
+      ],
+      "mean_ns": 5849.333333333333,
+      "stddev_ns": 1344.3710631948143,
+      "min_ns": 4859,
+      "max_ns": 7750,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "str_prefix_strip",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        9759872,
+        10801006,
+        8756934
+      ],
+      "mean_ns": 9772604.0,
+      "stddev_ns": 834537.4619767927,
+      "min_ns": 8756934,
+      "max_ns": 10801006,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "str_suffix_strip",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        7492,
+        5001,
+        5391
+      ],
+      "mean_ns": 5961.333333333333,
+      "stddev_ns": 1093.9927889260616,
+      "min_ns": 5001,
+      "max_ns": 7492,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "str_suffix_strip",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        13345555,
+        8629758,
+        8836122
+      ],
+      "mean_ns": 10270478.333333334,
+      "stddev_ns": 2176039.047525317,
+      "min_ns": 8629758,
+      "max_ns": 13345555,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "str_uppercase",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        6985,
+        4475,
+        4635
+      ],
+      "mean_ns": 5365.0,
+      "stddev_ns": 1147.3738129601297,
+      "min_ns": 4475,
+      "max_ns": 6985,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "str_uppercase",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        8682643,
+        8071740,
+        9562646
+      ],
+      "mean_ns": 8772343.0,
+      "stddev_ns": 611955.7406158281,
+      "min_ns": 8071740,
+      "max_ns": 9562646,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "str_lowercase",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        7787,
+        5779,
+        5355
+      ],
+      "mean_ns": 6307.0,
+      "stddev_ns": 1060.7368508101652,
+      "min_ns": 5355,
+      "max_ns": 7787,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "str_lowercase",
+      "category": "strings",
+      "iterations": 3,
+      "times_ns": [
+        8505410,
+        8318867,
+        9203224
+      ],
+      "mean_ns": 8675833.666666666,
+      "stddev_ns": 380617.91469690733,
+      "min_ns": 8318867,
+      "max_ns": 9203224,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "arr_create",
+      "category": "arrays",
+      "iterations": 3,
+      "times_ns": [
+        7947,
+        5850,
+        4893
+      ],
+      "mean_ns": 6230.0,
+      "stddev_ns": 1275.416010562828,
+      "min_ns": 4893,
+      "max_ns": 7947,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "arr_create",
+      "category": "arrays",
+      "iterations": 3,
+      "times_ns": [
+        10013856,
+        12037766,
+        8517439
+      ],
+      "mean_ns": 10189687.0,
+      "stddev_ns": 1442535.488218112,
+      "min_ns": 8517439,
+      "max_ns": 12037766,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "arr_all",
+      "category": "arrays",
+      "iterations": 3,
+      "times_ns": [
+        11600,
+        7937,
+        6601
+      ],
+      "mean_ns": 8712.666666666666,
+      "stddev_ns": 2113.250944766275,
+      "min_ns": 6601,
+      "max_ns": 11600,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "arr_all",
+      "category": "arrays",
+      "iterations": 3,
+      "times_ns": [
+        9181134,
+        8980422,
+        14647520
+      ],
+      "mean_ns": 10936358.666666666,
+      "stddev_ns": 2625466.3278812435,
+      "min_ns": 8980422,
+      "max_ns": 14647520,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "arr_length",
+      "category": "arrays",
+      "iterations": 3,
+      "times_ns": [
+        8757,
+        6753,
+        6583
+      ],
+      "mean_ns": 7364.333333333333,
+      "stddev_ns": 987.2066090180358,
+      "min_ns": 6583,
+      "max_ns": 8757,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "arr_length",
+      "category": "arrays",
+      "iterations": 3,
+      "times_ns": [
+        9127378,
+        9885426,
+        8946590
+      ],
+      "mean_ns": 9319798.0,
+      "stddev_ns": 406712.30702139647,
+      "min_ns": 8946590,
+      "max_ns": 9885426,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "arr_iterate",
+      "category": "arrays",
+      "iterations": 3,
+      "times_ns": [
+        11583,
+        8644,
+        7665
+      ],
+      "mean_ns": 9297.333333333334,
+      "stddev_ns": 1664.8952586340745,
+      "min_ns": 7665,
+      "max_ns": 11583,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "arr_iterate",
+      "category": "arrays",
+      "iterations": 3,
+      "times_ns": [
+        15857715,
+        10220122,
+        9380124
+      ],
+      "mean_ns": 11819320.333333334,
+      "stddev_ns": 2876093.736629868,
+      "min_ns": 9380124,
+      "max_ns": 15857715,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "arr_slice",
+      "category": "arrays",
+      "iterations": 3,
+      "times_ns": [
+        14699,
+        9202,
+        9582
+      ],
+      "mean_ns": 11161.0,
+      "stddev_ns": 2506.5491550469674,
+      "min_ns": 9202,
+      "max_ns": 14699,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "arr_slice",
+      "category": "arrays",
+      "iterations": 3,
+      "times_ns": [
+        9092843,
+        13704999,
+        10025107
+      ],
+      "mean_ns": 10940983.0,
+      "stddev_ns": 1991166.7229066144,
+      "min_ns": 9092843,
+      "max_ns": 13704999,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "arr_assign_index",
+      "category": "arrays",
+      "iterations": 3,
+      "times_ns": [
+        11549,
+        9964,
+        7889
+      ],
+      "mean_ns": 9800.666666666666,
+      "stddev_ns": 1498.6456849065053,
+      "min_ns": 7889,
+      "max_ns": 11549,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "arr_assign_index",
+      "category": "arrays",
+      "iterations": 3,
+      "times_ns": [
+        10084378,
+        10006232,
+        13433206
+      ],
+      "mean_ns": 11174605.333333334,
+      "stddev_ns": 1597390.4611228346,
+      "min_ns": 10006232,
+      "max_ns": 13433206,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "pipe_simple",
+      "category": "pipes",
+      "iterations": 3,
+      "times_ns": [
+        6730,
+        4877,
+        4188
+      ],
+      "mean_ns": 5265.0,
+      "stddev_ns": 1073.4210109116864,
+      "min_ns": 4188,
+      "max_ns": 6730,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "pipe_simple",
+      "category": "pipes",
+      "iterations": 3,
+      "times_ns": [
+        21556898,
+        22105705,
+        23751077
+      ],
+      "mean_ns": 22471226.666666668,
+      "stddev_ns": 932312.5147046396,
+      "min_ns": 21556898,
+      "max_ns": 23751077,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "pipe_multi",
+      "category": "pipes",
+      "iterations": 3,
+      "times_ns": [
+        9184,
+        7161,
+        6569
+      ],
+      "mean_ns": 7638.0,
+      "stddev_ns": 1119.584148988662,
+      "min_ns": 6569,
+      "max_ns": 9184,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "pipe_multi",
+      "category": "pipes",
+      "iterations": 3,
+      "times_ns": [
+        25341505,
+        31082086,
+        26519305
+      ],
+      "mean_ns": 27647632.0,
+      "stddev_ns": 2475669.4607838904,
+      "min_ns": 25341505,
+      "max_ns": 31082086,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "pipe_command_subst",
+      "category": "pipes",
+      "iterations": 3,
+      "times_ns": [
+        8644,
+        6963,
+        17505
+      ],
+      "mean_ns": 11037.333333333334,
+      "stddev_ns": 4624.534162726255,
+      "min_ns": 6963,
+      "max_ns": 17505,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "pipe_command_subst",
+      "category": "pipes",
+      "iterations": 3,
+      "times_ns": [
+        11908648,
+        11740575,
+        12216856
+      ],
+      "mean_ns": 11955359.666666666,
+      "stddev_ns": 197226.405588997,
+      "min_ns": 11740575,
+      "max_ns": 12216856,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "pipe_heredoc",
+      "category": "pipes",
+      "iterations": 3,
+      "times_ns": [
+        4729,
+        3592,
+        4809
+      ],
+      "mean_ns": 4376.666666666667,
+      "stddev_ns": 555.80352243896,
+      "min_ns": 3592,
+      "max_ns": 4809,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "pipe_heredoc",
+      "category": "pipes",
+      "iterations": 3,
+      "times_ns": [
+        17268040,
+        16739210,
+        17399612
+      ],
+      "mean_ns": 17135620.666666668,
+      "stddev_ns": 285404.8122478355,
+      "min_ns": 16739210,
+      "max_ns": 17399612,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "pipe_herestring",
+      "category": "pipes",
+      "iterations": 3,
+      "times_ns": [
+        5419,
+        3803,
+        3788
+      ],
+      "mean_ns": 4336.666666666667,
+      "stddev_ns": 765.3497385001332,
+      "min_ns": 3788,
+      "max_ns": 5419,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "pipe_herestring",
+      "category": "pipes",
+      "iterations": 3,
+      "times_ns": [
+        17653331,
+        18054711,
+        17497535
+      ],
+      "mean_ns": 17735192.333333332,
+      "stddev_ns": 234715.76025103687,
+      "min_ns": 17497535,
+      "max_ns": 18054711,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "pipe_discard",
+      "category": "pipes",
+      "iterations": 3,
+      "times_ns": [
+        7983,
+        6504,
+        5445
+      ],
+      "mean_ns": 6644.0,
+      "stddev_ns": 1040.8525351844996,
+      "min_ns": 5445,
+      "max_ns": 7983,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "pipe_discard",
+      "category": "pipes",
+      "iterations": 3,
+      "times_ns": [
+        11278079,
+        11613394,
+        12146108
+      ],
+      "mean_ns": 11679193.666666666,
+      "stddev_ns": 357412.7243680927,
+      "min_ns": 11278079,
+      "max_ns": 12146108,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_grep_simple",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        31534,
+        15319,
+        9964
+      ],
+      "mean_ns": 18939.0,
+      "stddev_ns": 9170.406206924534,
+      "min_ns": 9964,
+      "max_ns": 31534,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_grep_simple",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        25909956,
+        21036153,
+        21123121
+      ],
+      "mean_ns": 22689743.333333332,
+      "stddev_ns": 2277310.9979646807,
+      "min_ns": 21036153,
+      "max_ns": 25909956,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_grep_case",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        96885,
+        82277,
+        324571
+      ],
+      "mean_ns": 167911.0,
+      "stddev_ns": 110935.76254151168,
+      "min_ns": 82277,
+      "max_ns": 324571,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_grep_case",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        20184796,
+        26519178,
+        22473368
+      ],
+      "mean_ns": 23059114.0,
+      "stddev_ns": 2618959.413312598,
+      "min_ns": 20184796,
+      "max_ns": 26519178,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_grep_count",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        11804,
+        9122,
+        7262
+      ],
+      "mean_ns": 9396.0,
+      "stddev_ns": 1864.3583346556532,
+      "min_ns": 7262,
+      "max_ns": 11804,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_grep_count",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        23052431,
+        21689349,
+        22977912
+      ],
+      "mean_ns": 22573230.666666668,
+      "stddev_ns": 625738.694580165,
+      "min_ns": 21689349,
+      "max_ns": 23052431,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_grep_invert",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        13294,
+        10323,
+        9687
+      ],
+      "mean_ns": 11101.333333333334,
+      "stddev_ns": 1572.0399344659013,
+      "min_ns": 9687,
+      "max_ns": 13294,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_grep_invert",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        20207955,
+        20402458,
+        20784062
+      ],
+      "mean_ns": 20464825.0,
+      "stddev_ns": 239293.47515690155,
+      "min_ns": 20207955,
+      "max_ns": 20784062,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_grep_regex",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        104795,
+        43540,
+        37418
+      ],
+      "mean_ns": 61917.666666666664,
+      "stddev_ns": 30421.691891733364,
+      "min_ns": 37418,
+      "max_ns": 104795,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_grep_regex",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        20254685,
+        21328850,
+        20355613
+      ],
+      "mean_ns": 20646382.666666668,
+      "stddev_ns": 484333.1230302366,
+      "min_ns": 20254685,
+      "max_ns": 21328850,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_sed_replace",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        492921,
+        135510,
+        85705
+      ],
+      "mean_ns": 238045.33333333334,
+      "stddev_ns": 181367.65349299627,
+      "min_ns": 85705,
+      "max_ns": 492921,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_sed_replace",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        27868276,
+        26043437,
+        26459968
+      ],
+      "mean_ns": 26790560.333333332,
+      "stddev_ns": 780802.0714301132,
+      "min_ns": 26043437,
+      "max_ns": 27868276,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_sed_global",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        92305,
+        72527,
+        68766
+      ],
+      "mean_ns": 77866.0,
+      "stddev_ns": 10324.721820304248,
+      "min_ns": 68766,
+      "max_ns": 92305,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_sed_global",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        26502814,
+        22619648,
+        21656546
+      ],
+      "mean_ns": 23593002.666666668,
+      "stddev_ns": 2094778.088851312,
+      "min_ns": 21656546,
+      "max_ns": 26502814,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_sed_delete",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        10938,
+        7959,
+        6835
+      ],
+      "mean_ns": 8577.333333333334,
+      "stddev_ns": 1731.1661451813982,
+      "min_ns": 6835,
+      "max_ns": 10938,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_sed_delete",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        21328857,
+        21121025,
+        21533095
+      ],
+      "mean_ns": 21327659.0,
+      "stddev_ns": 168229.00587790046,
+      "min_ns": 21121025,
+      "max_ns": 21533095,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_sed_lines",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        8124,
+        5812,
+        5116
+      ],
+      "mean_ns": 6350.666666666667,
+      "stddev_ns": 1285.7260810746413,
+      "min_ns": 5116,
+      "max_ns": 8124,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_sed_lines",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        21948223,
+        21647582,
+        20211063
+      ],
+      "mean_ns": 21268956.0,
+      "stddev_ns": 758045.4921735678,
+      "min_ns": 20211063,
+      "max_ns": 21948223,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_sed_backrefs",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        149680,
+        133605,
+        130369
+      ],
+      "mean_ns": 137884.66666666666,
+      "stddev_ns": 8444.538287490257,
+      "min_ns": 130369,
+      "max_ns": 149680,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_sed_backrefs",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        20632873,
+        21720401,
+        20527116
+      ],
+      "mean_ns": 20960130.0,
+      "stddev_ns": 539323.7313790917,
+      "min_ns": 20527116,
+      "max_ns": 21720401,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_awk_print",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        12159,
+        8841,
+        7397
+      ],
+      "mean_ns": 9465.666666666666,
+      "stddev_ns": 1993.6260654618482,
+      "min_ns": 7397,
+      "max_ns": 12159,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_awk_print",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        19362639,
+        20510017,
+        24676832
+      ],
+      "mean_ns": 21516496.0,
+      "stddev_ns": 2283259.628016198,
+      "min_ns": 19362639,
+      "max_ns": 24676832,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_awk_sum",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        18961,
+        12973,
+        12641
+      ],
+      "mean_ns": 14858.333333333334,
+      "stddev_ns": 2904.187933924999,
+      "min_ns": 12641,
+      "max_ns": 18961,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_awk_sum",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        26835268,
+        24738767,
+        21638355
+      ],
+      "mean_ns": 24404130.0,
+      "stddev_ns": 2134785.3324895846,
+      "min_ns": 21638355,
+      "max_ns": 26835268,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_awk_pattern",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        34251,
+        24633,
+        25944
+      ],
+      "mean_ns": 28276.0,
+      "stddev_ns": 4258.728213915511,
+      "min_ns": 24633,
+      "max_ns": 34251,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_awk_pattern",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        20988883,
+        20583772,
+        20003141
+      ],
+      "mean_ns": 20525265.333333332,
+      "stddev_ns": 404548.38620724826,
+      "min_ns": 20003141,
+      "max_ns": 20988883,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_awk_fieldsep",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        11246,
+        9275,
+        8800
+      ],
+      "mean_ns": 9773.666666666666,
+      "stddev_ns": 1059.0027803971475,
+      "min_ns": 8800,
+      "max_ns": 11246,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_awk_fieldsep",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        21230394,
+        22055413,
+        21095423
+      ],
+      "mean_ns": 21460410.0,
+      "stddev_ns": 424323.5559625068,
+      "min_ns": 21095423,
+      "max_ns": 22055413,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_awk_nf",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        9933,
+        7521,
+        6195
+      ],
+      "mean_ns": 7883.0,
+      "stddev_ns": 1547.3512852613655,
+      "min_ns": 6195,
+      "max_ns": 9933,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_awk_nf",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        21045966,
+        20120483,
+        22618721
+      ],
+      "mean_ns": 21261723.333333332,
+      "stddev_ns": 1031248.9826504342,
+      "min_ns": 20120483,
+      "max_ns": 22618721,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_awk_compute",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        18748,
+        13847,
+        12718
+      ],
+      "mean_ns": 15104.333333333334,
+      "stddev_ns": 2617.3638561643575,
+      "min_ns": 12718,
+      "max_ns": 18748,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_awk_compute",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        20512477,
+        20116356,
+        25592398
+      ],
+      "mean_ns": 22073743.666666668,
+      "stddev_ns": 2493314.2868846054,
+      "min_ns": 20116356,
+      "max_ns": 25592398,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_jq_identity",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        556028,
+        413188,
+        503644
+      ],
+      "mean_ns": 490953.3333333333,
+      "stddev_ns": 59000.5998010943,
+      "min_ns": 413188,
+      "max_ns": 556028,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_jq_identity",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        23767761,
+        23027132,
+        22992555
+      ],
+      "mean_ns": 23262482.666666668,
+      "stddev_ns": 357564.48167599394,
+      "min_ns": 22992555,
+      "max_ns": 23767761,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_jq_field",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        442199,
+        400054,
+        409113
+      ],
+      "mean_ns": 417122.0,
+      "stddev_ns": 18113.68390655713,
+      "min_ns": 400054,
+      "max_ns": 442199,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_jq_field",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        29150161,
+        24524489,
+        23959301
+      ],
+      "mean_ns": 25877983.666666668,
+      "stddev_ns": 2325255.2181672924,
+      "min_ns": 23959301,
+      "max_ns": 29150161,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_jq_array",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        375433,
+        370812,
+        367411
+      ],
+      "mean_ns": 371218.6666666667,
+      "stddev_ns": 3287.5679291672272,
+      "min_ns": 367411,
+      "max_ns": 375433,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_jq_array",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        22401008,
+        29337949,
+        23061915
+      ],
+      "mean_ns": 24933624.0,
+      "stddev_ns": 3125994.086673976,
+      "min_ns": 22401008,
+      "max_ns": 29337949,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_jq_filter",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        425072,
+        380728,
+        357513
+      ],
+      "mean_ns": 387771.0,
+      "stddev_ns": 28026.862198017578,
+      "min_ns": 357513,
+      "max_ns": 425072,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_jq_filter",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        22344102,
+        25497957,
+        24372674
+      ],
+      "mean_ns": 24071577.666666668,
+      "stddev_ns": 1305040.124981178,
+      "min_ns": 22344102,
+      "max_ns": 25497957,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "tool_jq_map",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        428987,
+        382865,
+        372439
+      ],
+      "mean_ns": 394763.6666666667,
+      "stddev_ns": 24571.02327720376,
+      "min_ns": 372439,
+      "max_ns": 428987,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "tool_jq_map",
+      "category": "tools",
+      "iterations": 3,
+      "times_ns": [
+        24635817,
+        28918559,
+        23568441
+      ],
+      "mean_ns": 25707605.666666668,
+      "stddev_ns": 2311923.9986033756,
+      "min_ns": 23568441,
+      "max_ns": 28918559,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "complex_fibonacci",
+      "category": "complex",
+      "iterations": 3,
+      "times_ns": [
+        884334,
+        924539,
+        1017487
+      ],
+      "mean_ns": 942120.0,
+      "stddev_ns": 55762.88504611886,
+      "min_ns": 884334,
+      "max_ns": 1017487,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "complex_fibonacci",
+      "category": "complex",
+      "iterations": 3,
+      "times_ns": [
+        584406509,
+        602297424,
+        594911543
+      ],
+      "mean_ns": 593871825.3333334,
+      "stddev_ns": 7340843.253291379,
+      "min_ns": 584406509,
+      "max_ns": 602297424,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "complex_fibonacci_iter",
+      "category": "complex",
+      "iterations": 3,
+      "times_ns": [
+        22594,
+        19065,
+        18801
+      ],
+      "mean_ns": 20153.333333333332,
+      "stddev_ns": 1729.174048177016,
+      "min_ns": 18801,
+      "max_ns": 22594,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "complex_fibonacci_iter",
+      "category": "complex",
+      "iterations": 3,
+      "times_ns": [
+        8206817,
+        8419937,
+        8913498
+      ],
+      "mean_ns": 8513417.333333334,
+      "stddev_ns": 295976.8442297847,
+      "min_ns": 8206817,
+      "max_ns": 8913498,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "complex_nested_subst",
+      "category": "complex",
+      "iterations": 3,
+      "times_ns": [
+        14277,
+        8933,
+        7522
+      ],
+      "mean_ns": 10244.0,
+      "stddev_ns": 2909.3581193566847,
+      "min_ns": 7522,
+      "max_ns": 14277,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "complex_nested_subst",
+      "category": "complex",
+      "iterations": 3,
+      "times_ns": [
+        18907581,
+        17399083,
+        17399633
+      ],
+      "mean_ns": 17902099.0,
+      "stddev_ns": 710983.1760166106,
+      "min_ns": 17399083,
+      "max_ns": 18907581,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "complex_loop_compute",
+      "category": "complex",
+      "iterations": 3,
+      "times_ns": [
+        24172,
+        20891,
+        19788
+      ],
+      "mean_ns": 21617.0,
+      "stddev_ns": 1861.9292861617132,
+      "min_ns": 19788,
+      "max_ns": 24172,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "complex_loop_compute",
+      "category": "complex",
+      "iterations": 3,
+      "times_ns": [
+        8224963,
+        8793148,
+        9486999
+      ],
+      "mean_ns": 8835036.666666666,
+      "stddev_ns": 516074.743695351,
+      "min_ns": 8224963,
+      "max_ns": 9486999,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "complex_string_build",
+      "category": "complex",
+      "iterations": 3,
+      "times_ns": [
+        1000000000,
+        1000000000,
+        1000000000
+      ],
+      "mean_ns": 1000000000.0,
+      "stddev_ns": 0.0,
+      "min_ns": 1000000000,
+      "max_ns": 1000000000,
+      "errors": 3,
+      "error_messages": [
+        "command not found: a",
+        "command not found: a",
+        "command not found: a"
+      ],
+      "output_match": false
+    },
+    {
+      "runner": "bash",
+      "case_name": "complex_string_build",
+      "category": "complex",
+      "iterations": 3,
+      "times_ns": [
+        8334757,
+        7753172,
+        8139673
+      ],
+      "mean_ns": 8075867.333333333,
+      "stddev_ns": 241679.74729702852,
+      "min_ns": 7753172,
+      "max_ns": 8334757,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "complex_json_transform",
+      "category": "complex",
+      "iterations": 3,
+      "times_ns": [
+        410365,
+        418768,
+        375602
+      ],
+      "mean_ns": 401578.3333333333,
+      "stddev_ns": 18685.64551259127,
+      "min_ns": 375602,
+      "max_ns": 418768,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "complex_json_transform",
+      "category": "complex",
+      "iterations": 3,
+      "times_ns": [
+        23757284,
+        23507634,
+        22656071
+      ],
+      "mean_ns": 23306996.333333332,
+      "stddev_ns": 471422.756349566,
+      "min_ns": 22656071,
+      "max_ns": 23757284,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bashkit",
+      "case_name": "complex_pipeline_text",
+      "category": "complex",
+      "iterations": 3,
+      "times_ns": [
+        154281,
+        102756,
+        90228
+      ],
+      "mean_ns": 115755.0,
+      "stddev_ns": 27717.95089828972,
+      "min_ns": 90228,
+      "max_ns": 154281,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    },
+    {
+      "runner": "bash",
+      "case_name": "complex_pipeline_text",
+      "category": "complex",
+      "iterations": 3,
+      "times_ns": [
+        23811878,
+        24140366,
+        24838567
+      ],
+      "mean_ns": 24263603.666666668,
+      "stddev_ns": 428106.85390786367,
+      "min_ns": 23811878,
+      "max_ns": 24838567,
+      "errors": 0,
+      "error_messages": [],
+      "output_match": true
+    }
+  ],
+  "summary": {
+    "total_cases": 75,
+    "runner_stats": {
+      "bashkit": {
+        "total_time_ms": 4004.728974666668,
+        "avg_time_ms": 53.39638632888891,
+        "error_count": 12,
+        "error_rate": 0.05333333333333334,
+        "output_match_rate": 0.8
+      },
+      "bash": {
+        "total_time_ms": 1663.2578816666667,
+        "avg_time_ms": 22.176771755555556,
+        "error_count": 0,
+        "error_rate": 0.0,
+        "output_match_rate": 1.0
+      }
+    }
+  }
+}
