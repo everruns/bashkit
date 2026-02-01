@@ -2,13 +2,12 @@
 //!
 //! Implements a recursive descent parser for bash scripts.
 //!
-//! # Known Issues
+//! # Design Notes
 //!
-//! TODO(parser): Fix handling of reserved words as arguments after compound commands.
-//! E.g., `for i in 1; do echo $i; done; echo done` hangs because "done" is treated
-//! as a keyword instead of a regular word when it appears as an argument to echo.
-//! The parser needs to properly distinguish between keywords in command position
-//! vs regular words in argument position.
+//! Reserved words (like `done`, `fi`, `then`) are only treated as special in command
+//! position - when they would start a command. In argument position, they are regular
+//! words. The termination of compound commands is handled by `parse_compound_list_until`
+//! which checks for terminators BEFORE parsing each command.
 
 mod ast;
 mod lexer;
@@ -633,19 +632,10 @@ impl<'a> Parser<'a> {
         Ok(commands)
     }
 
-    /// Reserved words that terminate simple commands (cannot appear as arguments)
-    const TERMINATING_WORDS: &'static [&'static str] = &[
-        "then", "else", "elif", "fi", "do", "done", "esac", "in", "}", ")",
-    ];
-
-    /// Reserved words that cannot start a simple command
+    /// Reserved words that cannot start a simple command.
+    /// These words are only special in command position, not as arguments.
     const NON_COMMAND_WORDS: &'static [&'static str] =
         &["then", "else", "elif", "fi", "do", "done", "esac", "in"];
-
-    /// Check if a word is a terminating reserved word
-    fn is_terminating_word(word: &str) -> bool {
-        Self::TERMINATING_WORDS.contains(&word)
-    }
 
     /// Check if a word cannot start a command
     fn is_non_command_word(word: &str) -> bool {
@@ -739,11 +729,11 @@ impl<'a> Parser<'a> {
                         matches!(&self.current_token, Some(tokens::Token::LiteralWord(_)));
 
                     // Stop if this word cannot start a command (like 'then', 'fi', etc.)
+                    // This check is only for command position - reserved words in argument
+                    // position are handled as regular arguments. The termination of compound
+                    // commands is handled by parse_compound_list_until which checks for
+                    // terminators BEFORE calling parse_command_list.
                     if words.is_empty() && Self::is_non_command_word(w) {
-                        break;
-                    }
-                    // Stop if we see a terminating word as an argument
-                    if !words.is_empty() && Self::is_terminating_word(w) {
                         break;
                     }
 
