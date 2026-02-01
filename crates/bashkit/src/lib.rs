@@ -26,7 +26,7 @@ mod network;
 mod parser;
 
 pub use error::{Error, Result};
-pub use fs::{FileSystem, InMemoryFs, MountableFs, OverlayFs};
+pub use fs::{DirEntry, FileSystem, FileType, InMemoryFs, Metadata, MountableFs, OverlayFs};
 pub use interpreter::{ControlFlow, ExecResult};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
@@ -44,7 +44,6 @@ use std::sync::Arc;
 ///
 /// Provides a sandboxed bash interpreter with an in-memory virtual filesystem.
 pub struct Bash {
-    #[allow(dead_code)] // Will be used for filesystem access methods
     fs: Arc<dyn FileSystem>,
     interpreter: Interpreter,
 }
@@ -73,6 +72,42 @@ impl Bash {
         let parser = Parser::new(script);
         let ast = parser.parse()?;
         self.interpreter.execute(&ast).await
+    }
+
+    /// Get a clone of the underlying filesystem.
+    ///
+    /// Provides direct access to the virtual filesystem for:
+    /// - Pre-populating files before script execution
+    /// - Reading binary file outputs after execution
+    /// - Injecting test data or configuration
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use bashkit::Bash;
+    /// use std::path::Path;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> anyhow::Result<()> {
+    ///     let mut bash = Bash::new();
+    ///     let fs = bash.fs();
+    ///
+    ///     // Pre-populate config file
+    ///     fs.mkdir(Path::new("/config"), false).await?;
+    ///     fs.write_file(Path::new("/config/app.txt"), b"debug=true\n").await?;
+    ///
+    ///     // Bash script can read pre-populated files
+    ///     let result = bash.exec("cat /config/app.txt").await?;
+    ///     assert_eq!(result.stdout, "debug=true\n");
+    ///
+    ///     // Bash creates output, read it directly
+    ///     bash.exec("echo 'done' > /output.txt").await?;
+    ///     let output = fs.read_file(Path::new("/output.txt")).await?;
+    ///     assert_eq!(output, b"done\n");
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn fs(&self) -> Arc<dyn FileSystem> {
+        Arc::clone(&self.fs)
     }
 }
 
@@ -926,5 +961,151 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "1\nok\n");
+    }
+
+    // Filesystem access tests
+
+    #[tokio::test]
+    async fn test_fs_read_write_binary() {
+        let bash = Bash::new();
+        let fs = bash.fs();
+        let path = std::path::Path::new("/tmp/binary.bin");
+
+        // Write binary data with null bytes and high bytes
+        let binary_data: Vec<u8> = vec![0x00, 0x01, 0xFF, 0xFE, 0x42, 0x00, 0x7F];
+        fs.write_file(path, &binary_data).await.unwrap();
+
+        // Read it back
+        let content = fs.read_file(path).await.unwrap();
+        assert_eq!(content, binary_data);
+    }
+
+    #[tokio::test]
+    async fn test_fs_write_then_exec_cat() {
+        let mut bash = Bash::new();
+        let path = std::path::Path::new("/tmp/prepopulated.txt");
+
+        // Pre-populate a file before running bash
+        bash.fs()
+            .write_file(path, b"Hello from Rust!\n")
+            .await
+            .unwrap();
+
+        // Access it from bash
+        let result = bash.exec("cat /tmp/prepopulated.txt").await.unwrap();
+        assert_eq!(result.stdout, "Hello from Rust!\n");
+    }
+
+    #[tokio::test]
+    async fn test_fs_exec_then_read() {
+        let mut bash = Bash::new();
+        let path = std::path::Path::new("/tmp/from_bash.txt");
+
+        // Create file via bash
+        bash.exec("echo 'Created by bash' > /tmp/from_bash.txt")
+            .await
+            .unwrap();
+
+        // Read it directly
+        let content = bash.fs().read_file(path).await.unwrap();
+        assert_eq!(content, b"Created by bash\n");
+    }
+
+    #[tokio::test]
+    async fn test_fs_exists_and_stat() {
+        let bash = Bash::new();
+        let fs = bash.fs();
+        let path = std::path::Path::new("/tmp/testfile.txt");
+
+        // File doesn't exist yet
+        assert!(!fs.exists(path).await.unwrap());
+
+        // Create it
+        fs.write_file(path, b"content").await.unwrap();
+
+        // Now exists
+        assert!(fs.exists(path).await.unwrap());
+
+        // Check metadata
+        let stat = fs.stat(path).await.unwrap();
+        assert!(stat.file_type.is_file());
+        assert_eq!(stat.size, 7); // "content" = 7 bytes
+    }
+
+    #[tokio::test]
+    async fn test_fs_mkdir_and_read_dir() {
+        let bash = Bash::new();
+        let fs = bash.fs();
+
+        // Create nested directories
+        fs.mkdir(std::path::Path::new("/data/nested/dir"), true)
+            .await
+            .unwrap();
+
+        // Create some files
+        fs.write_file(std::path::Path::new("/data/file1.txt"), b"1")
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/data/file2.txt"), b"2")
+            .await
+            .unwrap();
+
+        // Read directory
+        let entries = fs.read_dir(std::path::Path::new("/data")).await.unwrap();
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"nested"));
+        assert!(names.contains(&"file1.txt"));
+        assert!(names.contains(&"file2.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_fs_append() {
+        let bash = Bash::new();
+        let fs = bash.fs();
+        let path = std::path::Path::new("/tmp/append.txt");
+
+        fs.write_file(path, b"line1\n").await.unwrap();
+        fs.append_file(path, b"line2\n").await.unwrap();
+        fs.append_file(path, b"line3\n").await.unwrap();
+
+        let content = fs.read_file(path).await.unwrap();
+        assert_eq!(content, b"line1\nline2\nline3\n");
+    }
+
+    #[tokio::test]
+    async fn test_fs_copy_and_rename() {
+        let bash = Bash::new();
+        let fs = bash.fs();
+
+        fs.write_file(std::path::Path::new("/tmp/original.txt"), b"data")
+            .await
+            .unwrap();
+
+        // Copy
+        fs.copy(
+            std::path::Path::new("/tmp/original.txt"),
+            std::path::Path::new("/tmp/copied.txt"),
+        )
+        .await
+        .unwrap();
+
+        // Rename
+        fs.rename(
+            std::path::Path::new("/tmp/copied.txt"),
+            std::path::Path::new("/tmp/renamed.txt"),
+        )
+        .await
+        .unwrap();
+
+        // Verify
+        let content = fs
+            .read_file(std::path::Path::new("/tmp/renamed.txt"))
+            .await
+            .unwrap();
+        assert_eq!(content, b"data");
+        assert!(!fs
+            .exists(std::path::Path::new("/tmp/copied.txt"))
+            .await
+            .unwrap());
     }
 }
