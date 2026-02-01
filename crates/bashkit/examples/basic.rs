@@ -18,11 +18,15 @@ async fn main() -> anyhow::Result<()> {
     println!("Output: {}", result.stdout);
 
     // Pipelines
-    let result = bash.exec("echo -e 'apple\\nbanana\\ncherry' | grep a").await?;
+    let result = bash
+        .exec("echo -e 'apple\\nbanana\\ncherry' | grep a")
+        .await?;
     println!("Filtered: {}", result.stdout);
 
     // Command substitution
-    let result = bash.exec("FILES=$(echo one two three); echo \"Files: $FILES\"").await?;
+    let result = bash
+        .exec("FILES=$(echo one two three); echo \"Files: $FILES\"")
+        .await?;
     println!("Output: {}", result.stdout);
 
     // Arithmetic

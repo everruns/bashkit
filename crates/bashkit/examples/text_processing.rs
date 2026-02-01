@@ -48,13 +48,13 @@ async fn grep_examples(bash: &mut Bash) -> anyhow::Result<()> {
 
 async fn sed_examples(bash: &mut Bash) -> anyhow::Result<()> {
     // Simple substitution
-    let result = bash.exec("echo 'hello world' | sed 's/world/bash/'").await?;
+    let result = bash
+        .exec("echo 'hello world' | sed 's/world/bash/'")
+        .await?;
     println!("Substitution: {}", result.stdout);
 
     // Global substitution
-    let result = bash
-        .exec("echo 'aaa bbb aaa' | sed 's/aaa/XXX/g'")
-        .await?;
+    let result = bash.exec("echo 'aaa bbb aaa' | sed 's/aaa/XXX/g'").await?;
     println!("Global replace: {}", result.stdout);
 
     // Delete lines matching pattern
@@ -86,9 +86,7 @@ async fn awk_examples(bash: &mut Bash) -> anyhow::Result<()> {
     println!("Error details:\n{}", result.stdout);
 
     // Custom field separator
-    let result = bash
-        .exec("echo 'a,b,c' | awk -F, '{print $2}'")
-        .await?;
+    let result = bash.exec("echo 'a,b,c' | awk -F, '{print $2}'").await?;
     println!("CSV field 2: {}", result.stdout);
 
     Ok(())

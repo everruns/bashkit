@@ -40,9 +40,7 @@ async fn loop_limit_example() {
     let mut bash = Bash::builder().limits(limits).build();
 
     // This will fail - trying to loop 100 times with limit of 5
-    let result = bash
-        .exec("for i in $(seq 1 100); do echo $i; done")
-        .await;
+    let result = bash.exec("for i in $(seq 1 100); do echo $i; done").await;
 
     match result {
         Ok(_) => println!("Unexpected success"),

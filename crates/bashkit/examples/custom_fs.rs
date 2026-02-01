@@ -27,7 +27,8 @@ async fn inmemory_example() -> anyhow::Result<()> {
     let mut bash = Bash::builder().fs(fs).build();
 
     // Create and read files
-    bash.exec("echo 'Hello from memory!' > /tmp/test.txt").await?;
+    bash.exec("echo 'Hello from memory!' > /tmp/test.txt")
+        .await?;
     let result = bash.exec("cat /tmp/test.txt").await?;
     println!("File contents: {}", result.stdout);
 
@@ -44,7 +45,8 @@ async fn overlay_example() -> anyhow::Result<()> {
     let base = Arc::new(InMemoryFs::new());
 
     // Pre-populate the base filesystem
-    base.write_file(Path::new("/data/config.txt"), b"base config").await?;
+    base.write_file(Path::new("/data/config.txt"), b"base config")
+        .await?;
 
     let overlay = Arc::new(OverlayFs::new(base));
     let mut bash = Bash::builder().fs(overlay).build();
@@ -54,7 +56,8 @@ async fn overlay_example() -> anyhow::Result<()> {
     println!("Base config: {}", result.stdout);
 
     // Writes go to the overlay layer
-    bash.exec("echo 'overlay config' > /data/config.txt").await?;
+    bash.exec("echo 'overlay config' > /data/config.txt")
+        .await?;
     let result = bash.exec("cat /data/config.txt").await?;
     println!("After overlay write: {}", result.stdout);
 
@@ -67,7 +70,9 @@ async fn mountable_example() -> anyhow::Result<()> {
     let data_fs = Arc::new(InMemoryFs::new());
 
     // Pre-populate data filesystem
-    data_fs.write_file(Path::new("/users.json"), br#"["alice", "bob"]"#).await?;
+    data_fs
+        .write_file(Path::new("/users.json"), br#"["alice", "bob"]"#)
+        .await?;
 
     let mountable = MountableFs::new(root);
     mountable.mount("/mnt/data", data_fs)?;
