@@ -163,12 +163,19 @@ Bash::builder()
 
 | Threat | Attack Vector | Mitigation | Status |
 |--------|--------------|------------|--------|
-| Hostname | `hostname`, `$HOSTNAME` | Not implemented | **MITIGATED** |
-| Username | `whoami`, `$USER` | Env var controlled | **CALLER RISK** |
+| Hostname | `hostname`, `$HOSTNAME` | Returns hardcoded "bashkit-sandbox" | **MITIGATED** |
+| Username | `whoami`, `$USER` | Returns hardcoded "sandbox" | **MITIGATED** |
 | IP address | `ip addr`, `ifconfig` | Not implemented | **MITIGATED** |
-| System info | `uname -a` | Not implemented | **MITIGATED** |
+| System info | `uname -a` | Returns hardcoded sandbox values | **MITIGATED** |
+| User ID | `id` | Returns hardcoded uid=1000 | **MITIGATED** |
 
-**Current Risk**: LOW - System commands not implemented
+**Current Risk**: NONE - System builtins return hardcoded sandbox values
+
+**Implementation**: `builtins/system.rs` provides:
+- `hostname` → "bashkit-sandbox"
+- `uname` → hardcoded Linux 5.15.0 / bashkit-sandbox
+- `whoami` → "sandbox"
+- `id` → uid=1000(sandbox) gid=1000(sandbox)
 
 #### 3.3 Network Exfiltration
 
@@ -366,13 +373,19 @@ ExecutionLimits::new()
 
 ## Testing Coverage
 
-| Threat Category | Unit Tests | Fail-Point Tests | Fuzz Tests |
-|----------------|------------|------------------|------------|
-| Resource limits | ✅ | ✅ | ❌ |
-| Filesystem escape | ✅ | ✅ | ❌ |
-| Injection attacks | ✅ | ❌ | ❌ |
-| Network bypass | ✅ | ❌ | ❌ |
-| Parser edge cases | Partial | ❌ | ❌ |
+| Threat Category | Unit Tests | Fail-Point Tests | Threat Model Tests | Fuzz Tests |
+|----------------|------------|------------------|-------------------|------------|
+| Resource limits | ✅ | ✅ | ✅ | ❌ |
+| Filesystem escape | ✅ | ✅ | ✅ | ❌ |
+| Injection attacks | ✅ | ❌ | ✅ | ❌ |
+| Information disclosure | ✅ | ❌ | ✅ | ❌ |
+| Network bypass | ✅ | ❌ | ✅ | ❌ |
+| Multi-tenant isolation | ✅ | ❌ | ✅ | ❌ |
+| Parser edge cases | Partial | ❌ | ✅ | ❌ |
+
+**Test Files**:
+- `tests/threat_model_tests.rs` - 39 threat-based security tests
+- `tests/security_failpoint_tests.rs` - Fail-point injection tests
 
 **Recommendation**: Add cargo-fuzz for parser and input handling.
 
@@ -383,4 +396,6 @@ ExecutionLimits::new()
 - `specs/001-architecture.md` - System design
 - `specs/003-vfs.md` - Virtual filesystem design
 - `specs/005-security-testing.md` - Fail-point testing
-- `tests/security_failpoint_tests.rs` - Security test suite
+- `src/builtins/system.rs` - Hardcoded system builtins
+- `tests/threat_model_tests.rs` - Threat model test suite (39 tests)
+- `tests/security_failpoint_tests.rs` - Fail-point security tests
