@@ -13,6 +13,8 @@ license = "MIT"
 authors = ["Everruns"]
 repository = "https://github.com/everruns/bashkit"
 description = "Sandboxed bash interpreter for multi-tenant environments"
+keywords = ["bash", "shell", "interpreter", "sandbox", "rust", "ai", "agent", "everruns"]
+categories = ["command-line-utilities", "parser-implementations"]
 
 [workspace.dependencies]
 # Async runtime
