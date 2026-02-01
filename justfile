@@ -16,6 +16,10 @@ build:
 test:
     cargo test --all-features
 
+# Run bash comparison tests (compare with real bash)
+compare:
+    cargo test --test spec_tests -- bash_comparison_tests --nocapture
+
 # Run formatters and linters (auto-fix)
 fmt:
     cargo fmt
