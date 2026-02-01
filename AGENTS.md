@@ -65,6 +65,7 @@ just pre-pr       # Pre-PR checks
 6. Update specs if behavior changes
 7. CI green before merge
 8. Resolve all PR comments
+9. `cargo bench --bench parallel_execution` if touching Arc/async/Interpreter/builtins (see `specs/007-parallel-execution.md`)
 
 ### CI
 
