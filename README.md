@@ -102,6 +102,24 @@ just check        # fmt + clippy + test
 just pre-pr       # Pre-PR checks
 ```
 
+## Benchmarks
+
+BashKit includes a benchmark tool to compare performance against bash and just-bash.
+
+```bash
+just bench              # Quick benchmark run
+just bench --save       # Save results with system identifier
+just bench-verbose      # Detailed output
+just bench-list         # List all benchmarks
+```
+
+Key findings:
+- **~2000x faster startup** - No subprocess overhead (0.004ms vs 9ms)
+- **~200-1000x faster for tools** - grep/sed/awk run in-process
+- **~550x faster recursive functions** - Fibonacci(10): 1ms vs 586ms
+
+See [crates/bashkit-bench/README.md](crates/bashkit-bench/README.md) for methodology and assumptions.
+
 ## Acknowledgments
 
 This project was inspired by [just-bash](https://github.com/vercel-labs/just-bash) from Vercel Labs. Huge kudos to the Vercel team for pioneering the idea of a sandboxed bash interpreter for AI-powered environments. Their work laid the conceptual foundation that made BashKit possible.

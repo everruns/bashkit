@@ -53,3 +53,33 @@ repl:
 # Run a script file
 run-script file:
     cargo run -p bashkit-cli -- run {{file}}
+
+# === Benchmarks ===
+
+# Run benchmarks comparing bashkit to bash
+bench:
+    cargo run -p bashkit-bench --release
+
+# Run benchmarks and save results to JSON
+bench-save file="bench-results.json":
+    cargo run -p bashkit-bench --release -- --save {{file}}
+
+# Run benchmarks with verbose output
+bench-verbose:
+    cargo run -p bashkit-bench --release -- --verbose
+
+# Run specific benchmark category (startup, variables, arithmetic, control, strings, arrays, pipes, tools, complex)
+bench-category cat:
+    cargo run -p bashkit-bench --release -- --category {{cat}}
+
+# Run benchmarks with more iterations for accuracy
+bench-accurate:
+    cargo run -p bashkit-bench --release -- --iterations 50 --warmup 5
+
+# List available benchmarks
+bench-list:
+    cargo run -p bashkit-bench --release -- --list
+
+# Run benchmarks with all runners (including just-bash if available)
+bench-all:
+    cargo run -p bashkit-bench --release -- --runners bashkit,bash,just-bash
