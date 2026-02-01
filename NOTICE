@@ -1,0 +1,103 @@
+BashKit
+Copyright (c) 2024-2026 Everruns
+
+This product is an independent implementation of a sandboxed bash interpreter.
+
+================================================================================
+ACKNOWLEDGMENTS
+================================================================================
+
+BashKit is an independent implementation that draws design inspiration from
+several open source projects. We gratefully acknowledge:
+
+--------------------------------------------------------------------------------
+just-bash
+--------------------------------------------------------------------------------
+Copyright (c) Vercel Inc.
+Licensed under the Apache License, Version 2.0
+
+Repository: https://github.com/vercel/just-bash
+
+BashKit's sandboxing architecture and multi-tenant design was inspired by
+just-bash's approach to safe bash execution. No code was copied; this is an
+independent Rust implementation.
+
+--------------------------------------------------------------------------------
+Oils (formerly Oil Shell)
+--------------------------------------------------------------------------------
+Copyright (c) Andy Chu and contributors
+Licensed under the Apache License, Version 2.0
+
+Repository: https://github.com/oilshell/oil
+
+The Oils project's comprehensive bash compatibility testing approach inspired
+our spec test methodology. Our test cases are independently written following
+similar testing principles.
+
+--------------------------------------------------------------------------------
+One True AWK
+--------------------------------------------------------------------------------
+Copyright (c) Lucent Technologies
+Licensed under the Lucent Public License
+
+Repository: https://github.com/onetrueawk/awk
+
+The behavior and semantics of our AWK builtin implementation are informed by
+the One True AWK specification. Our implementation is written from scratch in
+Rust using the original AWK language definition as reference.
+
+--------------------------------------------------------------------------------
+jq
+--------------------------------------------------------------------------------
+Copyright (c) Stephen Dolan
+Licensed under the MIT License
+
+Repository: https://github.com/jqlang/jq
+
+Our jq builtin aims for compatibility with jq's query syntax and behavior.
+The implementation uses the jaq Rust crates (MIT licensed) rather than jq
+source code directly.
+
+================================================================================
+RUST DEPENDENCIES
+================================================================================
+
+BashKit uses the following notable Rust crates. Full dependency information
+is available via `cargo tree` or in the Cargo.lock file.
+
+jaq-core, jaq-std, jaq-json (MIT)
+  - JQ expression parsing and evaluation
+  - Copyright (c) Michael Färber
+
+grep, grep-regex, grep-searcher (MIT/Apache-2.0)
+  - Text search functionality
+  - Part of the ripgrep project by Andrew Gallant
+
+tokio (MIT)
+  - Async runtime
+  - Copyright (c) Tokio Contributors
+
+serde, serde_json (MIT/Apache-2.0)
+  - Serialization framework
+  - Copyright (c) David Tolnay and serde contributors
+
+regex (MIT/Apache-2.0)
+  - Regular expression engine
+  - Copyright (c) The Rust Project Developers
+
+All dependencies are permissively licensed (MIT, Apache-2.0, BSD, ISC, Zlib).
+See THIRD_PARTY_LICENSES/ for full license texts of key dependencies.
+
+================================================================================
+INDEPENDENT IMPLEMENTATION NOTICE
+================================================================================
+
+BashKit is an independent implementation of a bash-like shell interpreter.
+It is not affiliated with, endorsed by, or derived from:
+
+- GNU Bash (GPL licensed)
+- The original Bourne shell
+- Any of the projects mentioned above
+
+The shell syntax parser, interpreter, virtual filesystem, and all builtins
+(except where noted) are original implementations written in Rust.
