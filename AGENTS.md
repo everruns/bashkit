@@ -27,6 +27,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 - Examples tested in CI - must pass
 - No silent deferral - `TODO` or `WTF` comment with explanation
 - Verify crate assumptions before planning to use them
+- Periodically rebase on main during implementation (parallel work may be running)
 
 ### Cloud Agent Setup
 

@@ -11,6 +11,18 @@ BashKit uses a multi-layer testing strategy:
 2. **Spec tests** - Compatibility tests against bash behavior
 3. **Comparison tests** - Direct comparison with real bash
 
+## Honest Metrics
+
+We track **spec test pass rate**, not bash compatibility percentage:
+- Pass rate = tests passing / tests running (excludes skipped)
+- Skipped tests are documented limitations, not hidden failures
+- Comparison tests against real bash run separately (not in pass rate)
+
+This matters because:
+1. 100% of curated tests ≠ bash compatible
+2. We test what we implement, not what bash does
+3. Real compatibility requires differential testing against bash
+
 ## Spec Test Framework
 
 ### Location
@@ -23,7 +35,7 @@ crates/bashkit/tests/
     ├── bash/           # Core bash compatibility
     │   ├── echo.test.sh
     │   ├── variables.test.sh
-    │   ├── control-flow.test.sh
+    │   ├── control-flow.test.sh.skip  # Needs implementation
     │   ├── functions.test.sh
     │   ├── arithmetic.test.sh
     │   ├── arrays.test.sh
@@ -85,11 +97,12 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 
 ## Coverage Goals
 
-| Category | Target | Current |
-|----------|--------|---------|
-| Core shell | 90% | 78% |
-| Builtins | 85% | 80% |
-| Text processing | 80% | 85% |
+| Category | Tests | Passing | Skipped | Status |
+|----------|-------|---------|---------|--------|
+| Core shell | 145 | 100 | 45 | In progress |
+| Text processing | 72 | 62 | 10 | Good |
+
+Note: "Passing" means passing against expected output. For real bash compatibility, run comparison tests.
 
 ## Adding New Tests
 

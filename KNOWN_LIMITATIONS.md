@@ -1,10 +1,17 @@
 # Known Limitations
 
-BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes safety and simplicity over full POSIX/bash compliance. This document tracks known limitations.
+BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes **practical compatibility** over full POSIX/bash compliance.
+
+## Compatibility Philosophy
+
+BashKit aims to handle common bash patterns used by AI agents, not to replicate bash 100%. When we differ from bash:
+- We document the difference here
+- We prefer explicit failure over silent misbehavior
+- We prioritize features by AI agent impact
 
 ## Spec Test Coverage
 
-Current compatibility: **100%** (102/102 non-skipped tests passing)
+Current status: **102 tests passing**, 24 tests skipped (documented below)
 
 | Category | Passed | Skipped | Total | Notes |
 |----------|--------|---------|-------|-------|
@@ -21,6 +28,33 @@ Current compatibility: **100%** (102/102 non-skipped tests passing)
 | Grep | 12 | 3 | 15 | -w, -o, -l stdin |
 | Sed | 13 | 4 | 17 | -i flag, multiple commands |
 | JQ | 20 | 1 | 21 | -r flag |
+
+## AI Agent Impact Rating
+
+Features prioritized by how often AI agents use them:
+
+### Critical (blocks most agent scripts)
+| Feature | Status | Workaround |
+|---------|--------|------------|
+| `echo`, `printf` | ✅ Works | - |
+| Variables | ✅ Works | - |
+| Pipes | ✅ Works | - |
+| `if`/`for`/`while` | ✅ Works | - |
+| Command substitution | ✅ Works | - |
+
+### High (blocks many scripts)
+| Feature | Status | Workaround |
+|---------|--------|------------|
+| `set -e` | ❌ Missing | Check `$?` manually |
+| `trap` | ❌ Missing | No cleanup on error |
+| Stderr redirect `2>` | ❌ Missing | Use stdout only |
+
+### Medium (blocks some scripts)
+| Feature | Status | Workaround |
+|---------|--------|------------|
+| Brace expansion | ❌ Missing | Use explicit list |
+| `[[ =~ ]]` regex | ❌ Missing | Use `grep` |
+| `${!arr[@]}` | ❌ Missing | Track indices manually |
 
 ## Shell Features
 
