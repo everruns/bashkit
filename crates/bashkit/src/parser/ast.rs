@@ -281,6 +281,8 @@ pub struct Assignment {
     /// Optional array index for indexed assignments like arr[0]=value
     pub index: Option<String>,
     pub value: AssignmentValue,
+    /// Whether this is an append assignment (+=)
+    pub append: bool,
 }
 
 /// Value in an assignment - scalar or array

@@ -206,7 +206,9 @@ impl Interpreter {
         let values: Vec<String> = if let Some(words) = &for_cmd.words {
             let mut vals = Vec::new();
             for w in words {
-                vals.push(self.expand_word(w).await?);
+                // Use expand_word_to_fields to properly handle "${arr[@]}"
+                let fields = self.expand_word_to_fields(w).await?;
+                vals.extend(fields);
             }
             vals
         } else {
@@ -650,19 +652,61 @@ impl Interpreter {
                         let index: usize =
                             self.evaluate_arithmetic(index_str).try_into().unwrap_or(0);
                         let arr = self.arrays.entry(assignment.name.clone()).or_default();
-                        arr.insert(index, value);
+                        if assignment.append {
+                            // Append to existing element
+                            let existing = arr.get(&index).cloned().unwrap_or_default();
+                            arr.insert(index, existing + &value);
+                        } else {
+                            arr.insert(index, value);
+                        }
+                    } else if assignment.append {
+                        // VAR+=value - append to variable
+                        let existing = self.expand_variable(&assignment.name);
+                        self.variables
+                            .insert(assignment.name.clone(), existing + &value);
                     } else {
                         self.variables.insert(assignment.name.clone(), value);
                     }
                 }
                 AssignmentValue::Array(words) => {
                     // arr=(a b c) - set whole array
-                    let mut arr = HashMap::new();
-                    for (i, word) in words.iter().enumerate() {
+                    // arr+=(d e f) - append to array
+                    // Handle word splitting for command substitution like arr=($(echo a b c))
+
+                    // First, expand all words (need to do this before borrowing arrays)
+                    let mut expanded_values = Vec::new();
+                    for word in words.iter() {
+                        let has_command_subst = word
+                            .parts
+                            .iter()
+                            .any(|p| matches!(p, WordPart::CommandSubstitution(_)));
                         let value = self.expand_word(word).await?;
-                        arr.insert(i, value);
+                        expanded_values.push((value, has_command_subst));
                     }
-                    self.arrays.insert(assignment.name.clone(), arr);
+
+                    // Now handle the array assignment
+                    let arr = self.arrays.entry(assignment.name.clone()).or_default();
+
+                    // Find starting index (max existing index + 1 for append, 0 for replace)
+                    let mut idx = if assignment.append {
+                        arr.keys().max().map(|k| k + 1).unwrap_or(0)
+                    } else {
+                        arr.clear();
+                        0
+                    };
+
+                    for (value, has_command_subst) in expanded_values {
+                        if has_command_subst && !value.is_empty() {
+                            // Word-split command substitution results
+                            for part in value.split_whitespace() {
+                                arr.insert(idx, part.to_string());
+                                idx += 1;
+                            }
+                        } else if !value.is_empty() || !has_command_subst {
+                            arr.insert(idx, value);
+                            idx += 1;
+                        }
+                    }
                 }
             }
         }
@@ -746,7 +790,8 @@ impl Interpreter {
                     if let Some(eq_pos) = arg.find('=') {
                         let var_name = &arg[..eq_pos];
                         let value = &arg[eq_pos + 1..];
-                        self.variables.insert(var_name.to_string(), value.to_string());
+                        self.variables
+                            .insert(var_name.to_string(), value.to_string());
                     } else {
                         self.variables.insert(arg.to_string(), String::new());
                     }
@@ -883,7 +928,22 @@ impl Interpreter {
                 }
                 WordPart::Length(name) => {
                     // ${#var} - length of variable value
-                    let value = self.expand_variable(name);
+                    // Also handles ${#arr[n]} - length of array element
+                    let value = if let Some(bracket_pos) = name.find('[') {
+                        // Array element length: ${#arr[n]}
+                        let arr_name = &name[..bracket_pos];
+                        let index_end = name.find(']').unwrap_or(name.len());
+                        let index_str = &name[bracket_pos + 1..index_end];
+                        let idx: usize =
+                            self.evaluate_arithmetic(index_str).try_into().unwrap_or(0);
+                        if let Some(arr) = self.arrays.get(arr_name) {
+                            arr.get(&idx).cloned().unwrap_or_default()
+                        } else {
+                            String::new()
+                        }
+                    } else {
+                        self.expand_variable(name)
+                    };
                     result.push_str(&value.len().to_string());
                 }
                 WordPart::ParameterExpansion {
@@ -929,6 +989,29 @@ impl Interpreter {
         }
 
         Ok(result)
+    }
+
+    /// Expand a word to multiple fields (for array iteration in for loops)
+    /// Returns Vec<String> where array expansions like "${arr[@]}" produce multiple fields
+    async fn expand_word_to_fields(&mut self, word: &Word) -> Result<Vec<String>> {
+        // Check if the word contains only an array expansion
+        if word.parts.len() == 1 {
+            if let WordPart::ArrayAccess { name, index } = &word.parts[0] {
+                if index == "@" || index == "*" {
+                    // ${arr[@]} or ${arr[*]} - return each element as separate field
+                    if let Some(arr) = self.arrays.get(name) {
+                        let mut indices: Vec<_> = arr.keys().collect();
+                        indices.sort();
+                        return Ok(indices.iter().filter_map(|i| arr.get(i).cloned()).collect());
+                    }
+                    return Ok(Vec::new());
+                }
+            }
+        }
+
+        // For other words, expand to a single field
+        let expanded = self.expand_word(word).await?;
+        Ok(vec![expanded])
     }
 
     /// Apply parameter expansion operator
@@ -1247,7 +1330,10 @@ impl Interpreter {
             match chars[i] {
                 '(' => depth += 1,
                 ')' => depth -= 1,
-                '|' if depth == 0 && (i == 0 || chars[i - 1] != '|') && (i + 1 >= chars.len() || chars[i + 1] != '|') => {
+                '|' if depth == 0
+                    && (i == 0 || chars[i - 1] != '|')
+                    && (i + 1 >= chars.len() || chars[i + 1] != '|') =>
+                {
                     let left = self.parse_arithmetic(&expr[..i]);
                     let right = self.parse_arithmetic(&expr[i + 1..]);
                     return left | right;
@@ -1262,7 +1348,10 @@ impl Interpreter {
             match chars[i] {
                 '(' => depth += 1,
                 ')' => depth -= 1,
-                '&' if depth == 0 && (i == 0 || chars[i - 1] != '&') && (i + 1 >= chars.len() || chars[i + 1] != '&') => {
+                '&' if depth == 0
+                    && (i == 0 || chars[i - 1] != '&')
+                    && (i + 1 >= chars.len() || chars[i + 1] != '&') =>
+                {
                     let left = self.parse_arithmetic(&expr[..i]);
                     let right = self.parse_arithmetic(&expr[i + 1..]);
                     return left & right;
@@ -1307,12 +1396,18 @@ impl Interpreter {
                     let right = self.parse_arithmetic(&expr[i + 1..]);
                     return if left >= right { 1 } else { 0 };
                 }
-                '<' if depth == 0 && (i + 1 >= chars.len() || chars[i + 1] != '=') && (i == 0 || chars[i - 1] != '<') => {
+                '<' if depth == 0
+                    && (i + 1 >= chars.len() || chars[i + 1] != '=')
+                    && (i == 0 || chars[i - 1] != '<') =>
+                {
                     let left = self.parse_arithmetic(&expr[..i]);
                     let right = self.parse_arithmetic(&expr[i + 1..]);
                     return if left < right { 1 } else { 0 };
                 }
-                '>' if depth == 0 && (i + 1 >= chars.len() || chars[i + 1] != '=') && (i == 0 || chars[i - 1] != '>') => {
+                '>' if depth == 0
+                    && (i + 1 >= chars.len() || chars[i + 1] != '=')
+                    && (i == 0 || chars[i - 1] != '>') =>
+                {
                     let left = self.parse_arithmetic(&expr[..i]);
                     let right = self.parse_arithmetic(&expr[i + 1..]);
                     return if left > right { 1 } else { 0 };
