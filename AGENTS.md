@@ -14,6 +14,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 - Code testable, smoke testable, runnable locally
 - Small, incremental PR-sized changes
 - No backward compat needed (internal code)
+- Write failing test before fixing bug
 
 ### Specs
 
