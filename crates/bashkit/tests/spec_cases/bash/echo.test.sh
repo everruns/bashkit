@@ -13,8 +13,8 @@ hello world
 ### end
 
 ### echo_empty
-### skip: test format expects empty but bash outputs newline
-# Echo with no arguments
+### skip: test framework can't express "expect only newline"
+# Echo with no arguments outputs just a newline
 echo
 ### expect
 
@@ -50,9 +50,9 @@ hello	world
 ### end
 
 ### echo_no_newline
-### skip: test format adds trailing newline but output has none
-# Echo with -n flag
-printf '%s' "$(echo -n hello)"
+# Echo with -n flag (no trailing newline)
+# Use printf to avoid test framework newline
+X=$(echo -n hello); printf '%s\n' "$X"
 ### expect
 hello
 ### end
