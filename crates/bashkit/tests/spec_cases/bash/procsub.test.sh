@@ -23,3 +23,29 @@ cat /tmp/file2
 first
 second
 ### end
+
+### procsub_empty_output
+# Process substitution with empty command output
+cat <(echo "")
+echo done
+### expect
+
+done
+### end
+
+### procsub_multiline
+# Process substitution with multiline output
+cat <(printf 'line1\nline2\nline3\n')
+### expect
+line1
+line2
+line3
+### end
+
+### procsub_variable_expansion
+# Process substitution with variable
+msg="world"
+cat <(echo "hello $msg")
+### expect
+hello world
+### end

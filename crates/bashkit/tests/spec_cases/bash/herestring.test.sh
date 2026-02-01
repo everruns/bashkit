@@ -34,3 +34,25 @@ cat <<< ""
 ### expect
 
 ### end
+
+### herestring_with_variable
+# Here string with variable expansion
+msg="universe"
+cat <<< "hello $msg"
+### expect
+hello universe
+### end
+
+### herestring_single_quotes
+# Here string with single quotes (literal)
+cat <<< 'hello $var world'
+### expect
+hello $var world
+### end
+
+### herestring_numbers
+# Here string with numbers
+cat <<< "123 456"
+### expect
+123 456
+### end

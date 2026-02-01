@@ -67,3 +67,33 @@ dirname foo/bar/baz
 ### expect
 foo/bar
 ### end
+
+### basename_no_args
+# Basename with no arguments should error
+basename 2>/dev/null
+echo $?
+### expect
+1
+### end
+
+### dirname_no_args
+# Dirname with no arguments should error
+dirname 2>/dev/null
+echo $?
+### expect
+1
+### end
+
+### basename_multiple_slashes
+# Handle multiple trailing slashes
+basename /path///to///file///
+### expect
+file
+### end
+
+### dirname_single_component
+# Single component relative path
+dirname file
+### expect
+.
+### end

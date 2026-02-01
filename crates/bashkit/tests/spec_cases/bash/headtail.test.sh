@@ -93,3 +93,35 @@ printf 'first\nsecond\nthird\n' | tail -n 1
 ### expect
 third
 ### end
+
+### head_empty_input
+# Head with empty input
+printf '' | head
+echo done
+### expect
+done
+### end
+
+### tail_empty_input
+# Tail with empty input
+printf '' | tail
+echo done
+### expect
+done
+### end
+
+### head_n_zero
+# Head with -n 0 outputs nothing
+printf 'a\nb\nc\n' | head -n 0
+echo done
+### expect
+done
+### end
+
+### tail_n_zero
+# Tail with -n 0 outputs nothing
+printf 'a\nb\nc\n' | tail -n 0
+echo done
+### expect
+done
+### end

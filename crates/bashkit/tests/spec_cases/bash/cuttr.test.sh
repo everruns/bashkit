@@ -50,3 +50,26 @@ one
 two
 three
 ### end
+
+### cut_no_field
+# Cut without field specification should error
+printf 'a,b,c\n' | cut -d, 2>/dev/null
+echo $?
+### expect
+1
+### end
+
+### cut_empty_input
+# Cut with empty input
+printf '' | cut -d, -f1
+echo done
+### expect
+done
+### end
+
+### tr_delete_all_vowels
+# Delete all vowels
+printf 'HELLO WORLD' | tr -d AEIOU
+### expect
+HLL WRLD
+### end

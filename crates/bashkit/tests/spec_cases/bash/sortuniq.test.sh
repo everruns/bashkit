@@ -60,3 +60,43 @@ a
 b
 c
 ### end
+
+### sort_empty
+# Sort empty input
+printf '' | sort
+echo done
+### expect
+done
+### end
+
+### uniq_empty
+# Uniq empty input
+printf '' | uniq
+echo done
+### expect
+done
+### end
+
+### sort_single_line
+# Sort single line
+printf 'only\n' | sort
+### expect
+only
+### end
+
+### uniq_all_same
+# All identical lines
+printf 'same\nsame\nsame\n' | uniq
+### expect
+same
+### end
+
+### sort_numeric_mixed
+# Numeric sort with mixed content
+printf '5\n10\n2\n1\n' | sort -n
+### expect
+1
+2
+5
+10
+### end

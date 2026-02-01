@@ -75,3 +75,51 @@ echo $?
 ### expect
 0
 ### end
+
+### rm_nonexistent_error
+# rm without -f should error on nonexistent
+rm /tmp/does_not_exist_at_all 2>/dev/null
+echo $?
+### expect
+1
+### end
+
+### mkdir_nested_error
+# mkdir without -p should error on nested path
+mkdir /tmp/nonexistent_parent/child 2>/dev/null
+echo $?
+### expect
+1
+### end
+
+### cp_missing_source
+# cp with missing source should error
+cp /tmp/source_not_here /tmp/dest 2>/dev/null
+echo $?
+### expect
+1
+### end
+
+### mv_missing_source
+# mv with missing source should error
+mv /tmp/source_not_here /tmp/dest 2>/dev/null
+echo $?
+### expect
+1
+### end
+
+### touch_multiple
+# touch can create multiple files
+touch /tmp/file1 /tmp/file2 /tmp/file3
+[ -f /tmp/file1 ] && [ -f /tmp/file2 ] && [ -f /tmp/file3 ] && echo ok
+### expect
+ok
+### end
+
+### chmod_missing_file
+# chmod on missing file should error
+chmod 644 /tmp/missing_file_here 2>/dev/null
+echo $?
+### expect
+1
+### end
