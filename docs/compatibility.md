@@ -6,8 +6,8 @@
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 35 | 13 | 48 |
-| Text Processing | 5 | 7 | 12 |
+| Shell Builtins | 37 | 11 | 48 |
+| Text Processing | 7 | 5 | 12 |
 | File Operations | 7 | 0 | 7 |
 | Network | 0 | 2 | 2 |
 
@@ -56,13 +56,13 @@
 | `touch` | - | Create empty files |
 | `chmod` | `MODE` | Change permissions (octal) |
 | `wc` | `-l`, `-w`, `-c` | Count lines/words/bytes |
+| `sort` | `-r`, `-n`, `-u` | Sort lines |
+| `uniq` | `-c`, `-d`, `-u` | Filter duplicate lines |
 
 ### Not Implemented
 
 | Builtin | Priority | Status |
 |---------|----------|--------|
-| `sort` | Medium | Planned |
-| `uniq` | Medium | Planned |
 | `cut` | Medium | Planned |
 | `tr` | Medium | Planned |
 | `date` | Medium | Planned |

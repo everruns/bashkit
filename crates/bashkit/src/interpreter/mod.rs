@@ -92,6 +92,8 @@ impl Interpreter {
         builtins.insert("touch", Box::new(builtins::Touch));
         builtins.insert("chmod", Box::new(builtins::Chmod));
         builtins.insert("wc", Box::new(builtins::Wc));
+        builtins.insert("sort", Box::new(builtins::Sort));
+        builtins.insert("uniq", Box::new(builtins::Uniq));
 
         Self {
             fs,
