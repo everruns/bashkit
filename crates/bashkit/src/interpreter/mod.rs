@@ -85,6 +85,12 @@ impl Interpreter {
         builtins.insert("tail", Box::new(builtins::Tail));
         builtins.insert("basename", Box::new(builtins::Basename));
         builtins.insert("dirname", Box::new(builtins::Dirname));
+        builtins.insert("mkdir", Box::new(builtins::Mkdir));
+        builtins.insert("rm", Box::new(builtins::Rm));
+        builtins.insert("cp", Box::new(builtins::Cp));
+        builtins.insert("mv", Box::new(builtins::Mv));
+        builtins.insert("touch", Box::new(builtins::Touch));
+        builtins.insert("chmod", Box::new(builtins::Chmod));
 
         Self {
             fs,

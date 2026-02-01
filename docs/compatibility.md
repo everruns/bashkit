@@ -6,9 +6,9 @@
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 28 | 20 | 48 |
+| Shell Builtins | 34 | 14 | 48 |
 | Text Processing | 4 | 8 | 12 |
-| File Operations | 1 | 6 | 7 |
+| File Operations | 7 | 0 | 7 |
 | Network | 0 | 2 | 2 |
 
 ---
@@ -49,18 +49,18 @@
 | `tail` | `-n N`, `-N` | Last N lines (default 10) |
 | `basename` | `NAME [SUFFIX]` | Strip directory from path |
 | `dirname` | `NAME` | Strip last path component |
+| `mkdir` | `-p` | Create directories |
+| `rm` | `-rf` | Remove files/directories |
+| `cp` | `-r` | Copy files |
+| `mv` | - | Move/rename files |
+| `touch` | - | Create empty files |
+| `chmod` | `MODE` | Change permissions (octal) |
 
 ### Not Implemented
 
 | Builtin | Priority | Status |
 |---------|----------|--------|
 | `wc` | High | Planned |
-| `mkdir` | High | Planned |
-| `rm` | High | Planned |
-| `cp` | High | Planned |
-| `mv` | High | Planned |
-| `touch` | Medium | Planned |
-| `chmod` | Medium | Planned |
 | `sort` | Medium | Planned |
 | `uniq` | Medium | Planned |
 | `cut` | Medium | Planned |
