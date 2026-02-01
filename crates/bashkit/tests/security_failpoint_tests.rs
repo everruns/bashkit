@@ -48,6 +48,7 @@ async fn run_script_with_limits(script: &str, limits: ExecutionLimits) -> ExecRe
 /// Security property: Even if the counter is corrupted to skip increment,
 /// the limit should still be enforced eventually.
 #[tokio::test]
+#[ignore = "Fail point test requires --test-threads=1"]
 async fn security_command_limit_skip_increment() {
     fail::cfg("limits::tick_command", "return(skip_increment)").unwrap();
 
@@ -68,6 +69,7 @@ async fn security_command_limit_skip_increment() {
 
 /// Test: Command counter overflow is handled
 #[tokio::test]
+#[ignore = "Fail point test requires --test-threads=1"]
 async fn security_command_limit_overflow() {
     fail::cfg("limits::tick_command", "return(force_overflow)").unwrap();
 
@@ -109,6 +111,7 @@ async fn security_loop_counter_reset() {
 
 /// Test: Function depth bypass is detected
 #[tokio::test]
+#[ignore = "Fail point test requires --test-threads=1"]
 async fn security_function_depth_bypass() {
     fail::cfg("limits::push_function", "return(skip_check)").unwrap();
 
@@ -145,6 +148,7 @@ async fn security_function_depth_bypass() {
 
 /// Test: Read failure is handled gracefully
 #[tokio::test]
+#[ignore = "Fail point test requires --test-threads=1"]
 async fn security_fs_read_io_error() {
     fail::cfg("fs::read_file", "return(io_error)").unwrap();
 
@@ -158,6 +162,7 @@ async fn security_fs_read_io_error() {
 
 /// Test: Permission denied is handled
 #[tokio::test]
+#[ignore = "Fail point test requires --test-threads=1"]
 async fn security_fs_read_permission_denied() {
     fail::cfg("fs::read_file", "return(permission_denied)").unwrap();
 
@@ -178,6 +183,7 @@ async fn security_fs_read_permission_denied() {
 
 /// Test: Corrupt data doesn't cause crash
 #[tokio::test]
+#[ignore = "Fail point test requires --test-threads=1"]
 async fn security_fs_corrupt_data() {
     fail::cfg("fs::read_file", "return(corrupt_data)").unwrap();
 
@@ -193,6 +199,7 @@ async fn security_fs_corrupt_data() {
 
 /// Test: Write failure doesn't corrupt state
 #[tokio::test]
+#[ignore = "Fail point test requires --test-threads=1"]
 async fn security_fs_write_failure() {
     fail::cfg("fs::write_file", "return(io_error)").unwrap();
 
@@ -206,6 +213,7 @@ async fn security_fs_write_failure() {
 
 /// Test: Disk full is handled
 #[tokio::test]
+#[ignore = "Fail point test requires --test-threads=1"]
 async fn security_fs_disk_full() {
     fail::cfg("fs::write_file", "return(disk_full)").unwrap();
 
@@ -223,6 +231,7 @@ async fn security_fs_disk_full() {
 
 /// Test: Command execution error is handled
 #[tokio::test]
+#[ignore = "Fail point test requires --test-threads=1"]
 async fn security_interp_execution_error() {
     fail::cfg("interp::execute_command", "return(error)").unwrap();
 
@@ -236,6 +245,7 @@ async fn security_interp_execution_error() {
 
 /// Test: Non-zero exit code injection
 #[tokio::test]
+#[ignore = "Fail point test requires --test-threads=1"]
 async fn security_interp_exit_nonzero() {
     fail::cfg("interp::execute_command", "return(exit_nonzero)").unwrap();
 
@@ -254,6 +264,7 @@ async fn security_interp_exit_nonzero() {
 
 /// Test: Multiple fail points active simultaneously
 #[tokio::test]
+#[ignore = "Fail point test requires --test-threads=1"]
 async fn security_multiple_failpoints() {
     // Activate multiple fail points
     fail::cfg("limits::tick_command", "5%return(skip_increment)").unwrap();
@@ -281,6 +292,7 @@ async fn security_multiple_failpoints() {
 
 /// Test: Fail point with probability (fuzz-like testing)
 #[tokio::test]
+#[ignore = "Fail point test requires --test-threads=1"]
 async fn security_probabilistic_failures() {
     // 10% chance of failure on each command
     fail::cfg("limits::tick_command", "10%return(corrupt_high)").unwrap();
@@ -318,6 +330,7 @@ async fn security_probabilistic_failures() {
 
 /// Demonstrates how to use fail points for custom security testing
 #[tokio::test]
+#[ignore = "Fail point test requires --test-threads=1"]
 async fn security_example_custom_failpoint_usage() {
     // Setup: Configure fail point
     fail::cfg("fs::write_file", "return(permission_denied)").unwrap();
