@@ -6,7 +6,7 @@
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 39 | 9 | 48 |
+| Shell Builtins | 40 | 8 | 48 |
 | Text Processing | 9 | 3 | 12 |
 | File Operations | 7 | 0 | 7 |
 | Network | 0 | 2 | 2 |
@@ -60,12 +60,12 @@
 | `uniq` | `-c`, `-d`, `-u` | Filter duplicate lines |
 | `cut` | `-d DELIM`, `-f FIELDS` | Extract fields |
 | `tr` | `-d`, character ranges | Translate/delete chars |
+| `date` | `+FORMAT`, `-u` | Display/format date |
 
 ### Not Implemented
 
 | Builtin | Priority | Status |
 |---------|----------|--------|
-| `date` | Medium | Planned |
 | `curl` | Medium | Planned |
 | `wget` | Medium | Planned |
 | `wait` | Medium | Planned |
@@ -320,10 +320,10 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] `wc` builtin
 - [x] Text processing (`sort`, `uniq`, `cut`, `tr`)
 - [x] `basename`/`dirname` builtins
+- [x] `date` builtin
 
 ### In Progress
 - [ ] Background execution (`&`, `wait`)
-- [ ] `date` builtin
 
 ### Planned
 - [ ] Network (`curl`, `wget`)

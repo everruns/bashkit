@@ -96,6 +96,7 @@ impl Interpreter {
         builtins.insert("uniq", Box::new(builtins::Uniq));
         builtins.insert("cut", Box::new(builtins::Cut));
         builtins.insert("tr", Box::new(builtins::Tr));
+        builtins.insert("date", Box::new(builtins::Date));
 
         Self {
             fs,

@@ -3,6 +3,7 @@
 mod awk;
 mod cat;
 mod cuttr;
+mod date;
 mod echo;
 mod export;
 mod fileops;
@@ -25,6 +26,7 @@ mod wc;
 pub use awk::Awk;
 pub use cat::Cat;
 pub use cuttr::{Cut, Tr};
+pub use date::Date;
 pub use echo::Echo;
 pub use export::Export;
 pub use fileops::{Chmod, Cp, Mkdir, Mv, Rm, Touch};
