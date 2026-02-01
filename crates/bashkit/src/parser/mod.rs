@@ -861,10 +861,11 @@ impl<'a> Parser<'a> {
                     // Now advance to get the next token after the heredoc
                     self.advance();
 
+                    // Parse the heredoc content to allow variable expansion
                     redirects.push(Redirect {
                         fd: None,
                         kind: RedirectKind::HereDoc,
-                        target: Word::literal(content),
+                        target: self.parse_word(content),
                     });
                 }
                 Some(tokens::Token::Newline)

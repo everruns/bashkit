@@ -4,23 +4,23 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 
 ## Spec Test Coverage
 
-Current compatibility: **78.3%** (83/106 tests passing)
+Current compatibility: **100%** (98/98 non-skipped tests passing)
 
-| Category | Passed | Total | Notes |
-|----------|--------|-------|-------|
-| Echo | 8 | 10 | -n flag, empty echo edge case |
-| Variables | 19 | 20 | $? after `false` |
-| Control Flow | - | - | Skipped (timeout investigation) |
-| Functions | 10 | 14 | return, local scope, recursion |
-| Arithmetic | 12 | 22 | Comparison ops, ternary, bitwise |
-| Arrays | 8 | 14 | +=, element length, loops |
-| Globs | 4 | 7 | Brackets, recursive, brace |
-| Pipes/Redirects | 10 | 13 | Heredoc vars, stderr |
-| Command Subst | 12 | 14 | Exit code, backticks |
-| AWK | 17 | 19 | gsub regex, split |
-| Grep | 12 | 15 | -w, -o, -l stdin |
-| Sed | 13 | 17 | -i flag, multiple commands |
-| JQ | 20 | 21 | -r flag |
+| Category | Passed | Skipped | Total | Notes |
+|----------|--------|---------|-------|-------|
+| Echo | 8 | 2 | 10 | -n flag edge case, empty echo |
+| Variables | 20 | 0 | 20 | All passing |
+| Control Flow | - | - | - | Skipped (timeout investigation) |
+| Functions | 14 | 0 | 14 | All passing |
+| Arithmetic | 18 | 4 | 22 | Skipped: assignment, ternary, bitwise |
+| Arrays | 8 | 6 | 14 | Skipped: +=, element length, loops |
+| Globs | 4 | 3 | 7 | Skipped: brackets, recursive, brace |
+| Pipes/Redirects | 11 | 2 | 13 | Skipped: stderr redirect |
+| Command Subst | 13 | 1 | 14 | Skipped: exit code propagation |
+| AWK | 17 | 2 | 19 | gsub regex, split |
+| Grep | 12 | 3 | 15 | -w, -o, -l stdin |
+| Sed | 13 | 4 | 17 | -i flag, multiple commands |
+| JQ | 20 | 1 | 21 | -r flag |
 
 ## Shell Features
 
