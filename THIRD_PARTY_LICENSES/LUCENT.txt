@@ -1,0 +1,27 @@
+Lucent Public License Version 1.02
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF THIRD PARTY RIGHTS.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall
+not be used in advertising or otherwise to promote the sale, use or other
+dealings in this Software without prior written authorization of the
+copyright holder.
+
+The complete Lucent Public License Version 1.02 is available at:
+https://opensource.org/licenses/LPL-1.02
+
+--------------------------------------------------------------------------------
+This license applies to:
+- One True AWK (Lucent Technologies / Brian Kernighan)
+  Repository: https://github.com/onetrueawk/awk
+
+  BashKit's AWK builtin implementation is informed by the One True AWK
+  language specification and behavior, but is an independent implementation
+  written from scratch in Rust.
+--------------------------------------------------------------------------------
