@@ -1,208 +1,274 @@
-//! Minimal agent example using BashKit as a Bash tool
+//! LLM Agent example using BashKit as a Bash tool
 //!
-//! This demonstrates how to expose bash execution as a tool for an AI agent.
-//! The agent writes poems and processes them using available builtins.
+//! Demonstrates a real AI agent using Claude to execute bash commands
+//! in a sandboxed BashKit session.
 //!
-//! Run with: cargo run --example agent_tool
+//! Run with: ANTHROPIC_API_KEY=your-key cargo run --example agent_tool --features network
+//!
+//! The agent will autonomously create folders and write poems using the Bash tool.
 
 use bashkit::{Bash, InMemoryFs};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Tool definition exposed to the agent (matches typical LLM tool schemas)
+// ============================================================================
+// Anthropic API Types
+// ============================================================================
+
 #[derive(Debug, Serialize)]
-struct BashToolDef {
+struct MessagesRequest {
+    model: &'static str,
+    max_tokens: u32,
+    system: String,
+    tools: Vec<Tool>,
+    messages: Vec<Message>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Message {
+    role: String,
+    content: MessageContent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum MessageContent {
+    Text(String),
+    Blocks(Vec<ContentBlock>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum ContentBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct Tool {
     name: &'static str,
     description: &'static str,
-    input_schema: InputSchema,
+    input_schema: serde_json::Value,
 }
 
-#[derive(Debug, Serialize)]
-struct InputSchema {
-    #[serde(rename = "type")]
-    schema_type: &'static str,
-    properties: Properties,
-    required: Vec<&'static str>,
+#[derive(Debug, Deserialize)]
+struct MessagesResponse {
+    content: Vec<ContentBlock>,
+    stop_reason: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct Properties {
-    command: PropertyDef,
-}
+// ============================================================================
+// Agent Implementation
+// ============================================================================
 
-#[derive(Debug, Serialize)]
-struct PropertyDef {
-    #[serde(rename = "type")]
-    prop_type: &'static str,
-    description: &'static str,
-}
-
-impl BashToolDef {
-    fn new() -> Self {
-        Self {
-            name: "bash",
-            description: "Execute bash commands in a sandboxed session. Variables, functions, and state persist between calls.",
-            input_schema: InputSchema {
-                schema_type: "object",
-                properties: Properties {
-                    command: PropertyDef {
-                        prop_type: "string",
-                        description: "The bash command to execute",
-                    },
-                },
-                required: vec!["command"],
-            },
-        }
-    }
-}
-
-/// Tool result back to agent
-#[derive(Debug, Serialize)]
-struct ToolResult {
-    stdout: String,
-    stderr: String,
-    exit_code: i32,
-}
-
-/// Simple agent that uses BashKit as its Bash tool
 struct Agent {
     bash: Bash,
+    client: reqwest::Client,
+    api_key: String,
+    messages: Vec<Message>,
 }
 
 impl Agent {
-    fn new() -> Self {
-        // Use in-memory filesystem for sandboxing
+    fn new(api_key: String) -> Self {
         let fs = Arc::new(InMemoryFs::new());
         Self {
             bash: Bash::builder().fs(fs).build(),
+            client: reqwest::Client::new(),
+            api_key,
+            messages: Vec::new(),
         }
     }
 
-    /// Execute a bash command - this is the "Bash tool" implementation
-    async fn call_bash_tool(&mut self, command: &str) -> ToolResult {
+    fn bash_tool() -> Tool {
+        Tool {
+            name: "bash",
+            description: "Execute bash commands in a sandboxed session. \
+                         Variables and functions persist between calls. \
+                         Available commands: echo, cat, printf, grep, sed, awk, jq, \
+                         cd, pwd, test, for/while/if, functions, redirections (> >>).",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The bash command to execute"
+                    }
+                },
+                "required": ["command"]
+            }),
+        }
+    }
+
+    async fn execute_bash(&mut self, command: &str) -> String {
         match self.bash.exec(command).await {
-            Ok(result) => ToolResult {
-                stdout: result.stdout,
-                stderr: result.stderr,
-                exit_code: result.exit_code,
-            },
-            Err(e) => ToolResult {
-                stdout: String::new(),
-                stderr: e.to_string(),
-                exit_code: 1,
-            },
+            Ok(result) => {
+                let mut output = String::new();
+                if !result.stdout.is_empty() {
+                    output.push_str(&result.stdout);
+                }
+                if !result.stderr.is_empty() {
+                    if !output.is_empty() {
+                        output.push('\n');
+                    }
+                    output.push_str("stderr: ");
+                    output.push_str(&result.stderr);
+                }
+                if result.exit_code != 0 {
+                    if !output.is_empty() {
+                        output.push('\n');
+                    }
+                    output.push_str(&format!("exit code: {}", result.exit_code));
+                }
+                if output.is_empty() {
+                    "(command completed successfully)".to_string()
+                } else {
+                    output
+                }
+            }
+            Err(e) => format!("error: {}", e),
         }
     }
-}
 
-/// Simulates what an LLM agent would do - plan and execute tasks via tool calls
-async fn run_agent_simulation(agent: &mut Agent) {
-    println!("Agent: I'll write poems to files and demonstrate text processing.\n");
+    async fn call_claude(&self, messages: &[Message]) -> anyhow::Result<MessagesResponse> {
+        let request = MessagesRequest {
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 1024,
+            system: "You are an agent with access to a sandboxed bash environment. \
+                    Your task is to create a few text files with short poems about different topics. \
+                    Use echo with redirection to create files (e.g., echo 'poem' > /topic.txt). \
+                    After creating files, read them back with cat to verify. \
+                    Be concise. When done, say DONE."
+                .to_string(),
+            tools: vec![Self::bash_tool()],
+            messages: messages.to_vec(),
+        };
 
-    // These represent tool calls the LLM would make
-    let tool_calls: Vec<(&str, &str)> = vec![
-        // 1. Write a nature poem
-        (
-            "Writing nature poem to file",
-            r#"echo 'Tall oaks stand in morning light,
-Their branches reaching, holding tight,
-To memories of seasons past,
-In roots so deep, forever cast.' > /nature.txt"#,
-        ),
-        // 2. Write a space poem
-        (
-            "Writing space poem to file",
-            r#"echo 'A million suns burn far away,
-In cosmic dance they twist and sway,
-Each one a world we may not know,
-Yet still they shine, they burn, they glow.' > /space.txt"#,
-        ),
-        // 3. Write an ocean poem
-        (
-            "Writing ocean poem to file",
-            r#"echo 'The waves roll in with endless grace,
-Each one a whisper, soft embrace,
-They crash and foam upon the shore,
-Then pull away to come once more.' > /ocean.txt"#,
-        ),
-        // 4. Define a helper function (demonstrates state persistence)
-        (
-            "Defining display_poem function",
-            r#"display_poem() {
-    echo "=== $1 ==="
-    cat "$1"
-    echo ""
-}"#,
-        ),
-        // 5. Display all poems using the function
-        ("Displaying nature poem", "display_poem /nature.txt"),
-        ("Displaying space poem", "display_poem /space.txt"),
-        ("Displaying ocean poem", "display_poem /ocean.txt"),
-        // 6. Use grep to find poems about light
-        (
-            "Searching for poems mentioning 'light'",
-            "grep -l light /*.txt",
-        ),
-        // 7. Count lines across all poems
-        (
-            "Counting total lines in all poems",
-            r#"TOTAL=0; for f in /*.txt; do LINES=$(cat "$f" | grep -c '.'); TOTAL=$((TOTAL + LINES)); done; echo "Total lines: $TOTAL""#,
-        ),
-        // 8. Store result in variable (demonstrates persistence)
-        (
-            "Storing poem count in variable",
-            "POEM_COUNT=3; echo \"Poems written: $POEM_COUNT\"",
-        ),
-    ];
+        let response = self
+            .client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&request)
+            .send()
+            .await?;
 
-    // Execute each tool call
-    for (i, (description, command)) in tool_calls.iter().enumerate() {
-        println!("--- Tool Call {} ---", i + 1);
-        println!("Agent intent: {}", description);
-
-        // Show first line of command (truncate multiline)
-        let cmd_preview = command.lines().next().unwrap_or(command);
-        if command.lines().count() > 1 {
-            println!("Command: {}...", cmd_preview);
-        } else {
-            println!("Command: {}", cmd_preview);
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await?;
+            anyhow::bail!("API error {}: {}", status, body);
         }
 
-        let result = agent.call_bash_tool(command).await;
-
-        if !result.stdout.is_empty() {
-            println!("Output:\n{}", result.stdout);
-        }
-        if !result.stderr.is_empty() {
-            println!("Stderr: {}", result.stderr);
-        }
-        if result.exit_code != 0 {
-            println!("Exit code: {}", result.exit_code);
-        }
-        println!();
+        Ok(response.json().await?)
     }
 
-    // Demonstrate that state persists
-    println!("--- Verifying Session State ---");
-    let result = agent
-        .call_bash_tool("echo \"POEM_COUNT is still: $POEM_COUNT\"")
-        .await;
-    println!("Output: {}", result.stdout);
+    async fn run(&mut self, task: &str) -> anyhow::Result<()> {
+        println!("Task: {}\n", task);
+
+        // Initial user message
+        self.messages.push(Message {
+            role: "user".to_string(),
+            content: MessageContent::Text(task.to_string()),
+        });
+
+        let mut turn = 0;
+        loop {
+            turn += 1;
+            println!("--- Turn {} ---", turn);
+
+            let response = self.call_claude(&self.messages).await?;
+
+            // Process response content
+            let mut tool_uses = Vec::new();
+            let mut has_text = false;
+
+            for block in &response.content {
+                match block {
+                    ContentBlock::Text { text } => {
+                        println!("Claude: {}", text);
+                        has_text = true;
+                    }
+                    ContentBlock::ToolUse { id, name, input } => {
+                        if name == "bash" {
+                            if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
+                                println!("$ {}", cmd);
+                                let result = self.execute_bash(cmd).await;
+                                println!("{}", result);
+                                tool_uses.push((id.clone(), result));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Add assistant message
+            self.messages.push(Message {
+                role: "assistant".to_string(),
+                content: MessageContent::Blocks(response.content),
+            });
+
+            // If there were tool uses, add results and continue
+            if !tool_uses.is_empty() {
+                let tool_results: Vec<ContentBlock> = tool_uses
+                    .into_iter()
+                    .map(|(id, result)| ContentBlock::ToolResult {
+                        tool_use_id: id,
+                        content: result,
+                    })
+                    .collect();
+
+                self.messages.push(Message {
+                    role: "user".to_string(),
+                    content: MessageContent::Blocks(tool_results),
+                });
+            } else if has_text && response.stop_reason.as_deref() == Some("end_turn") {
+                // No tool calls and natural stop - we're done
+                break;
+            }
+
+            // Safety limit
+            if turn >= 15 {
+                println!("(reached turn limit)");
+                break;
+            }
+
+            println!();
+        }
+
+        Ok(())
+    }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("=== Agent with Bash Tool Example ===\n");
+    println!("=== BashKit LLM Agent Example ===\n");
 
-    // Show tool definition (what would be sent to LLM)
-    let tool_def = BashToolDef::new();
-    println!("Tool definition for LLM:");
-    println!("{}\n", serde_json::to_string_pretty(&tool_def)?);
+    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| {
+        eprintln!("Error: ANTHROPIC_API_KEY environment variable not set");
+        eprintln!(
+            "Usage: ANTHROPIC_API_KEY=your-key cargo run --example agent_tool --features network"
+        );
+        std::process::exit(1);
+    });
 
-    // Create and run agent
-    let mut agent = Agent::new();
-    run_agent_simulation(&mut agent).await;
+    let mut agent = Agent::new(api_key);
 
-    println!("=== Agent completed successfully ===");
+    agent
+        .run("Create 3 short poems (4 lines each) about: nature, space, and ocean. Save each to a file, then display them all.")
+        .await?;
+
+    println!("\n=== Agent completed ===");
     Ok(())
 }
