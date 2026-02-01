@@ -117,11 +117,5 @@ async fn jq_examples(bash: &mut Bash) -> anyhow::Result<()> {
         .await?;
     println!("User names:\n{}", result.stdout);
 
-    // Raw output (no quotes)
-    let result = bash
-        .exec(r#"echo '{"msg": "hello"}' | jq -r '.msg'"#)
-        .await?;
-    println!("Raw output: {}", result.stdout);
-
     Ok(())
 }
