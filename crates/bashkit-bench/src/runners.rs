@@ -37,7 +37,7 @@ impl Runner {
 pub struct BashkitRunner;
 
 impl BashkitRunner {
-    pub async fn new() -> Result<Runner> {
+    pub async fn create() -> Result<Runner> {
         Ok(Runner::Bashkit)
     }
 }
@@ -52,7 +52,7 @@ async fn run_bashkit(script: &str) -> Result<(String, String, i32)> {
 pub struct BashRunner;
 
 impl BashRunner {
-    pub async fn new() -> Result<Runner> {
+    pub async fn create() -> Result<Runner> {
         let path = which_bash().await?;
         Ok(Runner::Bash(path))
     }
@@ -101,7 +101,7 @@ async fn run_bash(path: &str, script: &str) -> Result<(String, String, i32)> {
 pub struct JustBashRunner;
 
 impl JustBashRunner {
-    pub async fn new() -> Result<Runner> {
+    pub async fn create() -> Result<Runner> {
         let path = which_just_bash().await?;
         Ok(Runner::JustBash(path))
     }

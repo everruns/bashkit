@@ -6,6 +6,7 @@
 //
 // Usage: bashkit-bench [OPTIONS]
 //   --save [file]     Save results (auto-generates name if not provided)
+//   --moniker <id>    Custom system identifier (e.g., "ci-4cpu-8gb")
 //   --runners <list>  Comma-separated: bashkit,bash,just-bash (default: all available)
 //   --filter <name>   Run only benchmarks matching name
 //   --iterations <n>  Iterations per benchmark (default: 10)
@@ -26,6 +27,9 @@ mod runners;
 use cases::BenchCase;
 use runners::{BashRunner, BashkitRunner, JustBashRunner, Runner};
 
+/// Number of prewarm cases to run before actual benchmarks
+const PREWARM_CASES: usize = 3;
+
 #[derive(Parser, Debug)]
 #[command(name = "bashkit-bench")]
 #[command(about = "Benchmark bashkit against bash and just-bash")]
@@ -33,6 +37,10 @@ struct Args {
     /// Save results to file (auto-generates name with system info if no path given)
     #[arg(long, num_args = 0..=1, default_missing_value = "")]
     save: Option<String>,
+
+    /// Custom system identifier (e.g., "ci-4cpu-8gb", "macbook-m1")
+    #[arg(long)]
+    moniker: Option<String>,
 
     /// Runners to use (comma-separated: bashkit,bash,just-bash)
     #[arg(long, default_value = "bashkit,bash")]
@@ -46,7 +54,7 @@ struct Args {
     #[arg(long, default_value = "10")]
     iterations: usize,
 
-    /// Number of warmup iterations
+    /// Number of warmup iterations per benchmark
     #[arg(long, default_value = "2")]
     warmup: usize,
 
@@ -61,6 +69,10 @@ struct Args {
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
+
+    /// Skip prewarming phase
+    #[arg(long)]
+    no_prewarm: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,10 +81,12 @@ pub struct SystemInfo {
     pub os: String,
     pub arch: String,
     pub cpus: usize,
+    /// Custom moniker if provided, otherwise auto-generated
+    pub moniker: String,
 }
 
 impl SystemInfo {
-    fn collect() -> Self {
+    fn collect(custom_moniker: Option<&str>) -> Self {
         let hostname = std::env::var("HOSTNAME")
             .or_else(|_| std::env::var("HOST"))
             .unwrap_or_else(|_| gethostname());
@@ -83,25 +97,28 @@ impl SystemInfo {
             .map(|p| p.get())
             .unwrap_or(1);
 
+        let moniker = custom_moniker
+            .map(|m| m.to_string())
+            .unwrap_or_else(|| generate_moniker(&hostname, &os, &arch));
+
         Self {
             hostname,
             os,
             arch,
             cpus,
+            moniker,
         }
     }
+}
 
-    fn moniker(&self) -> String {
-        // Create short identifier: hostname-os-arch
-        let host = self
-            .hostname
-            .chars()
-            .filter(|c| c.is_alphanumeric())
-            .take(12)
-            .collect::<String>()
-            .to_lowercase();
-        format!("{}-{}-{}", host, self.os, self.arch)
-    }
+fn generate_moniker(hostname: &str, os: &str, arch: &str) -> String {
+    let host = hostname
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .take(12)
+        .collect::<String>()
+        .to_lowercase();
+    format!("{}-{}-{}", host, os, arch)
 }
 
 fn gethostname() -> String {
@@ -139,10 +156,12 @@ pub struct BenchResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchReport {
+    pub moniker: String,
     pub timestamp: String,
     pub system: SystemInfo,
     pub iterations: usize,
     pub warmup: usize,
+    pub prewarm_cases: usize,
     pub runners: Vec<String>,
     pub results: Vec<BenchResult>,
     pub summary: BenchSummary,
@@ -224,8 +243,8 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Collect system info
-    let system_info = SystemInfo::collect();
+    // Collect system info with optional custom moniker
+    let system_info = SystemInfo::collect(args.moniker.as_deref());
 
     // Initialize runners
     let runner_names: Vec<&str> = args.runners.split(',').map(|s| s.trim()).collect();
@@ -234,17 +253,17 @@ async fn main() -> Result<()> {
     for name in &runner_names {
         match *name {
             "bashkit" => {
-                runners.push(BashkitRunner::new().await?);
+                runners.push(BashkitRunner::create().await?);
             }
             "bash" => {
-                if let Ok(r) = BashRunner::new().await {
+                if let Ok(r) = BashRunner::create().await {
                     runners.push(r);
                 } else {
                     eprintln!("{}: bash not available", "Warning".yellow());
                 }
             }
             "just-bash" => {
-                if let Ok(r) = JustBashRunner::new().await {
+                if let Ok(r) = JustBashRunner::create().await {
                     runners.push(r);
                 } else {
                     eprintln!("{}: just-bash not available", "Warning".yellow());
@@ -273,10 +292,35 @@ async fn main() -> Result<()> {
         "  System: {} ({}-{}, {} CPUs)",
         system_info.hostname, system_info.os, system_info.arch, system_info.cpus
     );
+    println!("  Moniker: {}", system_info.moniker.cyan());
     println!(
         "  Iterations: {}, Warmup: {}\n",
         args.iterations, args.warmup
     );
+
+    // Prewarming phase - run first few cases to warm up JIT/compilation
+    let prewarm_count = if args.no_prewarm {
+        0
+    } else {
+        PREWARM_CASES.min(cases.len())
+    };
+
+    if prewarm_count > 0 {
+        println!(
+            "  {} Running {} prewarm cases (not counted)...",
+            "⚡".yellow(),
+            prewarm_count
+        );
+        for case in cases.iter().take(prewarm_count) {
+            for runner in &runners {
+                // Run each prewarm case with warmup + a few iterations
+                for _ in 0..(args.warmup + 2) {
+                    let _ = runner.run(&case.script).await;
+                }
+            }
+        }
+        println!("  {} Prewarming complete\n", "✓".green());
+    }
 
     // Get reference output from bash if available
     let bash_runner = runners.iter().find(|r| r.name() == "bash");
@@ -328,7 +372,7 @@ async fn main() -> Result<()> {
     }
 
     // Generate report
-    let report = generate_report(&results, &args, &runner_names, &system_info);
+    let report = generate_report(&results, &args, &runner_names, &system_info, prewarm_count);
 
     // Print results table
     println!("\n{}", "Results:".bold());
@@ -341,9 +385,9 @@ async fn main() -> Result<()> {
     // Save if requested
     if let Some(ref save_arg) = args.save {
         let base_name = if save_arg.is_empty() {
-            // Auto-generate filename with system moniker and timestamp
+            // Auto-generate filename with moniker and timestamp
             let timestamp = chrono_lite_now();
-            format!("bench-{}-{}", system_info.moniker(), timestamp)
+            format!("bench-{}-{}", system_info.moniker, timestamp)
         } else {
             // Use provided name, strip extension if present
             let path = PathBuf::from(save_arg);
@@ -386,7 +430,7 @@ async fn run_benchmark(
     let mut error_messages: Vec<String> = Vec::new();
     let mut last_output = String::new();
 
-    // Warmup
+    // Per-benchmark warmup
     for _ in 0..args.warmup {
         let _ = runner.run(&case.script).await;
     }
@@ -467,6 +511,7 @@ fn generate_report(
     args: &Args,
     runner_names: &[&str],
     system_info: &SystemInfo,
+    prewarm_count: usize,
 ) -> BenchReport {
     let mut runner_stats: HashMap<String, RunnerStats> = HashMap::new();
 
@@ -508,10 +553,12 @@ fn generate_report(
     let unique_cases: std::collections::HashSet<_> = results.iter().map(|r| &r.case_name).collect();
 
     BenchReport {
+        moniker: system_info.moniker.clone(),
         timestamp: chrono_lite_now(),
         system: system_info.clone(),
         iterations: args.iterations,
         warmup: args.warmup,
+        prewarm_cases: prewarm_count,
         runners: runner_names.iter().map(|s| s.to_string()).collect(),
         results: results.to_vec(),
         summary: BenchSummary {
@@ -529,6 +576,7 @@ fn generate_markdown_report(report: &BenchReport) -> String {
 
     // System info
     md.push_str("## System Information\n\n");
+    md.push_str(&format!("- **Moniker**: `{}`\n", report.moniker));
     md.push_str(&format!("- **Hostname**: {}\n", report.system.hostname));
     md.push_str(&format!("- **OS**: {}\n", report.system.os));
     md.push_str(&format!("- **Architecture**: {}\n", report.system.arch));
@@ -536,7 +584,8 @@ fn generate_markdown_report(report: &BenchReport) -> String {
     md.push_str(&format!("- **Timestamp**: {}\n", report.timestamp));
     md.push_str(&format!("- **Iterations**: {}\n", report.iterations));
     md.push_str(&format!("- **Warmup**: {}\n", report.warmup));
-    md.push_str("\n");
+    md.push_str(&format!("- **Prewarm cases**: {}\n", report.prewarm_cases));
+    md.push('\n');
 
     // Summary
     md.push_str("## Summary\n\n");
@@ -566,7 +615,7 @@ fn generate_markdown_report(report: &BenchReport) -> String {
             ));
         }
     }
-    md.push_str("\n");
+    md.push('\n');
 
     // Performance comparison (if multiple runners)
     if report.runners.len() >= 2 {
@@ -631,17 +680,18 @@ fn generate_markdown_report(report: &BenchReport) -> String {
                 if result.output_match { "✓" } else { "✗" }
             ));
         }
-        md.push_str("\n");
+        md.push('\n');
     }
 
     // Assumptions
     md.push_str("## Assumptions & Notes\n\n");
     md.push_str("- Times measured in nanoseconds, displayed in milliseconds\n");
-    md.push_str("- Warmup iterations excluded from timing\n");
+    md.push_str("- Prewarm phase runs first few cases to warm up JIT/compilation\n");
+    md.push_str("- Per-benchmark warmup iterations excluded from timing\n");
     md.push_str("- Output match compares against bash output when available\n");
     md.push_str("- Errors include execution failures and exit code mismatches\n");
     md.push_str("- BashKit runs in-process (no fork), bash spawns subprocess\n");
-    md.push_str("\n");
+    md.push('\n');
 
     md
 }
@@ -669,7 +719,7 @@ fn print_results_table(results: &[BenchResult]) {
             category: r.category.clone(),
             name: r.case_name.clone(),
             runner: r.runner.clone(),
-            mean_ms: format!("{:.3}", r.mean_ns as f64 / 1_000_000.0),
+            mean_ms: format!("{:.3}", r.mean_ns / 1_000_000.0),
             stddev: format!("±{:.3}", r.stddev_ns / 1_000_000.0),
             min_ms: format!("{:.3}", r.min_ns as f64 / 1_000_000.0),
             max_ms: format!("{:.3}", r.max_ns as f64 / 1_000_000.0),

@@ -18,6 +18,9 @@ cargo run -p bashkit-bench --release
 # Auto-generate results with system identifier
 cargo run -p bashkit-bench --release -- --save
 
+# Use custom moniker for CI environments
+cargo run -p bashkit-bench --release -- --save --moniker ci-4cpu-8gb
+
 # Save to specific file
 cargo run -p bashkit-bench --release -- --save my-results
 
@@ -33,6 +36,9 @@ cargo run -p bashkit-bench --release -- --filter grep
 # High accuracy run
 cargo run -p bashkit-bench --release -- --iterations 50 --warmup 5
 
+# Skip prewarming phase
+cargo run -p bashkit-bench --release -- --no-prewarm
+
 # List available benchmarks
 cargo run -p bashkit-bench --release -- --list
 ```
@@ -41,12 +47,14 @@ cargo run -p bashkit-bench --release -- --list
 
 | Option | Description |
 |--------|-------------|
-| `--save [file]` | Save results to JSON and Markdown. Auto-generates filename with system info if not provided |
+| `--save [file]` | Save results to JSON and Markdown. Auto-generates filename with moniker if not provided |
+| `--moniker <id>` | Custom system identifier (e.g., `ci-4cpu-8gb`, `macbook-m1`) |
 | `--runners <list>` | Comma-separated runners: `bashkit`, `bash`, `just-bash` (default: `bashkit,bash`) |
 | `--filter <name>` | Run only benchmarks matching substring |
 | `--category <cat>` | Run only specific category |
 | `--iterations <n>` | Iterations per benchmark (default: 10) |
-| `--warmup <n>` | Warmup iterations before timing (default: 2) |
+| `--warmup <n>` | Per-benchmark warmup iterations (default: 2) |
+| `--no-prewarm` | Skip prewarming phase |
 | `--verbose` | Show per-benchmark timing details |
 | `--list` | List available benchmarks |
 
