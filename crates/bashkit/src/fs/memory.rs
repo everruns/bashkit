@@ -70,7 +70,7 @@ impl InMemoryFs {
         );
 
         // Create common directories
-        for dir in &["/tmp", "/home", "/home/user"] {
+        for dir in &["/tmp", "/home", "/home/user", "/dev"] {
             entries.insert(
                 PathBuf::from(dir),
                 FsEntry::Directory {
@@ -84,6 +84,22 @@ impl InMemoryFs {
                 },
             );
         }
+
+        // Create special device files
+        // /dev/null - discards all writes, returns empty on read
+        entries.insert(
+            PathBuf::from("/dev/null"),
+            FsEntry::File {
+                content: Vec::new(),
+                metadata: Metadata {
+                    file_type: FileType::File,
+                    size: 0,
+                    mode: 0o666,
+                    modified: SystemTime::now(),
+                    created: SystemTime::now(),
+                },
+            },
+        );
 
         Self {
             entries: RwLock::new(entries),
@@ -182,6 +198,12 @@ impl FileSystem for InMemoryFs {
         });
 
         let path = Self::normalize_path(path);
+
+        // Special handling for /dev/null - discard all writes
+        if path == Path::new("/dev/null") {
+            return Ok(());
+        }
+
         let mut entries = self.entries.write().unwrap();
 
         // Ensure parent directory exists
@@ -210,6 +232,11 @@ impl FileSystem for InMemoryFs {
 
     async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()> {
         let path = Self::normalize_path(path);
+
+        // Special handling for /dev/null - discard all writes
+        if path == Path::new("/dev/null") {
+            return Ok(());
+        }
 
         // Check if file exists and handle accordingly
         // We need to release the lock before potentially calling write_file
