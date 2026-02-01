@@ -23,6 +23,7 @@ bashkit/
 src/
 ├── lib.rs                # Public API: Bash struct
 ├── error.rs              # Error types
+├── limits.rs             # Execution limits
 ├── parser/               # Lexer + Parser + AST
 │   ├── mod.rs           # Parser implementation
 │   ├── lexer.rs         # Tokenization
@@ -30,16 +31,31 @@ src/
 │   └── ast.rs           # AST node types
 ├── interpreter/          # Execution engine
 │   ├── mod.rs           # Interpreter implementation
-│   └── state.rs         # ExecResult and state types
+│   ├── state.rs         # ExecResult and state types
+│   └── jobs.rs          # Job table for background execution
 ├── fs/                   # Virtual filesystem
 │   ├── mod.rs           # Module exports
 │   ├── traits.rs        # FileSystem trait
 │   └── memory.rs        # InMemoryFs implementation
+├── network/              # Network access (optional)
+│   ├── mod.rs           # Module exports
+│   ├── allowlist.rs     # URL allowlist
+│   └── client.rs        # HTTP client
 └── builtins/            # Built-in commands
     ├── mod.rs           # Builtin trait + Context
-    ├── echo.rs          # echo command
-    ├── flow.rs          # true, false, exit
-    └── navigation.rs    # cd, pwd
+    ├── echo.rs          # echo, printf
+    ├── flow.rs          # true, false, exit, break, continue, return
+    ├── navigation.rs    # cd, pwd
+    ├── fileops.rs       # mkdir, rm, cp, mv, touch, chmod
+    ├── headtail.rs      # head, tail
+    ├── sortuniq.rs      # sort, uniq
+    ├── cuttr.rs         # cut, tr
+    ├── wc.rs            # wc
+    ├── date.rs          # date
+    ├── sleep.rs         # sleep
+    ├── wait.rs          # wait
+    ├── curl.rs          # curl, wget (stubs)
+    └── ...              # grep, sed, awk, jq, etc.
 ```
 
 ### Public API
