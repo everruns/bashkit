@@ -87,11 +87,21 @@ impl<'a> Lexer<'a> {
             }
             '(' => {
                 self.advance();
-                Some(Token::LeftParen)
+                if self.peek_char() == Some('(') {
+                    self.advance();
+                    Some(Token::DoubleLeftParen)
+                } else {
+                    Some(Token::LeftParen)
+                }
             }
             ')' => {
                 self.advance();
-                Some(Token::RightParen)
+                if self.peek_char() == Some(')') {
+                    self.advance();
+                    Some(Token::DoubleRightParen)
+                } else {
+                    Some(Token::RightParen)
+                }
             }
             '{' => {
                 self.advance();
@@ -166,7 +176,28 @@ impl<'a> Lexer<'a> {
         let mut word = String::new();
 
         while let Some(ch) = self.peek_char() {
-            if ch == '$' {
+            // Handle quoted strings within words (e.g., a="Hello" or VAR="value")
+            // This handles the case where a word like `a=` is followed by a quoted string
+            if ch == '"' || ch == '\'' {
+                // Check if this is a quoted value in an assignment (word ends with = or +=)
+                if word.ends_with('=') || word.ends_with("+=") {
+                    // Include the quoted string as part of this word
+                    let quote_char = ch;
+                    word.push(ch);
+                    self.advance();
+                    while let Some(c) = self.peek_char() {
+                        word.push(c);
+                        self.advance();
+                        if c == quote_char && !word.ends_with(&format!("\\{}", quote_char)) {
+                            break;
+                        }
+                    }
+                    continue;
+                } else {
+                    // Not after =, so this is a separate quoted token
+                    break;
+                }
+            } else if ch == '$' {
                 // Handle variable references and command substitution
                 word.push(ch);
                 self.advance();

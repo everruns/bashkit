@@ -22,9 +22,9 @@ use crate::error::{Error, Result};
 use crate::fs::FileSystem;
 use crate::limits::{ExecutionCounters, ExecutionLimits};
 use crate::parser::{
-    AssignmentValue, CaseCommand, Command, CommandList, CompoundCommand, ForCommand, FunctionDef,
-    IfCommand, ListOperator, ParameterOp, Pipeline, Redirect, RedirectKind, Script, SimpleCommand,
-    UntilCommand, WhileCommand, Word, WordPart,
+    ArithmeticForCommand, AssignmentValue, CaseCommand, Command, CommandList, CompoundCommand,
+    ForCommand, FunctionDef, IfCommand, ListOperator, ParameterOp, Pipeline, Redirect,
+    RedirectKind, Script, SimpleCommand, UntilCommand, WhileCommand, Word, WordPart,
 };
 
 #[cfg(feature = "failpoints")]
@@ -228,11 +228,15 @@ impl Interpreter {
         match compound {
             CompoundCommand::If(if_cmd) => self.execute_if(if_cmd).await,
             CompoundCommand::For(for_cmd) => self.execute_for(for_cmd).await,
+            CompoundCommand::ArithmeticFor(arith_for) => {
+                self.execute_arithmetic_for(arith_for).await
+            }
             CompoundCommand::While(while_cmd) => self.execute_while(while_cmd).await,
             CompoundCommand::Until(until_cmd) => self.execute_until(until_cmd).await,
             CompoundCommand::Subshell(commands) => self.execute_command_sequence(commands).await,
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
             CompoundCommand::Case(case_cmd) => self.execute_case(case_cmd).await,
+            CompoundCommand::Arithmetic(expr) => self.execute_arithmetic_command(expr).await,
         }
     }
 
@@ -347,6 +351,221 @@ impl Interpreter {
             exit_code,
             control_flow: ControlFlow::None,
         })
+    }
+
+    /// Execute a C-style arithmetic for loop: for ((init; cond; step))
+    async fn execute_arithmetic_for(
+        &mut self,
+        arith_for: &ArithmeticForCommand,
+    ) -> Result<ExecResult> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        // Execute initialization
+        if !arith_for.init.is_empty() {
+            self.execute_arithmetic_with_side_effects(&arith_for.init);
+        }
+
+        // Reset loop counter for this loop
+        self.counters.reset_loop();
+
+        loop {
+            // Check loop iteration limit
+            self.counters.tick_loop(&self.limits)?;
+
+            // Check condition (if empty, always true)
+            if !arith_for.condition.is_empty() {
+                let cond_result = self.evaluate_arithmetic(&arith_for.condition);
+                if cond_result == 0 {
+                    break;
+                }
+            }
+
+            // Execute body
+            let result = self.execute_command_sequence(&arith_for.body).await?;
+            stdout.push_str(&result.stdout);
+            stderr.push_str(&result.stderr);
+            exit_code = result.exit_code;
+
+            // Check for break/continue
+            match result.control_flow {
+                ControlFlow::Break(n) => {
+                    if n <= 1 {
+                        break;
+                    } else {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Break(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Continue(n) => {
+                    if n > 1 {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Continue(n - 1),
+                        });
+                    }
+                    // n <= 1: continue to next iteration (after step)
+                }
+                ControlFlow::Return(code) => {
+                    return Ok(ExecResult {
+                        stdout,
+                        stderr,
+                        exit_code: code,
+                        control_flow: ControlFlow::Return(code),
+                    });
+                }
+                ControlFlow::None => {}
+            }
+
+            // Execute step
+            if !arith_for.step.is_empty() {
+                self.execute_arithmetic_with_side_effects(&arith_for.step);
+            }
+        }
+
+        Ok(ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+            control_flow: ControlFlow::None,
+        })
+    }
+
+    /// Execute an arithmetic command ((expression))
+    /// Returns exit code 0 if result is non-zero, 1 if result is zero
+    async fn execute_arithmetic_command(&mut self, expr: &str) -> Result<ExecResult> {
+        let result = self.execute_arithmetic_with_side_effects(expr);
+        let exit_code = if result != 0 { 0 } else { 1 };
+
+        Ok(ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code,
+            control_flow: ControlFlow::None,
+        })
+    }
+
+    /// Execute arithmetic expression with side effects (assignments, ++, --)
+    fn execute_arithmetic_with_side_effects(&mut self, expr: &str) -> i64 {
+        let expr = expr.trim();
+
+        // Handle comma-separated expressions
+        if expr.contains(',') {
+            let parts: Vec<&str> = expr.split(',').collect();
+            let mut result = 0;
+            for part in parts {
+                result = self.execute_arithmetic_with_side_effects(part.trim());
+            }
+            return result;
+        }
+
+        // Handle assignment: var = expr or var op= expr
+        if let Some(eq_pos) = expr.find('=') {
+            // Check it's not ==, !=, <=, >=
+            let before = if eq_pos > 0 {
+                expr.chars().nth(eq_pos - 1)
+            } else {
+                None
+            };
+            let after = expr.chars().nth(eq_pos + 1);
+
+            if after != Some('=') && !matches!(before, Some('!' | '<' | '>' | '=')) {
+                // This is an assignment
+                let lhs = expr[..eq_pos].trim();
+                let rhs = expr[eq_pos + 1..].trim();
+
+                // Check for compound assignment (+=, -=, *=, /=, %=)
+                let (var_name, op, effective_rhs) = if lhs.ends_with('+')
+                    || lhs.ends_with('-')
+                    || lhs.ends_with('*')
+                    || lhs.ends_with('/')
+                    || lhs.ends_with('%')
+                {
+                    let op = lhs.chars().last().unwrap();
+                    let name = lhs[..lhs.len() - 1].trim();
+                    (name, Some(op), rhs)
+                } else {
+                    (lhs, None, rhs)
+                };
+
+                let rhs_value = self.execute_arithmetic_with_side_effects(effective_rhs);
+                let final_value = if let Some(op) = op {
+                    let current = self.evaluate_arithmetic(var_name);
+                    match op {
+                        '+' => current + rhs_value,
+                        '-' => current - rhs_value,
+                        '*' => current * rhs_value,
+                        '/' => {
+                            if rhs_value != 0 {
+                                current / rhs_value
+                            } else {
+                                0
+                            }
+                        }
+                        '%' => {
+                            if rhs_value != 0 {
+                                current % rhs_value
+                            } else {
+                                0
+                            }
+                        }
+                        _ => rhs_value,
+                    }
+                } else {
+                    rhs_value
+                };
+
+                self.variables
+                    .insert(var_name.to_string(), final_value.to_string());
+                return final_value;
+            }
+        }
+
+        // Handle pre-increment/decrement: ++var or --var
+        if let Some(stripped) = expr.strip_prefix("++") {
+            let var_name = stripped.trim();
+            let current = self.evaluate_arithmetic(var_name);
+            let new_value = current + 1;
+            self.variables
+                .insert(var_name.to_string(), new_value.to_string());
+            return new_value;
+        }
+        if let Some(stripped) = expr.strip_prefix("--") {
+            let var_name = stripped.trim();
+            let current = self.evaluate_arithmetic(var_name);
+            let new_value = current - 1;
+            self.variables
+                .insert(var_name.to_string(), new_value.to_string());
+            return new_value;
+        }
+
+        // Handle post-increment/decrement: var++ or var--
+        if let Some(stripped) = expr.strip_suffix("++") {
+            let var_name = stripped.trim();
+            let current = self.evaluate_arithmetic(var_name);
+            let new_value = current + 1;
+            self.variables
+                .insert(var_name.to_string(), new_value.to_string());
+            return current; // Return old value for post-increment
+        }
+        if let Some(stripped) = expr.strip_suffix("--") {
+            let var_name = stripped.trim();
+            let current = self.evaluate_arithmetic(var_name);
+            let new_value = current - 1;
+            self.variables
+                .insert(var_name.to_string(), new_value.to_string());
+            return current; // Return old value for post-decrement
+        }
+
+        // No side effects, just evaluate
+        self.evaluate_arithmetic(expr)
     }
 
     /// Execute a while loop
