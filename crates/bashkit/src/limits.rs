@@ -1,8 +1,17 @@
 //! Resource limits for sandboxed execution
 //!
 //! These limits prevent runaway scripts from consuming excessive resources.
+//!
+//! # Fail Points (enabled with `failpoints` feature)
+//!
+//! - `limits::tick_command` - Inject failures in command counting
+//! - `limits::tick_loop` - Inject failures in loop iteration counting
+//! - `limits::push_function` - Inject failures in function depth tracking
 
 use std::time::Duration;
+
+#[cfg(feature = "failpoints")]
+use fail::fail_point;
 
 /// Resource limits for script execution
 #[derive(Debug, Clone)]
@@ -87,6 +96,28 @@ impl ExecutionCounters {
 
     /// Increment command counter, returns error if limit exceeded
     pub fn tick_command(&mut self, limits: &ExecutionLimits) -> Result<(), LimitExceeded> {
+        // Fail point: test behavior when counter increment is corrupted
+        #[cfg(feature = "failpoints")]
+        fail_point!("limits::tick_command", |action| {
+            match action.as_deref() {
+                Some("skip_increment") => {
+                    // Simulate counter not incrementing (potential bypass)
+                    return Ok(());
+                }
+                Some("force_overflow") => {
+                    // Simulate counter overflow
+                    self.commands = usize::MAX;
+                    return Err(LimitExceeded::MaxCommands(limits.max_commands));
+                }
+                Some("corrupt_high") => {
+                    // Simulate counter corruption to a high value
+                    self.commands = limits.max_commands + 1;
+                }
+                _ => {}
+            }
+            Ok(())
+        });
+
         self.commands += 1;
         if self.commands > limits.max_commands {
             return Err(LimitExceeded::MaxCommands(limits.max_commands));
@@ -96,6 +127,25 @@ impl ExecutionCounters {
 
     /// Increment loop iteration counter, returns error if limit exceeded
     pub fn tick_loop(&mut self, limits: &ExecutionLimits) -> Result<(), LimitExceeded> {
+        // Fail point: test behavior when loop counter is corrupted
+        #[cfg(feature = "failpoints")]
+        fail_point!("limits::tick_loop", |action| {
+            match action.as_deref() {
+                Some("skip_check") => {
+                    // Simulate limit check being bypassed
+                    self.loop_iterations += 1;
+                    return Ok(());
+                }
+                Some("reset_counter") => {
+                    // Simulate counter being reset (infinite loop potential)
+                    self.loop_iterations = 0;
+                    return Ok(());
+                }
+                _ => {}
+            }
+            Ok(())
+        });
+
         self.loop_iterations += 1;
         if self.loop_iterations > limits.max_loop_iterations {
             return Err(LimitExceeded::MaxLoopIterations(limits.max_loop_iterations));
@@ -110,6 +160,25 @@ impl ExecutionCounters {
 
     /// Push function call, returns error if depth exceeded
     pub fn push_function(&mut self, limits: &ExecutionLimits) -> Result<(), LimitExceeded> {
+        // Fail point: test behavior when function depth tracking fails
+        #[cfg(feature = "failpoints")]
+        fail_point!("limits::push_function", |action| {
+            match action.as_deref() {
+                Some("skip_check") => {
+                    // Simulate depth check being bypassed (stack overflow potential)
+                    self.function_depth += 1;
+                    return Ok(());
+                }
+                Some("corrupt_depth") => {
+                    // Simulate depth counter corruption
+                    self.function_depth = 0;
+                    return Ok(());
+                }
+                _ => {}
+            }
+            Ok(())
+        });
+
         // Check before incrementing so we don't leave invalid state on failure
         if self.function_depth >= limits.max_function_depth {
             return Err(LimitExceeded::MaxFunctionDepth(limits.max_function_depth));

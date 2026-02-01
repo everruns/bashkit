@@ -1,4 +1,10 @@
 //! Interpreter for executing bash scripts
+//!
+//! # Fail Points (enabled with `failpoints` feature)
+//!
+//! - `interp::execute_command` - Inject failures in command execution
+//! - `interp::expand_variable` - Inject failures in variable expansion
+//! - `interp::execute_function` - Inject failures in function calls
 
 mod state;
 
@@ -17,6 +23,9 @@ use crate::parser::{
     IfCommand, ListOperator, ParameterOp, Pipeline, Redirect, RedirectKind, Script, SimpleCommand,
     UntilCommand, WhileCommand, Word, WordPart,
 };
+
+#[cfg(feature = "failpoints")]
+use fail::fail_point;
 
 /// A frame in the call stack for local variable scoping
 #[derive(Debug, Clone)]
@@ -80,6 +89,11 @@ impl Interpreter {
         builtins.insert("grep", Box::new(builtins::Grep));
         builtins.insert("sed", Box::new(builtins::Sed));
         builtins.insert("awk", Box::new(builtins::Awk));
+        // System info builtins (return hardcoded sandbox values)
+        builtins.insert("hostname", Box::new(builtins::Hostname));
+        builtins.insert("uname", Box::new(builtins::Uname));
+        builtins.insert("whoami", Box::new(builtins::Whoami));
+        builtins.insert("id", Box::new(builtins::Id));
 
         Self {
             fs,
@@ -138,6 +152,31 @@ impl Interpreter {
         command: &'a Command,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
+            // Fail point: inject failures during command execution
+            #[cfg(feature = "failpoints")]
+            fail_point!("interp::execute_command", |action| {
+                match action.as_deref() {
+                    Some("panic") => {
+                        // Test panic recovery
+                        panic!("injected panic in execute_command");
+                    }
+                    Some("error") => {
+                        return Err(Error::Execution("injected execution error".to_string()));
+                    }
+                    Some("exit_nonzero") => {
+                        // Return non-zero exit code without error
+                        return Ok(ExecResult {
+                            stdout: String::new(),
+                            stderr: "injected failure".to_string(),
+                            exit_code: 127,
+                            control_flow: ControlFlow::None,
+                        });
+                    }
+                    _ => {}
+                }
+                Ok(ExecResult::ok(String::new()))
+            });
+
             // Check command count limit
             self.counters.tick_command(&self.limits)?;
 
