@@ -746,7 +746,8 @@ impl Interpreter {
                     if let Some(eq_pos) = arg.find('=') {
                         let var_name = &arg[..eq_pos];
                         let value = &arg[eq_pos + 1..];
-                        self.variables.insert(var_name.to_string(), value.to_string());
+                        self.variables
+                            .insert(var_name.to_string(), value.to_string());
                     } else {
                         self.variables.insert(arg.to_string(), String::new());
                     }
@@ -1247,7 +1248,10 @@ impl Interpreter {
             match chars[i] {
                 '(' => depth += 1,
                 ')' => depth -= 1,
-                '|' if depth == 0 && (i == 0 || chars[i - 1] != '|') && (i + 1 >= chars.len() || chars[i + 1] != '|') => {
+                '|' if depth == 0
+                    && (i == 0 || chars[i - 1] != '|')
+                    && (i + 1 >= chars.len() || chars[i + 1] != '|') =>
+                {
                     let left = self.parse_arithmetic(&expr[..i]);
                     let right = self.parse_arithmetic(&expr[i + 1..]);
                     return left | right;
@@ -1262,7 +1266,10 @@ impl Interpreter {
             match chars[i] {
                 '(' => depth += 1,
                 ')' => depth -= 1,
-                '&' if depth == 0 && (i == 0 || chars[i - 1] != '&') && (i + 1 >= chars.len() || chars[i + 1] != '&') => {
+                '&' if depth == 0
+                    && (i == 0 || chars[i - 1] != '&')
+                    && (i + 1 >= chars.len() || chars[i + 1] != '&') =>
+                {
                     let left = self.parse_arithmetic(&expr[..i]);
                     let right = self.parse_arithmetic(&expr[i + 1..]);
                     return left & right;
@@ -1307,12 +1314,18 @@ impl Interpreter {
                     let right = self.parse_arithmetic(&expr[i + 1..]);
                     return if left >= right { 1 } else { 0 };
                 }
-                '<' if depth == 0 && (i + 1 >= chars.len() || chars[i + 1] != '=') && (i == 0 || chars[i - 1] != '<') => {
+                '<' if depth == 0
+                    && (i + 1 >= chars.len() || chars[i + 1] != '=')
+                    && (i == 0 || chars[i - 1] != '<') =>
+                {
                     let left = self.parse_arithmetic(&expr[..i]);
                     let right = self.parse_arithmetic(&expr[i + 1..]);
                     return if left < right { 1 } else { 0 };
                 }
-                '>' if depth == 0 && (i + 1 >= chars.len() || chars[i + 1] != '=') && (i == 0 || chars[i - 1] != '>') => {
+                '>' if depth == 0
+                    && (i + 1 >= chars.len() || chars[i + 1] != '=')
+                    && (i == 0 || chars[i - 1] != '>') =>
+                {
                     let left = self.parse_arithmetic(&expr[..i]);
                     let right = self.parse_arithmetic(&expr[i + 1..]);
                     return if left > right { 1 } else { 0 };
