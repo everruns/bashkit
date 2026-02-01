@@ -2,13 +2,11 @@
 //!
 //! Implements a recursive descent parser for bash scripts.
 //!
-//! # Known Issues
+//! # Design Notes
 //!
-//! TODO(parser): Fix handling of reserved words as arguments after compound commands.
-//! E.g., `for i in 1; do echo $i; done; echo done` hangs because "done" is treated
-//! as a keyword instead of a regular word when it appears as an argument to echo.
-//! The parser needs to properly distinguish between keywords in command position
-//! vs regular words in argument position.
+//! Reserved words like `done`, `fi`, `esac` are only treated specially in command
+//! position (when starting a command). When used as arguments to commands like
+//! `echo done`, they are parsed as regular words.
 
 mod ast;
 mod lexer;
@@ -50,6 +48,10 @@ impl<'a> Parser<'a> {
             }
             if let Some(cmd) = self.parse_command_list()? {
                 commands.push(cmd);
+            } else {
+                // Could not parse a command - stop to avoid infinite loop
+                // This handles dangling reserved words or unexpected tokens
+                break;
             }
         }
 
@@ -612,19 +614,10 @@ impl<'a> Parser<'a> {
         Ok(commands)
     }
 
-    /// Reserved words that terminate simple commands (cannot appear as arguments)
-    const TERMINATING_WORDS: &'static [&'static str] = &[
-        "then", "else", "elif", "fi", "do", "done", "esac", "in", "}", ")",
-    ];
-
     /// Reserved words that cannot start a simple command
+    /// These are only special in command position, not as arguments
     const NON_COMMAND_WORDS: &'static [&'static str] =
         &["then", "else", "elif", "fi", "do", "done", "esac", "in"];
-
-    /// Check if a word is a terminating reserved word
-    fn is_terminating_word(word: &str) -> bool {
-        Self::TERMINATING_WORDS.contains(&word)
-    }
 
     /// Check if a word cannot start a command
     fn is_non_command_word(word: &str) -> bool {
@@ -718,11 +711,8 @@ impl<'a> Parser<'a> {
                         matches!(&self.current_token, Some(tokens::Token::LiteralWord(_)));
 
                     // Stop if this word cannot start a command (like 'then', 'fi', etc.)
+                    // Note: we allow reserved words as arguments (e.g., `echo done` outputs "done")
                     if words.is_empty() && Self::is_non_command_word(w) {
-                        break;
-                    }
-                    // Stop if we see a terminating word as an argument
-                    if !words.is_empty() && Self::is_terminating_word(w) {
                         break;
                     }
 

@@ -431,7 +431,11 @@ hello
         };
 
         let result = run_spec_test(&test).await;
-        assert!(result.passed, "Test should pass when error occurs: {:?}", result);
+        assert!(
+            result.passed,
+            "Test should pass when error occurs: {:?}",
+            result
+        );
     }
 
     #[test]
