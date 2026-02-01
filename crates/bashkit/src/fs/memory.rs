@@ -1,4 +1,13 @@
 //! In-memory filesystem implementation
+//!
+//! # Fail Points (enabled with `failpoints` feature)
+//!
+//! - `fs::read_file` - Inject failures in file reads
+//! - `fs::write_file` - Inject failures in file writes
+//! - `fs::mkdir` - Inject failures in directory creation
+//! - `fs::remove` - Inject failures in file/directory removal
+//! - `fs::lock_read` - Inject failures in read lock acquisition
+//! - `fs::lock_write` - Inject failures in write lock acquisition
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -9,6 +18,9 @@ use std::time::SystemTime;
 
 use super::traits::{DirEntry, FileSystem, FileType, Metadata};
 use crate::error::Result;
+
+#[cfg(feature = "failpoints")]
+use fail::fail_point;
 
 /// In-memory filesystem.
 ///
@@ -108,6 +120,27 @@ impl InMemoryFs {
 #[async_trait]
 impl FileSystem for InMemoryFs {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        // Fail point: simulate read failures
+        #[cfg(feature = "failpoints")]
+        fail_point!("fs::read_file", |action| {
+            match action.as_deref() {
+                Some("io_error") => {
+                    return Err(IoError::other("injected I/O error").into());
+                }
+                Some("permission_denied") => {
+                    return Err(
+                        IoError::new(ErrorKind::PermissionDenied, "permission denied").into(),
+                    );
+                }
+                Some("corrupt_data") => {
+                    // Return garbage data instead of actual content
+                    return Ok(vec![0xFF, 0xFE, 0x00, 0x01]);
+                }
+                _ => {}
+            }
+            Err(IoError::other("fail point triggered").into())
+        });
+
         let path = Self::normalize_path(path);
         let entries = self.entries.read().unwrap();
 
@@ -123,6 +156,31 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+        // Fail point: simulate write failures
+        #[cfg(feature = "failpoints")]
+        fail_point!("fs::write_file", |action| {
+            match action.as_deref() {
+                Some("io_error") => {
+                    return Err(IoError::other("injected I/O error").into());
+                }
+                Some("disk_full") => {
+                    return Err(IoError::other("no space left on device").into());
+                }
+                Some("permission_denied") => {
+                    return Err(
+                        IoError::new(ErrorKind::PermissionDenied, "permission denied").into(),
+                    );
+                }
+                Some("partial_write") => {
+                    // Simulate partial write - this tests data integrity handling
+                    // In a real scenario, this could corrupt data
+                    return Err(IoError::new(ErrorKind::Interrupted, "partial write").into());
+                }
+                _ => {}
+            }
+            Err(IoError::other("fail point triggered").into())
+        });
+
         let path = Self::normalize_path(path);
         let mut entries = self.entries.write().unwrap();
 

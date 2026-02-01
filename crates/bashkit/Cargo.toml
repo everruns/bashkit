@@ -39,6 +39,9 @@ chrono = { workspace = true }
 # HTTP client (for curl) - optional, enabled with network feature
 reqwest = { workspace = true, optional = true }
 
+# Fault injection for testing (optional)
+fail = { workspace = true, optional = true }
+
 # URL parsing
 url = "2"
 
@@ -50,6 +53,9 @@ jaq-json = { workspace = true }
 [features]
 default = []
 network = ["reqwest"]
+# Enable fail points for security/fault injection testing
+# Usage: FAILPOINTS="fail_point_name=action" cargo test --features failpoints
+failpoints = ["fail/failpoints"]
 
 [dev-dependencies]
 tokio-test = { workspace = true }
