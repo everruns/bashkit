@@ -12,9 +12,14 @@ default:
 build:
     cargo build
 
-# Run all tests
+# Run all tests (including fail-point tests)
 test:
-    cargo test --all-features
+    cargo test --features network
+    cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
+
+# Run fail-point tests only (single-threaded, requires failpoints feature)
+test-failpoints:
+    cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
 
 # Run formatters and linters (auto-fix)
 fmt:
