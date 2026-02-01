@@ -83,4 +83,6 @@ Types: feat, fix, docs, refactor, test, chore
 
 Squash and Merge. Use PR template if exists.
 
+**NEVER add links to Claude sessions in PR body.**
+
 See `CONTRIBUTING.md` for details.
