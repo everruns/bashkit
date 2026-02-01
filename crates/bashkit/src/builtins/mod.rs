@@ -18,6 +18,7 @@ mod sleep;
 mod source;
 mod test;
 mod vars;
+mod wc;
 
 pub use awk::Awk;
 pub use cat::Cat;
@@ -37,6 +38,7 @@ pub use sleep::Sleep;
 pub use source::Source;
 pub use test::{Bracket, Test};
 pub use vars::{Local, Set, Shift, Unset};
+pub use wc::Wc;
 
 use async_trait::async_trait;
 use std::collections::HashMap;

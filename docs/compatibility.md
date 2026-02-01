@@ -6,8 +6,8 @@
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 34 | 14 | 48 |
-| Text Processing | 4 | 8 | 12 |
+| Shell Builtins | 35 | 13 | 48 |
+| Text Processing | 5 | 7 | 12 |
 | File Operations | 7 | 0 | 7 |
 | Network | 0 | 2 | 2 |
 
@@ -55,12 +55,12 @@
 | `mv` | - | Move/rename files |
 | `touch` | - | Create empty files |
 | `chmod` | `MODE` | Change permissions (octal) |
+| `wc` | `-l`, `-w`, `-c` | Count lines/words/bytes |
 
 ### Not Implemented
 
 | Builtin | Priority | Status |
 |---------|----------|--------|
-| `wc` | High | Planned |
 | `sort` | Medium | Planned |
 | `uniq` | Medium | Planned |
 | `cut` | Medium | Planned |
