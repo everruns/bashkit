@@ -624,6 +624,26 @@ impl<'a> Parser<'a> {
         Self::NON_COMMAND_WORDS.contains(&word)
     }
 
+    /// Extract file descriptor prefix from words for redirections.
+    /// In `2>file`, the `2` is a fd prefix, not an argument.
+    /// Returns the fd if the last word is a single digit (0-9).
+    fn extract_fd_prefix(words: &mut Vec<Word>) -> Option<i32> {
+        if let Some(last_word) = words.last() {
+            // Check if it's a single digit
+            if last_word.parts.len() == 1 {
+                if let WordPart::Literal(s) = &last_word.parts[0] {
+                    if s.len() == 1 {
+                        if let Some(fd) = s.chars().next().and_then(|c| c.to_digit(10)) {
+                            words.pop();
+                            return Some(fd as i32);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Check if current token is a specific keyword
     fn is_keyword(&self, keyword: &str) -> bool {
         matches!(&self.current_token, Some(tokens::Token::Word(w)) if w == keyword)
@@ -811,28 +831,32 @@ impl<'a> Parser<'a> {
                     self.advance();
                 }
                 Some(tokens::Token::RedirectOut) => {
+                    // Check if last word is a single digit (fd prefix like 2>file)
+                    let fd = Self::extract_fd_prefix(&mut words);
                     self.advance();
                     let target = self.expect_word()?;
                     redirects.push(Redirect {
-                        fd: None,
+                        fd,
                         kind: RedirectKind::Output,
                         target,
                     });
                 }
                 Some(tokens::Token::RedirectAppend) => {
+                    let fd = Self::extract_fd_prefix(&mut words);
                     self.advance();
                     let target = self.expect_word()?;
                     redirects.push(Redirect {
-                        fd: None,
+                        fd,
                         kind: RedirectKind::Append,
                         target,
                     });
                 }
                 Some(tokens::Token::RedirectIn) => {
+                    let fd = Self::extract_fd_prefix(&mut words);
                     self.advance();
                     let target = self.expect_word()?;
                     redirects.push(Redirect {
-                        fd: None,
+                        fd,
                         kind: RedirectKind::Input,
                         target,
                     });
@@ -866,6 +890,39 @@ impl<'a> Parser<'a> {
                         fd: None,
                         kind: RedirectKind::HereDoc,
                         target: self.parse_word(content),
+                    });
+                }
+                Some(tokens::Token::DupOutput) => {
+                    // Handle >& - duplicate output fd
+                    // Check if last word is a single digit (fd prefix like 2>&1)
+                    let fd = Self::extract_fd_prefix(&mut words);
+                    self.advance();
+                    let target = self.expect_word()?;
+                    redirects.push(Redirect {
+                        fd,
+                        kind: RedirectKind::DupOutput,
+                        target,
+                    });
+                }
+                Some(tokens::Token::DupInput) => {
+                    // Handle <& - duplicate input fd
+                    let fd = Self::extract_fd_prefix(&mut words);
+                    self.advance();
+                    let target = self.expect_word()?;
+                    redirects.push(Redirect {
+                        fd,
+                        kind: RedirectKind::DupInput,
+                        target,
+                    });
+                }
+                Some(tokens::Token::OutputBoth) => {
+                    // Handle &> - redirect both stdout and stderr
+                    self.advance();
+                    let target = self.expect_word()?;
+                    redirects.push(Redirect {
+                        fd: None,
+                        kind: RedirectKind::OutputBoth,
+                        target,
                     });
                 }
                 Some(tokens::Token::Newline)

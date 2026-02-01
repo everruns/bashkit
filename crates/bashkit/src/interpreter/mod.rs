@@ -864,26 +864,64 @@ impl Interpreter {
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         for redirect in redirects {
+            // Determine which stream(s) to redirect based on fd
+            // fd 1 = stdout (default for >), fd 2 = stderr
+            let fd = redirect.fd.unwrap_or(1);
+
             match redirect.kind {
                 RedirectKind::Output => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    // Write stdout to file
-                    self.fs.write_file(&path, result.stdout.as_bytes()).await?;
-                    result.stdout = String::new();
+                    if fd == 2 {
+                        // Redirect stderr to file
+                        self.fs.write_file(&path, result.stderr.as_bytes()).await?;
+                        result.stderr = String::new();
+                    } else {
+                        // Redirect stdout to file
+                        self.fs.write_file(&path, result.stdout.as_bytes()).await?;
+                        result.stdout = String::new();
+                    }
                 }
                 RedirectKind::Append => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    // Append stdout to file
-                    self.fs.append_file(&path, result.stdout.as_bytes()).await?;
-                    result.stdout = String::new();
+                    if fd == 2 {
+                        self.fs.append_file(&path, result.stderr.as_bytes()).await?;
+                        result.stderr = String::new();
+                    } else {
+                        self.fs.append_file(&path, result.stdout.as_bytes()).await?;
+                        result.stdout = String::new();
+                    }
                 }
-                RedirectKind::Input | RedirectKind::HereString => {
+                RedirectKind::DupOutput => {
+                    // Handle 2>&1 (redirect stderr to stdout) or >&2 (redirect stdout to stderr)
+                    let target_str = self.expand_word(&redirect.target).await?;
+                    if let Ok(target_fd) = target_str.parse::<i32>() {
+                        if fd == 2 && target_fd == 1 {
+                            // 2>&1: redirect stderr to stdout
+                            result.stdout.push_str(&result.stderr);
+                            result.stderr = String::new();
+                        } else if fd == 1 && target_fd == 2 {
+                            // >&2 or 1>&2: redirect stdout to stderr
+                            result.stderr.push_str(&result.stdout);
+                            result.stdout = String::new();
+                        }
+                    }
+                }
+                RedirectKind::OutputBoth => {
+                    // &> - redirect both stdout and stderr to file
+                    let target_path = self.expand_word(&redirect.target).await?;
+                    let path = self.resolve_path(&target_path);
+                    let combined = format!("{}{}", result.stdout, result.stderr);
+                    self.fs.write_file(&path, combined.as_bytes()).await?;
+                    result.stdout = String::new();
+                    result.stderr = String::new();
+                }
+                RedirectKind::Input | RedirectKind::HereString | RedirectKind::HereDoc => {
                     // Input redirections handled in process_input_redirections
                 }
-                _ => {
-                    // TODO: Handle other redirect types (HereDoc, DupOutput, DupInput, OutputBoth)
+                RedirectKind::DupInput => {
+                    // <& - duplicate input fd (less common, skip for now)
                 }
             }
         }

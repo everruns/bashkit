@@ -46,6 +46,15 @@ pub enum Token {
     /// Here string (<<<)
     HereString,
 
+    /// Duplicate output fd (>&)
+    DupOutput,
+
+    /// Duplicate input fd (<&)
+    DupInput,
+
+    /// Redirect both stdout and stderr (&>)
+    OutputBoth,
+
     /// Left parenthesis (()
     LeftParen,
 

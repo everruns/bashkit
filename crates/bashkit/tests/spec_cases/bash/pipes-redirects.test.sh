@@ -87,13 +87,13 @@ hello world
 ### end
 
 ### redirect_stderr
-### skip: stderr redirect not fully implemented
+# Redirect stdout to stderr
 echo error >&2
 ### expect
 ### end
 
 ### redirect_both
-### skip: combined redirects not implemented
+# Redirect stdout to file with stderr also going there
 echo hello > /tmp/out.txt 2>&1
 ### expect
 ### end

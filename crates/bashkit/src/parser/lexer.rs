@@ -52,6 +52,9 @@ impl<'a> Lexer<'a> {
                 if self.peek_char() == Some('&') {
                     self.advance();
                     Some(Token::And)
+                } else if self.peek_char() == Some('>') {
+                    self.advance();
+                    Some(Token::OutputBoth)
                 } else {
                     Some(Token::Background)
                 }
@@ -61,6 +64,9 @@ impl<'a> Lexer<'a> {
                 if self.peek_char() == Some('>') {
                     self.advance();
                     Some(Token::RedirectAppend)
+                } else if self.peek_char() == Some('&') {
+                    self.advance();
+                    Some(Token::DupOutput)
                 } else {
                     Some(Token::RedirectOut)
                 }
@@ -75,6 +81,9 @@ impl<'a> Lexer<'a> {
                     } else {
                         Some(Token::HereDoc)
                     }
+                } else if self.peek_char() == Some('&') {
+                    self.advance();
+                    Some(Token::DupInput)
                 } else {
                     Some(Token::RedirectIn)
                 }
