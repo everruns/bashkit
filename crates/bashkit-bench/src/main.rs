@@ -5,7 +5,7 @@
 // - Error rates (correctness)
 //
 // Usage: bashkit-bench [OPTIONS]
-//   --save <file>     Save results to JSON file
+//   --save [file]     Save results (auto-generates name if not provided)
 //   --runners <list>  Comma-separated: bashkit,bash,just-bash (default: all available)
 //   --filter <name>   Run only benchmarks matching name
 //   --iterations <n>  Iterations per benchmark (default: 10)
@@ -30,9 +30,9 @@ use runners::{BashRunner, BashkitRunner, JustBashRunner, Runner};
 #[command(name = "bashkit-bench")]
 #[command(about = "Benchmark bashkit against bash and just-bash")]
 struct Args {
-    /// Save results to JSON file
-    #[arg(long)]
-    save: Option<PathBuf>,
+    /// Save results to file (auto-generates name with system info if no path given)
+    #[arg(long, num_args = 0..=1, default_missing_value = "")]
+    save: Option<String>,
 
     /// Runners to use (comma-separated: bashkit,bash,just-bash)
     #[arg(long, default_value = "bashkit,bash")]
@@ -64,6 +64,64 @@ struct Args {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemInfo {
+    pub hostname: String,
+    pub os: String,
+    pub arch: String,
+    pub cpus: usize,
+}
+
+impl SystemInfo {
+    fn collect() -> Self {
+        let hostname = std::env::var("HOSTNAME")
+            .or_else(|_| std::env::var("HOST"))
+            .unwrap_or_else(|_| gethostname());
+
+        let os = std::env::consts::OS.to_string();
+        let arch = std::env::consts::ARCH.to_string();
+        let cpus = std::thread::available_parallelism()
+            .map(|p| p.get())
+            .unwrap_or(1);
+
+        Self {
+            hostname,
+            os,
+            arch,
+            cpus,
+        }
+    }
+
+    fn moniker(&self) -> String {
+        // Create short identifier: hostname-os-arch
+        let host = self
+            .hostname
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .take(12)
+            .collect::<String>()
+            .to_lowercase();
+        format!("{}-{}-{}", host, self.os, self.arch)
+    }
+}
+
+fn gethostname() -> String {
+    #[cfg(unix)]
+    {
+        use std::process::Command;
+        Command::new("hostname")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+    #[cfg(not(unix))]
+    {
+        "unknown".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchResult {
     pub runner: String,
     pub case_name: String,
@@ -82,6 +140,7 @@ pub struct BenchResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchReport {
     pub timestamp: String,
+    pub system: SystemInfo,
     pub iterations: usize,
     pub warmup: usize,
     pub runners: Vec<String>,
@@ -165,6 +224,9 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Collect system info
+    let system_info = SystemInfo::collect();
+
     // Initialize runners
     let runner_names: Vec<&str> = args.runners.split(',').map(|s| s.trim()).collect();
     let mut runners: Vec<Runner> = Vec::new();
@@ -206,6 +268,10 @@ async fn main() -> Result<()> {
             .map(|r| r.name())
             .collect::<Vec<_>>()
             .join(", ")
+    );
+    println!(
+        "  System: {} ({}-{}, {} CPUs)",
+        system_info.hostname, system_info.os, system_info.arch, system_info.cpus
     );
     println!(
         "  Iterations: {}, Warmup: {}\n",
@@ -262,7 +328,7 @@ async fn main() -> Result<()> {
     }
 
     // Generate report
-    let report = generate_report(&results, &args, &runner_names);
+    let report = generate_report(&results, &args, &runner_names, &system_info);
 
     // Print results table
     println!("\n{}", "Results:".bold());
@@ -273,10 +339,37 @@ async fn main() -> Result<()> {
     print_summary(&report.summary);
 
     // Save if requested
-    if let Some(ref path) = args.save {
+    if let Some(ref save_arg) = args.save {
+        let base_name = if save_arg.is_empty() {
+            // Auto-generate filename with system moniker and timestamp
+            let timestamp = chrono_lite_now();
+            format!("bench-{}-{}", system_info.moniker(), timestamp)
+        } else {
+            // Use provided name, strip extension if present
+            let path = PathBuf::from(save_arg);
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("bench-results")
+                .to_string()
+        };
+
+        let json_path = format!("{}.json", base_name);
+        let md_path = format!("{}.md", base_name);
+
+        // Save JSON
         let json = serde_json::to_string_pretty(&report)?;
-        std::fs::write(path, json).context("Failed to write results")?;
-        println!("\n{} results to {}", "Saved".green(), path.display());
+        std::fs::write(&json_path, json).context("Failed to write JSON results")?;
+
+        // Save Markdown report
+        let markdown = generate_markdown_report(&report);
+        std::fs::write(&md_path, markdown).context("Failed to write Markdown report")?;
+
+        println!(
+            "\n{} results to:\n  - {}\n  - {}",
+            "Saved".green(),
+            json_path,
+            md_path
+        );
     }
 
     Ok(())
@@ -369,7 +462,12 @@ fn normalize_output(s: &str) -> String {
     s.trim().replace("\r\n", "\n")
 }
 
-fn generate_report(results: &[BenchResult], args: &Args, runner_names: &[&str]) -> BenchReport {
+fn generate_report(
+    results: &[BenchResult],
+    args: &Args,
+    runner_names: &[&str],
+    system_info: &SystemInfo,
+) -> BenchReport {
     let mut runner_stats: HashMap<String, RunnerStats> = HashMap::new();
 
     for name in runner_names {
@@ -411,6 +509,7 @@ fn generate_report(results: &[BenchResult], args: &Args, runner_names: &[&str]) 
 
     BenchReport {
         timestamp: chrono_lite_now(),
+        system: system_info.clone(),
         iterations: args.iterations,
         warmup: args.warmup,
         runners: runner_names.iter().map(|s| s.to_string()).collect(),
@@ -422,8 +521,140 @@ fn generate_report(results: &[BenchResult], args: &Args, runner_names: &[&str]) 
     }
 }
 
+fn generate_markdown_report(report: &BenchReport) -> String {
+    let mut md = String::new();
+
+    // Header
+    md.push_str("# BashKit Benchmark Report\n\n");
+
+    // System info
+    md.push_str("## System Information\n\n");
+    md.push_str(&format!("- **Hostname**: {}\n", report.system.hostname));
+    md.push_str(&format!("- **OS**: {}\n", report.system.os));
+    md.push_str(&format!("- **Architecture**: {}\n", report.system.arch));
+    md.push_str(&format!("- **CPUs**: {}\n", report.system.cpus));
+    md.push_str(&format!("- **Timestamp**: {}\n", report.timestamp));
+    md.push_str(&format!("- **Iterations**: {}\n", report.iterations));
+    md.push_str(&format!("- **Warmup**: {}\n", report.warmup));
+    md.push_str("\n");
+
+    // Summary
+    md.push_str("## Summary\n\n");
+    md.push_str(&format!(
+        "Benchmarked {} cases across {} runners.\n\n",
+        report.summary.total_cases,
+        report.runners.len()
+    ));
+
+    md.push_str(
+        "| Runner | Total Time (ms) | Avg/Case (ms) | Errors | Error Rate | Output Match |\n",
+    );
+    md.push_str(
+        "|--------|-----------------|---------------|--------|------------|-------------|\n",
+    );
+
+    for runner in &report.runners {
+        if let Some(stats) = report.summary.runner_stats.get(runner) {
+            md.push_str(&format!(
+                "| {} | {:.2} | {:.3} | {} | {:.1}% | {:.1}% |\n",
+                runner,
+                stats.total_time_ms,
+                stats.avg_time_ms,
+                stats.error_count,
+                stats.error_rate * 100.0,
+                stats.output_match_rate * 100.0
+            ));
+        }
+    }
+    md.push_str("\n");
+
+    // Performance comparison (if multiple runners)
+    if report.runners.len() >= 2 {
+        md.push_str("## Performance Comparison\n\n");
+
+        let bashkit_stats = report.summary.runner_stats.get("bashkit");
+        let bash_stats = report.summary.runner_stats.get("bash");
+
+        if let (Some(bk), Some(b)) = (bashkit_stats, bash_stats) {
+            if bk.avg_time_ms > 0.0 && b.avg_time_ms > 0.0 {
+                let speedup = b.avg_time_ms / bk.avg_time_ms;
+                if speedup > 1.0 {
+                    md.push_str(&format!(
+                        "**BashKit is {:.1}x faster** than bash on average.\n\n",
+                        speedup
+                    ));
+                } else {
+                    md.push_str(&format!(
+                        "**Bash is {:.1}x faster** than bashkit on average.\n\n",
+                        1.0 / speedup
+                    ));
+                }
+            }
+        }
+    }
+
+    // Results by category
+    md.push_str("## Results by Category\n\n");
+
+    let mut categories: Vec<_> = report
+        .results
+        .iter()
+        .map(|r| r.category.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    categories.sort();
+
+    for category in categories {
+        md.push_str(&format!("### {}\n\n", capitalize(category)));
+        md.push_str("| Benchmark | Runner | Mean (ms) | StdDev | Errors | Match |\n");
+        md.push_str("|-----------|--------|-----------|--------|--------|-------|\n");
+
+        let cat_results: Vec<_> = report
+            .results
+            .iter()
+            .filter(|r| r.category == category)
+            .collect();
+
+        for result in cat_results {
+            md.push_str(&format!(
+                "| {} | {} | {:.3} | ±{:.3} | {} | {} |\n",
+                result.case_name,
+                result.runner,
+                result.mean_ns / 1_000_000.0,
+                result.stddev_ns / 1_000_000.0,
+                if result.errors > 0 {
+                    result.errors.to_string()
+                } else {
+                    "-".to_string()
+                },
+                if result.output_match { "✓" } else { "✗" }
+            ));
+        }
+        md.push_str("\n");
+    }
+
+    // Assumptions
+    md.push_str("## Assumptions & Notes\n\n");
+    md.push_str("- Times measured in nanoseconds, displayed in milliseconds\n");
+    md.push_str("- Warmup iterations excluded from timing\n");
+    md.push_str("- Output match compares against bash output when available\n");
+    md.push_str("- Errors include execution failures and exit code mismatches\n");
+    md.push_str("- BashKit runs in-process (no fork), bash spawns subprocess\n");
+    md.push_str("\n");
+
+    md
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
 fn chrono_lite_now() -> String {
-    // Simple timestamp without chrono dependency
     use std::time::SystemTime;
     let duration = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
