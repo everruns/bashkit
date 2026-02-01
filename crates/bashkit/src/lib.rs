@@ -1162,4 +1162,94 @@ mod tests {
             .unwrap();
         assert_eq!(result.stdout, "startabc\n");
     }
+
+    // Negative/edge case tests for reserved word handling
+
+    #[tokio::test]
+    async fn test_done_still_terminates_loop() {
+        // Ensure "done" still works as a loop terminator
+        let mut bash = Bash::new();
+        let result = bash.exec("for i in 1 2; do echo $i; done").await.unwrap();
+        assert_eq!(result.stdout, "1\n2\n");
+    }
+
+    #[tokio::test]
+    async fn test_fi_still_terminates_if() {
+        // Ensure "fi" still works as an if terminator
+        let mut bash = Bash::new();
+        let result = bash.exec("if true; then echo yes; fi").await.unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_echo_fi_as_argument() {
+        // "fi" should be a valid argument outside of if context
+        let mut bash = Bash::new();
+        let result = bash.exec("echo fi").await.unwrap();
+        assert_eq!(result.stdout, "fi\n");
+    }
+
+    #[tokio::test]
+    async fn test_echo_then_as_argument() {
+        // "then" should be a valid argument outside of if context
+        let mut bash = Bash::new();
+        let result = bash.exec("echo then").await.unwrap();
+        assert_eq!(result.stdout, "then\n");
+    }
+
+    #[tokio::test]
+    async fn test_reserved_words_in_quotes_are_arguments() {
+        // Reserved words in quotes should always be arguments
+        let mut bash = Bash::new();
+        let result = bash.exec("echo 'done' 'fi' 'then'").await.unwrap();
+        assert_eq!(result.stdout, "done fi then\n");
+    }
+
+    #[tokio::test]
+    async fn test_nested_loops_done_keyword() {
+        // Nested loops should properly match done keywords
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("for i in 1; do for j in a; do echo $i$j; done; done")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "1a\n");
+    }
+
+    // Negative/edge case tests for /dev/null
+
+    #[tokio::test]
+    async fn test_dev_null_read_returns_empty() {
+        // Reading from /dev/null should return empty
+        let mut bash = Bash::new();
+        let result = bash.exec("cat /dev/null").await.unwrap();
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_dev_null_append() {
+        // Appending to /dev/null should work silently
+        let mut bash = Bash::new();
+        let result = bash.exec("echo hello >> /dev/null; echo ok").await.unwrap();
+        assert_eq!(result.stdout, "ok\n");
+    }
+
+    #[tokio::test]
+    async fn test_dev_null_in_pipeline() {
+        // /dev/null in a pipeline should work
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("echo hello | cat > /dev/null; echo ok")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "ok\n");
+    }
+
+    #[tokio::test]
+    async fn test_dev_null_exists() {
+        // /dev/null should exist and be readable
+        let mut bash = Bash::new();
+        let result = bash.exec("cat /dev/null; echo exit_$?").await.unwrap();
+        assert_eq!(result.stdout, "exit_0\n");
+    }
 }
