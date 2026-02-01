@@ -1,0 +1,33 @@
+# Benchmark tool for comparing bashkit, bash, and just-bash
+# Goals: measure performance, start time, and error rates
+# Usage: cargo run -p bashkit-bench -- [options]
+
+[package]
+name = "bashkit-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Benchmark tool for bashkit shell interpreter"
+
+[[bin]]
+name = "bashkit-bench"
+path = "src/main.rs"
+
+[dependencies]
+bashkit = { path = "../bashkit" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+
+# Timing
+instant = "0.1"
+
+# Statistics
+statrs = "0.18"
+
+# Terminal output
+colored = "2"
+tabled = "0.17"
