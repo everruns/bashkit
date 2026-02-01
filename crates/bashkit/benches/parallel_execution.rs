@@ -125,6 +125,23 @@ fn bench_single_session_overhead(c: &mut Criterion) {
     });
 }
 
+/// Verify the benchmark script actually executes correctly
+#[test]
+fn verify_script_executes() {
+    let rt = Runtime::new().unwrap();
+    rt.block_on(async {
+        let mut bash = Bash::new();
+        let result = bash.exec(SIMPLE_SCRIPT).await.unwrap();
+        // 1+2+3+4+5 = 15
+        assert_eq!(
+            result.stdout.trim(),
+            "15",
+            "Script must compute sum correctly"
+        );
+        assert_eq!(result.exit_code, 0);
+    });
+}
+
 criterion_group!(
     benches,
     bench_parallel_vs_sequential,
