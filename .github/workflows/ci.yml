@@ -44,3 +44,10 @@ jobs:
 
       - name: Run tests
         run: cargo test --all-features
+
+      - name: Run examples
+        run: |
+          cargo run --example basic
+          cargo run --example custom_fs
+          cargo run --example resource_limits
+          cargo run --example text_processing
