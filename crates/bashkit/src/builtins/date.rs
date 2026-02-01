@@ -43,7 +43,7 @@ impl Builtin for Date {
         let format_arg = ctx.args.iter().find(|a| a.starts_with('+'));
 
         let format = match format_arg {
-            Some(fmt) => &fmt[1..], // Strip leading '+'
+            Some(fmt) => &fmt[1..],            // Strip leading '+'
             None => "%a %b %e %H:%M:%S %Z %Y", // Default format like: "Mon Jan  1 12:00:00 UTC 2024"
         };
 

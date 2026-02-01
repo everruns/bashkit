@@ -88,10 +88,7 @@ impl Builtin for Curl {
         let url = match url {
             Some(u) => u,
             None => {
-                return Ok(ExecResult::err(
-                    "curl: no URL specified\n".to_string(),
-                    3,
-                ));
+                return Ok(ExecResult::err("curl: no URL specified\n".to_string(), 3));
             }
         };
 
@@ -99,7 +96,15 @@ impl Builtin for Curl {
         // special configuration that's not available in the builtin context.
         // A real implementation would use ctx.http_client if available.
 
-        let _ = (silent, output_file, method, data, headers, head_only, ctx.fs);
+        let _ = (
+            silent,
+            output_file,
+            method,
+            data,
+            headers,
+            head_only,
+            ctx.fs,
+        );
 
         Ok(ExecResult::err(
             format!(
@@ -158,10 +163,7 @@ impl Builtin for Wget {
         let url = match url {
             Some(u) => u,
             None => {
-                return Ok(ExecResult::err(
-                    "wget: missing URL\n".to_string(),
-                    1,
-                ));
+                return Ok(ExecResult::err("wget: missing URL\n".to_string(), 1));
             }
         };
 

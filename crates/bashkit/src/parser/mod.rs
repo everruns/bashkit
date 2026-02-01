@@ -116,12 +116,15 @@ impl<'a> Parser<'a> {
                         || matches!(self.current_token, Some(tokens::Token::Newline))
                     {
                         // Just & at end - return as background
-                        rest.push((ListOperator::Background, Command::Simple(SimpleCommand {
-                            name: Word::literal(""),
-                            args: vec![],
-                            redirects: vec![],
-                            assignments: vec![],
-                        })));
+                        rest.push((
+                            ListOperator::Background,
+                            Command::Simple(SimpleCommand {
+                                name: Word::literal(""),
+                                args: vec![],
+                                redirects: vec![],
+                                assignments: vec![],
+                            }),
+                        ));
                         break;
                     }
                     ListOperator::Background

@@ -124,9 +124,7 @@ mod tests {
         let mut table = JobTable::new();
 
         // Spawn a simple job
-        let handle = tokio::spawn(async {
-            ExecResult::ok("hello".to_string())
-        });
+        let handle = tokio::spawn(async { ExecResult::ok("hello".to_string()) });
 
         let job_id = table.spawn(handle);
         assert_eq!(job_id, 1);
@@ -144,9 +142,7 @@ mod tests {
 
         // Spawn multiple jobs
         for i in 0..3 {
-            let handle = tokio::spawn(async move {
-                ExecResult::ok(format!("job {}", i))
-            });
+            let handle = tokio::spawn(async move { ExecResult::ok(format!("job {}", i)) });
             table.spawn(handle);
         }
 
