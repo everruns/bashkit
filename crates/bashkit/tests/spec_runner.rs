@@ -8,7 +8,22 @@
 //! ### expect
 //! hello
 //! ### end
+//!
+//! ### error_test
+//! ### expect_error
+//! invalid syntax (((
+//! ### expect
+//! ### end
 //! ```
+//!
+//! Directives:
+//! - `### test_name` - Start a new test
+//! - `### expect` - Expected stdout follows
+//! - `### end` - End of test case
+//! - `### exit_code: N` - Expected exit code
+//! - `### skip: reason` - Skip this test
+//! - `### expect_error` - Expect parse/execution error (test passes if error occurs)
+//! - `### timeout: N` - Custom timeout in seconds (default: 5)
 //!
 //! Multiple tests per file supported. Tests are run against BashKit
 //! and optionally compared against real bash.
@@ -18,6 +33,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
+use tokio::time::timeout;
+
+/// Default timeout for spec tests in seconds
+const DEFAULT_TIMEOUT_SECS: u64 = 5;
 
 /// A single test case parsed from a .test.sh file
 #[derive(Debug, Clone)]
@@ -29,6 +49,10 @@ pub struct SpecTest {
     pub expected_exit_code: Option<i32>,
     pub skip: bool,
     pub skip_reason: Option<String>,
+    /// If true, test passes when an error occurs (for testing error handling)
+    pub expect_error: bool,
+    /// Timeout in seconds (default: 5)
+    pub timeout_secs: u64,
 }
 
 /// Result of running a spec test
@@ -90,6 +114,16 @@ pub fn parse_spec_file(content: &str) -> Vec<SpecTest> {
                 if let Some(ref mut test) = current_test {
                     test.skip = true;
                 }
+            } else if directive == "expect_error" {
+                if let Some(ref mut test) = current_test {
+                    test.expect_error = true;
+                }
+            } else if let Some(secs_str) = directive.strip_prefix("timeout:") {
+                if let Some(ref mut test) = current_test {
+                    if let Ok(secs) = secs_str.trim().parse() {
+                        test.timeout_secs = secs;
+                    }
+                }
             } else {
                 // New test name
                 if let Some(mut test) = current_test.take() {
@@ -111,6 +145,8 @@ pub fn parse_spec_file(content: &str) -> Vec<SpecTest> {
                     expected_exit_code: None,
                     skip: false,
                     skip_reason: None,
+                    expect_error: false,
+                    timeout_secs: DEFAULT_TIMEOUT_SECS,
                 });
                 in_script = true;
                 in_expect = false;
@@ -148,22 +184,36 @@ pub fn parse_spec_file(content: &str) -> Vec<SpecTest> {
     tests
 }
 
-/// Run a single spec test against BashKit
+/// Run a single spec test against BashKit with timeout
 pub async fn run_spec_test(test: &SpecTest) -> TestResult {
     let mut bash = Bash::new();
+    let timeout_duration = Duration::from_secs(test.timeout_secs);
 
-    let (bashkit_stdout, bashkit_exit_code, error) = match bash.exec(&test.script).await {
-        Ok(result) => (result.stdout, result.exit_code, None),
-        Err(e) => (String::new(), 1, Some(e.to_string())),
+    let exec_result = timeout(timeout_duration, bash.exec(&test.script)).await;
+
+    let (bashkit_stdout, bashkit_exit_code, error) = match exec_result {
+        Ok(Ok(result)) => (result.stdout, result.exit_code, None),
+        Ok(Err(e)) => (String::new(), 1, Some(e.to_string())),
+        Err(_) => (
+            String::new(),
+            1,
+            Some(format!("Test timed out after {}s", test.timeout_secs)),
+        ),
     };
 
-    let stdout_matches = bashkit_stdout == test.expected_stdout;
-    let exit_code_matches = test
-        .expected_exit_code
-        .map(|expected| bashkit_exit_code == expected)
-        .unwrap_or(true);
-
-    let passed = stdout_matches && exit_code_matches && error.is_none();
+    // Determine if test passed
+    let passed = if test.expect_error {
+        // For expect_error tests, we pass if there was an error
+        error.is_some()
+    } else {
+        // Normal test: check stdout and exit code match
+        let stdout_matches = bashkit_stdout == test.expected_stdout;
+        let exit_code_matches = test
+            .expected_exit_code
+            .map(|expected| bashkit_exit_code == expected)
+            .unwrap_or(true);
+        stdout_matches && exit_code_matches && error.is_none()
+    };
 
     TestResult {
         name: test.name.clone(),
@@ -340,6 +390,8 @@ hello
             expected_exit_code: None,
             skip: false,
             skip_reason: None,
+            expect_error: false,
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
         };
 
         let result = run_spec_test(&test).await;
@@ -356,9 +408,44 @@ hello
             expected_exit_code: None,
             skip: false,
             skip_reason: None,
+            expect_error: false,
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
         };
 
         let result = run_spec_test(&test).await;
         assert!(!result.passed, "Test should fail");
+    }
+
+    #[tokio::test]
+    async fn test_expect_error() {
+        let test = SpecTest {
+            name: "error_test".to_string(),
+            description: "Test that expects an error".to_string(),
+            script: "(((".to_string(), // Invalid syntax
+            expected_stdout: String::new(),
+            expected_exit_code: None,
+            skip: false,
+            skip_reason: None,
+            expect_error: true,
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
+        };
+
+        let result = run_spec_test(&test).await;
+        assert!(result.passed, "Test should pass when error occurs: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_expect_error() {
+        let content = r#"
+### syntax_error
+### expect_error
+(((
+### expect
+### end
+"#;
+
+        let tests = parse_spec_file(content);
+        assert_eq!(tests.len(), 1);
+        assert!(tests[0].expect_error);
     }
 }
