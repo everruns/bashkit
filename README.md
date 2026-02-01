@@ -8,7 +8,6 @@ Sandboxed bash interpreter for multi-tenant environments. Written in Rust.
 - **Virtual filesystem** - InMemoryFs, OverlayFs, MountableFs
 - **Resource limits** - Command count, loop iterations, function depth
 - **Network allowlist** - Control HTTP access per-domain
-- **MCP server mode** - Model Context Protocol integration
 - **Async-first** - Built on tokio
 
 ## Quick Start
@@ -89,9 +88,6 @@ bashkit-cli run script.sh
 
 # Interactive REPL
 bashkit-cli repl
-
-# MCP server mode
-bashkit-cli mcp
 ```
 
 ## Development
