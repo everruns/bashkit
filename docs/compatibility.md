@@ -6,7 +6,7 @@
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 24 | 24 | 48 |
+| Shell Builtins | 26 | 22 | 48 |
 | Text Processing | 4 | 8 | 12 |
 | File Operations | 1 | 6 | 7 |
 | Network | 0 | 2 | 2 |
@@ -45,13 +45,13 @@
 | `awk` | `'{print}'`, `-F`, variables | Text processing |
 | `jq` | `.field`, `.[n]`, pipes | JSON processing |
 | `sleep` | `N`, `N.N` | Pause execution (max 60s) |
+| `head` | `-n N`, `-N` | First N lines (default 10) |
+| `tail` | `-n N`, `-N` | Last N lines (default 10) |
 
 ### Not Implemented
 
 | Builtin | Priority | Status |
 |---------|----------|--------|
-| `head` | High | Planned |
-| `tail` | High | Planned |
 | `wc` | High | Planned |
 | `mkdir` | High | Planned |
 | `rm` | High | Planned |

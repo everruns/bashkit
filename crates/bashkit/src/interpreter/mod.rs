@@ -81,6 +81,8 @@ impl Interpreter {
         builtins.insert("sed", Box::new(builtins::Sed));
         builtins.insert("awk", Box::new(builtins::Awk));
         builtins.insert("sleep", Box::new(builtins::Sleep));
+        builtins.insert("head", Box::new(builtins::Head));
+        builtins.insert("tail", Box::new(builtins::Tail));
 
         Self {
             fs,
