@@ -99,14 +99,14 @@ async fn mountable_example() -> anyhow::Result<()> {
 }
 
 async fn direct_fs_access_example() -> anyhow::Result<()> {
-    // Bash provides direct filesystem access methods for working with files
-    // outside of bash script execution
+    // Bash exposes fs() for direct filesystem access
     let mut bash = Bash::new();
+    let fs = bash.fs();
 
     // Create directories and pre-populate files before running scripts
-    bash.mkdir(Path::new("/config"), false).await?;
-    bash.mkdir(Path::new("/output"), false).await?;
-    bash.write_file(Path::new("/config/app.conf"), b"debug=true\nport=8080\n")
+    fs.mkdir(Path::new("/config"), false).await?;
+    fs.mkdir(Path::new("/output"), false).await?;
+    fs.write_file(Path::new("/config/app.conf"), b"debug=true\nport=8080\n")
         .await?;
 
     // Bash script can access pre-populated files
@@ -117,16 +117,16 @@ async fn direct_fs_access_example() -> anyhow::Result<()> {
     bash.exec("echo 'processed' > /output/result.txt").await?;
 
     // Read the output directly without going through bash
-    let output = bash.read_file(Path::new("/output/result.txt")).await?;
+    let output = bash.fs().read_file(Path::new("/output/result.txt")).await?;
     println!("Output bytes: {:?}", output);
     println!("Output text: {}", String::from_utf8_lossy(&output));
 
     // Check file metadata
-    let stat = bash.stat(Path::new("/output/result.txt")).await?;
+    let stat = bash.fs().stat(Path::new("/output/result.txt")).await?;
     println!("File size: {} bytes", stat.size);
 
     // List directory contents
-    let entries = bash.read_dir(Path::new("/output")).await?;
+    let entries = bash.fs().read_dir(Path::new("/output")).await?;
     for entry in entries {
         println!("  - {} ({:?})", entry.name, entry.metadata.file_type);
     }
@@ -137,9 +137,10 @@ async fn direct_fs_access_example() -> anyhow::Result<()> {
 async fn binary_file_example() -> anyhow::Result<()> {
     // The filesystem fully supports binary data with null bytes and high bytes
     let bash = Bash::new();
+    let fs = bash.fs();
 
     // Create directory for binary files
-    bash.mkdir(Path::new("/data"), false).await?;
+    fs.mkdir(Path::new("/data"), false).await?;
 
     // Write binary data directly (e.g., a simple binary header)
     let binary_header = vec![
@@ -148,32 +149,32 @@ async fn binary_file_example() -> anyhow::Result<()> {
         0x00, 0x00, 0x00, 0x00, // Some null bytes
         0xFF, 0xFE, 0xFD, 0xFC, // High bytes
     ];
-    bash.write_file(Path::new("/data/test.bin"), &binary_header)
+    fs.write_file(Path::new("/data/test.bin"), &binary_header)
         .await?;
     println!("Wrote {} bytes of binary data", binary_header.len());
 
     // Read it back and verify
-    let read_back = bash.read_file(Path::new("/data/test.bin")).await?;
+    let read_back = fs.read_file(Path::new("/data/test.bin")).await?;
     assert_eq!(read_back, binary_header);
     println!("Binary data verified: {:02X?}", &read_back[..4]);
 
     // Check file stats
-    let stat = bash.stat(Path::new("/data/test.bin")).await?;
+    let stat = fs.stat(Path::new("/data/test.bin")).await?;
     println!("File size: {} bytes", stat.size);
 
     // Append more binary data
-    bash.append_file(Path::new("/data/test.bin"), &[0xDE, 0xAD, 0xBE, 0xEF])
+    fs.append_file(Path::new("/data/test.bin"), &[0xDE, 0xAD, 0xBE, 0xEF])
         .await?;
-    let final_content = bash.read_file(Path::new("/data/test.bin")).await?;
+    let final_content = fs.read_file(Path::new("/data/test.bin")).await?;
     println!("After append: {} bytes total", final_content.len());
 
     // Copy binary file
-    bash.copy(
+    fs.copy(
         Path::new("/data/test.bin"),
         Path::new("/data/test_copy.bin"),
     )
     .await?;
-    let copied = bash.read_file(Path::new("/data/test_copy.bin")).await?;
+    let copied = fs.read_file(Path::new("/data/test_copy.bin")).await?;
     assert_eq!(copied, final_content);
     println!("Binary file copied successfully");
 
