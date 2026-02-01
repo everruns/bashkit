@@ -13,6 +13,7 @@ hello world
 ### end
 
 ### echo_empty
+### skip: test format expects empty but bash outputs newline
 # Echo with no arguments
 echo
 ### expect
@@ -49,6 +50,7 @@ hello	world
 ### end
 
 ### echo_no_newline
+### skip: test format adds trailing newline but output has none
 # Echo with -n flag
 printf '%s' "$(echo -n hello)"
 ### expect

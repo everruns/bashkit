@@ -583,6 +583,7 @@ impl Interpreter {
         stdout.push_str(&result.stdout);
         stderr.push_str(&result.stderr);
         exit_code = result.exit_code;
+        self.last_exit_code = exit_code;
         let mut control_flow = result.control_flow;
 
         // If first command signaled control flow, return immediately
@@ -611,6 +612,7 @@ impl Interpreter {
                 stdout.push_str(&result.stdout);
                 stderr.push_str(&result.stderr);
                 exit_code = result.exit_code;
+                self.last_exit_code = exit_code;
                 control_flow = result.control_flow;
 
                 // If command signaled control flow, return immediately
@@ -708,14 +710,49 @@ impl Interpreter {
             });
 
             // Execute function body
-            let result = self.execute_command(&func_def.body).await;
+            let mut result = self.execute_command(&func_def.body).await?;
 
             // Pop call frame and function counter
             self.call_stack.pop();
             self.counters.pop_function();
 
+            // Handle return - convert Return control flow to exit code
+            if let ControlFlow::Return(code) = result.control_flow {
+                result.exit_code = code;
+                result.control_flow = ControlFlow::None;
+            }
+
             // Handle output redirections
-            return self.apply_redirections(result?, &command.redirects).await;
+            return self.apply_redirections(result, &command.redirects).await;
+        }
+
+        // Handle `local` specially - must set in call frame locals
+        if name == "local" {
+            if let Some(frame) = self.call_stack.last_mut() {
+                // In a function - set in locals
+                for arg in &args {
+                    if let Some(eq_pos) = arg.find('=') {
+                        let var_name = &arg[..eq_pos];
+                        let value = &arg[eq_pos + 1..];
+                        frame.locals.insert(var_name.to_string(), value.to_string());
+                    } else {
+                        // Just declare without value
+                        frame.locals.insert(arg.to_string(), String::new());
+                    }
+                }
+            } else {
+                // Not in a function - set in global variables (bash behavior)
+                for arg in &args {
+                    if let Some(eq_pos) = arg.find('=') {
+                        let var_name = &arg[..eq_pos];
+                        let value = &arg[eq_pos + 1..];
+                        self.variables.insert(var_name.to_string(), value.to_string());
+                    } else {
+                        self.variables.insert(arg.to_string(), String::new());
+                    }
+                }
+            }
+            return Ok(ExecResult::ok(String::new()));
         }
 
         // Check for builtins
@@ -1096,7 +1133,27 @@ impl Interpreter {
         let mut chars = expr.chars().peekable();
 
         while let Some(ch) = chars.next() {
-            if ch.is_ascii_alphabetic() || ch == '_' {
+            if ch == '$' {
+                // Handle $var syntax (common in arithmetic)
+                let mut name = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c.is_ascii_alphanumeric() || c == '_' {
+                        name.push(chars.next().unwrap());
+                    } else {
+                        break;
+                    }
+                }
+                if !name.is_empty() {
+                    let value = self.expand_variable(&name);
+                    if value.is_empty() {
+                        result.push('0');
+                    } else {
+                        result.push_str(&value);
+                    }
+                } else {
+                    result.push(ch);
+                }
+            } else if ch.is_ascii_alphabetic() || ch == '_' {
                 // Could be a variable name
                 let mut name = String::new();
                 name.push(ch);
@@ -1126,15 +1183,146 @@ impl Interpreter {
     fn parse_arithmetic(&self, expr: &str) -> i64 {
         let expr = expr.trim();
 
-        // Handle parentheses
-        if expr.starts_with('(') && expr.ends_with(')') {
-            return self.parse_arithmetic(&expr[1..expr.len() - 1]);
+        if expr.is_empty() {
+            return 0;
         }
 
-        // Try to find lowest precedence operator from right to left
-        // Addition/Subtraction (lowest precedence)
-        let mut depth = 0;
+        // Handle parentheses
+        if expr.starts_with('(') && expr.ends_with(')') {
+            // Check if parentheses are balanced
+            let mut depth = 0;
+            let mut balanced = true;
+            for (i, ch) in expr.chars().enumerate() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 && i < expr.len() - 1 {
+                            balanced = false;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if balanced && depth == 0 {
+                return self.parse_arithmetic(&expr[1..expr.len() - 1]);
+            }
+        }
+
         let chars: Vec<char> = expr.chars().collect();
+
+        // Ternary operator (lowest precedence)
+        let mut depth = 0;
+        for i in 0..chars.len() {
+            match chars[i] {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                '?' if depth == 0 => {
+                    // Find matching :
+                    let mut colon_depth = 0;
+                    for j in (i + 1)..chars.len() {
+                        match chars[j] {
+                            '(' => colon_depth += 1,
+                            ')' => colon_depth -= 1,
+                            '?' => colon_depth += 1,
+                            ':' if colon_depth == 0 => {
+                                let cond = self.parse_arithmetic(&expr[..i]);
+                                let then_val = self.parse_arithmetic(&expr[i + 1..j]);
+                                let else_val = self.parse_arithmetic(&expr[j + 1..]);
+                                return if cond != 0 { then_val } else { else_val };
+                            }
+                            ':' => colon_depth -= 1,
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Bitwise OR (|) - but not ||
+        depth = 0;
+        for i in (0..chars.len()).rev() {
+            match chars[i] {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                '|' if depth == 0 && (i == 0 || chars[i - 1] != '|') && (i + 1 >= chars.len() || chars[i + 1] != '|') => {
+                    let left = self.parse_arithmetic(&expr[..i]);
+                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    return left | right;
+                }
+                _ => {}
+            }
+        }
+
+        // Bitwise AND (&) - but not &&
+        depth = 0;
+        for i in (0..chars.len()).rev() {
+            match chars[i] {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                '&' if depth == 0 && (i == 0 || chars[i - 1] != '&') && (i + 1 >= chars.len() || chars[i + 1] != '&') => {
+                    let left = self.parse_arithmetic(&expr[..i]);
+                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    return left & right;
+                }
+                _ => {}
+            }
+        }
+
+        // Equality operators (==, !=)
+        depth = 0;
+        for i in (0..chars.len()).rev() {
+            match chars[i] {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                '=' if depth == 0 && i > 0 && chars[i - 1] == '=' => {
+                    let left = self.parse_arithmetic(&expr[..i - 1]);
+                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    return if left == right { 1 } else { 0 };
+                }
+                '=' if depth == 0 && i > 0 && chars[i - 1] == '!' => {
+                    let left = self.parse_arithmetic(&expr[..i - 1]);
+                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    return if left != right { 1 } else { 0 };
+                }
+                _ => {}
+            }
+        }
+
+        // Relational operators (<, >, <=, >=)
+        depth = 0;
+        for i in (0..chars.len()).rev() {
+            match chars[i] {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                '=' if depth == 0 && i > 0 && chars[i - 1] == '<' => {
+                    let left = self.parse_arithmetic(&expr[..i - 1]);
+                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    return if left <= right { 1 } else { 0 };
+                }
+                '=' if depth == 0 && i > 0 && chars[i - 1] == '>' => {
+                    let left = self.parse_arithmetic(&expr[..i - 1]);
+                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    return if left >= right { 1 } else { 0 };
+                }
+                '<' if depth == 0 && (i + 1 >= chars.len() || chars[i + 1] != '=') && (i == 0 || chars[i - 1] != '<') => {
+                    let left = self.parse_arithmetic(&expr[..i]);
+                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    return if left < right { 1 } else { 0 };
+                }
+                '>' if depth == 0 && (i + 1 >= chars.len() || chars[i + 1] != '=') && (i == 0 || chars[i - 1] != '>') => {
+                    let left = self.parse_arithmetic(&expr[..i]);
+                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    return if left > right { 1 } else { 0 };
+                }
+                _ => {}
+            }
+        }
+
+        // Addition/Subtraction
+        depth = 0;
         for i in (0..chars.len()).rev() {
             match chars[i] {
                 '(' => depth += 1,
