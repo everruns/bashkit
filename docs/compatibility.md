@@ -6,7 +6,7 @@
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 23 | 25 | 48 |
+| Shell Builtins | 24 | 24 | 48 |
 | Text Processing | 4 | 8 | 12 |
 | File Operations | 1 | 6 | 7 |
 | Network | 0 | 2 | 2 |
@@ -44,12 +44,12 @@
 | `sed` | `s/pat/repl/[g]`, `d`, `p` | Stream editing |
 | `awk` | `'{print}'`, `-F`, variables | Text processing |
 | `jq` | `.field`, `.[n]`, pipes | JSON processing |
+| `sleep` | `N`, `N.N` | Pause execution (max 60s) |
 
 ### Not Implemented
 
 | Builtin | Priority | Status |
 |---------|----------|--------|
-| `sleep` | High | Planned |
 | `head` | High | Planned |
 | `tail` | High | Planned |
 | `wc` | High | Planned |

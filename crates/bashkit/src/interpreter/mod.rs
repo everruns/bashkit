@@ -80,6 +80,7 @@ impl Interpreter {
         builtins.insert("grep", Box::new(builtins::Grep));
         builtins.insert("sed", Box::new(builtins::Sed));
         builtins.insert("awk", Box::new(builtins::Awk));
+        builtins.insert("sleep", Box::new(builtins::Sleep));
 
         Self {
             fs,
