@@ -54,3 +54,8 @@ jobs:
           cargo run --example custom_fs
           cargo run --example resource_limits
           cargo run --example text_processing
+
+      - name: Run LLM agent example
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: cargo run --example agent_tool --features network
