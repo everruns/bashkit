@@ -8,7 +8,10 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Command line interface for BashKit sandboxed bash interpreter"
+readme = "../../README.md"
 
 [[bin]]
 name = "bashkit"
