@@ -83,6 +83,8 @@ pub enum CompoundCommand {
     If(IfCommand),
     /// For loop
     For(ForCommand),
+    /// C-style for loop: for ((init; cond; step))
+    ArithmeticFor(ArithmeticForCommand),
     /// While loop
     While(WhileCommand),
     /// Until loop
@@ -93,6 +95,8 @@ pub enum CompoundCommand {
     Subshell(Vec<Command>),
     /// Brace group
     BraceGroup(Vec<Command>),
+    /// Arithmetic command ((expression))
+    Arithmetic(String),
 }
 
 /// If statement.
@@ -109,6 +113,19 @@ pub struct IfCommand {
 pub struct ForCommand {
     pub variable: String,
     pub words: Option<Vec<Word>>,
+    pub body: Vec<Command>,
+}
+
+/// C-style arithmetic for loop: for ((init; cond; step)); do body; done
+#[derive(Debug, Clone)]
+pub struct ArithmeticForCommand {
+    /// Initialization expression
+    pub init: String,
+    /// Condition expression
+    pub condition: String,
+    /// Step/update expression
+    pub step: String,
+    /// Loop body
     pub body: Vec<Command>,
 }
 
