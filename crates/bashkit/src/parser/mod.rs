@@ -646,53 +646,59 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Check if a word is an assignment (NAME=value or NAME[index]=value)
-    /// Returns (name, optional_index, value)
-    fn is_assignment(word: &str) -> Option<(&str, Option<&str>, &str)> {
-        // Find the first =
-        if let Some(eq_pos) = word.find('=') {
-            let lhs = &word[..eq_pos];
-            let value = &word[eq_pos + 1..];
+    /// Check if a word is an assignment (NAME=value, NAME+=value, or NAME[index]=value)
+    /// Returns (name, optional_index, value, is_append)
+    fn is_assignment(word: &str) -> Option<(&str, Option<&str>, &str, bool)> {
+        // Check for += append operator first
+        let (eq_pos, is_append) = if let Some(pos) = word.find("+=") {
+            (pos, true)
+        } else if let Some(pos) = word.find('=') {
+            (pos, false)
+        } else {
+            return None;
+        };
 
-            // Check for array subscript: name[index]
-            if let Some(bracket_pos) = lhs.find('[') {
-                let name = &lhs[..bracket_pos];
-                // Validate name
-                if name.is_empty() {
-                    return None;
-                }
-                let mut chars = name.chars();
-                let first = chars.next().unwrap();
-                if !first.is_ascii_alphabetic() && first != '_' {
-                    return None;
-                }
-                for c in chars {
-                    if !c.is_ascii_alphanumeric() && c != '_' {
-                        return None;
-                    }
-                }
-                // Extract index (everything between [ and ])
-                if lhs.ends_with(']') {
-                    let index = &lhs[bracket_pos + 1..lhs.len() - 1];
-                    return Some((name, Some(index), value));
-                }
-            } else {
-                // Name must be valid identifier: starts with letter or _, followed by alnum or _
-                if lhs.is_empty() {
-                    return None;
-                }
-                let mut chars = lhs.chars();
-                let first = chars.next().unwrap();
-                if !first.is_ascii_alphabetic() && first != '_' {
-                    return None;
-                }
-                for c in chars {
-                    if !c.is_ascii_alphanumeric() && c != '_' {
-                        return None;
-                    }
-                }
-                return Some((lhs, None, value));
+        let lhs = &word[..eq_pos];
+        let value = &word[eq_pos + if is_append { 2 } else { 1 }..];
+
+        // Check for array subscript: name[index]
+        if let Some(bracket_pos) = lhs.find('[') {
+            let name = &lhs[..bracket_pos];
+            // Validate name
+            if name.is_empty() {
+                return None;
             }
+            let mut chars = name.chars();
+            let first = chars.next().unwrap();
+            if !first.is_ascii_alphabetic() && first != '_' {
+                return None;
+            }
+            for c in chars {
+                if !c.is_ascii_alphanumeric() && c != '_' {
+                    return None;
+                }
+            }
+            // Extract index (everything between [ and ])
+            if lhs.ends_with(']') {
+                let index = &lhs[bracket_pos + 1..lhs.len() - 1];
+                return Some((name, Some(index), value, is_append));
+            }
+        } else {
+            // Name must be valid identifier: starts with letter or _, followed by alnum or _
+            if lhs.is_empty() {
+                return None;
+            }
+            let mut chars = lhs.chars();
+            let first = chars.next().unwrap();
+            if !first.is_ascii_alphabetic() && first != '_' {
+                return None;
+            }
+            for c in chars {
+                if !c.is_ascii_alphanumeric() && c != '_' {
+                    return None;
+                }
+            }
+            return Some((lhs, None, value, is_append));
         }
         None
     }
@@ -723,7 +729,8 @@ impl<'a> Parser<'a> {
                     // Check for assignment (only before the command name, not for literal words)
                     if words.is_empty() && !is_literal {
                         let w_clone = w.clone();
-                        if let Some((name, index, value)) = Self::is_assignment(&w_clone) {
+                        if let Some((name, index, value, is_append)) = Self::is_assignment(&w_clone)
+                        {
                             let name = name.to_string();
                             let index = index.map(|s| s.to_string());
                             let value_str = value.to_string();
@@ -776,6 +783,7 @@ impl<'a> Parser<'a> {
                                         name,
                                         index,
                                         value: AssignmentValue::Array(elements),
+                                        append: is_append,
                                     });
                                     continue;
                                 } else {
@@ -784,6 +792,7 @@ impl<'a> Parser<'a> {
                                         name,
                                         index,
                                         value: AssignmentValue::Scalar(Word::literal("")),
+                                        append: is_append,
                                     });
                                     continue;
                                 }
@@ -794,6 +803,7 @@ impl<'a> Parser<'a> {
                                 name,
                                 index,
                                 value: assignment_value,
+                                append: is_append,
                             });
                             self.advance();
                             continue;
