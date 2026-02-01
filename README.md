@@ -103,6 +103,10 @@ just check        # fmt + clippy + test
 just pre-pr       # Pre-PR checks
 ```
 
+## Acknowledgments
+
+This project was inspired by [just-bash](https://github.com/vercel-labs/just-bash) from Vercel Labs. Huge kudos to the Vercel team for pioneering the idea of a sandboxed bash interpreter for AI-powered environments. Their work laid the conceptual foundation that made BashKit possible.
+
 ## License
 
 MIT
