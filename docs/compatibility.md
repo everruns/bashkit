@@ -23,7 +23,7 @@
 | Control Flow | 31 | - | 31 | - | ⚠️ Investigating |
 | Functions | 14 | 14 | 0 | 100% | ✅ Complete |
 | Arithmetic | 22 | 18 | 4 | 100% | ✅ Complete |
-| Arrays | 14 | 8 | 6 | 100% | ✅ Complete |
+| Arrays | 14 | 12 | 2 | 100% | ✅ Complete |
 | Globs | 7 | 4 | 3 | 100% | ✅ Complete |
 | Pipes/Redirects | 13 | 11 | 2 | 100% | ✅ Complete |
 | Command Substitution | 14 | 13 | 1 | 100% | ✅ Complete |
