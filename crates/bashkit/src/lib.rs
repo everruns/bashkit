@@ -1108,4 +1108,58 @@ mod tests {
             .await
             .unwrap());
     }
+
+    // Bug fix tests
+
+    #[tokio::test]
+    async fn test_echo_done_as_argument() {
+        // BUG: "done" should be parsed as a regular argument when not in loop context
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("for i in 1; do echo $i; done; echo done")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "1\ndone\n");
+    }
+
+    #[tokio::test]
+    async fn test_simple_echo_done() {
+        // Simple echo done without any loop
+        let mut bash = Bash::new();
+        let result = bash.exec("echo done").await.unwrap();
+        assert_eq!(result.stdout, "done\n");
+    }
+
+    #[tokio::test]
+    async fn test_dev_null_redirect() {
+        // BUG: Redirecting to /dev/null should discard output silently
+        let mut bash = Bash::new();
+        let result = bash.exec("echo hello > /dev/null; echo ok").await.unwrap();
+        assert_eq!(result.stdout, "ok\n");
+    }
+
+    #[tokio::test]
+    async fn test_string_concatenation_in_loop() {
+        // Test string concatenation in a loop
+        let mut bash = Bash::new();
+        // First test: basic for loop still works
+        let result = bash.exec("for i in a b c; do echo $i; done").await.unwrap();
+        assert_eq!(result.stdout, "a\nb\nc\n");
+
+        // Test variable assignment followed by for loop
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("result=x; for i in a b c; do echo $i; done; echo $result")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "a\nb\nc\nx\n");
+
+        // Test string concatenation in a loop
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("result=start; for i in a b c; do result=${result}$i; done; echo $result")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "startabc\n");
+    }
 }
