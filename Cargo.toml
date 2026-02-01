@@ -49,6 +49,9 @@ globset = "0.4"
 # Regex
 regex = "1"
 
+# Date/Time
+chrono = "0.4"
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 

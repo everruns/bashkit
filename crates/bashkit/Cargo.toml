@@ -33,6 +33,9 @@ regex = { workspace = true }
 # Glob matching
 globset = { workspace = true }
 
+# Date/Time
+chrono = { workspace = true }
+
 # HTTP client (for curl) - optional, enabled with network feature
 reqwest = { workspace = true, optional = true }
 

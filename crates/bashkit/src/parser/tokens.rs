@@ -66,4 +66,10 @@ pub enum Token {
 
     /// Assignment (=)
     Assignment,
+
+    /// Process substitution input <(cmd)
+    ProcessSubIn,
+
+    /// Process substitution output >(cmd)
+    ProcessSubOut,
 }

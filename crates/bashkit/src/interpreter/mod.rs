@@ -6,8 +6,11 @@
 //! - `interp::expand_variable` - Inject failures in variable expansion
 //! - `interp::execute_function` - Inject failures in function calls
 
+mod jobs;
 mod state;
 
+#[allow(unused_imports)]
+pub use jobs::{JobTable, SharedJobTable};
 pub use state::{ControlFlow, ExecResult};
 
 use std::collections::HashMap;
@@ -56,6 +59,9 @@ pub struct Interpreter {
     limits: ExecutionLimits,
     /// Execution counters for resource tracking
     counters: ExecutionCounters,
+    /// Job table for background execution
+    #[allow(dead_code)]
+    jobs: JobTable,
 }
 
 impl Interpreter {
@@ -89,6 +95,27 @@ impl Interpreter {
         builtins.insert("grep", Box::new(builtins::Grep));
         builtins.insert("sed", Box::new(builtins::Sed));
         builtins.insert("awk", Box::new(builtins::Awk));
+        builtins.insert("sleep", Box::new(builtins::Sleep));
+        builtins.insert("head", Box::new(builtins::Head));
+        builtins.insert("tail", Box::new(builtins::Tail));
+        builtins.insert("basename", Box::new(builtins::Basename));
+        builtins.insert("dirname", Box::new(builtins::Dirname));
+        builtins.insert("mkdir", Box::new(builtins::Mkdir));
+        builtins.insert("rm", Box::new(builtins::Rm));
+        builtins.insert("cp", Box::new(builtins::Cp));
+        builtins.insert("mv", Box::new(builtins::Mv));
+        builtins.insert("touch", Box::new(builtins::Touch));
+        builtins.insert("chmod", Box::new(builtins::Chmod));
+        builtins.insert("wc", Box::new(builtins::Wc));
+        builtins.insert("sort", Box::new(builtins::Sort));
+        builtins.insert("uniq", Box::new(builtins::Uniq));
+        builtins.insert("cut", Box::new(builtins::Cut));
+        builtins.insert("tr", Box::new(builtins::Tr));
+        builtins.insert("date", Box::new(builtins::Date));
+        builtins.insert("wait", Box::new(builtins::Wait));
+        builtins.insert("curl", Box::new(builtins::Curl));
+        builtins.insert("wget", Box::new(builtins::Wget));
+        builtins.insert("timeout", Box::new(builtins::Timeout));
         // System info builtins (return hardcoded sandbox values)
         builtins.insert("hostname", Box::new(builtins::Hostname));
         builtins.insert("uname", Box::new(builtins::Uname));
@@ -107,6 +134,7 @@ impl Interpreter {
             call_stack: Vec::new(),
             limits: ExecutionLimits::default(),
             counters: ExecutionCounters::new(),
+            jobs: JobTable::new(),
         }
     }
 
@@ -1022,6 +1050,36 @@ impl Interpreter {
                         result.push_str(&arr.len().to_string());
                     } else {
                         result.push('0');
+                    }
+                }
+                WordPart::ProcessSubstitution { commands, is_input } => {
+                    // Execute the commands and capture output
+                    let mut stdout = String::new();
+                    for cmd in commands {
+                        let cmd_result = self.execute_command(cmd).await?;
+                        stdout.push_str(&cmd_result.stdout);
+                    }
+
+                    // Create a virtual file with the output
+                    // Use a unique path based on the timestamp
+                    let path_str = format!(
+                        "/dev/fd/proc_sub_{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_nanos()
+                    );
+                    let path = Path::new(&path_str);
+
+                    // Write to virtual filesystem
+                    if self.fs.write_file(path, stdout.as_bytes()).await.is_err() {
+                        // If we can't write, just inline the content
+                        // This is a fallback for simpler behavior
+                        if *is_input {
+                            result.push_str(&stdout);
+                        }
+                    } else {
+                        result.push_str(&path_str);
                     }
                 }
             }
