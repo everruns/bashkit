@@ -58,3 +58,8 @@ failpoints = ["fail/failpoints"]
 tokio-test = { workspace = true }
 pretty_assertions = { workspace = true }
 insta = { workspace = true }
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "parallel_execution"
+harness = false
