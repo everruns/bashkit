@@ -37,8 +37,14 @@ clean:
 
 # === Run ===
 
-# Run the application
-run:
-    cargo run
+# Run the CLI
+run *args:
+    cargo run -p bashkit-cli -- {{args}}
 
-# TODO: Add more recipes as project evolves
+# Run REPL
+repl:
+    cargo run -p bashkit-cli -- repl
+
+# Run a script file
+run-script file:
+    cargo run -p bashkit-cli -- run {{file}}

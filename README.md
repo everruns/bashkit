@@ -1,5 +1,8 @@
 # BashKit
 
+[![CI](https://github.com/everruns/bashkit/actions/workflows/ci.yml/badge.svg)](https://github.com/everruns/bashkit/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Sandboxed bash interpreter for multi-tenant environments. Written in Rust.
 
 ## Features
