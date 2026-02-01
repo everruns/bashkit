@@ -94,6 +94,8 @@ impl Interpreter {
         builtins.insert("wc", Box::new(builtins::Wc));
         builtins.insert("sort", Box::new(builtins::Sort));
         builtins.insert("uniq", Box::new(builtins::Uniq));
+        builtins.insert("cut", Box::new(builtins::Cut));
+        builtins.insert("tr", Box::new(builtins::Tr));
 
         Self {
             fs,

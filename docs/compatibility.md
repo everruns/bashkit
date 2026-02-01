@@ -6,8 +6,8 @@
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 37 | 11 | 48 |
-| Text Processing | 7 | 5 | 12 |
+| Shell Builtins | 39 | 9 | 48 |
+| Text Processing | 9 | 3 | 12 |
 | File Operations | 7 | 0 | 7 |
 | Network | 0 | 2 | 2 |
 
@@ -58,13 +58,13 @@
 | `wc` | `-l`, `-w`, `-c` | Count lines/words/bytes |
 | `sort` | `-r`, `-n`, `-u` | Sort lines |
 | `uniq` | `-c`, `-d`, `-u` | Filter duplicate lines |
+| `cut` | `-d DELIM`, `-f FIELDS` | Extract fields |
+| `tr` | `-d`, character ranges | Translate/delete chars |
 
 ### Not Implemented
 
 | Builtin | Priority | Status |
 |---------|----------|--------|
-| `cut` | Medium | Planned |
-| `tr` | Medium | Planned |
 | `date` | Medium | Planned |
 | `curl` | Medium | Planned |
 | `wget` | Medium | Planned |
@@ -313,14 +313,19 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 
 ## Roadmap
 
+### Completed
+- [x] `sleep` builtin
+- [x] `head`/`tail` builtins
+- [x] File operation builtins (`mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`)
+- [x] `wc` builtin
+- [x] Text processing (`sort`, `uniq`, `cut`, `tr`)
+- [x] `basename`/`dirname` builtins
+
 ### In Progress
-- [ ] `sleep` builtin
-- [ ] `head`/`tail` builtins
-- [ ] File operation builtins (`mkdir`, `rm`, `cp`, `mv`)
 - [ ] Background execution (`&`, `wait`)
+- [ ] `date` builtin
 
 ### Planned
-- [ ] Text processing (`sort`, `uniq`, `cut`, `tr`)
 - [ ] Network (`curl`, `wget`)
 - [ ] `set -e` (errexit)
 - [ ] `trap` signal handling
