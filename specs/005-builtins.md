@@ -47,6 +47,7 @@ in a sandboxed environment. All builtins operate on the virtual filesystem.
 - `date` - Date/time formatting (`+FORMAT`, `-u`)
 - `basename`, `dirname` - Path manipulation
 - `wait` - Wait for background jobs
+- `timeout` - Run command with time limit (stub, max 300s)
 
 #### Network (Stubs)
 - `curl` - HTTP client (requires network feature + allowlist)

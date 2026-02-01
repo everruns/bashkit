@@ -951,6 +951,76 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(word)
             }
+            Some(tokens::Token::ProcessSubIn) | Some(tokens::Token::ProcessSubOut) => {
+                // Process substitution <(cmd) or >(cmd)
+                let is_input = matches!(self.current_token, Some(tokens::Token::ProcessSubIn));
+                self.advance();
+
+                // Parse commands until we hit a closing paren
+                let mut cmd_str = String::new();
+                let mut depth = 1;
+                loop {
+                    match &self.current_token {
+                        Some(tokens::Token::LeftParen) => {
+                            depth += 1;
+                            cmd_str.push('(');
+                            self.advance();
+                        }
+                        Some(tokens::Token::RightParen) => {
+                            depth -= 1;
+                            if depth == 0 {
+                                self.advance();
+                                break;
+                            }
+                            cmd_str.push(')');
+                            self.advance();
+                        }
+                        Some(tokens::Token::Word(w)) => {
+                            if !cmd_str.is_empty() {
+                                cmd_str.push(' ');
+                            }
+                            cmd_str.push_str(w);
+                            self.advance();
+                        }
+                        Some(tokens::Token::LiteralWord(w)) => {
+                            if !cmd_str.is_empty() {
+                                cmd_str.push(' ');
+                            }
+                            cmd_str.push('\'');
+                            cmd_str.push_str(w);
+                            cmd_str.push('\'');
+                            self.advance();
+                        }
+                        Some(tokens::Token::Pipe) => {
+                            cmd_str.push_str(" | ");
+                            self.advance();
+                        }
+                        Some(tokens::Token::Newline) => {
+                            self.advance();
+                        }
+                        None => {
+                            return Err(Error::Parse(
+                                "unexpected end of input in process substitution".to_string(),
+                            ));
+                        }
+                        _ => {
+                            // Skip other tokens for now
+                            self.advance();
+                        }
+                    }
+                }
+
+                // Parse the command inside
+                let inner_parser = Parser::new(&cmd_str);
+                let commands = match inner_parser.parse() {
+                    Ok(script) => script.commands,
+                    Err(_) => Vec::new(),
+                };
+
+                Ok(Word {
+                    parts: vec![WordPart::ProcessSubstitution { commands, is_input }],
+                })
+            }
             _ => Err(Error::Parse("expected word".to_string())),
         }
     }

@@ -106,6 +106,7 @@ impl Interpreter {
         builtins.insert("wait", Box::new(builtins::Wait));
         builtins.insert("curl", Box::new(builtins::Curl));
         builtins.insert("wget", Box::new(builtins::Wget));
+        builtins.insert("timeout", Box::new(builtins::Timeout));
 
         Self {
             fs,
@@ -1010,6 +1011,36 @@ impl Interpreter {
                         result.push_str(&arr.len().to_string());
                     } else {
                         result.push('0');
+                    }
+                }
+                WordPart::ProcessSubstitution { commands, is_input } => {
+                    // Execute the commands and capture output
+                    let mut stdout = String::new();
+                    for cmd in commands {
+                        let cmd_result = self.execute_command(cmd).await?;
+                        stdout.push_str(&cmd_result.stdout);
+                    }
+
+                    // Create a virtual file with the output
+                    // Use a unique path based on the timestamp
+                    let path_str = format!(
+                        "/dev/fd/proc_sub_{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_nanos()
+                    );
+                    let path = Path::new(&path_str);
+
+                    // Write to virtual filesystem
+                    if self.fs.write_file(path, stdout.as_bytes()).await.is_err() {
+                        // If we can't write, just inline the content
+                        // This is a fallback for simpler behavior
+                        if *is_input {
+                            result.push_str(&stdout);
+                        }
+                    } else {
+                        result.push_str(&path_str);
                     }
                 }
             }

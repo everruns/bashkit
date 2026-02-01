@@ -6,7 +6,7 @@
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 43 | 5 | 48 |
+| Shell Builtins | 44 | 4 | 48 |
 | Text Processing | 9 | 3 | 12 |
 | File Operations | 7 | 0 | 7 |
 | Network | 2 | 0 | 2 |
@@ -64,12 +64,12 @@
 | `wait` | `[JOB_ID...]` | Wait for background jobs |
 | `curl` | `-s`, `-o`, `-X`, `-d`, `-H` | HTTP client (stub) |
 | `wget` | `-q`, `-O` | Download files (stub) |
+| `timeout` | `DURATION COMMAND` | Run with time limit (stub) |
 
 ### Not Implemented
 
 | Builtin | Priority | Status |
 |---------|----------|--------|
-| `timeout` | Low | Planned |
 | `xargs` | Low | Planned |
 | `find` | Low | Planned |
 | `diff` | Low | Planned |
@@ -182,7 +182,7 @@
 | `[abc]` | ❌ | `[0-9]` | Bracket globs |
 | `{a,b,c}` | ❌ | `{1..5}` | Brace expansion |
 | `~` | ❌ | `~/file` | Tilde expansion |
-| `<(cmd)` | ❌ | `diff <(a) <(b)` | Process substitution |
+| `<(cmd)` | ✅ | `diff <(a) <(b)` | Process substitution |
 
 ---
 
@@ -323,6 +323,9 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] `date` builtin
 - [x] Background execution (`&`, `wait`) - parsed, runs synchronously
 - [x] Network (`curl`, `wget`) - stub, requires allowlist config
+- [x] `timeout` builtin - stub, requires interpreter-level integration
+- [x] Process substitution (`<(cmd)`, `>(cmd)`)
+- [x] Here string edge cases tested
 
 ### Planned
 - [ ] `set -e` (errexit)

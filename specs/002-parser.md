@@ -35,6 +35,8 @@ pub enum Token {
     RedirectIn,             // <
     HereDoc,                // <<
     HereString,             // <<<
+    ProcessSubIn,           // <(
+    ProcessSubOut,          // >(
 
     // File descriptor redirections (future)
     // 2>&1, &>, etc.
