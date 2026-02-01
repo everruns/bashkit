@@ -57,3 +57,6 @@ tokio-test = "0.4"
 tempfile = "3"
 pretty_assertions = "1"
 insta = "1"
+
+# Fault injection (security testing)
+fail = "0.5"

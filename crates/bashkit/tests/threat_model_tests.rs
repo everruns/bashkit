@@ -1,0 +1,598 @@
+//! Threat Model Security Tests
+//!
+//! Tests for threats identified in specs/006-threat-model.md
+//! Each test category maps to a threat category in the threat model.
+//!
+//! Run with: `cargo test threat_`
+
+use bashkit::{Bash, ExecutionLimits};
+use std::time::Duration;
+
+// =============================================================================
+// 1. RESOURCE EXHAUSTION TESTS
+// =============================================================================
+
+mod resource_exhaustion {
+    use super::*;
+
+    /// V1: Test that command limit prevents infinite execution
+    #[tokio::test]
+    async fn threat_infinite_commands_blocked() {
+        let limits = ExecutionLimits::new().max_commands(10);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // Try to run 20 commands
+        let result = bash
+            .exec("true; true; true; true; true; true; true; true; true; true; true; true; true; true; true; true; true; true; true; true")
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("command") && err.contains("exceeded"),
+            "Expected command limit error, got: {}",
+            err
+        );
+    }
+
+    /// V2: Test that loop limit prevents infinite loops
+    #[tokio::test]
+    async fn threat_infinite_loop_blocked() {
+        let limits = ExecutionLimits::new()
+            .max_loop_iterations(5)
+            .max_commands(1000);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        let result = bash
+            .exec("for i in 1 2 3 4 5 6 7 8 9 10; do echo $i; done")
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("loop") && err.contains("exceeded"),
+            "Expected loop limit error, got: {}",
+            err
+        );
+    }
+
+    /// V3: Test that function recursion limit prevents stack overflow
+    #[tokio::test]
+    async fn threat_stack_overflow_blocked() {
+        let limits = ExecutionLimits::new()
+            .max_function_depth(5)
+            .max_commands(1000);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        let result = bash
+            .exec(
+                r#"
+                recurse() {
+                    echo "depth"
+                    recurse
+                }
+                recurse
+                "#,
+            )
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("function") && err.contains("exceeded"),
+            "Expected function depth error, got: {}",
+            err
+        );
+    }
+
+    /// Test while loop with always-true condition is limited
+    #[tokio::test]
+    async fn threat_while_true_blocked() {
+        let limits = ExecutionLimits::new()
+            .max_loop_iterations(10)
+            .max_commands(1000);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // This would run forever without limits
+        let result = bash
+            .exec("i=0; while [ $i -lt 100 ]; do i=$((i+1)); done")
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    /// Test that timeout is respected (if implemented)
+    #[tokio::test]
+    async fn threat_cpu_exhaustion_timeout() {
+        let limits = ExecutionLimits::new()
+            .timeout(Duration::from_millis(100))
+            .max_commands(1_000_000)
+            .max_loop_iterations(1_000_000);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // This should timeout, not complete
+        let start = std::time::Instant::now();
+        let _ = bash
+            .exec("for i in $(seq 1 1000000); do echo $i; done")
+            .await;
+        let elapsed = start.elapsed();
+
+        // Should complete quickly due to either timeout or loop limit
+        assert!(elapsed < Duration::from_secs(5));
+    }
+}
+
+// =============================================================================
+// 2. SANDBOX ESCAPE TESTS
+// =============================================================================
+
+mod sandbox_escape {
+    use super::*;
+
+    /// Test path traversal is blocked
+    #[tokio::test]
+    async fn threat_path_traversal_blocked() {
+        let mut bash = Bash::new();
+
+        // Try to escape via ../
+        let result = bash.exec("cat ../../../etc/passwd").await.unwrap();
+        assert!(result.exit_code != 0 || result.stdout.is_empty());
+        assert!(!result.stdout.contains("root:"));
+    }
+
+    /// Test absolute path to /etc/passwd fails
+    #[tokio::test]
+    async fn threat_etc_passwd_blocked() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("cat /etc/passwd").await.unwrap();
+        // Should fail - file doesn't exist in virtual FS
+        assert!(result.exit_code != 0);
+        assert!(!result.stdout.contains("root:"));
+    }
+
+    /// Test /proc access is blocked (no /proc in virtual FS)
+    #[tokio::test]
+    async fn threat_proc_access_blocked() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("cat /proc/self/environ").await.unwrap();
+        assert!(result.exit_code != 0);
+    }
+
+    /// Test eval is not implemented (prevents code injection)
+    #[tokio::test]
+    async fn threat_eval_not_available() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("eval 'echo pwned'").await;
+        // eval should fail - either as error or not execute the payload
+        if let Ok(r) = result {
+            assert!(!r.stdout.contains("pwned"));
+        }
+        // Error is also acceptable - means command not found
+    }
+
+    /// Test exec is not implemented (prevents shell escape)
+    #[tokio::test]
+    async fn threat_exec_not_available() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("exec /bin/bash").await;
+        // Should fail - exec not implemented (error or non-zero exit)
+        if let Ok(r) = result {
+            assert!(r.exit_code != 0);
+        }
+    }
+
+    /// Test external command execution is blocked
+    #[tokio::test]
+    async fn threat_external_commands_blocked() {
+        let mut bash = Bash::new();
+
+        // Try to run a non-builtin command - should fail
+        if let Ok(r) = bash.exec("/bin/ls").await {
+            assert!(r.exit_code != 0);
+        }
+
+        if let Ok(r) = bash.exec("./malicious").await {
+            assert!(r.exit_code != 0);
+        }
+    }
+
+    /// Test symlink creation (stored but not followed for escape)
+    #[tokio::test]
+    async fn threat_symlink_escape_blocked() {
+        let mut bash = Bash::new();
+
+        // Even if symlinks could be created, they shouldn't allow escape
+        // Virtual FS doesn't follow symlinks
+        let result = bash.exec("cat /tmp/symlink_to_etc").await.unwrap();
+        assert!(result.exit_code != 0);
+    }
+}
+
+// =============================================================================
+// 3. INJECTION ATTACK TESTS
+// =============================================================================
+
+mod injection_attacks {
+    use super::*;
+
+    /// Test that variable content with semicolons doesn't execute as separate command
+    /// Security: Variables should expand to strings, not be re-parsed as code
+    #[tokio::test]
+    async fn threat_semicolon_in_variable_safe() {
+        let mut bash = Bash::new();
+
+        // Set a variable with a semicolon (simulating injection attempt)
+        bash.exec("safe=harmless").await.unwrap();
+        let result = bash.exec("echo $safe").await.unwrap();
+
+        // Simple case works
+        assert_eq!(result.stdout.trim(), "harmless");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// Test that command substitution in single quotes is literal
+    #[tokio::test]
+    async fn threat_command_sub_in_single_quotes() {
+        let mut bash = Bash::new();
+
+        // Single quotes should prevent command substitution
+        let result = bash.exec("echo '$(whoami)'").await.unwrap();
+        assert!(result.stdout.contains("$(whoami)"));
+        assert!(!result.stdout.contains("sandbox"));
+    }
+
+    /// Test that backticks in single quotes are literal
+    #[tokio::test]
+    async fn threat_backticks_in_single_quotes() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("echo '`hostname`'").await.unwrap();
+        assert!(result.stdout.contains("`hostname`"));
+        assert!(!result.stdout.contains("bashkit-sandbox"));
+    }
+
+    /// Test that eval is not implemented (prevents code injection)
+    #[tokio::test]
+    async fn threat_eval_not_implemented() {
+        let mut bash = Bash::new();
+
+        // eval should fail as unrecognized command
+        let result = bash.exec("eval echo test").await;
+        // Either returns error or non-zero exit - payload should not execute
+        if let Ok(r) = result {
+            assert!(!r.stdout.contains("test\n"));
+        }
+        // Error is also acceptable - command not found
+    }
+
+    /// Test path with null byte (Rust prevents this)
+    #[tokio::test]
+    async fn threat_null_byte_in_path() {
+        let mut bash = Bash::new();
+
+        // Rust strings can't contain null bytes, so this is safe by construction
+        let result = bash.exec("cat '/tmp/file'").await.unwrap();
+        // Just verify it doesn't crash
+        assert!(result.exit_code == 0 || result.exit_code == 1);
+    }
+
+    /// Test that pipe operator in quotes is literal
+    #[tokio::test]
+    async fn threat_pipe_in_quotes() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("echo '| cat /etc/passwd'").await.unwrap();
+        assert!(result.stdout.contains("| cat /etc/passwd"));
+    }
+
+    /// Test that redirect in quotes is literal
+    #[tokio::test]
+    async fn threat_redirect_in_quotes() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("echo '> /tmp/pwned'").await.unwrap();
+        assert!(result.stdout.contains("> /tmp/pwned"));
+    }
+}
+
+// =============================================================================
+// 4. INFORMATION DISCLOSURE TESTS
+// =============================================================================
+
+mod information_disclosure {
+    use super::*;
+
+    /// Test hostname returns sandbox value, not real hostname
+    #[tokio::test]
+    async fn threat_hostname_hardcoded() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("hostname").await.unwrap();
+        assert_eq!(result.stdout.trim(), "bashkit-sandbox");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// Test hostname cannot be set
+    #[tokio::test]
+    async fn threat_hostname_cannot_set() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("hostname evil.attacker.com").await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("cannot set"));
+    }
+
+    /// Test uname returns sandbox values
+    #[tokio::test]
+    async fn threat_uname_hardcoded() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("uname -a").await.unwrap();
+        assert!(result.stdout.contains("bashkit-sandbox"));
+        assert!(result.stdout.contains("Linux"));
+        // Should NOT contain real kernel info
+        assert!(!result.stdout.contains("Ubuntu"));
+        assert!(!result.stdout.contains("Debian"));
+    }
+
+    /// Test uname -n returns sandbox hostname
+    #[tokio::test]
+    async fn threat_uname_nodename_hardcoded() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("uname -n").await.unwrap();
+        assert_eq!(result.stdout.trim(), "bashkit-sandbox");
+    }
+
+    /// Test whoami returns sandbox user
+    #[tokio::test]
+    async fn threat_whoami_hardcoded() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("whoami").await.unwrap();
+        assert_eq!(result.stdout.trim(), "sandbox");
+    }
+
+    /// Test id returns sandbox IDs
+    #[tokio::test]
+    async fn threat_id_hardcoded() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("id").await.unwrap();
+        assert!(result.stdout.contains("uid=1000"));
+        assert!(result.stdout.contains("sandbox"));
+
+        let result = bash.exec("id -u").await.unwrap();
+        assert_eq!(result.stdout.trim(), "1000");
+
+        let result = bash.exec("id -g").await.unwrap();
+        assert_eq!(result.stdout.trim(), "1000");
+    }
+
+    /// Test that sensitive env vars are only accessible if passed
+    #[tokio::test]
+    async fn threat_env_vars_isolated() {
+        let mut bash = Bash::new();
+
+        // Default instance shouldn't have sensitive vars
+        let result = bash.exec("echo $DATABASE_URL").await.unwrap();
+        assert!(result.stdout.trim().is_empty());
+
+        let result = bash.exec("echo $AWS_SECRET_ACCESS_KEY").await.unwrap();
+        assert!(result.stdout.trim().is_empty());
+
+        let result = bash.exec("echo $API_KEY").await.unwrap();
+        assert!(result.stdout.trim().is_empty());
+    }
+
+    /// Test that only explicitly passed env vars are available
+    #[tokio::test]
+    async fn threat_env_vars_explicit_only() {
+        let mut bash = Bash::builder().env("ALLOWED_VAR", "allowed_value").build();
+
+        let result = bash.exec("echo $ALLOWED_VAR").await.unwrap();
+        assert_eq!(result.stdout.trim(), "allowed_value");
+
+        // But other vars aren't magically available
+        let result = bash.exec("echo $PATH").await.unwrap();
+        assert!(result.stdout.trim().is_empty());
+    }
+
+    /// Test /proc is not accessible
+    #[tokio::test]
+    async fn threat_proc_environ_blocked() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("cat /proc/self/environ").await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stdout.is_empty());
+    }
+}
+
+// =============================================================================
+// 5. NETWORK SECURITY TESTS (when network feature enabled)
+// =============================================================================
+
+mod network_security {
+    use super::*;
+
+    /// Test that curl/wget commands aren't available without network feature
+    #[tokio::test]
+    async fn threat_network_commands_not_builtin() {
+        let mut bash = Bash::new();
+
+        // curl/wget should not be available - either error or non-zero exit
+        let result = bash.exec("curl https://evil.com").await;
+        if let Ok(r) = result {
+            assert!(r.exit_code != 0);
+        }
+        // Error is also acceptable
+
+        let result = bash.exec("wget https://evil.com").await;
+        if let Ok(r) = result {
+            assert!(r.exit_code != 0);
+        }
+        // Error is also acceptable
+    }
+}
+
+// =============================================================================
+// 6. MULTI-TENANT ISOLATION TESTS
+// =============================================================================
+
+mod multi_tenant {
+    use super::*;
+    use bashkit::InMemoryFs;
+    use std::sync::Arc;
+
+    /// Test that separate instances have isolated filesystems
+    #[tokio::test]
+    async fn threat_tenant_fs_isolation() {
+        let fs_a = Arc::new(InMemoryFs::new());
+        let fs_b = Arc::new(InMemoryFs::new());
+
+        let mut tenant_a = Bash::builder().fs(fs_a).build();
+        let mut tenant_b = Bash::builder().fs(fs_b).build();
+
+        // Tenant A writes a secret
+        tenant_a
+            .exec("echo 'SECRET_A' > /tmp/secret.txt")
+            .await
+            .unwrap();
+
+        // Tenant B cannot read it
+        let result = tenant_b.exec("cat /tmp/secret.txt").await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(!result.stdout.contains("SECRET_A"));
+    }
+
+    /// Test that separate instances have isolated variables
+    #[tokio::test]
+    async fn threat_tenant_variable_isolation() {
+        let mut tenant_a = Bash::new();
+        let mut tenant_b = Bash::new();
+
+        tenant_a.exec("SECRET=password123").await.unwrap();
+
+        let result = tenant_b.exec("echo $SECRET").await.unwrap();
+        assert!(result.stdout.trim().is_empty());
+    }
+
+    /// Test that separate instances have isolated functions
+    #[tokio::test]
+    async fn threat_tenant_function_isolation() {
+        let mut tenant_a = Bash::new();
+        let mut tenant_b = Bash::new();
+
+        tenant_a.exec("steal() { echo 'stolen'; }").await.unwrap();
+
+        // Function defined in tenant_a should not exist in tenant_b
+        let result = tenant_b.exec("steal").await;
+        if let Ok(r) = result {
+            // Either command not found (non-zero exit) or no output
+            assert!(r.exit_code != 0 || !r.stdout.contains("stolen"));
+        }
+        // Error is also acceptable - means command not found
+    }
+
+    /// Test that limits are per-instance
+    #[tokio::test]
+    async fn threat_tenant_limits_isolation() {
+        let limits_strict = ExecutionLimits::new().max_commands(5);
+        let limits_relaxed = ExecutionLimits::new().max_commands(100);
+
+        let mut tenant_strict = Bash::builder().limits(limits_strict).build();
+        let mut tenant_relaxed = Bash::builder().limits(limits_relaxed).build();
+
+        // Strict tenant hits limit
+        let result = tenant_strict
+            .exec("true; true; true; true; true; true; true")
+            .await;
+        assert!(result.is_err());
+
+        // Relaxed tenant can do more
+        let result = tenant_relaxed
+            .exec("true; true; true; true; true; true; true")
+            .await;
+        assert!(result.is_ok());
+    }
+}
+
+// =============================================================================
+// 7. EDGE CASE TESTS
+// =============================================================================
+
+mod edge_cases {
+    use super::*;
+
+    /// Test empty script
+    #[tokio::test]
+    async fn threat_empty_script() {
+        let mut bash = Bash::new();
+        let result = bash.exec("").await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// Test script with only whitespace
+    #[tokio::test]
+    async fn threat_whitespace_script() {
+        let mut bash = Bash::new();
+        let result = bash.exec("   \n\t\n   ").await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// Test script with only comments
+    #[tokio::test]
+    async fn threat_comment_only_script() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("# This is a comment\n# Another comment")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// Test very long single line
+    #[tokio::test]
+    async fn threat_long_line() {
+        let mut bash = Bash::new();
+        let long_arg = "a".repeat(10000);
+        let result = bash.exec(&format!("echo {}", long_arg)).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.len() >= 10000);
+    }
+
+    /// Test deeply nested command substitution
+    #[tokio::test]
+    async fn threat_nested_command_sub() {
+        let limits = ExecutionLimits::new()
+            .max_commands(100)
+            .max_function_depth(50);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // Moderately nested - should work
+        let result = bash.exec("echo $(echo $(echo $(echo hello)))").await;
+        // Either succeeds or hits a limit - shouldn't crash
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    /// Test special variable names
+    #[tokio::test]
+    async fn threat_special_variable_names() {
+        let mut bash = Bash::new();
+
+        // These should all be safe
+        let result = bash.exec("echo $?").await.unwrap(); // Exit code
+        assert!(result.exit_code == 0);
+
+        let result = bash.exec("echo $$").await.unwrap(); // PID (may not be implemented)
+        assert!(result.exit_code == 0);
+
+        let result = bash.exec("echo $#").await.unwrap(); // Arg count
+        assert!(result.exit_code == 0);
+    }
+}

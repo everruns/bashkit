@@ -27,7 +27,7 @@ mod parser;
 
 pub use error::{Error, Result};
 pub use fs::{FileSystem, InMemoryFs, MountableFs, OverlayFs};
-pub use interpreter::ExecResult;
+pub use interpreter::{ControlFlow, ExecResult};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
 
