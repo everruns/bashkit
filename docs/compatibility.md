@@ -65,7 +65,7 @@
 | Arithmetic | `+ - * / % == != > < & \|` | Assignment `=`, logical `&& \|\|` |
 | Heredocs | Variable expansion | ✅ Fixed |
 | `echo -n` | Flag parsed | Newline suppression (test framework issue) |
-| Arrays | Basic operations | `+=` append, `${!arr[@]}` |
+| Arrays | `+=` append, iteration, `${#arr[i]}` | `${!arr[@]}` indices |
 
 ### Not Implemented 🔴
 
@@ -135,6 +135,7 @@ expected_output
 - [x] Fix function return value propagation
 - [x] Fix local variable scoping
 - [x] Fix heredoc variable expansion
+- [x] Fix array `+=` append, iteration, and `${#arr[i]}`
 
 ### Q1 Goals
 - [ ] Implement `set -e` (errexit)
