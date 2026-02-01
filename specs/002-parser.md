@@ -1,7 +1,7 @@
 # 002: Parser Design
 
 ## Status
-Implementing
+Implemented (core features)
 
 ## Decision
 
@@ -35,6 +35,8 @@ pub enum Token {
     RedirectIn,             // <
     HereDoc,                // <<
     HereString,             // <<<
+    ProcessSubIn,           // <(
+    ProcessSubOut,          // >(
 
     // File descriptor redirections (future)
     // 2>&1, &>, etc.
@@ -94,13 +96,16 @@ pub enum WordPart {
 
 ```
 script        → command_list EOF
-command_list  → pipeline (('&&' | '||') pipeline)*
+command_list  → pipeline (('&&' | '||' | ';' | '&') pipeline)*
 pipeline      → command ('|' command)*
 command       → simple_command | compound_command | function_def
 simple_command → (assignment)* word (word | redirect)*
 redirect      → ('>' | '>>' | '<' | '<<' | '<<<') word
                | NUMBER ('>' | '<') word
 ```
+
+Note: The `&` operator marks the preceding command for background execution.
+Currently, background commands run synchronously but are parsed correctly.
 
 ### Context-Aware Lexing
 

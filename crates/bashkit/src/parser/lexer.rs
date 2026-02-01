@@ -61,6 +61,9 @@ impl<'a> Lexer<'a> {
                 if self.peek_char() == Some('>') {
                     self.advance();
                     Some(Token::RedirectAppend)
+                } else if self.peek_char() == Some('(') {
+                    self.advance();
+                    Some(Token::ProcessSubOut)
                 } else {
                     Some(Token::RedirectOut)
                 }
@@ -75,6 +78,9 @@ impl<'a> Lexer<'a> {
                     } else {
                         Some(Token::HereDoc)
                     }
+                } else if self.peek_char() == Some('(') {
+                    self.advance();
+                    Some(Token::ProcessSubIn)
                 } else {
                     Some(Token::RedirectIn)
                 }
