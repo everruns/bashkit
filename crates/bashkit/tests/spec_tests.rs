@@ -201,6 +201,70 @@ async fn run_category_tests(
     );
 }
 
+/// Run external test suites (imported from bash/shellcheck)
+#[tokio::test]
+async fn external_spec_tests() {
+    let dir = spec_cases_dir().join("external");
+    let all_tests = load_spec_tests(&dir);
+
+    if all_tests.is_empty() {
+        println!("No external spec tests found in {:?}", dir);
+        return;
+    }
+
+    // External tests are informational - we expect some failures
+    // since these test features we haven't implemented yet
+    let mut summary = TestSummary::default();
+    let mut failures = Vec::new();
+
+    for (file, tests) in &all_tests {
+        for test in tests {
+            if test.skip {
+                summary.add(
+                    &spec_runner::TestResult {
+                        name: test.name.clone(),
+                        passed: false,
+                        bashkit_stdout: String::new(),
+                        bashkit_exit_code: 0,
+                        expected_stdout: String::new(),
+                        expected_exit_code: None,
+                        real_bash_stdout: None,
+                        real_bash_exit_code: None,
+                        error: None,
+                    },
+                    true,
+                );
+                continue;
+            }
+
+            let result = run_spec_test(test).await;
+            summary.add(&result, false);
+
+            if !result.passed {
+                failures.push((file.clone(), result));
+            }
+        }
+    }
+
+    println!("\n=== External Spec Tests ===");
+    println!(
+        "Total: {} | Passed: {} | Failed: {} | Skipped: {}",
+        summary.total, summary.passed, summary.failed, summary.skipped
+    );
+    println!("Pass rate: {:.1}%", summary.pass_rate());
+
+    // Don't fail the test - external tests are informational
+    if !failures.is_empty() {
+        println!("\n=== Non-passing tests (expected for unimplemented features) ===");
+        for (file, result) in &failures[..failures.len().min(5)] {
+            println!("  [{}] {}", file, result.name);
+        }
+        if failures.len() > 5 {
+            println!("  ... and {} more", failures.len() - 5);
+        }
+    }
+}
+
 /// Comparison test - runs against real bash to find divergences
 #[tokio::test]
 async fn bash_comparison_tests() {
