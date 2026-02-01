@@ -52,3 +52,4 @@ network = ["reqwest"]
 tokio-test = { workspace = true }
 pretty_assertions = { workspace = true }
 insta = { workspace = true }
+proptest = { workspace = true }

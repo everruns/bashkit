@@ -1455,19 +1455,31 @@ impl Interpreter {
         }
 
         // Addition/Subtraction
+        // Note: we must distinguish binary +/- from unary -
+        // Unary - appears after operators like *, /, (, etc.
         depth = 0;
         for i in (0..chars.len()).rev() {
             match chars[i] {
                 '(' => depth += 1,
                 ')' => depth -= 1,
                 '+' | '-' if depth == 0 && i > 0 => {
-                    let left = self.parse_arithmetic(&expr[..i]);
-                    let right = self.parse_arithmetic(&expr[i + 1..]);
-                    return if chars[i] == '+' {
-                        left + right
-                    } else {
-                        left - right
+                    // Check if this is binary (not unary)
+                    // Find the last non-whitespace character before this operator
+                    let prev_char = expr[..i].chars().rev().find(|c| !c.is_whitespace());
+                    // Binary operator only if preceded by digit, ), or alphanumeric (variable)
+                    let is_binary = match prev_char {
+                        Some(c) => c.is_alphanumeric() || c == ')' || c == '_',
+                        None => false,
                     };
+                    if is_binary {
+                        let left = self.parse_arithmetic(&expr[..i]);
+                        let right = self.parse_arithmetic(&expr[i + 1..]);
+                        return if chars[i] == '+' {
+                            left + right
+                        } else {
+                            left - right
+                        };
+                    }
                 }
                 _ => {}
             }
