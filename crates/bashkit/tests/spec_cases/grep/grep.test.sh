@@ -97,7 +97,7 @@ bar foo baz
 ### end
 
 ### grep_only_matching
-### skip: -o flag not implemented
+# Only show matching part
 printf 'hello world\n' | grep -o 'world'
 ### expect
 world

@@ -9,6 +9,7 @@
 //!   grep -v pattern file        # invert match
 //!   grep -n pattern file        # show line numbers
 //!   grep -c pattern file        # count matches
+//!   grep -o pattern file        # only show matching part
 //!   grep -l pattern file1 file2 # list matching files
 //!   grep -E pattern file        # extended regex (default)
 //!   grep -F pattern file        # fixed string match
@@ -32,6 +33,7 @@ struct GrepOptions {
     count_only: bool,
     files_with_matches: bool,
     fixed_strings: bool,
+    only_matching: bool,
 }
 
 impl GrepOptions {
@@ -45,6 +47,7 @@ impl GrepOptions {
             count_only: false,
             files_with_matches: false,
             fixed_strings: false,
+            only_matching: false,
         };
 
         let mut positional = Vec::new();
@@ -61,6 +64,7 @@ impl GrepOptions {
                         'n' => opts.line_numbers = true,
                         'c' => opts.count_only = true,
                         'l' => opts.files_with_matches = true,
+                        'o' => opts.only_matching = true,
                         'F' => opts.fixed_strings = true,
                         'E' => {} // Extended regex is default
                         'e' => {
@@ -156,30 +160,58 @@ impl Builtin for Grep {
             let mut file_matched = false;
 
             for (line_num, line) in content.lines().enumerate() {
-                let matches = regex.is_match(line);
-                let should_output = if opts.invert_match { !matches } else { matches };
+                if opts.only_matching {
+                    // -o mode: output each match separately
+                    for mat in regex.find_iter(line) {
+                        file_matched = true;
+                        any_match = true;
+                        match_count += 1;
 
-                if should_output {
-                    file_matched = true;
-                    any_match = true;
-                    match_count += 1;
+                        if opts.files_with_matches {
+                            break;
+                        }
 
-                    if opts.files_with_matches {
-                        // Just need to know if file matches, output later
+                        if !opts.count_only {
+                            if show_filename {
+                                output.push_str(filename);
+                                output.push(':');
+                            }
+                            if opts.line_numbers {
+                                output.push_str(&format!("{}:", line_num + 1));
+                            }
+                            output.push_str(mat.as_str());
+                            output.push('\n');
+                        }
+                    }
+                    if opts.files_with_matches && file_matched {
                         break;
                     }
+                } else {
+                    let matches = regex.is_match(line);
+                    let should_output = if opts.invert_match { !matches } else { matches };
 
-                    if !opts.count_only {
-                        // Build output line
-                        if show_filename {
-                            output.push_str(filename);
-                            output.push(':');
+                    if should_output {
+                        file_matched = true;
+                        any_match = true;
+                        match_count += 1;
+
+                        if opts.files_with_matches {
+                            // Just need to know if file matches, output later
+                            break;
                         }
-                        if opts.line_numbers {
-                            output.push_str(&format!("{}:", line_num + 1));
+
+                        if !opts.count_only {
+                            // Build output line
+                            if show_filename {
+                                output.push_str(filename);
+                                output.push(':');
+                            }
+                            if opts.line_numbers {
+                                output.push_str(&format!("{}:", line_num + 1));
+                            }
+                            output.push_str(line);
+                            output.push('\n');
                         }
-                        output.push_str(line);
-                        output.push('\n');
                     }
                 }
             }
@@ -301,5 +333,23 @@ mod tests {
             .unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "a.b\na.b.c\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_only_matching() {
+        let result = run_grep(&["-o", "world"], Some("hello world\n"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "world\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_only_matching_multiple() {
+        let result = run_grep(&["-o", "o"], Some("hello world\nfoo"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "o\no\no\no\n");
     }
 }

@@ -70,10 +70,10 @@ crates/bashkit/tests/
 |----------|------------|-------|------|------|
 | Bash | 209 | **NO** (ignored) | - | - |
 | AWK | 19 | Yes | 17 | 2 |
-| Grep | 15 | Yes | 12 | 3 |
+| Grep | 15 | Yes | 13 | 2 |
 | Sed | 17 | Yes | 13 | 4 |
 | JQ | 21 | Yes | 20 | 1 |
-| **Total** | **281** | **72** | 62 | 10 |
+| **Total** | **281** | **72** | 63 | 9 |
 
 ### Test File Format
 
@@ -128,7 +128,7 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 Coverage is tracked manually via spec test pass rates.
 
 ### Current Status
-- Text processing tools: 86% pass rate (62/72 running in CI)
+- Text processing tools: 88% pass rate (63/72 running in CI)
 - Core bash specs: Not running in CI (209 cases ignored)
 
 ## TODO: Testing Gaps
@@ -138,9 +138,9 @@ The following items need attention:
 - [ ] **Enable bash_spec_tests in CI** - 209 test cases currently ignored
 - [ ] **Fix control-flow.test.sh** - Currently skipped (.skip suffix)
 - [ ] **Add coverage tooling** - Consider cargo-tarpaulin or codecov
-- [ ] **Fix skipped spec tests** (10 total):
+- [ ] **Fix skipped spec tests** (9 total):
   - AWK: 2 skipped
-  - Grep: 3 skipped
+  - Grep: 2 skipped
   - Sed: 4 skipped
   - JQ: 1 skipped
 - [ ] **Add bash_comparison_tests to CI** - Currently ignored, runs manually
