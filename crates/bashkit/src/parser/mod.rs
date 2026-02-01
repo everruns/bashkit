@@ -108,6 +108,24 @@ impl<'a> Parser<'a> {
                     }
                     ListOperator::Semicolon
                 }
+                Some(tokens::Token::Background) => {
+                    self.advance();
+                    self.skip_newlines();
+                    // Check if there's more to parse after &
+                    if self.current_token.is_none()
+                        || matches!(self.current_token, Some(tokens::Token::Newline))
+                    {
+                        // Just & at end - return as background
+                        rest.push((ListOperator::Background, Command::Simple(SimpleCommand {
+                            name: Word::literal(""),
+                            args: vec![],
+                            redirects: vec![],
+                            assignments: vec![],
+                        })));
+                        break;
+                    }
+                    ListOperator::Background
+                }
                 _ => break,
             };
 

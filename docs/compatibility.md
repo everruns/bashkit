@@ -102,7 +102,7 @@
 | `&&` | ✅ | `cmd1 && cmd2` | AND list |
 | `\|\|` | ✅ | `cmd1 \|\| cmd2` | OR list |
 | `;` | ✅ | `cmd1; cmd2` | Sequential |
-| `&` | ❌ | `cmd &` | Background (planned) |
+| `&` | ⚠️ | `cmd &` | Parsed, async pending |
 | `!` | ✅ | `! cmd` | Negate exit code |
 
 ### Redirections
