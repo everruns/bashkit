@@ -52,3 +52,17 @@ repl:
 # Run a script file
 run-script file:
     cargo run -p bashkit-cli -- run {{file}}
+
+# === Testing ===
+
+# Run differential tests against real bash
+differential:
+    cargo test --test differential -- --nocapture
+
+# Run property-based tests
+proptest:
+    cargo test --test proptest_parser --test proptest_arithmetic --test proptest_variables
+
+# Run mutation testing (requires cargo-mutants)
+mutate:
+    cargo mutants --package bashkit --timeout 120
