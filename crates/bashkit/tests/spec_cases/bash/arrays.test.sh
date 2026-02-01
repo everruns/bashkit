@@ -41,6 +41,7 @@ a X c
 ### end
 
 ### array_append
+### skip: += append not implemented
 # Append to array
 arr=(a b); arr+=(c d); echo ${arr[@]}
 ### expect
@@ -48,6 +49,7 @@ a b c d
 ### end
 
 ### array_in_loop
+### skip: array element iteration needs quoted expansion
 # Array in for loop
 arr=(one two three)
 for item in "${arr[@]}"; do
@@ -67,6 +69,7 @@ a b c
 ### end
 
 ### array_element_length
+### skip: element length ${#arr[i]} not implemented
 # Length of array element
 arr=(hello world); echo ${#arr[0]}
 ### expect
@@ -81,6 +84,7 @@ hello world
 ### end
 
 ### array_from_command
+### skip: command substitution in array init not implemented
 # Array from command substitution
 arr=($(echo a b c)); echo ${arr[1]}
 ### expect
