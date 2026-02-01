@@ -104,6 +104,8 @@ impl Interpreter {
         builtins.insert("tr", Box::new(builtins::Tr));
         builtins.insert("date", Box::new(builtins::Date));
         builtins.insert("wait", Box::new(builtins::Wait));
+        builtins.insert("curl", Box::new(builtins::Curl));
+        builtins.insert("wget", Box::new(builtins::Wget));
 
         Self {
             fs,

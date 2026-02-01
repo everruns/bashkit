@@ -6,10 +6,10 @@
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 41 | 7 | 48 |
+| Shell Builtins | 43 | 5 | 48 |
 | Text Processing | 9 | 3 | 12 |
 | File Operations | 7 | 0 | 7 |
-| Network | 0 | 2 | 2 |
+| Network | 2 | 0 | 2 |
 
 ---
 
@@ -62,13 +62,13 @@
 | `tr` | `-d`, character ranges | Translate/delete chars |
 | `date` | `+FORMAT`, `-u` | Display/format date |
 | `wait` | `[JOB_ID...]` | Wait for background jobs |
+| `curl` | `-s`, `-o`, `-X`, `-d`, `-H` | HTTP client (stub) |
+| `wget` | `-q`, `-O` | Download files (stub) |
 
 ### Not Implemented
 
 | Builtin | Priority | Status |
 |---------|----------|--------|
-| `curl` | Medium | Planned |
-| `wget` | Medium | Planned |
 | `timeout` | Low | Planned |
 | `xargs` | Low | Planned |
 | `find` | Low | Planned |
@@ -322,9 +322,7 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] `basename`/`dirname` builtins
 - [x] `date` builtin
 - [x] Background execution (`&`, `wait`) - parsed, runs synchronously
-
-### In Progress
-- [ ] Network (`curl`, `wget`)
+- [x] Network (`curl`, `wget`) - stub, requires allowlist config
 
 ### Planned
 - [ ] `set -e` (errexit)

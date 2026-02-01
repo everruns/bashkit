@@ -2,6 +2,7 @@
 
 mod awk;
 mod cat;
+mod curl;
 mod cuttr;
 mod date;
 mod echo;
@@ -26,6 +27,7 @@ mod wc;
 
 pub use awk::Awk;
 pub use cat::Cat;
+pub use curl::{Curl, Wget};
 pub use cuttr::{Cut, Tr};
 pub use date::Date;
 pub use echo::Echo;
