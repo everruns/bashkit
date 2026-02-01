@@ -52,6 +52,12 @@ pub enum Token {
     /// Right parenthesis ())
     RightParen,
 
+    /// Double left parenthesis ((()
+    DoubleLeftParen,
+
+    /// Double right parenthesis ()))
+    DoubleRightParen,
+
     /// Left brace ({)
     LeftBrace,
 

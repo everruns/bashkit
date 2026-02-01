@@ -206,6 +206,13 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Check for arithmetic command ((expression))
+        if matches!(self.current_token, Some(tokens::Token::DoubleLeftParen)) {
+            return self
+                .parse_arithmetic_command()
+                .map(|c| Some(Command::Compound(c)));
+        }
+
         // Check for subshell
         if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
             return self.parse_subshell().map(|c| Some(Command::Compound(c)));
@@ -277,6 +284,11 @@ impl<'a> Parser<'a> {
         self.advance(); // consume 'for'
         self.skip_newlines();
 
+        // Check for C-style for loop: for ((init; cond; step))
+        if matches!(self.current_token, Some(tokens::Token::DoubleLeftParen)) {
+            return self.parse_arithmetic_for();
+        }
+
         // Expect variable name
         let variable = match &self.current_token {
             Some(tokens::Token::Word(w)) | Some(tokens::Token::LiteralWord(w)) => w.clone(),
@@ -334,6 +346,142 @@ impl<'a> Parser<'a> {
         Ok(CompoundCommand::For(ForCommand {
             variable,
             words,
+            body,
+        }))
+    }
+
+    /// Parse C-style arithmetic for loop: for ((init; cond; step)); do body; done
+    fn parse_arithmetic_for(&mut self) -> Result<CompoundCommand> {
+        self.advance(); // consume '(('
+
+        // Read the three expressions separated by semicolons
+        let mut parts: Vec<String> = Vec::new();
+        let mut current_expr = String::new();
+        let mut paren_depth = 0;
+
+        loop {
+            match &self.current_token {
+                Some(tokens::Token::DoubleRightParen) => {
+                    // End of the (( )) section
+                    parts.push(current_expr.trim().to_string());
+                    self.advance();
+                    break;
+                }
+                Some(tokens::Token::LeftParen) => {
+                    paren_depth += 1;
+                    current_expr.push('(');
+                    self.advance();
+                }
+                Some(tokens::Token::RightParen) => {
+                    if paren_depth > 0 {
+                        paren_depth -= 1;
+                        current_expr.push(')');
+                        self.advance();
+                    } else {
+                        // Unexpected - probably error
+                        self.advance();
+                    }
+                }
+                Some(tokens::Token::Semicolon) => {
+                    if paren_depth == 0 {
+                        // Separator between init, cond, step
+                        parts.push(current_expr.trim().to_string());
+                        current_expr.clear();
+                    } else {
+                        current_expr.push(';');
+                    }
+                    self.advance();
+                }
+                Some(tokens::Token::Word(w)) => {
+                    if !current_expr.is_empty()
+                        && !current_expr.ends_with(' ')
+                        && !current_expr.ends_with('(')
+                    {
+                        current_expr.push(' ');
+                    }
+                    current_expr.push_str(w);
+                    self.advance();
+                }
+                Some(tokens::Token::LiteralWord(w)) => {
+                    if !current_expr.is_empty()
+                        && !current_expr.ends_with(' ')
+                        && !current_expr.ends_with('(')
+                    {
+                        current_expr.push(' ');
+                    }
+                    current_expr.push_str(w);
+                    self.advance();
+                }
+                Some(tokens::Token::Newline) => {
+                    self.advance();
+                }
+                // Handle operators that are normally special tokens but valid in arithmetic
+                Some(tokens::Token::RedirectIn) => {
+                    current_expr.push('<');
+                    self.advance();
+                }
+                Some(tokens::Token::RedirectOut) => {
+                    current_expr.push('>');
+                    self.advance();
+                }
+                Some(tokens::Token::And) => {
+                    current_expr.push_str("&&");
+                    self.advance();
+                }
+                Some(tokens::Token::Or) => {
+                    current_expr.push_str("||");
+                    self.advance();
+                }
+                Some(tokens::Token::Pipe) => {
+                    current_expr.push('|');
+                    self.advance();
+                }
+                Some(tokens::Token::Background) => {
+                    current_expr.push('&');
+                    self.advance();
+                }
+                None => {
+                    return Err(Error::Parse(
+                        "unexpected end of input in for loop".to_string(),
+                    ));
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        // Ensure we have exactly 3 parts
+        while parts.len() < 3 {
+            parts.push(String::new());
+        }
+
+        let init = parts.first().cloned().unwrap_or_default();
+        let condition = parts.get(1).cloned().unwrap_or_default();
+        let step = parts.get(2).cloned().unwrap_or_default();
+
+        self.skip_newlines();
+
+        // Skip optional semicolon after ))
+        if matches!(self.current_token, Some(tokens::Token::Semicolon)) {
+            self.advance();
+        }
+        self.skip_newlines();
+
+        // Expect 'do'
+        self.expect_keyword("do")?;
+        self.skip_newlines();
+
+        // Parse body
+        let body = self.parse_compound_list("done")?;
+
+        // Expect 'done'
+        self.expect_keyword("done")?;
+
+        Ok(CompoundCommand::ArithmeticFor(ArithmeticForCommand {
+            init,
+            condition,
+            step,
             body,
         }))
     }
@@ -521,6 +669,98 @@ impl<'a> Parser<'a> {
         Ok(CompoundCommand::BraceGroup(commands))
     }
 
+    /// Parse arithmetic command ((expression))
+    fn parse_arithmetic_command(&mut self) -> Result<CompoundCommand> {
+        self.advance(); // consume '(('
+
+        // Read expression until we find ))
+        let mut expr = String::new();
+        let mut depth = 1;
+
+        loop {
+            match &self.current_token {
+                Some(tokens::Token::DoubleLeftParen) => {
+                    depth += 1;
+                    expr.push_str("((");
+                    self.advance();
+                }
+                Some(tokens::Token::DoubleRightParen) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        self.advance(); // consume '))'
+                        break;
+                    }
+                    expr.push_str("))");
+                    self.advance();
+                }
+                Some(tokens::Token::LeftParen) => {
+                    expr.push('(');
+                    self.advance();
+                }
+                Some(tokens::Token::RightParen) => {
+                    expr.push(')');
+                    self.advance();
+                }
+                Some(tokens::Token::Word(w)) => {
+                    if !expr.is_empty() && !expr.ends_with(' ') && !expr.ends_with('(') {
+                        expr.push(' ');
+                    }
+                    expr.push_str(w);
+                    self.advance();
+                }
+                Some(tokens::Token::LiteralWord(w)) => {
+                    if !expr.is_empty() && !expr.ends_with(' ') && !expr.ends_with('(') {
+                        expr.push(' ');
+                    }
+                    expr.push_str(w);
+                    self.advance();
+                }
+                Some(tokens::Token::Semicolon) => {
+                    expr.push(';');
+                    self.advance();
+                }
+                Some(tokens::Token::Newline) => {
+                    self.advance();
+                }
+                // Handle operators that are normally special tokens but valid in arithmetic
+                Some(tokens::Token::RedirectIn) => {
+                    expr.push('<');
+                    self.advance();
+                }
+                Some(tokens::Token::RedirectOut) => {
+                    expr.push('>');
+                    self.advance();
+                }
+                Some(tokens::Token::And) => {
+                    expr.push_str("&&");
+                    self.advance();
+                }
+                Some(tokens::Token::Or) => {
+                    expr.push_str("||");
+                    self.advance();
+                }
+                Some(tokens::Token::Pipe) => {
+                    expr.push('|');
+                    self.advance();
+                }
+                Some(tokens::Token::Background) => {
+                    expr.push('&');
+                    self.advance();
+                }
+                None => {
+                    return Err(Error::Parse(
+                        "unexpected end of input in arithmetic command".to_string(),
+                    ));
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        Ok(CompoundCommand::Arithmetic(expr.trim().to_string()))
+    }
+
     /// Parse function definition with 'function' keyword: function name { body }
     fn parse_function_keyword(&mut self) -> Result<Command> {
         self.advance(); // consume 'function'
@@ -655,6 +895,17 @@ impl<'a> Parser<'a> {
         } else {
             Err(Error::Parse(format!("expected '{}'", keyword)))
         }
+    }
+
+    /// Strip surrounding quotes from a string value
+    fn strip_quotes(s: &str) -> &str {
+        if s.len() >= 2
+            && ((s.starts_with('"') && s.ends_with('"'))
+                || (s.starts_with('\'') && s.ends_with('\'')))
+        {
+            return &s[1..s.len() - 1];
+        }
+        s
     }
 
     /// Check if a word is an assignment (NAME=value, NAME+=value, or NAME[index]=value)
@@ -808,7 +1059,23 @@ impl<'a> Parser<'a> {
                                     continue;
                                 }
                             } else {
-                                AssignmentValue::Scalar(self.parse_word(value_str))
+                                // Handle quoted values: strip quotes and handle appropriately
+                                let value_word = if value_str.starts_with('"')
+                                    && value_str.ends_with('"')
+                                {
+                                    // Double-quoted: strip quotes but allow variable expansion
+                                    let inner = Self::strip_quotes(&value_str);
+                                    self.parse_word(inner.to_string())
+                                } else if value_str.starts_with('\'') && value_str.ends_with('\'') {
+                                    // Single-quoted: literal, no expansion
+                                    let inner = Self::strip_quotes(&value_str);
+                                    Word {
+                                        parts: vec![WordPart::Literal(inner.to_string())],
+                                    }
+                                } else {
+                                    self.parse_word(value_str)
+                                };
+                                AssignmentValue::Scalar(value_word)
                             };
                             assignments.push(Assignment {
                                 name,
