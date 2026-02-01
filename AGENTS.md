@@ -55,22 +55,6 @@ just pre-pr       # Pre-PR checks
 - `cargo fmt` and `cargo clippy -- -D warnings`
 - License checks: `cargo deny check` (see `deny.toml`)
 
-### Performance Benchmarks
-
-**Parallel execution benchmark** - run when changes touch:
-- `Arc`, `RwLock`, or shared state
-- `Interpreter`, `Bash`, or `FileSystem` structs
-- Async execution paths (`tokio::spawn`, `.await`)
-- Builtins (grep, awk, sed, etc.)
-
-```bash
-cargo bench --bench parallel_execution
-```
-
-Must not degrade. Compare before/after. Key metrics:
-- `workload_types/*` - parallel vs sequential speedup
-- `parallel_scaling/*` - scaling with session count
-
 ### Pre-PR Checklist
 
 1. `just pre-pr` (runs 2-4 automatically)
@@ -81,7 +65,7 @@ Must not degrade. Compare before/after. Key metrics:
 6. Update specs if behavior changes
 7. CI green before merge
 8. Resolve all PR comments
-9. Run perf benchmarks if touching parallel execution paths (see above)
+9. `cargo bench --bench parallel_execution` if touching Arc/async/Interpreter/builtins (see `specs/007-parallel-execution.md`)
 
 ### CI
 
