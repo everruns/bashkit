@@ -9,7 +9,22 @@ BashKit uses a multi-layer testing strategy:
 
 1. **Unit tests** - Component-level tests in each module
 2. **Spec tests** - Compatibility tests against bash behavior
-3. **Comparison tests** - Direct comparison with real bash
+3. **Security tests** - Threat model and failpoint tests
+4. **Comparison tests** - Direct comparison with real bash (manual)
+
+## CI Test Summary
+
+Tests run automatically on every PR via `cargo test --features network`:
+
+| Test Suite | Test Functions | Notes |
+|------------|---------------|-------|
+| Unit tests (bashkit lib) | 286 | Core interpreter tests |
+| limits.rs | 5 | Resource limit tests |
+| spec_tests.rs | 9 (2 ignored) | Spec compatibility tests |
+| threat_model_tests | 39 | Security tests |
+| security_failpoint_tests | 14 | Fault injection tests |
+| Doc tests | 2 | Documentation examples |
+| **Total** | **355** | Plus 4 examples executed |
 
 ## Spec Test Framework
 
@@ -19,22 +34,46 @@ crates/bashkit/tests/
 ├── spec_runner.rs      # Test parser and runner
 ├── spec_tests.rs       # Integration test entry point
 ├── debug_spec.rs       # Debugging utilities
+├── threat_model_tests.rs    # Security threat model tests
+├── security_failpoint_tests.rs  # Fault injection tests
 └── spec_cases/
-    ├── bash/           # Core bash compatibility
-    │   ├── echo.test.sh
-    │   ├── variables.test.sh
-    │   ├── control-flow.test.sh
-    │   ├── functions.test.sh
-    │   ├── arithmetic.test.sh
-    │   ├── arrays.test.sh
-    │   ├── globs.test.sh
-    │   ├── pipes-redirects.test.sh
-    │   └── command-subst.test.sh
-    ├── awk/            # AWK builtin tests
-    ├── grep/           # Grep builtin tests
-    ├── sed/            # Sed builtin tests
-    └── jq/             # JQ builtin tests
+    ├── bash/           # Core bash compatibility (19 files, 209 cases)
+    │   ├── arithmetic.test.sh (22)
+    │   ├── arrays.test.sh (14)
+    │   ├── background.test.sh (2)
+    │   ├── command-subst.test.sh (14)
+    │   ├── control-flow.test.sh.skip  # Skipped - needs implementation
+    │   ├── cuttr.test.sh (10)
+    │   ├── date.test.sh (4)
+    │   ├── echo.test.sh (10)
+    │   ├── fileops.test.sh (15)
+    │   ├── functions.test.sh (14)
+    │   ├── globs.test.sh (7)
+    │   ├── headtail.test.sh (14)
+    │   ├── herestring.test.sh (8)
+    │   ├── path.test.sh (14)
+    │   ├── pipes-redirects.test.sh (13)
+    │   ├── procsub.test.sh (6)
+    │   ├── sleep.test.sh (6)
+    │   ├── sortuniq.test.sh (12)
+    │   ├── variables.test.sh (20)
+    │   └── wc.test.sh (4)
+    ├── awk/            # AWK builtin tests (19 cases)
+    ├── grep/           # Grep builtin tests (15 cases)
+    ├── sed/            # Sed builtin tests (17 cases)
+    └── jq/             # JQ builtin tests (21 cases)
 ```
+
+### Spec Test Counts
+
+| Category | Test Cases | In CI | Pass | Skip |
+|----------|------------|-------|------|------|
+| Bash | 209 | **NO** (ignored) | - | - |
+| AWK | 19 | Yes | 17 | 2 |
+| Grep | 15 | Yes | 12 | 3 |
+| Sed | 17 | Yes | 13 | 4 |
+| JQ | 21 | Yes | 20 | 1 |
+| **Total** | **281** | **72** | 62 | 10 |
 
 ### Test File Format
 
@@ -83,13 +122,28 @@ cargo test --test spec_tests -- --nocapture
 cargo test --test spec_tests -- bash_comparison_tests --ignored
 ```
 
-## Coverage Goals
+## Coverage
 
-| Category | Target | Current |
-|----------|--------|---------|
-| Core shell | 90% | 78% |
-| Builtins | 85% | 80% |
-| Text processing | 80% | 85% |
+**Note:** No formal coverage tooling (codecov, tarpaulin) is currently configured.
+Coverage is tracked manually via spec test pass rates.
+
+### Current Status
+- Text processing tools: 86% pass rate (62/72 running in CI)
+- Core bash specs: Not running in CI (209 cases ignored)
+
+## TODO: Testing Gaps
+
+The following items need attention:
+
+- [ ] **Enable bash_spec_tests in CI** - 209 test cases currently ignored
+- [ ] **Fix control-flow.test.sh** - Currently skipped (.skip suffix)
+- [ ] **Add coverage tooling** - Consider cargo-tarpaulin or codecov
+- [ ] **Fix skipped spec tests** (10 total):
+  - AWK: 2 skipped
+  - Grep: 3 skipped
+  - Sed: 4 skipped
+  - JQ: 1 skipped
+- [ ] **Add bash_comparison_tests to CI** - Currently ignored, runs manually
 
 ## Adding New Tests
 
@@ -128,9 +182,13 @@ Future consideration: Would help find parser crashes.
 ## Verification
 
 ```bash
-# All tests pass
-cargo test --test spec_tests
+# Run what CI runs
+cargo test --features network
+cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
 
-# Check coverage percentage
-cargo test --test spec_tests -- bash_spec_tests --nocapture 2>&1 | grep "Pass rate"
+# Run ALL spec tests including ignored bash tests (manual)
+cargo test --test spec_tests -- --include-ignored --nocapture
+
+# Check pass rates for each category
+cargo test --test spec_tests -- --nocapture 2>&1 | grep "Total:"
 ```

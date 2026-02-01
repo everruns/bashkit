@@ -4,23 +4,41 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 
 ## Spec Test Coverage
 
-Current compatibility: **100%** (102/102 non-skipped tests passing)
+**Total spec test cases:** 281
 
-| Category | Passed | Skipped | Total | Notes |
-|----------|--------|---------|-------|-------|
-| Echo | 8 | 2 | 10 | -n flag edge case, empty echo |
-| Variables | 20 | 0 | 20 | All passing |
-| Control Flow | - | - | - | Skipped (timeout investigation) |
-| Functions | 14 | 0 | 14 | All passing |
-| Arithmetic | 18 | 4 | 22 | Skipped: assignment, ternary, bitwise |
-| Arrays | 12 | 2 | 14 | Skipped: indices, slicing |
-| Globs | 4 | 3 | 7 | Skipped: brackets, recursive, brace |
-| Pipes/Redirects | 11 | 2 | 13 | Skipped: stderr redirect |
-| Command Subst | 13 | 1 | 14 | Skipped: exit code propagation |
-| AWK | 17 | 2 | 19 | gsub regex, split |
-| Grep | 12 | 3 | 15 | -w, -o, -l stdin |
-| Sed | 13 | 4 | 17 | -i flag, multiple commands |
-| JQ | 20 | 1 | 21 | -r flag |
+| Category | Cases | In CI | Pass | Skip | Notes |
+|----------|-------|-------|------|------|-------|
+| Bash (core) | 209 | **No** | - | - | `bash_spec_tests` ignored in CI |
+| AWK | 19 | Yes | 17 | 2 | gsub regex, split |
+| Grep | 15 | Yes | 12 | 3 | -w, -o, -l stdin |
+| Sed | 17 | Yes | 13 | 4 | -i flag, multiple commands |
+| JQ | 21 | Yes | 20 | 1 | -r flag |
+| **Total** | **281** | **72** | 62 | 10 | |
+
+### Bash Spec Tests Breakdown (not in CI)
+
+| File | Cases | Notes |
+|------|-------|-------|
+| arithmetic.test.sh | 22 | |
+| arrays.test.sh | 14 | |
+| background.test.sh | 2 | |
+| command-subst.test.sh | 14 | |
+| control-flow.test.sh | - | Skipped (.skip suffix) |
+| cuttr.test.sh | 10 | |
+| date.test.sh | 4 | |
+| echo.test.sh | 10 | |
+| fileops.test.sh | 15 | |
+| functions.test.sh | 14 | |
+| globs.test.sh | 7 | |
+| headtail.test.sh | 14 | |
+| herestring.test.sh | 8 | |
+| path.test.sh | 14 | |
+| pipes-redirects.test.sh | 13 | |
+| procsub.test.sh | 6 | |
+| sleep.test.sh | 6 | |
+| sortuniq.test.sh | 12 | |
+| variables.test.sh | 20 | |
+| wc.test.sh | 4 | |
 
 ## Shell Features
 
@@ -29,7 +47,6 @@ Current compatibility: **100%** (102/102 non-skipped tests passing)
 | Feature | Priority | Notes |
 |---------|----------|-------|
 | `set -e` (errexit) | High | Critical for scripts |
-| Process substitution `<(cmd)` | Medium | Used in advanced scripts |
 | Coprocesses `coproc` | Low | Rarely used |
 | Extended globs `@()` `!()` | Medium | Requires `shopt -s extglob` |
 | Associative arrays `declare -A` | Medium | Bash 4+ feature |
@@ -41,6 +58,9 @@ Current compatibility: **100%** (102/102 non-skipped tests passing)
 | `alias` | Low | Interactive feature |
 | History expansion | Out of scope | Interactive only |
 | Job control (bg/fg/jobs) | Out of scope | Requires process control |
+
+### Implemented (previously missing)
+- Process substitution `<(cmd)` - now works
 
 ### Partially Implemented
 
@@ -56,10 +76,10 @@ Current compatibility: **100%** (102/102 non-skipped tests passing)
 ## Builtins
 
 ### Implemented
-`echo`, `printf`, `cat`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`, `export`, `set`, `unset`, `local`, `source`, `read`, `grep`, `sed`, `awk`, `jq`
+`echo`, `printf`, `cat`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`, `export`, `set`, `unset`, `local`, `source`, `read`, `shift`, `break`, `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`, `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`, `sort`, `uniq`, `cut`, `tr`, `date`, `wait`, `curl`, `wget`, `timeout`
 
 ### Not Implemented
-`cp`, `mv`, `rm`, `mkdir`, `rmdir`, `ls`, `touch`, `chmod`, `chown`, `ln`, `head`, `tail`, `sort`, `uniq`, `wc`, `tr`, `cut`, `tee`, `xargs`, `find`, `type`, `which`, `command`, `hash`, `declare`, `typeset`, `readonly`, `shift`, `wait`, `kill`, `eval`, `exec`
+`ls`, `rmdir`, `ln`, `chown`, `tee`, `xargs`, `find`, `diff`, `type`, `which`, `command`, `hash`, `declare`, `typeset`, `readonly`, `getopts`, `kill`, `eval`, `exec`, `trap`
 
 ## Text Processing
 
