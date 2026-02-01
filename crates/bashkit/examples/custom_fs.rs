@@ -44,7 +44,8 @@ async fn overlay_example() -> anyhow::Result<()> {
     // OverlayFs layers a writable layer on top of a base
     let base = Arc::new(InMemoryFs::new());
 
-    // Pre-populate the base filesystem
+    // Pre-populate the base filesystem (create parent directory first)
+    base.mkdir(Path::new("/data"), true).await?;
     base.write_file(Path::new("/data/config.txt"), b"base config")
         .await?;
 
