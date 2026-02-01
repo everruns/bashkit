@@ -11,11 +11,7 @@ use std::process::Command;
 
 /// Run a script in the system's bash and capture output
 fn run_real_bash(script: &str) -> Option<(String, i32)> {
-    let output = Command::new("bash")
-        .arg("-c")
-        .arg(script)
-        .output()
-        .ok()?;
+    let output = Command::new("bash").arg("-c").arg(script).output().ok()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let exit_code = output.status.code().unwrap_or(-1);
@@ -94,7 +90,10 @@ mod strategies {
 
     /// Generate a variable assignment and use
     pub fn variable_script() -> impl Strategy<Value = String> {
-        (identifier(), prop::string::string_regex("[a-z0-9]{1,10}").unwrap())
+        (
+            identifier(),
+            prop::string::string_regex("[a-z0-9]{1,10}").unwrap(),
+        )
             .prop_map(|(name, value)| format!("{}={}; echo ${}", name, value, name))
     }
 
@@ -143,7 +142,6 @@ mod strategies {
             Just("x=0; while [ $x -lt 3 ]; do echo $x; x=$((x+1)); done".to_string()),
         ]
     }
-
 }
 
 proptest! {
