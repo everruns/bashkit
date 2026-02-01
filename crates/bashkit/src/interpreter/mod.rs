@@ -89,6 +89,11 @@ impl Interpreter {
         builtins.insert("grep", Box::new(builtins::Grep));
         builtins.insert("sed", Box::new(builtins::Sed));
         builtins.insert("awk", Box::new(builtins::Awk));
+        // System info builtins (return hardcoded sandbox values)
+        builtins.insert("hostname", Box::new(builtins::Hostname));
+        builtins.insert("uname", Box::new(builtins::Uname));
+        builtins.insert("whoami", Box::new(builtins::Whoami));
+        builtins.insert("id", Box::new(builtins::Id));
 
         Self {
             fs,

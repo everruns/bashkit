@@ -12,6 +12,7 @@ mod printf;
 mod read;
 mod sed;
 mod source;
+mod system;
 mod test;
 mod vars;
 
@@ -27,6 +28,7 @@ pub use printf::Printf;
 pub use read::Read;
 pub use sed::Sed;
 pub use source::Source;
+pub use system::{Hostname, Id, Uname, Whoami};
 pub use test::{Bracket, Test};
 pub use vars::{Local, Set, Shift, Unset};
 
