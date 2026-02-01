@@ -21,6 +21,7 @@ mod sortuniq;
 mod source;
 mod test;
 mod vars;
+mod wait;
 mod wc;
 
 pub use awk::Awk;
@@ -44,6 +45,7 @@ pub use sortuniq::{Sort, Uniq};
 pub use source::Source;
 pub use test::{Bracket, Test};
 pub use vars::{Local, Set, Shift, Unset};
+pub use wait::Wait;
 pub use wc::Wc;
 
 use async_trait::async_trait;

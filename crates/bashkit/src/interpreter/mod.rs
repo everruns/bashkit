@@ -1,7 +1,10 @@
 //! Interpreter for executing bash scripts
 
+mod jobs;
 mod state;
 
+#[allow(unused_imports)]
+pub use jobs::{JobTable, SharedJobTable};
 pub use state::{ControlFlow, ExecResult};
 
 use std::collections::HashMap;
@@ -47,6 +50,9 @@ pub struct Interpreter {
     limits: ExecutionLimits,
     /// Execution counters for resource tracking
     counters: ExecutionCounters,
+    /// Job table for background execution
+    #[allow(dead_code)]
+    jobs: JobTable,
 }
 
 impl Interpreter {
@@ -97,6 +103,7 @@ impl Interpreter {
         builtins.insert("cut", Box::new(builtins::Cut));
         builtins.insert("tr", Box::new(builtins::Tr));
         builtins.insert("date", Box::new(builtins::Date));
+        builtins.insert("wait", Box::new(builtins::Wait));
 
         Self {
             fs,
@@ -110,6 +117,7 @@ impl Interpreter {
             call_stack: Vec::new(),
             limits: ExecutionLimits::default(),
             counters: ExecutionCounters::new(),
+            jobs: JobTable::new(),
         }
     }
 

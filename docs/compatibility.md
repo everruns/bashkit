@@ -6,7 +6,7 @@
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 40 | 8 | 48 |
+| Shell Builtins | 41 | 7 | 48 |
 | Text Processing | 9 | 3 | 12 |
 | File Operations | 7 | 0 | 7 |
 | Network | 0 | 2 | 2 |
@@ -61,6 +61,7 @@
 | `cut` | `-d DELIM`, `-f FIELDS` | Extract fields |
 | `tr` | `-d`, character ranges | Translate/delete chars |
 | `date` | `+FORMAT`, `-u` | Display/format date |
+| `wait` | `[JOB_ID...]` | Wait for background jobs |
 
 ### Not Implemented
 
@@ -68,7 +69,6 @@
 |---------|----------|--------|
 | `curl` | Medium | Planned |
 | `wget` | Medium | Planned |
-| `wait` | Medium | Planned |
 | `timeout` | Low | Planned |
 | `xargs` | Low | Planned |
 | `find` | Low | Planned |
@@ -321,12 +321,12 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] Text processing (`sort`, `uniq`, `cut`, `tr`)
 - [x] `basename`/`dirname` builtins
 - [x] `date` builtin
+- [x] Background execution (`&`, `wait`) - parsed, runs synchronously
 
 ### In Progress
-- [ ] Background execution (`&`, `wait`)
+- [ ] Network (`curl`, `wget`)
 
 ### Planned
-- [ ] Network (`curl`, `wget`)
 - [ ] `set -e` (errexit)
 - [ ] `trap` signal handling
 
