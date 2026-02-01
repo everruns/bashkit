@@ -18,6 +18,12 @@ async fn main() -> anyhow::Result<()> {
     println!("\n=== MountableFs Example ===\n");
     mountable_example().await?;
 
+    println!("\n=== Direct Filesystem Access Example ===\n");
+    direct_fs_access_example().await?;
+
+    println!("\n=== Binary File Handling Example ===\n");
+    binary_file_example().await?;
+
     Ok(())
 }
 
@@ -88,6 +94,88 @@ async fn mountable_example() -> anyhow::Result<()> {
     bash.exec("echo 'root file' > /root.txt").await?;
     let result = bash.exec("cat /root.txt").await?;
     println!("Root file: {}", result.stdout);
+
+    Ok(())
+}
+
+async fn direct_fs_access_example() -> anyhow::Result<()> {
+    // Bash provides direct filesystem access methods for working with files
+    // outside of bash script execution
+    let mut bash = Bash::new();
+
+    // Create directories and pre-populate files before running scripts
+    bash.mkdir(Path::new("/config"), false).await?;
+    bash.mkdir(Path::new("/output"), false).await?;
+    bash.write_file(Path::new("/config/app.conf"), b"debug=true\nport=8080\n")
+        .await?;
+
+    // Bash script can access pre-populated files
+    let result = bash.exec("cat /config/app.conf").await?;
+    println!("Config from bash: {}", result.stdout);
+
+    // Run a bash script that creates output
+    bash.exec("echo 'processed' > /output/result.txt").await?;
+
+    // Read the output directly without going through bash
+    let output = bash.read_file(Path::new("/output/result.txt")).await?;
+    println!("Output bytes: {:?}", output);
+    println!("Output text: {}", String::from_utf8_lossy(&output));
+
+    // Check file metadata
+    let stat = bash.stat(Path::new("/output/result.txt")).await?;
+    println!("File size: {} bytes", stat.size);
+
+    // List directory contents
+    let entries = bash.read_dir(Path::new("/output")).await?;
+    for entry in entries {
+        println!("  - {} ({:?})", entry.name, entry.metadata.file_type);
+    }
+
+    Ok(())
+}
+
+async fn binary_file_example() -> anyhow::Result<()> {
+    // The filesystem fully supports binary data with null bytes and high bytes
+    let bash = Bash::new();
+
+    // Create directory for binary files
+    bash.mkdir(Path::new("/data"), false).await?;
+
+    // Write binary data directly (e.g., a simple binary header)
+    let binary_header = vec![
+        0x89, 0x50, 0x4E, 0x47, // PNG magic bytes
+        0x0D, 0x0A, 0x1A, 0x0A, // PNG header continuation
+        0x00, 0x00, 0x00, 0x00, // Some null bytes
+        0xFF, 0xFE, 0xFD, 0xFC, // High bytes
+    ];
+    bash.write_file(Path::new("/data/test.bin"), &binary_header)
+        .await?;
+    println!("Wrote {} bytes of binary data", binary_header.len());
+
+    // Read it back and verify
+    let read_back = bash.read_file(Path::new("/data/test.bin")).await?;
+    assert_eq!(read_back, binary_header);
+    println!("Binary data verified: {:02X?}", &read_back[..4]);
+
+    // Check file stats
+    let stat = bash.stat(Path::new("/data/test.bin")).await?;
+    println!("File size: {} bytes", stat.size);
+
+    // Append more binary data
+    bash.append_file(Path::new("/data/test.bin"), &[0xDE, 0xAD, 0xBE, 0xEF])
+        .await?;
+    let final_content = bash.read_file(Path::new("/data/test.bin")).await?;
+    println!("After append: {} bytes total", final_content.len());
+
+    // Copy binary file
+    bash.copy(
+        Path::new("/data/test.bin"),
+        Path::new("/data/test_copy.bin"),
+    )
+    .await?;
+    let copied = bash.read_file(Path::new("/data/test_copy.bin")).await?;
+    assert_eq!(copied, final_content);
+    println!("Binary file copied successfully");
 
     Ok(())
 }

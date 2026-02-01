@@ -26,7 +26,7 @@ mod network;
 mod parser;
 
 pub use error::{Error, Result};
-pub use fs::{FileSystem, InMemoryFs, MountableFs, OverlayFs};
+pub use fs::{DirEntry, FileSystem, FileType, InMemoryFs, Metadata, MountableFs, OverlayFs};
 pub use interpreter::{ControlFlow, ExecResult};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
@@ -37,14 +37,13 @@ pub use network::HttpClient;
 use interpreter::Interpreter;
 use parser::Parser;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Main entry point for BashKit.
 ///
 /// Provides a sandboxed bash interpreter with an in-memory virtual filesystem.
 pub struct Bash {
-    #[allow(dead_code)] // Will be used for filesystem access methods
     fs: Arc<dyn FileSystem>,
     interpreter: Interpreter,
 }
@@ -73,6 +72,118 @@ impl Bash {
         let parser = Parser::new(script);
         let ast = parser.parse()?;
         self.interpreter.execute(&ast).await
+    }
+
+    // =========================================================================
+    // Filesystem access methods
+    //
+    // These methods provide direct access to the virtual filesystem, bypassing
+    // the bash interpreter. Useful for:
+    // - Pre-populating files before script execution
+    // - Reading binary file outputs after execution
+    // - Injecting test data or configuration
+    // =========================================================================
+
+    /// Get a reference to the underlying filesystem.
+    ///
+    /// Useful when you need to perform multiple filesystem operations
+    /// or pass the filesystem to other components.
+    pub fn fs(&self) -> &Arc<dyn FileSystem> {
+        &self.fs
+    }
+
+    /// Read a file's contents as raw bytes.
+    ///
+    /// # Example
+    /// ```rust
+    /// use bashkit::Bash;
+    /// use std::path::Path;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> anyhow::Result<()> {
+    ///     let mut bash = Bash::new();
+    ///     bash.exec("echo hello > /tmp/test.txt").await?;
+    ///     let content = bash.read_file(Path::new("/tmp/test.txt")).await?;
+    ///     assert_eq!(content, b"hello\n");
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        self.fs.read_file(path).await
+    }
+
+    /// Write raw bytes to a file.
+    ///
+    /// Creates the file if it doesn't exist, overwrites if it does.
+    ///
+    /// # Example
+    /// ```rust
+    /// use bashkit::Bash;
+    /// use std::path::Path;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> anyhow::Result<()> {
+    ///     let bash = Bash::new();
+    ///     // Write binary data directly
+    ///     bash.write_file(Path::new("/tmp/data.bin"), &[0x00, 0xFF, 0x42]).await?;
+    ///     // Read it back
+    ///     let content = bash.read_file(Path::new("/tmp/data.bin")).await?;
+    ///     assert_eq!(content, vec![0x00, 0xFF, 0x42]);
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+        self.fs.write_file(path, content).await
+    }
+
+    /// Append raw bytes to a file.
+    ///
+    /// Creates the file if it doesn't exist.
+    pub async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+        self.fs.append_file(path, content).await
+    }
+
+    /// Create a directory.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the directory to create
+    /// * `recursive` - If true, create parent directories as needed (like `mkdir -p`)
+    pub async fn mkdir(&self, path: &Path, recursive: bool) -> Result<()> {
+        self.fs.mkdir(path, recursive).await
+    }
+
+    /// Remove a file or directory.
+    ///
+    /// # Arguments
+    /// * `path` - Path to remove
+    /// * `recursive` - If true, remove directories and their contents (like `rm -r`)
+    pub async fn remove(&self, path: &Path, recursive: bool) -> Result<()> {
+        self.fs.remove(path, recursive).await
+    }
+
+    /// Check if a path exists.
+    pub async fn exists(&self, path: &Path) -> Result<bool> {
+        self.fs.exists(path).await
+    }
+
+    /// Read directory entries.
+    pub async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
+        self.fs.read_dir(path).await
+    }
+
+    /// Get file metadata.
+    pub async fn stat(&self, path: &Path) -> Result<Metadata> {
+        self.fs.stat(path).await
+    }
+
+    /// Rename/move a file or directory.
+    pub async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+        self.fs.rename(from, to).await
+    }
+
+    /// Copy a file.
+    pub async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
+        self.fs.copy(from, to).await
     }
 }
 
@@ -926,5 +1037,160 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "1\nok\n");
+    }
+
+    // Filesystem access method tests
+
+    #[tokio::test]
+    async fn test_fs_read_write_binary() {
+        let bash = Bash::new();
+        let path = std::path::Path::new("/tmp/binary.bin");
+
+        // Write binary data with null bytes and high bytes
+        let binary_data: Vec<u8> = vec![0x00, 0x01, 0xFF, 0xFE, 0x42, 0x00, 0x7F];
+        bash.write_file(path, &binary_data).await.unwrap();
+
+        // Read it back
+        let content = bash.read_file(path).await.unwrap();
+        assert_eq!(content, binary_data);
+    }
+
+    #[tokio::test]
+    async fn test_fs_write_then_exec_cat() {
+        let mut bash = Bash::new();
+        let path = std::path::Path::new("/tmp/prepopulated.txt");
+
+        // Pre-populate a file before running bash
+        bash.write_file(path, b"Hello from Rust!\n").await.unwrap();
+
+        // Access it from bash
+        let result = bash.exec("cat /tmp/prepopulated.txt").await.unwrap();
+        assert_eq!(result.stdout, "Hello from Rust!\n");
+    }
+
+    #[tokio::test]
+    async fn test_fs_exec_then_read() {
+        let mut bash = Bash::new();
+        let path = std::path::Path::new("/tmp/from_bash.txt");
+
+        // Create file via bash
+        bash.exec("echo 'Created by bash' > /tmp/from_bash.txt")
+            .await
+            .unwrap();
+
+        // Read it directly
+        let content = bash.read_file(path).await.unwrap();
+        assert_eq!(content, b"Created by bash\n");
+    }
+
+    #[tokio::test]
+    async fn test_fs_exists_and_stat() {
+        let bash = Bash::new();
+        let path = std::path::Path::new("/tmp/testfile.txt");
+
+        // File doesn't exist yet
+        assert!(!bash.exists(path).await.unwrap());
+
+        // Create it
+        bash.write_file(path, b"content").await.unwrap();
+
+        // Now exists
+        assert!(bash.exists(path).await.unwrap());
+
+        // Check metadata
+        let stat = bash.stat(path).await.unwrap();
+        assert!(stat.file_type.is_file());
+        assert_eq!(stat.size, 7); // "content" = 7 bytes
+    }
+
+    #[tokio::test]
+    async fn test_fs_mkdir_and_read_dir() {
+        let bash = Bash::new();
+
+        // Create nested directories
+        bash.mkdir(std::path::Path::new("/data/nested/dir"), true)
+            .await
+            .unwrap();
+
+        // Create some files
+        bash.write_file(std::path::Path::new("/data/file1.txt"), b"1")
+            .await
+            .unwrap();
+        bash.write_file(std::path::Path::new("/data/file2.txt"), b"2")
+            .await
+            .unwrap();
+
+        // Read directory
+        let entries = bash.read_dir(std::path::Path::new("/data")).await.unwrap();
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"nested"));
+        assert!(names.contains(&"file1.txt"));
+        assert!(names.contains(&"file2.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_fs_append() {
+        let bash = Bash::new();
+        let path = std::path::Path::new("/tmp/append.txt");
+
+        bash.write_file(path, b"line1\n").await.unwrap();
+        bash.append_file(path, b"line2\n").await.unwrap();
+        bash.append_file(path, b"line3\n").await.unwrap();
+
+        let content = bash.read_file(path).await.unwrap();
+        assert_eq!(content, b"line1\nline2\nline3\n");
+    }
+
+    #[tokio::test]
+    async fn test_fs_copy_and_rename() {
+        let bash = Bash::new();
+
+        bash.write_file(std::path::Path::new("/tmp/original.txt"), b"data")
+            .await
+            .unwrap();
+
+        // Copy
+        bash.copy(
+            std::path::Path::new("/tmp/original.txt"),
+            std::path::Path::new("/tmp/copied.txt"),
+        )
+        .await
+        .unwrap();
+
+        // Rename
+        bash.rename(
+            std::path::Path::new("/tmp/copied.txt"),
+            std::path::Path::new("/tmp/renamed.txt"),
+        )
+        .await
+        .unwrap();
+
+        // Verify
+        let content = bash
+            .read_file(std::path::Path::new("/tmp/renamed.txt"))
+            .await
+            .unwrap();
+        assert_eq!(content, b"data");
+        assert!(!bash
+            .exists(std::path::Path::new("/tmp/copied.txt"))
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_fs_accessor() {
+        let bash = Bash::new();
+
+        // Get the filesystem directly and use it
+        let fs = bash.fs();
+        fs.write_file(std::path::Path::new("/tmp/via_fs.txt"), b"direct")
+            .await
+            .unwrap();
+
+        let content = fs
+            .read_file(std::path::Path::new("/tmp/via_fs.txt"))
+            .await
+            .unwrap();
+        assert_eq!(content, b"direct");
     }
 }
