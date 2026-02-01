@@ -35,13 +35,15 @@ crates/bashkit/tests/
     ├── bash/           # Core bash compatibility
     │   ├── echo.test.sh
     │   ├── variables.test.sh
-    │   ├── control-flow.test.sh.skip  # Needs implementation
+    │   ├── control-flow.test.sh  # 31 tests, all skipped (timeout investigation)
     │   ├── functions.test.sh
     │   ├── arithmetic.test.sh
     │   ├── arrays.test.sh
     │   ├── globs.test.sh
     │   ├── pipes-redirects.test.sh
-    │   └── command-subst.test.sh
+    │   ├── command-subst.test.sh
+    │   ├── errors.test.sh       # Error handling tests
+    │   └── edge-cases.test.sh   # Edge case tests
     ├── awk/            # AWK builtin tests
     ├── grep/           # Grep builtin tests
     ├── sed/            # Sed builtin tests
