@@ -264,11 +264,11 @@ pub enum WordPart {
     },
     /// Length expansion ${#var}
     Length(String),
-    /// Array element access ${arr[index]} or ${arr[@]} or ${arr[*]}
+    /// Array element access `${arr[index]}` or `${arr[@]}` or `${arr[*]}`
     ArrayAccess { name: String, index: String },
-    /// Array length ${#arr[@]} or ${#arr[*]}
+    /// Array length `${#arr[@]}` or `${#arr[*]}`
     ArrayLength(String),
-    /// Array indices ${!arr[@]} or ${!arr[*]}
+    /// Array indices `${!arr[@]}` or `${!arr[*]}`
     ArrayIndices(String),
     /// Process substitution <(cmd) or >(cmd)
     ProcessSubstitution {
@@ -336,7 +336,7 @@ pub enum RedirectKind {
 #[derive(Debug, Clone)]
 pub struct Assignment {
     pub name: String,
-    /// Optional array index for indexed assignments like arr[0]=value
+    /// Optional array index for indexed assignments like `arr[0]=value`
     pub index: Option<String>,
     pub value: AssignmentValue,
     /// Whether this is an append assignment (+=)

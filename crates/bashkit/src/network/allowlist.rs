@@ -13,7 +13,7 @@ use url::Url;
 pub struct NetworkAllowlist {
     /// URL patterns that are allowed
     /// Format: "scheme://host[:port][/path]"
-    /// Examples: "https://api.example.com", "https://example.com/api"
+    /// Examples: `https://api.example.com`, `https://example.com/api`
     patterns: HashSet<String>,
 
     /// If true, allow all URLs (dangerous - use only for testing)
@@ -55,8 +55,8 @@ impl NetworkAllowlist {
     /// # Pattern Format
     ///
     /// Patterns can be:
-    /// - Full URLs: "https://api.example.com/v1"
-    /// - Host only: "https://example.com"
+    /// - Full URLs: `https://api.example.com/v1`
+    /// - Host only: `https://example.com`
     /// - With port: "http://localhost:8080"
     ///
     /// A pattern matches if the requested URL's scheme, host, and port match,
