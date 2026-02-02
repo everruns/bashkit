@@ -70,10 +70,10 @@ crates/bashkit/tests/
 |----------|------------|-------|------|------|
 | Bash | 209 | **NO** (ignored) | - | - |
 | AWK | 19 | Yes | 17 | 2 |
-| Grep | 15 | Yes | 13 | 2 |
+| Grep | 15 | Yes | 15 | 0 |
 | Sed | 17 | Yes | 13 | 4 |
 | JQ | 21 | Yes | 21 | 0 |
-| **Total** | **281** | **72** | 64 | 8 |
+| **Total** | **281** | **72** | 66 | 6 |
 
 ### Test File Format
 
@@ -138,9 +138,8 @@ The following items need attention:
 - [ ] **Enable bash_spec_tests in CI** - 209 test cases currently ignored
 - [ ] **Fix control-flow.test.sh** - Currently skipped (.skip suffix)
 - [ ] **Add coverage tooling** - Consider cargo-tarpaulin or codecov
-- [ ] **Fix skipped spec tests** (8 total):
-  - AWK: 2 skipped
-  - Grep: 2 skipped
+- [ ] **Fix skipped spec tests** (6 total):
+  - AWK: 2 skipped (blocked by multi-statement action parsing bug)
   - Sed: 4 skipped
 - [ ] **Add bash_comparison_tests to CI** - Currently ignored, runs manually
 
