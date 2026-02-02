@@ -37,6 +37,8 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 | procsub.test.sh | 6 | |
 | sleep.test.sh | 6 | |
 | sortuniq.test.sh | 12 | |
+| time.test.sh | 12 | Wall-clock only (user/sys always 0) |
+| timeout.test.sh | 17 | 2 skipped (timing-dependent) |
 | variables.test.sh | 20 | |
 | wc.test.sh | 4 | |
 
@@ -72,11 +74,13 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 | Heredocs | Basic | Variable expansion inside |
 | Arrays | Indexing, `[@]` | `+=` append, `${!arr[@]}` |
 | `echo -n` | Flag parsed | Trailing newline handling |
+| `time` | Wall-clock timing | **User/sys CPU time not tracked (always 0)** |
+| `timeout` | Basic usage | `-k` kill timeout (always terminates immediately) |
 
 ## Builtins
 
 ### Implemented
-`echo`, `printf`, `cat`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`, `export`, `set`, `unset`, `local`, `source`, `read`, `shift`, `break`, `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`, `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`, `sort`, `uniq`, `cut`, `tr`, `date`, `wait`, `curl`, `wget`, `timeout`
+`echo`, `printf`, `cat`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`, `export`, `set`, `unset`, `local`, `source`, `read`, `shift`, `break`, `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`, `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`, `sort`, `uniq`, `cut`, `tr`, `date`, `wait`, `curl`, `wget`, `timeout`, `time` (keyword)
 
 ### Not Implemented
 `ls`, `rmdir`, `ln`, `chown`, `tee`, `xargs`, `find`, `diff`, `type`, `which`, `command`, `hash`, `declare`, `typeset`, `readonly`, `getopts`, `kill`, `eval`, `exec`, `trap`
