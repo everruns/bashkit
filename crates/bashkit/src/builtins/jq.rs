@@ -106,7 +106,14 @@ impl Builtin for Jq {
                                 output.push_str(&s);
                                 output.push('\n');
                             } else {
-                                match serde_json::to_string(&json) {
+                                // For non-strings in raw mode, still use pretty-print for arrays/objects
+                                let formatted = match &json {
+                                    serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                                        serde_json::to_string_pretty(&json)
+                                    }
+                                    _ => serde_json::to_string(&json),
+                                };
+                                match formatted {
                                     Ok(s) => {
                                         output.push_str(&s);
                                         output.push('\n');
@@ -120,7 +127,14 @@ impl Builtin for Jq {
                                 }
                             }
                         } else {
-                            match serde_json::to_string(&json) {
+                            // Use pretty-print for arrays/objects to match real jq behavior
+                            let formatted = match &json {
+                                serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                                    serde_json::to_string_pretty(&json)
+                                }
+                                _ => serde_json::to_string(&json),
+                            };
+                            match formatted {
                                 Ok(s) => {
                                     output.push_str(&s);
                                     output.push('\n');
@@ -176,7 +190,8 @@ mod tests {
     #[tokio::test]
     async fn test_jq_identity() {
         let result = run_jq(".", r#"{"name":"test"}"#).await.unwrap();
-        assert_eq!(result.trim(), r#"{"name":"test"}"#);
+        // Pretty-printed output to match real jq behavior
+        assert_eq!(result.trim(), "{\n  \"name\": \"test\"\n}");
     }
 
     #[tokio::test]
@@ -202,7 +217,8 @@ mod tests {
     #[tokio::test]
     async fn test_jq_keys() {
         let result = run_jq("keys", r#"{"b":1,"a":2}"#).await.unwrap();
-        assert_eq!(result.trim(), r#"["a","b"]"#);
+        // Pretty-printed array output to match real jq behavior
+        assert_eq!(result.trim(), "[\n  \"a\",\n  \"b\"\n]");
     }
 
     #[tokio::test]

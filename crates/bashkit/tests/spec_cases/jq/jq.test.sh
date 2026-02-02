@@ -1,8 +1,10 @@
 ### jq_identity
-# Identity filter
+# Identity filter - pretty-printed output
 echo '{"a":1}' | jq '.'
 ### expect
-{"a":1}
+{
+  "a": 1
+}
 ### end
 
 ### jq_field
@@ -36,10 +38,13 @@ echo '[1,2,3]' | jq '.[]'
 ### end
 
 ### jq_keys
-# Object keys
+# Object keys - pretty-printed array output
 echo '{"a":1,"b":2}' | jq 'keys'
 ### expect
-["a","b"]
+[
+  "a",
+  "b"
+]
 ### end
 
 ### jq_length
@@ -65,10 +70,36 @@ echo '[1,2,3,4,5]' | jq '.[] | select(. > 3)'
 ### end
 
 ### jq_map
-# Map operation
+# Map operation - pretty-printed array output
 echo '[1,2,3]' | jq 'map(. * 2)'
 ### expect
-[2,4,6]
+[
+  2,
+  4,
+  6
+]
+### end
+
+### jq_filter
+# Filter with select and array construction - pretty-printed output
+echo '[1,2,3,4,5]' | jq '[.[] | select(. > 2)]'
+### expect
+[
+  3,
+  4,
+  5
+]
+### end
+
+### jq_map_alternate
+# Map with array construction syntax - pretty-printed output
+echo '[1,2,3]' | jq '[.[] * 2]'
+### expect
+[
+  2,
+  4,
+  6
+]
 ### end
 
 ### jq_add
@@ -114,17 +145,23 @@ echo '{"name":"world"}' | jq '"hello \(.name)"'
 ### end
 
 ### jq_object_construction
-# Object construction
+# Object construction - pretty-printed output
 echo '{"a":1,"b":2}' | jq '{x:.a,y:.b}'
 ### expect
-{"x":1,"y":2}
+{
+  "x": 1,
+  "y": 2
+}
 ### end
 
 ### jq_array_construction
-# Array construction
+# Array construction - pretty-printed output
 echo '{"a":1,"b":2}' | jq '[.a,.b]'
 ### expect
-[1,2]
+[
+  1,
+  2
+]
 ### end
 
 ### jq_pipe
@@ -146,4 +183,17 @@ echo '[1,2,3]' | jq 'first'
 echo '[1,2,3]' | jq 'last'
 ### expect
 3
+### end
+
+### jq_nested_object
+# Nested object - pretty-printed with proper indentation
+echo '{"a":{"b":{"c":1}}}' | jq '.'
+### expect
+{
+  "a": {
+    "b": {
+      "c": 1
+    }
+  }
+}
 ### end
