@@ -4,6 +4,43 @@
 //! Run with comparison: cargo test --test spec_tests -- --include-ignored
 //!
 //! Test files are in tests/spec_cases/{bash,awk,grep,sed,jq}/
+//!
+//! ## Skipped Tests TODO
+//!
+//! The following tests are skipped and need fixes:
+//!
+//! ### cuttr.test.sh (5 tests)
+//! - [ ] tr_lowercase_to_uppercase - tr output missing trailing newline
+//! - [ ] tr_delete - tr output missing trailing newline
+//! - [ ] tr_single_char - tr output missing trailing newline
+//! - [ ] tr_spaces_to_newlines - tr escape sequence handling differs
+//! - [ ] tr_delete_all_vowels - tr output missing trailing newline
+//!
+//! ### date.test.sh (3 tests)
+//! - [ ] date_year_format - test expects empty but grep outputs matches
+//! - [ ] date_iso_format - test expects empty but grep outputs matches
+//! - [ ] date_time_format - test expects empty but grep outputs matches
+//!
+//! ### fileops.test.sh (5 tests)
+//! - [ ] mkdir_simple - test conditionals not seeing filesystem changes
+//! - [ ] mkdir_recursive - test conditionals not seeing filesystem changes
+//! - [ ] touch_create - test conditionals not seeing filesystem changes
+//! - [ ] mv_file - test conditionals not seeing filesystem changes
+//! - [ ] touch_multiple - test conditionals not seeing filesystem changes
+//!
+//! ### headtail.test.sh (2 tests)
+//! - [ ] head_default - default line count not working with stdin
+//! - [ ] tail_default - default line count not working with stdin
+//!
+//! ### herestring.test.sh (1 test)
+//! - [ ] herestring_empty - empty herestring adds extra newline
+//!
+//! ### path.test.sh (2 tests)
+//! - [ ] basename_no_args - missing argument error handling not implemented
+//! - [ ] dirname_no_args - missing argument error handling not implemented
+//!
+//! ### control-flow.test.sh.skip (entire file)
+//! - [ ] Control flow tests need implementation
 
 mod spec_runner;
 
