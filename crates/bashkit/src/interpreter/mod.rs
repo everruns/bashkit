@@ -24,7 +24,7 @@ use crate::limits::{ExecutionCounters, ExecutionLimits};
 use crate::parser::{
     ArithmeticForCommand, AssignmentValue, CaseCommand, Command, CommandList, CompoundCommand,
     ForCommand, FunctionDef, IfCommand, ListOperator, ParameterOp, Pipeline, Redirect,
-    RedirectKind, Script, SimpleCommand, UntilCommand, WhileCommand, Word, WordPart,
+    RedirectKind, Script, SimpleCommand, TimeCommand, UntilCommand, WhileCommand, Word, WordPart,
 };
 
 #[cfg(feature = "failpoints")]
@@ -257,6 +257,7 @@ impl Interpreter {
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
             CompoundCommand::Case(case_cmd) => self.execute_case(case_cmd).await,
             CompoundCommand::Arithmetic(expr) => self.execute_arithmetic_command(expr).await,
+            CompoundCommand::Time(time_cmd) => self.execute_time(time_cmd).await,
         }
     }
 
@@ -748,6 +749,215 @@ impl Interpreter {
         Ok(ExecResult::ok(String::new()))
     }
 
+    /// Execute a time command - measure wall-clock execution time
+    ///
+    /// Note: BashKit only measures wall-clock (real) time.
+    /// User and system CPU time are always reported as 0.
+    /// This is a documented incompatibility with bash.
+    async fn execute_time(&mut self, time_cmd: &TimeCommand) -> Result<ExecResult> {
+        use std::time::Instant;
+
+        let start = Instant::now();
+
+        // Execute the wrapped command if present
+        let mut result = if let Some(cmd) = &time_cmd.command {
+            self.execute_command(cmd).await?
+        } else {
+            // time with no command - just output timing for nothing
+            ExecResult::ok(String::new())
+        };
+
+        let elapsed = start.elapsed();
+
+        // Calculate time components
+        let total_secs = elapsed.as_secs_f64();
+        let minutes = (total_secs / 60.0).floor() as u64;
+        let seconds = total_secs % 60.0;
+
+        // Format timing output (goes to stderr, per bash behavior)
+        let timing = if time_cmd.posix_format {
+            // POSIX format: simple, machine-readable
+            format!("real {:.2}\nuser 0.00\nsys 0.00\n", total_secs)
+        } else {
+            // Default bash format
+            format!(
+                "\nreal\t{}m{:.3}s\nuser\t0m0.000s\nsys\t0m0.000s\n",
+                minutes, seconds
+            )
+        };
+
+        // Append timing to stderr (preserve command's stderr)
+        result.stderr.push_str(&timing);
+
+        Ok(result)
+    }
+
+    /// Execute a timeout command - run command with time limit
+    ///
+    /// Usage: timeout [OPTIONS] DURATION COMMAND [ARGS...]
+    ///
+    /// Options:
+    ///   --preserve-status  Exit with command's status even on timeout
+    ///   -k DURATION        Kill signal timeout (ignored - always terminates)
+    ///   -s SIGNAL          Signal to send (ignored)
+    ///
+    /// Exit codes:
+    ///   124 - Command timed out
+    ///   125 - Timeout itself failed (bad arguments)
+    ///   Otherwise, exit status of command
+    async fn execute_timeout(
+        &mut self,
+        args: &[String],
+        stdin: Option<String>,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        use std::time::Duration;
+        use tokio::time::timeout;
+
+        const MAX_TIMEOUT_SECONDS: u64 = 300; // 5 minutes max for safety
+
+        if args.is_empty() {
+            return Ok(ExecResult::err(
+                "timeout: missing operand\nUsage: timeout DURATION COMMAND [ARGS...]\n".to_string(),
+                125,
+            ));
+        }
+
+        // Parse options and find duration/command
+        let mut preserve_status = false;
+        let mut arg_idx = 0;
+
+        while arg_idx < args.len() {
+            let arg = &args[arg_idx];
+            match arg.as_str() {
+                "--preserve-status" => {
+                    preserve_status = true;
+                    arg_idx += 1;
+                }
+                "-k" | "-s" => {
+                    // These options take a value, skip it
+                    arg_idx += 2;
+                }
+                s if s.starts_with('-')
+                    && !s.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) =>
+                {
+                    // Unknown option, skip
+                    arg_idx += 1;
+                }
+                _ => break, // Found duration
+            }
+        }
+
+        if arg_idx >= args.len() {
+            return Ok(ExecResult::err(
+                "timeout: missing operand\nUsage: timeout DURATION COMMAND [ARGS...]\n".to_string(),
+                125,
+            ));
+        }
+
+        // Parse duration
+        let duration_str = &args[arg_idx];
+        let duration = match Self::parse_timeout_duration(duration_str) {
+            Some(d) => {
+                // Cap at max
+                let secs = d.as_secs().min(MAX_TIMEOUT_SECONDS);
+                Duration::from_secs(secs)
+            }
+            None => {
+                return Ok(ExecResult::err(
+                    format!("timeout: invalid time interval '{}'\n", duration_str),
+                    125,
+                ));
+            }
+        };
+
+        arg_idx += 1;
+
+        if arg_idx >= args.len() {
+            return Ok(ExecResult::err(
+                "timeout: missing command\nUsage: timeout DURATION COMMAND [ARGS...]\n".to_string(),
+                125,
+            ));
+        }
+
+        // Build the inner command
+        let cmd_name = &args[arg_idx];
+        let cmd_args: Vec<String> = args[arg_idx + 1..].to_vec();
+
+        // If we have stdin from a pipeline, pass it to the inner command via here-string
+        let inner_redirects = if let Some(ref stdin_data) = stdin {
+            vec![Redirect {
+                fd: None,
+                kind: RedirectKind::HereString,
+                target: Word::literal(stdin_data.trim_end_matches('\n').to_string()),
+            }]
+        } else {
+            Vec::new()
+        };
+
+        // Create a SimpleCommand for the inner command
+        let inner_cmd = Command::Simple(SimpleCommand {
+            name: Word::literal(cmd_name.clone()),
+            args: cmd_args.iter().map(|s| Word::literal(s.clone())).collect(),
+            redirects: inner_redirects,
+            assignments: Vec::new(),
+        });
+
+        // Execute with timeout using execute_command (which handles recursion via Box::pin)
+        let exec_future = self.execute_command(&inner_cmd);
+        let result = match timeout(duration, exec_future).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                // Timeout expired
+                if preserve_status {
+                    // Return the timeout exit code but preserve-status means...
+                    // actually in bash --preserve-status makes timeout return
+                    // the command's exit status, but if it times out, there's no status
+                    // so it still returns 124
+                    ExecResult::err(String::new(), 124)
+                } else {
+                    ExecResult::err(String::new(), 124)
+                }
+            }
+        };
+
+        // Apply output redirections
+        self.apply_redirections(result, redirects).await
+    }
+
+    /// Parse a timeout duration string like "30", "30s", "5m", "1h"
+    fn parse_timeout_duration(s: &str) -> Option<std::time::Duration> {
+        use std::time::Duration;
+
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+
+        // Check for suffix
+        let (num_str, multiplier) = if let Some(stripped) = s.strip_suffix('s') {
+            (stripped, 1u64)
+        } else if let Some(stripped) = s.strip_suffix('m') {
+            (stripped, 60u64)
+        } else if let Some(stripped) = s.strip_suffix('h') {
+            (stripped, 3600u64)
+        } else if let Some(stripped) = s.strip_suffix('d') {
+            (stripped, 86400u64)
+        } else {
+            (s, 1u64) // Default to seconds
+        };
+
+        // Parse the number (support decimals)
+        let seconds: f64 = num_str.parse().ok()?;
+        if seconds < 0.0 {
+            return None;
+        }
+
+        let total_secs = (seconds * multiplier as f64) as u64;
+        Some(Duration::from_secs(total_secs))
+    }
+
     /// Check if a value matches a shell pattern
     fn pattern_matches(&self, value: &str, pattern: &str) -> bool {
         // Handle special case of * (match anything)
@@ -1104,6 +1314,11 @@ impl Interpreter {
                 }
             }
             return Ok(ExecResult::ok(String::new()));
+        }
+
+        // Handle `timeout` specially - needs interpreter-level command execution
+        if name == "timeout" {
+            return self.execute_timeout(&args, stdin, &command.redirects).await;
         }
 
         // Check for builtins

@@ -97,6 +97,21 @@ pub enum CompoundCommand {
     BraceGroup(Vec<Command>),
     /// Arithmetic command ((expression))
     Arithmetic(String),
+    /// Time command - measure execution time
+    Time(TimeCommand),
+}
+
+/// Time command - wraps a command and measures its execution time.
+///
+/// Note: BashKit only supports wall-clock time measurement.
+/// User/system CPU time is not tracked (always reported as 0).
+/// This is a known incompatibility with bash.
+#[derive(Debug, Clone)]
+pub struct TimeCommand {
+    /// Use POSIX output format (-p flag)
+    pub posix_format: bool,
+    /// The command to time (optional - timing with no command is valid)
+    pub command: Option<Box<Command>>,
 }
 
 /// If statement.
