@@ -45,6 +45,16 @@ struct CallFrame {
     positional: Vec<String>,
 }
 
+/// Shell options that can be set via `set -o` or `set -x`
+#[derive(Debug, Clone, Default)]
+pub struct ShellOptions {
+    /// Exit immediately if a command exits with non-zero status (set -e)
+    pub errexit: bool,
+    /// Print commands before execution (set -x) - stored but not enforced
+    #[allow(dead_code)]
+    pub xtrace: bool,
+}
+
 /// Interpreter state.
 pub struct Interpreter {
     fs: Arc<dyn FileSystem>,
@@ -67,6 +77,8 @@ pub struct Interpreter {
     /// Job table for background execution
     #[allow(dead_code)]
     jobs: JobTable,
+    /// Shell options (set -e, set -x, etc.)
+    options: ShellOptions,
 }
 
 impl Interpreter {
@@ -199,7 +211,32 @@ impl Interpreter {
             limits: ExecutionLimits::default(),
             counters: ExecutionCounters::new(),
             jobs: JobTable::new(),
+            options: ShellOptions::default(),
         }
+    }
+
+    /// Get mutable access to shell options (for builtins like `set`)
+    #[allow(dead_code)]
+    pub fn options_mut(&mut self) -> &mut ShellOptions {
+        &mut self.options
+    }
+
+    /// Get shell options
+    #[allow(dead_code)]
+    pub fn options(&self) -> &ShellOptions {
+        &self.options
+    }
+
+    /// Check if errexit (set -e) is enabled
+    /// This checks both the options struct and the SHOPT_e variable
+    /// (the `set` builtin stores options in SHOPT_e)
+    fn is_errexit_enabled(&self) -> bool {
+        self.options.errexit
+            || self
+                .variables
+                .get("SHOPT_e")
+                .map(|v| v == "1")
+                .unwrap_or(false)
     }
 
     /// Set execution limits.
@@ -229,6 +266,11 @@ impl Interpreter {
             stderr.push_str(&result.stderr);
             exit_code = result.exit_code;
             self.last_exit_code = exit_code;
+
+            // NOTE: errexit (set -e) is handled internally by execute_command,
+            // execute_list, and execute_command_sequence. We don't check here
+            // because those methods handle the nuances of && / || chains,
+            // if/while conditions, etc.
         }
 
         Ok(ExecResult {
@@ -307,8 +349,8 @@ impl Interpreter {
 
     /// Execute an if statement
     async fn execute_if(&mut self, if_cmd: &IfCommand) -> Result<ExecResult> {
-        // Execute condition
-        let condition_result = self.execute_command_sequence(&if_cmd.condition).await?;
+        // Execute condition (no errexit checking - conditions are expected to fail)
+        let condition_result = self.execute_condition_sequence(&if_cmd.condition).await?;
 
         if condition_result.exit_code == 0 {
             // Condition succeeded, execute then branch
@@ -317,7 +359,7 @@ impl Interpreter {
 
         // Check elif branches
         for (elif_condition, elif_body) in &if_cmd.elif_branches {
-            let elif_result = self.execute_command_sequence(elif_condition).await?;
+            let elif_result = self.execute_condition_sequence(elif_condition).await?;
             if elif_result.exit_code == 0 {
                 return self.execute_command_sequence(elif_body).await;
             }
@@ -406,7 +448,17 @@ impl Interpreter {
                         control_flow: ControlFlow::Return(code),
                     });
                 }
-                ControlFlow::None => {}
+                ControlFlow::None => {
+                    // Check if errexit caused early return from body
+                    if self.is_errexit_enabled() && exit_code != 0 {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::None,
+                        });
+                    }
+                }
             }
         }
 
@@ -486,7 +538,17 @@ impl Interpreter {
                         control_flow: ControlFlow::Return(code),
                     });
                 }
-                ControlFlow::None => {}
+                ControlFlow::None => {
+                    // Check if errexit caused early return from body
+                    if self.is_errexit_enabled() && exit_code != 0 {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::None,
+                        });
+                    }
+                }
             }
 
             // Execute step
@@ -646,8 +708,10 @@ impl Interpreter {
             // Check loop iteration limit
             self.counters.tick_loop(&self.limits)?;
 
-            // Check condition
-            let condition_result = self.execute_command_sequence(&while_cmd.condition).await?;
+            // Check condition (no errexit - conditions are expected to fail)
+            let condition_result = self
+                .execute_condition_sequence(&while_cmd.condition)
+                .await?;
             if condition_result.exit_code != 0 {
                 break;
             }
@@ -692,7 +756,17 @@ impl Interpreter {
                         control_flow: ControlFlow::Return(code),
                     });
                 }
-                ControlFlow::None => {}
+                ControlFlow::None => {
+                    // Check if errexit caused early return from body
+                    if self.is_errexit_enabled() && exit_code != 0 {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::None,
+                        });
+                    }
+                }
             }
         }
 
@@ -717,8 +791,10 @@ impl Interpreter {
             // Check loop iteration limit
             self.counters.tick_loop(&self.limits)?;
 
-            // Check condition
-            let condition_result = self.execute_command_sequence(&until_cmd.condition).await?;
+            // Check condition (no errexit - conditions are expected to fail)
+            let condition_result = self
+                .execute_condition_sequence(&until_cmd.condition)
+                .await?;
             if condition_result.exit_code == 0 {
                 break;
             }
@@ -763,7 +839,17 @@ impl Interpreter {
                         control_flow: ControlFlow::Return(code),
                     });
                 }
-                ControlFlow::None => {}
+                ControlFlow::None => {
+                    // Check if errexit caused early return from body
+                    if self.is_errexit_enabled() && exit_code != 0 {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::None,
+                        });
+                    }
+                }
             }
         }
 
@@ -1071,8 +1157,23 @@ impl Interpreter {
         }
     }
 
-    /// Execute a sequence of commands
+    /// Execute a sequence of commands (with errexit checking)
     async fn execute_command_sequence(&mut self, commands: &[Command]) -> Result<ExecResult> {
+        self.execute_command_sequence_impl(commands, true).await
+    }
+
+    /// Execute a sequence of commands used as a condition (no errexit checking)
+    /// Used for if/while/until conditions where failure is expected
+    async fn execute_condition_sequence(&mut self, commands: &[Command]) -> Result<ExecResult> {
+        self.execute_command_sequence_impl(commands, false).await
+    }
+
+    /// Execute a sequence of commands with optional errexit checking
+    async fn execute_command_sequence_impl(
+        &mut self,
+        commands: &[Command],
+        check_errexit: bool,
+    ) -> Result<ExecResult> {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
@@ -1091,6 +1192,16 @@ impl Interpreter {
                     stderr,
                     exit_code,
                     control_flow: result.control_flow,
+                });
+            }
+
+            // Check for errexit (set -e) if enabled
+            if check_errexit && self.is_errexit_enabled() && exit_code != 0 {
+                return Ok(ExecResult {
+                    stdout,
+                    stderr,
+                    exit_code,
+                    control_flow: ControlFlow::None,
                 });
             }
         }
@@ -1162,7 +1273,51 @@ impl Interpreter {
             });
         }
 
-        for (op, cmd) in &list.rest {
+        // Track if the list contains any && or || operators
+        // If so, failures within the list are "handled" by those operators
+        let has_conditional_operators = list
+            .rest
+            .iter()
+            .any(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or));
+
+        // Track if we just exited a conditional chain (for errexit check)
+        let mut just_exited_conditional_chain = false;
+
+        for (i, (op, cmd)) in list.rest.iter().enumerate() {
+            // Check if next operator (if any) is && or ||
+            let next_op = list.rest.get(i + 1).map(|(op, _)| op);
+            let current_is_conditional = matches!(op, ListOperator::And | ListOperator::Or);
+            let next_is_conditional =
+                matches!(next_op, Some(ListOperator::And) | Some(ListOperator::Or));
+
+            // Check errexit before executing if:
+            // - We just exited a conditional chain (and current op is semicolon)
+            // - OR: current op is semicolon and previous wasn't in a conditional chain
+            // - Exit code is non-zero
+            // But NOT if we're about to enter/continue a conditional chain
+            let should_check_errexit = matches!(op, ListOperator::Semicolon)
+                && !just_exited_conditional_chain
+                && self.is_errexit_enabled()
+                && exit_code != 0;
+
+            if should_check_errexit {
+                return Ok(ExecResult {
+                    stdout,
+                    stderr,
+                    exit_code,
+                    control_flow: ControlFlow::None,
+                });
+            }
+
+            // Reset the flag
+            just_exited_conditional_chain = false;
+
+            // Mark that we're exiting a conditional chain if:
+            // - Current is conditional (&&/||) and next is not conditional (;/end)
+            if current_is_conditional && !next_is_conditional {
+                just_exited_conditional_chain = true;
+            }
+
             let should_execute = match op {
                 ListOperator::And => exit_code == 0,
                 ListOperator::Or => exit_code != 0,
@@ -1191,6 +1346,22 @@ impl Interpreter {
                     });
                 }
             }
+        }
+
+        // Final errexit check for the last command
+        // Don't check if:
+        // - The list had conditional operators (failures are "handled" by && / ||)
+        // - OR we're in/just exited a conditional chain
+        let should_final_errexit_check =
+            !has_conditional_operators && self.is_errexit_enabled() && exit_code != 0;
+
+        if should_final_errexit_check {
+            return Ok(ExecResult {
+                stdout,
+                stderr,
+                exit_code,
+                control_flow: ControlFlow::None,
+            });
         }
 
         Ok(ExecResult {

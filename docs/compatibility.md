@@ -31,7 +31,7 @@
 | `[` | (same as test) | Alias for test |
 | `export` | `VAR=value` | Export variables |
 | `read` | `VAR` | Read line into variable |
-| `set` | - | Set positional params |
+| `set` | `-e`, `+e`, positional | Set options and positional params |
 | `unset` | `VAR` | Unset variable |
 | `shift` | `[N]` | Shift positional params |
 | `local` | `VAR=value` | Local variables |
@@ -326,9 +326,9 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] `timeout` builtin - stub, requires interpreter-level integration
 - [x] Process substitution (`<(cmd)`, `>(cmd)`)
 - [x] Here string edge cases tested
+- [x] `set -e` (errexit) - exit on command failure
 
 ### Planned
-- [ ] `set -e` (errexit)
 - [ ] `trap` signal handling
 
 ### Not Planned

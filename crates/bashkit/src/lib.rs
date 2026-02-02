@@ -1990,6 +1990,7 @@ mod tests {
         assert_eq!(result.stdout, "hello\n");
     }
 
+<<<<<<< HEAD
     // Parser fuel tests
 
     #[tokio::test]
@@ -2117,5 +2118,109 @@ mod tests {
             "Expected parser fuel error, got: {}",
             err
         );
+    }
+
+    // set -e (errexit) tests
+
+    #[tokio::test]
+    async fn test_set_e_basic() {
+        // set -e should exit on non-zero return
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("set -e; true; false; echo should_not_reach")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "");
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_set_e_after_failing_cmd() {
+        // set -e exits immediately on failed command
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("set -e; echo before; false; echo after")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "before\n");
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_set_e_disabled() {
+        // set +e disables errexit
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("set -e; set +e; false; echo still_running")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "still_running\n");
+    }
+
+    #[tokio::test]
+    async fn test_set_e_in_pipeline_last() {
+        // set -e only checks last command in pipeline
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("set -e; false | true; echo reached")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "reached\n");
+    }
+
+    #[tokio::test]
+    async fn test_set_e_in_if_condition() {
+        // set -e should not trigger on if condition failure
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("set -e; if false; then echo yes; else echo no; fi; echo done")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "no\ndone\n");
+    }
+
+    #[tokio::test]
+    async fn test_set_e_in_while_condition() {
+        // set -e should not trigger on while condition failure
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("set -e; x=0; while [ \"$x\" -lt 2 ]; do echo \"x=$x\"; x=$((x + 1)); done; echo done")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "x=0\nx=1\ndone\n");
+    }
+
+    #[tokio::test]
+    async fn test_set_e_in_brace_group() {
+        // set -e should work inside brace groups
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("set -e; { echo start; false; echo unreached; }; echo after")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "start\n");
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_set_e_and_chain() {
+        // set -e should not trigger on && chain (false && ... is expected to not run second)
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("set -e; false && echo one; echo reached")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "reached\n");
+    }
+
+    #[tokio::test]
+    async fn test_set_e_or_chain() {
+        // set -e should not trigger on || chain (true || false is expected to short circuit)
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("set -e; true || false; echo reached")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "reached\n");
     }
 }
