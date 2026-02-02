@@ -31,6 +31,10 @@ pub struct SpecTest {
     pub skip_reason: Option<String>,
     /// If true, run test with tokio paused time for deterministic timing
     pub paused_time: bool,
+    /// If true, this test has known differences from real bash behavior.
+    /// Test still runs against expected output, but excluded from bash comparison.
+    pub bash_diff: bool,
+    pub bash_diff_reason: Option<String>,
 }
 
 /// Result of running a spec test
@@ -96,6 +100,15 @@ pub fn parse_spec_file(content: &str) -> Vec<SpecTest> {
                 if let Some(ref mut test) = current_test {
                     test.paused_time = true;
                 }
+            } else if let Some(reason) = directive.strip_prefix("bash_diff:") {
+                if let Some(ref mut test) = current_test {
+                    test.bash_diff = true;
+                    test.bash_diff_reason = Some(reason.trim().to_string());
+                }
+            } else if directive == "bash_diff" {
+                if let Some(ref mut test) = current_test {
+                    test.bash_diff = true;
+                }
             } else {
                 // New test name
                 if let Some(mut test) = current_test.take() {
@@ -118,6 +131,8 @@ pub fn parse_spec_file(content: &str) -> Vec<SpecTest> {
                     skip: false,
                     skip_reason: None,
                     paused_time: false,
+                    bash_diff: false,
+                    bash_diff_reason: None,
                 });
                 in_script = true;
                 in_expect = false;
@@ -402,6 +417,8 @@ hello
             skip: false,
             skip_reason: None,
             paused_time: false,
+            bash_diff: false,
+            bash_diff_reason: None,
         };
 
         let result = run_spec_test(&test).await;
@@ -419,10 +436,33 @@ hello
             skip: false,
             skip_reason: None,
             paused_time: false,
+            bash_diff: false,
+            bash_diff_reason: None,
         };
 
         let result = run_spec_test(&test).await;
         assert!(!result.passed, "Test should fail");
+    }
+
+    #[test]
+    fn test_parse_with_bash_diff() {
+        let content = r#"
+### diff_test
+### bash_diff: wc output formatting differs
+echo "test" | wc -l
+### expect
+       1
+### end
+"#;
+
+        let tests = parse_spec_file(content);
+        assert_eq!(tests.len(), 1);
+        assert!(tests[0].bash_diff);
+        assert_eq!(
+            tests[0].bash_diff_reason,
+            Some("wc output formatting differs".to_string())
+        );
+        assert!(!tests[0].skip);
     }
 
     #[test]

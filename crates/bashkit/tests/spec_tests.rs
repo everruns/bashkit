@@ -1,9 +1,13 @@
 //! Spec test integration - runs all .test.sh files against BashKit
 //!
 //! Run with: cargo test --test spec_tests
-//! Run with comparison: cargo test --test spec_tests -- --include-ignored
+//! Run verbose comparison: cargo test --test spec_tests -- bash_comparison_tests_verbose --ignored --nocapture
 //!
 //! Test files are in tests/spec_cases/{bash,awk,grep,sed,jq}/
+//!
+//! ## Test Directives
+//! - `### skip: reason` - Skip test entirely (not run in any test)
+//! - `### bash_diff: reason` - Known difference from real bash (runs in spec tests, excluded from comparison)
 //!
 //! ## Skipped Tests TODO (108 total)
 //!
@@ -280,9 +284,10 @@ async fn run_category_tests(
     );
 }
 
-/// Comparison test - runs against real bash (ignored by default)
+/// Comparison test - runs against real bash in CI
+/// This test compares BashKit output against real bash for all non-skipped tests.
+/// It fails if any mismatch is found, ensuring BashKit stays compatible with bash.
 #[tokio::test]
-#[ignore]
 async fn bash_comparison_tests() {
     let dir = spec_cases_dir().join("bash");
     let all_tests = load_spec_tests(&dir);
@@ -290,14 +295,18 @@ async fn bash_comparison_tests() {
     println!("\n=== Bash Comparison Tests ===");
     println!("Comparing BashKit output against real bash\n");
 
+    let mut total = 0;
+    let mut matched = 0;
     let mut mismatches = Vec::new();
 
     for (file, tests) in &all_tests {
         for test in tests {
-            if test.skip {
+            // Skip tests marked as skip or bash_diff (known differences)
+            if test.skip || test.bash_diff {
                 continue;
             }
 
+            total += 1;
             let result = run_spec_test_with_comparison(test).await;
 
             let real_stdout = result.real_bash_stdout.as_deref().unwrap_or("");
@@ -306,14 +315,31 @@ async fn bash_comparison_tests() {
             let stdout_matches = result.bashkit_stdout == real_stdout;
             let exit_matches = result.bashkit_exit_code == real_exit;
 
-            if !stdout_matches || !exit_matches {
+            if stdout_matches && exit_matches {
+                matched += 1;
+            } else {
                 mismatches.push((file.clone(), test.name.clone(), result));
             }
         }
     }
 
+    // Print summary
+    println!(
+        "Comparison: {}/{} tests match real bash ({:.1}%)",
+        matched,
+        total,
+        if total > 0 {
+            (matched as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        }
+    );
+
     if !mismatches.is_empty() {
-        println!("=== Mismatches with real bash ===\n");
+        println!(
+            "\n=== Mismatches with real bash ({}) ===\n",
+            mismatches.len()
+        );
         for (file, name, result) in &mismatches {
             println!("[{}] {}", file, name);
             println!("  BashKit stdout: {:?}", result.bashkit_stdout);
@@ -330,5 +356,48 @@ async fn bash_comparison_tests() {
         }
     }
 
-    println!("Comparison complete: {} mismatches found", mismatches.len());
+    assert!(
+        mismatches.is_empty(),
+        "{} tests have mismatches with real bash. BashKit must produce identical output.",
+        mismatches.len()
+    );
+}
+
+/// Detailed comparison test - runs against real bash (ignored by default, for debugging)
+/// Use this to see all comparison details including matching tests.
+#[tokio::test]
+#[ignore]
+async fn bash_comparison_tests_verbose() {
+    let dir = spec_cases_dir().join("bash");
+    let all_tests = load_spec_tests(&dir);
+
+    println!("\n=== Bash Comparison Tests (Verbose) ===");
+    println!("Comparing BashKit output against real bash\n");
+
+    for (file, tests) in &all_tests {
+        for test in tests {
+            if test.skip {
+                println!("[{}] {} - SKIPPED", file, test.name);
+                continue;
+            }
+
+            let result = run_spec_test_with_comparison(test).await;
+
+            let real_stdout = result.real_bash_stdout.as_deref().unwrap_or("");
+            let real_exit = result.real_bash_exit_code.unwrap_or(-1);
+
+            let stdout_matches = result.bashkit_stdout == real_stdout;
+            let exit_matches = result.bashkit_exit_code == real_exit;
+
+            if stdout_matches && exit_matches {
+                println!("[{}] {} - OK", file, test.name);
+            } else {
+                println!("[{}] {} - MISMATCH", file, test.name);
+                println!("  BashKit stdout: {:?}", result.bashkit_stdout);
+                println!("  Real bash stdout: {:?}", real_stdout);
+                println!("  BashKit exit: {}", result.bashkit_exit_code);
+                println!("  Real bash exit: {}", real_exit);
+            }
+        }
+    }
 }
