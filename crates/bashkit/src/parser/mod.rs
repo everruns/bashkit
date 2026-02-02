@@ -1807,7 +1807,10 @@ impl<'a> Parser<'a> {
             parts.push(WordPart::Literal(String::new()));
         }
 
-        Word { parts, quoted: false }
+        Word {
+            parts,
+            quoted: false,
+        }
     }
 
     /// Read operand for brace expansion (everything until closing brace)
