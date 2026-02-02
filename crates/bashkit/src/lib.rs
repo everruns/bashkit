@@ -2527,4 +2527,74 @@ mod tests {
         // stdout should still have the output since echo doesn't write to stderr
         assert_eq!(result.stdout, "hello\n");
     }
+
+    // ============================================================
+    // Arithmetic Logical Operator Tests
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_arithmetic_logical_and_true() {
+        // Both sides true
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $((1 && 1))").await.unwrap();
+        assert_eq!(result.stdout, "1\n");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_logical_and_false_left() {
+        // Left side false - short circuits
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $((0 && 1))").await.unwrap();
+        assert_eq!(result.stdout, "0\n");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_logical_and_false_right() {
+        // Right side false
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $((1 && 0))").await.unwrap();
+        assert_eq!(result.stdout, "0\n");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_logical_or_false() {
+        // Both sides false
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $((0 || 0))").await.unwrap();
+        assert_eq!(result.stdout, "0\n");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_logical_or_true_left() {
+        // Left side true - short circuits
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $((1 || 0))").await.unwrap();
+        assert_eq!(result.stdout, "1\n");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_logical_or_true_right() {
+        // Right side true
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $((0 || 1))").await.unwrap();
+        assert_eq!(result.stdout, "1\n");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_logical_combined() {
+        // Combined && and || with expressions
+        let mut bash = Bash::new();
+        // (5 > 3) && (2 < 4) => 1 && 1 => 1
+        let result = bash.exec("echo $((5 > 3 && 2 < 4))").await.unwrap();
+        assert_eq!(result.stdout, "1\n");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_logical_with_comparison() {
+        // || with comparison
+        let mut bash = Bash::new();
+        // (5 < 3) || (2 < 4) => 0 || 1 => 1
+        let result = bash.exec("echo $((5 < 3 || 2 < 4))").await.unwrap();
+        assert_eq!(result.stdout, "1\n");
+    }
 }

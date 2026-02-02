@@ -170,7 +170,7 @@
 | `+`, `-`, `*`, `/`, `%` | ✅ | Basic ops |
 | `==`, `!=`, `<`, `>`, `<=`, `>=` | ✅ | Comparisons |
 | `&`, `\|` | ✅ | Bitwise |
-| `&&`, `\|\|` | ❌ | Logical (not impl) |
+| `&&`, `\|\|` | ✅ | Logical operators |
 | `? :` | ✅ | Ternary |
 | `=`, `+=`, etc. | ❌ | Assignment (not impl) |
 
@@ -331,6 +331,7 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] Special variables ($$, $RANDOM, $LINENO)
 - [x] File test operators (-r, -w, -x, -L)
 - [x] Stderr redirections (2>, 2>&1, &>)
+- [x] Arithmetic logical operators (&&, ||)
 
 ### Planned
 - [ ] `trap` signal handling

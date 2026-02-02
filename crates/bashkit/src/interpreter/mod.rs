@@ -2174,6 +2174,44 @@ impl Interpreter {
             }
         }
 
+        // Logical OR (||)
+        depth = 0;
+        for i in (0..chars.len()).rev() {
+            match chars[i] {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                '|' if depth == 0 && i > 0 && chars[i - 1] == '|' => {
+                    let left = self.parse_arithmetic(&expr[..i - 1]);
+                    // Short-circuit: if left is true, don't evaluate right
+                    if left != 0 {
+                        return 1;
+                    }
+                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    return if right != 0 { 1 } else { 0 };
+                }
+                _ => {}
+            }
+        }
+
+        // Logical AND (&&)
+        depth = 0;
+        for i in (0..chars.len()).rev() {
+            match chars[i] {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                '&' if depth == 0 && i > 0 && chars[i - 1] == '&' => {
+                    let left = self.parse_arithmetic(&expr[..i - 1]);
+                    // Short-circuit: if left is false, don't evaluate right
+                    if left == 0 {
+                        return 0;
+                    }
+                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    return if right != 0 { 1 } else { 0 };
+                }
+                _ => {}
+            }
+        }
+
         // Bitwise OR (|) - but not ||
         depth = 0;
         for i in (0..chars.len()).rev() {
