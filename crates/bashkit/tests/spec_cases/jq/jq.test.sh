@@ -79,7 +79,7 @@ echo '[1,2,3]' | jq 'add'
 ### end
 
 ### jq_raw_output
-### skip: -r flag not implemented
+# Raw output mode outputs strings without quotes
 echo '{"name":"test"}' | jq -r '.name'
 ### expect
 test
