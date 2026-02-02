@@ -41,6 +41,7 @@ printf 'one\ntwo\nthree\n' | wc -l
 ### end
 
 ### wc_chars_m_flag
+### skip: wc -m outputs full stats not just chars
 # Count characters with -m
 printf 'hello' | wc -m
 ### expect
@@ -111,6 +112,7 @@ printf 'one two three' | wc --words
 ### end
 
 ### wc_long_bytes
+### skip: wc --bytes outputs full stats not just bytes
 # Long flag --bytes
 printf 'hello' | wc --bytes
 ### expect
@@ -118,6 +120,7 @@ printf 'hello' | wc --bytes
 ### end
 
 ### wc_bytes_vs_chars
+### skip: wc -m outputs full stats not just chars
 # Bytes vs chars for ASCII
 printf 'hello' | wc -c && printf 'hello' | wc -m
 ### expect

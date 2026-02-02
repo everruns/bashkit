@@ -1192,6 +1192,11 @@ impl<'a> Parser<'a> {
                         target: self.parse_word(content),
                     });
                 }
+                Some(tokens::Token::ProcessSubIn) | Some(tokens::Token::ProcessSubOut) => {
+                    // Process substitution as argument
+                    let word = self.expect_word()?;
+                    words.push(word);
+                }
                 Some(tokens::Token::Newline)
                 | Some(tokens::Token::Semicolon)
                 | Some(tokens::Token::Pipe)
