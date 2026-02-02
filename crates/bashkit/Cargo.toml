@@ -70,3 +70,7 @@ proptest = { workspace = true }
 [[bench]]
 name = "parallel_execution"
 harness = false
+
+[[example]]
+name = "agent_tool"
+required-features = ["network"]
