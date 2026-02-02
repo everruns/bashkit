@@ -89,7 +89,7 @@ colour
 ### end
 
 ### grep_word
-### skip: word boundary not implemented
+# Word boundary match
 printf 'foo\nfoobar\nbar foo baz\n' | grep -w foo
 ### expect
 foo
