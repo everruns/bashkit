@@ -63,3 +63,6 @@ insta = "1"
 
 # Fault injection (security testing)
 fail = "0.5"
+
+# Property-based testing
+proptest = "1"
