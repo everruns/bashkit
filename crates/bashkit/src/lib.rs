@@ -102,6 +102,8 @@ pub struct Bash {
     parser_timeout: std::time::Duration,
     /// Maximum input script size in bytes
     max_input_bytes: usize,
+    /// Maximum AST nesting depth for parsing
+    max_ast_depth: usize,
 }
 
 impl Default for Bash {
@@ -117,11 +119,13 @@ impl Bash {
         let interpreter = Interpreter::new(Arc::clone(&fs));
         let parser_timeout = ExecutionLimits::default().parser_timeout;
         let max_input_bytes = ExecutionLimits::default().max_input_bytes;
+        let max_ast_depth = ExecutionLimits::default().max_ast_depth;
         Self {
             fs,
             interpreter,
             parser_timeout,
             max_input_bytes,
+            max_ast_depth,
         }
     }
 
@@ -133,7 +137,7 @@ impl Bash {
     /// Execute a bash script and return the result.
     ///
     /// This method first validates that the script does not exceed the maximum
-    /// input size, then parses the script with a timeout to prevent parser hangs,
+    /// input size, then parses the script with a timeout and AST depth limit,
     /// then executes the resulting AST.
     pub async fn exec(&mut self, script: &str) -> Result<ExecResult> {
         // Check input size before parsing (V1 mitigation)
@@ -146,12 +150,13 @@ impl Bash {
         }
 
         let parser_timeout = self.parser_timeout;
+        let max_ast_depth = self.max_ast_depth;
         let script_owned = script.to_owned();
 
         // Parse with timeout using spawn_blocking since parsing is sync
         let parse_result = tokio::time::timeout(parser_timeout, async {
             tokio::task::spawn_blocking(move || {
-                let parser = Parser::new(&script_owned);
+                let parser = Parser::with_max_depth(&script_owned, max_ast_depth);
                 parser.parse()
             })
             .await
@@ -365,6 +370,7 @@ impl BashBuilder {
 
         let parser_timeout = self.limits.parser_timeout;
         let max_input_bytes = self.limits.max_input_bytes;
+        let max_ast_depth = self.limits.max_ast_depth;
         interpreter.set_limits(self.limits);
 
         Bash {
@@ -372,6 +378,7 @@ impl BashBuilder {
             interpreter,
             parser_timeout,
             max_input_bytes,
+            max_ast_depth,
         }
     }
 }
@@ -1864,5 +1871,49 @@ mod tests {
         let mut bash = Bash::builder().limits(limits).build();
         let result = bash.exec("echo hello").await.unwrap();
         assert_eq!(result.stdout, "hello\n");
+    }
+
+    // AST depth limit tests
+
+    #[tokio::test]
+    async fn test_ast_depth_limit_default() {
+        // Default AST depth limit should be 100
+        let limits = ExecutionLimits::default();
+        assert_eq!(limits.max_ast_depth, 100);
+    }
+
+    #[tokio::test]
+    async fn test_ast_depth_limit_custom() {
+        // AST depth limit can be customized
+        let limits = ExecutionLimits::new().max_ast_depth(10);
+        assert_eq!(limits.max_ast_depth, 10);
+    }
+
+    #[tokio::test]
+    async fn test_ast_depth_limit_normal_script() {
+        // Normal scripts should parse within limit
+        let limits = ExecutionLimits::new().max_ast_depth(10);
+        let mut bash = Bash::builder().limits(limits).build();
+        let result = bash.exec("if true; then echo ok; fi").await.unwrap();
+        assert_eq!(result.stdout, "ok\n");
+    }
+
+    #[tokio::test]
+    async fn test_ast_depth_limit_enforced() {
+        // Deeply nested scripts should be rejected
+        let limits = ExecutionLimits::new().max_ast_depth(2);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // This script has 3 levels of nesting (exceeds limit of 2)
+        let result = bash
+            .exec("if true; then if true; then if true; then echo nested; fi; fi; fi")
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("AST nesting too deep"),
+            "Expected AST depth error, got: {}",
+            err
+        );
     }
 }
