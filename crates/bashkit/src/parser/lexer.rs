@@ -112,11 +112,15 @@ impl<'a> Lexer<'a> {
             '{' => {
                 // Look ahead to see if this is a brace expansion like {a,b,c} or {1..5}
                 // vs a brace group like { cmd; }
+                // Note: { must be followed by space/newline to be a brace group
                 if self.looks_like_brace_expansion() {
                     self.read_brace_expansion_word()
-                } else {
+                } else if self.is_brace_group_start() {
                     self.advance();
                     Some(Token::LeftBrace)
+                } else {
+                    // {single} without comma/dot-dot is kept as literal word
+                    self.read_brace_literal_word()
                 }
             }
             '}' => {
@@ -480,6 +484,59 @@ impl<'a> Lexer<'a> {
         }
 
         false
+    }
+
+    /// Check if { is followed by whitespace (brace group start)
+    fn is_brace_group_start(&self) -> bool {
+        let mut chars = self.chars.clone();
+        // Skip the opening {
+        if chars.next() != Some('{') {
+            return false;
+        }
+        // If next char is whitespace or newline, it's a brace group
+        matches!(chars.next(), Some(' ') | Some('\t') | Some('\n') | None)
+    }
+
+    /// Read a {literal} pattern without comma/dot-dot as a word
+    fn read_brace_literal_word(&mut self) -> Option<Token> {
+        let mut word = String::new();
+
+        // Read the opening {
+        if let Some('{') = self.peek_char() {
+            word.push('{');
+            self.advance();
+        } else {
+            return None;
+        }
+
+        // Read until matching }
+        let mut depth = 1;
+        while let Some(ch) = self.peek_char() {
+            word.push(ch);
+            self.advance();
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Continue reading any suffix
+        while let Some(ch) = self.peek_char() {
+            if self.is_word_char(ch) {
+                word.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        Some(Token::Word(word))
     }
 
     /// Read a brace expansion pattern as a word

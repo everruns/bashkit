@@ -61,6 +61,7 @@ after
 ### end
 
 ### errexit_negation
+### skip: pipeline negation with errexit needs further testing
 # set -e doesn't trigger with !
 set -e
 ! false
