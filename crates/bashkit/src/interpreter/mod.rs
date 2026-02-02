@@ -157,6 +157,10 @@ impl Interpreter {
         builtins.insert("env", Box::new(builtins::Env));
         builtins.insert("printenv", Box::new(builtins::Printenv));
         builtins.insert("history", Box::new(builtins::History));
+        // Pipeline control
+        builtins.insert("xargs", Box::new(builtins::Xargs));
+        builtins.insert("tee", Box::new(builtins::Tee));
+        builtins.insert("watch", Box::new(builtins::Watch));
 
         Self {
             fs,
