@@ -69,3 +69,57 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: cargo run --example agent_tool --features network
+
+  # Miri check for undefined behavior (nightly only)
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly with Miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Setup Miri
+        run: cargo +nightly miri setup
+
+      - name: Run Miri on library tests
+        run: |
+          # Run a subset of tests with Miri (full suite is too slow)
+          # Miri is primarily for catching UB in unsafe code
+          cargo +nightly miri test --lib -p bashkit -- \
+            --test-threads=1 \
+            test_parse_simple_command \
+            test_parse_variable \
+            test_parse_pipeline
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+
+  # Security analysis with cargo-geiger
+  security-analysis:
+    name: Security Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-geiger
+        run: cargo install cargo-geiger --locked
+
+      - name: Run cargo-geiger (unsafe code audit)
+        run: |
+          # Report unsafe code usage in bashkit and dependencies
+          cargo geiger --all-features 2>&1 | tee geiger-report.txt
+          echo "::notice::Unsafe code report generated. Review geiger-report.txt for details."
+        continue-on-error: true
+
+      - name: Upload geiger report
+        uses: actions/upload-artifact@v4
+        with:
+          name: geiger-report
+          path: geiger-report.txt
+          retention-days: 30
