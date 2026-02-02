@@ -171,7 +171,7 @@
 //! - [`OverlayFs`]: Copy-on-write overlay for layered storage
 //! - [`MountableFs`]: Mount multiple filesystems at different paths
 //!
-//! See the [`fs`] module documentation for details and examples.
+//! See the `fs` module documentation for details and examples.
 //!
 //! # Direct Filesystem Access
 //!
