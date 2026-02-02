@@ -51,20 +51,25 @@ on:
 
 ## Changelog Format
 
+Follow everruns/sdk changelog conventions:
+
 ```markdown
 ## [0.1.0] - 2026-02-02
 
-### Added
-- Initial release with sandboxed bash interpreter
-- Virtual filesystem abstraction
-- Resource limits (memory, time, operations)
+### What's Changed
 
-### Changed
-- N/A
+* feat(scope): description ([#83](https://github.com/everruns/bashkit/pull/83)) by @author
+* feat(scope): description ([#82](https://github.com/everruns/bashkit/pull/82)) by @author
+...
 
-### Fixed
-- N/A
+**Full Changelog**: https://github.com/everruns/bashkit/commits/v0.1.0
 ```
+
+**Rules:**
+- Use `### What's Changed` section (not separate Added/Changed/Fixed)
+- List PRs in **descending order** (newest first, by PR number)
+- Format: `* type(scope): description ([#N](URL)) by @author`
+- End with `**Full Changelog**: URL`
 
 ## Pre-release Checklist
 
