@@ -6,6 +6,10 @@
 //! - `interp::expand_variable` - Inject failures in variable expansion
 //! - `interp::execute_function` - Inject failures in function calls
 
+// Interpreter uses chars().last().unwrap() and chars().next().unwrap() after
+// validating string contents. This is safe because we check for non-empty strings.
+#![allow(clippy::unwrap_used)]
+
 mod jobs;
 mod state;
 

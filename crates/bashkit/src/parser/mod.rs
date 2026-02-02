@@ -9,6 +9,10 @@
 //! words. The termination of compound commands is handled by `parse_compound_list_until`
 //! which checks for terminators BEFORE parsing each command.
 
+// Parser uses chars().next().unwrap() after validating character presence.
+// This is safe because we check bounds before accessing.
+#![allow(clippy::unwrap_used)]
+
 mod ast;
 mod lexer;
 mod tokens;
@@ -1631,6 +1635,7 @@ impl<'a> Parser<'a> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

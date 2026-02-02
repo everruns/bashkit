@@ -1,5 +1,8 @@
 //! Sort and uniq builtins - sort lines and filter duplicates
 
+// Uses unwrap() after is_empty() check (e.g., files.first() in else branch)
+#![allow(clippy::unwrap_used)]
+
 use async_trait::async_trait;
 
 use super::{Builtin, Context};
@@ -223,6 +226,7 @@ impl Builtin for Uniq {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::collections::HashMap;

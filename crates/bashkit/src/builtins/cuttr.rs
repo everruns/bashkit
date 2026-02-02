@@ -234,6 +234,7 @@ fn expand_char_set(spec: &str) -> Vec<char> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::collections::HashMap;

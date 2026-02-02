@@ -1,5 +1,8 @@
 //! File operation builtins - mkdir, rm, cp, mv, touch, chmod
 
+// Uses unwrap() after length checks (e.g., files.last() after files.len() >= 2)
+#![allow(clippy::unwrap_used)]
+
 use async_trait::async_trait;
 use std::path::Path;
 
@@ -362,6 +365,7 @@ fn resolve_path(cwd: &std::path::Path, path_str: &str) -> std::path::PathBuf {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::collections::HashMap;

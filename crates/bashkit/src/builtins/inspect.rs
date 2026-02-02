@@ -409,6 +409,7 @@ fn resolve_path(cwd: &std::path::Path, path_str: &str) -> std::path::PathBuf {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::collections::HashMap;

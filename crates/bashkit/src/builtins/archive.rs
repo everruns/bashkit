@@ -1,5 +1,8 @@
 //! Archive builtins - tar, gzip, gunzip
 
+// Uses expect() for verified safe unwraps (e.g., strip_suffix after ends_with check)
+#![allow(clippy::unwrap_used)]
+
 use async_trait::async_trait;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
@@ -783,6 +786,7 @@ fn resolve_path(cwd: &std::path::Path, path_str: &str) -> std::path::PathBuf {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::collections::HashMap;

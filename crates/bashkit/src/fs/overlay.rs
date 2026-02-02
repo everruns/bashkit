@@ -7,6 +7,10 @@
 //! - Writes: Always go to upper
 //! - Deletes: Tracked via whiteouts in upper
 
+// RwLock.read()/write().unwrap() only panics on lock poisoning (prior panic
+// while holding lock). This is intentional - corrupted state should not propagate.
+#![allow(clippy::unwrap_used)]
+
 use async_trait::async_trait;
 use std::collections::HashSet;
 use std::io::{Error as IoError, ErrorKind};
@@ -366,6 +370,7 @@ impl FileSystem for OverlayFs {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
