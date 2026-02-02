@@ -12,7 +12,7 @@
 //!   sed -e 's/a/b/' -e 's/c/d/' file     # multiple commands
 
 use async_trait::async_trait;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 
 use super::{Builtin, Context};
 use crate::error::{Error, Result};
@@ -32,6 +32,8 @@ enum SedCommand {
     Delete,
     Print,
     Quit,
+    Append(String),
+    Insert(String),
 }
 
 #[derive(Debug, Clone)]
@@ -87,9 +89,14 @@ impl SedOptions {
             } else if arg.starts_with('-') {
                 // Unknown option - ignore
             } else if opts.commands.is_empty() {
-                // First non-option is the command
-                let (addr, cmd) = parse_sed_command(arg)?;
-                opts.commands.push((addr, cmd));
+                // First non-option is the command (may contain multiple commands separated by ;)
+                for cmd_str in split_sed_commands(arg) {
+                    let trimmed = cmd_str.trim();
+                    if !trimmed.is_empty() {
+                        let (addr, cmd) = parse_sed_command(trimmed)?;
+                        opts.commands.push((addr, cmd));
+                    }
+                }
             } else {
                 // Rest are files
                 opts.files.push(arg.clone());
@@ -103,6 +110,54 @@ impl SedOptions {
 
         Ok(opts)
     }
+}
+
+/// Split a sed command string into individual commands separated by semicolons.
+/// This is careful to not split inside s/pattern/replacement/ structures.
+fn split_sed_commands(s: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut start = 0;
+    let mut in_subst = false;
+    let mut delim_count = 0;
+    let mut delim: Option<char> = None;
+    let mut escaped = false;
+    let chars: Vec<char> = s.chars().collect();
+
+    for (i, &c) in chars.iter().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        if c == '\\' {
+            escaped = true;
+            continue;
+        }
+
+        if !in_subst && c == 's' && i + 1 < chars.len() {
+            // Start of substitution command
+            in_subst = true;
+            delim = Some(chars[i + 1]);
+            delim_count = 0;
+        } else if in_subst {
+            if Some(c) == delim {
+                delim_count += 1;
+                if delim_count >= 3 {
+                    // After third delimiter, we might have flags then end
+                    in_subst = false;
+                }
+            }
+        } else if c == ';' {
+            result.push(&s[start..i]);
+            start = i + 1;
+        }
+    }
+
+    if start < s.len() {
+        result.push(&s[start..]);
+    }
+
+    result
 }
 
 fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
@@ -216,7 +271,11 @@ fn parse_sed_command(s: &str) -> Result<(Option<Address>, SedCommand)> {
                 .replace("\\+", "+")
                 .replace("\\?", "?");
 
-            let regex = Regex::new(&pattern)
+            // Build regex with optional case-insensitive flag
+            let case_insensitive = flags.contains('i');
+            let regex = RegexBuilder::new(&pattern)
+                .case_insensitive(case_insensitive)
+                .build()
                 .map_err(|e| Error::Execution(format!("sed: invalid pattern: {}", e)))?;
 
             // Convert sed replacement syntax to regex replacement syntax
@@ -245,6 +304,24 @@ fn parse_sed_command(s: &str) -> Result<(Option<Address>, SedCommand)> {
         'd' => Ok((address.or(Some(Address::All)), SedCommand::Delete)),
         'p' => Ok((address.or(Some(Address::All)), SedCommand::Print)),
         'q' => Ok((address, SedCommand::Quit)),
+        'a' => {
+            // Append command: a\text or a text (after backslash)
+            let text = if rest.len() > 1 && rest.chars().nth(1) == Some('\\') {
+                rest[2..].to_string()
+            } else {
+                rest[1..].to_string()
+            };
+            Ok((address, SedCommand::Append(text)))
+        }
+        'i' => {
+            // Insert command: i\text or i text (after backslash)
+            let text = if rest.len() > 1 && rest.chars().nth(1) == Some('\\') {
+                rest[2..].to_string()
+            } else {
+                rest[1..].to_string()
+            };
+            Ok((address, SedCommand::Insert(text)))
+        }
         _ => Err(Error::Execution(format!(
             "sed: unknown command: {}",
             first_char
@@ -301,6 +378,8 @@ impl Builtin for Sed {
                 let mut should_print = !opts.quiet;
                 let mut deleted = false;
                 let mut extra_print = false;
+                let mut insert_text: Option<String> = None;
+                let mut append_text: Option<String> = None;
 
                 for (addr, cmd) in &opts.commands {
                     let addr_matches = addr
@@ -342,7 +421,19 @@ impl Builtin for Sed {
                         SedCommand::Quit => {
                             quit = true;
                         }
+                        SedCommand::Append(text) => {
+                            append_text = Some(text.clone());
+                        }
+                        SedCommand::Insert(text) => {
+                            insert_text = Some(text.clone());
+                        }
                     }
+                }
+
+                // Insert text comes before the line
+                if let Some(text) = insert_text {
+                    file_output.push_str(&text);
+                    file_output.push('\n');
                 }
 
                 if !deleted && should_print {
@@ -352,6 +443,12 @@ impl Builtin for Sed {
 
                 if extra_print {
                     file_output.push_str(&current_line);
+                    file_output.push('\n');
+                }
+
+                // Append text comes after the line
+                if let Some(text) = append_text {
+                    file_output.push_str(&text);
                     file_output.push('\n');
                 }
             }
@@ -471,5 +568,37 @@ mod tests {
     async fn test_sed_last_line() {
         let result = run_sed(&["$d"], Some("line1\nline2\nline3")).await.unwrap();
         assert_eq!(result.stdout, "line1\nline2\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_case_insensitive() {
+        let result = run_sed(&["s/hello/hi/i"], Some("Hello World"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "hi World\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_multiple_commands() {
+        let result = run_sed(&["s/hello/hi/; s/world/there/"], Some("hello world"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "hi there\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_append() {
+        let result = run_sed(&["/one/a\\inserted"], Some("one\ntwo"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "one\ninserted\ntwo\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_insert() {
+        let result = run_sed(&["/two/i\\inserted"], Some("one\ntwo"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "one\ninserted\ntwo\n");
     }
 }

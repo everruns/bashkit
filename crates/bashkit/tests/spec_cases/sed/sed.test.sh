@@ -73,7 +73,7 @@ world hello
 ### end
 
 ### sed_case_insensitive
-### skip: case insensitive flag not fully implemented
+# Case insensitive substitution
 printf 'Hello World\n' | sed 's/hello/hi/i'
 ### expect
 hi World
@@ -87,7 +87,7 @@ path_to_file
 ### end
 
 ### sed_multiple
-### skip: multiple commands not fully implemented
+# Multiple commands separated by semicolons
 printf 'hello world\n' | sed 's/hello/hi/; s/world/there/'
 ### expect
 hi there
@@ -109,7 +109,7 @@ abc
 ### end
 
 ### sed_append
-### skip: append command not implemented
+# Append text after matching line
 printf 'one\ntwo\n' | sed '/one/a\inserted'
 ### expect
 one
@@ -118,7 +118,7 @@ two
 ### end
 
 ### sed_insert
-### skip: insert command not implemented
+# Insert text before matching line
 printf 'one\ntwo\n' | sed '/two/i\inserted'
 ### expect
 one
