@@ -10,7 +10,8 @@ BashKit uses a multi-layer testing strategy:
 1. **Unit tests** - Component-level tests in each module
 2. **Spec tests** - Compatibility tests against bash behavior
 3. **Security tests** - Threat model and failpoint tests
-4. **Comparison tests** - Direct comparison with real bash (manual)
+4. **Comparison tests** - Direct comparison with real bash
+5. **Differential fuzzing** - Property-based testing against real bash
 
 ## CI Test Summary
 
@@ -36,6 +37,7 @@ crates/bashkit/tests/
 ├── debug_spec.rs       # Debugging utilities
 ├── threat_model_tests.rs    # Security threat model tests
 ├── security_failpoint_tests.rs  # Fault injection tests
+├── proptest_differential.rs # Grammar-based differential fuzzing
 └── spec_cases/
     ├── bash/           # Core bash compatibility (19 files, 331 cases)
     │   ├── arithmetic.test.sh
@@ -242,16 +244,54 @@ The report shows:
 - **BashDiff**: Tests with known intentional differences from bash
 - **Bash Compat**: Tests producing identical output to real bash
 
+## Differential Fuzzing
+
+Grammar-based property testing using proptest generates random valid bash scripts
+and compares BashKit output against real bash. This helps find edge cases that
+aren't covered by hand-written spec tests.
+
+### Running Differential Fuzzing
+
+```bash
+# Run with default 50 cases per test
+cargo test --test proptest_differential
+
+# Run with more cases for deeper testing
+PROPTEST_CASES=1000 cargo test --test proptest_differential
+
+# Run with output to see generated scripts
+cargo test --test proptest_differential -- --nocapture
+
+# Using just commands
+just fuzz-diff
+just fuzz-diff-deep
+```
+
+### Script Generators
+
+The fuzzer generates scripts in these categories:
+- **Echo commands** - Various quoting styles, flags (-n), multiple args
+- **Arithmetic** - Addition, subtraction, multiplication, division, modulo
+- **Control flow** - if/else, for loops, while loops, case statements
+- **Pipelines** - echo | cat, multi-stage pipes
+- **Logical operators** - &&, ||, combined chains
+- **Command substitution** - $() and backticks
+- **Functions** - Definition and invocation
+
+### Known Limitations
+
+Some features are intentionally excluded from fuzzing:
+- `pwd` - Path differs between BashKit VFS and real filesystem
+- `wc` - Output formatting differs (column alignment)
+- Filesystem operations - BashKit uses virtual filesystem
+
 ## Alternatives Considered
 
 ### Bash test suite
 Rejected: Too complex, many tests for features we intentionally don't support.
 
-### Property-based testing
-Future consideration: Would help find edge cases in parser.
-
-### Fuzzing
-Future consideration: Would help find parser crashes.
+### Traditional fuzzing (AFL, libFuzzer)
+Future consideration: Would help find parser crashes via mutation.
 
 ## Verification
 
@@ -265,4 +305,7 @@ cargo test --test spec_tests -- --include-ignored --nocapture
 
 # Check pass rates for each category
 cargo test --test spec_tests -- --nocapture 2>&1 | grep "Total:"
+
+# Run differential fuzzing
+cargo test --test proptest_differential -- --nocapture
 ```
