@@ -279,7 +279,7 @@ impl<'a> AwkParser<'a> {
     fn skip_whitespace(&mut self) {
         while self.pos < self.input.len() {
             let c = self.input.chars().nth(self.pos).unwrap();
-            if c.is_whitespace() || c == ';' {
+            if c.is_whitespace() {
                 self.pos += 1;
             } else if c == '#' {
                 // Comment - skip to end of line
@@ -793,6 +793,25 @@ impl<'a> AwkParser<'a> {
             return Ok(AwkExpr::String(s));
         }
 
+        // Regex literal /pattern/
+        if c == '/' {
+            self.pos += 1;
+            let start = self.pos;
+            while self.pos < self.input.len() {
+                let c = self.input.chars().nth(self.pos).unwrap();
+                if c == '/' {
+                    let pattern = &self.input[start..self.pos];
+                    self.pos += 1;
+                    return Ok(AwkExpr::Regex(pattern.to_string()));
+                } else if c == '\\' {
+                    self.pos += 2; // Skip escape sequence
+                } else {
+                    self.pos += 1;
+                }
+            }
+            return Err(Error::Execution("awk: unterminated regex".to_string()));
+        }
+
         // Parenthesized expression
         if c == '(' {
             self.pos += 1;
@@ -841,6 +860,23 @@ impl<'a> AwkParser<'a> {
                     }
                 }
                 return Ok(AwkExpr::FuncCall(name, args));
+            }
+
+            // Array indexing: arr[index]
+            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '[' {
+                self.pos += 1; // consume '['
+                let index_expr = self.parse_expression()?;
+                self.skip_whitespace();
+                if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ']'
+                {
+                    return Err(Error::Execution("awk: expected ']'".to_string()));
+                }
+                self.pos += 1; // consume ']'
+                               // Store as arr[index] where index is evaluated at runtime
+                return Ok(AwkExpr::FuncCall(
+                    "__array_access".to_string(),
+                    vec![AwkExpr::Variable(name), index_expr],
+                ));
             }
 
             return Ok(AwkExpr::Variable(name));
@@ -1142,9 +1178,21 @@ impl AwkInterpreter {
                         (re.replace(&target, replacement.as_str()).to_string(), count)
                     };
 
-                    // Update the target variable
-                    if let AwkExpr::Variable(name) = &target_expr {
-                        self.state.set_variable(name, AwkValue::String(result));
+                    // Update the target variable or field
+                    match &target_expr {
+                        AwkExpr::Variable(name) => {
+                            self.state.set_variable(name, AwkValue::String(result));
+                        }
+                        AwkExpr::Field(index) => {
+                            let n = self.eval_expr(index).as_number() as usize;
+                            if n == 0 {
+                                // $0 is stored as a variable
+                                self.state.set_variable("$0", AwkValue::String(result));
+                            }
+                            // For other fields, we'd need to update the fields vec
+                            // and rebuild $0, but for now we just support $0
+                        }
+                        _ => {}
                     }
 
                     AwkValue::Number(count as f64)
@@ -1187,6 +1235,20 @@ impl AwkInterpreter {
                     return AwkValue::Number(0.0);
                 }
                 AwkValue::Number(self.eval_expr(&args[0]).as_number().exp())
+            }
+            "__array_access" => {
+                // Internal function for array indexing: arr[index]
+                if args.len() < 2 {
+                    return AwkValue::Uninitialized;
+                }
+                let arr_name = if let AwkExpr::Variable(name) = &args[0] {
+                    name.clone()
+                } else {
+                    return AwkValue::Uninitialized;
+                };
+                let index = self.eval_expr(&args[1]);
+                let key = format!("{}[{}]", arr_name, index.as_string());
+                self.state.get_variable(&key)
             }
             _ => AwkValue::Uninitialized,
         }
@@ -1581,5 +1643,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "HELLO\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_multi_statement() {
+        // Test multiple statements separated by semicolon
+        let result = run_awk(&["{x=1; print x}"], Some("test")).await.unwrap();
+        assert_eq!(result.stdout, "1\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_gsub_with_print() {
+        // gsub with regex literal followed by print
+        let result = run_awk(
+            &[r#"{gsub(/hello/, "hi"); print}"#],
+            Some("hello hello hello"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "hi hi hi\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_split_with_array_access() {
+        // split with array indexing
+        let result = run_awk(
+            &[r#"{n = split($0, arr, ":"); print arr[2]}"#],
+            Some("a:b:c"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "b\n");
     }
 }

@@ -117,14 +117,14 @@ hello
 ### end
 
 ### awk_gsub
-### skip: regex literal in function args not implemented
+# gsub with regex literal
 printf 'hello hello hello\n' | awk '{gsub(/hello/, "hi"); print}'
 ### expect
 hi hi hi
 ### end
 
 ### awk_split
-### skip: split with array assignment not fully implemented
+# split with array indexing
 printf 'a:b:c\n' | awk '{n = split($0, arr, ":"); print arr[2]}'
 ### expect
 b
