@@ -98,6 +98,8 @@ use std::sync::Arc;
 pub struct Bash {
     fs: Arc<dyn FileSystem>,
     interpreter: Interpreter,
+    /// Parser timeout (stored separately for use before interpreter runs)
+    parser_timeout: std::time::Duration,
 }
 
 impl Default for Bash {
@@ -111,7 +113,12 @@ impl Bash {
     pub fn new() -> Self {
         let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
         let interpreter = Interpreter::new(Arc::clone(&fs));
-        Self { fs, interpreter }
+        let parser_timeout = ExecutionLimits::default().parser_timeout;
+        Self {
+            fs,
+            interpreter,
+            parser_timeout,
+        }
     }
 
     /// Create a new BashBuilder for customized configuration.
@@ -120,9 +127,35 @@ impl Bash {
     }
 
     /// Execute a bash script and return the result.
+    ///
+    /// This method parses the script with a timeout to prevent parser hangs,
+    /// then executes the resulting AST.
     pub async fn exec(&mut self, script: &str) -> Result<ExecResult> {
-        let parser = Parser::new(script);
-        let ast = parser.parse()?;
+        let parser_timeout = self.parser_timeout;
+        let script_owned = script.to_owned();
+
+        // Parse with timeout using spawn_blocking since parsing is sync
+        let parse_result = tokio::time::timeout(parser_timeout, async {
+            tokio::task::spawn_blocking(move || {
+                let parser = Parser::new(&script_owned);
+                parser.parse()
+            })
+            .await
+        })
+        .await;
+
+        let ast = match parse_result {
+            Ok(Ok(result)) => result?,
+            Ok(Err(join_error)) => {
+                return Err(Error::Parse(format!("parser task failed: {}", join_error)))
+            }
+            Err(_elapsed) => {
+                return Err(Error::ResourceLimit(LimitExceeded::ParserTimeout(
+                    parser_timeout,
+                )))
+            }
+        };
+
         self.interpreter.execute(&ast).await
     }
 
@@ -316,9 +349,14 @@ impl BashBuilder {
             interpreter.set_cwd(cwd);
         }
 
+        let parser_timeout = self.limits.parser_timeout;
         interpreter.set_limits(self.limits);
 
-        Bash { fs, interpreter }
+        Bash {
+            fs,
+            interpreter,
+            parser_timeout,
+        }
     }
 }
 
@@ -1743,5 +1781,30 @@ mod tests {
             let result = bash.exec("readenv UNKNOWN").await.unwrap();
             assert_eq!(result.stdout, "UNKNOWN=(not set)\n");
         }
+    }
+
+    // Parser timeout tests
+
+    #[tokio::test]
+    async fn test_parser_timeout_default() {
+        // Default parser timeout should be 5 seconds
+        let limits = ExecutionLimits::default();
+        assert_eq!(limits.parser_timeout, std::time::Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn test_parser_timeout_custom() {
+        // Parser timeout can be customized
+        let limits = ExecutionLimits::new().parser_timeout(std::time::Duration::from_millis(100));
+        assert_eq!(limits.parser_timeout, std::time::Duration::from_millis(100));
+    }
+
+    #[tokio::test]
+    async fn test_parser_timeout_normal_script() {
+        // Normal scripts should complete well within timeout
+        let limits = ExecutionLimits::new().parser_timeout(std::time::Duration::from_secs(1));
+        let mut bash = Bash::builder().limits(limits).build();
+        let result = bash.exec("echo hello").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
     }
 }
