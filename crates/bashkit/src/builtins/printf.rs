@@ -1,5 +1,8 @@
 //! printf builtin - formatted output
 
+// Format parsing uses chars().next().unwrap() after peek() confirms character exists
+#![allow(clippy::unwrap_used)]
+
 use async_trait::async_trait;
 
 use super::{Builtin, Context};

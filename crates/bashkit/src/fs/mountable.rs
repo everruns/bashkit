@@ -3,6 +3,10 @@
 //! MountableFs allows mounting multiple filesystems at different paths,
 //! similar to Unix mount semantics.
 
+// RwLock.read()/write().unwrap() only panics on lock poisoning (prior panic
+// while holding lock). This is intentional - corrupted state should not propagate.
+#![allow(clippy::unwrap_used)]
+
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::io::Error as IoError;
@@ -261,6 +265,7 @@ impl FileSystem for MountableFs {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::fs::InMemoryFs;

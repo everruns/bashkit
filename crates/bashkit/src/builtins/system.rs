@@ -296,6 +296,7 @@ impl Builtin for Id {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::fs::InMemoryFs;

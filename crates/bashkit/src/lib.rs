@@ -17,6 +17,9 @@
 //! }
 //! ```
 
+// Stricter panic prevention - prefer proper error handling over unwrap()
+#![warn(clippy::unwrap_used)]
+
 mod builtins;
 mod error;
 mod fs;
@@ -193,6 +196,7 @@ impl BashBuilder {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

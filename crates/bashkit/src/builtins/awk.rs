@@ -10,6 +10,10 @@
 //!   awk '/pattern/{print}' file
 //!   awk 'NR==2{print}' file
 
+// AWK parser uses chars().nth().unwrap() after validating position.
+// This is safe because we check bounds before accessing.
+#![allow(clippy::unwrap_used)]
+
 use async_trait::async_trait;
 use regex::Regex;
 use std::collections::HashMap;
@@ -1510,6 +1514,7 @@ impl Builtin for Awk {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::fs::InMemoryFs;

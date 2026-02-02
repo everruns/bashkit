@@ -11,6 +11,10 @@
 //!   sed '2d' file                         # delete line 2
 //!   sed -e 's/a/b/' -e 's/c/d/' file     # multiple commands
 
+// sed command parser uses chars().next().unwrap() after validating.
+// This is safe because we check for non-empty strings before accessing.
+#![allow(clippy::unwrap_used)]
+
 use async_trait::async_trait;
 use regex::{Regex, RegexBuilder};
 
@@ -480,6 +484,7 @@ impl Builtin for Sed {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::fs::InMemoryFs;
