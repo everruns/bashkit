@@ -20,8 +20,18 @@ pub struct Jq;
 #[async_trait]
 impl Builtin for Jq {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        // Get the filter expression
-        let filter = ctx.args.first().map(|s| s.as_str()).unwrap_or(".");
+        // Parse arguments for flags
+        let mut raw_output = false;
+        let mut filter = ".";
+
+        for arg in ctx.args {
+            if arg == "-r" || arg == "--raw-output" {
+                raw_output = true;
+            } else if !arg.starts_with('-') {
+                filter = arg;
+                break;
+            }
+        }
 
         // Get input from stdin
         let input = ctx.stdin.unwrap_or("");
@@ -90,13 +100,37 @@ impl Builtin for Jq {
                     Ok(val) => {
                         // Convert back to serde_json::Value and format
                         let json: serde_json::Value = val.into();
-                        match serde_json::to_string(&json) {
-                            Ok(s) => {
+                        // In raw mode, strings are output without quotes
+                        if raw_output {
+                            if let serde_json::Value::String(s) = json {
                                 output.push_str(&s);
                                 output.push('\n');
+                            } else {
+                                match serde_json::to_string(&json) {
+                                    Ok(s) => {
+                                        output.push_str(&s);
+                                        output.push('\n');
+                                    }
+                                    Err(e) => {
+                                        return Err(Error::Execution(format!(
+                                            "jq: output error: {}",
+                                            e
+                                        )));
+                                    }
+                                }
                             }
-                            Err(e) => {
-                                return Err(Error::Execution(format!("jq: output error: {}", e)));
+                        } else {
+                            match serde_json::to_string(&json) {
+                                Ok(s) => {
+                                    output.push_str(&s);
+                                    output.push('\n');
+                                }
+                                Err(e) => {
+                                    return Err(Error::Execution(format!(
+                                        "jq: output error: {}",
+                                        e
+                                    )));
+                                }
                             }
                         }
                     }
@@ -175,5 +209,41 @@ mod tests {
     async fn test_jq_length() {
         let result = run_jq("length", r#"[1,2,3,4,5]"#).await.unwrap();
         assert_eq!(result.trim(), "5");
+    }
+
+    async fn run_jq_with_args(args: &[&str], input: &str) -> Result<String> {
+        let jq = Jq;
+        let fs = Arc::new(InMemoryFs::new());
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: Some(input),
+        };
+
+        let result = jq.execute(ctx).await?;
+        Ok(result.stdout)
+    }
+
+    #[tokio::test]
+    async fn test_jq_raw_output() {
+        let result = run_jq_with_args(&["-r", ".name"], r#"{"name":"test"}"#)
+            .await
+            .unwrap();
+        assert_eq!(result.trim(), "test");
+    }
+
+    #[tokio::test]
+    async fn test_jq_raw_output_long_flag() {
+        let result = run_jq_with_args(&["--raw-output", ".name"], r#"{"name":"test"}"#)
+            .await
+            .unwrap();
+        assert_eq!(result.trim(), "test");
     }
 }

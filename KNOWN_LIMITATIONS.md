@@ -10,10 +10,10 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 |----------|-------|-------|------|------|-------|
 | Bash (core) | 209 | **No** | - | - | `bash_spec_tests` ignored in CI |
 | AWK | 19 | Yes | 17 | 2 | gsub regex, split |
-| Grep | 15 | Yes | 12 | 3 | -w, -o, -l stdin |
+| Grep | 15 | Yes | 13 | 2 | -w, -l stdin |
 | Sed | 17 | Yes | 13 | 4 | -i flag, multiple commands |
-| JQ | 21 | Yes | 20 | 1 | -r flag |
-| **Total** | **281** | **72** | 62 | 10 | |
+| JQ | 21 | Yes | 21 | 0 | All tests pass |
+| **Total** | **281** | **72** | 64 | 8 | |
 
 ### Bash Spec Tests Breakdown (not in CI)
 
@@ -96,11 +96,9 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 
 ### Grep Limitations
 - Word boundary `-w`
-- Only matching `-o`
 - Stdin filename with `-l`
 
 ### JQ Limitations
-- Raw output `-r` flag
 - Pretty printing (outputs compact JSON)
 
 ## Parser Limitations
