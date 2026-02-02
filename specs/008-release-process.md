@@ -95,6 +95,12 @@ Follow everruns/sdk changelog conventions with GitHub-style commit listings.
 ```markdown
 ## [X.Y.Z] - YYYY-MM-DD
 
+### Highlights
+
+- 2-5 bullet points summarizing the most impactful changes
+- Focus on user-facing features and improvements
+- Keep it concise and scannable
+
 ### Breaking Changes
 
 - **Short description**: Detailed explanation of what changed and migration steps.
@@ -111,6 +117,7 @@ Follow everruns/sdk changelog conventions with GitHub-style commit listings.
 
 ### Rules
 
+- Add `### Highlights` section with 2-5 most impactful changes (user-facing summary)
 - Use `### What's Changed` section (not separate Added/Changed/Fixed)
 - List PRs in **descending order** (newest first, by PR number)
 - Format: `* type(scope): description ([#N](URL)) by @author`

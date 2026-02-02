@@ -2,6 +2,16 @@
 
 ## [0.1.0] - 2026-02-02
 
+### Highlights
+
+- Initial release of BashKit sandboxed bash interpreter
+- Core interpreter with bash-compatible syntax support
+- Virtual filesystem (VFS) abstraction for sandboxed file operations
+- Resource limits: memory, execution time, operation count
+- Built-in commands: echo, printf, cat, head, tail, wc, grep, sed, awk, jq, sort, uniq, cut, tr, date, base64, md5sum, sha256sum, gzip, gunzip, etc
+- CLI tool for running scripts and interactive REPL
+- Security testing with fail-point injection
+
 ### What's Changed
 
 * feat(test): add grammar-based differential fuzzing ([#83](https://github.com/everruns/bashkit/pull/83)) by @chaliy
