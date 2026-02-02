@@ -145,9 +145,10 @@ The following items need attention:
 - [ ] **Fix skipped spec tests** (110 total):
   - Bash: 108 skipped (various implementation gaps)
   - AWK: 2 skipped (blocked by multi-statement action parsing bug)
-- [ ] **Fix bash_diff tests** (19 total):
+- [ ] **Fix bash_diff tests** (21 total):
   - wc: 14 tests (output formatting differs)
   - background: 2 tests (non-deterministic order)
+  - globs: 2 tests (VFS vs real filesystem glob expansion)
   - timeout: 1 test (timeout 0 behavior)
   - brace-expansion: 1 test (empty item handling)
 
