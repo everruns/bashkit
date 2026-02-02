@@ -5,10 +5,13 @@
 //! Usage:
 //!   sed 's/pattern/replacement/' file
 //!   sed 's/pattern/replacement/g' file    # global replacement
+//!   sed 's/pattern/replacement/2' file    # nth occurrence
+//!   sed -E 's/pattern+/replacement/' file # extended regex
 //!   sed -i 's/pattern/replacement/' file  # in-place edit
 //!   echo "text" | sed 's/pattern/replacement/'
 //!   sed -n '2p' file                      # print line 2
 //!   sed '2d' file                         # delete line 2
+//!   sed '/bar/!d' file                    # delete lines not matching bar
 //!   sed -e 's/a/b/' -e 's/c/d/' file     # multiple commands
 
 // sed command parser uses chars().next().unwrap() after validating.
@@ -31,6 +34,7 @@ enum SedCommand {
         pattern: Regex,
         replacement: String,
         global: bool,
+        nth: Option<usize>, // Replace nth occurrence (1-indexed)
         print_only: bool,
     },
     Delete,
@@ -62,10 +66,11 @@ impl Address {
 }
 
 struct SedOptions {
-    commands: Vec<(Option<Address>, SedCommand)>,
+    commands: Vec<(Option<Address>, bool, SedCommand)>, // (address, negate, command)
     files: Vec<String>,
     in_place: bool,
     quiet: bool,
+    extended_regex: bool,
 }
 
 impl SedOptions {
@@ -75,7 +80,15 @@ impl SedOptions {
             files: Vec::new(),
             in_place: false,
             quiet: false,
+            extended_regex: false,
         };
+
+        // First pass: check for -E flag
+        for arg in args {
+            if arg == "-E" || arg == "-r" {
+                opts.extended_regex = true;
+            }
+        }
 
         let mut i = 0;
         while i < args.len() {
@@ -84,11 +97,13 @@ impl SedOptions {
                 opts.quiet = true;
             } else if arg == "-i" {
                 opts.in_place = true;
+            } else if arg == "-E" || arg == "-r" {
+                // Already handled
             } else if arg == "-e" {
                 i += 1;
                 if i < args.len() {
-                    let (addr, cmd) = parse_sed_command(&args[i])?;
-                    opts.commands.push((addr, cmd));
+                    let (addr, negate, cmd) = parse_sed_command(&args[i], opts.extended_regex)?;
+                    opts.commands.push((addr, negate, cmd));
                 }
             } else if arg.starts_with('-') {
                 // Unknown option - ignore
@@ -97,8 +112,8 @@ impl SedOptions {
                 for cmd_str in split_sed_commands(arg) {
                     let trimmed = cmd_str.trim();
                     if !trimmed.is_empty() {
-                        let (addr, cmd) = parse_sed_command(trimmed)?;
-                        opts.commands.push((addr, cmd));
+                        let (addr, negate, cmd) = parse_sed_command(trimmed, opts.extended_regex)?;
+                        opts.commands.push((addr, negate, cmd));
                     }
                 }
             } else {
@@ -218,8 +233,19 @@ fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
     Ok((None, s))
 }
 
-fn parse_sed_command(s: &str) -> Result<(Option<Address>, SedCommand)> {
+fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, bool, SedCommand)> {
     let (address, rest) = parse_address(s)?;
+
+    if rest.is_empty() {
+        return Err(Error::Execution("sed: missing command".to_string()));
+    }
+
+    // Check for address negation (!)
+    let (negate, rest) = if let Some(r) = rest.strip_prefix('!') {
+        (true, r)
+    } else {
+        (false, rest)
+    };
 
     if rest.is_empty() {
         return Err(Error::Execution("sed: missing command".to_string()));
@@ -266,14 +292,19 @@ fn parse_sed_command(s: &str) -> Result<(Option<Address>, SedCommand)> {
             let flags = parts.get(2).map(|s| s.as_str()).unwrap_or("");
 
             // Convert POSIX sed regex to Rust regex syntax
-            // \( \) -> ( ) for capture groups
-            // \+ -> + for one-or-more
-            // \? -> ? for zero-or-one
-            let pattern = pattern
-                .replace("\\(", "(")
-                .replace("\\)", ")")
-                .replace("\\+", "+")
-                .replace("\\?", "?");
+            // In BRE mode: \( \) -> ( ) for capture groups, \+ -> +, \? -> ?
+            // In ERE mode: ( ) are already groups, + and ? work directly
+            let pattern = if extended_regex {
+                // ERE mode: no conversion needed for groups/quantifiers
+                pattern.clone()
+            } else {
+                // BRE mode: convert escaped metacharacters
+                pattern
+                    .replace("\\(", "(")
+                    .replace("\\)", ")")
+                    .replace("\\+", "+")
+                    .replace("\\?", "?")
+            };
 
             // Build regex with optional case-insensitive flag
             let case_insensitive = flags.contains('i');
@@ -295,19 +326,30 @@ fn parse_sed_command(s: &str) -> Result<(Option<Address>, SedCommand)> {
                 .replace_all(&replacement, "$$$1")
                 .to_string();
 
+            // Parse nth occurrence from flags (e.g., "2" in s/a/b/2)
+            let nth = flags
+                .chars()
+                .filter(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse::<usize>()
+                .ok()
+                .filter(|&n| n > 0);
+
             Ok((
                 address,
+                negate,
                 SedCommand::Substitute {
                     pattern: regex,
                     replacement,
                     global: flags.contains('g'),
+                    nth,
                     print_only: flags.contains('p'),
                 },
             ))
         }
-        'd' => Ok((address.or(Some(Address::All)), SedCommand::Delete)),
-        'p' => Ok((address.or(Some(Address::All)), SedCommand::Print)),
-        'q' => Ok((address, SedCommand::Quit)),
+        'd' => Ok((address.or(Some(Address::All)), negate, SedCommand::Delete)),
+        'p' => Ok((address.or(Some(Address::All)), negate, SedCommand::Print)),
+        'q' => Ok((address, negate, SedCommand::Quit)),
         'a' => {
             // Append command: a\text or a text (after backslash)
             let text = if rest.len() > 1 && rest.chars().nth(1) == Some('\\') {
@@ -315,7 +357,7 @@ fn parse_sed_command(s: &str) -> Result<(Option<Address>, SedCommand)> {
             } else {
                 rest[1..].to_string()
             };
-            Ok((address, SedCommand::Append(text)))
+            Ok((address, negate, SedCommand::Append(text)))
         }
         'i' => {
             // Insert command: i\text or i text (after backslash)
@@ -324,13 +366,41 @@ fn parse_sed_command(s: &str) -> Result<(Option<Address>, SedCommand)> {
             } else {
                 rest[1..].to_string()
             };
-            Ok((address, SedCommand::Insert(text)))
+            Ok((address, negate, SedCommand::Insert(text)))
         }
         _ => Err(Error::Execution(format!(
             "sed: unknown command: {}",
             first_char
         ))),
     }
+}
+
+/// Replace the nth occurrence of a pattern in a string
+fn replace_nth<'a>(
+    pattern: &Regex,
+    text: &'a str,
+    replacement: &str,
+    n: usize,
+) -> std::borrow::Cow<'a, str> {
+    let mut count = 0;
+
+    for mat in pattern.find_iter(text) {
+        count += 1;
+        if count == n {
+            // Found the nth match - do the replacement
+            let mut result = String::new();
+            result.push_str(&text[..mat.start()]);
+            // Apply replacement with capture groups
+            let replaced = pattern.replace(mat.as_str(), replacement);
+            result.push_str(&replaced);
+            // Add the rest of the string
+            result.push_str(&text[mat.end()..]);
+            return std::borrow::Cow::Owned(result);
+        }
+    }
+
+    // nth occurrence not found, return original
+    std::borrow::Cow::Borrowed(text)
 }
 
 #[async_trait]
@@ -385,13 +455,16 @@ impl Builtin for Sed {
                 let mut insert_text: Option<String> = None;
                 let mut append_text: Option<String> = None;
 
-                for (addr, cmd) in &opts.commands {
+                for (addr, negate, cmd) in &opts.commands {
                     let addr_matches = addr
                         .as_ref()
                         .map(|a| a.matches(line_num, total_lines, &current_line))
                         .unwrap_or(true);
 
-                    if !addr_matches {
+                    // Apply negation if needed
+                    let should_apply = if *negate { !addr_matches } else { addr_matches };
+
+                    if !should_apply {
                         continue;
                     }
 
@@ -400,10 +473,14 @@ impl Builtin for Sed {
                             pattern,
                             replacement,
                             global,
+                            nth,
                             print_only,
                         } => {
                             let new_line = if *global {
                                 pattern.replace_all(&current_line, replacement.as_str())
+                            } else if let Some(n) = nth {
+                                // Replace nth occurrence
+                                replace_nth(pattern, &current_line, replacement, *n)
                             } else {
                                 pattern.replace(&current_line, replacement.as_str())
                             };
