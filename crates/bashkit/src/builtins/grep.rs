@@ -34,6 +34,7 @@ struct GrepOptions {
     files_with_matches: bool,
     fixed_strings: bool,
     only_matching: bool,
+    word_regex: bool,
 }
 
 impl GrepOptions {
@@ -48,6 +49,7 @@ impl GrepOptions {
             files_with_matches: false,
             fixed_strings: false,
             only_matching: false,
+            word_regex: false,
         };
 
         let mut positional = Vec::new();
@@ -65,6 +67,7 @@ impl GrepOptions {
                         'c' => opts.count_only = true,
                         'l' => opts.files_with_matches = true,
                         'o' => opts.only_matching = true,
+                        'w' => opts.word_regex = true,
                         'F' => opts.fixed_strings = true,
                         'E' => {} // Extended regex is default
                         'e' => {
@@ -108,6 +111,13 @@ impl GrepOptions {
             self.pattern.clone()
         };
 
+        // Wrap with word boundaries if -w flag is set
+        let pattern = if self.word_regex {
+            format!(r"\b{}\b", pattern)
+        } else {
+            pattern
+        };
+
         RegexBuilder::new(&pattern)
             .case_insensitive(self.ignore_case)
             .build()
@@ -126,9 +136,15 @@ impl Builtin for Grep {
         let mut exit_code = 1; // 1 = no match
 
         // Determine input sources
+        // Use "(stdin)" for stdin when -l flag is set
+        let stdin_name = if opts.files_with_matches {
+            "(stdin)"
+        } else {
+            ""
+        };
         let inputs: Vec<(&str, String)> = if opts.files.is_empty() {
             // Read from stdin
-            vec![("", ctx.stdin.unwrap_or("").to_string())]
+            vec![(stdin_name, ctx.stdin.unwrap_or("").to_string())]
         } else {
             // Read from files
             let mut inputs = Vec::new();
@@ -351,5 +367,30 @@ mod tests {
             .unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "o\no\no\no\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_word_boundary() {
+        let result = run_grep(&["-w", "foo"], Some("foo\nfoobar\nbar foo baz"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "foo\nbar foo baz\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_word_boundary_no_match() {
+        let result = run_grep(&["-w", "bar"], Some("foobar\nbarbaz"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_grep_files_with_matches_stdin() {
+        let result = run_grep(&["-l", "foo"], Some("foo\nbar")).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "(stdin)\n");
     }
 }
