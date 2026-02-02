@@ -1,6 +1,11 @@
-//! In-memory filesystem implementation
+//! In-memory filesystem implementation.
+//!
+//! [`InMemoryFs`] provides a simple, fast, thread-safe filesystem that stores
+//! all data in memory using a `HashMap`.
 //!
 //! # Fail Points (enabled with `failpoints` feature)
+//!
+//! For testing error handling, the following fail points are available:
 //!
 //! - `fs::read_file` - Inject failures in file reads
 //! - `fs::write_file` - Inject failures in file writes
@@ -26,9 +31,92 @@ use crate::error::Result;
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
 
-/// In-memory filesystem.
+/// In-memory filesystem implementation.
 ///
-/// Stores all files and directories in memory using a HashMap.
+/// `InMemoryFs` is the default filesystem used by [`Bash::new()`](crate::Bash::new).
+/// It stores all files and directories in memory using a `HashMap`, making it
+/// ideal for sandboxed execution where no real filesystem access is needed.
+///
+/// # Features
+///
+/// - **Thread-safe**: Uses `RwLock` for concurrent read/write access
+/// - **Binary-safe**: Fully supports binary data including null bytes
+/// - **Default directories**: Creates `/`, `/tmp`, `/home`, `/home/user`, `/dev`
+/// - **Special devices**: `/dev/null` discards writes and returns empty on read
+///
+/// # Example
+///
+/// ```rust
+/// use bashkit::{Bash, FileSystem, InMemoryFs};
+/// use std::path::Path;
+/// use std::sync::Arc;
+///
+/// # #[tokio::main]
+/// # async fn main() -> bashkit::Result<()> {
+/// // InMemoryFs is the default when using Bash::new()
+/// let mut bash = Bash::new();
+///
+/// // Or create explicitly for direct filesystem access
+/// let fs = Arc::new(InMemoryFs::new());
+///
+/// // Write files
+/// fs.write_file(Path::new("/tmp/test.txt"), b"hello").await?;
+///
+/// // Read files
+/// let content = fs.read_file(Path::new("/tmp/test.txt")).await?;
+/// assert_eq!(content, b"hello");
+///
+/// // Create directories
+/// fs.mkdir(Path::new("/data/nested/dir"), true).await?;
+///
+/// // Check existence
+/// assert!(fs.exists(Path::new("/data/nested/dir")).await?);
+///
+/// // Use with Bash
+/// let mut bash = Bash::builder().fs(fs.clone()).build();
+/// bash.exec("echo 'from bash' >> /tmp/test.txt").await?;
+///
+/// let content = fs.read_file(Path::new("/tmp/test.txt")).await?;
+/// assert_eq!(content, b"hellofrom bash\n");
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Default Directory Structure
+///
+/// `InMemoryFs::new()` creates these directories:
+///
+/// ```text
+/// /
+/// ├── tmp/
+/// ├── home/
+/// │   └── user/
+/// └── dev/
+///     └── null  (special device)
+/// ```
+///
+/// # Binary Data
+///
+/// The filesystem fully supports binary data:
+///
+/// ```rust
+/// use bashkit::{FileSystem, InMemoryFs};
+/// use std::path::Path;
+///
+/// # #[tokio::main]
+/// # async fn main() -> bashkit::Result<()> {
+/// let fs = InMemoryFs::new();
+///
+/// // Write binary with null bytes
+/// let data = vec![0x89, 0x50, 0x4E, 0x47, 0x00, 0xFF];
+/// fs.write_file(Path::new("/tmp/binary.bin"), &data).await?;
+///
+/// // Read it back unchanged
+/// let read = fs.read_file(Path::new("/tmp/binary.bin")).await?;
+/// assert_eq!(read, data);
+/// # Ok(())
+/// # }
+/// ```
 pub struct InMemoryFs {
     entries: RwLock<HashMap<PathBuf, FsEntry>>,
 }
@@ -55,7 +143,33 @@ impl Default for InMemoryFs {
 }
 
 impl InMemoryFs {
-    /// Create a new in-memory filesystem.
+    /// Create a new in-memory filesystem with default directories.
+    ///
+    /// Creates the following directory structure:
+    /// - `/` - Root directory
+    /// - `/tmp` - Temporary files
+    /// - `/home` - Home directories
+    /// - `/home/user` - Default user home
+    /// - `/dev` - Device files
+    /// - `/dev/null` - Null device (discards writes, returns empty)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{FileSystem, InMemoryFs};
+    /// use std::path::Path;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let fs = InMemoryFs::new();
+    ///
+    /// // Default directories exist
+    /// assert!(fs.exists(Path::new("/tmp")).await?);
+    /// assert!(fs.exists(Path::new("/home/user")).await?);
+    /// assert!(fs.exists(Path::new("/dev/null")).await?);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn new() -> Self {
         let mut entries = HashMap::new();
 
@@ -104,6 +218,7 @@ impl InMemoryFs {
                 },
             },
         );
+
         // /dev/fd - directory for process substitution file descriptors
         entries.insert(
             PathBuf::from("/dev/fd"),
