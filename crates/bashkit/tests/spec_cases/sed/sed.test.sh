@@ -87,7 +87,7 @@ path_to_file
 ### end
 
 ### sed_multiple
-### skip: multiple commands not fully implemented
+# Multiple commands separated by semicolons
 printf 'hello world\n' | sed 's/hello/hi/; s/world/there/'
 ### expect
 hi there

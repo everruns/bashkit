@@ -87,9 +87,14 @@ impl SedOptions {
             } else if arg.starts_with('-') {
                 // Unknown option - ignore
             } else if opts.commands.is_empty() {
-                // First non-option is the command
-                let (addr, cmd) = parse_sed_command(arg)?;
-                opts.commands.push((addr, cmd));
+                // First non-option is the command (may contain multiple commands separated by ;)
+                for cmd_str in split_sed_commands(arg) {
+                    let trimmed = cmd_str.trim();
+                    if !trimmed.is_empty() {
+                        let (addr, cmd) = parse_sed_command(trimmed)?;
+                        opts.commands.push((addr, cmd));
+                    }
+                }
             } else {
                 // Rest are files
                 opts.files.push(arg.clone());
@@ -103,6 +108,54 @@ impl SedOptions {
 
         Ok(opts)
     }
+}
+
+/// Split a sed command string into individual commands separated by semicolons.
+/// This is careful to not split inside s/pattern/replacement/ structures.
+fn split_sed_commands(s: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut start = 0;
+    let mut in_subst = false;
+    let mut delim_count = 0;
+    let mut delim: Option<char> = None;
+    let mut escaped = false;
+    let chars: Vec<char> = s.chars().collect();
+
+    for (i, &c) in chars.iter().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        if c == '\\' {
+            escaped = true;
+            continue;
+        }
+
+        if !in_subst && c == 's' && i + 1 < chars.len() {
+            // Start of substitution command
+            in_subst = true;
+            delim = Some(chars[i + 1]);
+            delim_count = 0;
+        } else if in_subst {
+            if Some(c) == delim {
+                delim_count += 1;
+                if delim_count >= 3 {
+                    // After third delimiter, we might have flags then end
+                    in_subst = false;
+                }
+            }
+        } else if c == ';' {
+            result.push(&s[start..i]);
+            start = i + 1;
+        }
+    }
+
+    if start < s.len() {
+        result.push(&s[start..]);
+    }
+
+    result
 }
 
 fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
@@ -483,5 +536,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "hi World\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_multiple_commands() {
+        let result = run_sed(&["s/hello/hi/; s/world/there/"], Some("hello world"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "hi there\n");
     }
 }
