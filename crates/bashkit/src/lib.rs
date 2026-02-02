@@ -1,21 +1,179 @@
 //! BashKit - Sandboxed bash interpreter for multi-tenant environments
 //!
-//! Part of the Everruns ecosystem.
+//! BashKit provides a fully sandboxed bash interpreter with a virtual filesystem,
+//! making it safe to execute untrusted scripts in multi-tenant environments like
+//! AI agents, CI/CD pipelines, and code sandboxes.
 //!
-//! # Example
+//! # Features
+//!
+//! - **Virtual Filesystem**: All file operations happen in memory by default
+//! - **Resource Limits**: Control command count, loop iterations, and function depth
+//! - **Sandboxed Identity**: Customizable username/hostname for `whoami`, `hostname`, etc.
+//! - **30+ Built-in Commands**: `echo`, `cat`, `grep`, `sed`, `awk`, `jq`, and more
+//! - **Full Bash Syntax**: Variables, pipelines, redirects, loops, functions, arrays
+//!
+//! # Quick Start
 //!
 //! ```rust
 //! use bashkit::Bash;
 //!
-//! #[tokio::main]
-//! async fn main() -> anyhow::Result<()> {
-//!     let mut bash = Bash::new();
-//!     let result = bash.exec("echo hello").await?;
-//!     assert_eq!(result.stdout, "hello\n");
-//!     assert_eq!(result.exit_code, 0);
-//!     Ok(())
-//! }
+//! # #[tokio::main]
+//! # async fn main() -> bashkit::Result<()> {
+//! let mut bash = Bash::new();
+//! let result = bash.exec("echo 'Hello, World!'").await?;
+//! assert_eq!(result.stdout, "Hello, World!\n");
+//! assert_eq!(result.exit_code, 0);
+//! # Ok(())
+//! # }
 //! ```
+//!
+//! # Basic Usage
+//!
+//! ## Simple Commands
+//!
+//! ```rust
+//! use bashkit::Bash;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> bashkit::Result<()> {
+//! let mut bash = Bash::new();
+//!
+//! // Echo with variables
+//! let result = bash.exec("NAME=World; echo \"Hello, $NAME!\"").await?;
+//! assert_eq!(result.stdout, "Hello, World!\n");
+//!
+//! // Pipelines
+//! let result = bash.exec("echo -e 'apple\\nbanana\\ncherry' | grep a").await?;
+//! assert_eq!(result.stdout, "apple\nbanana\n");
+//!
+//! // Arithmetic
+//! let result = bash.exec("echo $((2 + 2 * 3))").await?;
+//! assert_eq!(result.stdout, "8\n");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Control Flow
+//!
+//! ```rust
+//! use bashkit::Bash;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> bashkit::Result<()> {
+//! let mut bash = Bash::new();
+//!
+//! // For loops
+//! let result = bash.exec("for i in 1 2 3; do echo $i; done").await?;
+//! assert_eq!(result.stdout, "1\n2\n3\n");
+//!
+//! // If statements
+//! let result = bash.exec("if [ 5 -gt 3 ]; then echo bigger; fi").await?;
+//! assert_eq!(result.stdout, "bigger\n");
+//!
+//! // Functions
+//! let result = bash.exec("greet() { echo \"Hello, $1!\"; }; greet World").await?;
+//! assert_eq!(result.stdout, "Hello, World!\n");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## File Operations
+//!
+//! All file operations happen in the virtual filesystem:
+//!
+//! ```rust
+//! use bashkit::Bash;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> bashkit::Result<()> {
+//! let mut bash = Bash::new();
+//!
+//! // Create and read files
+//! bash.exec("echo 'Hello' > /tmp/test.txt").await?;
+//! bash.exec("echo 'World' >> /tmp/test.txt").await?;
+//!
+//! let result = bash.exec("cat /tmp/test.txt").await?;
+//! assert_eq!(result.stdout, "Hello\nWorld\n");
+//!
+//! // Directory operations
+//! bash.exec("mkdir -p /data/nested/dir").await?;
+//! bash.exec("echo 'content' > /data/nested/dir/file.txt").await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Configuration with Builder
+//!
+//! Use [`Bash::builder()`] for advanced configuration:
+//!
+//! ```rust
+//! use bashkit::{Bash, ExecutionLimits};
+//!
+//! # #[tokio::main]
+//! # async fn main() -> bashkit::Result<()> {
+//! let mut bash = Bash::builder()
+//!     .env("API_KEY", "secret123")
+//!     .username("deploy")
+//!     .hostname("prod-server")
+//!     .limits(ExecutionLimits::new().max_commands(100))
+//!     .build();
+//!
+//! let result = bash.exec("whoami && hostname").await?;
+//! assert_eq!(result.stdout, "deploy\nprod-server\n");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Virtual Filesystem
+//!
+//! BashKit provides three filesystem implementations:
+//!
+//! - [`InMemoryFs`]: Simple in-memory filesystem (default)
+//! - [`OverlayFs`]: Copy-on-write overlay for layered storage
+//! - [`MountableFs`]: Mount multiple filesystems at different paths
+//!
+//! See the [`fs`] module documentation for details and examples.
+//!
+//! # Direct Filesystem Access
+//!
+//! Access the filesystem directly via [`Bash::fs()`]:
+//!
+//! ```rust
+//! use bashkit::{Bash, FileSystem};
+//! use std::path::Path;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> bashkit::Result<()> {
+//! let mut bash = Bash::new();
+//! let fs = bash.fs();
+//!
+//! // Pre-populate files before running scripts
+//! fs.mkdir(Path::new("/config"), false).await?;
+//! fs.write_file(Path::new("/config/app.conf"), b"debug=true").await?;
+//!
+//! // Run a script that reads the config
+//! let result = bash.exec("cat /config/app.conf").await?;
+//! assert_eq!(result.stdout, "debug=true");
+//!
+//! // Read script output directly
+//! bash.exec("echo 'result' > /output.txt").await?;
+//! let output = fs.read_file(Path::new("/output.txt")).await?;
+//! assert_eq!(output, b"result\n");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Examples
+//!
+//! See the `examples/` directory for complete working examples:
+//!
+//! - `basic.rs` - Getting started with BashKit
+//! - `custom_fs.rs` - Using different filesystem implementations
+//! - `custom_filesystem_impl.rs` - Implementing the [`FileSystem`] trait
+//! - `resource_limits.rs` - Setting execution limits
+//! - `sandbox_identity.rs` - Customizing username/hostname
+//! - `text_processing.rs` - Using grep, sed, awk, and jq
+//! - `agent_tool.rs` - LLM agent integration
 
 // Stricter panic prevention - prefer proper error handling over unwrap()
 #![warn(clippy::unwrap_used)]
@@ -45,9 +203,121 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Main entry point for BashKit.
+/// Main entry point for BashKit - a sandboxed bash interpreter.
 ///
-/// Provides a sandboxed bash interpreter with an in-memory virtual filesystem.
+/// `Bash` provides a sandboxed bash execution environment with a virtual filesystem.
+/// Each instance is completely isolated and safe for multi-tenant use.
+///
+/// # Creating Instances
+///
+/// Use [`Bash::new()`] for quick setup with defaults, or [`Bash::builder()`]
+/// for customized configuration:
+///
+/// ```rust
+/// use bashkit::Bash;
+///
+/// // Quick setup with defaults
+/// let mut bash = Bash::new();
+///
+/// // Or use builder for customization
+/// let mut bash = Bash::builder()
+///     .env("MY_VAR", "value")
+///     .username("alice")
+///     .build();
+/// ```
+///
+/// # Executing Scripts
+///
+/// Use [`Bash::exec()`] to execute bash scripts:
+///
+/// ```rust
+/// use bashkit::Bash;
+///
+/// # #[tokio::main]
+/// # async fn main() -> bashkit::Result<()> {
+/// let mut bash = Bash::new();
+///
+/// // Simple command
+/// let result = bash.exec("echo hello").await?;
+/// assert_eq!(result.stdout, "hello\n");
+///
+/// // Multi-line script
+/// let script = r#"
+///     NAME="World"
+///     echo "Hello, $NAME!"
+/// "#;
+/// let result = bash.exec(script).await?;
+/// assert_eq!(result.stdout, "Hello, World!\n");
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # State Persistence
+///
+/// Variables, functions, and files persist across multiple [`exec()`](Bash::exec) calls
+/// on the same instance:
+///
+/// ```rust
+/// use bashkit::Bash;
+///
+/// # #[tokio::main]
+/// # async fn main() -> bashkit::Result<()> {
+/// let mut bash = Bash::new();
+///
+/// // Set a variable
+/// bash.exec("COUNTER=1").await?;
+///
+/// // Use it in a later command
+/// let result = bash.exec("echo $COUNTER").await?;
+/// assert_eq!(result.stdout, "1\n");
+///
+/// // Define a function
+/// bash.exec("greet() { echo \"Hello, $1!\"; }").await?;
+///
+/// // Call it later
+/// let result = bash.exec("greet World").await?;
+/// assert_eq!(result.stdout, "Hello, World!\n");
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Filesystem Access
+///
+/// Access the virtual filesystem directly via [`Bash::fs()`] to pre-populate
+/// files or read script output:
+///
+/// ```rust
+/// use bashkit::{Bash, FileSystem};
+/// use std::path::Path;
+///
+/// # #[tokio::main]
+/// # async fn main() -> bashkit::Result<()> {
+/// let mut bash = Bash::new();
+/// let fs = bash.fs();
+///
+/// // Pre-populate a config file
+/// fs.mkdir(Path::new("/config"), false).await?;
+/// fs.write_file(Path::new("/config/app.conf"), b"port=8080").await?;
+///
+/// // Script can read it
+/// let result = bash.exec("cat /config/app.conf").await?;
+/// assert_eq!(result.stdout, "port=8080");
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Built-in Commands
+///
+/// BashKit includes 30+ built-in commands:
+///
+/// - **I/O**: `echo`, `printf`, `cat`, `read`
+/// - **Text processing**: `grep`, `sed`, `awk`, `jq`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `tr`
+/// - **File operations**: `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `ln`
+/// - **Navigation**: `cd`, `pwd`
+/// - **Testing**: `test`, `[`, `true`, `false`
+/// - **Variables**: `export`, `unset`, `local`, `set`
+/// - **Identity**: `whoami`, `id`, `hostname`, `uname`
+/// - **Misc**: `sleep`, `date`, `basename`, `dirname`, `seq`, `env`
 pub struct Bash {
     fs: Arc<dyn FileSystem>,
     interpreter: Interpreter,
@@ -61,62 +331,208 @@ impl Default for Bash {
 
 impl Bash {
     /// Create a new Bash instance with default settings.
+    ///
+    /// This creates a Bash interpreter with:
+    /// - An [`InMemoryFs`] virtual filesystem
+    /// - Default username "sandbox" and hostname "bashkit-sandbox"
+    /// - Default execution limits (10,000 commands, 10,000 loop iterations, 100 function depth)
+    /// - Working directory `/home/user`
+    ///
+    /// For customization, use [`Bash::builder()`] instead.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::Bash;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::new();
+    /// let result = bash.exec("echo hello").await?;
+    /// assert_eq!(result.stdout, "hello\n");
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn new() -> Self {
         let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
         let interpreter = Interpreter::new(Arc::clone(&fs));
         Self { fs, interpreter }
     }
 
-    /// Create a new BashBuilder for customized configuration.
+    /// Create a new [`BashBuilder`] for customized configuration.
+    ///
+    /// The builder allows you to configure:
+    /// - Custom filesystem (e.g., [`OverlayFs`], [`MountableFs`])
+    /// - Environment variables
+    /// - Working directory
+    /// - Execution limits
+    /// - Sandbox identity (username/hostname)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, ExecutionLimits, InMemoryFs};
+    /// use std::sync::Arc;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::builder()
+    ///     .fs(Arc::new(InMemoryFs::new()))
+    ///     .env("HOME", "/home/alice")
+    ///     .cwd("/home/alice")
+    ///     .username("alice")
+    ///     .hostname("my-server")
+    ///     .limits(ExecutionLimits::new().max_commands(1000))
+    ///     .build();
+    ///
+    /// let result = bash.exec("whoami").await?;
+    /// assert_eq!(result.stdout, "alice\n");
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn builder() -> BashBuilder {
         BashBuilder::default()
     }
 
     /// Execute a bash script and return the result.
+    ///
+    /// Parses and executes the given script, returning an [`ExecResult`] containing
+    /// stdout, stderr, and the exit code.
+    ///
+    /// State (variables, functions, files) persists across multiple calls on the
+    /// same `Bash` instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `script` - A bash script string to execute
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(ExecResult)` - Execution completed (check `exit_code` for success)
+    /// * `Err(Error)` - Parse error, resource limit exceeded, or I/O error
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::Bash;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::new();
+    ///
+    /// // Successful command
+    /// let result = bash.exec("echo hello").await?;
+    /// assert_eq!(result.exit_code, 0);
+    /// assert_eq!(result.stdout, "hello\n");
+    ///
+    /// // Failed command (non-existent file)
+    /// let result = bash.exec("cat /nonexistent").await?;
+    /// assert_ne!(result.exit_code, 0);
+    /// assert!(!result.stderr.is_empty());
+    ///
+    /// // Multi-line script
+    /// let script = r#"
+    ///     for i in 1 2 3; do
+    ///         echo "Number: $i"
+    ///     done
+    /// "#;
+    /// let result = bash.exec(script).await?;
+    /// assert!(result.stdout.contains("Number: 1"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn exec(&mut self, script: &str) -> Result<ExecResult> {
         let parser = Parser::new(script);
         let ast = parser.parse()?;
         self.interpreter.execute(&ast).await
     }
 
-    /// Get a clone of the underlying filesystem.
+    /// Get a reference to the underlying virtual filesystem.
     ///
-    /// Provides direct access to the virtual filesystem for:
-    /// - Pre-populating files before script execution
-    /// - Reading binary file outputs after execution
-    /// - Injecting test data or configuration
+    /// Returns an `Arc<dyn FileSystem>` that provides direct access to the
+    /// virtual filesystem. This is useful for:
+    ///
+    /// - **Pre-populating files** before script execution
+    /// - **Reading binary outputs** after execution (bash commands only output text)
+    /// - **Injecting test data** or configuration
+    /// - **Checking file metadata** (size, permissions, etc.)
+    ///
+    /// The returned `Arc` can be cloned and used independently.
     ///
     /// # Example
-    /// ```rust,no_run
-    /// use bashkit::Bash;
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, FileSystem};
     /// use std::path::Path;
     ///
-    /// #[tokio::main]
-    /// async fn main() -> anyhow::Result<()> {
-    ///     let mut bash = Bash::new();
-    ///     let fs = bash.fs();
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::new();
+    /// let fs = bash.fs();
     ///
-    ///     // Pre-populate config file
-    ///     fs.mkdir(Path::new("/config"), false).await?;
-    ///     fs.write_file(Path::new("/config/app.txt"), b"debug=true\n").await?;
+    /// // Pre-populate config file
+    /// fs.mkdir(Path::new("/config"), false).await?;
+    /// fs.write_file(Path::new("/config/app.conf"), b"debug=true\nport=8080").await?;
     ///
-    ///     // Bash script can read pre-populated files
-    ///     let result = bash.exec("cat /config/app.txt").await?;
-    ///     assert_eq!(result.stdout, "debug=true\n");
+    /// // Bash script can read pre-populated files
+    /// let result = bash.exec("cat /config/app.conf").await?;
+    /// assert!(result.stdout.contains("debug=true"));
     ///
-    ///     // Bash creates output, read it directly
-    ///     bash.exec("echo 'done' > /output.txt").await?;
-    ///     let output = fs.read_file(Path::new("/output.txt")).await?;
-    ///     assert_eq!(output, b"done\n");
-    ///     Ok(())
-    /// }
+    /// // Create output from bash
+    /// bash.exec("echo 'processed' > /output.txt").await?;
+    ///
+    /// // Read output directly (useful for binary data)
+    /// let output = fs.read_file(Path::new("/output.txt")).await?;
+    /// assert_eq!(output, b"processed\n");
+    ///
+    /// // Check file metadata
+    /// let stat = fs.stat(Path::new("/output.txt")).await?;
+    /// assert_eq!(stat.size, 10); // "processed\n" = 10 bytes
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn fs(&self) -> Arc<dyn FileSystem> {
         Arc::clone(&self.fs)
     }
 }
 
-/// Builder for customized Bash configuration.
+/// Builder for customized [`Bash`] configuration.
+///
+/// Use [`Bash::builder()`] to create a `BashBuilder`, then chain configuration
+/// methods before calling [`build()`](BashBuilder::build).
+///
+/// # Example
+///
+/// ```rust
+/// use bashkit::{Bash, ExecutionLimits, InMemoryFs, OverlayFs};
+/// use std::sync::Arc;
+///
+/// # #[tokio::main]
+/// # async fn main() -> bashkit::Result<()> {
+/// // Basic configuration
+/// let mut bash = Bash::builder()
+///     .env("HOME", "/home/alice")
+///     .env("PATH", "/usr/bin:/bin")
+///     .username("alice")
+///     .hostname("dev-server")
+///     .build();
+///
+/// let result = bash.exec("echo $HOME").await?;
+/// assert_eq!(result.stdout, "/home/alice\n");
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Available Configuration
+///
+/// | Method | Description |
+/// |--------|-------------|
+/// | [`fs()`](BashBuilder::fs) | Custom filesystem implementation |
+/// | [`env()`](BashBuilder::env) | Environment variable |
+/// | [`cwd()`](BashBuilder::cwd) | Current working directory |
+/// | [`limits()`](BashBuilder::limits) | Execution resource limits |
+/// | [`username()`](BashBuilder::username) | Sandbox username (for `whoami`, `id`) |
+/// | [`hostname()`](BashBuilder::hostname) | Sandbox hostname (for `hostname`, `uname -n`) |
 #[derive(Default)]
 pub struct BashBuilder {
     fs: Option<Arc<dyn FileSystem>>,
@@ -129,24 +545,119 @@ pub struct BashBuilder {
 
 impl BashBuilder {
     /// Set a custom filesystem.
+    ///
+    /// By default, [`Bash`] uses [`InMemoryFs`]. Use this method to provide
+    /// a different filesystem implementation like [`OverlayFs`] or [`MountableFs`].
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, InMemoryFs, OverlayFs};
+    /// use std::sync::Arc;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// // Use OverlayFs with a base filesystem
+    /// let base = Arc::new(InMemoryFs::new());
+    /// let overlay = Arc::new(OverlayFs::new(base));
+    ///
+    /// let mut bash = Bash::builder()
+    ///     .fs(overlay)
+    ///     .build();
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn fs(mut self, fs: Arc<dyn FileSystem>) -> Self {
         self.fs = Some(fs);
         self
     }
 
     /// Set an environment variable.
+    ///
+    /// Can be called multiple times to set multiple variables.
+    /// These variables will be available to bash scripts via `$NAME` syntax.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::Bash;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::builder()
+    ///     .env("API_KEY", "secret123")
+    ///     .env("DEBUG", "true")
+    ///     .build();
+    ///
+    /// let result = bash.exec("echo $API_KEY").await?;
+    /// assert_eq!(result.stdout, "secret123\n");
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env.insert(key.into(), value.into());
         self
     }
 
     /// Set the current working directory.
+    ///
+    /// The default working directory is `/home/user`. This sets the initial
+    /// value of `$PWD` and affects relative path resolution.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::Bash;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::builder()
+    ///     .cwd("/tmp")
+    ///     .build();
+    ///
+    /// let result = bash.exec("pwd").await?;
+    /// assert_eq!(result.stdout, "/tmp\n");
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
         self.cwd = Some(cwd.into());
         self
     }
 
-    /// Set execution limits.
+    /// Set execution resource limits.
+    ///
+    /// Controls resource usage to prevent runaway scripts:
+    ///
+    /// - `max_commands` - Maximum number of commands to execute (default: 10,000)
+    /// - `max_loop_iterations` - Maximum loop iterations (default: 10,000)
+    /// - `max_function_depth` - Maximum function recursion depth (default: 100)
+    /// - `timeout` - Maximum execution time (default: 30 seconds)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, ExecutionLimits};
+    /// use std::time::Duration;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let limits = ExecutionLimits::new()
+    ///     .max_commands(100)
+    ///     .max_loop_iterations(50)
+    ///     .max_function_depth(5)
+    ///     .timeout(Duration::from_secs(5));
+    ///
+    /// let mut bash = Bash::builder()
+    ///     .limits(limits)
+    ///     .build();
+    ///
+    /// // This will fail with resource limit exceeded
+    /// let result = bash.exec("for i in $(seq 1 100); do echo $i; done").await;
+    /// assert!(result.is_err());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn limits(mut self, limits: ExecutionLimits) -> Self {
         self.limits = limits;
         self
@@ -154,8 +665,33 @@ impl BashBuilder {
 
     /// Set the sandbox username.
     ///
-    /// This configures `whoami` and `id` builtins to return this username,
-    /// and automatically sets the `USER` environment variable.
+    /// Configures the username returned by `whoami` and `id` commands.
+    /// Also automatically sets the `USER` environment variable.
+    ///
+    /// Default: "sandbox"
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::Bash;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::builder()
+    ///     .username("alice")
+    ///     .build();
+    ///
+    /// let result = bash.exec("whoami").await?;
+    /// assert_eq!(result.stdout, "alice\n");
+    ///
+    /// let result = bash.exec("echo $USER").await?;
+    /// assert_eq!(result.stdout, "alice\n");
+    ///
+    /// let result = bash.exec("id").await?;
+    /// assert!(result.stdout.contains("alice"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn username(mut self, username: impl Into<String>) -> Self {
         self.username = Some(username.into());
         self
@@ -163,13 +699,48 @@ impl BashBuilder {
 
     /// Set the sandbox hostname.
     ///
-    /// This configures `hostname` and `uname -n` builtins to return this hostname.
+    /// Configures the hostname returned by `hostname` and `uname -n` commands.
+    ///
+    /// Default: "bashkit-sandbox"
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::Bash;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::builder()
+    ///     .hostname("prod-server-01")
+    ///     .build();
+    ///
+    /// let result = bash.exec("hostname").await?;
+    /// assert_eq!(result.stdout, "prod-server-01\n");
+    ///
+    /// let result = bash.exec("uname -n").await?;
+    /// assert_eq!(result.stdout, "prod-server-01\n");
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn hostname(mut self, hostname: impl Into<String>) -> Self {
         self.hostname = Some(hostname.into());
         self
     }
 
-    /// Build the Bash instance.
+    /// Build the configured [`Bash`] instance.
+    ///
+    /// Consumes the builder and returns a ready-to-use `Bash` instance.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::Bash;
+    ///
+    /// let mut bash = Bash::builder()
+    ///     .env("GREETING", "Hello")
+    ///     .username("user")
+    ///     .build();
+    /// ```
     pub fn build(self) -> Bash {
         let fs = self.fs.unwrap_or_else(|| Arc::new(InMemoryFs::new()));
         let mut interpreter =
