@@ -216,7 +216,7 @@
 | Element length | ✅ | `${#arr[0]}` |
 | Append | ✅ | `arr+=(d e)` |
 | Slice | ❌ | `${arr[@]:1:2}` |
-| Indices | ❌ | `${!arr[@]}` |
+| Indices | ✅ | `${!arr[@]}` |
 | Associative | ❌ | `declare -A` |
 
 ---
@@ -244,8 +244,8 @@
 | `-n str` | ✅ | Is non-empty |
 | `str1 = str2` | ✅ | Equal |
 | `str1 != str2` | ✅ | Not equal |
-| `str1 < str2` | ❌ | Less than |
-| `str1 > str2` | ❌ | Greater than |
+| `str1 < str2` | ✅ | Less than |
+| `str1 > str2` | ✅ | Greater than |
 
 ### Numeric Tests
 
@@ -333,6 +333,8 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] Stderr redirections (2>, 2>&1, &>)
 - [x] Arithmetic logical operators (&&, ||)
 - [x] Brace expansion ({a,b,c}, {1..5})
+- [x] String comparison operators (< >) in test
+- [x] Array indices ${!arr[@]}
 
 ### Planned
 - [ ] `trap` signal handling

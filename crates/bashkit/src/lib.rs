@@ -2665,4 +2665,77 @@ mod tests {
         let result = bash.exec("echo x{,y}z").await.unwrap();
         assert_eq!(result.stdout, "xz xyz\n");
     }
+
+    // ============================================================
+    // String Comparison Tests
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_string_less_than() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("test apple '<' banana && echo yes")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_string_greater_than() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("test banana '>' apple && echo yes")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_string_less_than_false() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("test banana '<' apple && echo yes || echo no")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "no\n");
+    }
+
+    // ============================================================
+    // Array Indices Tests
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_array_indices_basic() {
+        // ${!arr[@]} returns the indices of the array
+        let mut bash = Bash::new();
+        let result = bash.exec("arr=(a b c); echo ${!arr[@]}").await.unwrap();
+        assert_eq!(result.stdout, "0 1 2\n");
+    }
+
+    #[tokio::test]
+    async fn test_array_indices_sparse() {
+        // ${!arr[@]} should show indices even for sparse arrays
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("arr[0]=a; arr[5]=b; arr[10]=c; echo ${!arr[@]}")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "0 5 10\n");
+    }
+
+    #[tokio::test]
+    async fn test_array_indices_star() {
+        // ${!arr[*]} should also work
+        let mut bash = Bash::new();
+        let result = bash.exec("arr=(x y z); echo ${!arr[*]}").await.unwrap();
+        assert_eq!(result.stdout, "0 1 2\n");
+    }
+
+    #[tokio::test]
+    async fn test_array_indices_empty() {
+        // Empty array should return empty string
+        let mut bash = Bash::new();
+        let result = bash.exec("arr=(); echo \"${!arr[@]}\"").await.unwrap();
+        assert_eq!(result.stdout, "\n");
+    }
 }

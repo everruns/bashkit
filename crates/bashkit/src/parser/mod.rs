@@ -1606,6 +1606,49 @@ impl<'a> Parser<'a> {
                             }
                             parts.push(WordPart::Length(var_name));
                         }
+                    } else if chars.peek() == Some(&'!') {
+                        // Check for ${!arr[@]} or ${!arr[*]} - array indices
+                        chars.next(); // consume '!'
+                        let mut var_name = String::new();
+                        while let Some(&c) = chars.peek() {
+                            if c == '}' || c == '[' {
+                                break;
+                            }
+                            var_name.push(chars.next().unwrap());
+                        }
+                        // Check for array indices ${!arr[@]} or ${!arr[*]}
+                        if chars.peek() == Some(&'[') {
+                            chars.next(); // consume '['
+                            let mut index = String::new();
+                            while let Some(&c) = chars.peek() {
+                                if c == ']' {
+                                    chars.next();
+                                    break;
+                                }
+                                index.push(chars.next().unwrap());
+                            }
+                            // Consume closing }
+                            if chars.peek() == Some(&'}') {
+                                chars.next();
+                            }
+                            if index == "@" || index == "*" {
+                                parts.push(WordPart::ArrayIndices(var_name));
+                            } else {
+                                // ${!arr[n]} - not standard, treat as variable
+                                parts.push(WordPart::Variable(format!("!{}[{}]", var_name, index)));
+                            }
+                        } else {
+                            // ${!prefix*} or ${!prefix@} - indirect expansion (not fully supported)
+                            // For now, consume until } and treat as variable
+                            while let Some(&c) = chars.peek() {
+                                if c == '}' {
+                                    chars.next();
+                                    break;
+                                }
+                                var_name.push(chars.next().unwrap());
+                            }
+                            parts.push(WordPart::Variable(format!("!{}", var_name)));
+                        }
                     } else {
                         // Read variable name
                         let mut var_name = String::new();

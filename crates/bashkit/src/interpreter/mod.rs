@@ -1802,6 +1802,16 @@ impl Interpreter {
                         }
                     }
                 }
+                WordPart::ArrayIndices(name) => {
+                    // ${!arr[@]} or ${!arr[*]} - expand to array indices
+                    if let Some(arr) = self.arrays.get(name) {
+                        let mut indices: Vec<_> = arr.keys().collect();
+                        indices.sort();
+                        let index_strs: Vec<String> =
+                            indices.iter().map(|i| i.to_string()).collect();
+                        result.push_str(&index_strs.join(" "));
+                    }
+                }
                 WordPart::ArrayLength(name) => {
                     // ${#arr[@]} - number of elements
                     if let Some(arr) = self.arrays.get(name) {

@@ -222,6 +222,7 @@ impl fmt::Display for Word {
                 WordPart::Length(name) => write!(f, "${{#{}}}", name)?,
                 WordPart::ArrayAccess { name, index } => write!(f, "${{{}[{}]}}", name, index)?,
                 WordPart::ArrayLength(name) => write!(f, "${{#{}[@]}}", name)?,
+                WordPart::ArrayIndices(name) => write!(f, "${{!{}[@]}}", name)?,
                 WordPart::ProcessSubstitution { commands, is_input } => {
                     let prefix = if *is_input { "<" } else { ">" };
                     write!(f, "{}({:?})", prefix, commands)?
@@ -255,6 +256,8 @@ pub enum WordPart {
     ArrayAccess { name: String, index: String },
     /// Array length ${#arr[@]} or ${#arr[*]}
     ArrayLength(String),
+    /// Array indices ${!arr[@]} or ${!arr[*]}
+    ArrayIndices(String),
     /// Process substitution <(cmd) or >(cmd)
     ProcessSubstitution {
         /// The commands to run
