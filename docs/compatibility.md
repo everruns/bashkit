@@ -270,6 +270,10 @@ Default limits (configurable):
 | Loop iterations | 100,000 | Per loop |
 | Function depth | 100 | Recursion limit |
 | Output size | 10MB | Total stdout |
+| Parser timeout | 5s | Prevents infinite parse |
+| Parser operations | 100,000 | Fuel-based limit |
+| Input size | 10MB | Max script size |
+| AST depth | 100 | Nesting limit |
 
 ---
 

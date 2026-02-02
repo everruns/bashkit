@@ -4,42 +4,46 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 510+
+**Total spec test cases:** 708
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 209+ | **No** | - | - | `bash_spec_tests` ignored in CI |
-| AWK | 89 | Yes | 46 | 43 | loops, arrays, functions |
-| Grep | 55 | Yes | 32 | 23 | context, -m, -x flags |
-| Sed | 65 | Yes | 36 | 29 | hold space, -E, branching |
-| JQ | 92 | Yes | 54 | 38 | reduce, walk, regex funcs |
-| **Total** | **510+** | **301** | 168 | 133 | |
+| Bash (core) | 404 | Yes | 294 | 110 | `bash_spec_tests` in CI |
+| AWK | 89 | Yes | 48 | 41 | loops, arrays, functions |
+| Grep | 55 | Yes | 34 | 21 | context, -m, -x flags |
+| Sed | 65 | Yes | 40 | 25 | hold space, -E, branching |
+| JQ | 95 | Yes | 58 | 37 | reduce, walk, regex funcs |
+| **Total** | **708** | **Yes** | **474** | **234** | |
 
-### Bash Spec Tests Breakdown (not in CI)
+### Bash Spec Tests Breakdown
 
 | File | Cases | Notes |
 |------|-------|-------|
-| arithmetic.test.sh | 22 | |
-| arrays.test.sh | 14 | |
+| arithmetic.test.sh | 22 | includes logical operators |
+| arrays.test.sh | 14 | includes indices |
 | background.test.sh | 2 | |
+| brace-expansion.test.sh | 10 | NEW: {a,b,c}, {1..5} |
 | command-subst.test.sh | 14 | |
 | control-flow.test.sh | - | Skipped (.skip suffix) |
 | cuttr.test.sh | 35 | cut and tr commands |
 | date.test.sh | 31 | format specifiers |
 | echo.test.sh | 26 | escape sequences |
+| errexit.test.sh | 10 | NEW: set -e tests |
 | fileops.test.sh | 15 | |
 | functions.test.sh | 14 | |
 | globs.test.sh | 7 | |
 | headtail.test.sh | 14 | |
 | herestring.test.sh | 8 | |
+| negative-tests.test.sh | 8 | NEW: error conditions |
 | path.test.sh | 14 | |
-| pipes-redirects.test.sh | 13 | |
+| pipes-redirects.test.sh | 13 | includes stderr redirects |
 | procsub.test.sh | 6 | |
 | sleep.test.sh | 6 | |
 | sortuniq.test.sh | 31 | sort and uniq |
+| test-operators.test.sh | 12 | NEW: file/string tests |
 | time.test.sh | 12 | Wall-clock only (user/sys always 0) |
 | timeout.test.sh | 17 | 2 skipped (timing-dependent) |
-| variables.test.sh | 20 | |
+| variables.test.sh | 20 | includes special vars |
 | wc.test.sh | 22 | word count |
 
 ## Shell Features
@@ -48,13 +52,11 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| `set -e` (errexit) | High | Critical for scripts |
 | Coprocesses `coproc` | Low | Rarely used |
 | Extended globs `@()` `!()` | Medium | Requires `shopt -s extglob` |
 | Associative arrays `declare -A` | Medium | Bash 4+ feature |
 | `[[ =~ ]]` regex matching | Medium | Bash extension |
 | Backtick substitution | Low | Deprecated, use `$()` |
-| Brace expansion `{a,b,c}` | Medium | Common pattern |
 | `trap` signal handling | High | Error handling |
 | `getopts` | Medium | Option parsing |
 | `alias` | Low | Interactive feature |
@@ -62,7 +64,16 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 | Job control (bg/fg/jobs) | Out of scope | Requires process control |
 
 ### Implemented (previously missing)
-- Process substitution `<(cmd)` - now works
+- Process substitution `<(cmd)` - works
+- `set -e` (errexit) - exits on command failure, respects conditionals
+- Brace expansion `{a,b,c}`, `{1..5}` - full support
+- Tilde expansion `~` - expands to $HOME
+- Special variables `$$`, `$RANDOM`, `$LINENO`
+- File test operators `-r`, `-w`, `-x`, `-L`
+- Stderr redirections `2>`, `2>&1`, `&>`
+- Arithmetic logical operators `&&`, `||` with short-circuit
+- String comparison `<`, `>` in test
+- Array indices `${!arr[@]}`
 
 ### Partially Implemented
 
@@ -70,9 +81,8 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 |---------|------------|----------------|
 | `local` | Declaration | Proper scoping in nested functions |
 | `return` | Basic usage | Return value propagation |
-| Arithmetic | Basic ops | Comparison, ternary, bitwise |
 | Heredocs | Basic | Variable expansion inside |
-| Arrays | Indexing, `[@]` | `+=` append, `${!arr[@]}` |
+| Arrays | Indexing, `[@]`, `${!arr[@]}`, `+=` | Slice `${arr[@]:1:2}` |
 | `echo -n` | Flag parsed | Trailing newline handling |
 | `time` | Wall-clock timing | **User/sys CPU time not tracked (always 0)** |
 | `timeout` | Basic usage | `-k` kill timeout (always terminates immediately) |
@@ -80,7 +90,7 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 ## Builtins
 
 ### Implemented
-`echo`, `printf`, `cat`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`, `export`, `set`, `unset`, `local`, `source`, `read`, `shift`, `break`, `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`, `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`, `sort`, `uniq`, `cut`, `tr`, `date`, `wait`, `curl`, `wget`, `timeout`, `time` (keyword)
+`echo`, `printf`, `cat`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`, `export`, `set`, `unset`, `local`, `source`, `read`, `shift`, `break`, `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`, `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`, `sort`, `uniq`, `cut`, `tr`, `date`, `wait`, `curl`, `wget`, `timeout`, `time` (keyword), `whoami`, `hostname`
 
 ### Not Implemented
 `ls`, `rmdir`, `ln`, `chown`, `tee`, `xargs`, `find`, `diff`, `type`, `which`, `command`, `hash`, `declare`, `typeset`, `readonly`, `getopts`, `kill`, `eval`, `exec`, `trap`
@@ -92,7 +102,7 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 - Array assignment in split: `split($0, arr, ":")`
 - Complex regex patterns
 
-**Skipped Tests (43):**
+**Skipped Tests (41):**
 | Feature | Count | Notes |
 |---------|-------|-------|
 | Arrays | 8 | `arr[key]`, associative arrays, `in` operator |
@@ -107,12 +117,11 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 | BEGIN/END blocks | 3 | Multiple or complex blocks |
 | Field assignment | 2 | `$1 = "new"` |
 | NR/NF in conditions | 3 | `NR > 1`, `NF == 3` |
-| Regex match ~ | 2 | `$0 ~ /pattern/` |
 
 ### Sed Limitations
 - In-place editing (`-i`) - not implemented for security
 
-**Skipped Tests (29):**
+**Skipped Tests (25):**
 | Feature | Count | Notes |
 |---------|-------|-------|
 | Extended regex `-E` | 5 | `+`, `?`, `\|`, `()` grouping |
@@ -121,12 +130,10 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 | Branching | 4 | `b`, `t`, `:label` commands |
 | Append/Insert | 3 | `a\`, `i\` commands |
 | Character classes | 3 | `[:alpha:]`, `[:digit:]` in `y///` |
-| Multiple `-e` | 2 | `-e 's/a/b/' -e 's/c/d/'` |
-| Line number ranges | 2 | `1,5s/...` |
 
 ### Grep Limitations
 
-**Skipped Tests (23):**
+**Skipped Tests (21):**
 | Feature | Count | Notes |
 |---------|-------|-------|
 | Context flags | 6 | `-A`, `-B`, `-C` (after/before/context) |
@@ -137,11 +144,10 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 | Invert `-v` with count | 2 | Combined flags |
 | Word boundary `\b` | 2 | `\bword\b` |
 | Multiple `-e` patterns | 2 | `-e pat1 -e pat2` |
-| Perl regex `-P` | 2 | Lookahead, lookbehind |
 
 ### JQ Limitations
 
-**Skipped Tests (38):**
+**Skipped Tests (37):**
 | Feature | Count | Notes |
 |---------|-------|-------|
 | CLI flags | 8 | `-c`, `-S`, `-s`, `-n`, `-e`, `-j`, `--tab` |
@@ -181,6 +187,7 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 - Single-quoted strings are completely literal (correct behavior)
 - Some complex nested structures may timeout
 - Very long pipelines may cause stack issues
+- Parser has configurable limits: timeout, fuel (operations), input size, AST depth
 
 ## Filesystem
 
@@ -203,6 +210,10 @@ Default limits (configurable):
 - Loop iterations: 100,000
 - Function depth: 100
 - Output size: 10MB
+- Parser timeout: 5 seconds
+- Parser operations (fuel): 100,000
+- Input size: 10MB
+- AST depth: 100
 
 ## Comparison with Real Bash
 
