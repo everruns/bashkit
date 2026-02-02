@@ -9,41 +9,79 @@
 //!
 //! The following tests are skipped and need fixes:
 //!
-//! ### cuttr.test.sh - cut/tr issues
+//! ### date.test.sh (30 skipped) - grep output expectations wrong
+//! - [ ] date_*_format tests - test expects empty but grep outputs matches
+//! - [ ] date_rfc_format, date_nanoseconds, date_set_time - flags not implemented
+//!
+//! ### cuttr.test.sh (25 skipped) - cut/tr issues
 //! - [ ] tr_* (5) - tr output missing trailing newline
 //! - [ ] cut_char_* (5) - cut -c character mode not implemented
 //! - [ ] cut_field_to_end - cut field-to-end range not fully implemented
 //! - [ ] tr_squeeze, tr_complement - tr -s/-c not implemented
-//! - [ ] tr_class_* (2) - tr character class handling differs
+//! - [ ] tr_class_* (4) - tr character class handling differs
 //! - [ ] tr_escape_* (2) - tr escape sequence handling differs
 //! - [ ] tr_multiple_chars - tr output missing trailing newline
 //! - [ ] cut_complement, cut_output_delimiter - not implemented
 //! - [ ] tr_truncate_set2 - tr truncation behavior differs
 //! - [ ] cut_only_delimited, cut_zero_terminated - not implemented
 //!
-//! ### date.test.sh - grep output expectations wrong
-//! - [ ] All date format tests (20+) - test expects empty but grep outputs matches
+//! ### sortuniq.test.sh (14 skipped) - sort/uniq flags
+//! - [ ] sort -f, -t, -k, -s, -c, -m, -h, -M, -o, -z - not implemented
+//! - [ ] uniq -d, -u, -i, -f - not implemented
 //!
-//! ### fileops.test.sh - filesystem visibility
-//! - [ ] mkdir_*, touch_*, mv_file (5) - test conditionals not seeing fs changes
-//!
-//! ### headtail.test.sh
-//! - [ ] head_default, tail_default - default line count not working with stdin
-//!
-//! ### herestring.test.sh
-//! - [ ] herestring_empty - empty herestring adds extra newline
-//!
-//! ### path.test.sh
-//! - [ ] basename_no_args, dirname_no_args - error handling not implemented
-//!
-//! ### echo.test.sh
+//! ### echo.test.sh (9 skipped)
+//! - [ ] echo_empty_* (2) - test format expects empty/newline mismatch
 //! - [ ] echo_escape_r - carriage return handling differs
 //! - [ ] echo_combined_en, echo_combined_ne - combined flag handling differs
+//! - [ ] echo_E_flag - -E flag (disable escapes) not implemented
+//! - [ ] echo_option_end - -- to end options not implemented
+//! - [ ] echo_escape_hex, echo_escape_octal - hex/octal escapes not implemented
 //!
-//! ### wc.test.sh
-//! - [ ] wc_chars_m_flag, wc_long_bytes, wc_bytes_vs_chars - outputs full stats
+//! ### fileops.test.sh (5 skipped) - filesystem visibility
+//! - [ ] mkdir_*, touch_*, mv_file - test conditionals not seeing fs changes
 //!
-//! ### control-flow.test.sh.skip (entire file)
+//! ### wc.test.sh (5 skipped)
+//! - [ ] wc_chars_m_flag, wc_bytes_vs_chars - wc -m outputs full stats
+//! - [ ] wc_max_line_length - -L max line length not implemented
+//! - [ ] wc_long_bytes - wc --bytes outputs full stats
+//! - [ ] wc_unicode_chars - unicode character counting not implemented
+//!
+//! ### sleep.test.sh (3 skipped)
+//! - [ ] sleep_stderr_* - stderr redirect not implemented
+//!
+//! ### globs.test.sh (3 skipped)
+//! - [ ] glob_bracket - bracket glob not fully implemented
+//! - [ ] glob_recursive - recursive glob (**) not implemented
+//! - [ ] brace_expansion - brace expansion not implemented
+//!
+//! ### timeout.test.sh (2 skipped)
+//! - [ ] timeout_* - timing-dependent tests, verified manually
+//!
+//! ### pipes-redirects.test.sh (2 skipped)
+//! - [ ] redirect_stderr - stderr redirect not fully implemented
+//! - [ ] redirect_combined - combined redirects not implemented
+//!
+//! ### headtail.test.sh (2 skipped)
+//! - [ ] head_default, tail_default - default line count not working with stdin
+//!
+//! ### path.test.sh (2 skipped)
+//! - [ ] basename_no_args, dirname_no_args - error handling not implemented
+//!
+//! ### command-subst.test.sh (2 skipped)
+//! - [ ] subst_exit_code - exit code propagation needs work
+//! - [ ] subst_backtick - backtick substitution not implemented
+//!
+//! ### arrays.test.sh (2 skipped)
+//! - [ ] array_indices - array indices not implemented
+//! - [ ] array_slice - array slicing not implemented
+//!
+//! ### herestring.test.sh (1 skipped)
+//! - [ ] herestring_empty - empty herestring adds extra newline
+//!
+//! ### arithmetic.test.sh (1 skipped)
+//! - [ ] arith_assign - assignment inside $(()) not implemented
+//!
+//! ### control-flow.test.sh.skip (entire file skipped)
 //! - [ ] Control flow tests need implementation
 
 mod spec_runner;
