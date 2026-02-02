@@ -1,4 +1,5 @@
 ### wc_lines_only
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # Count lines with -l
 printf 'a\nb\nc\n' | wc -l
 ### expect
@@ -6,6 +7,7 @@ printf 'a\nb\nc\n' | wc -l
 ### end
 
 ### wc_words_only
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # Count words with -w
 printf 'one two three four five' | wc -w
 ### expect
@@ -13,6 +15,7 @@ printf 'one two three four five' | wc -w
 ### end
 
 ### wc_bytes_only
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # Count bytes with -c
 printf 'hello' | wc -c
 ### expect
@@ -20,6 +23,7 @@ printf 'hello' | wc -c
 ### end
 
 ### wc_empty
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # Empty input
 printf '' | wc -l
 ### expect
@@ -27,6 +31,7 @@ printf '' | wc -l
 ### end
 
 ### wc_all_flags
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # All counts (default)
 printf 'hello world\n' | wc
 ### expect
@@ -34,6 +39,7 @@ printf 'hello world\n' | wc
 ### end
 
 ### wc_multiple_lines
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # Multiple lines
 printf 'one\ntwo\nthree\n' | wc -l
 ### expect
@@ -49,6 +55,7 @@ printf 'hello' | wc -m
 ### end
 
 ### wc_lines_words
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # Lines and words combined
 printf 'one two\nthree four\n' | wc -lw
 ### expect
@@ -56,6 +63,7 @@ printf 'one two\nthree four\n' | wc -lw
 ### end
 
 ### wc_no_newline_at_end
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # Input without trailing newline
 printf 'hello world' | wc -w
 ### expect
@@ -63,6 +71,7 @@ printf 'hello world' | wc -w
 ### end
 
 ### wc_multiple_spaces
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # Multiple spaces between words
 printf 'hello   world' | wc -w
 ### expect
@@ -70,6 +79,7 @@ printf 'hello   world' | wc -w
 ### end
 
 ### wc_tabs_count
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # Tabs in input
 printf 'a\tb\tc' | wc -w
 ### expect
@@ -77,6 +87,7 @@ printf 'a\tb\tc' | wc -w
 ### end
 
 ### wc_single_word
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # Single word
 printf 'word' | wc -w
 ### expect
@@ -84,6 +95,7 @@ printf 'word' | wc -w
 ### end
 
 ### wc_only_whitespace
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # Only whitespace
 printf '   \t   ' | wc -w
 ### expect
@@ -98,6 +110,7 @@ printf 'short\nlongerline\n' | wc -L
 ### end
 
 ### wc_long_flags
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # Long flag --lines
 printf 'a\nb\n' | wc --lines
 ### expect
@@ -105,6 +118,7 @@ printf 'a\nb\n' | wc --lines
 ### end
 
 ### wc_long_words
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # Long flag --words
 printf 'one two three' | wc --words
 ### expect
@@ -136,6 +150,7 @@ printf 'héllo' | wc -m
 ### end
 
 ### wc_unicode_bytes
+### bash_diff: BashKit wc uses fixed-width padding for stdin, real bash uses no padding
 # Unicode byte count
 printf 'héllo' | wc -c
 ### expect

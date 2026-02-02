@@ -1,4 +1,5 @@
 ### glob_star
+### bash_diff: BashKit VFS has files, real bash CI filesystem does not - glob expands differently
 # Glob with asterisk
 echo a > /test1.txt; echo b > /test2.txt; echo /test*.txt
 ### expect
@@ -6,6 +7,7 @@ echo a > /test1.txt; echo b > /test2.txt; echo /test*.txt
 ### end
 
 ### glob_question
+### bash_diff: BashKit VFS has files, real bash CI filesystem does not - glob expands differently
 # Glob with question mark
 echo a > /a1.txt; echo b > /a2.txt; echo c > /a10.txt; echo /a?.txt
 ### expect

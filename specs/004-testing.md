@@ -105,6 +105,8 @@ false
 - `### end` - End of test case
 - `### exit_code: N` - Expected exit code (optional)
 - `### skip: reason` - Skip this test with reason
+- `### bash_diff: reason` - Test has known difference from real bash (still runs in spec tests, excluded from bash comparison)
+- `### paused_time` - Run with tokio paused time for deterministic timing tests
 
 ## Running Tests
 
@@ -137,12 +139,18 @@ Coverage is tracked manually via spec test pass rates.
 The following items need attention:
 
 - [x] **Enable bash_spec_tests in CI** - Done! 223/331 tests running
+- [x] **Add bash_comparison_tests to CI** - Done! 275 tests compared against real bash
 - [ ] **Fix control-flow.test.sh** - Currently skipped (.skip suffix)
 - [ ] **Add coverage tooling** - Consider cargo-tarpaulin or codecov
 - [ ] **Fix skipped spec tests** (110 total):
   - Bash: 108 skipped (various implementation gaps)
   - AWK: 2 skipped (blocked by multi-statement action parsing bug)
-- [ ] **Add bash_comparison_tests to CI** - Currently ignored, runs manually
+- [ ] **Fix bash_diff tests** (21 total):
+  - wc: 14 tests (output formatting differs)
+  - background: 2 tests (non-deterministic order)
+  - globs: 2 tests (VFS vs real filesystem glob expansion)
+  - timeout: 1 test (timeout 0 behavior)
+  - brace-expansion: 1 test (empty item handling)
 
 ## Adding New Tests
 
@@ -154,7 +162,7 @@ The following items need attention:
 
 ## Comparison Testing
 
-The `bash_comparison_tests` test (ignored by default) runs each spec test against both BashKit and real bash:
+The `bash_comparison_tests` test runs in CI and compares BashKit output against real bash:
 
 ```rust
 pub fn run_real_bash(script: &str) -> (String, i32) {
@@ -165,7 +173,12 @@ pub fn run_real_bash(script: &str) -> (String, i32) {
 }
 ```
 
-This helps identify behavioral differences.
+Tests marked with `### bash_diff` are excluded from comparison (known intentional differences).
+Tests marked with `### skip` are excluded from both spec tests and comparison.
+
+The test fails if any non-excluded test produces different output than real bash.
+
+A verbose version `bash_comparison_tests_verbose` is available (ignored by default) for debugging.
 
 ## Alternatives Considered
 
