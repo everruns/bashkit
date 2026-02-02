@@ -89,6 +89,29 @@ FsLimits {
 
 **Monitoring**: `du` and `df` builtins allow scripts to check usage
 
+#### 1.6 Path and Name Attacks
+
+| Threat | Attack Vector | Mitigation | Status |
+|--------|--------------|------------|--------|
+| Symlink loops | `ln -s /a /b; ln -s /b /a` | No symlink following | **MITIGATED** |
+| Deep directory nesting | `mkdir -p a/b/c/.../z` (1000 levels) | None | **VULNERABLE** |
+| Long filenames | Create 10KB filename | None | **VULNERABLE** |
+| Many directory entries | Create 1M files in one dir | File count limit | **MITIGATED** |
+| Unicode path attacks | Homoglyph/RTL override chars | None | **VULNERABLE** |
+
+**Current Risk**: MEDIUM - Some vectors unprotected
+
+**Recommendations**:
+```rust
+// Add to FsLimits or separate PathLimits
+max_path_depth: 100,           // Max directory nesting
+max_filename_length: 255,      // Max single component
+max_path_length: 4096,         // Max total path
+```
+
+**Note**: Symlink loops are mitigated because InMemoryFs stores symlinks but doesn't
+follow them during path resolution - symlink targets are only returned by `read_link()`.
+
 #### 1.2 Infinite Loops
 
 | Threat | Attack Vector | Mitigation | Status |
@@ -473,13 +496,16 @@ let tenant_b = Bash::builder()
 |----|--------------|--------|------------|
 | V6 | Env vars may leak secrets | Information disclosure | Document caller responsibility |
 | V7 | Terminal escapes in output | UI manipulation | Document sanitization need |
+| V8 | Deep directory nesting | Memory/stack exhaustion | Add `max_path_depth` limit |
+| V9 | Long filenames | Memory exhaustion | Add `max_filename_length` limit |
+| V10 | Unicode path manipulation | Path confusion | Validate/normalize paths |
 
 ### Low (Acceptable)
 
 | ID | Vulnerability | Impact | Mitigation |
 |----|--------------|--------|------------|
-| V8 | Symlinks not followed | Functionality gap | Implement with loop detection |
-| V9 | Globs incomplete | Functionality gap | Complete implementation |
+| V11 | Symlinks not followed | Functionality gap | Implement with loop detection |
+| V12 | Globs incomplete | Functionality gap | Complete implementation |
 
 ---
 
@@ -493,7 +519,9 @@ let tenant_b = Bash::builder()
 | Timeout (30s) | CPU exhaustion | `limits.rs` | Partial |
 | Virtual filesystem | FS escape | `fs/memory.rs` | Yes |
 | Filesystem limits | FS exhaustion | `fs/limits.rs` | Yes |
+| Zip bomb protection | Decompression bomb | `builtins/archive.rs` | Yes |
 | Path normalization | Path traversal | `fs/memory.rs` | Yes |
+| No symlink following | Symlink loops | `fs/memory.rs` | Yes |
 | Network allowlist | Data exfiltration | `network/allowlist.rs` | Yes |
 | Sandboxed eval, no exec | Code injection | eval runs builtins only, exec not implemented | Yes |
 | Fail-point testing | Control bypass | `security_failpoint_tests.rs` | Yes |

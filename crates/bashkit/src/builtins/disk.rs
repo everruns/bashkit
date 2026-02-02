@@ -281,14 +281,7 @@ mod tests {
             .unwrap();
 
         let args = vec!["test.txt".to_string()];
-        let ctx = Context {
-            args: &args,
-            env: &env,
-            variables: &mut variables,
-            cwd: &mut cwd,
-            fs: fs.clone(),
-            stdin: None,
-        };
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
 
         let result = Du.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -309,14 +302,7 @@ mod tests {
             .unwrap();
 
         let args = vec!["-s".to_string(), "subdir".to_string()];
-        let ctx = Context {
-            args: &args,
-            env: &env,
-            variables: &mut variables,
-            cwd: &mut cwd,
-            fs: fs.clone(),
-            stdin: None,
-        };
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
 
         let result = Du.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -337,14 +323,7 @@ mod tests {
             .unwrap();
 
         let args = vec!["-h".to_string(), "large.txt".to_string()];
-        let ctx = Context {
-            args: &args,
-            env: &env,
-            variables: &mut variables,
-            cwd: &mut cwd,
-            fs: fs.clone(),
-            stdin: None,
-        };
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
 
         let result = Du.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -357,14 +336,7 @@ mod tests {
         let env = HashMap::new();
 
         let args = vec!["nonexistent".to_string()];
-        let ctx = Context {
-            args: &args,
-            env: &env,
-            variables: &mut variables,
-            cwd: &mut cwd,
-            fs: fs.clone(),
-            stdin: None,
-        };
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
 
         let result = Du.execute(ctx).await.unwrap();
         assert_ne!(result.exit_code, 0);
@@ -378,14 +350,7 @@ mod tests {
         let env = HashMap::new();
 
         let args: Vec<String> = vec![];
-        let ctx = Context {
-            args: &args,
-            env: &env,
-            variables: &mut variables,
-            cwd: &mut cwd,
-            fs: fs.clone(),
-            stdin: None,
-        };
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
 
         let result = Df.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -399,14 +364,7 @@ mod tests {
         let env = HashMap::new();
 
         let args = vec!["-h".to_string()];
-        let ctx = Context {
-            args: &args,
-            env: &env,
-            variables: &mut variables,
-            cwd: &mut cwd,
-            fs: fs.clone(),
-            stdin: None,
-        };
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
 
         let result = Df.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -428,14 +386,7 @@ mod tests {
             .unwrap();
 
         let args: Vec<String> = vec![];
-        let ctx = Context {
-            args: &args,
-            env: &env,
-            variables: &mut variables,
-            cwd: &mut cwd,
-            fs: fs.clone(),
-            stdin: None,
-        };
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
 
         let result = Df.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);

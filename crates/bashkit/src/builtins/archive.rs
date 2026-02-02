@@ -1363,14 +1363,7 @@ mod tests {
 
         // Compress it
         let args = vec!["small.txt".to_string()];
-        let ctx = Context {
-            args: &args,
-            env: &env,
-            variables: &mut variables,
-            cwd: &mut cwd,
-            fs: fs.clone(),
-            stdin: None,
-        };
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
 
         let result = Gzip.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
