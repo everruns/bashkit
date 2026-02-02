@@ -141,6 +141,26 @@ impl Interpreter {
             Box::new(builtins::Whoami::with_username(&username_val)),
         );
         builtins.insert("id", Box::new(builtins::Id::with_username(&username_val)));
+        // Directory listing and search
+        builtins.insert("ls", Box::new(builtins::Ls));
+        builtins.insert("find", Box::new(builtins::Find));
+        builtins.insert("rmdir", Box::new(builtins::Rmdir));
+        // File inspection
+        builtins.insert("less", Box::new(builtins::Less));
+        builtins.insert("file", Box::new(builtins::File));
+        builtins.insert("stat", Box::new(builtins::Stat));
+        // Archive operations
+        builtins.insert("tar", Box::new(builtins::Tar));
+        builtins.insert("gzip", Box::new(builtins::Gzip));
+        builtins.insert("gunzip", Box::new(builtins::Gunzip));
+        // Environment builtins
+        builtins.insert("env", Box::new(builtins::Env));
+        builtins.insert("printenv", Box::new(builtins::Printenv));
+        builtins.insert("history", Box::new(builtins::History));
+        // Pipeline control
+        builtins.insert("xargs", Box::new(builtins::Xargs));
+        builtins.insert("tee", Box::new(builtins::Tee));
+        builtins.insert("watch", Box::new(builtins::Watch));
 
         Self {
             fs,

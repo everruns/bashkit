@@ -52,6 +52,9 @@ regex = "1"
 # Date/Time
 chrono = "0.4"
 
+# Compression
+flate2 = "1"
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 
