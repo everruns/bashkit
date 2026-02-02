@@ -58,6 +58,12 @@ jobs:
       - name: Run fail-point tests (single-threaded)
         run: cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
 
+      - name: Run property-based security tests (proptest)
+        run: cargo test --test proptest_security -- --test-threads=1
+        env:
+          # Reduce proptest cases in CI for speed (full run in nightly)
+          PROPTEST_CASES: 50
+
       - name: Run examples
         run: |
           cargo run --example basic
