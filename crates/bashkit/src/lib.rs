@@ -2319,4 +2319,114 @@ mod tests {
         let result = bash.exec("echo $LINENO").await.unwrap();
         assert_eq!(result.stdout, "1\n");
     }
+
+    // File test operator tests
+
+    #[tokio::test]
+    async fn test_file_test_r_readable() {
+        // -r file: true if file exists (readable in virtual fs)
+        let mut bash = Bash::new();
+        bash.exec("echo hello > /tmp/readable.txt").await.unwrap();
+        let result = bash
+            .exec("test -r /tmp/readable.txt && echo yes")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_file_test_r_not_exists() {
+        // -r file: false if file doesn't exist
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("test -r /tmp/nonexistent.txt && echo yes || echo no")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "no\n");
+    }
+
+    #[tokio::test]
+    async fn test_file_test_w_writable() {
+        // -w file: true if file exists (writable in virtual fs)
+        let mut bash = Bash::new();
+        bash.exec("echo hello > /tmp/writable.txt").await.unwrap();
+        let result = bash
+            .exec("test -w /tmp/writable.txt && echo yes")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_file_test_x_executable() {
+        // -x file: true if file exists and has execute permission
+        let mut bash = Bash::new();
+        bash.exec("echo '#!/bin/bash' > /tmp/script.sh")
+            .await
+            .unwrap();
+        bash.exec("chmod 755 /tmp/script.sh").await.unwrap();
+        let result = bash
+            .exec("test -x /tmp/script.sh && echo yes")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_file_test_x_not_executable() {
+        // -x file: false if file has no execute permission
+        let mut bash = Bash::new();
+        bash.exec("echo 'data' > /tmp/noexec.txt").await.unwrap();
+        bash.exec("chmod 644 /tmp/noexec.txt").await.unwrap();
+        let result = bash
+            .exec("test -x /tmp/noexec.txt && echo yes || echo no")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "no\n");
+    }
+
+    #[tokio::test]
+    async fn test_file_test_e_exists() {
+        // -e file: true if file exists
+        let mut bash = Bash::new();
+        bash.exec("echo hello > /tmp/exists.txt").await.unwrap();
+        let result = bash
+            .exec("test -e /tmp/exists.txt && echo yes")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_file_test_f_regular() {
+        // -f file: true if regular file
+        let mut bash = Bash::new();
+        bash.exec("echo hello > /tmp/regular.txt").await.unwrap();
+        let result = bash
+            .exec("test -f /tmp/regular.txt && echo yes")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_file_test_d_directory() {
+        // -d file: true if directory
+        let mut bash = Bash::new();
+        bash.exec("mkdir -p /tmp/mydir").await.unwrap();
+        let result = bash.exec("test -d /tmp/mydir && echo yes").await.unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_file_test_s_size() {
+        // -s file: true if file has size > 0
+        let mut bash = Bash::new();
+        bash.exec("echo hello > /tmp/nonempty.txt").await.unwrap();
+        let result = bash
+            .exec("test -s /tmp/nonempty.txt && echo yes")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
 }

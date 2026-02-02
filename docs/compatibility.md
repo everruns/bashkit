@@ -231,10 +231,10 @@
 | `-f file` | ✅ | Is regular file |
 | `-d file` | ✅ | Is directory |
 | `-s file` | ✅ | Size > 0 |
-| `-r file` | ❌ | Is readable |
-| `-w file` | ❌ | Is writable |
-| `-x file` | ❌ | Is executable |
-| `-L file` | ❌ | Is symlink |
+| `-r file` | ✅ | Is readable (exists in virtual fs) |
+| `-w file` | ✅ | Is writable (exists in virtual fs) |
+| `-x file` | ✅ | Is executable (mode & 0o111) |
+| `-L file` | ✅ | Is symlink |
 
 ### String Tests
 
@@ -329,6 +329,7 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] `set -e` (errexit) - exit on command failure
 - [x] Tilde expansion (~) - expands to $HOME
 - [x] Special variables ($$, $RANDOM, $LINENO)
+- [x] File test operators (-r, -w, -x, -L)
 
 ### Planned
 - [ ] `trap` signal handling
