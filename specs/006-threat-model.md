@@ -60,6 +60,35 @@ max_output_bytes: 10_000_000,   // 10MB stdout+stderr
 max_variable_size: 1_000_000,   // 1MB per variable
 ```
 
+#### 1.5 Filesystem Exhaustion
+
+| Threat | Attack Vector | Mitigation | Status |
+|--------|--------------|------------|--------|
+| Large file creation | `dd if=/dev/zero bs=1G count=100` | FS limits | **MITIGATED** |
+| Many small files | `for i in $(seq 1 1000000); do touch $i; done` | File count limit | **MITIGATED** |
+| Zip bomb | `gunzip bomb.gz` (small file → huge output) | Decompression limit | **MITIGATED** |
+| Tar bomb | `tar -xf bomb.tar` (many files / large files) | FS limits | **MITIGATED** |
+| Recursive copy | `cp -r /tmp /tmp/copy` | FS limits | **MITIGATED** |
+| Append flood | `while true; do echo x >> file; done` | FS limits + loop limit | **MITIGATED** |
+
+**Current Risk**: LOW - Filesystem limits prevent unbounded memory consumption
+
+**Implementation**: `FsLimits` struct in `fs/limits.rs`:
+```rust
+FsLimits {
+    max_total_bytes: 100_000_000,    // 100MB total filesystem
+    max_file_size: 10_000_000,       // 10MB per file
+    max_file_count: 10_000,          // 10K files max
+}
+```
+
+**Zip Bomb Protection**:
+- Decompression operations check output size against `max_file_size`
+- Archive extraction checks total extracted size against `max_total_bytes`
+- Extraction aborts early if limits would be exceeded
+
+**Monitoring**: `du` and `df` builtins allow scripts to check usage
+
 #### 1.2 Infinite Loops
 
 | Threat | Attack Vector | Mitigation | Status |
@@ -463,6 +492,7 @@ let tenant_b = Bash::builder()
 | Function depth (100) | Stack overflow | `limits.rs` | Yes |
 | Timeout (30s) | CPU exhaustion | `limits.rs` | Partial |
 | Virtual filesystem | FS escape | `fs/memory.rs` | Yes |
+| Filesystem limits | FS exhaustion | `fs/limits.rs` | Yes |
 | Path normalization | Path traversal | `fs/memory.rs` | Yes |
 | Network allowlist | Data exfiltration | `network/allowlist.rs` | Yes |
 | Sandboxed eval, no exec | Code injection | eval runs builtins only, exec not implemented | Yes |

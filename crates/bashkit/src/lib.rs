@@ -269,7 +269,10 @@ pub mod tool;
 pub use async_trait::async_trait;
 pub use builtins::{Builtin, Context as BuiltinContext};
 pub use error::{Error, Result};
-pub use fs::{DirEntry, FileSystem, FileType, InMemoryFs, Metadata, MountableFs, OverlayFs};
+pub use fs::{
+    DirEntry, FileSystem, FileType, FsLimitExceeded, FsLimits, FsUsage, InMemoryFs, Metadata,
+    MountableFs, OverlayFs,
+};
 pub use interpreter::{ControlFlow, ExecResult};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
