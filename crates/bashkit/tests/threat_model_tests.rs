@@ -165,12 +165,11 @@ mod sandbox_escape {
     async fn threat_eval_not_available() {
         let mut bash = Bash::new();
 
-        let result = bash.exec("eval 'echo pwned'").await;
-        // eval should fail - either as error or not execute the payload
-        if let Ok(r) = result {
-            assert!(!r.stdout.contains("pwned"));
-        }
-        // Error is also acceptable - means command not found
+        let result = bash.exec("eval 'echo pwned'").await.unwrap();
+        // eval should return command not found (exit 127)
+        assert_eq!(result.exit_code, 127);
+        assert!(!result.stdout.contains("pwned"));
+        assert!(result.stderr.contains("command not found"));
     }
 
     /// Test exec is not implemented (prevents shell escape)
@@ -178,11 +177,10 @@ mod sandbox_escape {
     async fn threat_exec_not_available() {
         let mut bash = Bash::new();
 
-        let result = bash.exec("exec /bin/bash").await;
-        // Should fail - exec not implemented (error or non-zero exit)
-        if let Ok(r) = result {
-            assert!(r.exit_code != 0);
-        }
+        let result = bash.exec("exec /bin/bash").await.unwrap();
+        // exec should return command not found (exit 127)
+        assert_eq!(result.exit_code, 127);
+        assert!(result.stderr.contains("command not found"));
     }
 
     /// Test external command execution is blocked
@@ -260,13 +258,11 @@ mod injection_attacks {
     async fn threat_eval_not_implemented() {
         let mut bash = Bash::new();
 
-        // eval should fail as unrecognized command
-        let result = bash.exec("eval echo test").await;
-        // Either returns error or non-zero exit - payload should not execute
-        if let Ok(r) = result {
-            assert!(!r.stdout.contains("test\n"));
-        }
-        // Error is also acceptable - command not found
+        // eval should fail as unrecognized command with exit 127
+        let result = bash.exec("eval echo test").await.unwrap();
+        assert_eq!(result.exit_code, 127);
+        assert!(!result.stdout.contains("test\n"));
+        assert!(result.stderr.contains("command not found"));
     }
 
     /// Test path with null byte (Rust prevents this)
@@ -491,12 +487,11 @@ mod multi_tenant {
         tenant_a.exec("steal() { echo 'stolen'; }").await.unwrap();
 
         // Function defined in tenant_a should not exist in tenant_b
-        let result = tenant_b.exec("steal").await;
-        if let Ok(r) = result {
-            // Either command not found (non-zero exit) or no output
-            assert!(r.exit_code != 0 || !r.stdout.contains("stolen"));
-        }
-        // Error is also acceptable - means command not found
+        let result = tenant_b.exec("steal").await.unwrap();
+        // Should return command not found (exit 127)
+        assert_eq!(result.exit_code, 127);
+        assert!(!result.stdout.contains("stolen"));
+        assert!(result.stderr.contains("command not found"));
     }
 
     /// Test that limits are per-instance
@@ -594,5 +589,174 @@ mod edge_cases {
 
         let result = bash.exec("echo $#").await.unwrap(); // Arg count
         assert!(result.exit_code == 0);
+    }
+
+    /// Test command not found returns exit code 127 and proper error message
+    #[tokio::test]
+    async fn command_not_found_exit_code() {
+        let mut bash = Bash::new();
+
+        // Unknown command should return exit code 127 (not a Rust error)
+        let result = bash.exec("nonexistent_command").await.unwrap();
+        assert_eq!(result.exit_code, 127);
+        assert!(
+            result.stderr.contains("command not found"),
+            "stderr should contain 'command not found', got: {}",
+            result.stderr
+        );
+        assert!(
+            result.stderr.contains("nonexistent_command"),
+            "stderr should contain the command name, got: {}",
+            result.stderr
+        );
+    }
+
+    /// Test command not found in script continues execution
+    #[tokio::test]
+    async fn command_not_found_continues_script() {
+        let mut bash = Bash::new();
+
+        // Script should continue after command not found
+        let result = bash.exec("unknown_cmd; echo after").await.unwrap();
+        assert!(result.stdout.contains("after"));
+        // Last command succeeded, so exit code should be 0
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// Test command not found stderr format matches bash
+    #[tokio::test]
+    async fn command_not_found_stderr_format() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("ssh").await.unwrap();
+        assert_eq!(result.exit_code, 127);
+        // Should match bash format: "bash: cmd: command not found"
+        assert!(
+            result.stderr.starts_with("bash: ssh: command not found"),
+            "stderr should match bash format, got: {}",
+            result.stderr
+        );
+    }
+
+    /// Test various common missing commands all return 127
+    #[tokio::test]
+    async fn command_not_found_various_commands() {
+        let mut bash = Bash::new();
+
+        // Commands that are NOT implemented as builtins
+        for cmd in &["ssh", "du", "apt", "yum", "docker", "git", "vim", "nano"] {
+            let result = bash.exec(cmd).await.unwrap();
+            assert_eq!(
+                result.exit_code, 127,
+                "{} should return exit 127, got {}",
+                cmd, result.exit_code
+            );
+            assert!(
+                result.stderr.contains("command not found"),
+                "{} stderr should contain 'command not found', got: {}",
+                cmd,
+                result.stderr
+            );
+        }
+    }
+
+    /// Test $? captures exit code 127 after command not found
+    #[tokio::test]
+    async fn command_not_found_exit_status_variable() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("nonexistent; echo $?").await.unwrap();
+        assert!(result.stdout.contains("127"));
+        // Final exit code is 0 because echo succeeded
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// Test command not found in pipeline
+    #[tokio::test]
+    async fn command_not_found_in_pipeline() {
+        let mut bash = Bash::new();
+
+        // Pipeline with missing command should still work
+        let result = bash.exec("echo hello | nonexistent_filter").await.unwrap();
+        // Exit code should be from the last command (127)
+        assert_eq!(result.exit_code, 127);
+    }
+
+    /// Test command not found in conditional
+    #[tokio::test]
+    async fn command_not_found_in_conditional() {
+        let mut bash = Bash::new();
+
+        // if with missing command should take else branch
+        let result = bash
+            .exec("if nonexistent_cmd; then echo yes; else echo no; fi")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("no"));
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// Test command not found with || operator
+    #[tokio::test]
+    async fn command_not_found_or_operator() {
+        let mut bash = Bash::new();
+
+        // Should execute fallback after command not found
+        let result = bash.exec("nonexistent || echo fallback").await.unwrap();
+        assert!(result.stdout.contains("fallback"));
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// Test command not found with && operator
+    #[tokio::test]
+    async fn command_not_found_and_operator() {
+        let mut bash = Bash::new();
+
+        // Should not execute second command after failure
+        let result = bash.exec("nonexistent && echo success").await.unwrap();
+        assert!(!result.stdout.contains("success"));
+        assert_eq!(result.exit_code, 127);
+    }
+
+    /// Test builtins still work (positive test case)
+    #[tokio::test]
+    async fn builtins_still_work() {
+        let mut bash = Bash::new();
+
+        // Verify various builtins work correctly
+        let result = bash.exec("echo hello").await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("hello"));
+
+        let result = bash.exec("pwd").await.unwrap();
+        assert_eq!(result.exit_code, 0);
+
+        let result = bash.exec("true").await.unwrap();
+        assert_eq!(result.exit_code, 0);
+
+        let result = bash.exec("false").await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    /// Test command in subshell not found
+    #[tokio::test]
+    async fn command_not_found_in_subshell() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("(nonexistent_cmd)").await.unwrap();
+        assert_eq!(result.exit_code, 127);
+        assert!(result.stderr.contains("command not found"));
+    }
+
+    /// Test command substitution with not found command
+    #[tokio::test]
+    async fn command_not_found_in_substitution() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("echo \"output: $(nonexistent)\"").await.unwrap();
+        // Command substitution captures stdout (which is empty for command not found)
+        assert!(result.stdout.contains("output:"));
+        // Exit code is from echo (0), not from the failed substitution
+        assert_eq!(result.exit_code, 0);
     }
 }

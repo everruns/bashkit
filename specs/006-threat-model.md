@@ -114,12 +114,17 @@ max_variable_size: 1_000_000,   // 1MB per variable
 
 | Threat | Attack Vector | Mitigation | Status |
 |--------|--------------|------------|--------|
-| Shell escape | `exec /bin/bash` | exec not implemented | **MITIGATED** |
-| Subprocess | `./malicious` | External exec disabled | **MITIGATED** |
+| Shell escape | `exec /bin/bash` | exec not implemented (returns exit 127) | **MITIGATED** |
+| Subprocess | `./malicious` | External exec disabled (returns exit 127) | **MITIGATED** |
 | Background proc | `malicious &` | Background not impl | **MITIGATED** |
-| eval injection | `eval "$user_input"` | eval not implemented | **MITIGATED** |
+| eval injection | `eval "$user_input"` | eval not implemented (returns exit 127) | **MITIGATED** |
 
 **Current Risk**: LOW - No external process execution capability
+
+**Note**: Unimplemented commands return bash-compatible error:
+- Exit code: 127
+- Stderr: `bash: <cmd>: command not found`
+- Script continues execution (unless `set -e`)
 
 #### 2.3 Privilege Escalation
 
@@ -499,5 +504,5 @@ The following components are fuzz-tested for robustness:
 - `specs/003-vfs.md` - Virtual filesystem design
 - `specs/005-security-testing.md` - Fail-point testing
 - `src/builtins/system.rs` - Hardcoded system builtins
-- `tests/threat_model_tests.rs` - Threat model test suite (39 tests)
+- `tests/threat_model_tests.rs` - Threat model test suite (51 tests)
 - `tests/security_failpoint_tests.rs` - Fail-point security tests
