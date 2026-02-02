@@ -1386,9 +1386,11 @@ impl Interpreter {
             return self.apply_redirections(result, &command.redirects).await;
         }
 
-        // Check for external commands
-        // TODO: Implement command lookup and execution
-        Err(Error::CommandNotFound(name))
+        // Command not found - return error like bash does (exit code 127)
+        Ok(ExecResult::err(
+            format!("bash: {}: command not found", name),
+            127,
+        ))
     }
 
     /// Process input redirections (< file, <<< string)
