@@ -100,6 +100,8 @@ pub struct Bash {
     interpreter: Interpreter,
     /// Parser timeout (stored separately for use before interpreter runs)
     parser_timeout: std::time::Duration,
+    /// Maximum input script size in bytes
+    max_input_bytes: usize,
 }
 
 impl Default for Bash {
@@ -114,10 +116,12 @@ impl Bash {
         let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
         let interpreter = Interpreter::new(Arc::clone(&fs));
         let parser_timeout = ExecutionLimits::default().parser_timeout;
+        let max_input_bytes = ExecutionLimits::default().max_input_bytes;
         Self {
             fs,
             interpreter,
             parser_timeout,
+            max_input_bytes,
         }
     }
 
@@ -128,9 +132,19 @@ impl Bash {
 
     /// Execute a bash script and return the result.
     ///
-    /// This method parses the script with a timeout to prevent parser hangs,
+    /// This method first validates that the script does not exceed the maximum
+    /// input size, then parses the script with a timeout to prevent parser hangs,
     /// then executes the resulting AST.
     pub async fn exec(&mut self, script: &str) -> Result<ExecResult> {
+        // Check input size before parsing (V1 mitigation)
+        let input_len = script.len();
+        if input_len > self.max_input_bytes {
+            return Err(Error::ResourceLimit(LimitExceeded::InputTooLarge(
+                input_len,
+                self.max_input_bytes,
+            )));
+        }
+
         let parser_timeout = self.parser_timeout;
         let script_owned = script.to_owned();
 
@@ -350,12 +364,14 @@ impl BashBuilder {
         }
 
         let parser_timeout = self.limits.parser_timeout;
+        let max_input_bytes = self.limits.max_input_bytes;
         interpreter.set_limits(self.limits);
 
         Bash {
             fs,
             interpreter,
             parser_timeout,
+            max_input_bytes,
         }
     }
 }
@@ -1803,6 +1819,48 @@ mod tests {
     async fn test_parser_timeout_normal_script() {
         // Normal scripts should complete well within timeout
         let limits = ExecutionLimits::new().parser_timeout(std::time::Duration::from_secs(1));
+        let mut bash = Bash::builder().limits(limits).build();
+        let result = bash.exec("echo hello").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    // Input size limit tests
+
+    #[tokio::test]
+    async fn test_input_size_limit_default() {
+        // Default input size limit should be 10MB
+        let limits = ExecutionLimits::default();
+        assert_eq!(limits.max_input_bytes, 10_000_000);
+    }
+
+    #[tokio::test]
+    async fn test_input_size_limit_custom() {
+        // Input size limit can be customized
+        let limits = ExecutionLimits::new().max_input_bytes(1000);
+        assert_eq!(limits.max_input_bytes, 1000);
+    }
+
+    #[tokio::test]
+    async fn test_input_size_limit_enforced() {
+        // Scripts exceeding the limit should be rejected
+        let limits = ExecutionLimits::new().max_input_bytes(10);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // This script is longer than 10 bytes
+        let result = bash.exec("echo hello world").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("input too large"),
+            "Expected input size error, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_input_size_limit_normal_script() {
+        // Normal scripts should complete within limit
+        let limits = ExecutionLimits::new().max_input_bytes(1000);
         let mut bash = Bash::builder().limits(limits).build();
         let result = bash.exec("echo hello").await.unwrap();
         assert_eq!(result.stdout, "hello\n");

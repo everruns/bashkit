@@ -37,6 +37,11 @@ pub struct ExecutionLimits {
     /// This limits how long the parser can spend parsing a script before giving up.
     /// Protects against parser hang attacks (V3 in threat model).
     pub parser_timeout: Duration,
+
+    /// Maximum input script size in bytes
+    /// Default: 10MB (10,000,000 bytes)
+    /// Protects against memory exhaustion from large scripts (V1 in threat model).
+    pub max_input_bytes: usize,
 }
 
 impl Default for ExecutionLimits {
@@ -47,6 +52,7 @@ impl Default for ExecutionLimits {
             max_function_depth: 100,
             timeout: Duration::from_secs(30),
             parser_timeout: Duration::from_secs(5),
+            max_input_bytes: 10_000_000, // 10MB
         }
     }
 }
@@ -84,6 +90,12 @@ impl ExecutionLimits {
     /// Set parser timeout
     pub fn parser_timeout(mut self, timeout: Duration) -> Self {
         self.parser_timeout = timeout;
+        self
+    }
+
+    /// Set maximum input script size in bytes
+    pub fn max_input_bytes(mut self, bytes: usize) -> Self {
+        self.max_input_bytes = bytes;
         self
     }
 }
@@ -225,6 +237,9 @@ pub enum LimitExceeded {
 
     #[error("parser timeout ({0:?})")]
     ParserTimeout(Duration),
+
+    #[error("input too large ({0} bytes, max {1} bytes)")]
+    InputTooLarge(usize, usize),
 }
 
 #[cfg(test)]
@@ -240,6 +255,7 @@ mod tests {
         assert_eq!(limits.max_function_depth, 100);
         assert_eq!(limits.timeout, Duration::from_secs(30));
         assert_eq!(limits.parser_timeout, Duration::from_secs(5));
+        assert_eq!(limits.max_input_bytes, 10_000_000);
     }
 
     #[test]
