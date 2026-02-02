@@ -109,7 +109,7 @@ abc
 ### end
 
 ### sed_append
-### skip: append command not implemented
+# Append text after matching line
 printf 'one\ntwo\n' | sed '/one/a\inserted'
 ### expect
 one
@@ -118,7 +118,7 @@ two
 ### end
 
 ### sed_insert
-### skip: insert command not implemented
+# Insert text before matching line
 printf 'one\ntwo\n' | sed '/two/i\inserted'
 ### expect
 one

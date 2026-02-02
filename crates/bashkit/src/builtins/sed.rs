@@ -32,6 +32,8 @@ enum SedCommand {
     Delete,
     Print,
     Quit,
+    Append(String),
+    Insert(String),
 }
 
 #[derive(Debug, Clone)]
@@ -302,6 +304,24 @@ fn parse_sed_command(s: &str) -> Result<(Option<Address>, SedCommand)> {
         'd' => Ok((address.or(Some(Address::All)), SedCommand::Delete)),
         'p' => Ok((address.or(Some(Address::All)), SedCommand::Print)),
         'q' => Ok((address, SedCommand::Quit)),
+        'a' => {
+            // Append command: a\text or a text (after backslash)
+            let text = if rest.len() > 1 && rest.chars().nth(1) == Some('\\') {
+                rest[2..].to_string()
+            } else {
+                rest[1..].to_string()
+            };
+            Ok((address, SedCommand::Append(text)))
+        }
+        'i' => {
+            // Insert command: i\text or i text (after backslash)
+            let text = if rest.len() > 1 && rest.chars().nth(1) == Some('\\') {
+                rest[2..].to_string()
+            } else {
+                rest[1..].to_string()
+            };
+            Ok((address, SedCommand::Insert(text)))
+        }
         _ => Err(Error::Execution(format!(
             "sed: unknown command: {}",
             first_char
@@ -358,6 +378,8 @@ impl Builtin for Sed {
                 let mut should_print = !opts.quiet;
                 let mut deleted = false;
                 let mut extra_print = false;
+                let mut insert_text: Option<String> = None;
+                let mut append_text: Option<String> = None;
 
                 for (addr, cmd) in &opts.commands {
                     let addr_matches = addr
@@ -399,7 +421,19 @@ impl Builtin for Sed {
                         SedCommand::Quit => {
                             quit = true;
                         }
+                        SedCommand::Append(text) => {
+                            append_text = Some(text.clone());
+                        }
+                        SedCommand::Insert(text) => {
+                            insert_text = Some(text.clone());
+                        }
                     }
+                }
+
+                // Insert text comes before the line
+                if let Some(text) = insert_text {
+                    file_output.push_str(&text);
+                    file_output.push('\n');
                 }
 
                 if !deleted && should_print {
@@ -409,6 +443,12 @@ impl Builtin for Sed {
 
                 if extra_print {
                     file_output.push_str(&current_line);
+                    file_output.push('\n');
+                }
+
+                // Append text comes after the line
+                if let Some(text) = append_text {
+                    file_output.push_str(&text);
                     file_output.push('\n');
                 }
             }
@@ -544,5 +584,21 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "hi there\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_append() {
+        let result = run_sed(&["/one/a\\inserted"], Some("one\ntwo"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "one\ninserted\ntwo\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_insert() {
+        let result = run_sed(&["/two/i\\inserted"], Some("one\ntwo"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "one\ninserted\ntwo\n");
     }
 }
