@@ -149,6 +149,10 @@ impl Interpreter {
         builtins.insert("less", Box::new(builtins::Less));
         builtins.insert("file", Box::new(builtins::File));
         builtins.insert("stat", Box::new(builtins::Stat));
+        // Archive operations
+        builtins.insert("tar", Box::new(builtins::Tar));
+        builtins.insert("gzip", Box::new(builtins::Gzip));
+        builtins.insert("gunzip", Box::new(builtins::Gunzip));
 
         Self {
             fs,

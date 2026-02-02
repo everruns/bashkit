@@ -1,5 +1,6 @@
 //! Built-in shell commands
 
+mod archive;
 mod awk;
 mod cat;
 mod curl;
@@ -29,6 +30,7 @@ mod vars;
 mod wait;
 mod wc;
 
+pub use archive::{Gunzip, Gzip, Tar};
 pub use awk::Awk;
 pub use cat::Cat;
 pub use curl::{Curl, Wget};
