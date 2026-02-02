@@ -22,23 +22,56 @@ pub use lexer::Lexer;
 
 use crate::error::{Error, Result};
 
+/// Default maximum AST depth (matches ExecutionLimits default)
+const DEFAULT_MAX_AST_DEPTH: usize = 100;
+
 /// Parser for bash scripts.
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     current_token: Option<tokens::Token>,
     /// Lookahead token for function parsing
     peeked_token: Option<tokens::Token>,
+    /// Maximum allowed AST nesting depth
+    max_depth: usize,
+    /// Current nesting depth
+    current_depth: usize,
 }
 
 impl<'a> Parser<'a> {
     /// Create a new parser for the given input.
     pub fn new(input: &'a str) -> Self {
+        Self::with_max_depth(input, DEFAULT_MAX_AST_DEPTH)
+    }
+
+    /// Create a new parser with a custom maximum AST depth.
+    pub fn with_max_depth(input: &'a str, max_depth: usize) -> Self {
         let mut lexer = Lexer::new(input);
         let current_token = lexer.next_token();
         Self {
             lexer,
             current_token,
             peeked_token: None,
+            max_depth,
+            current_depth: 0,
+        }
+    }
+
+    /// Push nesting depth and check limit
+    fn push_depth(&mut self) -> Result<()> {
+        self.current_depth += 1;
+        if self.current_depth > self.max_depth {
+            return Err(Error::Parse(format!(
+                "AST nesting too deep ({} levels, max {})",
+                self.current_depth, self.max_depth
+            )));
+        }
+        Ok(())
+    }
+
+    /// Pop nesting depth
+    fn pop_depth(&mut self) {
+        if self.current_depth > 0 {
+            self.current_depth -= 1;
         }
     }
 
@@ -237,6 +270,7 @@ impl<'a> Parser<'a> {
 
     /// Parse an if statement
     fn parse_if(&mut self) -> Result<CompoundCommand> {
+        self.push_depth()?;
         self.advance(); // consume 'if'
         self.skip_newlines();
 
@@ -276,6 +310,7 @@ impl<'a> Parser<'a> {
         // Expect 'fi'
         self.expect_keyword("fi")?;
 
+        self.pop_depth();
         Ok(CompoundCommand::If(IfCommand {
             condition,
             then_branch,
@@ -286,21 +321,25 @@ impl<'a> Parser<'a> {
 
     /// Parse a for loop
     fn parse_for(&mut self) -> Result<CompoundCommand> {
+        self.push_depth()?;
         self.advance(); // consume 'for'
         self.skip_newlines();
 
         // Check for C-style for loop: for ((init; cond; step))
         if matches!(self.current_token, Some(tokens::Token::DoubleLeftParen)) {
-            return self.parse_arithmetic_for();
+            let result = self.parse_arithmetic_for_inner();
+            self.pop_depth();
+            return result;
         }
 
         // Expect variable name
         let variable = match &self.current_token {
             Some(tokens::Token::Word(w)) | Some(tokens::Token::LiteralWord(w)) => w.clone(),
             _ => {
+                self.pop_depth();
                 return Err(Error::Parse(
                     "expected variable name in for loop".to_string(),
-                ))
+                ));
             }
         };
         self.advance();
@@ -348,6 +387,7 @@ impl<'a> Parser<'a> {
         // Expect 'done'
         self.expect_keyword("done")?;
 
+        self.pop_depth();
         Ok(CompoundCommand::For(ForCommand {
             variable,
             words,
@@ -355,8 +395,9 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    /// Parse C-style arithmetic for loop: for ((init; cond; step)); do body; done
-    fn parse_arithmetic_for(&mut self) -> Result<CompoundCommand> {
+    /// Parse C-style arithmetic for loop inner: for ((init; cond; step)); do body; done
+    /// Note: depth tracking is done by parse_for which calls this
+    fn parse_arithmetic_for_inner(&mut self) -> Result<CompoundCommand> {
         self.advance(); // consume '(('
 
         // Read the three expressions separated by semicolons
@@ -493,6 +534,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a while loop
     fn parse_while(&mut self) -> Result<CompoundCommand> {
+        self.push_depth()?;
         self.advance(); // consume 'while'
         self.skip_newlines();
 
@@ -509,11 +551,13 @@ impl<'a> Parser<'a> {
         // Expect 'done'
         self.expect_keyword("done")?;
 
+        self.pop_depth();
         Ok(CompoundCommand::While(WhileCommand { condition, body }))
     }
 
     /// Parse an until loop
     fn parse_until(&mut self) -> Result<CompoundCommand> {
+        self.push_depth()?;
         self.advance(); // consume 'until'
         self.skip_newlines();
 
@@ -530,11 +574,13 @@ impl<'a> Parser<'a> {
         // Expect 'done'
         self.expect_keyword("done")?;
 
+        self.pop_depth();
         Ok(CompoundCommand::Until(UntilCommand { condition, body }))
     }
 
     /// Parse a case statement: case WORD in pattern) commands ;; ... esac
     fn parse_case(&mut self) -> Result<CompoundCommand> {
+        self.push_depth()?;
         self.advance(); // consume 'case'
         self.skip_newlines();
 
@@ -575,6 +621,7 @@ impl<'a> Parser<'a> {
 
             // Expect )
             if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
+                self.pop_depth();
                 return Err(Error::Parse("expected ')' after case pattern".to_string()));
             }
             self.advance();
@@ -604,6 +651,7 @@ impl<'a> Parser<'a> {
         // Expect 'esac'
         self.expect_keyword("esac")?;
 
+        self.pop_depth();
         Ok(CompoundCommand::Case(CaseCommand { word, cases }))
     }
 
@@ -657,6 +705,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a subshell (commands in parentheses)
     fn parse_subshell(&mut self) -> Result<CompoundCommand> {
+        self.push_depth()?;
         self.advance(); // consume '('
         self.skip_newlines();
 
@@ -672,15 +721,18 @@ impl<'a> Parser<'a> {
         }
 
         if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
+            self.pop_depth();
             return Err(Error::Parse("expected ')' to close subshell".to_string()));
         }
         self.advance(); // consume ')'
 
+        self.pop_depth();
         Ok(CompoundCommand::Subshell(commands))
     }
 
     /// Parse a brace group
     fn parse_brace_group(&mut self) -> Result<CompoundCommand> {
+        self.push_depth()?;
         self.advance(); // consume '{'
         self.skip_newlines();
 
@@ -696,12 +748,14 @@ impl<'a> Parser<'a> {
         }
 
         if !matches!(self.current_token, Some(tokens::Token::RightBrace)) {
+            self.pop_depth();
             return Err(Error::Parse(
                 "expected '}' to close brace group".to_string(),
             ));
         }
         self.advance(); // consume '}'
 
+        self.pop_depth();
         Ok(CompoundCommand::BraceGroup(commands))
     }
 

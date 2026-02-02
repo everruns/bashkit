@@ -42,6 +42,11 @@ pub struct ExecutionLimits {
     /// Default: 10MB (10,000,000 bytes)
     /// Protects against memory exhaustion from large scripts (V1 in threat model).
     pub max_input_bytes: usize,
+
+    /// Maximum AST nesting depth during parsing
+    /// Default: 100
+    /// Protects against stack overflow from deeply nested scripts (V4 in threat model).
+    pub max_ast_depth: usize,
 }
 
 impl Default for ExecutionLimits {
@@ -53,6 +58,7 @@ impl Default for ExecutionLimits {
             timeout: Duration::from_secs(30),
             parser_timeout: Duration::from_secs(5),
             max_input_bytes: 10_000_000, // 10MB
+            max_ast_depth: 100,
         }
     }
 }
@@ -96,6 +102,12 @@ impl ExecutionLimits {
     /// Set maximum input script size in bytes
     pub fn max_input_bytes(mut self, bytes: usize) -> Self {
         self.max_input_bytes = bytes;
+        self
+    }
+
+    /// Set maximum AST nesting depth
+    pub fn max_ast_depth(mut self, depth: usize) -> Self {
+        self.max_ast_depth = depth;
         self
     }
 }
@@ -240,6 +252,9 @@ pub enum LimitExceeded {
 
     #[error("input too large ({0} bytes, max {1} bytes)")]
     InputTooLarge(usize, usize),
+
+    #[error("AST nesting too deep ({0} levels, max {1})")]
+    AstTooDeep(usize, usize),
 }
 
 #[cfg(test)]
@@ -256,6 +271,7 @@ mod tests {
         assert_eq!(limits.timeout, Duration::from_secs(30));
         assert_eq!(limits.parser_timeout, Duration::from_secs(5));
         assert_eq!(limits.max_input_bytes, 10_000_000);
+        assert_eq!(limits.max_ast_depth, 100);
     }
 
     #[test]
