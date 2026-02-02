@@ -36,6 +36,14 @@ check:
 pre-pr: check vet
     @echo "Pre-PR checks passed"
 
+# Check spec tests against real bash
+check-bash-compat:
+    ./scripts/update-spec-expected.sh
+
+# Check spec tests against real bash (verbose)
+check-bash-compat-verbose:
+    ./scripts/update-spec-expected.sh --verbose
+
 # Clean build artifacts
 clean:
     cargo clean
