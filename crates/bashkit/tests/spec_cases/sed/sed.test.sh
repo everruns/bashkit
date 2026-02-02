@@ -73,7 +73,7 @@ world hello
 ### end
 
 ### sed_case_insensitive
-### skip: case insensitive flag not fully implemented
+# Case insensitive substitution
 printf 'Hello World\n' | sed 's/hello/hi/i'
 ### expect
 hi World

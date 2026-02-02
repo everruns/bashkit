@@ -12,7 +12,7 @@
 //!   sed -e 's/a/b/' -e 's/c/d/' file     # multiple commands
 
 use async_trait::async_trait;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 
 use super::{Builtin, Context};
 use crate::error::{Error, Result};
@@ -216,7 +216,11 @@ fn parse_sed_command(s: &str) -> Result<(Option<Address>, SedCommand)> {
                 .replace("\\+", "+")
                 .replace("\\?", "?");
 
-            let regex = Regex::new(&pattern)
+            // Build regex with optional case-insensitive flag
+            let case_insensitive = flags.contains('i');
+            let regex = RegexBuilder::new(&pattern)
+                .case_insensitive(case_insensitive)
+                .build()
                 .map_err(|e| Error::Execution(format!("sed: invalid pattern: {}", e)))?;
 
             // Convert sed replacement syntax to regex replacement syntax
@@ -471,5 +475,13 @@ mod tests {
     async fn test_sed_last_line() {
         let result = run_sed(&["$d"], Some("line1\nline2\nline3")).await.unwrap();
         assert_eq!(result.stdout, "line1\nline2\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_case_insensitive() {
+        let result = run_sed(&["s/hello/hi/i"], Some("Hello World"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "hi World\n");
     }
 }
