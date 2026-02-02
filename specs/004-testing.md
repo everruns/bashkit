@@ -120,8 +120,14 @@ cargo test --test spec_tests -- bash_spec_tests
 # With output
 cargo test --test spec_tests -- --nocapture
 
-# Comparison against real bash (ignored by default)
-cargo test --test spec_tests -- bash_comparison_tests --ignored
+# Check spec tests match real bash
+just check-bash-compat
+
+# Check spec tests match real bash (verbose - shows each test)
+just check-bash-compat-verbose
+
+# Or directly with cargo:
+cargo test --test spec_tests -- bash_comparison_tests --nocapture
 ```
 
 ## Coverage
@@ -156,9 +162,26 @@ The following items need attention:
 
 1. Create or edit `.test.sh` file in appropriate category
 2. Use the standard format with `### test_name`, `### expect`, `### end`
-3. Run tests to verify
+3. Run `just check-bash-compat` to verify expected output matches real bash
 4. If test fails due to unimplemented feature, add `### skip: reason`
-5. Update `KNOWN_LIMITATIONS.md` for skipped tests
+5. If BashKit intentionally differs from bash, add `### bash_diff: reason`
+6. Update `KNOWN_LIMITATIONS.md` for skipped tests
+
+### Checking Expected Outputs
+
+The `scripts/update-spec-expected.sh` script helps verify expected outputs:
+
+```bash
+# Check all tests match real bash
+./scripts/update-spec-expected.sh
+
+# Show detailed comparison for each test
+./scripts/update-spec-expected.sh --verbose
+```
+
+If a test fails, either:
+1. Fix the expected output to match real bash, or
+2. Add `### bash_diff: reason` if the difference is intentional
 
 ## Comparison Testing
 
