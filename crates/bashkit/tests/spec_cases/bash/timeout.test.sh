@@ -81,17 +81,17 @@ input data
 ### end
 
 ### timeout_expired
-### skip: timing-dependent test, verified manually
 # Timeout that expires should return 124
-timeout 0.001 sleep 10
+# Note: Also tested in interpreter::tests::test_timeout_expires_deterministically with paused time
+timeout 0.1 sleep 100
 echo $?
 ### expect
 124
 ### end
 
 ### timeout_zero
-### skip: timing-dependent test, verified manually
 # Timeout of 0 should timeout immediately
+# Note: Also tested in interpreter::tests::test_timeout_zero_deterministically with paused time
 timeout 0 sleep 1
 echo $?
 ### expect
