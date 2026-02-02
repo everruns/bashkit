@@ -123,6 +123,11 @@ impl Interpreter {
         builtins.insert("unset".to_string(), Box::new(builtins::Unset));
         builtins.insert("shift".to_string(), Box::new(builtins::Shift));
         builtins.insert("local".to_string(), Box::new(builtins::Local));
+        // POSIX special built-ins
+        builtins.insert(":".to_string(), Box::new(builtins::Colon));
+        builtins.insert("readonly".to_string(), Box::new(builtins::Readonly));
+        builtins.insert("times".to_string(), Box::new(builtins::Times));
+        builtins.insert("eval".to_string(), Box::new(builtins::Eval));
         builtins.insert(
             "source".to_string(),
             Box::new(builtins::Source::new(fs.clone())),
@@ -2383,7 +2388,7 @@ impl Interpreter {
 
     /// Expand a variable by name, checking local scope, positional params, shell vars, then env
     fn expand_variable(&self, name: &str) -> String {
-        // Check for special parameters
+        // Check for special parameters (POSIX required)
         match name {
             "?" => return self.last_exit_code.to_string(),
             "#" => {
@@ -2403,6 +2408,39 @@ impl Interpreter {
             "$" => {
                 // $$ - current process ID (simulated)
                 return std::process::id().to_string();
+            }
+            "!" => {
+                // $! - PID of most recent background command
+                // In sandboxed environment, background jobs run synchronously
+                // Return empty string or last job ID placeholder
+                if let Some(last_bg_pid) = self.variables.get("_LAST_BG_PID") {
+                    return last_bg_pid.clone();
+                }
+                return String::new();
+            }
+            "-" => {
+                // $- - Current option flags as a string
+                // Build from SHOPT_* variables
+                let mut flags = String::new();
+                for opt in ['e', 'x', 'u', 'f', 'n', 'v', 'a', 'b', 'h', 'm'] {
+                    let opt_name = format!("SHOPT_{}", opt);
+                    if self
+                        .variables
+                        .get(&opt_name)
+                        .map(|v| v == "1")
+                        .unwrap_or(false)
+                    {
+                        flags.push(opt);
+                    }
+                }
+                // Also check options struct
+                if self.options.errexit && !flags.contains('e') {
+                    flags.push('e');
+                }
+                if self.options.xtrace && !flags.contains('x') {
+                    flags.push('x');
+                }
+                return flags;
             }
             "RANDOM" => {
                 // $RANDOM - random number between 0 and 32767
@@ -2747,5 +2785,72 @@ mod tests {
         // Zero should work
         let d = Interpreter::parse_timeout_duration("0").unwrap();
         assert_eq!(d, Duration::ZERO);
+    }
+
+    // POSIX special builtins tests
+
+    /// Helper to run a script and return result
+    async fn run_script(script: &str) -> ExecResult {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        let parser = Parser::new(script);
+        let ast = parser.parse().unwrap();
+        interp.execute(&ast).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_colon_null_utility() {
+        // POSIX : (colon) - null utility, should return success
+        let result = run_script(":").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_colon_with_args() {
+        // Colon should ignore arguments and still succeed
+        let result = run_script(": arg1 arg2 arg3").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_colon_in_while_loop() {
+        // Common use case: while : (infinite loop, but we limit iterations)
+        let result = run_script(
+            "x=0; while :; do x=$((x+1)); if [ $x -ge 3 ]; then break; fi; done; echo $x",
+        )
+        .await;
+        assert_eq!(result.stdout.trim(), "3");
+    }
+
+    #[tokio::test]
+    async fn test_times_builtin() {
+        // POSIX times - returns process times (zeros in sandbox)
+        let result = run_script("times").await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("0m0.000s"));
+    }
+
+    #[tokio::test]
+    async fn test_readonly_basic() {
+        // POSIX readonly - mark variable as read-only
+        let result = run_script("readonly X=value; echo $X").await;
+        assert_eq!(result.stdout.trim(), "value");
+    }
+
+    #[tokio::test]
+    async fn test_special_param_dash() {
+        // $- should return current option flags
+        let result = run_script("set -e; echo \"$-\"").await;
+        assert!(result.stdout.contains('e'));
+    }
+
+    #[tokio::test]
+    async fn test_special_param_bang() {
+        // $! - last background PID (empty in sandbox with no bg jobs)
+        let result = run_script("echo \"$!\"").await;
+        // Should be empty or a placeholder
+        assert_eq!(result.exit_code, 0);
     }
 }

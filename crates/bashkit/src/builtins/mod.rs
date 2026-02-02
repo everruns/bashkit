@@ -64,7 +64,7 @@ pub use echo::Echo;
 pub use environ::{Env, History, Printenv};
 pub use export::Export;
 pub use fileops::{Chmod, Cp, Mkdir, Mv, Rm, Touch};
-pub use flow::{Break, Continue, Exit, False, Return, True};
+pub use flow::{Break, Colon, Continue, Exit, False, Return, True};
 pub use grep::Grep;
 pub use headtail::{Head, Tail};
 pub use inspect::{File, Less, Stat};
@@ -82,7 +82,7 @@ pub use source::Source;
 pub use system::{Hostname, Id, Uname, Whoami, DEFAULT_HOSTNAME, DEFAULT_USERNAME};
 pub use test::{Bracket, Test};
 pub use timeout::Timeout;
-pub use vars::{Local, Set, Shift, Unset};
+pub use vars::{Eval, Local, Readonly, Set, Shift, Times, Unset};
 pub use wait::Wait;
 pub use wc::Wc;
 
