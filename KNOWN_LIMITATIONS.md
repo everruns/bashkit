@@ -19,9 +19,9 @@ for detailed compliance status.
 | Bash (core) | 404 | Yes | 294 | 110 | `bash_spec_tests` in CI |
 | AWK | 89 | Yes | 48 | 41 | loops, arrays, functions |
 | Grep | 70 | Yes | 56 | 14 | now with -A/-B/-C, -m, -q, -x, -e |
-| Sed | 65 | Yes | 40 | 25 | hold space, -E, branching |
+| Sed | 65 | Yes | 49 | 16 | now with -E, nth occurrence, ! negation |
 | JQ | 95 | Yes | 58 | 37 | reduce, walk, regex funcs |
-| **Total** | **723** | **Yes** | **496** | **227** | |
+| **Total** | **723** | **Yes** | **505** | **218** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -135,15 +135,26 @@ for detailed compliance status.
 ### Sed Limitations
 - In-place editing (`-i`) - not implemented for security
 
-**Skipped Tests (25):**
+**Implemented (previously missing):**
+- Extended regex `-E` (`+`, `?`, `|`, `()` grouping)
+- Nth occurrence replacement (`s/a/X/2`, `s/a/X/3`)
+- Address negation (`!`) for inverted matches
+- Append/insert (`a\`, `i\`) commands
+- Multiple `-e` expressions (`sed -e 's/a/b/' -e 's/c/d/'`)
+
+**Skipped Tests (16):**
 | Feature | Count | Notes |
 |---------|-------|-------|
-| Extended regex `-E` | 5 | `+`, `?`, `\|`, `()` grouping |
-| Hold space | 6 | `h`, `H`, `g`, `G`, `x` commands |
-| Pattern ranges | 4 | `/start/,/end/` address ranges |
-| Branching | 4 | `b`, `t`, `:label` commands |
-| Append/Insert | 3 | `a\`, `i\` commands |
-| Character classes | 3 | `[:alpha:]`, `[:digit:]` in `y///` |
+| Hold space | 3 | `h`, `H`, `x` commands |
+| Pattern ranges | 3 | `/start/,/end/` address ranges |
+| Branching | 1 | `b`, `t`, `:label` commands |
+| Grouped commands | 1 | `{cmd1;cmd2}` blocks |
+| Special addresses | 2 | `0~2` step, `0,/pattern/` first match |
+| Replacement escapes | 2 | `\n` newline, `&` with adjacent chars |
+| Change command | 1 | `c\` command |
+| Q command | 1 | `Q` quit without printing |
+| In-place edit | 1 | `-i` flag |
+| Backreferences | 1 | Some edge cases |
 
 ### Grep Limitations
 

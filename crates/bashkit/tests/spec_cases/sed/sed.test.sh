@@ -127,14 +127,14 @@ two
 ### end
 
 ### sed_nth_occurrence
-### skip: nth occurrence flag not implemented
+# Replace 2nd occurrence
 printf 'aaa\n' | sed 's/a/X/2'
 ### expect
 aXa
 ### end
 
 ### sed_nth_occurrence_3rd
-### skip: nth occurrence flag not implemented
+# Replace 3rd occurrence
 printf 'aaaa\n' | sed 's/a/X/3'
 ### expect
 aaXa
@@ -168,7 +168,7 @@ d
 ### end
 
 ### sed_multiple_e_flags
-### skip: multiple -e expressions not implemented
+# Multiple -e expressions
 printf 'hello world\n' | sed -e 's/hello/hi/' -e 's/world/there/'
 ### expect
 hi there
@@ -182,28 +182,28 @@ done
 ### end
 
 ### sed_extended_regex_plus
-### skip: -E flag not implemented
+# Extended regex with + quantifier
 printf 'aaa\n' | sed -E 's/a+/X/'
 ### expect
 X
 ### end
 
 ### sed_extended_regex_question
-### skip: -E flag not implemented
+# Extended regex with ? quantifier
 printf 'ab\n' | sed -E 's/ab?/X/'
 ### expect
 X
 ### end
 
 ### sed_extended_regex_group
-### skip: -E flag not implemented
+# Extended regex with capture groups
 printf 'hello world\n' | sed -E 's/(hello) (world)/\2 \1/'
 ### expect
 world hello
 ### end
 
 ### sed_extended_regex_alternation
-### skip: -E flag not implemented
+# Extended regex with alternation
 printf 'cat\ndog\nbird\n' | sed -E '/cat|dog/d'
 ### expect
 bird
@@ -276,7 +276,7 @@ X
 ### end
 
 ### sed_negate_pattern
-### skip: address negation ! not implemented
+# Address negation with !
 printf 'foo\nbar\nbaz\n' | sed '/bar/!d'
 ### expect
 bar
@@ -391,7 +391,7 @@ foo baz
 ### end
 
 ### sed_address_not_pattern_subst
-### skip: address negation ! not implemented
+# Address negation with substitution
 printf 'foo\nbar\nbaz\n' | sed '/foo/!s/./X/g'
 ### expect
 foo
