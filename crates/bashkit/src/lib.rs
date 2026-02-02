@@ -255,6 +255,8 @@ pub struct Bash {
     max_input_bytes: usize,
     /// Maximum AST nesting depth for parsing
     max_ast_depth: usize,
+    /// Maximum parser operations (fuel)
+    max_parser_operations: usize,
 }
 
 impl Default for Bash {
@@ -271,12 +273,14 @@ impl Bash {
         let parser_timeout = ExecutionLimits::default().parser_timeout;
         let max_input_bytes = ExecutionLimits::default().max_input_bytes;
         let max_ast_depth = ExecutionLimits::default().max_ast_depth;
+        let max_parser_operations = ExecutionLimits::default().max_parser_operations;
         Self {
             fs,
             interpreter,
             parser_timeout,
             max_input_bytes,
             max_ast_depth,
+            max_parser_operations,
         }
     }
 
@@ -288,7 +292,7 @@ impl Bash {
     /// Execute a bash script and return the result.
     ///
     /// This method first validates that the script does not exceed the maximum
-    /// input size, then parses the script with a timeout and AST depth limit,
+    /// input size, then parses the script with a timeout, AST depth limit, and fuel limit,
     /// then executes the resulting AST.
     pub async fn exec(&mut self, script: &str) -> Result<ExecResult> {
         // Check input size before parsing (V1 mitigation)
@@ -302,12 +306,14 @@ impl Bash {
 
         let parser_timeout = self.parser_timeout;
         let max_ast_depth = self.max_ast_depth;
+        let max_parser_operations = self.max_parser_operations;
         let script_owned = script.to_owned();
 
         // Parse with timeout using spawn_blocking since parsing is sync
         let parse_result = tokio::time::timeout(parser_timeout, async {
             tokio::task::spawn_blocking(move || {
-                let parser = Parser::with_max_depth(&script_owned, max_ast_depth);
+                let parser =
+                    Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations);
                 parser.parse()
             })
             .await
@@ -522,6 +528,7 @@ impl BashBuilder {
         let parser_timeout = self.limits.parser_timeout;
         let max_input_bytes = self.limits.max_input_bytes;
         let max_ast_depth = self.limits.max_ast_depth;
+        let max_parser_operations = self.limits.max_parser_operations;
         interpreter.set_limits(self.limits);
 
         Bash {
@@ -530,6 +537,7 @@ impl BashBuilder {
             parser_timeout,
             max_input_bytes,
             max_ast_depth,
+            max_parser_operations,
         }
     }
 }
@@ -1982,6 +1990,31 @@ mod tests {
         assert_eq!(result.stdout, "hello\n");
     }
 
+    // Parser fuel tests
+
+    #[tokio::test]
+    async fn test_parser_fuel_default() {
+        // Default parser fuel should be 100,000
+        let limits = ExecutionLimits::default();
+        assert_eq!(limits.max_parser_operations, 100_000);
+    }
+
+    #[tokio::test]
+    async fn test_parser_fuel_custom() {
+        // Parser fuel can be customized
+        let limits = ExecutionLimits::new().max_parser_operations(1000);
+        assert_eq!(limits.max_parser_operations, 1000);
+    }
+
+    #[tokio::test]
+    async fn test_parser_fuel_normal_script() {
+        // Normal scripts should parse within fuel limit
+        let limits = ExecutionLimits::new().max_parser_operations(1000);
+        let mut bash = Bash::builder().limits(limits).build();
+        let result = bash.exec("echo hello").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
     // Input size limit tests
 
     #[tokio::test]
@@ -2064,6 +2097,24 @@ mod tests {
         assert!(
             err.to_string().contains("AST nesting too deep"),
             "Expected AST depth error, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_parser_fuel_enforced() {
+        // Scripts exceeding fuel limit should be rejected
+        // With fuel of 3, parsing "echo a" should fail (needs multiple operations)
+        let limits = ExecutionLimits::new().max_parser_operations(3);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // Even a simple script needs more than 3 parsing operations
+        let result = bash.exec("echo a; echo b; echo c").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("parser fuel exhausted"),
+            "Expected parser fuel error, got: {}",
             err
         );
     }

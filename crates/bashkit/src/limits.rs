@@ -47,6 +47,11 @@ pub struct ExecutionLimits {
     /// Default: 100
     /// Protects against stack overflow from deeply nested scripts (V4 in threat model).
     pub max_ast_depth: usize,
+
+    /// Maximum parser operations (fuel model for parsing)
+    /// Default: 100,000
+    /// Protects against parser DoS attacks that could otherwise cause CPU exhaustion.
+    pub max_parser_operations: usize,
 }
 
 impl Default for ExecutionLimits {
@@ -59,6 +64,7 @@ impl Default for ExecutionLimits {
             parser_timeout: Duration::from_secs(5),
             max_input_bytes: 10_000_000, // 10MB
             max_ast_depth: 100,
+            max_parser_operations: 100_000,
         }
     }
 }
@@ -108,6 +114,12 @@ impl ExecutionLimits {
     /// Set maximum AST nesting depth
     pub fn max_ast_depth(mut self, depth: usize) -> Self {
         self.max_ast_depth = depth;
+        self
+    }
+
+    /// Set maximum parser operations
+    pub fn max_parser_operations(mut self, ops: usize) -> Self {
+        self.max_parser_operations = ops;
         self
     }
 }
@@ -255,6 +267,9 @@ pub enum LimitExceeded {
 
     #[error("AST nesting too deep ({0} levels, max {1})")]
     AstTooDeep(usize, usize),
+
+    #[error("parser fuel exhausted ({0} operations, max {1})")]
+    ParserExhausted(usize, usize),
 }
 
 #[cfg(test)]
@@ -272,6 +287,7 @@ mod tests {
         assert_eq!(limits.parser_timeout, Duration::from_secs(5));
         assert_eq!(limits.max_input_bytes, 10_000_000);
         assert_eq!(limits.max_ast_depth, 100);
+        assert_eq!(limits.max_parser_operations, 100_000);
     }
 
     #[test]

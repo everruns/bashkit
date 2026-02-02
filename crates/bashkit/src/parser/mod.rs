@@ -25,6 +25,9 @@ use crate::error::{Error, Result};
 /// Default maximum AST depth (matches ExecutionLimits default)
 const DEFAULT_MAX_AST_DEPTH: usize = 100;
 
+/// Default maximum parser operations (matches ExecutionLimits default)
+const DEFAULT_MAX_PARSER_OPERATIONS: usize = 100_000;
+
 /// Parser for bash scripts.
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
@@ -35,16 +38,30 @@ pub struct Parser<'a> {
     max_depth: usize,
     /// Current nesting depth
     current_depth: usize,
+    /// Remaining fuel for parsing operations
+    fuel: usize,
+    /// Maximum fuel (for error reporting)
+    max_fuel: usize,
 }
 
 impl<'a> Parser<'a> {
     /// Create a new parser for the given input.
     pub fn new(input: &'a str) -> Self {
-        Self::with_max_depth(input, DEFAULT_MAX_AST_DEPTH)
+        Self::with_limits(input, DEFAULT_MAX_AST_DEPTH, DEFAULT_MAX_PARSER_OPERATIONS)
     }
 
     /// Create a new parser with a custom maximum AST depth.
     pub fn with_max_depth(input: &'a str, max_depth: usize) -> Self {
+        Self::with_limits(input, max_depth, DEFAULT_MAX_PARSER_OPERATIONS)
+    }
+
+    /// Create a new parser with a custom fuel limit.
+    pub fn with_fuel(input: &'a str, max_fuel: usize) -> Self {
+        Self::with_limits(input, DEFAULT_MAX_AST_DEPTH, max_fuel)
+    }
+
+    /// Create a new parser with custom depth and fuel limits.
+    pub fn with_limits(input: &'a str, max_depth: usize, max_fuel: usize) -> Self {
         let mut lexer = Lexer::new(input);
         let current_token = lexer.next_token();
         Self {
@@ -53,7 +70,22 @@ impl<'a> Parser<'a> {
             peeked_token: None,
             max_depth,
             current_depth: 0,
+            fuel: max_fuel,
+            max_fuel,
         }
+    }
+
+    /// Consume one unit of fuel, returning an error if exhausted
+    fn tick(&mut self) -> Result<()> {
+        if self.fuel == 0 {
+            let used = self.max_fuel;
+            return Err(Error::Parse(format!(
+                "parser fuel exhausted ({} operations, max {})",
+                used, self.max_fuel
+            )));
+        }
+        self.fuel -= 1;
+        Ok(())
     }
 
     /// Push nesting depth and check limit
@@ -80,7 +112,8 @@ impl<'a> Parser<'a> {
         let mut commands = Vec::new();
 
         while self.current_token.is_some() {
-            self.skip_newlines();
+            self.tick()?;
+            self.skip_newlines()?;
             if self.current_token.is_none() {
                 break;
             }
@@ -108,14 +141,17 @@ impl<'a> Parser<'a> {
         self.peeked_token.as_ref()
     }
 
-    fn skip_newlines(&mut self) {
+    fn skip_newlines(&mut self) -> Result<()> {
         while matches!(self.current_token, Some(tokens::Token::Newline)) {
+            self.tick()?;
             self.advance();
         }
+        Ok(())
     }
 
     /// Parse a command list (commands connected by && or ||)
     fn parse_command_list(&mut self) -> Result<Option<Command>> {
+        self.tick()?;
         let first = match self.parse_pipeline()? {
             Some(cmd) => cmd,
             None => return Ok(None),
@@ -135,7 +171,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(tokens::Token::Semicolon) => {
                     self.advance();
-                    self.skip_newlines();
+                    self.skip_newlines()?;
                     // Check if there's more to parse
                     if self.current_token.is_none()
                         || matches!(self.current_token, Some(tokens::Token::Newline))
@@ -146,7 +182,7 @@ impl<'a> Parser<'a> {
                 }
                 Some(tokens::Token::Background) => {
                     self.advance();
-                    self.skip_newlines();
+                    self.skip_newlines()?;
                     // Check if there's more to parse after &
                     if self.current_token.is_none()
                         || matches!(self.current_token, Some(tokens::Token::Newline))
@@ -168,7 +204,7 @@ impl<'a> Parser<'a> {
                 _ => break,
             };
 
-            self.skip_newlines();
+            self.skip_newlines()?;
 
             if let Some(cmd) = self.parse_pipeline()? {
                 rest.push((op, cmd));
@@ -198,7 +234,7 @@ impl<'a> Parser<'a> {
 
         while matches!(self.current_token, Some(tokens::Token::Pipe)) {
             self.advance();
-            self.skip_newlines();
+            self.skip_newlines()?;
 
             if let Some(cmd) = self.parse_command()? {
                 commands.push(cmd);
@@ -219,7 +255,7 @@ impl<'a> Parser<'a> {
 
     /// Parse a single command (simple or compound)
     fn parse_command(&mut self) -> Result<Option<Command>> {
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Check for compound commands and function keyword
         if let Some(tokens::Token::Word(w)) = &self.current_token {
@@ -272,14 +308,14 @@ impl<'a> Parser<'a> {
     fn parse_if(&mut self) -> Result<CompoundCommand> {
         self.push_depth()?;
         self.advance(); // consume 'if'
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Parse condition
         let condition = self.parse_compound_list("then")?;
 
         // Expect 'then'
         self.expect_keyword("then")?;
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Parse then branch
         let then_branch = self.parse_compound_list_until(&["elif", "else", "fi"])?;
@@ -288,11 +324,11 @@ impl<'a> Parser<'a> {
         let mut elif_branches = Vec::new();
         while self.is_keyword("elif") {
             self.advance(); // consume 'elif'
-            self.skip_newlines();
+            self.skip_newlines()?;
 
             let elif_condition = self.parse_compound_list("then")?;
             self.expect_keyword("then")?;
-            self.skip_newlines();
+            self.skip_newlines()?;
 
             let elif_body = self.parse_compound_list_until(&["elif", "else", "fi"])?;
             elif_branches.push((elif_condition, elif_body));
@@ -301,7 +337,7 @@ impl<'a> Parser<'a> {
         // Parse else branch
         let else_branch = if self.is_keyword("else") {
             self.advance(); // consume 'else'
-            self.skip_newlines();
+            self.skip_newlines()?;
             Some(self.parse_compound_list("fi")?)
         } else {
             None
@@ -323,7 +359,7 @@ impl<'a> Parser<'a> {
     fn parse_for(&mut self) -> Result<CompoundCommand> {
         self.push_depth()?;
         self.advance(); // consume 'for'
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Check for C-style for loop: for ((init; cond; step))
         if matches!(self.current_token, Some(tokens::Token::DoubleLeftParen)) {
@@ -375,11 +411,11 @@ impl<'a> Parser<'a> {
             None // for var; do ... (iterates over positional params)
         };
 
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Expect 'do'
         self.expect_keyword("do")?;
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Parse body
         let body = self.parse_compound_list("done")?;
@@ -506,17 +542,17 @@ impl<'a> Parser<'a> {
         let condition = parts.get(1).cloned().unwrap_or_default();
         let step = parts.get(2).cloned().unwrap_or_default();
 
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Skip optional semicolon after ))
         if matches!(self.current_token, Some(tokens::Token::Semicolon)) {
             self.advance();
         }
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Expect 'do'
         self.expect_keyword("do")?;
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Parse body
         let body = self.parse_compound_list("done")?;
@@ -536,14 +572,14 @@ impl<'a> Parser<'a> {
     fn parse_while(&mut self) -> Result<CompoundCommand> {
         self.push_depth()?;
         self.advance(); // consume 'while'
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Parse condition
         let condition = self.parse_compound_list("do")?;
 
         // Expect 'do'
         self.expect_keyword("do")?;
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Parse body
         let body = self.parse_compound_list("done")?;
@@ -559,14 +595,14 @@ impl<'a> Parser<'a> {
     fn parse_until(&mut self) -> Result<CompoundCommand> {
         self.push_depth()?;
         self.advance(); // consume 'until'
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Parse condition
         let condition = self.parse_compound_list("do")?;
 
         // Expect 'do'
         self.expect_keyword("do")?;
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Parse body
         let body = self.parse_compound_list("done")?;
@@ -582,20 +618,20 @@ impl<'a> Parser<'a> {
     fn parse_case(&mut self) -> Result<CompoundCommand> {
         self.push_depth()?;
         self.advance(); // consume 'case'
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Get the word to match against
         let word = self.expect_word()?;
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Expect 'in'
         self.expect_keyword("in")?;
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Parse case items
         let mut cases = Vec::new();
         while !self.is_keyword("esac") && self.current_token.is_some() {
-            self.skip_newlines();
+            self.skip_newlines()?;
             if self.is_keyword("esac") {
                 break;
             }
@@ -625,7 +661,7 @@ impl<'a> Parser<'a> {
                 return Err(Error::Parse("expected ')' after case pattern".to_string()));
             }
             self.advance();
-            self.skip_newlines();
+            self.skip_newlines()?;
 
             // Parse commands until ;; or esac
             let mut commands = Vec::new();
@@ -636,7 +672,7 @@ impl<'a> Parser<'a> {
                 if let Some(cmd) = self.parse_command_list()? {
                     commands.push(cmd);
                 }
-                self.skip_newlines();
+                self.skip_newlines()?;
             }
 
             cases.push(CaseItem { patterns, commands });
@@ -645,7 +681,7 @@ impl<'a> Parser<'a> {
             if self.is_case_terminator() {
                 self.advance_double_semicolon();
             }
-            self.skip_newlines();
+            self.skip_newlines()?;
         }
 
         // Expect 'esac'
@@ -661,13 +697,13 @@ impl<'a> Parser<'a> {
     /// Note: BashKit only tracks wall-clock time, not CPU user/sys time.
     fn parse_time(&mut self) -> Result<CompoundCommand> {
         self.advance(); // consume 'time'
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Check for -p flag (POSIX format)
         let posix_format = if let Some(tokens::Token::Word(w)) = &self.current_token {
             if w == "-p" {
                 self.advance();
-                self.skip_newlines();
+                self.skip_newlines()?;
                 true
             } else {
                 false
@@ -707,11 +743,11 @@ impl<'a> Parser<'a> {
     fn parse_subshell(&mut self) -> Result<CompoundCommand> {
         self.push_depth()?;
         self.advance(); // consume '('
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         let mut commands = Vec::new();
         while !matches!(self.current_token, Some(tokens::Token::RightParen) | None) {
-            self.skip_newlines();
+            self.skip_newlines()?;
             if matches!(self.current_token, Some(tokens::Token::RightParen)) {
                 break;
             }
@@ -734,11 +770,11 @@ impl<'a> Parser<'a> {
     fn parse_brace_group(&mut self) -> Result<CompoundCommand> {
         self.push_depth()?;
         self.advance(); // consume '{'
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         let mut commands = Vec::new();
         while !matches!(self.current_token, Some(tokens::Token::RightBrace) | None) {
-            self.skip_newlines();
+            self.skip_newlines()?;
             if matches!(self.current_token, Some(tokens::Token::RightBrace)) {
                 break;
             }
@@ -854,7 +890,7 @@ impl<'a> Parser<'a> {
     /// Parse function definition with 'function' keyword: function name { body }
     fn parse_function_keyword(&mut self) -> Result<Command> {
         self.advance(); // consume 'function'
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Get function name
         let name = match &self.current_token {
@@ -862,7 +898,7 @@ impl<'a> Parser<'a> {
             _ => return Err(Error::Parse("expected function name".to_string())),
         };
         self.advance();
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Optional () after name
         if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
@@ -873,7 +909,7 @@ impl<'a> Parser<'a> {
                 ));
             }
             self.advance(); // consume ')'
-            self.skip_newlines();
+            self.skip_newlines()?;
         }
 
         // Expect { for body
@@ -913,7 +949,7 @@ impl<'a> Parser<'a> {
             ));
         }
         self.advance(); // consume ')'
-        self.skip_newlines();
+        self.skip_newlines()?;
 
         // Expect { for body
         if !matches!(self.current_token, Some(tokens::Token::LeftBrace)) {
@@ -939,7 +975,7 @@ impl<'a> Parser<'a> {
         let mut commands = Vec::new();
 
         loop {
-            self.skip_newlines();
+            self.skip_newlines()?;
 
             // Check for terminators
             if let Some(tokens::Token::Word(w)) = &self.current_token {
@@ -1057,7 +1093,8 @@ impl<'a> Parser<'a> {
 
     /// Parse a simple command with redirections
     fn parse_simple_command(&mut self) -> Result<Option<SimpleCommand>> {
-        self.skip_newlines();
+        self.tick()?;
+        self.skip_newlines()?;
 
         let mut assignments = Vec::new();
         let mut words = Vec::new();
