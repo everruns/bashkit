@@ -2,6 +2,14 @@
 //!
 //! Part of the Everruns ecosystem.
 //!
+//! # Features
+//!
+//! - **Sandboxed execution**: In-memory virtual filesystem, no host access
+//! - **Async-first**: Built on tokio for efficient async execution
+//! - **Multi-tenant safe**: Isolated state per Bash instance
+//! - **Custom builtins**: Extend with domain-specific commands (psql, kubectl, etc.)
+//! - **Resource limits**: Configurable limits on commands, loops, and recursion
+//!
 //! # Example
 //!
 //! ```rust
@@ -16,6 +24,44 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! # Custom Builtins
+//!
+//! Register custom commands to extend BashKit with domain-specific functionality:
+//!
+//! ```rust
+//! use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, async_trait};
+//!
+//! struct Greet;
+//!
+//! #[async_trait]
+//! impl Builtin for Greet {
+//!     async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+//!         let name = ctx.args.first().map(|s| s.as_str()).unwrap_or("World");
+//!         Ok(ExecResult::ok(format!("Hello, {}!\n", name)))
+//!     }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//!     let mut bash = Bash::builder()
+//!         .builtin("greet", Box::new(Greet))
+//!         .build();
+//!
+//!     let result = bash.exec("greet Alice").await?;
+//!     assert_eq!(result.stdout, "Hello, Alice!\n");
+//!     Ok(())
+//! }
+//! ```
+//!
+//! Custom builtins have access to:
+//! - Command arguments (`ctx.args`)
+//! - Environment variables (`ctx.env`)
+//! - Shell variables (`ctx.variables`)
+//! - Virtual filesystem (`ctx.fs`)
+//! - Pipeline stdin (`ctx.stdin`)
+//!
+//! See [`BashBuilder::builtin`] for more details.
 
 // Stricter panic prevention - prefer proper error handling over unwrap()
 #![warn(clippy::unwrap_used)]
@@ -30,6 +76,7 @@ mod network;
 pub mod parser;
 
 pub use async_trait::async_trait;
+pub use builtins::{Builtin, Context as BuiltinContext};
 pub use error::{Error, Result};
 pub use fs::{DirEntry, FileSystem, FileType, InMemoryFs, Metadata, MountableFs, OverlayFs};
 pub use interpreter::{ControlFlow, ExecResult};
@@ -117,6 +164,40 @@ impl Bash {
 }
 
 /// Builder for customized Bash configuration.
+///
+/// # Example
+///
+/// ```rust
+/// use bashkit::{Bash, ExecutionLimits};
+///
+/// let bash = Bash::builder()
+///     .env("HOME", "/home/user")
+///     .username("deploy")
+///     .hostname("prod-server")
+///     .limits(ExecutionLimits::new().max_commands(1000))
+///     .build();
+/// ```
+///
+/// ## Custom Builtins
+///
+/// You can register custom builtins to extend bashkit with domain-specific commands:
+///
+/// ```rust
+/// use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, async_trait};
+///
+/// struct MyCommand;
+///
+/// #[async_trait]
+/// impl Builtin for MyCommand {
+///     async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+///         Ok(ExecResult::ok(format!("Hello from custom command!\n")))
+///     }
+/// }
+///
+/// let bash = Bash::builder()
+///     .builtin("mycommand", Box::new(MyCommand))
+///     .build();
+/// ```
 #[derive(Default)]
 pub struct BashBuilder {
     fs: Option<Arc<dyn FileSystem>>,
@@ -125,6 +206,7 @@ pub struct BashBuilder {
     limits: ExecutionLimits,
     username: Option<String>,
     hostname: Option<String>,
+    custom_builtins: HashMap<String, Box<dyn Builtin>>,
 }
 
 impl BashBuilder {
@@ -169,11 +251,56 @@ impl BashBuilder {
         self
     }
 
+    /// Register a custom builtin command.
+    ///
+    /// Custom builtins extend bashkit with domain-specific commands that can be
+    /// invoked from bash scripts. They have full access to the execution context
+    /// including arguments, environment, shell variables, and the virtual filesystem.
+    ///
+    /// Custom builtins can override default builtins if registered with the same name.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The command name (e.g., "psql", "kubectl")
+    /// * `builtin` - A boxed implementation of the [`Builtin`] trait
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, async_trait};
+    ///
+    /// struct Greet {
+    ///     default_name: String,
+    /// }
+    ///
+    /// #[async_trait]
+    /// impl Builtin for Greet {
+    ///     async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+    ///         let name = ctx.args.first()
+    ///             .map(|s| s.as_str())
+    ///             .unwrap_or(&self.default_name);
+    ///         Ok(ExecResult::ok(format!("Hello, {}!\n", name)))
+    ///     }
+    /// }
+    ///
+    /// let bash = Bash::builder()
+    ///     .builtin("greet", Box::new(Greet { default_name: "World".into() }))
+    ///     .build();
+    /// ```
+    pub fn builtin(mut self, name: impl Into<String>, builtin: Box<dyn Builtin>) -> Self {
+        self.custom_builtins.insert(name.into(), builtin);
+        self
+    }
+
     /// Build the Bash instance.
     pub fn build(self) -> Bash {
         let fs = self.fs.unwrap_or_else(|| Arc::new(InMemoryFs::new()));
-        let mut interpreter =
-            Interpreter::with_config(Arc::clone(&fs), self.username.clone(), self.hostname);
+        let mut interpreter = Interpreter::with_config(
+            Arc::clone(&fs),
+            self.username.clone(),
+            self.hostname,
+            self.custom_builtins,
+        );
 
         // Set environment variables
         for (key, value) in self.env {
@@ -1346,5 +1473,275 @@ mod tests {
 
         let result = bash.exec("echo $USER").await.unwrap();
         assert_eq!(result.stdout, "deploy\n");
+    }
+
+    // Custom builtins tests
+
+    mod custom_builtins {
+        use super::*;
+        use crate::builtins::{Builtin, Context};
+        use crate::ExecResult;
+        use async_trait::async_trait;
+
+        /// A simple custom builtin that outputs a static string
+        struct Hello;
+
+        #[async_trait]
+        impl Builtin for Hello {
+            async fn execute(&self, _ctx: Context<'_>) -> crate::Result<ExecResult> {
+                Ok(ExecResult::ok("Hello from custom builtin!\n".to_string()))
+            }
+        }
+
+        #[tokio::test]
+        async fn test_custom_builtin_basic() {
+            let mut bash = Bash::builder().builtin("hello", Box::new(Hello)).build();
+
+            let result = bash.exec("hello").await.unwrap();
+            assert_eq!(result.stdout, "Hello from custom builtin!\n");
+            assert_eq!(result.exit_code, 0);
+        }
+
+        /// A custom builtin that uses arguments
+        struct Greet;
+
+        #[async_trait]
+        impl Builtin for Greet {
+            async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
+                let name = ctx.args.first().map(|s| s.as_str()).unwrap_or("World");
+                Ok(ExecResult::ok(format!("Hello, {}!\n", name)))
+            }
+        }
+
+        #[tokio::test]
+        async fn test_custom_builtin_with_args() {
+            let mut bash = Bash::builder().builtin("greet", Box::new(Greet)).build();
+
+            let result = bash.exec("greet").await.unwrap();
+            assert_eq!(result.stdout, "Hello, World!\n");
+
+            let result = bash.exec("greet Alice").await.unwrap();
+            assert_eq!(result.stdout, "Hello, Alice!\n");
+
+            let result = bash.exec("greet Bob Charlie").await.unwrap();
+            assert_eq!(result.stdout, "Hello, Bob!\n");
+        }
+
+        /// A custom builtin that reads from stdin
+        struct Upper;
+
+        #[async_trait]
+        impl Builtin for Upper {
+            async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
+                let input = ctx.stdin.unwrap_or("");
+                Ok(ExecResult::ok(input.to_uppercase()))
+            }
+        }
+
+        #[tokio::test]
+        async fn test_custom_builtin_with_stdin() {
+            let mut bash = Bash::builder().builtin("upper", Box::new(Upper)).build();
+
+            let result = bash.exec("echo hello | upper").await.unwrap();
+            assert_eq!(result.stdout, "HELLO\n");
+        }
+
+        /// A custom builtin that interacts with the filesystem
+        struct WriteFile;
+
+        #[async_trait]
+        impl Builtin for WriteFile {
+            async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
+                if ctx.args.len() < 2 {
+                    return Ok(ExecResult::err(
+                        "Usage: writefile <path> <content>\n".to_string(),
+                        1,
+                    ));
+                }
+                let path = std::path::Path::new(&ctx.args[0]);
+                let content = ctx.args[1..].join(" ");
+                ctx.fs.write_file(path, content.as_bytes()).await?;
+                Ok(ExecResult::ok(String::new()))
+            }
+        }
+
+        #[tokio::test]
+        async fn test_custom_builtin_with_filesystem() {
+            let mut bash = Bash::builder()
+                .builtin("writefile", Box::new(WriteFile))
+                .build();
+
+            bash.exec("writefile /tmp/test.txt custom content here")
+                .await
+                .unwrap();
+
+            let result = bash.exec("cat /tmp/test.txt").await.unwrap();
+            assert_eq!(result.stdout, "custom content here");
+        }
+
+        /// A custom builtin that overrides a default builtin
+        struct CustomEcho;
+
+        #[async_trait]
+        impl Builtin for CustomEcho {
+            async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
+                let msg = ctx.args.join(" ");
+                Ok(ExecResult::ok(format!("[CUSTOM] {}\n", msg)))
+            }
+        }
+
+        #[tokio::test]
+        async fn test_custom_builtin_override_default() {
+            let mut bash = Bash::builder()
+                .builtin("echo", Box::new(CustomEcho))
+                .build();
+
+            let result = bash.exec("echo hello world").await.unwrap();
+            assert_eq!(result.stdout, "[CUSTOM] hello world\n");
+        }
+
+        /// Test multiple custom builtins
+        #[tokio::test]
+        async fn test_multiple_custom_builtins() {
+            let mut bash = Bash::builder()
+                .builtin("hello", Box::new(Hello))
+                .builtin("greet", Box::new(Greet))
+                .builtin("upper", Box::new(Upper))
+                .build();
+
+            let result = bash.exec("hello").await.unwrap();
+            assert_eq!(result.stdout, "Hello from custom builtin!\n");
+
+            let result = bash.exec("greet Test").await.unwrap();
+            assert_eq!(result.stdout, "Hello, Test!\n");
+
+            let result = bash.exec("echo foo | upper").await.unwrap();
+            assert_eq!(result.stdout, "FOO\n");
+        }
+
+        /// A custom builtin with internal state
+        struct Counter {
+            prefix: String,
+        }
+
+        #[async_trait]
+        impl Builtin for Counter {
+            async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
+                let count = ctx
+                    .args
+                    .first()
+                    .and_then(|s| s.parse::<i32>().ok())
+                    .unwrap_or(1);
+                let mut output = String::new();
+                for i in 1..=count {
+                    output.push_str(&format!("{}{}\n", self.prefix, i));
+                }
+                Ok(ExecResult::ok(output))
+            }
+        }
+
+        #[tokio::test]
+        async fn test_custom_builtin_with_state() {
+            let mut bash = Bash::builder()
+                .builtin(
+                    "count",
+                    Box::new(Counter {
+                        prefix: "Item ".to_string(),
+                    }),
+                )
+                .build();
+
+            let result = bash.exec("count 3").await.unwrap();
+            assert_eq!(result.stdout, "Item 1\nItem 2\nItem 3\n");
+        }
+
+        /// A custom builtin that returns an error
+        struct Fail;
+
+        #[async_trait]
+        impl Builtin for Fail {
+            async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
+                let code = ctx
+                    .args
+                    .first()
+                    .and_then(|s| s.parse::<i32>().ok())
+                    .unwrap_or(1);
+                Ok(ExecResult::err(
+                    format!("Failed with code {}\n", code),
+                    code,
+                ))
+            }
+        }
+
+        #[tokio::test]
+        async fn test_custom_builtin_error() {
+            let mut bash = Bash::builder().builtin("fail", Box::new(Fail)).build();
+
+            let result = bash.exec("fail 42").await.unwrap();
+            assert_eq!(result.exit_code, 42);
+            assert_eq!(result.stderr, "Failed with code 42\n");
+        }
+
+        #[tokio::test]
+        async fn test_custom_builtin_in_script() {
+            let mut bash = Bash::builder().builtin("greet", Box::new(Greet)).build();
+
+            let script = r#"
+                for name in Alice Bob Charlie; do
+                    greet $name
+                done
+            "#;
+
+            let result = bash.exec(script).await.unwrap();
+            assert_eq!(
+                result.stdout,
+                "Hello, Alice!\nHello, Bob!\nHello, Charlie!\n"
+            );
+        }
+
+        #[tokio::test]
+        async fn test_custom_builtin_with_conditionals() {
+            let mut bash = Bash::builder()
+                .builtin("fail", Box::new(Fail))
+                .builtin("hello", Box::new(Hello))
+                .build();
+
+            let result = bash.exec("fail 1 || hello").await.unwrap();
+            assert_eq!(result.stdout, "Hello from custom builtin!\n");
+            assert_eq!(result.exit_code, 0);
+
+            let result = bash.exec("hello && fail 5").await.unwrap();
+            assert_eq!(result.exit_code, 5);
+        }
+
+        /// A custom builtin that reads environment variables
+        struct EnvReader;
+
+        #[async_trait]
+        impl Builtin for EnvReader {
+            async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
+                let var_name = ctx.args.first().map(|s| s.as_str()).unwrap_or("HOME");
+                let value = ctx
+                    .env
+                    .get(var_name)
+                    .map(|s| s.as_str())
+                    .unwrap_or("(not set)");
+                Ok(ExecResult::ok(format!("{}={}\n", var_name, value)))
+            }
+        }
+
+        #[tokio::test]
+        async fn test_custom_builtin_reads_env() {
+            let mut bash = Bash::builder()
+                .env("MY_VAR", "my_value")
+                .builtin("readenv", Box::new(EnvReader))
+                .build();
+
+            let result = bash.exec("readenv MY_VAR").await.unwrap();
+            assert_eq!(result.stdout, "MY_VAR=my_value\n");
+
+            let result = bash.exec("readenv UNKNOWN").await.unwrap();
+            assert_eq!(result.stdout, "UNKNOWN=(not set)\n");
+        }
     }
 }

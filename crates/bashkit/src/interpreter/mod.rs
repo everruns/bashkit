@@ -54,7 +54,8 @@ pub struct Interpreter {
     arrays: HashMap<String, HashMap<usize, String>>,
     cwd: PathBuf,
     last_exit_code: i32,
-    builtins: HashMap<&'static str, Box<dyn Builtin>>,
+    /// Built-in commands (default + custom)
+    builtins: HashMap<String, Box<dyn Builtin>>,
     /// Defined functions
     functions: HashMap<String, FunctionDef>,
     /// Call stack for local variable scoping
@@ -71,100 +72,119 @@ pub struct Interpreter {
 impl Interpreter {
     /// Create a new interpreter with the given filesystem.
     pub fn new(fs: Arc<dyn FileSystem>) -> Self {
-        Self::with_config(fs, None, None)
+        Self::with_config(fs, None, None, HashMap::new())
     }
 
-    /// Create a new interpreter with custom username and hostname.
+    /// Create a new interpreter with custom username, hostname, and builtins.
+    ///
+    /// # Arguments
+    ///
+    /// * `fs` - The virtual filesystem to use
+    /// * `username` - Optional custom username for sandbox identity
+    /// * `hostname` - Optional custom hostname for sandbox identity
+    /// * `custom_builtins` - Custom builtins to register (override defaults if same name)
     pub fn with_config(
         fs: Arc<dyn FileSystem>,
         username: Option<String>,
         hostname: Option<String>,
+        custom_builtins: HashMap<String, Box<dyn Builtin>>,
     ) -> Self {
-        let mut builtins: HashMap<&'static str, Box<dyn Builtin>> = HashMap::new();
+        let mut builtins: HashMap<String, Box<dyn Builtin>> = HashMap::new();
 
-        // Register builtins
-        builtins.insert("echo", Box::new(builtins::Echo));
-        builtins.insert("true", Box::new(builtins::True));
-        builtins.insert("false", Box::new(builtins::False));
-        builtins.insert("exit", Box::new(builtins::Exit));
-        builtins.insert("cd", Box::new(builtins::Cd));
-        builtins.insert("pwd", Box::new(builtins::Pwd));
-        builtins.insert("cat", Box::new(builtins::Cat));
-        builtins.insert("break", Box::new(builtins::Break));
-        builtins.insert("continue", Box::new(builtins::Continue));
-        builtins.insert("return", Box::new(builtins::Return));
-        builtins.insert("test", Box::new(builtins::Test));
-        builtins.insert("[", Box::new(builtins::Bracket));
-        builtins.insert("printf", Box::new(builtins::Printf));
-        builtins.insert("export", Box::new(builtins::Export));
-        builtins.insert("read", Box::new(builtins::Read));
-        builtins.insert("set", Box::new(builtins::Set));
-        builtins.insert("unset", Box::new(builtins::Unset));
-        builtins.insert("shift", Box::new(builtins::Shift));
-        builtins.insert("local", Box::new(builtins::Local));
-        builtins.insert("source", Box::new(builtins::Source::new(fs.clone())));
-        builtins.insert(".", Box::new(builtins::Source::new(fs.clone())));
-        builtins.insert("jq", Box::new(builtins::Jq));
-        builtins.insert("grep", Box::new(builtins::Grep));
-        builtins.insert("sed", Box::new(builtins::Sed));
-        builtins.insert("awk", Box::new(builtins::Awk));
-        builtins.insert("sleep", Box::new(builtins::Sleep));
-        builtins.insert("head", Box::new(builtins::Head));
-        builtins.insert("tail", Box::new(builtins::Tail));
-        builtins.insert("basename", Box::new(builtins::Basename));
-        builtins.insert("dirname", Box::new(builtins::Dirname));
-        builtins.insert("mkdir", Box::new(builtins::Mkdir));
-        builtins.insert("rm", Box::new(builtins::Rm));
-        builtins.insert("cp", Box::new(builtins::Cp));
-        builtins.insert("mv", Box::new(builtins::Mv));
-        builtins.insert("touch", Box::new(builtins::Touch));
-        builtins.insert("chmod", Box::new(builtins::Chmod));
-        builtins.insert("wc", Box::new(builtins::Wc));
-        builtins.insert("sort", Box::new(builtins::Sort));
-        builtins.insert("uniq", Box::new(builtins::Uniq));
-        builtins.insert("cut", Box::new(builtins::Cut));
-        builtins.insert("tr", Box::new(builtins::Tr));
-        builtins.insert("date", Box::new(builtins::Date));
-        builtins.insert("wait", Box::new(builtins::Wait));
-        builtins.insert("curl", Box::new(builtins::Curl));
-        builtins.insert("wget", Box::new(builtins::Wget));
-        builtins.insert("timeout", Box::new(builtins::Timeout));
+        // Register default builtins
+        builtins.insert("echo".to_string(), Box::new(builtins::Echo));
+        builtins.insert("true".to_string(), Box::new(builtins::True));
+        builtins.insert("false".to_string(), Box::new(builtins::False));
+        builtins.insert("exit".to_string(), Box::new(builtins::Exit));
+        builtins.insert("cd".to_string(), Box::new(builtins::Cd));
+        builtins.insert("pwd".to_string(), Box::new(builtins::Pwd));
+        builtins.insert("cat".to_string(), Box::new(builtins::Cat));
+        builtins.insert("break".to_string(), Box::new(builtins::Break));
+        builtins.insert("continue".to_string(), Box::new(builtins::Continue));
+        builtins.insert("return".to_string(), Box::new(builtins::Return));
+        builtins.insert("test".to_string(), Box::new(builtins::Test));
+        builtins.insert("[".to_string(), Box::new(builtins::Bracket));
+        builtins.insert("printf".to_string(), Box::new(builtins::Printf));
+        builtins.insert("export".to_string(), Box::new(builtins::Export));
+        builtins.insert("read".to_string(), Box::new(builtins::Read));
+        builtins.insert("set".to_string(), Box::new(builtins::Set));
+        builtins.insert("unset".to_string(), Box::new(builtins::Unset));
+        builtins.insert("shift".to_string(), Box::new(builtins::Shift));
+        builtins.insert("local".to_string(), Box::new(builtins::Local));
+        builtins.insert(
+            "source".to_string(),
+            Box::new(builtins::Source::new(fs.clone())),
+        );
+        builtins.insert(".".to_string(), Box::new(builtins::Source::new(fs.clone())));
+        builtins.insert("jq".to_string(), Box::new(builtins::Jq));
+        builtins.insert("grep".to_string(), Box::new(builtins::Grep));
+        builtins.insert("sed".to_string(), Box::new(builtins::Sed));
+        builtins.insert("awk".to_string(), Box::new(builtins::Awk));
+        builtins.insert("sleep".to_string(), Box::new(builtins::Sleep));
+        builtins.insert("head".to_string(), Box::new(builtins::Head));
+        builtins.insert("tail".to_string(), Box::new(builtins::Tail));
+        builtins.insert("basename".to_string(), Box::new(builtins::Basename));
+        builtins.insert("dirname".to_string(), Box::new(builtins::Dirname));
+        builtins.insert("mkdir".to_string(), Box::new(builtins::Mkdir));
+        builtins.insert("rm".to_string(), Box::new(builtins::Rm));
+        builtins.insert("cp".to_string(), Box::new(builtins::Cp));
+        builtins.insert("mv".to_string(), Box::new(builtins::Mv));
+        builtins.insert("touch".to_string(), Box::new(builtins::Touch));
+        builtins.insert("chmod".to_string(), Box::new(builtins::Chmod));
+        builtins.insert("wc".to_string(), Box::new(builtins::Wc));
+        builtins.insert("sort".to_string(), Box::new(builtins::Sort));
+        builtins.insert("uniq".to_string(), Box::new(builtins::Uniq));
+        builtins.insert("cut".to_string(), Box::new(builtins::Cut));
+        builtins.insert("tr".to_string(), Box::new(builtins::Tr));
+        builtins.insert("date".to_string(), Box::new(builtins::Date));
+        builtins.insert("wait".to_string(), Box::new(builtins::Wait));
+        builtins.insert("curl".to_string(), Box::new(builtins::Curl));
+        builtins.insert("wget".to_string(), Box::new(builtins::Wget));
+        builtins.insert("timeout".to_string(), Box::new(builtins::Timeout));
         // System info builtins (configurable sandbox values)
         let hostname_val = hostname.unwrap_or_else(|| builtins::DEFAULT_HOSTNAME.to_string());
         let username_val = username.unwrap_or_else(|| builtins::DEFAULT_USERNAME.to_string());
         builtins.insert(
-            "hostname",
+            "hostname".to_string(),
             Box::new(builtins::Hostname::with_hostname(&hostname_val)),
         );
         builtins.insert(
-            "uname",
+            "uname".to_string(),
             Box::new(builtins::Uname::with_hostname(&hostname_val)),
         );
         builtins.insert(
-            "whoami",
+            "whoami".to_string(),
             Box::new(builtins::Whoami::with_username(&username_val)),
         );
-        builtins.insert("id", Box::new(builtins::Id::with_username(&username_val)));
+        builtins.insert(
+            "id".to_string(),
+            Box::new(builtins::Id::with_username(&username_val)),
+        );
         // Directory listing and search
-        builtins.insert("ls", Box::new(builtins::Ls));
-        builtins.insert("find", Box::new(builtins::Find));
-        builtins.insert("rmdir", Box::new(builtins::Rmdir));
+        builtins.insert("ls".to_string(), Box::new(builtins::Ls));
+        builtins.insert("find".to_string(), Box::new(builtins::Find));
+        builtins.insert("rmdir".to_string(), Box::new(builtins::Rmdir));
         // File inspection
-        builtins.insert("less", Box::new(builtins::Less));
-        builtins.insert("file", Box::new(builtins::File));
-        builtins.insert("stat", Box::new(builtins::Stat));
+        builtins.insert("less".to_string(), Box::new(builtins::Less));
+        builtins.insert("file".to_string(), Box::new(builtins::File));
+        builtins.insert("stat".to_string(), Box::new(builtins::Stat));
         // Archive operations
-        builtins.insert("tar", Box::new(builtins::Tar));
-        builtins.insert("gzip", Box::new(builtins::Gzip));
-        builtins.insert("gunzip", Box::new(builtins::Gunzip));
+        builtins.insert("tar".to_string(), Box::new(builtins::Tar));
+        builtins.insert("gzip".to_string(), Box::new(builtins::Gzip));
+        builtins.insert("gunzip".to_string(), Box::new(builtins::Gunzip));
         // Environment builtins
-        builtins.insert("env", Box::new(builtins::Env));
-        builtins.insert("printenv", Box::new(builtins::Printenv));
-        builtins.insert("history", Box::new(builtins::History));
+        builtins.insert("env".to_string(), Box::new(builtins::Env));
+        builtins.insert("printenv".to_string(), Box::new(builtins::Printenv));
+        builtins.insert("history".to_string(), Box::new(builtins::History));
         // Pipeline control
-        builtins.insert("xargs", Box::new(builtins::Xargs));
-        builtins.insert("tee", Box::new(builtins::Tee));
-        builtins.insert("watch", Box::new(builtins::Watch));
+        builtins.insert("xargs".to_string(), Box::new(builtins::Xargs));
+        builtins.insert("tee".to_string(), Box::new(builtins::Tee));
+        builtins.insert("watch".to_string(), Box::new(builtins::Watch));
+
+        // Merge custom builtins (override defaults if same name)
+        for (name, builtin) in custom_builtins {
+            builtins.insert(name, builtin);
+        }
 
         Self {
             fs,
