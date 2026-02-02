@@ -1,0 +1,64 @@
+name: Fuzz Testing
+
+# Run fuzzing on schedule and manual trigger
+# Fuzzing is too slow for every PR, so we run it nightly
+on:
+  schedule:
+    # Run at 3 AM UTC every day
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Fuzzing duration in seconds per target'
+        required: false
+        default: '300'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: Fuzz Test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parser_fuzz, lexer_fuzz, arithmetic_fuzz]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Cache fuzz corpus
+        uses: actions/cache@v4
+        with:
+          path: crates/bashkit/fuzz/corpus
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.sha }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
+      - name: Run fuzzer - ${{ matrix.target }}
+        working-directory: crates/bashkit
+        run: |
+          # Run for specified duration (default 5 minutes per target)
+          DURATION="${{ github.event.inputs.duration || '300' }}"
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time=$DURATION \
+            -print_final_stats=1
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: |
+            crates/bashkit/fuzz/artifacts/${{ matrix.target }}
+          retention-days: 30
