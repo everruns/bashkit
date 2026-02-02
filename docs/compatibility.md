@@ -6,9 +6,9 @@
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 44 | 4 | 48 |
-| Text Processing | 9 | 3 | 12 |
-| File Operations | 7 | 0 | 7 |
+| Shell Builtins | 63 | 1 | 64 |
+| Text Processing | 12 | 1 | 13 |
+| File Operations | 10 | 1 | 11 |
 | Network | 2 | 0 | 2 |
 
 ---
@@ -65,16 +65,31 @@
 | `curl` | `-s`, `-o`, `-X`, `-d`, `-H` | HTTP client (stub) |
 | `wget` | `-q`, `-O` | Download files (stub) |
 | `timeout` | `DURATION COMMAND` | Run with time limit (stub) |
+| `ls` | `-l`, `-a`, `-h`, `-1`, `-R` | List directory contents |
+| `find` | `-name`, `-type`, `-maxdepth`, `-print` | Search for files |
+| `rmdir` | `-p` | Remove empty directories |
+| `xargs` | `-I`, `-n`, `-d` | Build commands from stdin |
+| `tee` | `-a` | Write to files and stdout |
+| `watch` | `INTERVAL COMMAND` | Execute periodically (sandbox mode) |
+| `file` | (none) | Detect file type via magic bytes |
+| `less` | (none) | View file (behaves like cat in sandbox) |
+| `stat` | `-c FORMAT` | Display file metadata |
+| `tar` | `-c`, `-x`, `-t`, `-v`, `-f`, `-z` | Archive operations |
+| `gzip` | `-d`, `-k`, `-f` | Compress files |
+| `gunzip` | `-k`, `-f` | Decompress files |
+| `env` | `[VAR=val]` | Print/modify environment |
+| `printenv` | `[VAR]` | Print environment variables |
+| `history` | (none) | Command history (limited in sandbox) |
+| `hostname` | (none) | Display sandbox hostname |
+| `uname` | `-a`, `-s`, `-n`, `-r`, `-v`, `-m`, `-o` | System info |
+| `whoami` | (none) | Display sandbox username |
+| `id` | `-u`, `-g`, `-n` | User/group IDs |
 
 ### Not Implemented
 
 | Builtin | Priority | Status |
 |---------|----------|--------|
-| `xargs` | Low | Planned |
-| `find` | Low | Planned |
 | `diff` | Low | Planned |
-| `tee` | Low | - |
-| `ls` | Low | - |
 | `ln` | Low | - |
 | `chown` | Low | - |
 | `kill` | Low | - |
@@ -294,8 +309,8 @@ Default limits (configurable):
 |---------|--------|-------|
 | HTTP client | ✅ | Infrastructure exists |
 | URL allowlist | ✅ | Whitelist-based security |
-| `curl` builtin | ❌ | Planned |
-| `wget` builtin | ❌ | Planned |
+| `curl` builtin | ✅ | Stub, requires allowlist config |
+| `wget` builtin | ✅ | Stub, requires allowlist config |
 | Raw sockets | ❌ | Not planned |
 
 ---
