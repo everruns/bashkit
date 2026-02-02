@@ -21,7 +21,12 @@ jobs:
         id: version
         run: |
           # Extract version from "chore(release): prepare vX.Y.Z"
-          VERSION=$(echo "${{ github.event.head_commit.message }}" | grep -oP 'prepare v\K[0-9]+\.[0-9]+\.[0-9]+')
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          VERSION=$(echo "$COMMIT_MSG" | sed -n 's/.*prepare v\([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p')
+          if [ -z "$VERSION" ]; then
+            echo "Error: Could not extract version from commit message: $COMMIT_MSG"
+            exit 1
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"

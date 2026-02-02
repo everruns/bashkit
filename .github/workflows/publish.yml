@@ -27,14 +27,19 @@ jobs:
 
       - name: Verify version matches tag
         run: |
+          # Get tag from release event or skip check for workflow_dispatch
           TAG_VERSION="${{ github.event.release.tag_name }}"
-          TAG_VERSION="${TAG_VERSION#v}"  # Remove 'v' prefix
-          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
-            echo "Error: Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
-            exit 1
+          if [ -n "$TAG_VERSION" ]; then
+            TAG_VERSION="${TAG_VERSION#v}"  # Remove 'v' prefix
+            CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+              echo "Error: Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
+              exit 1
+            fi
+            echo "Version verified: $TAG_VERSION"
+          else
+            echo "Manual dispatch - skipping tag verification"
           fi
-          echo "Version verified: $TAG_VERSION"
 
       - name: Publish bashkit to crates.io
         run: cargo publish -p bashkit
