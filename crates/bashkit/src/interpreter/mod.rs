@@ -153,6 +153,10 @@ impl Interpreter {
         builtins.insert("tar", Box::new(builtins::Tar));
         builtins.insert("gzip", Box::new(builtins::Gzip));
         builtins.insert("gunzip", Box::new(builtins::Gunzip));
+        // Environment builtins
+        builtins.insert("env", Box::new(builtins::Env));
+        builtins.insert("printenv", Box::new(builtins::Printenv));
+        builtins.insert("history", Box::new(builtins::History));
 
         Self {
             fs,
