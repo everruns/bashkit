@@ -595,4 +595,51 @@ mod edge_cases {
         let result = bash.exec("echo $#").await.unwrap(); // Arg count
         assert!(result.exit_code == 0);
     }
+
+    /// Test command not found returns exit code 127 and proper error message
+    #[tokio::test]
+    async fn command_not_found_exit_code() {
+        let mut bash = Bash::new();
+
+        // Unknown command should return exit code 127 (not a Rust error)
+        let result = bash.exec("nonexistent_command").await.unwrap();
+        assert_eq!(result.exit_code, 127);
+        assert!(
+            result.stderr.contains("command not found"),
+            "stderr should contain 'command not found', got: {}",
+            result.stderr
+        );
+        assert!(
+            result.stderr.contains("nonexistent_command"),
+            "stderr should contain the command name, got: {}",
+            result.stderr
+        );
+    }
+
+    /// Test command not found in script continues execution
+    #[tokio::test]
+    async fn command_not_found_continues_script() {
+        let mut bash = Bash::new();
+
+        // Script should continue after command not found
+        let result = bash.exec("unknown_cmd; echo after").await.unwrap();
+        assert!(result.stdout.contains("after"));
+        // Last command succeeded, so exit code should be 0
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// Test command not found stderr format matches bash
+    #[tokio::test]
+    async fn command_not_found_stderr_format() {
+        let mut bash = Bash::new();
+
+        let result = bash.exec("ssh").await.unwrap();
+        assert_eq!(result.exit_code, 127);
+        // Should match bash format: "bash: cmd: command not found"
+        assert!(
+            result.stderr.starts_with("bash: ssh: command not found"),
+            "stderr should match bash format, got: {}",
+            result.stderr
+        );
+    }
 }
