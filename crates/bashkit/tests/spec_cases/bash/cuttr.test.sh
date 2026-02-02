@@ -73,3 +73,161 @@ printf 'HELLO WORLD' | tr -d AEIOU
 ### expect
 HLL WRLD
 ### end
+
+### cut_char_range
+# Cut character range
+printf 'hello world\n' | cut -c1-5
+### expect
+hello
+### end
+
+### cut_char_single
+# Cut single character
+printf 'hello\n' | cut -c1
+### expect
+h
+### end
+
+### cut_char_multiple
+# Cut multiple chars
+printf 'hello\n' | cut -c1,3,5
+### expect
+hlo
+### end
+
+### cut_char_from_end
+### skip: cut from end (-N) not implemented
+printf 'hello\n' | cut -c-3
+### expect
+hel
+### end
+
+### cut_char_to_end
+# Cut from position to end
+printf 'hello world\n' | cut -c7-
+### expect
+world
+### end
+
+### cut_field_from_end
+# Cut fields from start
+printf 'a:b:c:d:e\n' | cut -d: -f-3
+### expect
+a:b:c
+### end
+
+### cut_field_to_end
+# Cut fields to end
+printf 'a:b:c:d:e\n' | cut -d: -f3-
+### expect
+c:d:e
+### end
+
+### cut_complement
+### skip: --complement not implemented
+printf 'a,b,c,d\n' | cut -d, --complement -f2
+### expect
+a,c,d
+### end
+
+### cut_output_delimiter
+### skip: --output-delimiter not implemented
+printf 'a,b,c\n' | cut -d, -f1,3 --output-delimiter='-'
+### expect
+a-c
+### end
+
+### cut_tab_default
+# Default tab delimiter
+printf 'a\tb\tc\n' | cut -f2
+### expect
+b
+### end
+
+### tr_squeeze
+# Squeeze repeated characters
+printf 'heeelllo   wooorld' | tr -s 'eol '
+### expect
+helo world
+### end
+
+### tr_complement
+# Complement character set
+printf 'hello123' | tr -cd '0-9'
+### expect
+123
+### end
+
+### tr_class_lower
+# Character class [:lower:]
+printf 'Hello World' | tr '[:upper:]' '[:lower:]'
+### expect
+hello world
+### end
+
+### tr_class_upper
+# Character class [:upper:]
+printf 'Hello World' | tr '[:lower:]' '[:upper:]'
+### expect
+HELLO WORLD
+### end
+
+### tr_class_digit
+### skip: [:digit:] class not implemented
+printf 'a1b2c3' | tr -d '[:digit:]'
+### expect
+abc
+### end
+
+### tr_class_alpha
+### skip: [:alpha:] class not implemented
+printf 'a1b2c3' | tr -d '[:alpha:]'
+### expect
+123
+### end
+
+### tr_escape_newline
+# Translate to newline
+printf 'a:b:c' | tr ':' '\n'
+### expect
+a
+b
+c
+### end
+
+### tr_escape_tab
+# Translate to tab
+printf 'a b c' | tr ' ' '\t'
+### expect
+a	b	c
+### end
+
+### tr_multiple_chars
+# Translate multiple chars
+printf 'aabbcc' | tr 'abc' 'xyz'
+### expect
+xxyyzz
+### end
+
+### tr_truncate_set2
+### skip: tr truncation behavior differs
+printf 'aabbcc' | tr 'abc' 'x'
+### expect
+xxxxxx
+### end
+
+### cut_only_delimited
+### skip: -s only delimited not implemented
+printf 'a,b,c\nno delim\nx,y\n' | cut -d, -f1 -s
+### expect
+a
+x
+### end
+
+### cut_zero_terminated
+### skip: -z null terminated not implemented
+printf 'a,b\0x,y\0' | cut -d, -f2 -z | tr '\0' '\n'
+### expect
+b
+y
+### end
