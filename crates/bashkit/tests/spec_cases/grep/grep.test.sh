@@ -104,7 +104,7 @@ world
 ### end
 
 ### grep_files_with_matches
-### skip: -l with stdin naming not implemented
+# List matching files (shows (stdin) for stdin input)
 printf 'foo\nbar\n' | grep -l foo
 ### expect
 (stdin)

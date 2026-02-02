@@ -136,9 +136,15 @@ impl Builtin for Grep {
         let mut exit_code = 1; // 1 = no match
 
         // Determine input sources
+        // Use "(stdin)" for stdin when -l flag is set
+        let stdin_name = if opts.files_with_matches {
+            "(stdin)"
+        } else {
+            ""
+        };
         let inputs: Vec<(&str, String)> = if opts.files.is_empty() {
             // Read from stdin
-            vec![("", ctx.stdin.unwrap_or("").to_string())]
+            vec![(stdin_name, ctx.stdin.unwrap_or("").to_string())]
         } else {
             // Read from files
             let mut inputs = Vec::new();
@@ -379,5 +385,12 @@ mod tests {
             .unwrap();
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_grep_files_with_matches_stdin() {
+        let result = run_grep(&["-l", "foo"], Some("foo\nbar")).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "(stdin)\n");
     }
 }
