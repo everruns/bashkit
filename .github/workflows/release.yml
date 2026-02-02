@@ -13,7 +13,7 @@ jobs:
     name: Create Release
     runs-on: ubuntu-latest
     # Only run if commit message starts with "chore(release): prepare v"
-    if: startsWith(github.event.head_commit.message, 'chore(release): prepare v')
+    if: ${{ startsWith(github.event.head_commit.message, 'chore(release): prepare v') }}
     steps:
       - uses: actions/checkout@v4
 
