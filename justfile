@@ -48,6 +48,14 @@ check-bash-compat-verbose:
 compat-report:
     cargo test --test spec_tests -- compatibility_report --ignored --nocapture
 
+# Run differential fuzzing tests (grammar-based proptest)
+fuzz-diff:
+    cargo test --test proptest_differential -- --nocapture
+
+# Run differential fuzzing with more iterations
+fuzz-diff-deep:
+    PROPTEST_CASES=500 cargo test --test proptest_differential -- --nocapture
+
 # Clean build artifacts
 clean:
     cargo clean
