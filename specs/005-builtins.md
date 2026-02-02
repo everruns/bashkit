@@ -18,8 +18,40 @@ in a sandboxed environment. All builtins operate on the virtual filesystem.
 - `cd`, `pwd` - Navigation
 - `export`, `local`, `set`, `unset`, `shift` - Variable management
 - `source`, `.` - Script sourcing
-- `test`, `[` - Conditionals
+- `test`, `[` - Conditionals (see Test Operators below)
 - `read` - Input
+
+#### Test Operators (`test` / `[`)
+
+**String tests:**
+- `-z string` - True if string is empty
+- `-n string` - True if string is non-empty
+- `s1 = s2`, `s1 == s2` - String equality
+- `s1 != s2` - String inequality
+- `s1 < s2`, `s1 > s2` - String comparison (lexicographic)
+
+**Numeric tests:**
+- `-eq`, `-ne`, `-lt`, `-le`, `-gt`, `-ge` - Integer comparisons
+
+**File tests:**
+- `-e file` - File exists
+- `-f file` - Regular file
+- `-d file` - Directory
+- `-r file` - Readable
+- `-w file` - Writable
+- `-x file` - Executable
+- `-s file` - Non-empty file
+- `-L file`, `-h file` - Symbolic link
+
+**Logical:**
+- `! expr` - Negation
+- `expr1 -a expr2` - AND
+- `expr1 -o expr2` - OR
+
+#### Shell Options (`set`)
+- `set -e` / `set -o errexit` - Exit on error
+- `set +e` - Disable errexit
+- errexit respects conditionals (if, while, &&, ||)
 
 #### File Operations
 - `mkdir` - Create directories (`-p` for parents)

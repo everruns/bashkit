@@ -86,14 +86,31 @@ EOF
 hello world
 ### end
 
-### redirect_stderr
-### skip: stderr redirect not fully implemented
-echo error >&2
+### redirect_stderr_to_file
+# Redirect stderr to file
+echo error 2>/tmp/err.txt; cat /tmp/err.txt
 ### expect
+error
 ### end
 
-### redirect_both
-### skip: combined redirects not implemented
-echo hello > /tmp/out.txt 2>&1
+### redirect_stderr_with_dup
+# Redirect stderr to stdout (2>&1)
+echo "hello" > /tmp/combined.txt 2>&1; cat /tmp/combined.txt
 ### expect
+hello
+### end
+
+### redirect_both_ampersand
+# Redirect both with &>
+echo "output" &> /tmp/both.txt; cat /tmp/both.txt
+### expect
+output
+### end
+
+### redirect_fd2_append
+# Append stderr to file (2>>)
+echo err1 2>/tmp/err_append.txt; echo err2 2>>/tmp/err_append.txt; cat /tmp/err_append.txt
+### expect
+err1
+err2
 ### end
