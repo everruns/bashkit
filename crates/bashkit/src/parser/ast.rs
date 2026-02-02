@@ -183,6 +183,9 @@ pub struct FunctionDef {
 #[derive(Debug, Clone)]
 pub struct Word {
     pub parts: Vec<WordPart>,
+    /// True if this word came from a quoted source (single or double quotes)
+    /// Quoted words should not undergo brace expansion or glob expansion
+    pub quoted: bool,
 }
 
 impl Word {
@@ -190,6 +193,15 @@ impl Word {
     pub fn literal(s: impl Into<String>) -> Self {
         Self {
             parts: vec![WordPart::Literal(s.into())],
+            quoted: false,
+        }
+    }
+
+    /// Create a quoted literal word (no brace/glob expansion).
+    pub fn quoted_literal(s: impl Into<String>) -> Self {
+        Self {
+            parts: vec![WordPart::Literal(s.into())],
+            quoted: true,
         }
     }
 }

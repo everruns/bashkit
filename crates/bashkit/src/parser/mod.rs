@@ -396,6 +396,7 @@ impl<'a> Parser<'a> {
                     Some(tokens::Token::LiteralWord(w)) => {
                         words.push(Word {
                             parts: vec![WordPart::Literal(w.clone())],
+                            quoted: true,
                         });
                         self.advance();
                     }
@@ -1155,6 +1156,7 @@ impl<'a> Parser<'a> {
                                                 ) {
                                                     Word {
                                                         parts: vec![WordPart::Literal(elem_clone)],
+                                                        quoted: true,
                                                     }
                                                 } else {
                                                     self.parse_word(elem_clone)
@@ -1198,6 +1200,7 @@ impl<'a> Parser<'a> {
                                     let inner = Self::strip_quotes(&value_str);
                                     Word {
                                         parts: vec![WordPart::Literal(inner.to_string())],
+                                        quoted: true,
                                     }
                                 } else {
                                     self.parse_word(value_str)
@@ -1218,6 +1221,7 @@ impl<'a> Parser<'a> {
                     let word = if is_literal {
                         Word {
                             parts: vec![WordPart::Literal(w.clone())],
+                            quoted: true,
                         }
                     } else {
                         self.parse_word(w.clone())
@@ -1389,6 +1393,7 @@ impl<'a> Parser<'a> {
                 // Single-quoted: no variable expansion
                 let word = Word {
                     parts: vec![WordPart::Literal(w.clone())],
+                    quoted: true,
                 };
                 self.advance();
                 Ok(word)
@@ -1461,6 +1466,7 @@ impl<'a> Parser<'a> {
 
                 Ok(Word {
                     parts: vec![WordPart::ProcessSubstitution { commands, is_input }],
+                    quoted: false,
                 })
             }
             _ => Err(Error::Parse("expected word".to_string())),
@@ -1475,6 +1481,7 @@ impl<'a> Parser<'a> {
             Some(tokens::Token::Word(w)) => Some(self.parse_word(w.clone())),
             Some(tokens::Token::LiteralWord(w)) => Some(Word {
                 parts: vec![WordPart::Literal(w.clone())],
+                quoted: true,
             }),
             _ => None,
         }
@@ -1800,7 +1807,7 @@ impl<'a> Parser<'a> {
             parts.push(WordPart::Literal(String::new()));
         }
 
-        Word { parts }
+        Word { parts, quoted: false }
     }
 
     /// Read operand for brace expansion (everything until closing brace)

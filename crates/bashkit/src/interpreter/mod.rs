@@ -1458,6 +1458,12 @@ impl Interpreter {
         for word in &command.args {
             let expanded = self.expand_word(word).await?;
 
+            // Skip brace and glob expansion for quoted words
+            if word.quoted {
+                args.push(expanded);
+                continue;
+            }
+
             // Step 1: Brace expansion (produces multiple strings)
             let brace_expanded = self.expand_braces(&expanded);
 

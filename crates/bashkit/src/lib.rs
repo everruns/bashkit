@@ -1990,7 +1990,6 @@ mod tests {
         assert_eq!(result.stdout, "hello\n");
     }
 
-<<<<<<< HEAD
     // Parser fuel tests
 
     #[tokio::test]
