@@ -4,16 +4,16 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 281
+**Total spec test cases:** 510+
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 209 | **No** | - | - | `bash_spec_tests` ignored in CI |
-| AWK | 19 | Yes | 17 | 2 | gsub regex, split (blocked by parser bug) |
-| Grep | 15 | Yes | 15 | 0 | All tests pass |
-| Sed | 17 | Yes | 17 | 0 | All tests pass |
-| JQ | 21 | Yes | 21 | 0 | All tests pass |
-| **Total** | **281** | **72** | 70 | 2 | |
+| Bash (core) | 209+ | **No** | - | - | `bash_spec_tests` ignored in CI |
+| AWK | 89 | Yes | 46 | 43 | loops, arrays, functions |
+| Grep | 55 | Yes | 32 | 23 | context, -m, -x flags |
+| Sed | 65 | Yes | 36 | 29 | hold space, -E, branching |
+| JQ | 92 | Yes | 54 | 38 | reduce, walk, regex funcs |
+| **Total** | **510+** | **301** | 168 | 133 | |
 
 ### Bash Spec Tests Breakdown (not in CI)
 
@@ -24,9 +24,9 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 | background.test.sh | 2 | |
 | command-subst.test.sh | 14 | |
 | control-flow.test.sh | - | Skipped (.skip suffix) |
-| cuttr.test.sh | 10 | |
-| date.test.sh | 4 | |
-| echo.test.sh | 10 | |
+| cuttr.test.sh | 35 | cut and tr commands |
+| date.test.sh | 31 | format specifiers |
+| echo.test.sh | 26 | escape sequences |
 | fileops.test.sh | 15 | |
 | functions.test.sh | 14 | |
 | globs.test.sh | 7 | |
@@ -36,11 +36,11 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 | pipes-redirects.test.sh | 13 | |
 | procsub.test.sh | 6 | |
 | sleep.test.sh | 6 | |
-| sortuniq.test.sh | 12 | |
+| sortuniq.test.sh | 31 | sort and uniq |
 | time.test.sh | 12 | Wall-clock only (user/sys always 0) |
 | timeout.test.sh | 17 | 2 skipped (timing-dependent) |
 | variables.test.sh | 20 | |
-| wc.test.sh | 4 | |
+| wc.test.sh | 22 | word count |
 
 ## Shell Features
 
