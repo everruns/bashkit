@@ -64,7 +64,7 @@ in a sandboxed environment. All builtins operate on the virtual filesystem.
 #### Text Processing
 - `cat` - Concatenate files
 - `head`, `tail` - First/last N lines
-- `grep` - Pattern matching (`-i`, `-v`, `-c`, `-n`, `-E`, `-q`)
+- `grep` - Pattern matching (`-i`, `-v`, `-c`, `-n`, `-o`, `-l`, `-w`, `-E`, `-F`, `-q`, `-m`, `-x`, `-A`, `-B`, `-C`, `-e`)
 - `sed` - Stream editing (s/pat/repl/, d, p)
 - `awk` - Text processing (print, -F, variables)
 - `jq` - JSON processing
