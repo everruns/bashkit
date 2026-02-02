@@ -104,6 +104,19 @@ impl InMemoryFs {
                 },
             },
         );
+        // /dev/fd - directory for process substitution file descriptors
+        entries.insert(
+            PathBuf::from("/dev/fd"),
+            FsEntry::Directory {
+                metadata: Metadata {
+                    file_type: FileType::Directory,
+                    size: 0,
+                    mode: 0o755,
+                    modified: SystemTime::now(),
+                    created: SystemTime::now(),
+                },
+            },
+        );
 
         Self {
             entries: RwLock::new(entries),

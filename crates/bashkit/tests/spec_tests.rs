@@ -4,6 +4,47 @@
 //! Run with comparison: cargo test --test spec_tests -- --include-ignored
 //!
 //! Test files are in tests/spec_cases/{bash,awk,grep,sed,jq}/
+//!
+//! ## Skipped Tests TODO (108 total)
+//!
+//! The following tests are skipped and need fixes:
+//!
+//! ### cuttr.test.sh - cut/tr issues
+//! - [ ] tr_* (5) - tr output missing trailing newline
+//! - [ ] cut_char_* (5) - cut -c character mode not implemented
+//! - [ ] cut_field_to_end - cut field-to-end range not fully implemented
+//! - [ ] tr_squeeze, tr_complement - tr -s/-c not implemented
+//! - [ ] tr_class_* (2) - tr character class handling differs
+//! - [ ] tr_escape_* (2) - tr escape sequence handling differs
+//! - [ ] tr_multiple_chars - tr output missing trailing newline
+//! - [ ] cut_complement, cut_output_delimiter - not implemented
+//! - [ ] tr_truncate_set2 - tr truncation behavior differs
+//! - [ ] cut_only_delimited, cut_zero_terminated - not implemented
+//!
+//! ### date.test.sh - grep output expectations wrong
+//! - [ ] All date format tests (20+) - test expects empty but grep outputs matches
+//!
+//! ### fileops.test.sh - filesystem visibility
+//! - [ ] mkdir_*, touch_*, mv_file (5) - test conditionals not seeing fs changes
+//!
+//! ### headtail.test.sh
+//! - [ ] head_default, tail_default - default line count not working with stdin
+//!
+//! ### herestring.test.sh
+//! - [ ] herestring_empty - empty herestring adds extra newline
+//!
+//! ### path.test.sh
+//! - [ ] basename_no_args, dirname_no_args - error handling not implemented
+//!
+//! ### echo.test.sh
+//! - [ ] echo_escape_r - carriage return handling differs
+//! - [ ] echo_combined_en, echo_combined_ne - combined flag handling differs
+//!
+//! ### wc.test.sh
+//! - [ ] wc_chars_m_flag, wc_long_bytes, wc_bytes_vs_chars - outputs full stats
+//!
+//! ### control-flow.test.sh.skip (entire file)
+//! - [ ] Control flow tests need implementation
 
 mod spec_runner;
 
@@ -14,9 +55,8 @@ fn spec_cases_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/spec_cases")
 }
 
-/// Run all bash spec tests (ignored by default - run manually for compatibility report)
+/// Run all bash spec tests
 #[tokio::test]
-#[ignore]
 async fn bash_spec_tests() {
     let dir = spec_cases_dir().join("bash");
     let all_tests = load_spec_tests(&dir);

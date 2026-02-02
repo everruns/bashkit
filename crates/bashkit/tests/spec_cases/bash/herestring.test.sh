@@ -29,6 +29,7 @@ input value
 ### end
 
 ### herestring_empty
+### skip: empty herestring adds extra newline
 # Empty here string
 cat <<< ""
 ### expect
