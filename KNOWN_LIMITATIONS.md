@@ -4,16 +4,16 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 708
+**Total spec test cases:** 723
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
 | Bash (core) | 404 | Yes | 294 | 110 | `bash_spec_tests` in CI |
 | AWK | 89 | Yes | 48 | 41 | loops, arrays, functions |
-| Grep | 55 | Yes | 34 | 21 | context, -m, -x flags |
+| Grep | 70 | Yes | 56 | 14 | now with -A/-B/-C, -m, -q, -x, -e |
 | Sed | 65 | Yes | 40 | 25 | hold space, -E, branching |
 | JQ | 95 | Yes | 58 | 37 | reduce, walk, regex funcs |
-| **Total** | **708** | **Yes** | **474** | **234** | |
+| **Total** | **723** | **Yes** | **496** | **227** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -133,17 +133,22 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 
 ### Grep Limitations
 
-**Skipped Tests (21):**
+**Implemented (previously missing):**
+- Context flags `-A`, `-B`, `-C` (after/before/context)
+- Max count `-m` (stop after N matches)
+- Whole line match `-x`
+- Quiet mode `-q` (exit status only)
+- Multiple `-e` patterns (`-e pat1 -e pat2`)
+
+**Skipped Tests (8):**
 | Feature | Count | Notes |
 |---------|-------|-------|
-| Context flags | 6 | `-A`, `-B`, `-C` (after/before/context) |
-| Max count `-m` | 3 | Stop after N matches |
-| Exact match `-x` | 2 | Match whole line only |
-| Files with matches `-l` | 2 | List filenames only |
-| Quiet mode `-q` | 2 | Exit status only |
-| Invert `-v` with count | 2 | Combined flags |
-| Word boundary `\b` | 2 | `\bword\b` |
-| Multiple `-e` patterns | 2 | `-e pat1 -e pat2` |
+| Recursive `-r` | 2 | Recursive search in directories |
+| Pattern file `-f` | 1 | Read patterns from file |
+| Byte offset `-b` | 1 | Show byte offset |
+| Show filename `-H` | 1 | Force filename display |
+| Word boundary `\b` in ERE | 1 | `\bword\b` with `-E` |
+| Binary files | 2 | `-a`, binary detection |
 
 ### JQ Limitations
 
