@@ -89,7 +89,7 @@ colour
 ### end
 
 ### grep_word
-### skip: word boundary not implemented
+# Word boundary match
 printf 'foo\nfoobar\nbar foo baz\n' | grep -w foo
 ### expect
 foo
@@ -104,7 +104,7 @@ world
 ### end
 
 ### grep_files_with_matches
-### skip: -l with stdin naming not implemented
+# List matching files (shows (stdin) for stdin input)
 printf 'foo\nbar\n' | grep -l foo
 ### expect
 (stdin)
