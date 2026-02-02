@@ -68,6 +68,22 @@ let mut bash = Bash::builder()
     .build();
 ```
 
+### Sandbox Identity
+
+Configure the sandbox username and hostname for `whoami`, `hostname`, `id`, and `uname`:
+
+```rust
+let mut bash = Bash::builder()
+    .username("deploy")      // Sets whoami, id, and $USER env var
+    .hostname("my-server")   // Sets hostname, uname -n
+    .build();
+
+// whoami → "deploy"
+// hostname → "my-server"
+// id → "uid=1000(deploy) gid=1000(deploy)..."
+// echo $USER → "deploy"
+```
+
 ## Virtual Filesystem
 
 ```rust
