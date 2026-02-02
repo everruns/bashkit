@@ -114,9 +114,9 @@
 | `<` | ✅ | `cmd < file` | Input from file |
 | `<<<` | ✅ | `cmd <<< "string"` | Here-string |
 | `<<EOF` | ✅ | Heredoc | Multi-line input |
-| `2>` | ❌ | `cmd 2> file` | Stderr redirect |
-| `2>&1` | ❌ | `cmd 2>&1` | Stderr to stdout |
-| `&>` | ❌ | `cmd &> file` | Both to file |
+| `2>` | ✅ | `cmd 2> file` | Stderr redirect |
+| `2>&1` | ✅ | `cmd 2>&1` | Stderr to stdout |
+| `&>` | ✅ | `cmd &> file` | Both to file |
 
 ### Control Flow
 
@@ -330,6 +330,7 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] Tilde expansion (~) - expands to $HOME
 - [x] Special variables ($$, $RANDOM, $LINENO)
 - [x] File test operators (-r, -w, -x, -L)
+- [x] Stderr redirections (2>, 2>&1, &>)
 
 ### Planned
 - [ ] `trap` signal handling

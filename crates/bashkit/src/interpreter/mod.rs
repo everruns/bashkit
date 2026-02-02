@@ -1610,22 +1610,74 @@ impl Interpreter {
                 RedirectKind::Output => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    // Write stdout to file
-                    self.fs.write_file(&path, result.stdout.as_bytes()).await?;
-                    result.stdout = String::new();
+                    // Check which fd we're redirecting
+                    match redirect.fd {
+                        Some(2) => {
+                            // 2> - redirect stderr to file
+                            self.fs.write_file(&path, result.stderr.as_bytes()).await?;
+                            result.stderr = String::new();
+                        }
+                        _ => {
+                            // Default (stdout) - write stdout to file
+                            self.fs.write_file(&path, result.stdout.as_bytes()).await?;
+                            result.stdout = String::new();
+                        }
+                    }
                 }
                 RedirectKind::Append => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    // Append stdout to file
-                    self.fs.append_file(&path, result.stdout.as_bytes()).await?;
-                    result.stdout = String::new();
+                    // Check which fd we're appending
+                    match redirect.fd {
+                        Some(2) => {
+                            // 2>> - append stderr to file
+                            self.fs.append_file(&path, result.stderr.as_bytes()).await?;
+                            result.stderr = String::new();
+                        }
+                        _ => {
+                            // Default (stdout) - append stdout to file
+                            self.fs.append_file(&path, result.stdout.as_bytes()).await?;
+                            result.stdout = String::new();
+                        }
+                    }
                 }
-                RedirectKind::Input | RedirectKind::HereString => {
+                RedirectKind::OutputBoth => {
+                    // &> - redirect both stdout and stderr to file
+                    let target_path = self.expand_word(&redirect.target).await?;
+                    let path = self.resolve_path(&target_path);
+                    // Write both stdout and stderr to file
+                    let combined = format!("{}{}", result.stdout, result.stderr);
+                    self.fs.write_file(&path, combined.as_bytes()).await?;
+                    result.stdout = String::new();
+                    result.stderr = String::new();
+                }
+                RedirectKind::DupOutput => {
+                    // Handle fd duplication (e.g., 2>&1, >&2)
+                    let target = self.expand_word(&redirect.target).await?;
+                    let target_fd: i32 = target.parse().unwrap_or(1);
+                    let src_fd = redirect.fd.unwrap_or(1);
+
+                    match (src_fd, target_fd) {
+                        (2, 1) => {
+                            // 2>&1 - redirect stderr to stdout
+                            result.stdout.push_str(&result.stderr);
+                            result.stderr = String::new();
+                        }
+                        (1, 2) => {
+                            // >&2 or 1>&2 - redirect stdout to stderr
+                            result.stderr.push_str(&result.stdout);
+                            result.stdout = String::new();
+                        }
+                        _ => {
+                            // Other fd duplications not yet supported
+                        }
+                    }
+                }
+                RedirectKind::Input | RedirectKind::HereString | RedirectKind::HereDoc => {
                     // Input redirections handled in process_input_redirections
                 }
-                _ => {
-                    // TODO: Handle other redirect types (HereDoc, DupOutput, DupInput, OutputBoth)
+                RedirectKind::DupInput => {
+                    // Input fd duplication not yet supported
                 }
             }
         }

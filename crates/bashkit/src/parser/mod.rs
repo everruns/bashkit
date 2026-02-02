@@ -1288,6 +1288,59 @@ impl<'a> Parser<'a> {
                     let word = self.expect_word()?;
                     words.push(word);
                 }
+                // &> - redirect both stdout and stderr to file
+                Some(tokens::Token::RedirectBoth) => {
+                    self.advance();
+                    let target = self.expect_word()?;
+                    redirects.push(Redirect {
+                        fd: None,
+                        kind: RedirectKind::OutputBoth,
+                        target,
+                    });
+                }
+                // >& - duplicate output fd (used for >&2 etc.)
+                Some(tokens::Token::DupOutput) => {
+                    self.advance();
+                    let target = self.expect_word()?;
+                    redirects.push(Redirect {
+                        fd: Some(1), // Default to stdout
+                        kind: RedirectKind::DupOutput,
+                        target,
+                    });
+                }
+                // N> - redirect with specific file descriptor
+                Some(tokens::Token::RedirectFd(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    let target = self.expect_word()?;
+                    redirects.push(Redirect {
+                        fd: Some(fd),
+                        kind: RedirectKind::Output,
+                        target,
+                    });
+                }
+                // N>> - append with specific file descriptor
+                Some(tokens::Token::RedirectFdAppend(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    let target = self.expect_word()?;
+                    redirects.push(Redirect {
+                        fd: Some(fd),
+                        kind: RedirectKind::Append,
+                        target,
+                    });
+                }
+                // N>&M - duplicate fd N to M
+                Some(tokens::Token::DupFd(src_fd, dst_fd)) => {
+                    let src_fd = *src_fd;
+                    let dst_fd = *dst_fd;
+                    self.advance();
+                    redirects.push(Redirect {
+                        fd: Some(src_fd),
+                        kind: RedirectKind::DupOutput,
+                        target: Word::literal(dst_fd.to_string()),
+                    });
+                }
                 Some(tokens::Token::Newline)
                 | Some(tokens::Token::Semicolon)
                 | Some(tokens::Token::Pipe)

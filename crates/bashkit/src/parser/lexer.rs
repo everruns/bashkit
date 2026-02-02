@@ -52,6 +52,9 @@ impl<'a> Lexer<'a> {
                 if self.peek_char() == Some('&') {
                     self.advance();
                     Some(Token::And)
+                } else if self.peek_char() == Some('>') {
+                    self.advance();
+                    Some(Token::RedirectBoth)
                 } else {
                     Some(Token::Background)
                 }
@@ -64,6 +67,9 @@ impl<'a> Lexer<'a> {
                 } else if self.peek_char() == Some('(') {
                     self.advance();
                     Some(Token::ProcessSubOut)
+                } else if self.peek_char() == Some('&') {
+                    self.advance();
+                    Some(Token::DupOutput)
                 } else {
                     Some(Token::RedirectOut)
                 }
@@ -137,6 +143,8 @@ impl<'a> Lexer<'a> {
                 self.skip_comment();
                 self.next_token()
             }
+            // Handle file descriptor redirects like 2> or 2>&1
+            '0'..='9' => self.read_word_or_fd_redirect(),
             _ => self.read_word(),
         }
     }
@@ -170,6 +178,75 @@ impl<'a> Lexer<'a> {
             }
             self.advance();
         }
+    }
+
+    /// Check if this is a file descriptor redirect (e.g., 2>, 2>>, 2>&1)
+    /// or just a regular word starting with a digit
+    fn read_word_or_fd_redirect(&mut self) -> Option<Token> {
+        // We need to look ahead to see if this is a fd redirect pattern
+        // Collect the leading digits
+        let mut fd_str = String::new();
+
+        // Peek at the first digit - we know it's a digit from the match
+        if let Some(ch) = self.peek_char() {
+            if ch.is_ascii_digit() {
+                fd_str.push(ch);
+            }
+        }
+
+        // Check if it's a single digit followed by > or <
+        // We need to peek further without consuming
+        let input_remaining: String = self.chars.clone().collect();
+
+        // Check patterns: "N>" "N>>" "N>&" "N<" "N<&"
+        if fd_str.len() == 1 {
+            if let Some(first_digit) = fd_str.chars().next() {
+                let rest = &input_remaining[1..]; // Skip the digit we already matched
+
+                if rest.starts_with(">>") {
+                    // N>> - append redirect with fd
+                    let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
+                    self.advance(); // consume digit
+                    self.advance(); // consume >
+                    self.advance(); // consume >
+                    return Some(Token::RedirectFdAppend(fd));
+                } else if rest.starts_with(">&") {
+                    // N>&M - duplicate fd
+                    let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
+                    self.advance(); // consume digit
+                    self.advance(); // consume >
+                    self.advance(); // consume &
+
+                    // Read the target fd number
+                    let mut target_str = String::new();
+                    while let Some(c) = self.peek_char() {
+                        if c.is_ascii_digit() {
+                            target_str.push(c);
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if target_str.is_empty() {
+                        // Just N>& without target - treat as DupOutput with fd
+                        return Some(Token::RedirectFd(fd));
+                    }
+
+                    let target_fd: i32 = target_str.parse().unwrap_or(1);
+                    return Some(Token::DupFd(fd, target_fd));
+                } else if rest.starts_with('>') {
+                    // N> - redirect with fd
+                    let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
+                    self.advance(); // consume digit
+                    self.advance(); // consume >
+                    return Some(Token::RedirectFd(fd));
+                }
+            }
+        }
+
+        // Not a fd redirect pattern, read as regular word
+        self.read_word()
     }
 
     fn read_word(&mut self) -> Option<Token> {
