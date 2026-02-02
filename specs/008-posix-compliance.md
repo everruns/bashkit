@@ -212,7 +212,42 @@ Implemented via `set` builtin:
 
 ## Testing POSIX Compliance
 
+### Testing Approach
+
+POSIX compliance is verified through multiple layers of testing:
+
+1. **Unit Tests** (22 POSIX-specific tests in `interpreter/mod.rs`)
+   - Positive tests: Verify correct behavior for valid inputs
+   - Negative tests: Verify correct handling of edge cases and errors
+   - Coverage: All new POSIX special builtins and parameters
+
+2. **Positive Tests** verify:
+   - `:` (colon) returns success with no output
+   - `:` works in common patterns (while loops, if/then, variable defaults)
+   - `readonly` correctly sets and marks variables
+   - `times` outputs correct format (two lines, POSIX time format)
+   - `eval` accepts and stores commands
+   - `$-` reflects current shell options
+   - `$!` is accessible (empty when no background jobs)
+
+3. **Negative/Edge Case Tests** verify:
+   - `:` produces no output even with arguments
+   - `eval` with no arguments succeeds silently
+   - `readonly` handles empty values correctly
+   - `times` ignores extraneous arguments
+   - `$!` is empty when no background jobs have run
+   - `:` resets exit code to 0 after failed command
+
+### Running Tests
+
 ```bash
+# Run all POSIX compliance tests
+cargo test --lib -- interpreter::tests::test_colon
+cargo test --lib -- interpreter::tests::test_readonly
+cargo test --lib -- interpreter::tests::test_times
+cargo test --lib -- interpreter::tests::test_eval
+cargo test --lib -- interpreter::tests::test_special_param
+
 # Run POSIX-focused spec tests
 cargo test --test spec_tests
 
