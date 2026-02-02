@@ -92,15 +92,89 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 - Array assignment in split: `split($0, arr, ":")`
 - Complex regex patterns
 
+**Skipped Tests (43):**
+| Feature | Count | Notes |
+|---------|-------|-------|
+| Arrays | 8 | `arr[key]`, associative arrays, `in` operator |
+| For loops | 6 | `for (i=0; i<n; i++)`, `for (k in arr)` |
+| While loops | 2 | `while (condition)` |
+| Ternary operator | 2 | `condition ? true : false` |
+| User functions | 4 | `function name() {}` |
+| gsub/sub regex | 3 | Regex literals as first argument |
+| split() | 2 | Array assignment from split |
+| printf formatting | 4 | `%s`, `%-10s`, `%d` width/precision |
+| Multiple -v vars | 2 | `-v a=1 -v b=2` |
+| BEGIN/END blocks | 3 | Multiple or complex blocks |
+| Field assignment | 2 | `$1 = "new"` |
+| NR/NF in conditions | 3 | `NR > 1`, `NF == 3` |
+| Regex match ~ | 2 | `$0 ~ /pattern/` |
+
 ### Sed Limitations
 - In-place editing (`-i`) - not implemented for security
-- All spec tests pass
+
+**Skipped Tests (29):**
+| Feature | Count | Notes |
+|---------|-------|-------|
+| Extended regex `-E` | 5 | `+`, `?`, `\|`, `()` grouping |
+| Hold space | 6 | `h`, `H`, `g`, `G`, `x` commands |
+| Pattern ranges | 4 | `/start/,/end/` address ranges |
+| Branching | 4 | `b`, `t`, `:label` commands |
+| Append/Insert | 3 | `a\`, `i\` commands |
+| Character classes | 3 | `[:alpha:]`, `[:digit:]` in `y///` |
+| Multiple `-e` | 2 | `-e 's/a/b/' -e 's/c/d/'` |
+| Line number ranges | 2 | `1,5s/...` |
 
 ### Grep Limitations
-- No known limitations (all spec tests pass)
+
+**Skipped Tests (23):**
+| Feature | Count | Notes |
+|---------|-------|-------|
+| Context flags | 6 | `-A`, `-B`, `-C` (after/before/context) |
+| Max count `-m` | 3 | Stop after N matches |
+| Exact match `-x` | 2 | Match whole line only |
+| Files with matches `-l` | 2 | List filenames only |
+| Quiet mode `-q` | 2 | Exit status only |
+| Invert `-v` with count | 2 | Combined flags |
+| Word boundary `\b` | 2 | `\bword\b` |
+| Multiple `-e` patterns | 2 | `-e pat1 -e pat2` |
+| Perl regex `-P` | 2 | Lookahead, lookbehind |
 
 ### JQ Limitations
-- Pretty printing (outputs compact JSON)
+
+**Skipped Tests (38):**
+| Feature | Count | Notes |
+|---------|-------|-------|
+| CLI flags | 8 | `-c`, `-S`, `-s`, `-n`, `-e`, `-j`, `--tab` |
+| Regex functions | 4 | `test`, `match`, `scan`, `gsub`, `sub` |
+| Path functions | 4 | `getpath`, `setpath`, `paths`, `leaf_paths` |
+| Control flow | 4 | `reduce`, `foreach`, `until`, `while`, `limit` |
+| Math functions | 3 | `ceil`, `round`, `abs`, `range` |
+| Advanced filters | 3 | `walk`, `recurse`, `del` |
+| String functions | 2 | `rindex`, `indices` |
+| I/O functions | 3 | `input`, `inputs`, `debug`, `env` |
+| Alternative `//` | 2 | Null coalescing operator |
+| Try-catch | 2 | `try ... catch` |
+| Group by | 2 | `group_by(.key)` |
+
+### Curl Limitations
+
+**Tests NOT Ported:** Curl tests from just-bash were not ported because:
+1. Requires network feature flag (`--features network`)
+2. Needs URL allowlist configuration
+3. just-bash tests mock HTTP responses; bashkit uses real requests
+4. Different error handling semantics
+
+**Coverage Gap:** ~25 curl test patterns from just-bash not yet adapted:
+- HTTP methods (GET, POST, PUT, DELETE)
+- Headers (`-H`)
+- Data payloads (`-d`, `--data-raw`)
+- Output options (`-o`, `-O`)
+- Authentication (`-u`)
+- Follow redirects (`-L`)
+- Silent mode (`-s`)
+- Timeout (`--connect-timeout`)
+
+**TODO:** Create curl.test.sh with mock server or allowlisted test endpoints.
 
 ## Parser Limitations
 
