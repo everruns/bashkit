@@ -44,6 +44,10 @@ check-bash-compat:
 check-bash-compat-verbose:
     ./scripts/update-spec-expected.sh --verbose
 
+# Generate comprehensive compatibility report
+compat-report:
+    cargo test --test spec_tests -- compatibility_report --ignored --nocapture
+
 # Clean build artifacts
 clean:
     cargo clean
