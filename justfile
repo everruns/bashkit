@@ -97,3 +97,78 @@ vet-suggest:
 # Certify a crate after audit
 vet-certify crate version:
     cargo vet certify {{crate}} {{version}}
+
+# === Release ===
+
+# Prepare a release (update version, remind to edit changelog)
+release-prepare version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Preparing release v{{version}}..."
+
+    # Update workspace version
+    sed -i 's/^version = ".*"/version = "{{version}}"/' Cargo.toml
+
+    # Verify the change
+    echo "Updated Cargo.toml workspace version to {{version}}"
+    grep '^version' Cargo.toml | head -1
+
+    # Remind to update changelog
+    echo ""
+    echo "Next steps:"
+    echo "1. Edit CHANGELOG.md to add release notes for {{version}}"
+    echo "2. Run: just release-check"
+    echo "3. Run: just release-tag {{version}}"
+
+# Verify release is ready
+release-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Running release checks..."
+
+    # Run pre-PR checks
+    just pre-pr
+
+    # Dry-run publish
+    echo ""
+    echo "Dry-run publish bashkit..."
+    cargo publish -p bashkit --dry-run
+
+    echo ""
+    echo "Dry-run publish bashkit-cli..."
+    cargo publish -p bashkit-cli --dry-run
+
+    echo ""
+    echo "All release checks passed!"
+
+# Create and push release tag
+release-tag version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Verify version matches Cargo.toml
+    CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    if [ "{{version}}" != "$CARGO_VERSION" ]; then
+        echo "Error: Requested version ({{version}}) does not match Cargo.toml version ($CARGO_VERSION)"
+        echo "Run: just release-prepare {{version}}"
+        exit 1
+    fi
+
+    # Check for uncommitted changes
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "Error: Uncommitted changes detected. Commit all changes before tagging."
+        git status --short
+        exit 1
+    fi
+
+    # Create tag
+    echo "Creating tag v{{version}}..."
+    git tag -a "v{{version}}" -m "Release v{{version}}"
+
+    # Push tag
+    echo "Pushing tag to origin..."
+    git push origin "v{{version}}"
+
+    echo ""
+    echo "Release v{{version}} tagged and pushed!"
+    echo "CI will now publish to crates.io"
