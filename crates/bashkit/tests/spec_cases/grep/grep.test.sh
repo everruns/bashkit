@@ -111,7 +111,7 @@ printf 'foo\nbar\n' | grep -l foo
 ### end
 
 ### grep_quiet
-### skip: -q flag still outputs matches
+# Quiet mode - no output, just exit status
 printf 'foo\nbar\n' | grep -q foo
 ### exit_code: 0
 ### expect
@@ -125,7 +125,7 @@ printf 'foo\nbar\n' | grep -q xyz
 ### end
 
 ### grep_max_count
-### skip: -m flag not implemented
+# Stop after N matches
 printf 'foo\nfoo\nfoo\n' | grep -m 2 foo
 ### expect
 foo
@@ -133,7 +133,7 @@ foo
 ### end
 
 ### grep_after_context
-### skip: -A context flag not implemented
+# Show N lines after match
 printf 'a\nfoo\nb\nc\n' | grep -A 1 foo
 ### expect
 foo
@@ -141,7 +141,7 @@ b
 ### end
 
 ### grep_before_context
-### skip: -B context flag not implemented
+# Show N lines before match
 printf 'a\nb\nfoo\nc\n' | grep -B 1 foo
 ### expect
 b
@@ -149,7 +149,7 @@ foo
 ### end
 
 ### grep_context
-### skip: -C context flag not implemented
+# Show N lines before and after match
 printf 'a\nb\nfoo\nc\nd\n' | grep -C 1 foo
 ### expect
 b
@@ -165,7 +165,7 @@ grep -r pattern /some/dir
 ### end
 
 ### grep_multiple_patterns
-### skip: multiple -e patterns not implemented
+# Multiple -e patterns (OR matching)
 printf 'foo\nbar\nbaz\n' | grep -e foo -e bar
 ### expect
 foo
@@ -287,7 +287,7 @@ bar
 ### end
 
 ### grep_whole_line
-### skip: -x whole line match not implemented
+# Match whole line only
 printf 'foo\nfoobar\nbar foo\n' | grep -x foo
 ### expect
 foo
@@ -415,4 +415,124 @@ printf 'a\naa\naaa\naaaa\n' | grep -E 'a{2,3}'
 aa
 aaa
 aaaa
+### end
+
+### grep_max_count_exact
+# Max count equals matches
+printf 'foo\nfoo\n' | grep -m 2 foo
+### expect
+foo
+foo
+### end
+
+### grep_max_count_one
+# Max count of 1
+printf 'foo\nfoo\nfoo\n' | grep -m 1 foo
+### expect
+foo
+### end
+
+### grep_context_multiple_matches
+# Context with multiple matches close together
+printf 'a\nfoo\nb\nfoo\nc\n' | grep -A 1 foo
+### expect
+foo
+b
+foo
+c
+### end
+
+### grep_context_overlapping
+# Overlapping context regions should merge
+printf 'a\nfoo\nb\nbar\nc\n' | grep -C 1 -e foo -e bar
+### expect
+a
+foo
+b
+bar
+c
+### end
+
+### grep_whole_line_no_match
+# Whole line with partial match should not match
+printf 'foobar\n' | grep -x foo
+### exit_code: 1
+### expect
+### end
+
+### grep_whole_line_with_spaces
+# Whole line including spaces
+printf 'foo bar\nfoo\nbar\n' | grep -x 'foo bar'
+### expect
+foo bar
+### end
+
+### grep_multiple_patterns_no_match
+# Multiple patterns with no match
+printf 'baz\nqux\n' | grep -e foo -e bar
+### exit_code: 1
+### expect
+### end
+
+### grep_quiet_with_count
+# Quiet should override count
+printf 'foo\nfoo\n' | grep -qc foo
+### exit_code: 0
+### expect
+### end
+
+### grep_max_count_with_context
+# Max count with context
+printf 'a\nfoo\nb\nfoo\nc\nfoo\nd\n' | grep -m 2 -A 1 foo
+### expect
+foo
+b
+foo
+c
+### end
+
+### grep_before_context_at_start
+# Before context at file start
+printf 'foo\nb\nc\n' | grep -B 2 foo
+### expect
+foo
+### end
+
+### grep_after_context_at_end
+# After context at file end
+printf 'a\nb\nfoo\n' | grep -A 2 foo
+### expect
+foo
+### end
+
+### grep_context_with_line_numbers
+# Context with line numbers
+printf 'a\nfoo\nb\n' | grep -n -C 1 foo
+### expect
+1-a
+2:foo
+3-b
+### end
+
+### grep_multiple_patterns_case_insensitive
+# Multiple patterns with case insensitive
+printf 'FOO\nBAR\nbaz\n' | grep -i -e foo -e bar
+### expect
+FOO
+BAR
+### end
+
+### grep_whole_line_case_insensitive
+# Whole line with case insensitive
+printf 'FOO\nfoo\nFOObar\n' | grep -ix foo
+### expect
+FOO
+foo
+### end
+
+### grep_max_count_zero
+# Max count of zero should match nothing
+printf 'foo\nfoo\n' | grep -m 0 foo
+### exit_code: 1
+### expect
 ### end
