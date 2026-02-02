@@ -881,11 +881,15 @@ impl Interpreter {
 
         // Parse duration
         let duration_str = &args[arg_idx];
+        let max_duration = Duration::from_secs(MAX_TIMEOUT_SECONDS);
         let duration = match Self::parse_timeout_duration(duration_str) {
             Some(d) => {
-                // Cap at max
-                let secs = d.as_secs().min(MAX_TIMEOUT_SECONDS);
-                Duration::from_secs(secs)
+                // Cap at max while preserving subsecond precision
+                if d > max_duration {
+                    max_duration
+                } else {
+                    d
+                }
             }
             None => {
                 return Ok(ExecResult::err(
@@ -978,8 +982,8 @@ impl Interpreter {
             return None;
         }
 
-        let total_secs = (seconds * multiplier as f64) as u64;
-        Some(Duration::from_secs(total_secs))
+        let total_secs_f64 = seconds * multiplier as f64;
+        Some(Duration::from_secs_f64(total_secs_f64))
     }
 
     /// Check if a value matches a shell pattern
@@ -2186,5 +2190,66 @@ impl Interpreter {
         // Sort matches alphabetically (bash behavior)
         matches.sort();
         Ok(matches)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fs::InMemoryFs;
+    use crate::parser::Parser;
+
+    /// Test timeout with paused time for deterministic behavior
+    #[tokio::test(start_paused = true)]
+    async fn test_timeout_expires_deterministically() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+
+        // timeout 0.001 sleep 10 - should timeout (1ms << 10s)
+        let parser = Parser::new("timeout 0.001 sleep 10; echo $?");
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+        assert_eq!(
+            result.stdout.trim(),
+            "124",
+            "Expected exit code 124 for timeout"
+        );
+    }
+
+    /// Test zero timeout
+    #[tokio::test(start_paused = true)]
+    async fn test_timeout_zero_deterministically() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+
+        // timeout 0 sleep 1 - should timeout immediately
+        let parser = Parser::new("timeout 0 sleep 1; echo $?");
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+        assert_eq!(
+            result.stdout.trim(),
+            "124",
+            "Expected exit code 124 for zero timeout"
+        );
+    }
+
+    /// Test that parse_timeout_duration preserves subsecond precision
+    #[test]
+    fn test_parse_timeout_duration_subsecond() {
+        use std::time::Duration;
+
+        // Should preserve subsecond precision
+        let d = Interpreter::parse_timeout_duration("0.001").unwrap();
+        assert_eq!(d, Duration::from_secs_f64(0.001));
+
+        let d = Interpreter::parse_timeout_duration("0.5").unwrap();
+        assert_eq!(d, Duration::from_millis(500));
+
+        let d = Interpreter::parse_timeout_duration("1.5s").unwrap();
+        assert_eq!(d, Duration::from_millis(1500));
+
+        // Zero should work
+        let d = Interpreter::parse_timeout_duration("0").unwrap();
+        assert_eq!(d, Duration::ZERO);
     }
 }
