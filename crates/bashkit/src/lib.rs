@@ -23,7 +23,8 @@ mod fs;
 mod interpreter;
 mod limits;
 mod network;
-mod parser;
+/// Parser module - exposed for fuzzing and testing
+pub mod parser;
 
 pub use error::{Error, Result};
 pub use fs::{DirEntry, FileSystem, FileType, InMemoryFs, Metadata, MountableFs, OverlayFs};

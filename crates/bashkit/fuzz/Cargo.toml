@@ -1,0 +1,46 @@
+# Fuzz testing for BashKit parser
+# Run with: cargo +nightly fuzz run parser_fuzz
+# See specs/006-threat-model.md for security context
+
+[package]
+name = "bashkit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.bashkit]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "parser_fuzz"
+path = "fuzz_targets/parser_fuzz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lexer_fuzz"
+path = "fuzz_targets/lexer_fuzz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "arithmetic_fuzz"
+path = "fuzz_targets/arithmetic_fuzz.rs"
+test = false
+doc = false
+bench = false
