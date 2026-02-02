@@ -14,9 +14,8 @@ fn spec_cases_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/spec_cases")
 }
 
-/// Run all bash spec tests (ignored by default - run manually for compatibility report)
+/// Run all bash spec tests
 #[tokio::test]
-#[ignore]
 async fn bash_spec_tests() {
     let dir = spec_cases_dir().join("bash");
     let all_tests = load_spec_tests(&dir);

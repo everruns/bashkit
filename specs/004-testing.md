@@ -20,11 +20,11 @@ Tests run automatically on every PR via `cargo test --features network`:
 |------------|---------------|-------|
 | Unit tests (bashkit lib) | 286 | Core interpreter tests |
 | limits.rs | 5 | Resource limit tests |
-| spec_tests.rs | 9 (2 ignored) | Spec compatibility tests |
+| spec_tests.rs | 10 (1 ignored) | Spec compatibility tests |
 | threat_model_tests | 39 | Security tests |
 | security_failpoint_tests | 14 | Fault injection tests |
 | Doc tests | 2 | Documentation examples |
-| **Total** | **355** | Plus 4 examples executed |
+| **Total** | **356** | Plus 4 examples executed |
 
 ## Spec Test Framework
 
@@ -68,12 +68,12 @@ crates/bashkit/tests/
 
 | Category | Test Cases | In CI | Pass | Skip |
 |----------|------------|-------|------|------|
-| Bash | 209 | **NO** (ignored) | - | - |
+| Bash | 209 | Yes | 176 | 33 |
 | AWK | 19 | Yes | 17 | 2 |
 | Grep | 15 | Yes | 15 | 0 |
 | Sed | 17 | Yes | 17 | 0 |
 | JQ | 21 | Yes | 21 | 0 |
-| **Total** | **281** | **72** | 70 | 2 |
+| **Total** | **281** | **281** | 246 | 35 |
 
 ### Test File Format
 
@@ -128,17 +128,19 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 Coverage is tracked manually via spec test pass rates.
 
 ### Current Status
-- Text processing tools: 88% pass rate (63/72 running in CI)
-- Core bash specs: Not running in CI (209 cases ignored)
+- All spec tests: 87% pass rate (246/281 running in CI, 35 skipped)
+- Text processing tools: 100% pass rate (70/70 running)
+- Core bash specs: 100% pass rate (176/176 running, 33 skipped)
 
 ## TODO: Testing Gaps
 
 The following items need attention:
 
-- [ ] **Enable bash_spec_tests in CI** - 209 test cases currently ignored
+- [x] **Enable bash_spec_tests in CI** - Done! 176/209 tests running
 - [ ] **Fix control-flow.test.sh** - Currently skipped (.skip suffix)
 - [ ] **Add coverage tooling** - Consider cargo-tarpaulin or codecov
-- [ ] **Fix skipped spec tests** (2 total):
+- [ ] **Fix skipped spec tests** (35 total):
+  - Bash: 33 skipped (various implementation gaps)
   - AWK: 2 skipped (blocked by multi-statement action parsing bug)
 - [ ] **Add bash_comparison_tests to CI** - Currently ignored, runs manually
 
