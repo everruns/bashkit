@@ -367,7 +367,7 @@ version = "0.6.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.hyper-util]]
-version = "0.1.19"
+version = "0.1.20"
 criteria = "safe-to-deploy"
 
 [[exemptions.iana-time-zone]]
@@ -419,7 +419,7 @@ version = "2.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.insta]]
-version = "1.46.2"
+version = "1.46.3"
 criteria = "safe-to-run"
 
 [[exemptions.instant]]
@@ -863,7 +863,7 @@ version = "0.13.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.system-configuration]]
-version = "0.6.1"
+version = "0.7.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.system-configuration-sys]]
