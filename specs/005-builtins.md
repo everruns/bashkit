@@ -83,9 +83,38 @@ pub struct Context<'a> {
     pub variables: &'a mut HashMap<String, String>,
     pub cwd: &'a mut PathBuf,
     pub fs: Arc<dyn FileSystem>,
-    pub stdin: Option<String>,
+    pub stdin: Option<&'a str>,
 }
 ```
+
+### Custom Builtins
+
+BashKit supports registering custom builtins via `BashBuilder`:
+
+```rust
+use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, async_trait};
+
+struct MyCommand;
+
+#[async_trait]
+impl Builtin for MyCommand {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        Ok(ExecResult::ok("Hello!\n".to_string()))
+    }
+}
+
+let bash = Bash::builder()
+    .builtin("mycommand", Box::new(MyCommand))
+    .build();
+```
+
+Custom builtins:
+- Have full access to execution context (args, env, fs, stdin)
+- Can override default builtins if registered with the same name
+- Must implement `Send + Sync` for async safety
+- Integrate seamlessly with pipelines, conditionals, and loops
+
+See `docs/custom_builtins.md` for detailed documentation.
 
 ### Safety Constraints
 
