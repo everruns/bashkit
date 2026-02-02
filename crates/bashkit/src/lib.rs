@@ -25,6 +25,7 @@ mod limits;
 mod network;
 mod parser;
 
+pub use async_trait::async_trait;
 pub use error::{Error, Result};
 pub use fs::{DirEntry, FileSystem, FileType, InMemoryFs, Metadata, MountableFs, OverlayFs};
 pub use interpreter::{ControlFlow, ExecResult};
