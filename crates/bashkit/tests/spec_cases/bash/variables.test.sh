@@ -138,3 +138,45 @@ false; echo $?
 ### expect
 1
 ### end
+
+### var_special_pid
+# Process ID $$ is a number
+test -n "$$" && echo "ok"
+### expect
+ok
+### end
+
+### var_special_lineno
+# Line number $LINENO
+echo $LINENO
+### expect
+1
+### end
+
+### var_special_random
+# Random number is set
+test -n "$RANDOM" && echo "ok"
+### expect
+ok
+### end
+
+### tilde_home
+# Tilde expands to HOME
+HOME=/home/user; echo ~
+### expect
+/home/user
+### end
+
+### tilde_in_path
+# Tilde at start of path
+HOME=/home/user; echo ~/subdir
+### expect
+/home/user/subdir
+### end
+
+### tilde_not_in_middle
+# Tilde not expanded in middle of word
+HOME=/home/user; echo a~b
+### expect
+a~b
+### end

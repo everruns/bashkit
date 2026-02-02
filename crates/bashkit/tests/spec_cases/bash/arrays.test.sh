@@ -88,7 +88,7 @@ b
 ### end
 
 ### array_indices
-### skip: array indices not implemented
+# Array indices expansion
 arr=(a b c); echo ${!arr[@]}
 ### expect
 0 1 2

@@ -78,4 +78,19 @@ pub enum Token {
 
     /// Process substitution output >(cmd)
     ProcessSubOut,
+
+    /// Redirect both stdout and stderr (&>)
+    RedirectBoth,
+
+    /// Duplicate output file descriptor (>&)
+    DupOutput,
+
+    /// Redirect with file descriptor (e.g., 2>)
+    RedirectFd(i32),
+
+    /// Redirect and append with file descriptor (e.g., 2>>)
+    RedirectFdAppend(i32),
+
+    /// Duplicate fd to another (e.g., 2>&1)
+    DupFd(i32, i32),
 }

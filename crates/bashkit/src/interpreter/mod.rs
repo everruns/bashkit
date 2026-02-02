@@ -45,6 +45,16 @@ struct CallFrame {
     positional: Vec<String>,
 }
 
+/// Shell options that can be set via `set -o` or `set -x`
+#[derive(Debug, Clone, Default)]
+pub struct ShellOptions {
+    /// Exit immediately if a command exits with non-zero status (set -e)
+    pub errexit: bool,
+    /// Print commands before execution (set -x) - stored but not enforced
+    #[allow(dead_code)]
+    pub xtrace: bool,
+}
+
 /// Interpreter state.
 pub struct Interpreter {
     fs: Arc<dyn FileSystem>,
@@ -67,6 +77,8 @@ pub struct Interpreter {
     /// Job table for background execution
     #[allow(dead_code)]
     jobs: JobTable,
+    /// Shell options (set -e, set -x, etc.)
+    options: ShellOptions,
 }
 
 impl Interpreter {
@@ -199,7 +211,32 @@ impl Interpreter {
             limits: ExecutionLimits::default(),
             counters: ExecutionCounters::new(),
             jobs: JobTable::new(),
+            options: ShellOptions::default(),
         }
+    }
+
+    /// Get mutable access to shell options (for builtins like `set`)
+    #[allow(dead_code)]
+    pub fn options_mut(&mut self) -> &mut ShellOptions {
+        &mut self.options
+    }
+
+    /// Get shell options
+    #[allow(dead_code)]
+    pub fn options(&self) -> &ShellOptions {
+        &self.options
+    }
+
+    /// Check if errexit (set -e) is enabled
+    /// This checks both the options struct and the SHOPT_e variable
+    /// (the `set` builtin stores options in SHOPT_e)
+    fn is_errexit_enabled(&self) -> bool {
+        self.options.errexit
+            || self
+                .variables
+                .get("SHOPT_e")
+                .map(|v| v == "1")
+                .unwrap_or(false)
     }
 
     /// Set execution limits.
@@ -229,6 +266,11 @@ impl Interpreter {
             stderr.push_str(&result.stderr);
             exit_code = result.exit_code;
             self.last_exit_code = exit_code;
+
+            // NOTE: errexit (set -e) is handled internally by execute_command,
+            // execute_list, and execute_command_sequence. We don't check here
+            // because those methods handle the nuances of && / || chains,
+            // if/while conditions, etc.
         }
 
         Ok(ExecResult {
@@ -307,8 +349,8 @@ impl Interpreter {
 
     /// Execute an if statement
     async fn execute_if(&mut self, if_cmd: &IfCommand) -> Result<ExecResult> {
-        // Execute condition
-        let condition_result = self.execute_command_sequence(&if_cmd.condition).await?;
+        // Execute condition (no errexit checking - conditions are expected to fail)
+        let condition_result = self.execute_condition_sequence(&if_cmd.condition).await?;
 
         if condition_result.exit_code == 0 {
             // Condition succeeded, execute then branch
@@ -317,7 +359,7 @@ impl Interpreter {
 
         // Check elif branches
         for (elif_condition, elif_body) in &if_cmd.elif_branches {
-            let elif_result = self.execute_command_sequence(elif_condition).await?;
+            let elif_result = self.execute_condition_sequence(elif_condition).await?;
             if elif_result.exit_code == 0 {
                 return self.execute_command_sequence(elif_body).await;
             }
@@ -406,7 +448,17 @@ impl Interpreter {
                         control_flow: ControlFlow::Return(code),
                     });
                 }
-                ControlFlow::None => {}
+                ControlFlow::None => {
+                    // Check if errexit caused early return from body
+                    if self.is_errexit_enabled() && exit_code != 0 {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::None,
+                        });
+                    }
+                }
             }
         }
 
@@ -486,7 +538,17 @@ impl Interpreter {
                         control_flow: ControlFlow::Return(code),
                     });
                 }
-                ControlFlow::None => {}
+                ControlFlow::None => {
+                    // Check if errexit caused early return from body
+                    if self.is_errexit_enabled() && exit_code != 0 {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::None,
+                        });
+                    }
+                }
             }
 
             // Execute step
@@ -646,8 +708,10 @@ impl Interpreter {
             // Check loop iteration limit
             self.counters.tick_loop(&self.limits)?;
 
-            // Check condition
-            let condition_result = self.execute_command_sequence(&while_cmd.condition).await?;
+            // Check condition (no errexit - conditions are expected to fail)
+            let condition_result = self
+                .execute_condition_sequence(&while_cmd.condition)
+                .await?;
             if condition_result.exit_code != 0 {
                 break;
             }
@@ -692,7 +756,17 @@ impl Interpreter {
                         control_flow: ControlFlow::Return(code),
                     });
                 }
-                ControlFlow::None => {}
+                ControlFlow::None => {
+                    // Check if errexit caused early return from body
+                    if self.is_errexit_enabled() && exit_code != 0 {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::None,
+                        });
+                    }
+                }
             }
         }
 
@@ -717,8 +791,10 @@ impl Interpreter {
             // Check loop iteration limit
             self.counters.tick_loop(&self.limits)?;
 
-            // Check condition
-            let condition_result = self.execute_command_sequence(&until_cmd.condition).await?;
+            // Check condition (no errexit - conditions are expected to fail)
+            let condition_result = self
+                .execute_condition_sequence(&until_cmd.condition)
+                .await?;
             if condition_result.exit_code == 0 {
                 break;
             }
@@ -763,7 +839,17 @@ impl Interpreter {
                         control_flow: ControlFlow::Return(code),
                     });
                 }
-                ControlFlow::None => {}
+                ControlFlow::None => {
+                    // Check if errexit caused early return from body
+                    if self.is_errexit_enabled() && exit_code != 0 {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::None,
+                        });
+                    }
+                }
             }
         }
 
@@ -1071,8 +1157,23 @@ impl Interpreter {
         }
     }
 
-    /// Execute a sequence of commands
+    /// Execute a sequence of commands (with errexit checking)
     async fn execute_command_sequence(&mut self, commands: &[Command]) -> Result<ExecResult> {
+        self.execute_command_sequence_impl(commands, true).await
+    }
+
+    /// Execute a sequence of commands used as a condition (no errexit checking)
+    /// Used for if/while/until conditions where failure is expected
+    async fn execute_condition_sequence(&mut self, commands: &[Command]) -> Result<ExecResult> {
+        self.execute_command_sequence_impl(commands, false).await
+    }
+
+    /// Execute a sequence of commands with optional errexit checking
+    async fn execute_command_sequence_impl(
+        &mut self,
+        commands: &[Command],
+        check_errexit: bool,
+    ) -> Result<ExecResult> {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
@@ -1091,6 +1192,16 @@ impl Interpreter {
                     stderr,
                     exit_code,
                     control_flow: result.control_flow,
+                });
+            }
+
+            // Check for errexit (set -e) if enabled
+            if check_errexit && self.is_errexit_enabled() && exit_code != 0 {
+                return Ok(ExecResult {
+                    stdout,
+                    stderr,
+                    exit_code,
+                    control_flow: ControlFlow::None,
                 });
             }
         }
@@ -1162,7 +1273,51 @@ impl Interpreter {
             });
         }
 
-        for (op, cmd) in &list.rest {
+        // Track if the list contains any && or || operators
+        // If so, failures within the list are "handled" by those operators
+        let has_conditional_operators = list
+            .rest
+            .iter()
+            .any(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or));
+
+        // Track if we just exited a conditional chain (for errexit check)
+        let mut just_exited_conditional_chain = false;
+
+        for (i, (op, cmd)) in list.rest.iter().enumerate() {
+            // Check if next operator (if any) is && or ||
+            let next_op = list.rest.get(i + 1).map(|(op, _)| op);
+            let current_is_conditional = matches!(op, ListOperator::And | ListOperator::Or);
+            let next_is_conditional =
+                matches!(next_op, Some(ListOperator::And) | Some(ListOperator::Or));
+
+            // Check errexit before executing if:
+            // - We just exited a conditional chain (and current op is semicolon)
+            // - OR: current op is semicolon and previous wasn't in a conditional chain
+            // - Exit code is non-zero
+            // But NOT if we're about to enter/continue a conditional chain
+            let should_check_errexit = matches!(op, ListOperator::Semicolon)
+                && !just_exited_conditional_chain
+                && self.is_errexit_enabled()
+                && exit_code != 0;
+
+            if should_check_errexit {
+                return Ok(ExecResult {
+                    stdout,
+                    stderr,
+                    exit_code,
+                    control_flow: ControlFlow::None,
+                });
+            }
+
+            // Reset the flag
+            just_exited_conditional_chain = false;
+
+            // Mark that we're exiting a conditional chain if:
+            // - Current is conditional (&&/||) and next is not conditional (;/end)
+            if current_is_conditional && !next_is_conditional {
+                just_exited_conditional_chain = true;
+            }
+
             let should_execute = match op {
                 ListOperator::And => exit_code == 0,
                 ListOperator::Or => exit_code != 0,
@@ -1191,6 +1346,22 @@ impl Interpreter {
                     });
                 }
             }
+        }
+
+        // Final errexit check for the last command
+        // Don't check if:
+        // - The list had conditional operators (failures are "handled" by && / ||)
+        // - OR we're in/just exited a conditional chain
+        let should_final_errexit_check =
+            !has_conditional_operators && self.is_errexit_enabled() && exit_code != 0;
+
+        if should_final_errexit_check {
+            return Ok(ExecResult {
+                stdout,
+                stderr,
+                exit_code,
+                control_flow: ControlFlow::None,
+            });
         }
 
         Ok(ExecResult {
@@ -1282,21 +1453,33 @@ impl Interpreter {
             return Ok(ExecResult::ok(String::new()));
         }
 
-        // Expand arguments with glob expansion
+        // Expand arguments with brace and glob expansion
         let mut args: Vec<String> = Vec::new();
         for word in &command.args {
             let expanded = self.expand_word(word).await?;
-            // Check if the word contains glob characters
-            if self.contains_glob_chars(&expanded) {
-                let glob_matches = self.expand_glob(&expanded).await?;
-                if glob_matches.is_empty() {
-                    // No matches - keep original pattern (bash behavior)
-                    args.push(expanded);
-                } else {
-                    args.extend(glob_matches);
-                }
-            } else {
+
+            // Skip brace and glob expansion for quoted words
+            if word.quoted {
                 args.push(expanded);
+                continue;
+            }
+
+            // Step 1: Brace expansion (produces multiple strings)
+            let brace_expanded = self.expand_braces(&expanded);
+
+            // Step 2: For each brace-expanded item, do glob expansion
+            for item in brace_expanded {
+                if self.contains_glob_chars(&item) {
+                    let glob_matches = self.expand_glob(&item).await?;
+                    if glob_matches.is_empty() {
+                        // No matches - keep original pattern (bash behavior)
+                        args.push(item);
+                    } else {
+                        args.extend(glob_matches);
+                    }
+                } else {
+                    args.push(item);
+                }
             }
         }
 
@@ -1439,22 +1622,74 @@ impl Interpreter {
                 RedirectKind::Output => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    // Write stdout to file
-                    self.fs.write_file(&path, result.stdout.as_bytes()).await?;
-                    result.stdout = String::new();
+                    // Check which fd we're redirecting
+                    match redirect.fd {
+                        Some(2) => {
+                            // 2> - redirect stderr to file
+                            self.fs.write_file(&path, result.stderr.as_bytes()).await?;
+                            result.stderr = String::new();
+                        }
+                        _ => {
+                            // Default (stdout) - write stdout to file
+                            self.fs.write_file(&path, result.stdout.as_bytes()).await?;
+                            result.stdout = String::new();
+                        }
+                    }
                 }
                 RedirectKind::Append => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    // Append stdout to file
-                    self.fs.append_file(&path, result.stdout.as_bytes()).await?;
-                    result.stdout = String::new();
+                    // Check which fd we're appending
+                    match redirect.fd {
+                        Some(2) => {
+                            // 2>> - append stderr to file
+                            self.fs.append_file(&path, result.stderr.as_bytes()).await?;
+                            result.stderr = String::new();
+                        }
+                        _ => {
+                            // Default (stdout) - append stdout to file
+                            self.fs.append_file(&path, result.stdout.as_bytes()).await?;
+                            result.stdout = String::new();
+                        }
+                    }
                 }
-                RedirectKind::Input | RedirectKind::HereString => {
+                RedirectKind::OutputBoth => {
+                    // &> - redirect both stdout and stderr to file
+                    let target_path = self.expand_word(&redirect.target).await?;
+                    let path = self.resolve_path(&target_path);
+                    // Write both stdout and stderr to file
+                    let combined = format!("{}{}", result.stdout, result.stderr);
+                    self.fs.write_file(&path, combined.as_bytes()).await?;
+                    result.stdout = String::new();
+                    result.stderr = String::new();
+                }
+                RedirectKind::DupOutput => {
+                    // Handle fd duplication (e.g., 2>&1, >&2)
+                    let target = self.expand_word(&redirect.target).await?;
+                    let target_fd: i32 = target.parse().unwrap_or(1);
+                    let src_fd = redirect.fd.unwrap_or(1);
+
+                    match (src_fd, target_fd) {
+                        (2, 1) => {
+                            // 2>&1 - redirect stderr to stdout
+                            result.stdout.push_str(&result.stderr);
+                            result.stderr = String::new();
+                        }
+                        (1, 2) => {
+                            // >&2 or 1>&2 - redirect stdout to stderr
+                            result.stderr.push_str(&result.stdout);
+                            result.stdout = String::new();
+                        }
+                        _ => {
+                            // Other fd duplications not yet supported
+                        }
+                    }
+                }
+                RedirectKind::Input | RedirectKind::HereString | RedirectKind::HereDoc => {
                     // Input redirections handled in process_input_redirections
                 }
-                _ => {
-                    // TODO: Handle other redirect types (HereDoc, DupOutput, DupInput, OutputBoth)
+                RedirectKind::DupInput => {
+                    // Input fd duplication not yet supported
                 }
             }
         }
@@ -1474,10 +1709,35 @@ impl Interpreter {
 
     async fn expand_word(&mut self, word: &Word) -> Result<String> {
         let mut result = String::new();
+        let mut is_first_part = true;
 
         for part in &word.parts {
             match part {
-                WordPart::Literal(s) => result.push_str(s),
+                WordPart::Literal(s) => {
+                    // Tilde expansion: ~ at start of word expands to $HOME
+                    if is_first_part && s.starts_with('~') {
+                        let home = self
+                            .env
+                            .get("HOME")
+                            .or_else(|| self.variables.get("HOME"))
+                            .cloned()
+                            .unwrap_or_else(|| "/home/user".to_string());
+
+                        if s == "~" {
+                            // Just ~
+                            result.push_str(&home);
+                        } else if s.starts_with("~/") {
+                            // ~/path
+                            result.push_str(&home);
+                            result.push_str(&s[1..]); // Include the /
+                        } else {
+                            // ~user - not implemented, keep as-is
+                            result.push_str(s);
+                        }
+                    } else {
+                        result.push_str(s);
+                    }
+                }
                 WordPart::Variable(name) => {
                     result.push_str(&self.expand_variable(name));
                 }
@@ -1548,6 +1808,16 @@ impl Interpreter {
                         }
                     }
                 }
+                WordPart::ArrayIndices(name) => {
+                    // ${!arr[@]} or ${!arr[*]} - expand to array indices
+                    if let Some(arr) = self.arrays.get(name) {
+                        let mut indices: Vec<_> = arr.keys().collect();
+                        indices.sort();
+                        let index_strs: Vec<String> =
+                            indices.iter().map(|i| i.to_string()).collect();
+                        result.push_str(&index_strs.join(" "));
+                    }
+                }
                 WordPart::ArrayLength(name) => {
                     // ${#arr[@]} - number of elements
                     if let Some(arr) = self.arrays.get(name) {
@@ -1587,6 +1857,7 @@ impl Interpreter {
                     }
                 }
             }
+            is_first_part = false;
         }
 
         Ok(result)
@@ -1925,6 +2196,44 @@ impl Interpreter {
             }
         }
 
+        // Logical OR (||)
+        depth = 0;
+        for i in (0..chars.len()).rev() {
+            match chars[i] {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                '|' if depth == 0 && i > 0 && chars[i - 1] == '|' => {
+                    let left = self.parse_arithmetic(&expr[..i - 1]);
+                    // Short-circuit: if left is true, don't evaluate right
+                    if left != 0 {
+                        return 1;
+                    }
+                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    return if right != 0 { 1 } else { 0 };
+                }
+                _ => {}
+            }
+        }
+
+        // Logical AND (&&)
+        depth = 0;
+        for i in (0..chars.len()).rev() {
+            match chars[i] {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                '&' if depth == 0 && i > 0 && chars[i - 1] == '&' => {
+                    let left = self.parse_arithmetic(&expr[..i - 1]);
+                    // Short-circuit: if left is false, don't evaluate right
+                    if left == 0 {
+                        return 0;
+                    }
+                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    return if right != 0 { 1 } else { 0 };
+                }
+                _ => {}
+            }
+        }
+
         // Bitwise OR (|) - but not ||
         depth = 0;
         for i in (0..chars.len()).rev() {
@@ -2091,6 +2400,22 @@ impl Interpreter {
                 }
                 return String::new();
             }
+            "$" => {
+                // $$ - current process ID (simulated)
+                return std::process::id().to_string();
+            }
+            "RANDOM" => {
+                // $RANDOM - random number between 0 and 32767
+                use std::collections::hash_map::RandomState;
+                use std::hash::{BuildHasher, Hasher};
+                let random = RandomState::new().build_hasher().finish() as u32;
+                return (random % 32768).to_string();
+            }
+            "LINENO" => {
+                // $LINENO - current line number (not tracked, return 1)
+                // TODO: Track line numbers in parser and interpreter
+                return "1".to_string();
+            }
             _ => {}
         }
 
@@ -2142,6 +2467,155 @@ impl Interpreter {
     }
 
     /// Check if a string contains glob characters
+    /// Expand brace patterns like {a,b,c} or {1..5}
+    /// Returns a Vec of expanded strings, or a single-element Vec if no braces
+    fn expand_braces(&self, s: &str) -> Vec<String> {
+        // Find the first brace that has a matching close brace
+        let mut depth = 0;
+        let mut brace_start = None;
+        let mut brace_end = None;
+        let chars: Vec<char> = s.chars().collect();
+
+        for (i, &ch) in chars.iter().enumerate() {
+            match ch {
+                '{' => {
+                    if depth == 0 {
+                        brace_start = Some(i);
+                    }
+                    depth += 1;
+                }
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 && brace_start.is_some() {
+                        brace_end = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // No valid brace pattern found
+        let (start, end) = match (brace_start, brace_end) {
+            (Some(s), Some(e)) => (s, e),
+            _ => return vec![s.to_string()],
+        };
+
+        let prefix: String = chars[..start].iter().collect();
+        let suffix: String = chars[end + 1..].iter().collect();
+        let brace_content: String = chars[start + 1..end].iter().collect();
+
+        // Check for range expansion like {1..5} or {a..z}
+        if let Some(range_result) = self.try_expand_range(&brace_content) {
+            let mut results = Vec::new();
+            for item in range_result {
+                let expanded = format!("{}{}{}", prefix, item, suffix);
+                // Recursively expand any remaining braces
+                results.extend(self.expand_braces(&expanded));
+            }
+            return results;
+        }
+
+        // List expansion like {a,b,c}
+        // Need to split by comma, but respect nested braces
+        let items = self.split_brace_items(&brace_content);
+        if items.len() <= 1 && !brace_content.contains(',') {
+            // Not a valid brace expansion (e.g., just {foo})
+            return vec![s.to_string()];
+        }
+
+        let mut results = Vec::new();
+        for item in items {
+            let expanded = format!("{}{}{}", prefix, item, suffix);
+            // Recursively expand any remaining braces
+            results.extend(self.expand_braces(&expanded));
+        }
+
+        results
+    }
+
+    /// Try to expand a range like 1..5 or a..z
+    fn try_expand_range(&self, content: &str) -> Option<Vec<String>> {
+        // Check for .. separator
+        let parts: Vec<&str> = content.split("..").collect();
+        if parts.len() != 2 {
+            return None;
+        }
+
+        let start = parts[0];
+        let end = parts[1];
+
+        // Try numeric range
+        if let (Ok(start_num), Ok(end_num)) = (start.parse::<i64>(), end.parse::<i64>()) {
+            let mut results = Vec::new();
+            if start_num <= end_num {
+                for i in start_num..=end_num {
+                    results.push(i.to_string());
+                }
+            } else {
+                for i in (end_num..=start_num).rev() {
+                    results.push(i.to_string());
+                }
+            }
+            return Some(results);
+        }
+
+        // Try character range (single chars only)
+        if start.len() == 1 && end.len() == 1 {
+            let start_char = start.chars().next().unwrap();
+            let end_char = end.chars().next().unwrap();
+
+            if start_char.is_ascii_alphabetic() && end_char.is_ascii_alphabetic() {
+                let mut results = Vec::new();
+                let start_byte = start_char as u8;
+                let end_byte = end_char as u8;
+
+                if start_byte <= end_byte {
+                    for b in start_byte..=end_byte {
+                        results.push((b as char).to_string());
+                    }
+                } else {
+                    for b in (end_byte..=start_byte).rev() {
+                        results.push((b as char).to_string());
+                    }
+                }
+                return Some(results);
+            }
+        }
+
+        None
+    }
+
+    /// Split brace content by commas, respecting nested braces
+    fn split_brace_items(&self, content: &str) -> Vec<String> {
+        let mut items = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0;
+
+        for ch in content.chars() {
+            match ch {
+                '{' => {
+                    depth += 1;
+                    current.push(ch);
+                }
+                '}' => {
+                    depth -= 1;
+                    current.push(ch);
+                }
+                ',' if depth == 0 => {
+                    items.push(current);
+                    current = String::new();
+                }
+                _ => {
+                    current.push(ch);
+                }
+            }
+        }
+        items.push(current);
+
+        items
+    }
+
     fn contains_glob_chars(&self, s: &str) -> bool {
         s.contains('*') || s.contains('?') || s.contains('[')
     }

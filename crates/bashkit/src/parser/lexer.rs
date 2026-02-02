@@ -52,6 +52,9 @@ impl<'a> Lexer<'a> {
                 if self.peek_char() == Some('&') {
                     self.advance();
                     Some(Token::And)
+                } else if self.peek_char() == Some('>') {
+                    self.advance();
+                    Some(Token::RedirectBoth)
                 } else {
                     Some(Token::Background)
                 }
@@ -64,6 +67,9 @@ impl<'a> Lexer<'a> {
                 } else if self.peek_char() == Some('(') {
                     self.advance();
                     Some(Token::ProcessSubOut)
+                } else if self.peek_char() == Some('&') {
+                    self.advance();
+                    Some(Token::DupOutput)
                 } else {
                     Some(Token::RedirectOut)
                 }
@@ -104,8 +110,18 @@ impl<'a> Lexer<'a> {
                 }
             }
             '{' => {
-                self.advance();
-                Some(Token::LeftBrace)
+                // Look ahead to see if this is a brace expansion like {a,b,c} or {1..5}
+                // vs a brace group like { cmd; }
+                // Note: { must be followed by space/newline to be a brace group
+                if self.looks_like_brace_expansion() {
+                    self.read_brace_expansion_word()
+                } else if self.is_brace_group_start() {
+                    self.advance();
+                    Some(Token::LeftBrace)
+                } else {
+                    // {single} without comma/dot-dot is kept as literal word
+                    self.read_brace_literal_word()
+                }
             }
             '}' => {
                 self.advance();
@@ -137,6 +153,8 @@ impl<'a> Lexer<'a> {
                 self.skip_comment();
                 self.next_token()
             }
+            // Handle file descriptor redirects like 2> or 2>&1
+            '0'..='9' => self.read_word_or_fd_redirect(),
             _ => self.read_word(),
         }
     }
@@ -170,6 +188,75 @@ impl<'a> Lexer<'a> {
             }
             self.advance();
         }
+    }
+
+    /// Check if this is a file descriptor redirect (e.g., 2>, 2>>, 2>&1)
+    /// or just a regular word starting with a digit
+    fn read_word_or_fd_redirect(&mut self) -> Option<Token> {
+        // We need to look ahead to see if this is a fd redirect pattern
+        // Collect the leading digits
+        let mut fd_str = String::new();
+
+        // Peek at the first digit - we know it's a digit from the match
+        if let Some(ch) = self.peek_char() {
+            if ch.is_ascii_digit() {
+                fd_str.push(ch);
+            }
+        }
+
+        // Check if it's a single digit followed by > or <
+        // We need to peek further without consuming
+        let input_remaining: String = self.chars.clone().collect();
+
+        // Check patterns: "N>" "N>>" "N>&" "N<" "N<&"
+        if fd_str.len() == 1 {
+            if let Some(first_digit) = fd_str.chars().next() {
+                let rest = &input_remaining[1..]; // Skip the digit we already matched
+
+                if rest.starts_with(">>") {
+                    // N>> - append redirect with fd
+                    let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
+                    self.advance(); // consume digit
+                    self.advance(); // consume >
+                    self.advance(); // consume >
+                    return Some(Token::RedirectFdAppend(fd));
+                } else if rest.starts_with(">&") {
+                    // N>&M - duplicate fd
+                    let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
+                    self.advance(); // consume digit
+                    self.advance(); // consume >
+                    self.advance(); // consume &
+
+                    // Read the target fd number
+                    let mut target_str = String::new();
+                    while let Some(c) = self.peek_char() {
+                        if c.is_ascii_digit() {
+                            target_str.push(c);
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if target_str.is_empty() {
+                        // Just N>& without target - treat as DupOutput with fd
+                        return Some(Token::RedirectFd(fd));
+                    }
+
+                    let target_fd: i32 = target_str.parse().unwrap_or(1);
+                    return Some(Token::DupFd(fd, target_fd));
+                } else if rest.starts_with('>') {
+                    // N> - redirect with fd
+                    let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
+                    self.advance(); // consume digit
+                    self.advance(); // consume >
+                    return Some(Token::RedirectFd(fd));
+                }
+            }
+        }
+
+        // Not a fd redirect pattern, read as regular word
+        self.read_word()
     }
 
     fn read_word(&mut self) -> Option<Token> {
@@ -274,6 +361,23 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 }
+            } else if ch == '{' {
+                // Brace expansion pattern - include entire {...} in word
+                word.push(ch);
+                self.advance();
+                let mut depth = 1;
+                while let Some(c) = self.peek_char() {
+                    word.push(c);
+                    self.advance();
+                    if c == '{' {
+                        depth += 1;
+                    } else if c == '}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                }
             } else if self.is_word_char(ch) {
                 word.push(ch);
                 self.advance();
@@ -341,6 +445,161 @@ impl<'a> Lexer<'a> {
         }
 
         Some(Token::Word(content))
+    }
+
+    /// Check if the content starting with { looks like a brace expansion
+    /// Brace expansion: {a,b,c} or {1..5} (contains , or ..)
+    /// Brace group: { cmd; } (contains spaces, semicolons, newlines)
+    fn looks_like_brace_expansion(&self) -> bool {
+        // Clone the iterator to peek ahead without consuming
+        let mut chars = self.chars.clone();
+
+        // Skip the opening {
+        if chars.next() != Some('{') {
+            return false;
+        }
+
+        let mut depth = 1;
+        let mut has_comma = false;
+        let mut has_dot_dot = false;
+        let mut prev_char = None;
+
+        for ch in chars {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // Found matching }, check if we have brace expansion markers
+                        return has_comma || has_dot_dot;
+                    }
+                }
+                ',' if depth == 1 => has_comma = true,
+                '.' if prev_char == Some('.') && depth == 1 => has_dot_dot = true,
+                // Brace groups have whitespace/newlines/semicolons at depth 1
+                ' ' | '\t' | '\n' | ';' if depth == 1 => return false,
+                _ => {}
+            }
+            prev_char = Some(ch);
+        }
+
+        false
+    }
+
+    /// Check if { is followed by whitespace (brace group start)
+    fn is_brace_group_start(&self) -> bool {
+        let mut chars = self.chars.clone();
+        // Skip the opening {
+        if chars.next() != Some('{') {
+            return false;
+        }
+        // If next char is whitespace or newline, it's a brace group
+        matches!(chars.next(), Some(' ') | Some('\t') | Some('\n') | None)
+    }
+
+    /// Read a {literal} pattern without comma/dot-dot as a word
+    fn read_brace_literal_word(&mut self) -> Option<Token> {
+        let mut word = String::new();
+
+        // Read the opening {
+        if let Some('{') = self.peek_char() {
+            word.push('{');
+            self.advance();
+        } else {
+            return None;
+        }
+
+        // Read until matching }
+        let mut depth = 1;
+        while let Some(ch) = self.peek_char() {
+            word.push(ch);
+            self.advance();
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Continue reading any suffix
+        while let Some(ch) = self.peek_char() {
+            if self.is_word_char(ch) {
+                word.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        Some(Token::Word(word))
+    }
+
+    /// Read a brace expansion pattern as a word
+    fn read_brace_expansion_word(&mut self) -> Option<Token> {
+        let mut word = String::new();
+
+        // Read the opening {
+        if let Some('{') = self.peek_char() {
+            word.push('{');
+            self.advance();
+        } else {
+            return None;
+        }
+
+        // Read until matching }
+        let mut depth = 1;
+        while let Some(ch) = self.peek_char() {
+            word.push(ch);
+            self.advance();
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Continue reading any suffix after the brace pattern
+        while let Some(ch) = self.peek_char() {
+            if self.is_word_char(ch) || ch == '{' {
+                if ch == '{' {
+                    // Another brace pattern - include it
+                    word.push(ch);
+                    self.advance();
+                    let mut inner_depth = 1;
+                    while let Some(c) = self.peek_char() {
+                        word.push(c);
+                        self.advance();
+                        match c {
+                            '{' => inner_depth += 1,
+                            '}' => {
+                                inner_depth -= 1;
+                                if inner_depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                } else {
+                    word.push(ch);
+                    self.advance();
+                }
+            } else {
+                break;
+            }
+        }
+
+        Some(Token::Word(word))
     }
 
     fn is_word_char(&self, ch: char) -> bool {

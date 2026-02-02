@@ -396,6 +396,7 @@ impl<'a> Parser<'a> {
                     Some(tokens::Token::LiteralWord(w)) => {
                         words.push(Word {
                             parts: vec![WordPart::Literal(w.clone())],
+                            quoted: true,
                         });
                         self.advance();
                     }
@@ -1155,6 +1156,7 @@ impl<'a> Parser<'a> {
                                                 ) {
                                                     Word {
                                                         parts: vec![WordPart::Literal(elem_clone)],
+                                                        quoted: true,
                                                     }
                                                 } else {
                                                     self.parse_word(elem_clone)
@@ -1198,6 +1200,7 @@ impl<'a> Parser<'a> {
                                     let inner = Self::strip_quotes(&value_str);
                                     Word {
                                         parts: vec![WordPart::Literal(inner.to_string())],
+                                        quoted: true,
                                     }
                                 } else {
                                     self.parse_word(value_str)
@@ -1218,6 +1221,7 @@ impl<'a> Parser<'a> {
                     let word = if is_literal {
                         Word {
                             parts: vec![WordPart::Literal(w.clone())],
+                            quoted: true,
                         }
                     } else {
                         self.parse_word(w.clone())
@@ -1288,6 +1292,59 @@ impl<'a> Parser<'a> {
                     let word = self.expect_word()?;
                     words.push(word);
                 }
+                // &> - redirect both stdout and stderr to file
+                Some(tokens::Token::RedirectBoth) => {
+                    self.advance();
+                    let target = self.expect_word()?;
+                    redirects.push(Redirect {
+                        fd: None,
+                        kind: RedirectKind::OutputBoth,
+                        target,
+                    });
+                }
+                // >& - duplicate output fd (used for >&2 etc.)
+                Some(tokens::Token::DupOutput) => {
+                    self.advance();
+                    let target = self.expect_word()?;
+                    redirects.push(Redirect {
+                        fd: Some(1), // Default to stdout
+                        kind: RedirectKind::DupOutput,
+                        target,
+                    });
+                }
+                // N> - redirect with specific file descriptor
+                Some(tokens::Token::RedirectFd(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    let target = self.expect_word()?;
+                    redirects.push(Redirect {
+                        fd: Some(fd),
+                        kind: RedirectKind::Output,
+                        target,
+                    });
+                }
+                // N>> - append with specific file descriptor
+                Some(tokens::Token::RedirectFdAppend(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    let target = self.expect_word()?;
+                    redirects.push(Redirect {
+                        fd: Some(fd),
+                        kind: RedirectKind::Append,
+                        target,
+                    });
+                }
+                // N>&M - duplicate fd N to M
+                Some(tokens::Token::DupFd(src_fd, dst_fd)) => {
+                    let src_fd = *src_fd;
+                    let dst_fd = *dst_fd;
+                    self.advance();
+                    redirects.push(Redirect {
+                        fd: Some(src_fd),
+                        kind: RedirectKind::DupOutput,
+                        target: Word::literal(dst_fd.to_string()),
+                    });
+                }
                 Some(tokens::Token::Newline)
                 | Some(tokens::Token::Semicolon)
                 | Some(tokens::Token::Pipe)
@@ -1336,6 +1393,7 @@ impl<'a> Parser<'a> {
                 // Single-quoted: no variable expansion
                 let word = Word {
                     parts: vec![WordPart::Literal(w.clone())],
+                    quoted: true,
                 };
                 self.advance();
                 Ok(word)
@@ -1408,6 +1466,7 @@ impl<'a> Parser<'a> {
 
                 Ok(Word {
                     parts: vec![WordPart::ProcessSubstitution { commands, is_input }],
+                    quoted: false,
                 })
             }
             _ => Err(Error::Parse("expected word".to_string())),
@@ -1422,6 +1481,7 @@ impl<'a> Parser<'a> {
             Some(tokens::Token::Word(w)) => Some(self.parse_word(w.clone())),
             Some(tokens::Token::LiteralWord(w)) => Some(Word {
                 parts: vec![WordPart::Literal(w.clone())],
+                quoted: true,
             }),
             _ => None,
         }
@@ -1552,6 +1612,49 @@ impl<'a> Parser<'a> {
                                 chars.next();
                             }
                             parts.push(WordPart::Length(var_name));
+                        }
+                    } else if chars.peek() == Some(&'!') {
+                        // Check for ${!arr[@]} or ${!arr[*]} - array indices
+                        chars.next(); // consume '!'
+                        let mut var_name = String::new();
+                        while let Some(&c) = chars.peek() {
+                            if c == '}' || c == '[' {
+                                break;
+                            }
+                            var_name.push(chars.next().unwrap());
+                        }
+                        // Check for array indices ${!arr[@]} or ${!arr[*]}
+                        if chars.peek() == Some(&'[') {
+                            chars.next(); // consume '['
+                            let mut index = String::new();
+                            while let Some(&c) = chars.peek() {
+                                if c == ']' {
+                                    chars.next();
+                                    break;
+                                }
+                                index.push(chars.next().unwrap());
+                            }
+                            // Consume closing }
+                            if chars.peek() == Some(&'}') {
+                                chars.next();
+                            }
+                            if index == "@" || index == "*" {
+                                parts.push(WordPart::ArrayIndices(var_name));
+                            } else {
+                                // ${!arr[n]} - not standard, treat as variable
+                                parts.push(WordPart::Variable(format!("!{}[{}]", var_name, index)));
+                            }
+                        } else {
+                            // ${!prefix*} or ${!prefix@} - indirect expansion (not fully supported)
+                            // For now, consume until } and treat as variable
+                            while let Some(&c) = chars.peek() {
+                                if c == '}' {
+                                    chars.next();
+                                    break;
+                                }
+                                var_name.push(chars.next().unwrap());
+                            }
+                            parts.push(WordPart::Variable(format!("!{}", var_name)));
                         }
                     } else {
                         // Read variable name
@@ -1704,7 +1807,10 @@ impl<'a> Parser<'a> {
             parts.push(WordPart::Literal(String::new()));
         }
 
-        Word { parts }
+        Word {
+            parts,
+            quoted: false,
+        }
     }
 
     /// Read operand for brace expansion (everything until closing brace)
