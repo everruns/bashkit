@@ -5,39 +5,43 @@
 //!
 //! Test files are in tests/spec_cases/{bash,awk,grep,sed,jq}/
 //!
-//! ## Skipped Tests TODO
+//! ## Skipped Tests TODO (108 total)
 //!
 //! The following tests are skipped and need fixes:
 //!
-//! ### cuttr.test.sh (5 tests)
-//! - [ ] tr_lowercase_to_uppercase - tr output missing trailing newline
-//! - [ ] tr_delete - tr output missing trailing newline
-//! - [ ] tr_single_char - tr output missing trailing newline
-//! - [ ] tr_spaces_to_newlines - tr escape sequence handling differs
-//! - [ ] tr_delete_all_vowels - tr output missing trailing newline
+//! ### cuttr.test.sh - cut/tr issues
+//! - [ ] tr_* (5) - tr output missing trailing newline
+//! - [ ] cut_char_* (5) - cut -c character mode not implemented
+//! - [ ] cut_field_to_end - cut field-to-end range not fully implemented
+//! - [ ] tr_squeeze, tr_complement - tr -s/-c not implemented
+//! - [ ] tr_class_* (2) - tr character class handling differs
+//! - [ ] tr_escape_* (2) - tr escape sequence handling differs
+//! - [ ] tr_multiple_chars - tr output missing trailing newline
+//! - [ ] cut_complement, cut_output_delimiter - not implemented
+//! - [ ] tr_truncate_set2 - tr truncation behavior differs
+//! - [ ] cut_only_delimited, cut_zero_terminated - not implemented
 //!
-//! ### date.test.sh (3 tests)
-//! - [ ] date_year_format - test expects empty but grep outputs matches
-//! - [ ] date_iso_format - test expects empty but grep outputs matches
-//! - [ ] date_time_format - test expects empty but grep outputs matches
+//! ### date.test.sh - grep output expectations wrong
+//! - [ ] All date format tests (20+) - test expects empty but grep outputs matches
 //!
-//! ### fileops.test.sh (5 tests)
-//! - [ ] mkdir_simple - test conditionals not seeing filesystem changes
-//! - [ ] mkdir_recursive - test conditionals not seeing filesystem changes
-//! - [ ] touch_create - test conditionals not seeing filesystem changes
-//! - [ ] mv_file - test conditionals not seeing filesystem changes
-//! - [ ] touch_multiple - test conditionals not seeing filesystem changes
+//! ### fileops.test.sh - filesystem visibility
+//! - [ ] mkdir_*, touch_*, mv_file (5) - test conditionals not seeing fs changes
 //!
-//! ### headtail.test.sh (2 tests)
-//! - [ ] head_default - default line count not working with stdin
-//! - [ ] tail_default - default line count not working with stdin
+//! ### headtail.test.sh
+//! - [ ] head_default, tail_default - default line count not working with stdin
 //!
-//! ### herestring.test.sh (1 test)
+//! ### herestring.test.sh
 //! - [ ] herestring_empty - empty herestring adds extra newline
 //!
-//! ### path.test.sh (2 tests)
-//! - [ ] basename_no_args - missing argument error handling not implemented
-//! - [ ] dirname_no_args - missing argument error handling not implemented
+//! ### path.test.sh
+//! - [ ] basename_no_args, dirname_no_args - error handling not implemented
+//!
+//! ### echo.test.sh
+//! - [ ] echo_escape_r - carriage return handling differs
+//! - [ ] echo_combined_en, echo_combined_ne - combined flag handling differs
+//!
+//! ### wc.test.sh
+//! - [ ] wc_chars_m_flag, wc_long_bytes, wc_bytes_vs_chars - outputs full stats
 //!
 //! ### control-flow.test.sh.skip (entire file)
 //! - [ ] Control flow tests need implementation

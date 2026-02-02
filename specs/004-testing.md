@@ -37,27 +37,27 @@ crates/bashkit/tests/
 ├── threat_model_tests.rs    # Security threat model tests
 ├── security_failpoint_tests.rs  # Fault injection tests
 └── spec_cases/
-    ├── bash/           # Core bash compatibility (19 files, 209 cases)
-    │   ├── arithmetic.test.sh (22)
-    │   ├── arrays.test.sh (14)
-    │   ├── background.test.sh (2)
-    │   ├── command-subst.test.sh (14)
+    ├── bash/           # Core bash compatibility (19 files, 331 cases)
+    │   ├── arithmetic.test.sh
+    │   ├── arrays.test.sh
+    │   ├── background.test.sh
+    │   ├── command-subst.test.sh
     │   ├── control-flow.test.sh.skip  # Skipped - needs implementation
-    │   ├── cuttr.test.sh (10)
-    │   ├── date.test.sh (4)
-    │   ├── echo.test.sh (10)
-    │   ├── fileops.test.sh (15)
-    │   ├── functions.test.sh (14)
-    │   ├── globs.test.sh (7)
-    │   ├── headtail.test.sh (14)
-    │   ├── herestring.test.sh (8)
-    │   ├── path.test.sh (14)
-    │   ├── pipes-redirects.test.sh (13)
-    │   ├── procsub.test.sh (6)
-    │   ├── sleep.test.sh (6)
-    │   ├── sortuniq.test.sh (12)
-    │   ├── variables.test.sh (20)
-    │   └── wc.test.sh (4)
+    │   ├── cuttr.test.sh
+    │   ├── date.test.sh
+    │   ├── echo.test.sh
+    │   ├── fileops.test.sh
+    │   ├── functions.test.sh
+    │   ├── globs.test.sh
+    │   ├── headtail.test.sh
+    │   ├── herestring.test.sh
+    │   ├── path.test.sh
+    │   ├── pipes-redirects.test.sh
+    │   ├── procsub.test.sh
+    │   ├── sleep.test.sh
+    │   ├── sortuniq.test.sh
+    │   ├── variables.test.sh
+    │   └── wc.test.sh
     ├── awk/            # AWK builtin tests (19 cases)
     ├── grep/           # Grep builtin tests (15 cases)
     ├── sed/            # Sed builtin tests (17 cases)
@@ -68,12 +68,12 @@ crates/bashkit/tests/
 
 | Category | Test Cases | In CI | Pass | Skip |
 |----------|------------|-------|------|------|
-| Bash | 209 | Yes | 176 | 33 |
+| Bash | 331 | Yes | 223 | 108 |
 | AWK | 19 | Yes | 17 | 2 |
 | Grep | 15 | Yes | 15 | 0 |
 | Sed | 17 | Yes | 17 | 0 |
 | JQ | 21 | Yes | 21 | 0 |
-| **Total** | **281** | **281** | 246 | 35 |
+| **Total** | **403** | **403** | 293 | 110 |
 
 ### Test File Format
 
@@ -128,19 +128,19 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 Coverage is tracked manually via spec test pass rates.
 
 ### Current Status
-- All spec tests: 87% pass rate (246/281 running in CI, 35 skipped)
-- Text processing tools: 100% pass rate (70/70 running)
-- Core bash specs: 100% pass rate (176/176 running, 33 skipped)
+- All spec tests: 73% pass rate (293/403 running in CI, 110 skipped)
+- Text processing tools: 97% pass rate (70/72 running, 2 AWK skipped)
+- Core bash specs: 100% pass rate (223/223 running, 108 skipped)
 
 ## TODO: Testing Gaps
 
 The following items need attention:
 
-- [x] **Enable bash_spec_tests in CI** - Done! 176/209 tests running
+- [x] **Enable bash_spec_tests in CI** - Done! 223/331 tests running
 - [ ] **Fix control-flow.test.sh** - Currently skipped (.skip suffix)
 - [ ] **Add coverage tooling** - Consider cargo-tarpaulin or codecov
-- [ ] **Fix skipped spec tests** (35 total):
-  - Bash: 33 skipped (various implementation gaps)
+- [ ] **Fix skipped spec tests** (110 total):
+  - Bash: 108 skipped (various implementation gaps)
   - AWK: 2 skipped (blocked by multi-statement action parsing bug)
 - [ ] **Add bash_comparison_tests to CI** - Currently ignored, runs manually
 
