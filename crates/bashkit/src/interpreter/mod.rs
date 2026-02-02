@@ -141,6 +141,10 @@ impl Interpreter {
             Box::new(builtins::Whoami::with_username(&username_val)),
         );
         builtins.insert("id", Box::new(builtins::Id::with_username(&username_val)));
+        // Directory listing and search
+        builtins.insert("ls", Box::new(builtins::Ls));
+        builtins.insert("find", Box::new(builtins::Find));
+        builtins.insert("rmdir", Box::new(builtins::Rmdir));
 
         Self {
             fs,
