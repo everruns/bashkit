@@ -153,3 +153,52 @@ echo $((5 | 3))
 ### expect
 7
 ### end
+
+### arith_logical_and_true
+# Logical AND - both true
+echo $((1 && 1))
+### expect
+1
+### end
+
+### arith_logical_and_false
+# Logical AND - second false
+echo $((1 && 0))
+### expect
+0
+### end
+
+### arith_logical_and_first_false
+# Logical AND - first false (short-circuit)
+echo $((0 && 1))
+### expect
+0
+### end
+
+### arith_logical_or_true
+# Logical OR - first true (short-circuit)
+echo $((1 || 0))
+### expect
+1
+### end
+
+### arith_logical_or_false
+# Logical OR - both false
+echo $((0 || 0))
+### expect
+0
+### end
+
+### arith_logical_or_second_true
+# Logical OR - first false, second true
+echo $((0 || 1))
+### expect
+1
+### end
+
+### arith_logical_combined
+# Combined logical operators
+echo $((1 || 0 && 0))
+### expect
+1
+### end

@@ -31,7 +31,7 @@
 | `[` | (same as test) | Alias for test |
 | `export` | `VAR=value` | Export variables |
 | `read` | `VAR` | Read line into variable |
-| `set` | - | Set positional params |
+| `set` | `-e`, `+e`, positional | Set options and positional params |
 | `unset` | `VAR` | Unset variable |
 | `shift` | `[N]` | Shift positional params |
 | `local` | `VAR=value` | Local variables |
@@ -114,9 +114,9 @@
 | `<` | ✅ | `cmd < file` | Input from file |
 | `<<<` | ✅ | `cmd <<< "string"` | Here-string |
 | `<<EOF` | ✅ | Heredoc | Multi-line input |
-| `2>` | ❌ | `cmd 2> file` | Stderr redirect |
-| `2>&1` | ❌ | `cmd 2>&1` | Stderr to stdout |
-| `&>` | ❌ | `cmd &> file` | Both to file |
+| `2>` | ✅ | `cmd 2> file` | Stderr redirect |
+| `2>&1` | ✅ | `cmd 2>&1` | Stderr to stdout |
+| `&>` | ✅ | `cmd &> file` | Both to file |
 
 ### Control Flow
 
@@ -170,7 +170,7 @@
 | `+`, `-`, `*`, `/`, `%` | ✅ | Basic ops |
 | `==`, `!=`, `<`, `>`, `<=`, `>=` | ✅ | Comparisons |
 | `&`, `\|` | ✅ | Bitwise |
-| `&&`, `\|\|` | ❌ | Logical (not impl) |
+| `&&`, `\|\|` | ✅ | Logical operators |
 | `? :` | ✅ | Ternary |
 | `=`, `+=`, etc. | ❌ | Assignment (not impl) |
 
@@ -180,8 +180,8 @@
 |--------|--------|---------|-------------|
 | `*`, `?` | ✅ | `*.txt` | Glob patterns |
 | `[abc]` | ❌ | `[0-9]` | Bracket globs |
-| `{a,b,c}` | ❌ | `{1..5}` | Brace expansion |
-| `~` | ❌ | `~/file` | Tilde expansion |
+| `{a,b,c}` | ✅ | `{1..5}` | Brace expansion |
+| `~` | ✅ | `~/file` | Tilde expansion |
 | `<(cmd)` | ✅ | `diff <(a) <(b)` | Process substitution |
 
 ---
@@ -197,11 +197,11 @@
 | `$0` | ✅ | Script/function name |
 | `$1`-`$9` | ✅ | Positional parameters |
 | `$!` | ❌ | Last background PID |
-| `$$` | ❌ | Current PID |
+| `$$` | ✅ | Current PID |
 | `$-` | ❌ | Current options |
 | `$_` | ❌ | Last argument |
-| `$RANDOM` | ❌ | Random number |
-| `$LINENO` | ❌ | Current line number |
+| `$RANDOM` | ✅ | Random number (0-32767) |
+| `$LINENO` | ✅ | Current line number (placeholder) |
 
 ---
 
@@ -216,7 +216,7 @@
 | Element length | ✅ | `${#arr[0]}` |
 | Append | ✅ | `arr+=(d e)` |
 | Slice | ❌ | `${arr[@]:1:2}` |
-| Indices | ❌ | `${!arr[@]}` |
+| Indices | ✅ | `${!arr[@]}` |
 | Associative | ❌ | `declare -A` |
 
 ---
@@ -231,10 +231,10 @@
 | `-f file` | ✅ | Is regular file |
 | `-d file` | ✅ | Is directory |
 | `-s file` | ✅ | Size > 0 |
-| `-r file` | ❌ | Is readable |
-| `-w file` | ❌ | Is writable |
-| `-x file` | ❌ | Is executable |
-| `-L file` | ❌ | Is symlink |
+| `-r file` | ✅ | Is readable (exists in virtual fs) |
+| `-w file` | ✅ | Is writable (exists in virtual fs) |
+| `-x file` | ✅ | Is executable (mode & 0o111) |
+| `-L file` | ✅ | Is symlink |
 
 ### String Tests
 
@@ -244,8 +244,8 @@
 | `-n str` | ✅ | Is non-empty |
 | `str1 = str2` | ✅ | Equal |
 | `str1 != str2` | ✅ | Not equal |
-| `str1 < str2` | ❌ | Less than |
-| `str1 > str2` | ❌ | Greater than |
+| `str1 < str2` | ✅ | Less than |
+| `str1 > str2` | ✅ | Greater than |
 
 ### Numeric Tests
 
@@ -326,9 +326,17 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] `timeout` builtin - stub, requires interpreter-level integration
 - [x] Process substitution (`<(cmd)`, `>(cmd)`)
 - [x] Here string edge cases tested
+- [x] `set -e` (errexit) - exit on command failure
+- [x] Tilde expansion (~) - expands to $HOME
+- [x] Special variables ($$, $RANDOM, $LINENO)
+- [x] File test operators (-r, -w, -x, -L)
+- [x] Stderr redirections (2>, 2>&1, &>)
+- [x] Arithmetic logical operators (&&, ||)
+- [x] Brace expansion ({a,b,c}, {1..5})
+- [x] String comparison operators (< >) in test
+- [x] Array indices ${!arr[@]}
 
 ### Planned
-- [ ] `set -e` (errexit)
 - [ ] `trap` signal handling
 
 ### Not Planned

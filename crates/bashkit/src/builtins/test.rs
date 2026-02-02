@@ -1,9 +1,13 @@
 //! test builtin command ([ and test)
 
+use std::path::Path;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 
 use super::{Builtin, Context};
 use crate::error::Result;
+use crate::fs::FileSystem;
 use crate::interpreter::ExecResult;
 
 /// The test builtin command.
@@ -18,7 +22,7 @@ impl Builtin for Test {
         }
 
         // Parse and evaluate the expression
-        let result = evaluate_expression(ctx.args);
+        let result = evaluate_expression(ctx.args, &ctx.fs).await;
 
         if result {
             Ok(ExecResult::ok(String::new()))
@@ -48,7 +52,7 @@ impl Builtin for Bracket {
         }
 
         // Parse and evaluate the expression
-        let result = evaluate_expression(&args);
+        let result = evaluate_expression(&args, &ctx.fs).await;
 
         if result {
             Ok(ExecResult::ok(String::new()))
@@ -59,74 +63,135 @@ impl Builtin for Bracket {
 }
 
 /// Evaluate a test expression
-fn evaluate_expression(args: &[String]) -> bool {
-    if args.is_empty() {
-        return false;
-    }
+fn evaluate_expression<'a>(
+    args: &'a [String],
+    fs: &'a Arc<dyn FileSystem>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
+    Box::pin(async move {
+        if args.is_empty() {
+            return false;
+        }
 
-    // Handle negation
-    if args[0] == "!" {
-        return !evaluate_expression(&args[1..]);
-    }
+        // Handle negation
+        if args[0] == "!" {
+            return !evaluate_expression(&args[1..], fs).await;
+        }
 
-    // Handle parentheses (basic support)
-    if args[0] == "(" && args.last().map(|s| s.as_str()) == Some(")") {
-        return evaluate_expression(&args[1..args.len() - 1]);
-    }
+        // Handle parentheses (basic support)
+        if args[0] == "(" && args.last().map(|s| s.as_str()) == Some(")") {
+            return evaluate_expression(&args[1..args.len() - 1], fs).await;
+        }
 
-    // Look for binary operators
-    for (i, arg) in args.iter().enumerate() {
-        match arg.as_str() {
-            // Logical operators (lowest precedence)
-            "-a" if i > 0 => {
-                return evaluate_expression(&args[..i]) && evaluate_expression(&args[i + 1..]);
+        // Look for binary operators
+        for (i, arg) in args.iter().enumerate() {
+            match arg.as_str() {
+                // Logical operators (lowest precedence)
+                "-a" if i > 0 => {
+                    return evaluate_expression(&args[..i], fs).await
+                        && evaluate_expression(&args[i + 1..], fs).await;
+                }
+                "-o" if i > 0 => {
+                    return evaluate_expression(&args[..i], fs).await
+                        || evaluate_expression(&args[i + 1..], fs).await;
+                }
+                _ => {}
             }
-            "-o" if i > 0 => {
-                return evaluate_expression(&args[..i]) || evaluate_expression(&args[i + 1..]);
-            }
-            _ => {}
         }
-    }
 
-    // Now handle binary comparisons and unary tests
-    match args.len() {
-        1 => {
-            // Single arg: true if non-empty string
-            !args[0].is_empty()
+        // Now handle binary comparisons and unary tests
+        match args.len() {
+            1 => {
+                // Single arg: true if non-empty string
+                !args[0].is_empty()
+            }
+            2 => {
+                // Unary operators
+                evaluate_unary(&args[0], &args[1], fs).await
+            }
+            3 => {
+                // Binary operators
+                evaluate_binary(&args[0], &args[1], &args[2])
+            }
+            _ => false,
         }
-        2 => {
-            // Unary operators
-            evaluate_unary(&args[0], &args[1])
-        }
-        3 => {
-            // Binary operators
-            evaluate_binary(&args[0], &args[1], &args[2])
-        }
-        _ => false,
-    }
+    })
 }
 
 /// Evaluate a unary test expression
-fn evaluate_unary(op: &str, arg: &str) -> bool {
+async fn evaluate_unary(op: &str, arg: &str, fs: &Arc<dyn FileSystem>) -> bool {
     match op {
         // String tests
         "-z" => arg.is_empty(),
         "-n" => !arg.is_empty(),
 
-        // File tests (basic support - always false for now as we don't have real FS access)
-        "-e" | "-a" => false, // file exists
-        "-f" => false,        // regular file
-        "-d" => false,        // directory
-        "-r" => false,        // readable
-        "-w" => false,        // writable
-        "-x" => false,        // executable
-        "-s" => false,        // file exists and has size > 0
-        "-L" | "-h" => false, // symbolic link
-        "-p" => false,        // named pipe
-        "-S" => false,        // socket
-        "-b" => false,        // block device
-        "-c" => false,        // character device
-        "-t" => false,        // file descriptor is open and refers to a terminal
+        // File tests using the virtual filesystem
+        "-e" | "-a" => {
+            // file exists
+            let path = Path::new(arg);
+            fs.exists(path).await.unwrap_or(false)
+        }
+        "-f" => {
+            // regular file
+            let path = Path::new(arg);
+            if let Ok(meta) = fs.stat(path).await {
+                meta.file_type.is_file()
+            } else {
+                false
+            }
+        }
+        "-d" => {
+            // directory
+            let path = Path::new(arg);
+            if let Ok(meta) = fs.stat(path).await {
+                meta.file_type.is_dir()
+            } else {
+                false
+            }
+        }
+        "-r" => {
+            // readable - in virtual fs, check if file exists
+            // (permissions are stored but not enforced)
+            let path = Path::new(arg);
+            fs.exists(path).await.unwrap_or(false)
+        }
+        "-w" => {
+            // writable - in virtual fs, check if file exists
+            let path = Path::new(arg);
+            fs.exists(path).await.unwrap_or(false)
+        }
+        "-x" => {
+            // executable - in virtual fs, check if file exists and has executable permission
+            let path = Path::new(arg);
+            if let Ok(meta) = fs.stat(path).await {
+                // Check if any execute bit is set (u+x, g+x, o+x)
+                (meta.mode & 0o111) != 0
+            } else {
+                false
+            }
+        }
+        "-s" => {
+            // file exists and has size > 0
+            let path = Path::new(arg);
+            if let Ok(meta) = fs.stat(path).await {
+                meta.size > 0
+            } else {
+                false
+            }
+        }
+        "-L" | "-h" => {
+            // symbolic link
+            let path = Path::new(arg);
+            if let Ok(meta) = fs.stat(path).await {
+                meta.file_type.is_symlink()
+            } else {
+                false
+            }
+        }
+        "-p" => false, // named pipe (not supported)
+        "-S" => false, // socket (not supported)
+        "-b" => false, // block device (not supported)
+        "-c" => false, // character device (not supported)
+        "-t" => false, // file descriptor is open and refers to a terminal (not supported)
 
         _ => false,
     }

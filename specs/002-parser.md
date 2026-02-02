@@ -38,8 +38,12 @@ pub enum Token {
     ProcessSubIn,           // <(
     ProcessSubOut,          // >(
 
-    // File descriptor redirections (future)
-    // 2>&1, &>, etc.
+    // File descriptor redirections
+    RedirectBoth,           // &>
+    DupOutput,              // >&
+    RedirectFd(i32),        // 2>
+    RedirectFdAppend(i32),  // 2>>
+    DupFd(i32, i32),        // 2>&1
 
     // Grouping
     LeftParen,              // (
@@ -89,6 +93,11 @@ pub enum WordPart {
     CommandSub(Script),         // $(cmd) or `cmd`
     ArithmeticSub(String),      // $((expr))
     DoubleQuoted(Vec<WordPart>), // "text $var"
+    Length(String),             // ${#var}
+    ArrayAccess { name, index },// ${arr[i]} or ${arr[@]}
+    ArrayLength(String),        // ${#arr[@]}
+    ArrayIndices(String),       // ${!arr[@]}
+    ParameterExpansion { ... }, // ${var:-default}, ${var#pattern}, etc.
 }
 ```
 
@@ -114,6 +123,18 @@ The lexer must handle bash's context-sensitivity:
 - `$var` in single quotes: literal text
 - Word splitting after expansion
 - Glob patterns (*, ?, [])
+- Brace expansion: `{a,b,c}` and `{1..5}` vs brace groups `{ cmd; }`
+- Tilde expansion: `~` at start of word expands to `$HOME`
+
+### Arithmetic Expressions
+
+Arithmetic expansion `$((expr))` supports:
+- Basic operators: `+`, `-`, `*`, `/`, `%`
+- Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
+- Logical: `&&`, `||` (with short-circuit evaluation)
+- Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
+- Ternary: `cond ? true : false`
+- Variable references with or without `$` prefix
 
 ### Error Recovery
 

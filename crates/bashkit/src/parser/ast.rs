@@ -183,6 +183,9 @@ pub struct FunctionDef {
 #[derive(Debug, Clone)]
 pub struct Word {
     pub parts: Vec<WordPart>,
+    /// True if this word came from a quoted source (single or double quotes)
+    /// Quoted words should not undergo brace expansion or glob expansion
+    pub quoted: bool,
 }
 
 impl Word {
@@ -190,6 +193,15 @@ impl Word {
     pub fn literal(s: impl Into<String>) -> Self {
         Self {
             parts: vec![WordPart::Literal(s.into())],
+            quoted: false,
+        }
+    }
+
+    /// Create a quoted literal word (no brace/glob expansion).
+    pub fn quoted_literal(s: impl Into<String>) -> Self {
+        Self {
+            parts: vec![WordPart::Literal(s.into())],
+            quoted: true,
         }
     }
 }
@@ -222,6 +234,7 @@ impl fmt::Display for Word {
                 WordPart::Length(name) => write!(f, "${{#{}}}", name)?,
                 WordPart::ArrayAccess { name, index } => write!(f, "${{{}[{}]}}", name, index)?,
                 WordPart::ArrayLength(name) => write!(f, "${{#{}[@]}}", name)?,
+                WordPart::ArrayIndices(name) => write!(f, "${{!{}[@]}}", name)?,
                 WordPart::ProcessSubstitution { commands, is_input } => {
                     let prefix = if *is_input { "<" } else { ">" };
                     write!(f, "{}({:?})", prefix, commands)?
@@ -255,6 +268,8 @@ pub enum WordPart {
     ArrayAccess { name: String, index: String },
     /// Array length ${#arr[@]} or ${#arr[*]}
     ArrayLength(String),
+    /// Array indices ${!arr[@]} or ${!arr[*]}
+    ArrayIndices(String),
     /// Process substitution <(cmd) or >(cmd)
     ProcessSubstitution {
         /// The commands to run
