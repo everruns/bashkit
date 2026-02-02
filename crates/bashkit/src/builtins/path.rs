@@ -1,5 +1,8 @@
 //! Path manipulation builtins - basename, dirname
 
+// Uses unwrap() after is_empty() check (e.g., args.next() after !args.is_empty())
+#![allow(clippy::unwrap_used)]
+
 use async_trait::async_trait;
 use std::path::Path;
 
@@ -117,6 +120,7 @@ impl Builtin for Dirname {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::collections::HashMap;

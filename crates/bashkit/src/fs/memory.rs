@@ -9,6 +9,10 @@
 //! - `fs::lock_read` - Inject failures in read lock acquisition
 //! - `fs::lock_write` - Inject failures in write lock acquisition
 
+// RwLock.read()/write().unwrap() only panics on lock poisoning (prior panic
+// while holding lock). This is intentional - corrupted state should not propagate.
+#![allow(clippy::unwrap_used)]
+
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::io::{Error as IoError, ErrorKind};
@@ -491,6 +495,7 @@ impl FileSystem for InMemoryFs {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
