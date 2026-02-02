@@ -1,6 +1,6 @@
 //! System information builtins (hostname, uname, whoami, id)
 //!
-//! These builtins return hardcoded sandbox values to prevent
+//! These builtins return configurable sandbox values to prevent
 //! information disclosure about the host system.
 //!
 //! Security rationale: Real system information could be used for:
@@ -14,12 +14,12 @@ use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
-/// Hardcoded sandbox hostname.
+/// Default sandbox hostname.
 /// Using a clearly fake name prevents confusion with real hosts.
-pub const SANDBOX_HOSTNAME: &str = "bashkit-sandbox";
+pub const DEFAULT_HOSTNAME: &str = "bashkit-sandbox";
 
-/// Hardcoded sandbox username.
-pub const SANDBOX_USERNAME: &str = "sandbox";
+/// Default sandbox username.
+pub const DEFAULT_USERNAME: &str = "sandbox";
 
 /// Hardcoded sandbox user ID.
 pub const SANDBOX_UID: u32 = 1000;
@@ -27,10 +27,34 @@ pub const SANDBOX_UID: u32 = 1000;
 /// Hardcoded sandbox group ID.
 pub const SANDBOX_GID: u32 = 1000;
 
-/// The hostname builtin - returns hardcoded sandbox hostname.
+/// The hostname builtin - returns configurable sandbox hostname.
 ///
 /// Real hostname is never exposed to prevent host fingerprinting.
-pub struct Hostname;
+pub struct Hostname {
+    hostname: String,
+}
+
+impl Hostname {
+    /// Create a new Hostname builtin with default hostname.
+    pub fn new() -> Self {
+        Self {
+            hostname: DEFAULT_HOSTNAME.to_string(),
+        }
+    }
+
+    /// Create a new Hostname builtin with custom hostname.
+    pub fn with_hostname(hostname: impl Into<String>) -> Self {
+        Self {
+            hostname: hostname.into(),
+        }
+    }
+}
+
+impl Default for Hostname {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl Builtin for Hostname {
@@ -52,17 +76,41 @@ impl Builtin for Hostname {
             ));
         }
 
-        Ok(ExecResult::ok(format!("{}\n", SANDBOX_HOSTNAME)))
+        Ok(ExecResult::ok(format!("{}\n", self.hostname)))
     }
 }
 
-/// The uname builtin - returns hardcoded system information.
+/// The uname builtin - returns configurable system information.
 ///
 /// Prevents disclosure of:
 /// - Kernel version (could reveal vulnerabilities)
 /// - Architecture (could inform exploit selection)
 /// - Host machine name
-pub struct Uname;
+pub struct Uname {
+    hostname: String,
+}
+
+impl Uname {
+    /// Create a new Uname builtin with default hostname.
+    pub fn new() -> Self {
+        Self {
+            hostname: DEFAULT_HOSTNAME.to_string(),
+        }
+    }
+
+    /// Create a new Uname builtin with custom hostname.
+    pub fn with_hostname(hostname: impl Into<String>) -> Self {
+        Self {
+            hostname: hostname.into(),
+        }
+    }
+}
+
+impl Default for Uname {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl Builtin for Uname {
@@ -117,40 +165,88 @@ impl Builtin for Uname {
         let mut parts = Vec::new();
 
         if show_all || show_kernel {
-            parts.push("Linux");
+            parts.push("Linux".to_string());
         }
         if show_all || show_nodename {
-            parts.push(SANDBOX_HOSTNAME);
+            parts.push(self.hostname.clone());
         }
         if show_all || show_release {
-            parts.push("5.15.0-sandbox");
+            parts.push("5.15.0-sandbox".to_string());
         }
         if show_all || show_version {
-            parts.push("#1 SMP PREEMPT sandbox");
+            parts.push("#1 SMP PREEMPT sandbox".to_string());
         }
         if show_all || show_machine {
-            parts.push("x86_64");
+            parts.push("x86_64".to_string());
         }
         if show_all || show_os {
-            parts.push("GNU/Linux");
+            parts.push("GNU/Linux".to_string());
         }
 
         Ok(ExecResult::ok(format!("{}\n", parts.join(" "))))
     }
 }
 
-/// The whoami builtin - returns hardcoded sandbox username.
-pub struct Whoami;
+/// The whoami builtin - returns configurable sandbox username.
+pub struct Whoami {
+    username: String,
+}
+
+impl Whoami {
+    /// Create a new Whoami builtin with default username.
+    pub fn new() -> Self {
+        Self {
+            username: DEFAULT_USERNAME.to_string(),
+        }
+    }
+
+    /// Create a new Whoami builtin with custom username.
+    pub fn with_username(username: impl Into<String>) -> Self {
+        Self {
+            username: username.into(),
+        }
+    }
+}
+
+impl Default for Whoami {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl Builtin for Whoami {
     async fn execute(&self, _ctx: Context<'_>) -> Result<ExecResult> {
-        Ok(ExecResult::ok(format!("{}\n", SANDBOX_USERNAME)))
+        Ok(ExecResult::ok(format!("{}\n", self.username)))
     }
 }
 
-/// The id builtin - returns hardcoded sandbox user/group IDs.
-pub struct Id;
+/// The id builtin - returns configurable sandbox user/group IDs.
+pub struct Id {
+    username: String,
+}
+
+impl Id {
+    /// Create a new Id builtin with default username.
+    pub fn new() -> Self {
+        Self {
+            username: DEFAULT_USERNAME.to_string(),
+        }
+    }
+
+    /// Create a new Id builtin with custom username.
+    pub fn with_username(username: impl Into<String>) -> Self {
+        Self {
+            username: username.into(),
+        }
+    }
+}
+
+impl Default for Id {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl Builtin for Id {
@@ -185,21 +281,16 @@ impl Builtin for Id {
         // Check for -un or -gn combinations
         let args_str: String = ctx.args.iter().map(|s| s.as_str()).collect();
         if args_str.contains('u') && args_str.contains('n') {
-            return Ok(ExecResult::ok(format!("{}\n", SANDBOX_USERNAME)));
+            return Ok(ExecResult::ok(format!("{}\n", self.username)));
         }
         if args_str.contains('g') && args_str.contains('n') {
-            return Ok(ExecResult::ok(format!("{}\n", SANDBOX_USERNAME)));
+            return Ok(ExecResult::ok(format!("{}\n", self.username)));
         }
 
         // Default output format
         Ok(ExecResult::ok(format!(
             "uid={}({}) gid={}({}) groups={}({})\n",
-            SANDBOX_UID,
-            SANDBOX_USERNAME,
-            SANDBOX_GID,
-            SANDBOX_USERNAME,
-            SANDBOX_GID,
-            SANDBOX_USERNAME
+            SANDBOX_UID, self.username, SANDBOX_GID, self.username, SANDBOX_GID, self.username
         )))
     }
 }
@@ -233,61 +324,87 @@ mod tests {
 
     #[tokio::test]
     async fn test_hostname_returns_sandbox() {
-        let result = run_builtin(&Hostname, &[]).await;
+        let result = run_builtin(&Hostname::new(), &[]).await;
         assert_eq!(result.stdout, "bashkit-sandbox\n");
         assert_eq!(result.exit_code, 0);
     }
 
     #[tokio::test]
+    async fn test_hostname_custom() {
+        let result = run_builtin(&Hostname::with_hostname("my-host"), &[]).await;
+        assert_eq!(result.stdout, "my-host\n");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
     async fn test_hostname_cannot_set() {
-        let result = run_builtin(&Hostname, &["evil.com"]).await;
+        let result = run_builtin(&Hostname::new(), &["evil.com"]).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("cannot set"));
     }
 
     #[tokio::test]
     async fn test_uname_default() {
-        let result = run_builtin(&Uname, &[]).await;
+        let result = run_builtin(&Uname::new(), &[]).await;
         assert_eq!(result.stdout, "Linux\n");
     }
 
     #[tokio::test]
     async fn test_uname_all() {
-        let result = run_builtin(&Uname, &["-a"]).await;
+        let result = run_builtin(&Uname::new(), &["-a"]).await;
         assert!(result.stdout.contains("Linux"));
         assert!(result.stdout.contains("bashkit-sandbox"));
         assert!(result.stdout.contains("x86_64"));
     }
 
     #[tokio::test]
+    async fn test_uname_custom_hostname() {
+        let result = run_builtin(&Uname::with_hostname("custom-host"), &["-n"]).await;
+        assert_eq!(result.stdout, "custom-host\n");
+    }
+
+    #[tokio::test]
     async fn test_uname_nodename() {
-        let result = run_builtin(&Uname, &["-n"]).await;
+        let result = run_builtin(&Uname::new(), &["-n"]).await;
         assert_eq!(result.stdout, "bashkit-sandbox\n");
     }
 
     #[tokio::test]
     async fn test_whoami() {
-        let result = run_builtin(&Whoami, &[]).await;
+        let result = run_builtin(&Whoami::new(), &[]).await;
         assert_eq!(result.stdout, "sandbox\n");
     }
 
     #[tokio::test]
+    async fn test_whoami_custom() {
+        let result = run_builtin(&Whoami::with_username("alice"), &[]).await;
+        assert_eq!(result.stdout, "alice\n");
+    }
+
+    #[tokio::test]
     async fn test_id_default() {
-        let result = run_builtin(&Id, &[]).await;
+        let result = run_builtin(&Id::new(), &[]).await;
         assert!(result.stdout.contains("uid=1000"));
         assert!(result.stdout.contains("gid=1000"));
         assert!(result.stdout.contains("sandbox"));
     }
 
     #[tokio::test]
+    async fn test_id_custom_username() {
+        let result = run_builtin(&Id::with_username("bob"), &[]).await;
+        assert!(result.stdout.contains("uid=1000(bob)"));
+        assert!(result.stdout.contains("gid=1000(bob)"));
+    }
+
+    #[tokio::test]
     async fn test_id_user() {
-        let result = run_builtin(&Id, &["-u"]).await;
+        let result = run_builtin(&Id::new(), &["-u"]).await;
         assert_eq!(result.stdout, "1000\n");
     }
 
     #[tokio::test]
     async fn test_id_group() {
-        let result = run_builtin(&Id, &["-g"]).await;
+        let result = run_builtin(&Id::new(), &["-g"]).await;
         assert_eq!(result.stdout, "1000\n");
     }
 }

@@ -67,6 +67,15 @@ pub struct Interpreter {
 impl Interpreter {
     /// Create a new interpreter with the given filesystem.
     pub fn new(fs: Arc<dyn FileSystem>) -> Self {
+        Self::with_config(fs, None, None)
+    }
+
+    /// Create a new interpreter with custom username and hostname.
+    pub fn with_config(
+        fs: Arc<dyn FileSystem>,
+        username: Option<String>,
+        hostname: Option<String>,
+    ) -> Self {
         let mut builtins: HashMap<&'static str, Box<dyn Builtin>> = HashMap::new();
 
         // Register builtins
@@ -116,11 +125,22 @@ impl Interpreter {
         builtins.insert("curl", Box::new(builtins::Curl));
         builtins.insert("wget", Box::new(builtins::Wget));
         builtins.insert("timeout", Box::new(builtins::Timeout));
-        // System info builtins (return hardcoded sandbox values)
-        builtins.insert("hostname", Box::new(builtins::Hostname));
-        builtins.insert("uname", Box::new(builtins::Uname));
-        builtins.insert("whoami", Box::new(builtins::Whoami));
-        builtins.insert("id", Box::new(builtins::Id));
+        // System info builtins (configurable sandbox values)
+        let hostname_val = hostname.unwrap_or_else(|| builtins::DEFAULT_HOSTNAME.to_string());
+        let username_val = username.unwrap_or_else(|| builtins::DEFAULT_USERNAME.to_string());
+        builtins.insert(
+            "hostname",
+            Box::new(builtins::Hostname::with_hostname(&hostname_val)),
+        );
+        builtins.insert(
+            "uname",
+            Box::new(builtins::Uname::with_hostname(&hostname_val)),
+        );
+        builtins.insert(
+            "whoami",
+            Box::new(builtins::Whoami::with_username(&username_val)),
+        );
+        builtins.insert("id", Box::new(builtins::Id::with_username(&username_val)));
 
         Self {
             fs,

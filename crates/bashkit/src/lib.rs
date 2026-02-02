@@ -120,6 +120,8 @@ pub struct BashBuilder {
     env: HashMap<String, String>,
     cwd: Option<PathBuf>,
     limits: ExecutionLimits,
+    username: Option<String>,
+    hostname: Option<String>,
 }
 
 impl BashBuilder {
@@ -147,13 +149,37 @@ impl BashBuilder {
         self
     }
 
+    /// Set the sandbox username.
+    ///
+    /// This configures `whoami` and `id` builtins to return this username,
+    /// and automatically sets the `USER` environment variable.
+    pub fn username(mut self, username: impl Into<String>) -> Self {
+        self.username = Some(username.into());
+        self
+    }
+
+    /// Set the sandbox hostname.
+    ///
+    /// This configures `hostname` and `uname -n` builtins to return this hostname.
+    pub fn hostname(mut self, hostname: impl Into<String>) -> Self {
+        self.hostname = Some(hostname.into());
+        self
+    }
+
     /// Build the Bash instance.
     pub fn build(self) -> Bash {
         let fs = self.fs.unwrap_or_else(|| Arc::new(InMemoryFs::new()));
-        let mut interpreter = Interpreter::new(Arc::clone(&fs));
+        let mut interpreter =
+            Interpreter::with_config(Arc::clone(&fs), self.username.clone(), self.hostname);
 
+        // Set environment variables
         for (key, value) in self.env {
             interpreter.set_env(&key, &value);
+        }
+
+        // If username is set, automatically set USER env var
+        if let Some(ref username) = self.username {
+            interpreter.set_env("USER", username);
         }
 
         if let Some(cwd) = self.cwd {
@@ -1253,5 +1279,68 @@ mod tests {
         let mut bash = Bash::new();
         let result = bash.exec("cat /dev/null; echo exit_$?").await.unwrap();
         assert_eq!(result.stdout, "exit_0\n");
+    }
+
+    // Custom username/hostname tests
+
+    #[tokio::test]
+    async fn test_custom_username_whoami() {
+        let mut bash = Bash::builder().username("alice").build();
+        let result = bash.exec("whoami").await.unwrap();
+        assert_eq!(result.stdout, "alice\n");
+    }
+
+    #[tokio::test]
+    async fn test_custom_username_id() {
+        let mut bash = Bash::builder().username("bob").build();
+        let result = bash.exec("id").await.unwrap();
+        assert!(result.stdout.contains("uid=1000(bob)"));
+        assert!(result.stdout.contains("gid=1000(bob)"));
+    }
+
+    #[tokio::test]
+    async fn test_custom_username_sets_user_env() {
+        let mut bash = Bash::builder().username("charlie").build();
+        let result = bash.exec("echo $USER").await.unwrap();
+        assert_eq!(result.stdout, "charlie\n");
+    }
+
+    #[tokio::test]
+    async fn test_custom_hostname() {
+        let mut bash = Bash::builder().hostname("my-server").build();
+        let result = bash.exec("hostname").await.unwrap();
+        assert_eq!(result.stdout, "my-server\n");
+    }
+
+    #[tokio::test]
+    async fn test_custom_hostname_uname() {
+        let mut bash = Bash::builder().hostname("custom-host").build();
+        let result = bash.exec("uname -n").await.unwrap();
+        assert_eq!(result.stdout, "custom-host\n");
+    }
+
+    #[tokio::test]
+    async fn test_default_username_and_hostname() {
+        // Default values should still work
+        let mut bash = Bash::new();
+        let result = bash.exec("whoami").await.unwrap();
+        assert_eq!(result.stdout, "sandbox\n");
+
+        let result = bash.exec("hostname").await.unwrap();
+        assert_eq!(result.stdout, "bashkit-sandbox\n");
+    }
+
+    #[tokio::test]
+    async fn test_custom_username_and_hostname_combined() {
+        let mut bash = Bash::builder()
+            .username("deploy")
+            .hostname("prod-server-01")
+            .build();
+
+        let result = bash.exec("whoami && hostname").await.unwrap();
+        assert_eq!(result.stdout, "deploy\nprod-server-01\n");
+
+        let result = bash.exec("echo $USER").await.unwrap();
+        assert_eq!(result.stdout, "deploy\n");
     }
 }
