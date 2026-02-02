@@ -5,6 +5,10 @@ domain-specific functionality. Custom builtins have full access to the execution
 context including arguments, environment variables, shell variables, and the
 virtual filesystem.
 
+**See also:**
+- [API Documentation](https://docs.rs/bashkit) - Full API reference
+- [Compatibility Reference](./compatibility.md) - Supported bash features
+
 ## Quick Start
 
 ```rust

@@ -20,6 +20,14 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 
 `specs/` contains feature specifications. New code should comply with these or propose changes.
 
+### Documentation
+
+- Guides live in `docs/` as markdown files
+- Embedded into rustdoc via `include_str!` (see `specs/008-documentation.md`)
+- Edit `docs/*.md`, not the doc modules in `lib.rs`
+- Add "See also" cross-links when creating new guides
+- Run `cargo doc --open` to preview changes
+
 ### BashKit Principles
 
 - All design decisions in `specs/` - no undocumented choices
