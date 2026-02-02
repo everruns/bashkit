@@ -145,6 +145,10 @@ impl Interpreter {
         builtins.insert("ls", Box::new(builtins::Ls));
         builtins.insert("find", Box::new(builtins::Find));
         builtins.insert("rmdir", Box::new(builtins::Rmdir));
+        // File inspection
+        builtins.insert("less", Box::new(builtins::Less));
+        builtins.insert("file", Box::new(builtins::File));
+        builtins.insert("stat", Box::new(builtins::Stat));
 
         Self {
             fs,
