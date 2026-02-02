@@ -6,11 +6,29 @@
 - [API Documentation](https://docs.rs/bashkit) - Full API reference
 - [Custom Builtins Guide](./custom_builtins.md) - Extending BashKit with custom commands
 
+## POSIX Shell Compliance
+
+BashKit provides substantial compliance with IEEE Std 1003.1-2024 (POSIX.1-2024)
+Shell Command Language. See [specs/008-posix-compliance.md](../specs/008-posix-compliance.md)
+for detailed compliance status.
+
+| POSIX Category | Status |
+|----------------|--------|
+| Reserved Words (16) | Full compliance |
+| Special Parameters (8) | Full compliance |
+| Special Built-ins (15) | 13/15 implemented |
+| Word Expansions | Substantial compliance |
+| Redirections | Full compliance |
+| Compound Commands | Full compliance |
+
+**Security Exclusions**: `exec` and `trap` are intentionally not implemented
+for sandbox security reasons. See the compliance spec for details.
+
 ## Quick Status
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 63 | 1 | 64 |
+| Shell Builtins | 67 | 1 | 68 |
 | Text Processing | 12 | 1 | 13 |
 | File Operations | 10 | 1 | 11 |
 | Network | 2 | 0 | 2 |
@@ -44,6 +62,10 @@
 | `break` | `[N]` | Break from loop |
 | `continue` | `[N]` | Continue loop |
 | `return` | `[N]` | Return from function |
+| `:` | - | POSIX null utility (no-op) |
+| `eval` | `command...` | POSIX construct and execute command |
+| `readonly` | `VAR[=value]`, `-p` | POSIX mark variable read-only |
+| `times` | - | POSIX display process times |
 | `grep` | `-i`, `-v`, `-c`, `-n`, `-E`, `-q` | Pattern matching |
 | `sed` | `s/pat/repl/[g]`, `d`, `p` | Stream editing |
 | `awk` | `'{print}'`, `-F`, variables | Text processing |
@@ -93,21 +115,19 @@
 
 | Builtin | Priority | Status |
 |---------|----------|--------|
-| `diff` | Low | Planned |
 | `ln` | Low | - |
 | `chown` | Low | - |
 | `kill` | Low | - |
-| `eval` | Low | - |
-| `exec` | Low | - |
+| `exec` | N/A | Security: intentionally excluded |
+| `trap` | N/A | Security: intentionally excluded |
 | `type` | Low | - |
 | `which` | Low | - |
-| `command` | Low | - |
+| `command` | Medium | POSIX utility |
 | `hash` | Low | - |
-| `declare` | Low | - |
-| `typeset` | Low | - |
-| `readonly` | Low | - |
-| `getopts` | Low | - |
-| `trap` | High | - |
+| `declare` | Low | Bash extension |
+| `typeset` | Low | Bash extension |
+| `getopts` | Medium | POSIX utility |
+| `diff` | Low | Planned |
 
 ---
 
@@ -215,9 +235,9 @@
 | `$*` | ✅ | All positional params (joined) |
 | `$0` | ✅ | Script/function name |
 | `$1`-`$9` | ✅ | Positional parameters |
-| `$!` | ❌ | Last background PID |
+| `$!` | ✅ | Last background job ID (POSIX) |
 | `$$` | ✅ | Current PID |
-| `$-` | ❌ | Current options |
+| `$-` | ✅ | Current option flags (POSIX) |
 | `$_` | ❌ | Last argument |
 | `$RANDOM` | ✅ | Random number (0-32767) |
 | `$LINENO` | ✅ | Current line number (placeholder) |

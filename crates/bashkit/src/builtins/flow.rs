@@ -1,10 +1,26 @@
-//! Flow control builtins (true, false, exit, break, continue, return)
+//! Flow control builtins (true, false, exit, break, continue, return, colon)
 
 use async_trait::async_trait;
 
 use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::{ControlFlow, ExecResult};
+
+/// The colon builtin (`:`) - POSIX null utility.
+///
+/// Does nothing and returns success. Required by POSIX as a special built-in.
+/// Common uses:
+/// - Infinite loops: `while :; do ...; done`
+/// - No-op in conditionals: `if cond; then :; else ...; fi`
+/// - Variable expansion side effects: `: ${VAR:=default}`
+pub struct Colon;
+
+#[async_trait]
+impl Builtin for Colon {
+    async fn execute(&self, _ctx: Context<'_>) -> Result<ExecResult> {
+        Ok(ExecResult::ok(String::new()))
+    }
+}
 
 /// The true builtin - always returns 0.
 pub struct True;

@@ -7,6 +7,7 @@ Sandboxed bash interpreter for multi-tenant environments. Written in Rust.
 
 ## Features
 
+- **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance
 - **Sandboxed execution** - No real filesystem access by default
 - **Virtual filesystem** - InMemoryFs, OverlayFs, MountableFs
 - **Resource limits** - Command count, loop iterations, function depth

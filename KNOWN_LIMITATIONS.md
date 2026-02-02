@@ -1,6 +1,14 @@
 # Known Limitations
 
-BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes safety and simplicity over full POSIX/bash compliance. This document tracks known limitations.
+BashKit is a sandboxed bash interpreter designed for AI agents. It provides
+substantial POSIX shell compliance while prioritizing safety and security.
+This document tracks known limitations.
+
+## POSIX Compliance
+
+BashKit implements most of IEEE 1003.1-2024 Shell Command Language with
+intentional security exclusions. See [specs/008-posix-compliance.md](specs/008-posix-compliance.md)
+for detailed compliance status.
 
 ## Spec Test Coverage
 
@@ -52,13 +60,14 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
+| `exec` builtin | N/A | Security: intentionally excluded |
+| `trap` signal handling | N/A | Security: intentionally excluded |
 | Coprocesses `coproc` | Low | Rarely used |
 | Extended globs `@()` `!()` | Medium | Requires `shopt -s extglob` |
 | Associative arrays `declare -A` | Medium | Bash 4+ feature |
 | `[[ =~ ]]` regex matching | Medium | Bash extension |
-| Backtick substitution | Low | Deprecated, use `$()` |
-| `trap` signal handling | High | Error handling |
-| `getopts` | Medium | Option parsing |
+| `getopts` | Medium | POSIX option parsing |
+| `command` builtin | Medium | POSIX command lookup |
 | `alias` | Low | Interactive feature |
 | History expansion | Out of scope | Interactive only |
 | Job control (bg/fg/jobs) | Out of scope | Requires process control |
@@ -74,6 +83,8 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 - Arithmetic logical operators `&&`, `||` with short-circuit
 - String comparison `<`, `>` in test
 - Array indices `${!arr[@]}`
+- POSIX special parameters `$-` (current options) and `$!` (last bg PID)
+- POSIX special builtins: `:` (colon/null), `eval`, `readonly`, `times`
 
 ### Partially Implemented
 
@@ -90,10 +101,13 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It prioritizes s
 ## Builtins
 
 ### Implemented
-`echo`, `printf`, `cat`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`, `export`, `set`, `unset`, `local`, `source`, `read`, `shift`, `break`, `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`, `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`, `sort`, `uniq`, `cut`, `tr`, `date`, `wait`, `curl`, `wget`, `timeout`, `time` (keyword), `whoami`, `hostname`
+`echo`, `printf`, `cat`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`, `export`, `set`, `unset`, `local`, `source`, `read`, `shift`, `break`, `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`, `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`, `sort`, `uniq`, `cut`, `tr`, `date`, `wait`, `curl`, `wget`, `timeout`, `time` (keyword), `whoami`, `hostname`, `ls`, `rmdir`, `find`, `xargs`, `tee`, `:` (colon), `eval`, `readonly`, `times`
 
 ### Not Implemented
-`ls`, `rmdir`, `ln`, `chown`, `tee`, `xargs`, `find`, `diff`, `type`, `which`, `command`, `hash`, `declare`, `typeset`, `readonly`, `getopts`, `kill`, `eval`, `exec`, `trap`
+`ln`, `chown`, `diff`, `type`, `which`, `command`, `hash`, `declare`, `typeset`, `getopts`, `kill`
+
+### Security Exclusions (Intentional)
+`exec`, `trap` - These POSIX special builtins are excluded for sandbox security reasons.
 
 ## Text Processing
 
