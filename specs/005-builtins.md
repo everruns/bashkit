@@ -49,6 +49,22 @@ in a sandboxed environment. All builtins operate on the virtual filesystem.
 - `wait` - Wait for background jobs
 - `timeout` - Run command with time limit (stub, max 300s)
 
+#### System Information
+- `hostname` - Display sandbox hostname (configurable, default: "bashkit-sandbox")
+- `uname` - System info (`-a`, `-s`, `-n`, `-r`, `-v`, `-m`, `-o`)
+- `whoami` - Display sandbox username (configurable, default: "sandbox")
+- `id` - User/group IDs (`-u`, `-g`, `-n`)
+
+These builtins return configurable sandbox values to prevent host information disclosure.
+Configure via `BashBuilder`:
+
+```rust
+Bash::builder()
+    .username("deploy")      // Sets whoami, id, and $USER
+    .hostname("my-server")   // Sets hostname, uname -n
+    .build();
+```
+
 #### Network (Stubs)
 - `curl` - HTTP client (requires network feature + allowlist)
 - `wget` - Download files (requires network feature + allowlist)

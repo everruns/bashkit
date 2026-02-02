@@ -47,7 +47,7 @@ pub use sed::Sed;
 pub use sleep::Sleep;
 pub use sortuniq::{Sort, Uniq};
 pub use source::Source;
-pub use system::{Hostname, Id, Uname, Whoami};
+pub use system::{Hostname, Id, Uname, Whoami, DEFAULT_HOSTNAME, DEFAULT_USERNAME};
 pub use test::{Bracket, Test};
 pub use timeout::Timeout;
 pub use vars::{Local, Set, Shift, Unset};

@@ -163,19 +163,27 @@ Bash::builder()
 
 | Threat | Attack Vector | Mitigation | Status |
 |--------|--------------|------------|--------|
-| Hostname | `hostname`, `$HOSTNAME` | Returns hardcoded "bashkit-sandbox" | **MITIGATED** |
-| Username | `whoami`, `$USER` | Returns hardcoded "sandbox" | **MITIGATED** |
+| Hostname | `hostname`, `$HOSTNAME` | Returns configurable sandbox value (default: "bashkit-sandbox") | **MITIGATED** |
+| Username | `whoami`, `$USER` | Returns configurable sandbox value (default: "sandbox") | **MITIGATED** |
 | IP address | `ip addr`, `ifconfig` | Not implemented | **MITIGATED** |
-| System info | `uname -a` | Returns hardcoded sandbox values | **MITIGATED** |
-| User ID | `id` | Returns hardcoded uid=1000 | **MITIGATED** |
+| System info | `uname -a` | Returns configurable sandbox values | **MITIGATED** |
+| User ID | `id` | Returns hardcoded uid=1000 with configurable username | **MITIGATED** |
 
-**Current Risk**: NONE - System builtins return hardcoded sandbox values
+**Current Risk**: NONE - System builtins return configurable sandbox values (never real host info)
 
-**Implementation**: `builtins/system.rs` provides:
-- `hostname` → "bashkit-sandbox"
-- `uname` → hardcoded Linux 5.15.0 / bashkit-sandbox
-- `whoami` → "sandbox"
-- `id` → uid=1000(sandbox) gid=1000(sandbox)
+**Implementation**: `builtins/system.rs` provides configurable system builtins:
+- `hostname` → configurable (default: "bashkit-sandbox")
+- `uname` → hardcoded Linux 5.15.0 / configurable hostname
+- `whoami` → configurable (default: "sandbox")
+- `id` → uid=1000(configurable) gid=1000(configurable)
+
+**Configuration**:
+```rust
+Bash::builder()
+    .username("deploy")      // Sets whoami, id, and $USER env var
+    .hostname("my-server")   // Sets hostname, uname -n
+    .build();
+```
 
 #### 3.3 Network Exfiltration
 
