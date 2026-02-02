@@ -100,3 +100,142 @@ printf '5\n10\n2\n1\n' | sort -n
 5
 10
 ### end
+
+### sort_reverse_numeric
+# Reverse numeric sort
+printf '1\n10\n2\n5\n' | sort -rn
+### expect
+10
+5
+2
+1
+### end
+
+### sort_case_insensitive
+### skip: -f case-insensitive sort not implemented
+printf 'Banana\napple\nCherry\n' | sort -f
+### expect
+apple
+Banana
+Cherry
+### end
+
+### sort_field_delim
+### skip: -t delimiter not implemented
+printf 'b:2\na:1\nc:3\n' | sort -t: -k2n
+### expect
+a:1
+b:2
+c:3
+### end
+
+### sort_key_field
+### skip: -k field sort not implemented
+printf 'Bob 25\nAlice 30\nDavid 20\n' | sort -k2n
+### expect
+David 20
+Bob 25
+Alice 30
+### end
+
+### sort_stable
+### skip: -s stable sort not implemented
+printf 'b 1\na 2\nb 3\n' | sort -s -k1,1
+### expect
+a 2
+b 1
+b 3
+### end
+
+### sort_check
+### skip: -c check sorted not implemented
+printf 'a\nb\nc\n' | sort -c
+echo $?
+### expect
+0
+### end
+
+### sort_merge
+### skip: -m merge sorted files not implemented
+printf 'a\nc\n' > /tmp/f1 && printf 'b\nd\n' > /tmp/f2 && sort -m /tmp/f1 /tmp/f2
+### expect
+a
+b
+c
+d
+### end
+
+### uniq_duplicate_only
+### skip: -d show only duplicates not implemented
+printf 'a\na\nb\nc\nc\n' | uniq -d
+### expect
+a
+c
+### end
+
+### uniq_unique_only
+### skip: -u show only unique lines not implemented
+printf 'a\na\nb\nc\nc\n' | uniq -u
+### expect
+b
+### end
+
+### uniq_ignore_case
+### skip: -i case insensitive not implemented
+printf 'a\nA\nb\nB\n' | uniq -i
+### expect
+a
+b
+### end
+
+### uniq_skip_fields
+### skip: -f skip fields not implemented
+printf 'x a\ny a\nx b\n' | uniq -f1
+### expect
+x a
+x b
+### end
+
+### sort_uniq_count
+# Count sorted duplicates
+printf 'a\nb\na\nb\na\n' | sort | uniq -c
+### expect
+      3 a
+      2 b
+### end
+
+### sort_human_numeric
+### skip: -h human numeric sort not implemented
+printf '10K\n1K\n100M\n1G\n' | sort -h
+### expect
+1K
+10K
+100M
+1G
+### end
+
+### sort_month
+### skip: -M month sort not implemented
+printf 'Mar\nJan\nFeb\n' | sort -M
+### expect
+Jan
+Feb
+Mar
+### end
+
+### sort_output_file
+### skip: -o output file not implemented
+printf 'b\na\n' | sort -o /tmp/sorted.txt && cat /tmp/sorted.txt
+### expect
+a
+b
+### end
+
+### sort_zero_terminated
+### skip: -z null terminated not implemented
+printf 'b\0a\0c\0' | sort -z | tr '\0' '\n'
+### expect
+a
+b
+c
+### end
