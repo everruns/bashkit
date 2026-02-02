@@ -27,15 +27,22 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-## Built-in Commands
+## Built-in Commands (60+)
 
 | Category | Commands |
 |----------|----------|
 | Core | `echo`, `printf`, `cat`, `read` |
-| Navigation | `cd`, `pwd` |
-| Flow control | `true`, `false`, `exit`, `test`, `[` |
-| Variables | `export`, `set`, `unset`, `local`, `source` |
-| Text processing | `grep`, `sed`, `awk`, `jq` |
+| Navigation | `cd`, `pwd`, `ls`, `find` |
+| Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[` |
+| Variables | `export`, `set`, `unset`, `local`, `shift`, `source` |
+| Text processing | `grep`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc` |
+| File operations | `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `rmdir` |
+| File inspection | `file`, `stat`, `less` |
+| Archives | `tar`, `gzip`, `gunzip` |
+| Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait` |
+| Pipeline | `xargs`, `tee` |
+| System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv` |
+| Network | `curl`, `wget` (stub, requires allowlist) |
 
 ## Shell Features
 
