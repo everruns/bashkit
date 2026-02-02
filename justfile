@@ -33,7 +33,7 @@ check:
     cargo test
 
 # Run all pre-PR checks
-pre-pr: check
+pre-pr: check vet
     @echo "Pre-PR checks passed"
 
 # Clean build artifacts
@@ -83,3 +83,17 @@ bench-list:
 # Run benchmarks with all runners (including just-bash if available)
 bench-all:
     cargo run -p bashkit-bench --release -- --runners bashkit,bash,just-bash
+
+# === Security ===
+
+# Run supply chain audit (cargo-vet)
+vet:
+    cargo vet
+
+# Suggest crates to audit
+vet-suggest:
+    cargo vet suggest
+
+# Certify a crate after audit
+vet-certify crate version:
+    cargo vet certify {{crate}} {{version}}
