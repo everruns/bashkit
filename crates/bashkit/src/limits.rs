@@ -31,6 +31,12 @@ pub struct ExecutionLimits {
     /// Execution timeout
     /// Default: 30 seconds
     pub timeout: Duration,
+
+    /// Parser timeout (separate from execution timeout)
+    /// Default: 5 seconds
+    /// This limits how long the parser can spend parsing a script before giving up.
+    /// Protects against parser hang attacks (V3 in threat model).
+    pub parser_timeout: Duration,
 }
 
 impl Default for ExecutionLimits {
@@ -40,6 +46,7 @@ impl Default for ExecutionLimits {
             max_loop_iterations: 10_000,
             max_function_depth: 100,
             timeout: Duration::from_secs(30),
+            parser_timeout: Duration::from_secs(5),
         }
     }
 }
@@ -71,6 +78,12 @@ impl ExecutionLimits {
     /// Set execution timeout
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Set parser timeout
+    pub fn parser_timeout(mut self, timeout: Duration) -> Self {
+        self.parser_timeout = timeout;
         self
     }
 }
@@ -209,6 +222,9 @@ pub enum LimitExceeded {
 
     #[error("execution timeout ({0:?})")]
     Timeout(Duration),
+
+    #[error("parser timeout ({0:?})")]
+    ParserTimeout(Duration),
 }
 
 #[cfg(test)]
@@ -223,6 +239,7 @@ mod tests {
         assert_eq!(limits.max_loop_iterations, 10_000);
         assert_eq!(limits.max_function_depth, 100);
         assert_eq!(limits.timeout, Duration::from_secs(30));
+        assert_eq!(limits.parser_timeout, Duration::from_secs(5));
     }
 
     #[test]
