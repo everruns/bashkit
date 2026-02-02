@@ -2288,6 +2288,22 @@ impl Interpreter {
                 }
                 return String::new();
             }
+            "$" => {
+                // $$ - current process ID (simulated)
+                return std::process::id().to_string();
+            }
+            "RANDOM" => {
+                // $RANDOM - random number between 0 and 32767
+                use std::collections::hash_map::RandomState;
+                use std::hash::{BuildHasher, Hasher};
+                let random = RandomState::new().build_hasher().finish() as u32;
+                return (random % 32768).to_string();
+            }
+            "LINENO" => {
+                // $LINENO - current line number (not tracked, return 1)
+                // TODO: Track line numbers in parser and interpreter
+                return "1".to_string();
+            }
             _ => {}
         }
 

@@ -197,11 +197,11 @@
 | `$0` | ✅ | Script/function name |
 | `$1`-`$9` | ✅ | Positional parameters |
 | `$!` | ❌ | Last background PID |
-| `$$` | ❌ | Current PID |
+| `$$` | ✅ | Current PID |
 | `$-` | ❌ | Current options |
 | `$_` | ❌ | Last argument |
-| `$RANDOM` | ❌ | Random number |
-| `$LINENO` | ❌ | Current line number |
+| `$RANDOM` | ✅ | Random number (0-32767) |
+| `$LINENO` | ✅ | Current line number (placeholder) |
 
 ---
 
@@ -328,6 +328,7 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] Here string edge cases tested
 - [x] `set -e` (errexit) - exit on command failure
 - [x] Tilde expansion (~) - expands to $HOME
+- [x] Special variables ($$, $RANDOM, $LINENO)
 
 ### Planned
 - [ ] `trap` signal handling

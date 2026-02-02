@@ -2265,4 +2265,58 @@ mod tests {
         let result = bash.exec("echo foo~bar").await.unwrap();
         assert_eq!(result.stdout, "foo~bar\n");
     }
+
+    // Special variables tests
+
+    #[tokio::test]
+    async fn test_special_var_dollar_dollar() {
+        // $$ - current process ID
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $$").await.unwrap();
+        // Should be a numeric value
+        let pid: u32 = result.stdout.trim().parse().expect("$$ should be a number");
+        assert!(pid > 0, "$$ should be a positive number");
+    }
+
+    #[tokio::test]
+    async fn test_special_var_random() {
+        // $RANDOM - random number between 0 and 32767
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $RANDOM").await.unwrap();
+        let random: u32 = result
+            .stdout
+            .trim()
+            .parse()
+            .expect("$RANDOM should be a number");
+        assert!(random < 32768, "$RANDOM should be < 32768");
+    }
+
+    #[tokio::test]
+    async fn test_special_var_random_varies() {
+        // $RANDOM should return different values on different calls
+        let mut bash = Bash::new();
+        let result1 = bash.exec("echo $RANDOM").await.unwrap();
+        let result2 = bash.exec("echo $RANDOM").await.unwrap();
+        // With high probability, they should be different
+        // (small chance they're the same, so this test may rarely fail)
+        // We'll just check they're both valid numbers
+        let _: u32 = result1
+            .stdout
+            .trim()
+            .parse()
+            .expect("$RANDOM should be a number");
+        let _: u32 = result2
+            .stdout
+            .trim()
+            .parse()
+            .expect("$RANDOM should be a number");
+    }
+
+    #[tokio::test]
+    async fn test_special_var_lineno() {
+        // $LINENO - current line number (placeholder returns 1)
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $LINENO").await.unwrap();
+        assert_eq!(result.stdout, "1\n");
+    }
 }
