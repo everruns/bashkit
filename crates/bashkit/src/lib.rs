@@ -2223,4 +2223,46 @@ mod tests {
             .unwrap();
         assert_eq!(result.stdout, "reached\n");
     }
+
+    // Tilde expansion tests
+
+    #[tokio::test]
+    async fn test_tilde_expansion_basic() {
+        // ~ should expand to $HOME
+        let mut bash = Bash::builder().env("HOME", "/home/testuser").build();
+        let result = bash.exec("echo ~").await.unwrap();
+        assert_eq!(result.stdout, "/home/testuser\n");
+    }
+
+    #[tokio::test]
+    async fn test_tilde_expansion_with_path() {
+        // ~/path should expand to $HOME/path
+        let mut bash = Bash::builder().env("HOME", "/home/testuser").build();
+        let result = bash.exec("echo ~/documents/file.txt").await.unwrap();
+        assert_eq!(result.stdout, "/home/testuser/documents/file.txt\n");
+    }
+
+    #[tokio::test]
+    async fn test_tilde_expansion_in_assignment() {
+        // Tilde expansion should work in variable assignments
+        let mut bash = Bash::builder().env("HOME", "/home/testuser").build();
+        let result = bash.exec("DIR=~/data; echo $DIR").await.unwrap();
+        assert_eq!(result.stdout, "/home/testuser/data\n");
+    }
+
+    #[tokio::test]
+    async fn test_tilde_expansion_default_home() {
+        // ~ should default to /home/user if HOME is not set
+        let mut bash = Bash::new();
+        let result = bash.exec("echo ~").await.unwrap();
+        assert_eq!(result.stdout, "/home/user\n");
+    }
+
+    #[tokio::test]
+    async fn test_tilde_not_at_start() {
+        // ~ not at start of word should not expand
+        let mut bash = Bash::builder().env("HOME", "/home/testuser").build();
+        let result = bash.exec("echo foo~bar").await.unwrap();
+        assert_eq!(result.stdout, "foo~bar\n");
+    }
 }

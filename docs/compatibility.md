@@ -181,7 +181,7 @@
 | `*`, `?` | ✅ | `*.txt` | Glob patterns |
 | `[abc]` | ❌ | `[0-9]` | Bracket globs |
 | `{a,b,c}` | ❌ | `{1..5}` | Brace expansion |
-| `~` | ❌ | `~/file` | Tilde expansion |
+| `~` | ✅ | `~/file` | Tilde expansion |
 | `<(cmd)` | ✅ | `diff <(a) <(b)` | Process substitution |
 
 ---
@@ -327,6 +327,7 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] Process substitution (`<(cmd)`, `>(cmd)`)
 - [x] Here string edge cases tested
 - [x] `set -e` (errexit) - exit on command failure
+- [x] Tilde expansion (~) - expands to $HOME
 
 ### Planned
 - [ ] `trap` signal handling

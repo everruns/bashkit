@@ -1645,10 +1645,35 @@ impl Interpreter {
 
     async fn expand_word(&mut self, word: &Word) -> Result<String> {
         let mut result = String::new();
+        let mut is_first_part = true;
 
         for part in &word.parts {
             match part {
-                WordPart::Literal(s) => result.push_str(s),
+                WordPart::Literal(s) => {
+                    // Tilde expansion: ~ at start of word expands to $HOME
+                    if is_first_part && s.starts_with('~') {
+                        let home = self
+                            .env
+                            .get("HOME")
+                            .or_else(|| self.variables.get("HOME"))
+                            .cloned()
+                            .unwrap_or_else(|| "/home/user".to_string());
+
+                        if s == "~" {
+                            // Just ~
+                            result.push_str(&home);
+                        } else if s.starts_with("~/") {
+                            // ~/path
+                            result.push_str(&home);
+                            result.push_str(&s[1..]); // Include the /
+                        } else {
+                            // ~user - not implemented, keep as-is
+                            result.push_str(s);
+                        }
+                    } else {
+                        result.push_str(s);
+                    }
+                }
                 WordPart::Variable(name) => {
                     result.push_str(&self.expand_variable(name));
                 }
@@ -1758,6 +1783,7 @@ impl Interpreter {
                     }
                 }
             }
+            is_first_part = false;
         }
 
         Ok(result)
