@@ -110,8 +110,14 @@ impl<'a> Lexer<'a> {
                 }
             }
             '{' => {
-                self.advance();
-                Some(Token::LeftBrace)
+                // Look ahead to see if this is a brace expansion like {a,b,c} or {1..5}
+                // vs a brace group like { cmd; }
+                if self.looks_like_brace_expansion() {
+                    self.read_brace_expansion_word()
+                } else {
+                    self.advance();
+                    Some(Token::LeftBrace)
+                }
             }
             '}' => {
                 self.advance();
@@ -351,6 +357,23 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 }
+            } else if ch == '{' {
+                // Brace expansion pattern - include entire {...} in word
+                word.push(ch);
+                self.advance();
+                let mut depth = 1;
+                while let Some(c) = self.peek_char() {
+                    word.push(c);
+                    self.advance();
+                    if c == '{' {
+                        depth += 1;
+                    } else if c == '}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                }
             } else if self.is_word_char(ch) {
                 word.push(ch);
                 self.advance();
@@ -418,6 +441,108 @@ impl<'a> Lexer<'a> {
         }
 
         Some(Token::Word(content))
+    }
+
+    /// Check if the content starting with { looks like a brace expansion
+    /// Brace expansion: {a,b,c} or {1..5} (contains , or ..)
+    /// Brace group: { cmd; } (contains spaces, semicolons, newlines)
+    fn looks_like_brace_expansion(&self) -> bool {
+        // Clone the iterator to peek ahead without consuming
+        let mut chars = self.chars.clone();
+
+        // Skip the opening {
+        if chars.next() != Some('{') {
+            return false;
+        }
+
+        let mut depth = 1;
+        let mut has_comma = false;
+        let mut has_dot_dot = false;
+        let mut prev_char = None;
+
+        for ch in chars {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // Found matching }, check if we have brace expansion markers
+                        return has_comma || has_dot_dot;
+                    }
+                }
+                ',' if depth == 1 => has_comma = true,
+                '.' if prev_char == Some('.') && depth == 1 => has_dot_dot = true,
+                // Brace groups have whitespace/newlines/semicolons at depth 1
+                ' ' | '\t' | '\n' | ';' if depth == 1 => return false,
+                _ => {}
+            }
+            prev_char = Some(ch);
+        }
+
+        false
+    }
+
+    /// Read a brace expansion pattern as a word
+    fn read_brace_expansion_word(&mut self) -> Option<Token> {
+        let mut word = String::new();
+
+        // Read the opening {
+        if let Some('{') = self.peek_char() {
+            word.push('{');
+            self.advance();
+        } else {
+            return None;
+        }
+
+        // Read until matching }
+        let mut depth = 1;
+        while let Some(ch) = self.peek_char() {
+            word.push(ch);
+            self.advance();
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Continue reading any suffix after the brace pattern
+        while let Some(ch) = self.peek_char() {
+            if self.is_word_char(ch) || ch == '{' {
+                if ch == '{' {
+                    // Another brace pattern - include it
+                    word.push(ch);
+                    self.advance();
+                    let mut inner_depth = 1;
+                    while let Some(c) = self.peek_char() {
+                        word.push(c);
+                        self.advance();
+                        match c {
+                            '{' => inner_depth += 1,
+                            '}' => {
+                                inner_depth -= 1;
+                                if inner_depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                } else {
+                    word.push(ch);
+                    self.advance();
+                }
+            } else {
+                break;
+            }
+        }
+
+        Some(Token::Word(word))
     }
 
     fn is_word_char(&self, ch: char) -> bool {

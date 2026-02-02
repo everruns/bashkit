@@ -1453,21 +1453,27 @@ impl Interpreter {
             return Ok(ExecResult::ok(String::new()));
         }
 
-        // Expand arguments with glob expansion
+        // Expand arguments with brace and glob expansion
         let mut args: Vec<String> = Vec::new();
         for word in &command.args {
             let expanded = self.expand_word(word).await?;
-            // Check if the word contains glob characters
-            if self.contains_glob_chars(&expanded) {
-                let glob_matches = self.expand_glob(&expanded).await?;
-                if glob_matches.is_empty() {
-                    // No matches - keep original pattern (bash behavior)
-                    args.push(expanded);
+
+            // Step 1: Brace expansion (produces multiple strings)
+            let brace_expanded = self.expand_braces(&expanded);
+
+            // Step 2: For each brace-expanded item, do glob expansion
+            for item in brace_expanded {
+                if self.contains_glob_chars(&item) {
+                    let glob_matches = self.expand_glob(&item).await?;
+                    if glob_matches.is_empty() {
+                        // No matches - keep original pattern (bash behavior)
+                        args.push(item);
+                    } else {
+                        args.extend(glob_matches);
+                    }
                 } else {
-                    args.extend(glob_matches);
+                    args.push(item);
                 }
-            } else {
-                args.push(expanded);
             }
         }
 
@@ -2445,6 +2451,155 @@ impl Interpreter {
     }
 
     /// Check if a string contains glob characters
+    /// Expand brace patterns like {a,b,c} or {1..5}
+    /// Returns a Vec of expanded strings, or a single-element Vec if no braces
+    fn expand_braces(&self, s: &str) -> Vec<String> {
+        // Find the first brace that has a matching close brace
+        let mut depth = 0;
+        let mut brace_start = None;
+        let mut brace_end = None;
+        let chars: Vec<char> = s.chars().collect();
+
+        for (i, &ch) in chars.iter().enumerate() {
+            match ch {
+                '{' => {
+                    if depth == 0 {
+                        brace_start = Some(i);
+                    }
+                    depth += 1;
+                }
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 && brace_start.is_some() {
+                        brace_end = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // No valid brace pattern found
+        let (start, end) = match (brace_start, brace_end) {
+            (Some(s), Some(e)) => (s, e),
+            _ => return vec![s.to_string()],
+        };
+
+        let prefix: String = chars[..start].iter().collect();
+        let suffix: String = chars[end + 1..].iter().collect();
+        let brace_content: String = chars[start + 1..end].iter().collect();
+
+        // Check for range expansion like {1..5} or {a..z}
+        if let Some(range_result) = self.try_expand_range(&brace_content) {
+            let mut results = Vec::new();
+            for item in range_result {
+                let expanded = format!("{}{}{}", prefix, item, suffix);
+                // Recursively expand any remaining braces
+                results.extend(self.expand_braces(&expanded));
+            }
+            return results;
+        }
+
+        // List expansion like {a,b,c}
+        // Need to split by comma, but respect nested braces
+        let items = self.split_brace_items(&brace_content);
+        if items.len() <= 1 && !brace_content.contains(',') {
+            // Not a valid brace expansion (e.g., just {foo})
+            return vec![s.to_string()];
+        }
+
+        let mut results = Vec::new();
+        for item in items {
+            let expanded = format!("{}{}{}", prefix, item, suffix);
+            // Recursively expand any remaining braces
+            results.extend(self.expand_braces(&expanded));
+        }
+
+        results
+    }
+
+    /// Try to expand a range like 1..5 or a..z
+    fn try_expand_range(&self, content: &str) -> Option<Vec<String>> {
+        // Check for .. separator
+        let parts: Vec<&str> = content.split("..").collect();
+        if parts.len() != 2 {
+            return None;
+        }
+
+        let start = parts[0];
+        let end = parts[1];
+
+        // Try numeric range
+        if let (Ok(start_num), Ok(end_num)) = (start.parse::<i64>(), end.parse::<i64>()) {
+            let mut results = Vec::new();
+            if start_num <= end_num {
+                for i in start_num..=end_num {
+                    results.push(i.to_string());
+                }
+            } else {
+                for i in (end_num..=start_num).rev() {
+                    results.push(i.to_string());
+                }
+            }
+            return Some(results);
+        }
+
+        // Try character range (single chars only)
+        if start.len() == 1 && end.len() == 1 {
+            let start_char = start.chars().next().unwrap();
+            let end_char = end.chars().next().unwrap();
+
+            if start_char.is_ascii_alphabetic() && end_char.is_ascii_alphabetic() {
+                let mut results = Vec::new();
+                let start_byte = start_char as u8;
+                let end_byte = end_char as u8;
+
+                if start_byte <= end_byte {
+                    for b in start_byte..=end_byte {
+                        results.push((b as char).to_string());
+                    }
+                } else {
+                    for b in (end_byte..=start_byte).rev() {
+                        results.push((b as char).to_string());
+                    }
+                }
+                return Some(results);
+            }
+        }
+
+        None
+    }
+
+    /// Split brace content by commas, respecting nested braces
+    fn split_brace_items(&self, content: &str) -> Vec<String> {
+        let mut items = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0;
+
+        for ch in content.chars() {
+            match ch {
+                '{' => {
+                    depth += 1;
+                    current.push(ch);
+                }
+                '}' => {
+                    depth -= 1;
+                    current.push(ch);
+                }
+                ',' if depth == 0 => {
+                    items.push(current);
+                    current = String::new();
+                }
+                _ => {
+                    current.push(ch);
+                }
+            }
+        }
+        items.push(current);
+
+        items
+    }
+
     fn contains_glob_chars(&self, s: &str) -> bool {
         s.contains('*') || s.contains('?') || s.contains('[')
     }

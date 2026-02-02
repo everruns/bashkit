@@ -2597,4 +2597,72 @@ mod tests {
         let result = bash.exec("echo $((5 < 3 || 2 < 4))").await.unwrap();
         assert_eq!(result.stdout, "1\n");
     }
+
+    // ============================================================
+    // Brace Expansion Tests
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_brace_expansion_list() {
+        // {a,b,c} expands to a b c
+        let mut bash = Bash::new();
+        let result = bash.exec("echo {a,b,c}").await.unwrap();
+        assert_eq!(result.stdout, "a b c\n");
+    }
+
+    #[tokio::test]
+    async fn test_brace_expansion_with_prefix() {
+        // file{1,2,3}.txt expands to file1.txt file2.txt file3.txt
+        let mut bash = Bash::new();
+        let result = bash.exec("echo file{1,2,3}.txt").await.unwrap();
+        assert_eq!(result.stdout, "file1.txt file2.txt file3.txt\n");
+    }
+
+    #[tokio::test]
+    async fn test_brace_expansion_numeric_range() {
+        // {1..5} expands to 1 2 3 4 5
+        let mut bash = Bash::new();
+        let result = bash.exec("echo {1..5}").await.unwrap();
+        assert_eq!(result.stdout, "1 2 3 4 5\n");
+    }
+
+    #[tokio::test]
+    async fn test_brace_expansion_char_range() {
+        // {a..e} expands to a b c d e
+        let mut bash = Bash::new();
+        let result = bash.exec("echo {a..e}").await.unwrap();
+        assert_eq!(result.stdout, "a b c d e\n");
+    }
+
+    #[tokio::test]
+    async fn test_brace_expansion_reverse_range() {
+        // {5..1} expands to 5 4 3 2 1
+        let mut bash = Bash::new();
+        let result = bash.exec("echo {5..1}").await.unwrap();
+        assert_eq!(result.stdout, "5 4 3 2 1\n");
+    }
+
+    #[tokio::test]
+    async fn test_brace_expansion_nested() {
+        // Nested brace expansion: {a,b}{1,2}
+        let mut bash = Bash::new();
+        let result = bash.exec("echo {a,b}{1,2}").await.unwrap();
+        assert_eq!(result.stdout, "a1 a2 b1 b2\n");
+    }
+
+    #[tokio::test]
+    async fn test_brace_expansion_with_suffix() {
+        // Prefix and suffix: pre{x,y}suf
+        let mut bash = Bash::new();
+        let result = bash.exec("echo pre{x,y}suf").await.unwrap();
+        assert_eq!(result.stdout, "prexsuf preysuf\n");
+    }
+
+    #[tokio::test]
+    async fn test_brace_expansion_empty_item() {
+        // {,foo} expands to (empty) foo
+        let mut bash = Bash::new();
+        let result = bash.exec("echo x{,y}z").await.unwrap();
+        assert_eq!(result.stdout, "xz xyz\n");
+    }
 }

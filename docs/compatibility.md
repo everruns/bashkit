@@ -180,7 +180,7 @@
 |--------|--------|---------|-------------|
 | `*`, `?` | ✅ | `*.txt` | Glob patterns |
 | `[abc]` | ❌ | `[0-9]` | Bracket globs |
-| `{a,b,c}` | ❌ | `{1..5}` | Brace expansion |
+| `{a,b,c}` | ✅ | `{1..5}` | Brace expansion |
 | `~` | ✅ | `~/file` | Tilde expansion |
 | `<(cmd)` | ✅ | `diff <(a) <(b)` | Process substitution |
 
@@ -332,6 +332,7 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] File test operators (-r, -w, -x, -L)
 - [x] Stderr redirections (2>, 2>&1, &>)
 - [x] Arithmetic logical operators (&&, ||)
+- [x] Brace expansion ({a,b,c}, {1..5})
 
 ### Planned
 - [ ] `trap` signal handling
