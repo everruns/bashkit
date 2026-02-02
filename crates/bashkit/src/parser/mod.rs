@@ -193,6 +193,7 @@ impl<'a> Parser<'a> {
                 "while" => return self.parse_while().map(|c| Some(Command::Compound(c))),
                 "until" => return self.parse_until().map(|c| Some(Command::Compound(c))),
                 "case" => return self.parse_case().map(|c| Some(Command::Compound(c))),
+                "time" => return self.parse_time().map(|c| Some(Command::Compound(c))),
                 "function" => return self.parse_function_keyword().map(Some),
                 _ => {
                     // Check for POSIX-style function: name() { body }
@@ -600,6 +601,37 @@ impl<'a> Parser<'a> {
         self.expect_keyword("esac")?;
 
         Ok(CompoundCommand::Case(CaseCommand { word, cases }))
+    }
+
+    /// Parse a time command: time [-p] [command]
+    ///
+    /// The time keyword measures execution time of the following command.
+    /// Note: BashKit only tracks wall-clock time, not CPU user/sys time.
+    fn parse_time(&mut self) -> Result<CompoundCommand> {
+        self.advance(); // consume 'time'
+        self.skip_newlines();
+
+        // Check for -p flag (POSIX format)
+        let posix_format = if let Some(tokens::Token::Word(w)) = &self.current_token {
+            if w == "-p" {
+                self.advance();
+                self.skip_newlines();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        // Parse the command to time (if any)
+        // time with no command is valid in bash (just outputs timing header)
+        let command = self.parse_pipeline()?;
+
+        Ok(CompoundCommand::Time(TimeCommand {
+            posix_format,
+            command: command.map(Box::new),
+        }))
     }
 
     /// Check if current token is ;; (case terminator)
