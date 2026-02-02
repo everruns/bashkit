@@ -2,6 +2,10 @@
 
 > Dense reference for all bash features and builtins
 
+**See also:**
+- [API Documentation](https://docs.rs/bashkit) - Full API reference
+- [Custom Builtins Guide](./custom_builtins.md) - Extending BashKit with custom commands
+
 ## Quick Status
 
 | Category | Implemented | Planned | Total |
@@ -353,7 +357,7 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] Arithmetic logical operators (&&, ||)
 - [x] Brace expansion ({a,b,c}, {1..5})
 - [x] String comparison operators (< >) in test
-- [x] Array indices ${!arr[@]}
+- [x] Array indices `${!arr[@]}`
 
 ### Planned
 - [ ] `trap` signal handling

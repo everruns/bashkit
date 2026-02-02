@@ -5,9 +5,13 @@ domain-specific functionality. Custom builtins have full access to the execution
 context including arguments, environment variables, shell variables, and the
 virtual filesystem.
 
+**See also:**
+- [API Documentation](https://docs.rs/bashkit) - Full API reference
+- [Compatibility Reference](./compatibility.md) - Supported bash features
+
 ## Quick Start
 
-```rust
+```rust,ignore
 use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, async_trait};
 
 struct MyCommand;
@@ -36,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
 
 All custom builtins must implement the `Builtin` trait:
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait Builtin: Send + Sync {
     async fn execute(&self, ctx: BuiltinContext<'_>) -> Result<ExecResult>;
@@ -50,7 +54,7 @@ thread safety in async contexts.
 
 The `BuiltinContext` provides access to the execution environment:
 
-```rust
+```rust,ignore
 pub struct BuiltinContext<'a> {
     /// Command arguments (not including the command name)
     pub args: &'a [String],
@@ -76,7 +80,7 @@ pub struct BuiltinContext<'a> {
 
 Arguments are passed as a slice of strings, excluding the command name itself:
 
-```rust
+```rust,ignore
 // For "mycommand arg1 arg2", ctx.args = ["arg1", "arg2"]
 let first_arg = ctx.args.first().map(|s| s.as_str()).unwrap_or("default");
 ```
@@ -85,7 +89,7 @@ let first_arg = ctx.args.first().map(|s| s.as_str()).unwrap_or("default");
 
 Read-only access to environment variables set via `BashBuilder::env()` or `export`:
 
-```rust
+```rust,ignore
 let home = ctx.env.get("HOME").map(|s| s.as_str()).unwrap_or("/");
 ```
 
@@ -93,7 +97,7 @@ let home = ctx.env.get("HOME").map(|s| s.as_str()).unwrap_or("/");
 
 Mutable access to shell variables allows builtins to set variables:
 
-```rust
+```rust,ignore
 ctx.variables.insert("RESULT".to_string(), "computed_value".to_string());
 ```
 
@@ -101,7 +105,7 @@ ctx.variables.insert("RESULT".to_string(), "computed_value".to_string());
 
 The virtual filesystem supports all standard operations:
 
-```rust
+```rust,ignore
 // Read a file
 let content = ctx.fs.read_file(Path::new("/data/input.txt")).await?;
 
@@ -119,7 +123,7 @@ if ctx.fs.exists(Path::new("/config")).await? {
 When the builtin is invoked in a pipeline, stdin contains the output from the
 previous command:
 
-```rust
+```rust,ignore
 // echo "hello" | mycommand
 let input = ctx.stdin.unwrap_or("");
 let processed = input.to_uppercase();
@@ -129,7 +133,7 @@ let processed = input.to_uppercase();
 
 Builtins return `Result<ExecResult>`:
 
-```rust
+```rust,ignore
 pub struct ExecResult {
     pub stdout: String,
     pub stderr: String,
@@ -139,7 +143,7 @@ pub struct ExecResult {
 
 Helper constructors:
 
-```rust
+```rust,ignore
 // Success with output
 ExecResult::ok("output\n".to_string())
 
@@ -151,7 +155,7 @@ ExecResult::err("error message\n".to_string(), 1)
 
 ### Database Query Builtin
 
-```rust
+```rust,ignore
 use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, async_trait};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -188,7 +192,7 @@ bash.exec("psql -c 'SELECT * FROM users'").await?;
 
 ### HTTP Client Builtin
 
-```rust
+```rust,ignore
 struct HttpGet {
     client: reqwest::Client,
 }
@@ -216,7 +220,7 @@ impl Builtin for HttpGet {
 
 Custom builtins can override default builtins by using the same name:
 
-```rust
+```rust,ignore
 struct SecureEcho;
 
 #[async_trait]
@@ -248,7 +252,7 @@ let bash = Bash::builder()
 The `Builtin` trait requires `Send + Sync`. For builtins with mutable state, use
 appropriate synchronization:
 
-```rust
+```rust,ignore
 struct Counter {
     count: Arc<std::sync::atomic::AtomicU64>,
 }
