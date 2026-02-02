@@ -29,6 +29,8 @@ pub struct SpecTest {
     pub expected_exit_code: Option<i32>,
     pub skip: bool,
     pub skip_reason: Option<String>,
+    /// If true, run test with tokio paused time for deterministic timing
+    pub paused_time: bool,
 }
 
 /// Result of running a spec test
@@ -90,6 +92,10 @@ pub fn parse_spec_file(content: &str) -> Vec<SpecTest> {
                 if let Some(ref mut test) = current_test {
                     test.skip = true;
                 }
+            } else if directive == "paused_time" {
+                if let Some(ref mut test) = current_test {
+                    test.paused_time = true;
+                }
             } else {
                 // New test name
                 if let Some(mut test) = current_test.take() {
@@ -111,6 +117,7 @@ pub fn parse_spec_file(content: &str) -> Vec<SpecTest> {
                     expected_exit_code: None,
                     skip: false,
                     skip_reason: None,
+                    paused_time: false,
                 });
                 in_script = true;
                 in_expect = false;
@@ -150,6 +157,12 @@ pub fn parse_spec_file(content: &str) -> Vec<SpecTest> {
 
 /// Run a single spec test against BashKit
 pub async fn run_spec_test(test: &SpecTest) -> TestResult {
+    // For timing tests, run in a separate runtime with paused time
+    // This enables deterministic time-based testing with auto-advance
+    if test.paused_time {
+        return run_spec_test_paused_time(test).await;
+    }
+
     let mut bash = Bash::new();
 
     let (bashkit_stdout, bashkit_exit_code, error) = match bash.exec(&test.script).await {
@@ -172,6 +185,54 @@ pub async fn run_spec_test(test: &SpecTest) -> TestResult {
         bashkit_exit_code,
         expected_stdout: test.expected_stdout.clone(),
         expected_exit_code: test.expected_exit_code,
+        real_bash_stdout: None,
+        real_bash_exit_code: None,
+        error,
+    }
+}
+
+/// Run a spec test with paused time for deterministic timing behavior.
+/// Uses spawn_blocking + a separate tokio runtime with start_paused=true.
+async fn run_spec_test_paused_time(test: &SpecTest) -> TestResult {
+    let script = test.script.clone();
+    let expected_stdout = test.expected_stdout.clone();
+    let expected_exit_code = test.expected_exit_code;
+    let name = test.name.clone();
+
+    // Run in a blocking thread to create a new runtime with paused time
+    let (bashkit_stdout, bashkit_exit_code, error) = tokio::task::spawn_blocking(move || {
+        // Create a new runtime with paused time and auto-advance
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .expect("Failed to create paused time runtime");
+
+        rt.block_on(async {
+            let mut bash = Bash::new();
+            match bash.exec(&script).await {
+                Ok(result) => (result.stdout, result.exit_code, None),
+                Err(e) => (String::new(), 1, Some(e.to_string())),
+            }
+        })
+    })
+    .await
+    .expect("spawn_blocking failed");
+
+    let stdout_matches = bashkit_stdout == expected_stdout;
+    let exit_code_matches = expected_exit_code
+        .map(|expected| bashkit_exit_code == expected)
+        .unwrap_or(true);
+
+    let passed = stdout_matches && exit_code_matches && error.is_none();
+
+    TestResult {
+        name,
+        passed,
+        bashkit_stdout,
+        bashkit_exit_code,
+        expected_stdout,
+        expected_exit_code,
         real_bash_stdout: None,
         real_bash_exit_code: None,
         error,
@@ -340,6 +401,7 @@ hello
             expected_exit_code: None,
             skip: false,
             skip_reason: None,
+            paused_time: false,
         };
 
         let result = run_spec_test(&test).await;
@@ -356,9 +418,28 @@ hello
             expected_exit_code: None,
             skip: false,
             skip_reason: None,
+            paused_time: false,
         };
 
         let result = run_spec_test(&test).await;
         assert!(!result.passed, "Test should fail");
+    }
+
+    #[test]
+    fn test_parse_with_paused_time() {
+        let content = r#"
+### timing_test
+### paused_time
+timeout 0.001 sleep 10
+echo $?
+### expect
+124
+### end
+"#;
+
+        let tests = parse_spec_file(content);
+        assert_eq!(tests.len(), 1);
+        assert!(tests[0].paused_time);
+        assert!(!tests[0].skip);
     }
 }
