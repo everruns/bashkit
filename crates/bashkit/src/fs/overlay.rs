@@ -1,11 +1,7 @@
-//! Overlay filesystem implementation
+//! Overlay filesystem implementation.
 //!
-//! OverlayFs provides copy-on-write semantics by layering a writable upper
-//! filesystem on top of a read-only lower filesystem.
-//!
-//! - Reads: Check upper first, fall back to lower
-//! - Writes: Always go to upper
-//! - Deletes: Tracked via whiteouts in upper
+//! [`OverlayFs`] provides copy-on-write semantics by layering a writable upper
+//! filesystem on top of a read-only lower (base) filesystem.
 
 // RwLock.read()/write().unwrap() only panics on lock poisoning (prior panic
 // while holding lock). This is intentional - corrupted state should not propagate.
@@ -21,12 +17,124 @@ use super::memory::InMemoryFs;
 use super::traits::{DirEntry, FileSystem, FileType, Metadata};
 use crate::error::Result;
 
-/// Overlay filesystem with copy-on-write semantics.
+/// Copy-on-write overlay filesystem.
 ///
-/// Changes are written to the upper layer while the lower layer remains
-/// read-only. Deleted files are tracked via whiteouts.
+/// `OverlayFs` layers a writable upper filesystem on top of a read-only base
+/// (lower) filesystem, similar to Docker's overlay storage driver or Linux
+/// overlayfs.
+///
+/// # Behavior
+///
+/// - **Reads**: Check upper layer first, fall back to lower layer
+/// - **Writes**: Always go to the upper layer (copy-on-write)
+/// - **Deletes**: Tracked via whiteouts - deleted files are hidden but the lower layer is unchanged
+///
+/// # Use Cases
+///
+/// - **Template systems**: Start from a read-only template, allow modifications
+/// - **Immutable infrastructure**: Keep base images unchanged while allowing runtime modifications
+/// - **Testing**: Run tests against a base state without modifying it
+/// - **Undo support**: Discard the upper layer to "reset" to the base state
+///
+/// # Example
+///
+/// ```rust
+/// use bashkit::{Bash, FileSystem, InMemoryFs, OverlayFs};
+/// use std::path::Path;
+/// use std::sync::Arc;
+///
+/// # #[tokio::main]
+/// # async fn main() -> bashkit::Result<()> {
+/// // Create a base filesystem with template files
+/// let base = Arc::new(InMemoryFs::new());
+/// base.mkdir(Path::new("/config"), false).await?;
+/// base.write_file(Path::new("/config/app.conf"), b"debug=false").await?;
+///
+/// // Create overlay - base is read-only, changes go to overlay
+/// let overlay = Arc::new(OverlayFs::new(base.clone()));
+///
+/// // Use with Bash
+/// let mut bash = Bash::builder().fs(overlay.clone()).build();
+///
+/// // Read from base layer
+/// let result = bash.exec("cat /config/app.conf").await?;
+/// assert_eq!(result.stdout, "debug=false");
+///
+/// // Modify - changes go to overlay only
+/// bash.exec("echo 'debug=true' > /config/app.conf").await?;
+///
+/// // Overlay shows modified content
+/// let result = bash.exec("cat /config/app.conf").await?;
+/// assert_eq!(result.stdout, "debug=true\n");
+///
+/// // Base is unchanged!
+/// let original = base.read_file(Path::new("/config/app.conf")).await?;
+/// assert_eq!(original, b"debug=false");
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Whiteouts (Deletion Handling)
+///
+/// When you delete a file that exists in the base layer, `OverlayFs` creates
+/// a "whiteout" marker that hides the file without modifying the base:
+///
+/// ```rust
+/// use bashkit::{Bash, FileSystem, InMemoryFs, OverlayFs};
+/// use std::path::Path;
+/// use std::sync::Arc;
+///
+/// # #[tokio::main]
+/// # async fn main() -> bashkit::Result<()> {
+/// let base = Arc::new(InMemoryFs::new());
+/// base.write_file(Path::new("/tmp/secret.txt"), b"sensitive").await?;
+///
+/// let overlay = Arc::new(OverlayFs::new(base.clone()));
+/// let mut bash = Bash::builder().fs(overlay.clone()).build();
+///
+/// // File exists initially
+/// assert!(overlay.exists(Path::new("/tmp/secret.txt")).await?);
+///
+/// // Delete it
+/// bash.exec("rm /tmp/secret.txt").await?;
+///
+/// // Gone from overlay's view
+/// assert!(!overlay.exists(Path::new("/tmp/secret.txt")).await?);
+///
+/// // But base is unchanged
+/// assert!(base.exists(Path::new("/tmp/secret.txt")).await?);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Directory Listing
+///
+/// When listing directories, entries from both layers are merged, with the
+/// upper layer taking precedence for files that exist in both:
+///
+/// ```rust
+/// use bashkit::{FileSystem, InMemoryFs, OverlayFs};
+/// use std::path::Path;
+/// use std::sync::Arc;
+///
+/// # #[tokio::main]
+/// # async fn main() -> bashkit::Result<()> {
+/// let base = Arc::new(InMemoryFs::new());
+/// base.write_file(Path::new("/tmp/base.txt"), b"from base").await?;
+///
+/// let overlay = OverlayFs::new(base);
+/// overlay.write_file(Path::new("/tmp/upper.txt"), b"from upper").await?;
+///
+/// // Both files visible
+/// let entries = overlay.read_dir(Path::new("/tmp")).await?;
+/// let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+/// assert!(names.contains(&"base.txt"));
+/// assert!(names.contains(&"upper.txt"));
+/// # Ok(())
+/// # }
+/// ```
 pub struct OverlayFs {
-    /// Lower (read-only) filesystem
+    /// Lower (read-only base) filesystem
     lower: Arc<dyn FileSystem>,
     /// Upper (writable) filesystem - always InMemoryFs
     upper: InMemoryFs,
@@ -35,10 +143,42 @@ pub struct OverlayFs {
 }
 
 impl OverlayFs {
-    /// Create a new overlay filesystem.
+    /// Create a new overlay filesystem with the given base layer.
     ///
-    /// The lower filesystem is treated as read-only, and all writes go to
-    /// a new in-memory upper layer.
+    /// The `lower` filesystem is treated as read-only - all reads will first
+    /// check the upper layer, then fall back to the lower layer. All writes
+    /// go to a new [`InMemoryFs`] upper layer.
+    ///
+    /// # Arguments
+    ///
+    /// * `lower` - The base (read-only) filesystem
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{FileSystem, InMemoryFs, OverlayFs};
+    /// use std::path::Path;
+    /// use std::sync::Arc;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// // Create base with some files
+    /// let base = Arc::new(InMemoryFs::new());
+    /// base.mkdir(Path::new("/data"), false).await?;
+    /// base.write_file(Path::new("/data/readme.txt"), b"Read me!").await?;
+    ///
+    /// // Create overlay
+    /// let overlay = OverlayFs::new(base);
+    ///
+    /// // Can read from base
+    /// let content = overlay.read_file(Path::new("/data/readme.txt")).await?;
+    /// assert_eq!(content, b"Read me!");
+    ///
+    /// // Writes go to upper layer
+    /// overlay.write_file(Path::new("/data/new.txt"), b"New file").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn new(lower: Arc<dyn FileSystem>) -> Self {
         Self {
             lower,
