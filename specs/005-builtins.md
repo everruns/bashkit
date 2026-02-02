@@ -65,6 +65,31 @@ Bash::builder()
     .build();
 ```
 
+#### Directory Listing and Search
+- `ls` - List directory contents (`-l`, `-a`, `-h`, `-1`, `-R`)
+- `find` - Search for files (`-name PATTERN`, `-type f|d|l`, `-maxdepth N`, `-print`)
+- `rmdir` - Remove empty directories (`-p` for parents)
+
+#### File Inspection
+- `less` - View file contents (sandbox: behaves like `cat`, no interactive paging)
+- `file` - Detect file type via magic bytes (text, binary, PNG, JPEG, gzip, etc.)
+- `stat` - Display file metadata (`-c FORMAT` with %n, %s, %F, %a, %U, %G, %Y, %Z)
+
+#### Archive Operations
+- `tar` - Create/extract tar archives (`-c`, `-x`, `-t`, `-v`, `-f`, `-z` for gzip)
+- `gzip` - Compress files (`-d` decompress, `-k` keep, `-f` force)
+- `gunzip` - Decompress files (`-k` keep, `-f` force)
+
+#### Environment
+- `env` - Print environment or run command with modified environment
+- `printenv` - Print environment variable values
+- `history` - Command history (sandbox: limited, no persistent history)
+
+#### Pipeline Control
+- `xargs` - Build commands from stdin (`-I REPL`, `-n MAX`, `-d DELIM`)
+- `tee` - Write to files and stdout (`-a` append)
+- `watch` - Execute command periodically (sandbox: shows command info, no continuous execution)
+
 #### Network (Stubs)
 - `curl` - HTTP client (requires network feature + allowlist)
 - `wget` - Download files (requires network feature + allowlist)
