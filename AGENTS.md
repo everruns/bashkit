@@ -20,6 +20,19 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 
 `specs/` contains feature specifications. New code should comply with these or propose changes.
 
+| Spec | Description |
+|------|-------------|
+| 001-architecture | Core interpreter architecture, module structure |
+| 002-parser | Bash syntax parser design |
+| 003-vfs | Virtual filesystem abstraction |
+| 004-testing | Testing strategy and patterns |
+| 005-builtins | Builtin command implementations |
+| 005-security-testing | Fail-point injection for security testing |
+| 006-threat-model | Security threats and mitigations |
+| 007-parallel-execution | Threading model, Arc usage |
+| 008-documentation | Rustdoc guides, embedded markdown |
+| 008-release-process | Version tagging, crates.io publishing |
+
 ### Documentation
 
 - Guides live in `docs/` as markdown files
