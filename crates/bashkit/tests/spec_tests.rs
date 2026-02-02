@@ -401,3 +401,160 @@ async fn bash_comparison_tests_verbose() {
         }
     }
 }
+
+/// Generate comprehensive compatibility report
+/// Shows per-category statistics and overall compatibility score.
+/// Run with: cargo test --test spec_tests -- compatibility_report --ignored --nocapture
+#[tokio::test]
+#[ignore]
+async fn compatibility_report() {
+    println!("\n");
+    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("║                 BashKit Compatibility Report                     ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝");
+    println!();
+
+    let categories = ["bash", "awk", "grep", "sed", "jq"];
+    let mut overall_total = 0;
+    let mut overall_passed = 0;
+    let mut overall_skipped = 0;
+    let mut overall_bash_diff = 0;
+    let mut overall_bash_matched = 0;
+
+    let mut category_stats = Vec::new();
+
+    for category in categories {
+        let dir = spec_cases_dir().join(category);
+        let all_tests = load_spec_tests(&dir);
+
+        let mut total = 0;
+        let mut passed = 0;
+        let mut skipped = 0;
+        let mut bash_diff = 0;
+        let mut bash_matched = 0;
+
+        for tests in all_tests.values() {
+            for test in tests {
+                total += 1;
+                overall_total += 1;
+
+                if test.skip {
+                    skipped += 1;
+                    overall_skipped += 1;
+                    continue;
+                }
+
+                if test.bash_diff {
+                    bash_diff += 1;
+                    overall_bash_diff += 1;
+                }
+
+                let result = run_spec_test(test).await;
+                if result.passed {
+                    passed += 1;
+                    overall_passed += 1;
+                }
+
+                // Check bash compatibility for non-skipped, non-bash_diff tests
+                if !test.bash_diff {
+                    let result = run_spec_test_with_comparison(test).await;
+                    let real_stdout = result.real_bash_stdout.as_deref().unwrap_or("");
+                    let real_exit = result.real_bash_exit_code.unwrap_or(-1);
+
+                    if result.bashkit_stdout == real_stdout && result.bashkit_exit_code == real_exit
+                    {
+                        bash_matched += 1;
+                        overall_bash_matched += 1;
+                    }
+                }
+            }
+        }
+
+        let running = total - skipped;
+        let pass_rate = if running > 0 {
+            (passed as f64 / running as f64) * 100.0
+        } else {
+            0.0
+        };
+        let bash_compat_total = total - skipped - bash_diff;
+        let bash_compat_rate = if bash_compat_total > 0 {
+            (bash_matched as f64 / bash_compat_total as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        category_stats.push((
+            category,
+            total,
+            passed,
+            skipped,
+            bash_diff,
+            bash_matched,
+            pass_rate,
+            bash_compat_rate,
+        ));
+    }
+
+    // Print category breakdown
+    println!("┌─────────────┬───────┬────────┬─────────┬───────────┬─────────────────┐");
+    println!(
+        "│ {:^11} │ {:^5} │ {:^6} │ {:^7} │ {:^9} │ {:^15} │",
+        "Category", "Total", "Passed", "Skipped", "BashDiff", "Bash Compat"
+    );
+    println!("├─────────────┼───────┼────────┼─────────┼───────────┼─────────────────┤");
+
+    for (category, total, passed, skipped, bash_diff, bash_matched, _pass_rate, bash_compat_rate) in
+        &category_stats
+    {
+        let running = total - skipped;
+        let bash_compat_total = total - skipped - bash_diff;
+        println!(
+            "│ {:^11} │ {:^5} │ {:>3}/{:<3}│ {:^7} │ {:^9} │ {:>3}/{:<3} ({:>5.1}%) │",
+            category,
+            total,
+            passed,
+            running,
+            skipped,
+            bash_diff,
+            bash_matched,
+            bash_compat_total,
+            bash_compat_rate
+        );
+    }
+
+    println!("└─────────────┴───────┴────────┴─────────┴───────────┴─────────────────┘");
+    println!();
+
+    // Overall summary
+    let overall_running = overall_total - overall_skipped;
+    let overall_pass_rate = if overall_running > 0 {
+        (overall_passed as f64 / overall_running as f64) * 100.0
+    } else {
+        0.0
+    };
+    let bash_compat_total = overall_total - overall_skipped - overall_bash_diff;
+    let bash_compat_rate = if bash_compat_total > 0 {
+        (overall_bash_matched as f64 / bash_compat_total as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    println!("Summary:");
+    println!("  Total tests:        {}", overall_total);
+    println!(
+        "  Passing:            {}/{} ({:.1}%)",
+        overall_passed, overall_running, overall_pass_rate
+    );
+    println!("  Skipped:            {}", overall_skipped);
+    println!(
+        "  Known differences:  {} (marked bash_diff)",
+        overall_bash_diff
+    );
+    println!();
+    println!(
+        "  Bash compatibility: {}/{} ({:.1}%)",
+        overall_bash_matched, bash_compat_total, bash_compat_rate
+    );
+    println!("    (tests matching real bash output exactly)");
+    println!();
+}

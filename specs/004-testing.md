@@ -126,8 +126,12 @@ just check-bash-compat
 # Check spec tests match real bash (verbose - shows each test)
 just check-bash-compat-verbose
 
+# Generate comprehensive compatibility report
+just compat-report
+
 # Or directly with cargo:
 cargo test --test spec_tests -- bash_comparison_tests --nocapture
+cargo test --test spec_tests -- compatibility_report --ignored --nocapture
 ```
 
 ## Coverage
@@ -202,6 +206,41 @@ Tests marked with `### skip` are excluded from both spec tests and comparison.
 The test fails if any non-excluded test produces different output than real bash.
 
 A verbose version `bash_comparison_tests_verbose` is available (ignored by default) for debugging.
+
+## Compatibility Report
+
+The `compatibility_report` test generates a comprehensive summary of BashKit's
+compatibility with real bash. Run with:
+
+```bash
+just compat-report
+```
+
+Example output:
+```
+╔══════════════════════════════════════════════════════════════════╗
+║                 BashKit Compatibility Report                     ║
+╚══════════════════════════════════════════════════════════════════╝
+
+┌─────────────┬───────┬────────┬─────────┬───────────┬─────────────────┐
+│  Category   │ Total │ Passed │ Skipped │ BashDiff  │   Bash Compat   │
+├─────────────┼───────┼────────┼─────────┼───────────┼─────────────────┤
+│    bash     │  404  │ 294/294│   110   │    21     │ 273/273 (100.0%)│
+│     awk     │  89   │  48/48 │   41    │     0     │  48/48  (100.0%)│
+│    grep     │  55   │  34/34 │   21    │     0     │  33/34  ( 97.1%)│
+│     sed     │  65   │  40/40 │   25    │     0     │  40/40  (100.0%)│
+│     jq      │  95   │  58/58 │   37    │     0     │  58/58  (100.0%)│
+└─────────────┴───────┴────────┴─────────┴───────────┴─────────────────┘
+
+Summary:
+  Bash compatibility: 452/453 (99.8%)
+```
+
+The report shows:
+- **Passed**: Tests passing against expected output
+- **Skipped**: Tests for unimplemented features
+- **BashDiff**: Tests with known intentional differences from bash
+- **Bash Compat**: Tests producing identical output to real bash
 
 ## Alternatives Considered
 
