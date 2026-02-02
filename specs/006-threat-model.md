@@ -117,7 +117,7 @@ max_variable_size: 1_000_000,   // 1MB per variable
 | Shell escape | `exec /bin/bash` | exec not implemented (returns exit 127) | **MITIGATED** |
 | Subprocess | `./malicious` | External exec disabled (returns exit 127) | **MITIGATED** |
 | Background proc | `malicious &` | Background not impl | **MITIGATED** |
-| eval injection | `eval "$user_input"` | eval not implemented (returns exit 127) | **MITIGATED** |
+| eval injection | `eval "$user_input"` | eval runs in sandbox (can only execute builtins) | **MITIGATED** |
 
 **Current Risk**: LOW - No external process execution capability
 
@@ -210,7 +210,7 @@ Bash::builder()
 |--------|--------------|------------|--------|
 | Variable injection | `$user_input` containing `; rm -rf /` | Variables not re-parsed | **MITIGATED** |
 | Backtick injection | `` `$malicious` `` | Parsed as command sub | **MITIGATED** |
-| eval bypass | N/A | eval not implemented | **MITIGATED** |
+| eval bypass | `eval $user_input` | eval sandboxed (only runs builtins) | **MITIGATED** |
 
 **Current Risk**: LOW - Bash's quoting rules apply, variables expand to strings only
 
@@ -353,7 +353,7 @@ let tenant_b = Bash::builder()
 | Virtual filesystem | FS escape | `fs/memory.rs` | Yes |
 | Path normalization | Path traversal | `fs/memory.rs` | Yes |
 | Network allowlist | Data exfiltration | `network/allowlist.rs` | Yes |
-| No eval/exec | Code injection | Not implemented | N/A |
+| Sandboxed eval, no exec | Code injection | eval runs builtins only, exec not implemented | Yes |
 | Fail-point testing | Control bypass | `security_failpoint_tests.rs` | Yes |
 
 ---
