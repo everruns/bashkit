@@ -373,21 +373,115 @@ ExecutionLimits::new()
 
 ## Testing Coverage
 
-| Threat Category | Unit Tests | Fail-Point Tests | Threat Model Tests | Fuzz Tests |
-|----------------|------------|------------------|-------------------|------------|
-| Resource limits | ✅ | ✅ | ✅ | ❌ |
-| Filesystem escape | ✅ | ✅ | ✅ | ❌ |
-| Injection attacks | ✅ | ❌ | ✅ | ❌ |
-| Information disclosure | ✅ | ❌ | ✅ | ❌ |
-| Network bypass | ✅ | ❌ | ✅ | ❌ |
-| Multi-tenant isolation | ✅ | ❌ | ✅ | ❌ |
-| Parser edge cases | Partial | ❌ | ✅ | ❌ |
+| Threat Category | Unit Tests | Fail-Point Tests | Threat Model Tests | Fuzz Tests | Proptest |
+|----------------|------------|------------------|-------------------|------------|----------|
+| Resource limits | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Filesystem escape | ✅ | ✅ | ✅ | - | ✅ |
+| Injection attacks | ✅ | ❌ | ✅ | ✅ | ✅ |
+| Information disclosure | ✅ | ❌ | ✅ | - | - |
+| Network bypass | ✅ | ❌ | ✅ | - | - |
+| Multi-tenant isolation | ✅ | ❌ | ✅ | - | - |
+| Parser edge cases | ✅ | ❌ | ✅ | ✅ | ✅ |
 
 **Test Files**:
 - `tests/threat_model_tests.rs` - 39 threat-based security tests
 - `tests/security_failpoint_tests.rs` - Fail-point injection tests
 
 **Recommendation**: Add cargo-fuzz for parser and input handling.
+
+---
+
+## Security Tooling
+
+This section documents the security tools used to detect and prevent vulnerabilities in BashKit.
+
+### Static Analysis Tools
+
+| Tool | Purpose | CI Integration | Frequency |
+|------|---------|----------------|-----------|
+| **cargo-audit** | CVE scanning for dependencies | ✅ Required | Every PR |
+| **cargo-deny** | License + advisory checks | ✅ Required | Every PR |
+| **cargo-clippy** | Lint with security-focused warnings | ✅ Required | Every PR |
+| **cargo-geiger** | Count unsafe code blocks | ✅ Informational | Every PR |
+
+**cargo-audit**: Scans `Cargo.lock` against RustSec Advisory Database for known vulnerabilities.
+```bash
+cargo audit
+```
+
+**cargo-geiger**: Tracks unsafe code usage to ensure it remains minimal and audited.
+```bash
+cargo geiger --all-features
+```
+
+### Dynamic Analysis Tools
+
+| Tool | Purpose | CI Integration | Frequency |
+|------|---------|----------------|-----------|
+| **cargo-fuzz** | LibFuzzer-based fuzzing | ✅ Scheduled | Nightly/Weekly |
+| **Miri** | Undefined behavior detection | ✅ Required | Every PR |
+| **proptest** | Property-based testing | ✅ Required | Every PR |
+
+**cargo-fuzz**: Finds crashes, hangs, and memory issues in parser and interpreter.
+```bash
+cargo +nightly fuzz run parser_fuzz -- -max_total_time=300
+```
+
+**Miri**: Detects undefined behavior in unsafe code blocks.
+```bash
+cargo +nightly miri test --lib
+```
+
+**proptest**: Generates random inputs to test invariants and boundary conditions.
+```rust
+proptest! {
+    #[test]
+    fn parser_handles_arbitrary_input(s in ".*") {
+        // Should not panic on any input
+        let _ = parse(&s);
+    }
+}
+```
+
+### Memory Safety Tools
+
+| Tool | Purpose | When to Use |
+|------|---------|-------------|
+| **AddressSanitizer (ASAN)** | Memory errors, buffer overflow | Local testing, CI (optional) |
+| **Miri** | UB detection in unsafe code | CI required |
+| **cargo-careful** | Extra UB checks | Local development |
+
+### Supply Chain Security
+
+| Tool | Purpose | CI Integration |
+|------|---------|----------------|
+| **cargo-audit** | Known CVE detection | ✅ Required |
+| **cargo-deny** | License compliance | ✅ Required |
+| **Dependabot** | Automated dependency updates | GitHub-native |
+
+### Fuzzing Targets
+
+The following components are fuzz-tested for robustness:
+
+| Target | File | Threats Mitigated |
+|--------|------|-------------------|
+| Parser | `fuzz/fuzz_targets/parser_fuzz.rs` | V3 (parser hang), V4 (parser recursion) |
+| Lexer | `fuzz/fuzz_targets/lexer_fuzz.rs` | Tokenization crashes |
+| Arithmetic | `fuzz/fuzz_targets/arithmetic_fuzz.rs` | Integer overflow, parsing errors |
+| Pattern matching | `fuzz/fuzz_targets/glob_fuzz.rs` | Glob/regex DoS |
+
+### Vulnerability Detection Matrix
+
+| Vulnerability | cargo-audit | cargo-fuzz | Miri | proptest | ASAN |
+|--------------|-------------|------------|------|----------|------|
+| Known CVEs | ✅ | - | - | - | - |
+| Parser crashes | - | ✅ | - | ✅ | ✅ |
+| Stack overflow | - | ✅ | ✅ | - | ✅ |
+| Buffer overflow | - | ✅ | ✅ | - | ✅ |
+| Undefined behavior | - | - | ✅ | - | - |
+| Integer overflow | - | ✅ | ✅ | ✅ | - |
+| Infinite loops | - | ✅ | - | ✅ | - |
+| Memory leaks | - | ✅ | - | - | ✅ |
 
 ---
 
