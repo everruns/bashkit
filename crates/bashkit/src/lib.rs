@@ -230,7 +230,7 @@
 //! - No automatic redirects (prevents allowlist bypass)
 //! - Zip bomb protection for compressed responses
 //!
-//! See the [`network`] module for detailed documentation.
+//! See [`NetworkAllowlist`] for allowlist configuration options.
 //!
 //! # Examples
 //!
