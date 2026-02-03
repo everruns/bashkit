@@ -1,6 +1,6 @@
 //! Text file pre-population example
 //!
-//! Demonstrates using `text_file()` and `readonly_text()` builder methods
+//! Demonstrates using `mount_text()` and `mount_readonly_text()` builder methods
 //! to pre-populate the virtual filesystem before running scripts.
 //!
 //! Run with: cargo run --example text_files
@@ -31,11 +31,11 @@ async fn basic_text_files() -> anyhow::Result<()> {
 
     // Pre-populate files using the builder
     let mut bash = Bash::builder()
-        .text_file(
+        .mount_text(
             "/config/app.conf",
             "debug=true\nport=8080\nhost=localhost\n",
         )
-        .text_file("/data/greeting.txt", "Hello from pre-populated file!")
+        .mount_text("/data/greeting.txt", "Hello from pre-populated file!")
         .build();
 
     // Scripts can read the pre-populated files
@@ -63,8 +63,8 @@ async fn readonly_config_files() -> anyhow::Result<()> {
 
     // Use readonly_text for files that shouldn't be modified
     let bash = Bash::builder()
-        .readonly_text("/etc/version", "1.2.3")
-        .readonly_text(
+        .mount_readonly_text("/etc/version", "1.2.3")
+        .mount_readonly_text(
             "/etc/system.conf",
             "# System configuration (readonly)\nmode=production\n",
         )
@@ -91,11 +91,11 @@ async fn json_data_files() -> anyhow::Result<()> {
     println!("--- JSON Data Files ---");
 
     let mut bash = Bash::builder()
-        .text_file(
+        .mount_text(
             "/data/users.json",
             r#"[{"name": "alice", "role": "admin"}, {"name": "bob", "role": "user"}]"#,
         )
-        .text_file(
+        .mount_text(
             "/data/config.json",
             r#"{"api_url": "https://api.example.com", "timeout": 30}"#,
         )
@@ -119,11 +119,11 @@ async fn mixed_permissions() -> anyhow::Result<()> {
 
     let bash = Bash::builder()
         // Readonly system files
-        .readonly_text("/etc/hostname", "sandbox-host")
-        .readonly_text("/etc/os-release", "NAME=\"BashKit\"\nVERSION=\"1.0\"\n")
+        .mount_readonly_text("/etc/hostname", "sandbox-host")
+        .mount_readonly_text("/etc/os-release", "NAME=\"BashKit\"\nVERSION=\"1.0\"\n")
         // Writable workspace files
-        .text_file("/workspace/notes.txt", "Initial notes\n")
-        .text_file(
+        .mount_text("/workspace/notes.txt", "Initial notes\n")
+        .mount_text(
             "/workspace/data.csv",
             "id,name,value\n1,foo,100\n2,bar,200\n",
         )
