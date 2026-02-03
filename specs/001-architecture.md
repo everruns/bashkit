@@ -55,7 +55,7 @@ src/
     ├── date.rs          # date
     ├── sleep.rs         # sleep
     ├── wait.rs          # wait
-    ├── curl.rs          # curl, wget (stubs)
+    ├── curl.rs          # curl, wget
     └── ...              # grep, sed, awk, jq, etc.
 ```
 

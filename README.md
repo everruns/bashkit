@@ -46,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
 | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait` |
 | Pipeline | `xargs`, `tee` |
 | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv` |
-| Network | `curl`, `wget` (stub, requires allowlist) |
+| Network | `curl`, `wget` (requires allowlist) |
 
 ## Shell Features
 
