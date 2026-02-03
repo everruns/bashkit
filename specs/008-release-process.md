@@ -73,8 +73,8 @@ When asked to create a release, the agent:
 - Creates GitHub Release with tag `vX.Y.Z`
 
 **On GitHub Release published** (publish.yml):
-- Runs verification (fmt, clippy, tests)
 - Publishes to crates.io in dependency order
+- Note: No verification step - CI already ran when PR merged to main
 
 ## Pre-Release Checklist
 
@@ -166,7 +166,7 @@ The CI workflow handles this with a dependency chain and wait for index update.
 ### publish.yml
 
 - **Trigger**: GitHub Release published
-- **Actions**: Verifies and publishes to crates.io
+- **Actions**: Publishes to crates.io (no verification - CI ran on merge)
 - **File**: `.github/workflows/publish.yml`
 - **Secret required**: `CARGO_REGISTRY_TOKEN`
 
