@@ -25,6 +25,7 @@ All threats use a stable ID format: `TM-<CATEGORY>-<NUMBER>`
 | TM-INJ | Injection | Command injection, path injection |
 | TM-NET | Network Security | DNS manipulation, HTTP attacks, network bypass |
 | TM-ISO | Isolation | Multi-tenant cross-access |
+| TM-INT | Internal Errors | Panic recovery, error message safety, unexpected failures |
 
 ### Adding New Threats
 
@@ -535,6 +536,62 @@ let tenant_b = Bash::builder()
 
 ---
 
+### 7. Internal Error Handling
+
+#### 7.1 Panic Recovery
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-INT-001 | Builtin panic crash | Invalid input triggers panic in builtin | `catch_unwind` wrapper on all builtins | **MITIGATED** |
+| TM-INT-002 | Panic info leak | Panic message reveals sensitive data | Sanitized error messages (no panic details) | **MITIGATED** |
+| TM-INT-003 | Date format panic | Invalid strftime format causes chrono panic | Pre-validation with `StrftimeItems` | **MITIGATED** |
+
+**Current Risk**: LOW - All builtin panics are caught and converted to sanitized errors
+
+**Implementation**: `interpreter/mod.rs` - Panic catching for all builtins:
+```rust
+// THREAT[TM-INT-001]: Builtins may panic on unexpected input
+let result = AssertUnwindSafe(builtin.execute(ctx)).catch_unwind().await;
+
+match result {
+    Ok(Ok(exec_result)) => exec_result,
+    Ok(Err(e)) => return Err(e),
+    Err(_panic) => {
+        // THREAT[TM-INT-002]: Panic message may contain sensitive info
+        // Return sanitized error - never expose panic details
+        ExecResult::err(format!("bash: {}: builtin failed unexpectedly\n", name), 1)
+    }
+}
+```
+
+**Date Format Validation** (TM-INT-003): `builtins/date.rs`
+```rust
+// THREAT[TM-INT-003]: chrono::format() can panic on invalid format specifiers
+fn validate_format(format: &str) -> Result<(), String> {
+    for item in StrftimeItems::new(format) {
+        if let Item::Error = item {
+            return Err(format!("invalid format string: '{}'", format));
+        }
+    }
+    Ok(())
+}
+```
+
+#### 7.2 Error Message Safety
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-INT-004 | Path leak in errors | Error shows real filesystem paths | Virtual paths only in messages | **MITIGATED** |
+| TM-INT-005 | Memory addr in errors | Debug output shows addresses | Display impl hides addresses | **MITIGATED** |
+| TM-INT-006 | Stack trace exposure | Panic unwinds show call stack | `catch_unwind` prevents propagation | **MITIGATED** |
+
+**Error Type Design**: `error.rs`
+- All error messages are designed for end-user display
+- `Internal` error variant for unexpected failures (never includes panic details)
+- Error types implement Display without exposing internals
+
+---
+
 ## Vulnerability Summary
 
 This section maps former vulnerability IDs to the new threat ID scheme and tracks status.
@@ -588,7 +645,9 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Network allowlist | TM-INF-010, TM-NET-001 to TM-NET-007 | `network/allowlist.rs` | Yes |
 | Sandboxed eval, no exec | TM-ESC-005 to TM-ESC-008, TM-INJ-003 | `interpreter/mod.rs` | Yes |
 | Fail-point testing | All controls | `security_failpoint_tests.rs` | Yes |
-| Builtin panic catching | Custom builtin safety | `interpreter/mod.rs` | Yes |
+| Builtin panic catching | TM-INT-001, TM-INT-002, TM-INT-006 | `interpreter/mod.rs` | Yes |
+| Date format validation | TM-INT-003 | `builtins/date.rs` | Yes |
+| Error message sanitization | TM-INT-004, TM-INT-005 | `error.rs` | Yes |
 | HTTP response size limit | TM-NET-008, TM-NET-012 | `network/client.rs` | Yes |
 | HTTP connect timeout | TM-NET-009 | `network/client.rs` | Yes |
 | HTTP read timeout | TM-NET-010 | `network/client.rs` | Yes |

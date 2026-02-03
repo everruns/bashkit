@@ -966,3 +966,86 @@ async fn builtin_error_leaky_message_bad_pattern() {
         "Leaky builtin exposes internal details (this is BAD)"
     );
 }
+
+// ============================================================================
+// TM-INT-003: Date Format Validation Tests
+// ============================================================================
+
+/// Test that invalid date format specifiers return human-readable errors
+/// THREAT[TM-INT-003]: Invalid strftime formats could cause chrono to panic
+#[tokio::test]
+async fn date_invalid_format_returns_error_not_panic() {
+    let mut bash = Bash::new();
+
+    // %Q is not a valid strftime specifier
+    let result = bash.exec("date '+%Q'").await.unwrap();
+
+    // Should get an error, not a panic
+    assert_eq!(result.exit_code, 1);
+    assert!(
+        result.stderr.contains("invalid format string"),
+        "Should provide human-readable error: {}",
+        result.stderr
+    );
+    assert!(result.stdout.is_empty());
+}
+
+/// Test that incomplete format specifiers are handled gracefully
+#[tokio::test]
+async fn date_incomplete_format_returns_error() {
+    let mut bash = Bash::new();
+
+    // Trailing % is incomplete
+    let result = bash.exec("date '+%Y-%m-%'").await.unwrap();
+
+    assert_eq!(result.exit_code, 1);
+    assert!(
+        result.stderr.contains("invalid format string"),
+        "Should provide error for incomplete format: {}",
+        result.stderr
+    );
+}
+
+/// Test that valid formats still work correctly
+#[tokio::test]
+async fn date_valid_formats_work() {
+    let mut bash = Bash::new();
+
+    // ISO date format
+    let result = bash.exec("date '+%Y-%m-%d'").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stdout.len() >= 10); // YYYY-MM-DD
+
+    // Unix timestamp
+    let result = bash.exec("date '+%s'").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stdout.trim().parse::<i64>().is_ok());
+}
+
+/// Test that error messages don't expose implementation details
+#[tokio::test]
+async fn date_error_messages_are_safe() {
+    let mut bash = Bash::new();
+
+    let result = bash.exec("date '+%Q'").await.unwrap();
+
+    // Error should be user-friendly
+    assert!(!result.stderr.contains("panic"));
+    assert!(!result.stderr.contains("unwrap"));
+    assert!(!result.stderr.contains("chrono"));
+    assert!(!result.stderr.contains("0x")); // No memory addresses
+}
+
+/// Test date command in pipeline continues on error
+#[tokio::test]
+async fn date_error_allows_script_to_continue() {
+    let mut bash = Bash::new();
+
+    // Script should continue after date error (unless set -e)
+    let result = bash.exec("date '+%Q'; echo 'continued'").await.unwrap();
+
+    assert!(
+        result.stdout.contains("continued"),
+        "Script should continue after date error"
+    );
+}
