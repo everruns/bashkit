@@ -305,7 +305,6 @@ fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, 
                     .replace("\\+", "+")
                     .replace("\\?", "?")
             };
-
             // Build regex with optional case-insensitive flag
             let case_insensitive = flags.contains('i');
             let regex = RegexBuilder::new(&pattern)
@@ -321,9 +320,10 @@ fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, 
                 .replace('&', "$0")
                 .replace("\x00", "&");
 
+            // Use ${N} format instead of $N to avoid ambiguity with following chars
             let replacement = Regex::new(r"\\(\d+)")
                 .unwrap()
-                .replace_all(&replacement, "$$$1")
+                .replace_all(&replacement, r"$${$1}")
                 .to_string();
 
             // Parse nth occurrence from flags (e.g., "2" in s/a/b/2)
@@ -630,6 +630,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "world hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_backref_single() {
+        // Test single backreference: capture "hel", replace entire match with captured + "p"
+        let result = run_sed(&["s/\\(hel\\)lo/\\1p/"], Some("hello"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "help\n");
     }
 
     #[tokio::test]

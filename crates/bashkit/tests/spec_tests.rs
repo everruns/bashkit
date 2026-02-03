@@ -75,9 +75,9 @@
 //! - [ ] subst_exit_code - exit code propagation needs work
 //! - [ ] subst_backtick - backtick substitution not implemented
 //!
-//! ### arrays.test.sh (2 skipped)
-//! - [ ] array_indices - array indices not implemented
-//! - [ ] array_slice - array slicing not implemented
+//! ### arrays.test.sh (1 skipped)
+//! - [ ] array_indices - ${!arr[@]} array indices expansion not implemented
+//! - [x] array_slice - array slicing now implemented
 //!
 //! ### herestring.test.sh (1 skipped)
 //! - [ ] herestring_empty - empty herestring adds extra newline

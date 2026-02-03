@@ -180,3 +180,87 @@ HOME=/home/user; echo a~b
 ### expect
 a~b
 ### end
+
+### var_substring
+# Substring extraction with offset and length
+X=hello_world; echo ${X:0:5}
+### expect
+hello
+### end
+
+### var_substring_offset
+# Substring with offset only
+X=hello_world; echo ${X:6}
+### expect
+world
+### end
+
+### var_substring_middle
+# Substring from middle
+X=hello_world; echo ${X:2:5}
+### expect
+llo_w
+### end
+
+### var_replace_first
+# Pattern replacement first occurrence
+X=hello_world; echo ${X/o/0}
+### expect
+hell0_world
+### end
+
+### var_replace_all
+# Pattern replacement all occurrences
+X=hello_world; echo ${X//o/0}
+### expect
+hell0_w0rld
+### end
+
+### var_replace_word
+# Pattern replacement with word
+X=hello_world; echo ${X/world/bash}
+### expect
+hello_bash
+### end
+
+### var_uppercase_all
+# Uppercase all characters
+X=hello; echo ${X^^}
+### expect
+HELLO
+### end
+
+### var_uppercase_first
+# Uppercase first character
+X=hello; echo ${X^}
+### expect
+Hello
+### end
+
+### var_lowercase_all
+# Lowercase all characters
+X=HELLO; echo ${X,,}
+### expect
+hello
+### end
+
+### var_lowercase_first
+# Lowercase first character
+X=HELLO; echo ${X,}
+### expect
+hELLO
+### end
+
+### var_indirect
+# Indirect variable expansion
+A=hello; B=A; echo ${!B}
+### expect
+hello
+### end
+
+### var_indirect_nested
+# Indirect with nested variable
+X=value; ref=X; echo ${!ref}
+### expect
+value
+### end

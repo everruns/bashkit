@@ -318,7 +318,7 @@ X
 ### end
 
 ### sed_backref_1
-### skip: backreferences not working correctly
+# Single backreference
 printf 'hello\n' | sed 's/\(hel\)lo/\1p/'
 ### expect
 help

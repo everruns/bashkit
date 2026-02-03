@@ -218,23 +218,55 @@ impl fmt::Display for Word {
                     name,
                     operator,
                     operand,
-                } => {
-                    let op_str = match operator {
-                        ParameterOp::UseDefault => ":-",
-                        ParameterOp::AssignDefault => ":=",
-                        ParameterOp::UseReplacement => ":+",
-                        ParameterOp::Error => ":?",
-                        ParameterOp::RemovePrefixShort => "#",
-                        ParameterOp::RemovePrefixLong => "##",
-                        ParameterOp::RemoveSuffixShort => "%",
-                        ParameterOp::RemoveSuffixLong => "%%",
-                    };
-                    write!(f, "${{{}{}{}}}", name, op_str, operand)?
-                }
+                } => match operator {
+                    ParameterOp::UseDefault => write!(f, "${{{}:-{}}}", name, operand)?,
+                    ParameterOp::AssignDefault => write!(f, "${{{}:={}}}", name, operand)?,
+                    ParameterOp::UseReplacement => write!(f, "${{{}:+{}}}", name, operand)?,
+                    ParameterOp::Error => write!(f, "${{{}:?{}}}", name, operand)?,
+                    ParameterOp::RemovePrefixShort => write!(f, "${{{}#{}}}", name, operand)?,
+                    ParameterOp::RemovePrefixLong => write!(f, "${{{}##{}}}", name, operand)?,
+                    ParameterOp::RemoveSuffixShort => write!(f, "${{{}%{}}}", name, operand)?,
+                    ParameterOp::RemoveSuffixLong => write!(f, "${{{}%%{}}}", name, operand)?,
+                    ParameterOp::ReplaceFirst {
+                        pattern,
+                        replacement,
+                    } => write!(f, "${{{}/{}/{}}}", name, pattern, replacement)?,
+                    ParameterOp::ReplaceAll {
+                        pattern,
+                        replacement,
+                    } => write!(f, "${{{}///{}/{}}}", name, pattern, replacement)?,
+                    ParameterOp::UpperFirst => write!(f, "${{{}^}}", name)?,
+                    ParameterOp::UpperAll => write!(f, "${{{}^^}}", name)?,
+                    ParameterOp::LowerFirst => write!(f, "{}{{,}}", name)?,
+                    ParameterOp::LowerAll => write!(f, "${{{},,}}", name)?,
+                },
                 WordPart::Length(name) => write!(f, "${{#{}}}", name)?,
                 WordPart::ArrayAccess { name, index } => write!(f, "${{{}[{}]}}", name, index)?,
                 WordPart::ArrayLength(name) => write!(f, "${{#{}[@]}}", name)?,
                 WordPart::ArrayIndices(name) => write!(f, "${{!{}[@]}}", name)?,
+                WordPart::Substring {
+                    name,
+                    offset,
+                    length,
+                } => {
+                    if let Some(len) = length {
+                        write!(f, "${{{}:{}:{}}}", name, offset, len)?
+                    } else {
+                        write!(f, "${{{}:{}}}", name, offset)?
+                    }
+                }
+                WordPart::ArraySlice {
+                    name,
+                    offset,
+                    length,
+                } => {
+                    if let Some(len) = length {
+                        write!(f, "${{{}[@]:{}:{}}}", name, offset, len)?
+                    } else {
+                        write!(f, "${{{}[@]:{}}}", name, offset)?
+                    }
+                }
+                WordPart::IndirectExpansion(name) => write!(f, "${{!{}}}", name)?,
                 WordPart::ProcessSubstitution { commands, is_input } => {
                     let prefix = if *is_input { "<" } else { ">" };
                     write!(f, "{}({:?})", prefix, commands)?
@@ -270,6 +302,20 @@ pub enum WordPart {
     ArrayLength(String),
     /// Array indices `${!arr[@]}` or `${!arr[*]}`
     ArrayIndices(String),
+    /// Substring extraction `${var:offset}` or `${var:offset:length}`
+    Substring {
+        name: String,
+        offset: String,
+        length: Option<String>,
+    },
+    /// Array slice `${arr[@]:offset:length}`
+    ArraySlice {
+        name: String,
+        offset: String,
+        length: Option<String>,
+    },
+    /// Indirect expansion `${!var}` - expands to value of variable named by var's value
+    IndirectExpansion(String),
     /// Process substitution <(cmd) or >(cmd)
     ProcessSubstitution {
         /// The commands to run
@@ -298,6 +344,24 @@ pub enum ParameterOp {
     RemoveSuffixShort,
     /// %% remove suffix (longest)
     RemoveSuffixLong,
+    /// / pattern replacement (first occurrence)
+    ReplaceFirst {
+        pattern: String,
+        replacement: String,
+    },
+    /// // pattern replacement (all occurrences)
+    ReplaceAll {
+        pattern: String,
+        replacement: String,
+    },
+    /// ^ uppercase first char
+    UpperFirst,
+    /// ^^ uppercase all chars
+    UpperAll,
+    /// , lowercase first char
+    LowerFirst,
+    /// ,, lowercase all chars
+    LowerAll,
 }
 
 /// I/O redirection.
