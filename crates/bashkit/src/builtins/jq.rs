@@ -182,6 +182,8 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin: Some(input),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = jq.execute(ctx).await?;
@@ -242,6 +244,8 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin: Some(input),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = jq.execute(ctx).await?;

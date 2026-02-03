@@ -88,8 +88,8 @@ for sandbox security reasons. See the compliance spec for details.
 | `tr` | `-d`, character ranges | Translate/delete chars |
 | `date` | `+FORMAT`, `-u` | Display/format date |
 | `wait` | `[JOB_ID...]` | Wait for background jobs |
-| `curl` | `-s`, `-o`, `-X`, `-d`, `-H` | HTTP client (stub) |
-| `wget` | `-q`, `-O` | Download files (stub) |
+| `curl` | `-s`, `-o`, `-X`, `-d`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` | HTTP client (requires http_client feature) |
+| `wget` | `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` | Download files (requires http_client feature) |
 | `timeout` | `DURATION COMMAND` | Run with time limit (stub) |
 | `ls` | `-l`, `-a`, `-h`, `-1`, `-R` | List directory contents |
 | `find` | `-name`, `-type`, `-maxdepth`, `-print` | Search for files |
@@ -331,11 +331,28 @@ Default limits (configurable):
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| HTTP client | ✅ | Infrastructure exists |
-| URL allowlist | ✅ | Whitelist-based security |
-| `curl` builtin | ✅ | Stub, requires allowlist config |
-| `wget` builtin | ✅ | Stub, requires allowlist config |
+| HTTP client | ✅ | Full implementation with security mitigations |
+| URL allowlist | ✅ | Default-deny whitelist security model |
+| `curl` builtin | ✅ | Full HTTP client with `-s`, `-o`, `-X`, `-d`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` |
+| `wget` builtin | ✅ | Full downloader with `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` |
+| Response limits | ✅ | 10MB max response size, 30s timeout |
+| Redirect security | ✅ | Redirects require explicit `-L` and allowlist check |
 | Raw sockets | ❌ | Not planned |
+
+### Network Configuration
+
+```rust
+use bashkit::{Bash, NetworkAllowlist};
+
+// Enable network with URL allowlist
+let bash = Bash::builder()
+    .network(NetworkAllowlist::new()
+        .allow("https://api.example.com")
+        .allow("https://cdn.example.com/assets"))
+    .build();
+```
+
+See [specs/006-threat-model.md](../specs/006-threat-model.md) for HTTP security details.
 
 ---
 
@@ -365,7 +382,7 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] `basename`/`dirname` builtins
 - [x] `date` builtin
 - [x] Background execution (`&`, `wait`) - parsed, runs synchronously
-- [x] Network (`curl`, `wget`) - stub, requires allowlist config
+- [x] Network (`curl`, `wget`) - full HTTP implementation with security mitigations
 - [x] `timeout` builtin - stub, requires interpreter-level integration
 - [x] Process substitution (`<(cmd)`, `>(cmd)`)
 - [x] Here string edge cases tested

@@ -203,6 +203,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Env.execute(ctx).await.unwrap();
@@ -225,6 +227,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Env.execute(ctx).await.unwrap();
@@ -245,6 +249,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Env.execute(ctx).await.unwrap();
@@ -270,6 +276,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Env.execute(ctx).await.unwrap();
@@ -294,6 +302,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Printenv.execute(ctx).await.unwrap();
@@ -316,6 +326,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Printenv.execute(ctx).await.unwrap();
@@ -338,6 +350,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Printenv.execute(ctx).await.unwrap();
@@ -359,6 +373,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Printenv.execute(ctx).await.unwrap();
@@ -380,6 +396,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Printenv.execute(ctx).await.unwrap();
@@ -402,6 +420,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = History.execute(ctx).await.unwrap();
@@ -421,6 +441,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = History.execute(ctx).await.unwrap();
@@ -440,6 +462,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = History.execute(ctx).await.unwrap();
@@ -459,6 +483,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = History.execute(ctx).await.unwrap();
