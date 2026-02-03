@@ -12,16 +12,16 @@ for detailed compliance status.
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 723
+**Total spec test cases:** 754
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 404 | Yes | 294 | 110 | `bash_spec_tests` in CI |
+| Bash (core) | 435 | Yes | 330 | 105 | `bash_spec_tests` in CI |
 | AWK | 89 | Yes | 48 | 41 | loops, arrays, functions |
 | Grep | 70 | Yes | 56 | 14 | now with -A/-B/-C, -m, -q, -x, -e |
 | Sed | 65 | Yes | 49 | 16 | now with -E, nth occurrence, ! negation |
 | JQ | 95 | Yes | 58 | 37 | reduce, walk, regex funcs |
-| **Total** | **723** | **Yes** | **505** | **218** | |
+| **Total** | **754** | **Yes** | **541** | **213** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -32,7 +32,7 @@ for detailed compliance status.
 | background.test.sh | 2 | |
 | brace-expansion.test.sh | 10 | NEW: {a,b,c}, {1..5} |
 | command-subst.test.sh | 14 | |
-| control-flow.test.sh | - | Skipped (.skip suffix) |
+| control-flow.test.sh | 31 | if/elif/else, for, while, case |
 | cuttr.test.sh | 35 | cut and tr commands |
 | date.test.sh | 31 | format specifiers |
 | echo.test.sh | 26 | escape sequences |
