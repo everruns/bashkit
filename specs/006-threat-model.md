@@ -26,6 +26,7 @@ All threats use a stable ID format: `TM-<CATEGORY>-<NUMBER>`
 | TM-NET | Network Security | DNS manipulation, HTTP attacks, network bypass |
 | TM-ISO | Isolation | Multi-tenant cross-access |
 | TM-INT | Internal Errors | Panic recovery, error message safety, unexpected failures |
+| TM-LOG | Logging Security | Sensitive data in logs, log injection, log volume attacks |
 
 ### Adding New Threats
 
@@ -592,6 +593,99 @@ fn validate_format(format: &str) -> Result<(), String> {
 
 ---
 
+### 8. Logging Security
+
+BashKit provides optional structured logging via the `logging` feature. This section documents
+security threats related to logging and their mitigations.
+
+#### 8.1 Sensitive Data Leakage
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-LOG-001 | Secrets in logs | Log env vars containing passwords/tokens | LogConfig redaction | **MITIGATED** |
+| TM-LOG-002 | Script content leak | Log full scripts containing embedded secrets | Script content disabled by default | **MITIGATED** |
+| TM-LOG-003 | URL credential leak | Log URLs with `user:pass@host` | URL credential redaction | **MITIGATED** |
+| TM-LOG-004 | API key detection | Log values that look like API keys/JWTs | Entropy-based detection | **MITIGATED** |
+
+**Current Risk**: LOW - Sensitive data is redacted by default
+
+**Implementation**: `logging.rs` provides `LogConfig` with redaction:
+```rust
+// Default configuration redacts sensitive data (TM-LOG-001 to TM-LOG-004)
+let config = LogConfig::new();
+
+// Redacts env vars matching: PASSWORD, SECRET, TOKEN, KEY, etc.
+assert!(config.should_redact_env("DATABASE_PASSWORD"));
+
+// Redacts URL credentials
+assert_eq!(
+    config.redact_url("https://user:pass@host.com"),
+    "https://[REDACTED]@host.com"
+);
+
+// Detects API keys and JWTs
+assert_eq!(config.redact_value("sk-1234567890abcdef"), "[REDACTED]");
+```
+
+**Caller Warning**: Using `LogConfig::unsafe_disable_redaction()` or
+`LogConfig::unsafe_log_scripts()` may expose sensitive data in logs.
+
+#### 8.2 Log Injection
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-LOG-005 | Newline injection | Script contains `\n[ERROR] fake` | Newline escaping | **MITIGATED** |
+| TM-LOG-006 | Control char injection | ANSI escape sequences in logs | Control char filtering | **MITIGATED** |
+
+**Current Risk**: LOW - Log content is sanitized
+
+**Implementation**: `logging::sanitize_for_log()` escapes dangerous characters:
+```rust
+// TM-LOG-005: Newlines escaped to prevent fake log entries
+let input = "normal\n[ERROR] injected";
+let sanitized = sanitize_for_log(input);
+// Result: "normal\\n[ERROR] injected"
+```
+
+#### 8.3 Log Volume Attacks
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-LOG-007 | Log flooding | Script generates excessive output → many logs | Value truncation | **MITIGATED** |
+| TM-LOG-008 | Large value DoS | Log very long strings | `max_value_length` limit (200) | **MITIGATED** |
+
+**Current Risk**: LOW - Log values are truncated
+
+**Implementation**: `LogConfig` limits value lengths:
+```rust
+// TM-LOG-008: Values truncated to prevent memory exhaustion
+let config = LogConfig::new().max_value_length(200);
+let long_value = "a".repeat(1000);
+let truncated = config.truncate(&long_value);
+// Result: "aaa...[truncated 800 bytes]"
+```
+
+#### 8.4 Logging Security Configuration
+
+**Secure Defaults** (TM-LOG-001 to TM-LOG-008):
+```rust
+let config = LogConfig::new();
+// - redact_sensitive: true (default)
+// - log_script_content: false (default)
+// - log_file_contents: false (default)
+// - max_value_length: 200 (default)
+```
+
+**Custom Redaction Patterns**:
+```rust
+// Add custom env var patterns to redact
+let config = LogConfig::new()
+    .redact_env("MY_CUSTOM_SECRET")
+    .redact_env("INTERNAL_TOKEN");
+```
+
+---
+
 ## Vulnerability Summary
 
 This section maps former vulnerability IDs to the new threat ID scheme and tracks status.
@@ -652,6 +746,9 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | HTTP connect timeout | TM-NET-009 | `network/client.rs` | Yes |
 | HTTP read timeout | TM-NET-010 | `network/client.rs` | Yes |
 | No auto-redirect | TM-NET-011, TM-NET-014 | `network/client.rs` | Yes |
+| Log value redaction | TM-LOG-001 to TM-LOG-004 | `logging.rs` | Yes |
+| Log injection prevention | TM-LOG-005, TM-LOG-006 | `logging.rs` | Yes |
+| Log value truncation | TM-LOG-007, TM-LOG-008 | `logging.rs` | Yes |
 
 ---
 
@@ -680,6 +777,7 @@ ExecutionLimits::new()
 | Sanitize output | TM-INJ-008 | Filter terminal escapes if displaying output |
 | Set appropriate limits | TM-DOS-* | Tune limits for your use case |
 | Isolate tenants | TM-ISO-001 to TM-ISO-003 | Use separate Bash instances per tenant |
+| Keep log redaction enabled | TM-LOG-001 to TM-LOG-004 | Don't disable redaction in production |
 
 ---
 
@@ -696,12 +794,14 @@ ExecutionLimits::new()
 | Multi-tenant isolation | ✅ | ❌ | ✅ | - | - |
 | Parser edge cases | ✅ | ❌ | ✅ | ✅ | ✅ |
 | Custom builtin errors | ✅ | ✅ | ✅ | - | - |
+| Logging security | ✅ | ❌ | ✅ | - | ✅ |
 
 **Test Files**:
-- `tests/threat_model_tests.rs` - 51 threat-based security tests
+- `tests/threat_model_tests.rs` - 51+ threat-based security tests
 - `tests/security_failpoint_tests.rs` - Fail-point injection tests
 - `tests/builtin_error_security_tests.rs` - Custom builtin error handling tests (34 tests)
 - `tests/network_security_tests.rs` - HTTP security tests (43 tests: allowlist, size limits, timeouts)
+- `tests/logging_security_tests.rs` - Logging security tests (redaction, injection)
 
 **Recommendation**: Add cargo-fuzz for parser and input handling.
 

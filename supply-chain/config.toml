@@ -102,6 +102,10 @@ criteria = "safe-to-deploy"
 version = "1.11.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.bytes]]
+version = "1.11.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.cast]]
 version = "0.3.0"
 criteria = "safe-to-run"
@@ -131,6 +135,14 @@ version = "0.2.2"
 criteria = "safe-to-run"
 
 [[exemptions.clap]]
+version = "4.5.57"
+criteria = "safe-to-deploy"
+
+[[exemptions.clap]]
+version = "4.5.57"
+criteria = "safe-to-deploy"
+
+[[exemptions.clap_builder]]
 version = "4.5.57"
 criteria = "safe-to-deploy"
 
@@ -236,6 +248,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.find-msvc-tools]]
 version = "0.1.9"
+criteria = "safe-to-deploy"
+
+[[exemptions.flate2]]
+version = "1.1.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.flate2]]
@@ -706,12 +722,28 @@ criteria = "safe-to-deploy"
 version = "1.12.3"
 criteria = "safe-to-deploy"
 
+[[exemptions.regex]]
+version = "1.12.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.regex-automata]]
+version = "0.4.14"
+criteria = "safe-to-deploy"
+
 [[exemptions.regex-automata]]
 version = "0.4.14"
 criteria = "safe-to-deploy"
 
 [[exemptions.regex-lite]]
 version = "0.1.9"
+criteria = "safe-to-deploy"
+
+[[exemptions.regex-lite]]
+version = "0.1.9"
+criteria = "safe-to-deploy"
+
+[[exemptions.regex-syntax]]
+version = "0.8.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.regex-syntax]]
@@ -956,6 +988,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tracing]]
 version = "0.1.44"
+criteria = "safe-to-deploy"
+
+[[exemptions.tracing-attributes]]
+version = "0.1.31"
 criteria = "safe-to-deploy"
 
 [[exemptions.tracing-core]]
@@ -1203,6 +1239,14 @@ version = "0.8.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy]]
+version = "0.8.38"
+criteria = "safe-to-deploy"
+
+[[exemptions.zerocopy]]
+version = "0.8.38"
+criteria = "safe-to-deploy"
+
+[[exemptions.zerocopy-derive]]
 version = "0.8.38"
 criteria = "safe-to-deploy"
 

@@ -290,6 +290,8 @@ mod error;
 mod fs;
 mod interpreter;
 mod limits;
+#[cfg(feature = "logging")]
+mod logging_impl;
 mod network;
 /// Parser module - exposed for fuzzing and testing
 pub mod parser;
@@ -313,6 +315,18 @@ pub use tool::{
 #[cfg(feature = "http_client")]
 pub use network::HttpClient;
 
+/// Logging utilities module
+///
+/// Provides structured logging with security features including sensitive data redaction.
+/// Only available when the `logging` feature is enabled.
+#[cfg(feature = "logging")]
+pub mod logging {
+    pub use crate::logging_impl::{format_script_for_log, sanitize_for_log, LogConfig};
+}
+
+#[cfg(feature = "logging")]
+pub use logging::LogConfig;
+
 use interpreter::Interpreter;
 use parser::Parser;
 use std::collections::HashMap;
@@ -333,6 +347,9 @@ pub struct Bash {
     max_ast_depth: usize,
     /// Maximum parser operations (fuel)
     max_parser_operations: usize,
+    /// Logging configuration
+    #[cfg(feature = "logging")]
+    log_config: logging::LogConfig,
 }
 
 impl Default for Bash {
@@ -357,6 +374,8 @@ impl Bash {
             max_input_bytes,
             max_ast_depth,
             max_parser_operations,
+            #[cfg(feature = "logging")]
+            log_config: logging::LogConfig::default(),
         }
     }
 
@@ -371,9 +390,24 @@ impl Bash {
     /// input size, then parses the script with a timeout, AST depth limit, and fuel limit,
     /// then executes the resulting AST.
     pub async fn exec(&mut self, script: &str) -> Result<ExecResult> {
+        // THREAT[TM-LOG-001]: Sensitive data in logs
+        // Mitigation: Use LogConfig to redact sensitive script content
+        #[cfg(feature = "logging")]
+        {
+            let script_info = logging::format_script_for_log(script, &self.log_config);
+            tracing::info!(target: "bashkit::session", script = %script_info, "Starting script execution");
+        }
+
         // Check input size before parsing (V1 mitigation)
         let input_len = script.len();
         if input_len > self.max_input_bytes {
+            #[cfg(feature = "logging")]
+            tracing::error!(
+                target: "bashkit::session",
+                input_len = input_len,
+                max_bytes = self.max_input_bytes,
+                "Script exceeds maximum input size"
+            );
             return Err(Error::ResourceLimit(LimitExceeded::InputTooLarge(
                 input_len,
                 self.max_input_bytes,
@@ -384,6 +418,15 @@ impl Bash {
         let max_ast_depth = self.max_ast_depth;
         let max_parser_operations = self.max_parser_operations;
         let script_owned = script.to_owned();
+
+        #[cfg(feature = "logging")]
+        tracing::debug!(
+            target: "bashkit::parser",
+            input_len = input_len,
+            max_ast_depth = max_ast_depth,
+            max_operations = max_parser_operations,
+            "Parsing script"
+        );
 
         // Parse with timeout using spawn_blocking since parsing is sync
         let parse_result = tokio::time::timeout(parser_timeout, async {
@@ -397,18 +440,67 @@ impl Bash {
         .await;
 
         let ast = match parse_result {
-            Ok(Ok(result)) => result?,
+            Ok(Ok(result)) => {
+                match &result {
+                    Ok(_) => {
+                        #[cfg(feature = "logging")]
+                        tracing::debug!(target: "bashkit::parser", "Parse completed successfully");
+                    }
+                    Err(e) => {
+                        #[cfg(feature = "logging")]
+                        tracing::warn!(target: "bashkit::parser", error = %e, "Parse error");
+                    }
+                }
+                result?
+            }
             Ok(Err(join_error)) => {
-                return Err(Error::Parse(format!("parser task failed: {}", join_error)))
+                #[cfg(feature = "logging")]
+                tracing::error!(
+                    target: "bashkit::parser",
+                    error = %join_error,
+                    "Parser task failed"
+                );
+                return Err(Error::Parse(format!("parser task failed: {}", join_error)));
             }
             Err(_elapsed) => {
+                #[cfg(feature = "logging")]
+                tracing::error!(
+                    target: "bashkit::parser",
+                    timeout_ms = parser_timeout.as_millis() as u64,
+                    "Parser timeout exceeded"
+                );
                 return Err(Error::ResourceLimit(LimitExceeded::ParserTimeout(
                     parser_timeout,
-                )))
+                )));
             }
         };
 
-        self.interpreter.execute(&ast).await
+        #[cfg(feature = "logging")]
+        tracing::debug!(target: "bashkit::interpreter", "Starting interpretation");
+
+        let result = self.interpreter.execute(&ast).await;
+
+        #[cfg(feature = "logging")]
+        match &result {
+            Ok(exec_result) => {
+                tracing::info!(
+                    target: "bashkit::session",
+                    exit_code = exec_result.exit_code,
+                    stdout_len = exec_result.stdout.len(),
+                    stderr_len = exec_result.stderr.len(),
+                    "Script execution completed"
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    target: "bashkit::session",
+                    error = %e,
+                    "Script execution failed"
+                );
+            }
+        }
+
+        result
     }
 
     /// Get a clone of the underlying filesystem.
@@ -504,6 +596,9 @@ pub struct BashBuilder {
     /// Network allowlist for curl/wget builtins
     #[cfg(feature = "http_client")]
     network_allowlist: Option<NetworkAllowlist>,
+    /// Logging configuration
+    #[cfg(feature = "logging")]
+    log_config: Option<logging::LogConfig>,
 }
 
 impl BashBuilder {
@@ -582,6 +677,48 @@ impl BashBuilder {
     #[cfg(feature = "http_client")]
     pub fn network(mut self, allowlist: NetworkAllowlist) -> Self {
         self.network_allowlist = Some(allowlist);
+        self
+    }
+
+    /// Configure logging behavior.
+    ///
+    /// When the `logging` feature is enabled, BashKit can emit structured logs
+    /// at various levels (error, warn, info, debug, trace) during execution.
+    ///
+    /// # Log Levels
+    ///
+    /// - **ERROR**: Unrecoverable failures, exceptions, security violations
+    /// - **WARN**: Recoverable issues, limit warnings, deprecated usage
+    /// - **INFO**: Session lifecycle (start/end), high-level execution flow
+    /// - **DEBUG**: Command execution, variable expansion, control flow
+    /// - **TRACE**: Internal parser/interpreter state, detailed data flow
+    ///
+    /// # Security (TM-LOG-001)
+    ///
+    /// By default, sensitive data is redacted from logs:
+    /// - Environment variables matching secret patterns (PASSWORD, TOKEN, etc.)
+    /// - URL credentials (user:pass@host)
+    /// - Values that look like API keys or JWTs
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, LogConfig};
+    ///
+    /// let bash = Bash::builder()
+    ///     .log_config(LogConfig::new()
+    ///         .redact_env("MY_CUSTOM_SECRET"))
+    ///     .build();
+    /// ```
+    ///
+    /// # Warning
+    ///
+    /// Do not use `LogConfig::unsafe_disable_redaction()` or
+    /// `LogConfig::unsafe_log_scripts()` in production, as they may expose
+    /// sensitive data in logs.
+    #[cfg(feature = "logging")]
+    pub fn log_config(mut self, config: logging::LogConfig) -> Self {
+        self.log_config = Some(config);
         self
     }
 
@@ -773,6 +910,8 @@ impl BashBuilder {
             self.custom_builtins,
             #[cfg(feature = "http_client")]
             self.network_allowlist,
+            #[cfg(feature = "logging")]
+            self.log_config,
         )
     }
 
@@ -787,7 +926,19 @@ impl BashBuilder {
         limits: ExecutionLimits,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
         #[cfg(feature = "http_client")] network_allowlist: Option<NetworkAllowlist>,
+        #[cfg(feature = "logging")] log_config: Option<logging::LogConfig>,
     ) -> Bash {
+        #[cfg(feature = "logging")]
+        let log_config = log_config.unwrap_or_default();
+
+        #[cfg(feature = "logging")]
+        tracing::debug!(
+            target: "bashkit::config",
+            redact_sensitive = log_config.redact_sensitive,
+            log_scripts = log_config.log_script_content,
+            "Bash instance configured"
+        );
+
         let mut interpreter =
             Interpreter::with_config(Arc::clone(&fs), username.clone(), hostname, custom_builtins);
 
@@ -825,6 +976,8 @@ impl BashBuilder {
             max_input_bytes,
             max_ast_depth,
             max_parser_operations,
+            #[cfg(feature = "logging")]
+            log_config,
         }
     }
 }
@@ -875,6 +1028,22 @@ pub mod compatibility_scorecard {}
 /// **Related:** [`ExecutionLimits`], [`FsLimits`], [`NetworkAllowlist`]
 #[doc = include_str!("../docs/threat-model.md")]
 pub mod threat_model {}
+
+/// Logging guide for BashKit.
+///
+/// This guide covers configuring structured logging, log levels, security
+/// considerations, and integration with tracing subscribers.
+///
+/// **Topics covered:**
+/// - Enabling the `logging` feature
+/// - Log levels and targets
+/// - Security: sensitive data redaction (TM-LOG-*)
+/// - Integration with tracing-subscriber
+///
+/// **Related:** [`LogConfig`], [`threat_model`]
+#[cfg(feature = "logging")]
+#[doc = include_str!("../docs/logging.md")]
+pub mod logging_guide {}
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

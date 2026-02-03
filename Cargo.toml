@@ -75,3 +75,6 @@ proptest = "1"
 
 # JSON Schema generation
 schemars = "0.8"
+
+# Logging/tracing
+tracing = "0.1"
