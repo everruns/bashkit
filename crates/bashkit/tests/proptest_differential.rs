@@ -29,7 +29,15 @@ async fn run_bashkit(script: &str) -> (String, i32) {
     let mut bash = Bash::new();
     match bash.exec(script).await {
         Ok(result) => (result.stdout, result.exit_code),
-        Err(_) => (String::new(), 1),
+        Err(e) => {
+            // Parse errors should return exit code 2 (like bash)
+            let exit_code = if matches!(e, bashkit::Error::Parse(_)) {
+                2
+            } else {
+                1
+            };
+            (String::new(), exit_code)
+        }
     }
 }
 
@@ -183,16 +191,28 @@ fn logical_ops_strategy() -> impl Strategy<Value = String> {
     ]
 }
 
+/// Bash reserved words that cannot be used as function names
+const RESERVED_WORDS: &[&str] = &[
+    "if", "then", "else", "elif", "fi", "case", "esac", "for", "select", "while", "until", "do",
+    "done", "in", "function", "time", "coproc",
+];
+
 /// Generate a function definition and call
 fn function_strategy() -> impl Strategy<Value = String> {
-    (var_name_strategy(), safe_value_strategy()).prop_map(|(name, body)| {
-        format!(
-            "{}() {{ echo {}; }}; {}",
-            name.to_lowercase(),
-            body,
-            name.to_lowercase()
-        )
-    })
+    (var_name_strategy(), safe_value_strategy()).prop_filter_map(
+        "avoid reserved words",
+        |(name, body)| {
+            let lower_name = name.to_lowercase();
+            if RESERVED_WORDS.contains(&lower_name.as_str()) {
+                None
+            } else {
+                Some(format!(
+                    "{}() {{ echo {}; }}; {}",
+                    lower_name, body, lower_name
+                ))
+            }
+        },
+    )
 }
 
 /// Generate a complete valid bash script
@@ -496,6 +516,15 @@ async fn differential_edge_cases() {
         ("echo hello | cat", "echo hello | cat"),
         // Command substitution
         ("echo $(echo hello)", "echo $(echo hello)"),
+        // Reserved words as function names (syntax errors)
+        (
+            "if() { echo 0; }; if",
+            "reserved word 'if' as function name",
+        ),
+        (
+            "do() { echo a; }; do",
+            "reserved word 'do' as function name",
+        ),
     ];
 
     for (name, script) in test_cases {
