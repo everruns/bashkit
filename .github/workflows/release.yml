@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   release:
@@ -67,3 +68,8 @@ jobs:
           body_path: release_notes.md
           draft: false
           prerelease: false
+
+      - name: Trigger publish workflow
+        run: gh workflow run publish.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
