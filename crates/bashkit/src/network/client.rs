@@ -1,15 +1,19 @@
-//! HTTP client for secure network access
+//! HTTP client for secure network access.
 //!
 //! Provides a sandboxed HTTP client that respects the allowlist with
 //! security mitigations for common HTTP attacks.
 //!
 //! # Security Mitigations
 //!
-//! - **URL Allowlist**: Only URLs matching configured patterns are allowed
-//! - **Response Size Limit**: Prevents memory exhaustion from large responses (default: 10MB)
-//! - **Connection Timeout**: Prevents hanging on unresponsive servers (default: 30s)
-//! - **No Redirects to Different Hosts**: Prevents redirect-based allowlist bypass
-//! - **DNS via Host Header Only**: Allowlist matching uses literal hostname (no DNS resolution)
+//! This module mitigates the following threats (see `specs/006-threat-model.md`):
+//!
+//! - **TM-NET-008**: Large response DoS → `max_response_bytes` limit (10MB default)
+//! - **TM-NET-009**: Connection hang → connect timeout (10s)
+//! - **TM-NET-010**: Slowloris attack → read timeout (30s)
+//! - **TM-NET-011**: Redirect bypass → `Policy::none()` disables auto-redirect
+//! - **TM-NET-012**: Chunked encoding bomb → streaming size check
+//! - **TM-NET-013**: Gzip/compression bomb → auto-decompression disabled
+//! - **TM-NET-014**: DNS rebind via redirect → manual redirect requires allowlist check
 
 use reqwest::Client;
 use std::time::Duration;

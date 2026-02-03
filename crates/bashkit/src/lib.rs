@@ -277,6 +277,10 @@
 //! # Guides
 //!
 //! - [`custom_builtins_guide`] - Creating custom builtins
+//!
+//! # Resources
+//!
+//! - [`threat_model`] - Security threats and mitigations
 
 // Stricter panic prevention - prefer proper error handling over unwrap()
 #![warn(clippy::unwrap_used)]
@@ -852,9 +856,25 @@ pub mod custom_builtins_guide {}
 /// - POSIX compliance status
 /// - Resource limits
 ///
-/// **Related:** [`custom_builtins_guide`]
+/// **Related:** [`custom_builtins_guide`], [`threat_model`]
 #[doc = include_str!("../docs/compatibility.md")]
 pub mod compatibility_scorecard {}
+
+/// Security threat model guide.
+///
+/// This guide documents security threats addressed by BashKit and their mitigations.
+/// All threats use stable IDs for tracking and code references.
+///
+/// **Topics covered:**
+/// - Denial of Service mitigations (TM-DOS-*)
+/// - Sandbox escape prevention (TM-ESC-*)
+/// - Information disclosure protection (TM-INF-*)
+/// - Network security controls (TM-NET-*)
+/// - Multi-tenant isolation (TM-ISO-*)
+///
+/// **Related:** [`ExecutionLimits`], [`FsLimits`], [`NetworkAllowlist`]
+#[doc = include_str!("../docs/threat-model.md")]
+pub mod threat_model {}
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
