@@ -24,6 +24,7 @@ src/
 ├── lib.rs                # Public API: Bash struct
 ├── error.rs              # Error types
 ├── limits.rs             # Execution limits
+├── tool.rs               # LLM tool contract (Tool, ToolBuilder)
 ├── parser/               # Lexer + Parser + AST
 │   ├── mod.rs           # Parser implementation
 │   ├── lexer.rs         # Tokenization
@@ -77,6 +78,21 @@ pub struct ExecResult {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
+}
+
+// LLM Tool Contract
+pub struct Tool { /* configured tool */ }
+pub struct ToolBuilder { /* builder pattern */ }
+pub struct ToolRequest { script: String, timeout_ms: Option<u64> }
+pub struct ToolResponse { stdout, stderr, exit_code, error }
+
+impl Tool {
+    pub fn builder() -> ToolBuilder;
+    pub fn description(&self) -> String;      // Dynamic, includes custom builtins
+    pub fn llmtxt(&self) -> String;           // Dynamic, includes configuration
+    pub fn input_schema(&self) -> serde_json::Value;
+    pub fn output_schema(&self) -> serde_json::Value;
+    pub async fn execute(&mut self, req: ToolRequest) -> ToolResponse;
 }
 ```
 
