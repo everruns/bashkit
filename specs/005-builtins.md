@@ -171,7 +171,7 @@ Custom builtins:
 - Must implement `Send + Sync` for async safety
 - Integrate seamlessly with pipelines, conditionals, and loops
 
-See `docs/custom_builtins.md` for detailed documentation.
+See `crates/bashkit/docs/custom_builtins.md` for detailed documentation.
 
 ### Safety Constraints
 

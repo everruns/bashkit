@@ -44,6 +44,11 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Build documentation
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
       - name: Security audit (cargo-audit)
         uses: rustsec/audit-check@v2.0.0
         with:
