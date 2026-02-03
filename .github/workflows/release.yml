@@ -14,18 +14,23 @@ jobs:
     name: Create Release
     runs-on: ubuntu-latest
     # Only run if manually triggered OR commit message starts with "chore(release): prepare v"
-    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'chore(release): prepare v') }}
+    if: "${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'chore(release): prepare v') }}"
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract version from commit message
+      - name: Extract version
         id: version
         run: |
-          # Extract version from "chore(release): prepare vX.Y.Z"
-          COMMIT_MSG="${{ github.event.head_commit.message }}"
-          VERSION=$(echo "$COMMIT_MSG" | sed -n 's/.*prepare v\([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p')
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual trigger: read version from Cargo.toml
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          else
+            # Push trigger: extract from commit message
+            COMMIT_MSG="${{ github.event.head_commit.message }}"
+            VERSION=$(echo "$COMMIT_MSG" | sed -n 's/.*prepare v\([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p')
+          fi
           if [ -z "$VERSION" ]; then
-            echo "Error: Could not extract version from commit message: $COMMIT_MSG"
+            echo "Error: Could not determine version"
             exit 1
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
