@@ -90,12 +90,35 @@ pub use wc::Wc;
 
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::error::Result;
 use crate::fs::FileSystem;
 use crate::interpreter::ExecResult;
+
+/// Resolve a path relative to the current working directory.
+///
+/// If the path is absolute, returns it unchanged.
+/// If relative, joins it with the cwd.
+///
+/// # Example
+///
+/// ```ignore
+/// let abs = resolve_path(Path::new("/home"), "/etc/passwd");
+/// assert_eq!(abs, PathBuf::from("/etc/passwd"));
+///
+/// let rel = resolve_path(Path::new("/home"), "file.txt");
+/// assert_eq!(rel, PathBuf::from("/home/file.txt"));
+/// ```
+pub fn resolve_path(cwd: &Path, path_str: &str) -> PathBuf {
+    let path = Path::new(path_str);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    }
+}
 
 /// Execution context for builtin commands.
 ///
@@ -243,4 +266,23 @@ pub trait Builtin: Send + Sync {
     /// * `Ok(ExecResult)` - Execution result with stdout, stderr, and exit code
     /// * `Err(Error)` - Fatal error that should abort execution
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_path_absolute() {
+        let cwd = PathBuf::from("/home/user");
+        let result = resolve_path(&cwd, "/tmp/file.txt");
+        assert_eq!(result, PathBuf::from("/tmp/file.txt"));
+    }
+
+    #[test]
+    fn test_resolve_path_relative() {
+        let cwd = PathBuf::from("/home/user");
+        let result = resolve_path(&cwd, "downloads/file.txt");
+        assert_eq!(result, PathBuf::from("/home/user/downloads/file.txt"));
+    }
 }
