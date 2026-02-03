@@ -6,7 +6,7 @@ Use `include_str!` macro to embed external markdown files into rustdoc as docume
 
 ## Rationale
 
-1. **Single source of truth**: Markdown files in `docs/` are the canonical source
+1. **Single source of truth**: Markdown files in `crates/bashkit/docs/` are the canonical source
 2. **Dual visibility**: Same content visible on GitHub and in docs.rs/rustdoc
 3. **No duplication**: Avoids maintaining separate docs for different platforms
 4. **Cross-linking**: rustdoc links connect guides to API types
@@ -14,16 +14,21 @@ Use `include_str!` macro to embed external markdown files into rustdoc as docume
 ## Structure
 
 ```
-docs/
-├── compatibility.md      # Bash feature compatibility reference
-├── custom_builtins.md    # Guide for extending BashKit
-└── (future guides...)
-
-crates/bashkit/src/lib.rs
-├── //! crate docs with links to guides
-└── pub mod custom_builtins_guide {}   # Empty module with include_str!
-    pub mod compatibility_guide {}
+crates/bashkit/
+├── docs/
+│   ├── compatibility.md      # Bash feature compatibility reference
+│   ├── custom_builtins.md    # Guide for extending BashKit
+│   └── (future guides...)
+└── src/
+    └── lib.rs
+        ├── //! crate docs with links to guides
+        └── pub mod custom_builtins_guide {}   # Empty module with include_str!
+            pub mod compatibility_guide {}
 ```
+
+Note: Docs live inside `crates/bashkit/docs/` to ensure they are included in
+the published crate package. This allows `include_str!` to work correctly
+when the crate is built from crates.io.
 
 ## Implementation
 
@@ -31,7 +36,7 @@ crates/bashkit/src/lib.rs
 
 ```rust
 /// Brief description and cross-links
-#[doc = include_str!("../../../docs/guide_name.md")]
+#[doc = include_str!("../docs/guide_name.md")]
 pub mod guide_name {}
 ```
 
@@ -62,12 +67,12 @@ Add "Guides" section to main crate documentation:
 
 ## Adding New Guides
 
-1. Create `docs/new_guide.md` with content
+1. Create `crates/bashkit/docs/new_guide.md` with content
 2. Add "See also" links to related guides
 3. Add doc module in `lib.rs`:
    ```rust
    /// Brief description
-   #[doc = include_str!("../../../docs/new_guide.md")]
+   #[doc = include_str!("../docs/new_guide.md")]
    pub mod new_guide {}
    ```
 4. Add link in crate docs `# Guides` section
