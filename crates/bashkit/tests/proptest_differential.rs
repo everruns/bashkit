@@ -183,15 +183,21 @@ fn logical_ops_strategy() -> impl Strategy<Value = String> {
     ]
 }
 
+/// Bash reserved words that cannot be used as function names
+const BASH_RESERVED_WORDS: &[&str] = &[
+    "if", "then", "else", "elif", "fi", "case", "esac", "for", "select", "while", "until", "do",
+    "done", "in", "function", "time", "coproc",
+];
+
 /// Generate a function definition and call
 fn function_strategy() -> impl Strategy<Value = String> {
-    (var_name_strategy(), safe_value_strategy()).prop_map(|(name, body)| {
-        format!(
-            "{}() {{ echo {}; }}; {}",
-            name.to_lowercase(),
-            body,
-            name.to_lowercase()
-        )
+    (var_name_strategy(), safe_value_strategy()).prop_filter_map("reserved word", |(name, body)| {
+        let lower = name.to_lowercase();
+        if BASH_RESERVED_WORDS.contains(&lower.as_str()) {
+            None
+        } else {
+            Some(format!("{}() {{ echo {}; }}; {}", lower, body, lower))
+        }
     })
 }
 
