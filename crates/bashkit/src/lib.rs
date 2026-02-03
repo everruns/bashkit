@@ -230,6 +230,8 @@ mod limits;
 mod network;
 /// Parser module - exposed for fuzzing and testing
 pub mod parser;
+/// Tool contract for LLM integration
+pub mod tool;
 
 pub use async_trait::async_trait;
 pub use builtins::{Builtin, Context as BuiltinContext};
@@ -238,6 +240,9 @@ pub use fs::{DirEntry, FileSystem, FileType, InMemoryFs, Metadata, MountableFs, 
 pub use interpreter::{ControlFlow, ExecResult};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
+pub use tool::{
+    Tool, ToolBuilder, ToolRequest, ToolResponse, ToolStatus, TOOL_DESCRIPTION, TOOL_LLMTXT,
+};
 
 #[cfg(feature = "network")]
 pub use network::HttpClient;
