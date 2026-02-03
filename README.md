@@ -2,6 +2,9 @@
 
 [![CI](https://github.com/everruns/bashkit/actions/workflows/ci.yml/badge.svg)](https://github.com/everruns/bashkit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/bashkit.svg)](https://crates.io/crates/bashkit)
+[![docs.rs](https://img.shields.io/docsrs/bashkit)](https://docs.rs/bashkit)
+[![Repo: Agent Friendly](https://img.shields.io/badge/Repo-Agent%20Friendly-blue)](AGENTS.md)
 
 Sandboxed bash interpreter for multi-tenant environments. Written in Rust.
 
