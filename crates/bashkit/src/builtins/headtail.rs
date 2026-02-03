@@ -209,6 +209,8 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         Head.execute(ctx).await.unwrap()
@@ -228,6 +230,8 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         Tail.execute(ctx).await.unwrap()

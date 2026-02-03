@@ -195,7 +195,7 @@ for detailed compliance status.
 ### Curl Limitations
 
 **Tests NOT Ported:** Curl tests from just-bash were not ported because:
-1. Requires network feature flag (`--features network`)
+1. Requires http_client feature flag (`--features http_client`)
 2. Needs URL allowlist configuration
 3. just-bash tests mock HTTP responses; bashkit uses real requests
 4. Different error handling semantics

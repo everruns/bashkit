@@ -547,6 +547,8 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         grep.execute(ctx).await

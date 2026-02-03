@@ -55,6 +55,9 @@ chrono = "0.4"
 # Compression
 flate2 = "1"
 
+# Base64 encoding
+base64 = "0.22"
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 

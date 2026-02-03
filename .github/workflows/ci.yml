@@ -65,7 +65,7 @@ jobs:
           cargo vet --locked
 
       - name: Run tests
-        run: cargo test --features network
+        run: cargo test --features http_client
 
       - name: Run fail-point tests (single-threaded)
         run: cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
@@ -86,7 +86,7 @@ jobs:
       - name: Run LLM agent example
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: cargo run --example agent_tool --features network
+        run: cargo run --example agent_tool --features http_client
 
   # Miri check for undefined behavior (nightly only)
   miri:

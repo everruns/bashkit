@@ -164,6 +164,8 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         Wc.execute(ctx).await.unwrap()

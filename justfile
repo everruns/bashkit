@@ -14,7 +14,7 @@ build:
 
 # Run all tests (including fail-point tests)
 test:
-    cargo test --features network
+    cargo test --features http_client
     cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
 
 # Run fail-point tests only (single-threaded, requires failpoints feature)

@@ -15,7 +15,7 @@ BashKit uses a multi-layer testing strategy:
 
 ## CI Test Summary
 
-Tests run automatically on every PR via `cargo test --features network`:
+Tests run automatically on every PR via `cargo test --features http_client`:
 
 | Test Suite | Test Functions | Notes |
 |------------|---------------|-------|
@@ -297,7 +297,7 @@ Future consideration: Would help find parser crashes via mutation.
 
 ```bash
 # Run what CI runs
-cargo test --features network
+cargo test --features http_client
 cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
 
 # Run ALL spec tests including ignored bash tests (manual)

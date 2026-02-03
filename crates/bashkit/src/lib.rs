@@ -202,6 +202,36 @@
 //! # }
 //! ```
 //!
+//! # HTTP Access (curl/wget)
+//!
+//! Enable the `http_client` feature and configure an allowlist for network access:
+//!
+//! ```rust,no_run
+//! use bashkit::{Bash, NetworkAllowlist};
+//!
+//! # #[tokio::main]
+//! # async fn main() -> bashkit::Result<()> {
+//! let mut bash = Bash::builder()
+//!     .network(NetworkAllowlist::new()
+//!         .allow("https://httpbin.org"))
+//!     .build();
+//!
+//! // curl and wget now work for allowed URLs
+//! let result = bash.exec("curl -s https://httpbin.org/get").await?;
+//! assert!(result.stdout.contains("httpbin.org"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Security features:
+//! - URL allowlist enforcement (no access without explicit configuration)
+//! - 10MB response size limit (prevents memory exhaustion)
+//! - 30 second timeout (prevents hanging)
+//! - No automatic redirects (prevents allowlist bypass)
+//! - Zip bomb protection for compressed responses
+//!
+//! See [`NetworkAllowlist`] for allowlist configuration options.
+//!
 //! # Examples
 //!
 //! See the `examples/` directory for complete working examples:
@@ -244,7 +274,7 @@ pub use tool::{
     Tool, ToolBuilder, ToolRequest, ToolResponse, ToolStatus, TOOL_DESCRIPTION, TOOL_LLMTXT,
 };
 
-#[cfg(feature = "network")]
+#[cfg(feature = "http_client")]
 pub use network::HttpClient;
 
 use interpreter::Interpreter;
@@ -426,6 +456,9 @@ pub struct BashBuilder {
     username: Option<String>,
     hostname: Option<String>,
     custom_builtins: HashMap<String, Box<dyn Builtin>>,
+    /// Network allowlist for curl/wget builtins
+    #[cfg(feature = "http_client")]
+    network_allowlist: Option<NetworkAllowlist>,
 }
 
 impl BashBuilder {
@@ -467,6 +500,43 @@ impl BashBuilder {
     /// This configures `hostname` and `uname -n` builtins to return this hostname.
     pub fn hostname(mut self, hostname: impl Into<String>) -> Self {
         self.hostname = Some(hostname.into());
+        self
+    }
+
+    /// Configure network access for curl/wget builtins.
+    ///
+    /// Network access is disabled by default. Use this method to enable HTTP
+    /// requests from scripts with a URL allowlist for security.
+    ///
+    /// # Security
+    ///
+    /// The allowlist uses a default-deny model:
+    /// - Only URLs matching allowlist patterns can be accessed
+    /// - Pattern matching is literal (no DNS resolution) to prevent DNS rebinding
+    /// - Scheme, host, port, and path prefix are all validated
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, NetworkAllowlist};
+    ///
+    /// // Allow access to specific APIs only
+    /// let allowlist = NetworkAllowlist::new()
+    ///     .allow("https://api.example.com")
+    ///     .allow("https://cdn.example.com/assets");
+    ///
+    /// let bash = Bash::builder()
+    ///     .network(allowlist)
+    ///     .build();
+    /// ```
+    ///
+    /// # Warning
+    ///
+    /// Using [`NetworkAllowlist::allow_all()`] is dangerous and should only be
+    /// used for testing or when the script is fully trusted.
+    #[cfg(feature = "http_client")]
+    pub fn network(mut self, allowlist: NetworkAllowlist) -> Self {
+        self.network_allowlist = Some(allowlist);
         self
     }
 
@@ -533,6 +603,13 @@ impl BashBuilder {
 
         if let Some(cwd) = self.cwd {
             interpreter.set_cwd(cwd);
+        }
+
+        // Configure HTTP client for network builtins
+        #[cfg(feature = "http_client")]
+        if let Some(allowlist) = self.network_allowlist {
+            let client = network::HttpClient::new(allowlist);
+            interpreter.set_http_client(client);
         }
 
         let parser_timeout = self.limits.parser_timeout;

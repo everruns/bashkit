@@ -312,6 +312,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("foo bar baz"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -332,6 +334,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("file1 file2"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -352,6 +356,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("a b c"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -382,6 +388,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("file1\nfile2"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -403,6 +411,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("a:b:c"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -423,6 +433,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some(""),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -443,6 +455,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("test"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -465,6 +479,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("Hello, world!"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -489,6 +505,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("content"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -520,6 +538,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("appended"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -543,6 +563,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("pass through"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -563,6 +585,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("test"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -585,6 +609,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Watch.execute(ctx).await.unwrap();
@@ -606,6 +632,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Watch.execute(ctx).await.unwrap();
@@ -627,6 +655,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Watch.execute(ctx).await.unwrap();
@@ -647,6 +677,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
         };
 
         let result = Watch.execute(ctx).await.unwrap();

@@ -82,6 +82,9 @@ pub struct Interpreter {
     jobs: JobTable,
     /// Shell options (set -e, set -x, etc.)
     options: ShellOptions,
+    /// HTTP client for network builtins (curl, wget)
+    #[cfg(feature = "http_client")]
+    http_client: Option<crate::network::HttpClient>,
 }
 
 impl Interpreter {
@@ -220,6 +223,8 @@ impl Interpreter {
             counters: ExecutionCounters::new(),
             jobs: JobTable::new(),
             options: ShellOptions::default(),
+            #[cfg(feature = "http_client")]
+            http_client: None,
         }
     }
 
@@ -260,6 +265,14 @@ impl Interpreter {
     /// Set the current working directory.
     pub fn set_cwd(&mut self, cwd: PathBuf) {
         self.cwd = cwd;
+    }
+
+    /// Set the HTTP client for network builtins (curl, wget).
+    ///
+    /// This is only available when the `network` feature is enabled.
+    #[cfg(feature = "http_client")]
+    pub fn set_http_client(&mut self, client: crate::network::HttpClient) {
+        self.http_client = Some(client);
     }
 
     /// Execute a script.
@@ -1569,6 +1582,8 @@ impl Interpreter {
                 cwd: &mut self.cwd,
                 fs: Arc::clone(&self.fs),
                 stdin: stdin.as_deref(),
+                #[cfg(feature = "http_client")]
+                http_client: self.http_client.as_ref(),
             };
 
             // Execute builtin with panic catching for security
