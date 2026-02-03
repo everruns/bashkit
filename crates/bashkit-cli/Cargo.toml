@@ -19,7 +19,7 @@ path = "src/main.rs"
 doc = false  # Disable to avoid collision with bashkit library docs
 
 [dependencies]
-bashkit = { path = "../bashkit" }
+bashkit = { path = "../bashkit", version = "0.1.0" }
 tokio.workspace = true
 clap.workspace = true
 anyhow.workspace = true
