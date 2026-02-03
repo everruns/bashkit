@@ -10,7 +10,7 @@
 //! - **Resource Limits**: Control command count, loop iterations, and function depth
 //! - **Sandboxed Identity**: Customizable username/hostname for `whoami`, `hostname`, etc.
 //! - **Custom Builtins**: Extend with domain-specific commands (psql, kubectl, etc.)
-//! - **30+ Built-in Commands**: `echo`, `cat`, `grep`, `sed`, `awk`, `jq`, and more
+//! - **66 Built-in Commands**: Shell builtins, text processing, file operations, and networking
 //! - **Full Bash Syntax**: Variables, pipelines, redirects, loops, functions, arrays
 //!
 //! # Quick Start
@@ -247,7 +247,10 @@
 //! # Guides
 //!
 //! - [`custom_builtins_guide`] - Creating custom builtins
-//! - [`compatibility_guide`] - Full bash compatibility reference
+//!
+//! # References
+//!
+//! - [`compatibility_reference`] - Bash compatibility scorecard
 
 // Stricter panic prevention - prefer proper error handling over unwrap()
 #![warn(clippy::unwrap_used)]
@@ -644,21 +647,21 @@ impl BashBuilder {
 /// - Working with arguments, environment, and filesystem
 /// - Best practices and examples
 ///
-/// **Related:** [`BashBuilder::builtin`], [`compatibility_guide`]
+/// **Related:** [`BashBuilder::builtin`], [`compatibility_reference`]
 #[doc = include_str!("../docs/custom_builtins.md")]
 pub mod custom_builtins_guide {}
 
-/// Comprehensive reference for supported bash features.
+/// Bash compatibility scorecard - tracks feature parity with real bash.
 ///
-/// This reference covers:
-/// - All implemented builtins and their flags
-/// - Shell syntax (operators, redirections, control flow)
-/// - Variable expansion and special variables
-/// - Arrays, test operators, and resource limits
+/// This reference provides:
+/// - Quick status of implemented features vs bash
+/// - Detailed compatibility tables for builtins, syntax, expansions
+/// - POSIX compliance status
+/// - Resource limits and security boundaries
 ///
 /// **Related:** [`custom_builtins_guide`]
 #[doc = include_str!("../docs/compatibility.md")]
-pub mod compatibility_guide {}
+pub mod compatibility_reference {}
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
