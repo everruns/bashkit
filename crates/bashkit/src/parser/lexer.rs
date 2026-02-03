@@ -444,7 +444,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        Some(Token::Word(content))
+        Some(Token::QuotedWord(content))
     }
 
     /// Check if the content starting with { looks like a brace expansion
@@ -704,7 +704,7 @@ mod tests {
         assert_eq!(lexer.next_token(), Some(Token::Word("echo".to_string())));
         assert_eq!(
             lexer.next_token(),
-            Some(Token::Word("hello world".to_string()))
+            Some(Token::QuotedWord("hello world".to_string()))
         );
         assert_eq!(lexer.next_token(), None);
     }
