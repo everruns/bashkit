@@ -108,6 +108,76 @@ mod redaction_tests {
             config.should_redact_env("COOKIE_SECRET"),
             "COOKIE_SECRET should be redacted"
         );
+
+        // AI provider env vars
+        assert!(
+            config.should_redact_env("OPENAI_API_KEY"),
+            "OPENAI_API_KEY should be redacted"
+        );
+        assert!(
+            config.should_redact_env("ANTHROPIC_API_KEY"),
+            "ANTHROPIC_API_KEY should be redacted"
+        );
+        assert!(
+            config.should_redact_env("CLAUDE_API_KEY"),
+            "CLAUDE_API_KEY should be redacted"
+        );
+        assert!(
+            config.should_redact_env("AZURE_OPENAI_KEY"),
+            "AZURE_OPENAI_KEY should be redacted"
+        );
+        assert!(
+            config.should_redact_env("GOOGLE_AI_API_KEY"),
+            "GOOGLE_AI_API_KEY should be redacted"
+        );
+        assert!(
+            config.should_redact_env("GEMINI_API_KEY"),
+            "GEMINI_API_KEY should be redacted"
+        );
+        assert!(
+            config.should_redact_env("COHERE_API_KEY"),
+            "COHERE_API_KEY should be redacted"
+        );
+        assert!(
+            config.should_redact_env("HUGGINGFACE_TOKEN"),
+            "HUGGINGFACE_TOKEN should be redacted"
+        );
+        assert!(
+            config.should_redact_env("HUGGING_FACE_TOKEN"),
+            "HUGGING_FACE_TOKEN should be redacted"
+        );
+        assert!(
+            config.should_redact_env("REPLICATE_API_TOKEN"),
+            "REPLICATE_API_TOKEN should be redacted"
+        );
+        assert!(
+            config.should_redact_env("MISTRAL_API_KEY"),
+            "MISTRAL_API_KEY should be redacted"
+        );
+        assert!(
+            config.should_redact_env("GROQ_API_KEY"),
+            "GROQ_API_KEY should be redacted"
+        );
+        assert!(
+            config.should_redact_env("TOGETHER_API_KEY"),
+            "TOGETHER_API_KEY should be redacted"
+        );
+        assert!(
+            config.should_redact_env("PERPLEXITY_API_KEY"),
+            "PERPLEXITY_API_KEY should be redacted"
+        );
+        assert!(
+            config.should_redact_env("FIREWORKS_API_KEY"),
+            "FIREWORKS_API_KEY should be redacted"
+        );
+        assert!(
+            config.should_redact_env("VERTEX_AI_KEY"),
+            "VERTEX_AI_KEY should be redacted"
+        );
+        assert!(
+            config.should_redact_env("BEDROCK_ACCESS_KEY"),
+            "BEDROCK_ACCESS_KEY should be redacted"
+        );
     }
 
     #[test]
@@ -285,15 +355,11 @@ mod redaction_tests {
             "[REDACTED]"
         );
         assert_eq!(
-            config
-                .redact_value("sk_live_FAKE_TEST_KEY_123456")
-                .as_ref(),
+            config.redact_value("sk_live_FAKE_TEST_KEY_123456").as_ref(),
             "[REDACTED]"
         );
         assert_eq!(
-            config
-                .redact_value("sk_test_FAKE_TEST_KEY_123456")
-                .as_ref(),
+            config.redact_value("sk_test_FAKE_TEST_KEY_123456").as_ref(),
             "[REDACTED]"
         );
 
@@ -309,9 +375,7 @@ mod redaction_tests {
 
         // Slack-style tokens (using obviously fake pattern)
         assert_eq!(
-            config
-                .redact_value("xoxb-FAKE-TEST-TOKEN-HERE")
-                .as_ref(),
+            config.redact_value("xoxb-FAKE-TEST-TOKEN-HERE").as_ref(),
             "[REDACTED]"
         );
 
@@ -612,6 +676,11 @@ mod proptest_redaction {
                     "COOKIE", "ENCRYPTION", "SIGNING", "DATABASE_URL", "DB_URL",
                     "CONNECTION_STRING", "AWS_SECRET", "AWS_ACCESS", "GITHUB_TOKEN",
                     "NPM_TOKEN", "STRIPE", "TWILIO", "SENDGRID", "PASSWD",
+                    // AI providers
+                    "OPENAI", "ANTHROPIC", "CLAUDE", "AZURE_OPENAI", "GOOGLE_AI",
+                    "GEMINI", "COHERE", "HUGGINGFACE", "HUGGING_FACE", "REPLICATE",
+                    "MISTRAL", "PERPLEXITY", "GROQ", "TOGETHER", "ANYSCALE",
+                    "FIREWORKS", "DEEPMIND", "VERTEX_AI", "BEDROCK", "SAGEMAKER",
                 ];
                 let contains_pattern = patterns.iter().any(|p| upper.contains(p));
                 prop_assert!(contains_pattern, "Redacted var '{}' should contain sensitive pattern", name);

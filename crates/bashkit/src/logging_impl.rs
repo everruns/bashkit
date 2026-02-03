@@ -80,6 +80,27 @@ impl Default for LogConfig {
             "STRIPE",
             "TWILIO",
             "SENDGRID",
+            // AI provider patterns
+            "OPENAI",
+            "ANTHROPIC",
+            "CLAUDE",
+            "AZURE_OPENAI",
+            "GOOGLE_AI",
+            "GEMINI",
+            "COHERE",
+            "HUGGINGFACE",
+            "HUGGING_FACE",
+            "REPLICATE",
+            "MISTRAL",
+            "PERPLEXITY",
+            "GROQ",
+            "TOGETHER",
+            "ANYSCALE",
+            "FIREWORKS",
+            "DEEPMIND",
+            "VERTEX_AI",
+            "BEDROCK",
+            "SAGEMAKER",
         ] {
             redact_env_vars.insert(pattern.to_string());
         }
