@@ -16,20 +16,15 @@ Use `include_str!` macro to embed external markdown files into rustdoc as docume
 ```
 crates/bashkit/
 ├── docs/
-│   ├── compatibility.md      # Bash compatibility scorecard (reference)
+│   ├── compatibility.md      # Bash compatibility scorecard
 │   ├── custom_builtins.md    # Guide for extending BashKit
 │   └── (future docs...)
 └── src/
     └── lib.rs
-        ├── //! crate docs with links to guides and references
-        └── pub mod custom_builtins_guide {}      # Tutorial-style guide
-            pub mod compatibility_reference {}    # Dense reference/scorecard
+        ├── //! crate docs with links to guides
+        └── pub mod custom_builtins_guide {}
+            pub mod compatibility_scorecard {}
 ```
-
-### Guides vs References
-
-- **Guides** (`*_guide`): Tutorial-style docs with examples, step-by-step instructions
-- **References** (`*_reference`): Dense lookup tables, compatibility scorecards, quick status
 
 Note: Docs live inside `crates/bashkit/docs/` to ensure they are included in
 the published crate package. This allows `include_str!` to work correctly
@@ -61,16 +56,19 @@ Add "See also" section at top of each markdown file:
 
 ### Crate Docs
 
-Add "Guides" and "References" sections to main crate documentation:
+Add "Guides" section and link to scorecard in main crate documentation:
 
 ```rust
+//! # Shell Features
+//! ...
+//! - [`compatibility_scorecard`] - Full compatibility status
+//!
+//! # Quick Start
+//! ...
+//!
 //! # Guides
 //!
 //! - [`custom_builtins_guide`] - Creating custom builtins
-//!
-//! # References
-//!
-//! - [`compatibility_reference`] - Bash compatibility scorecard
 ```
 
 ## Adding New Guides

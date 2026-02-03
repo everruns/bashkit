@@ -1,17 +1,47 @@
 //! BashKit - Sandboxed bash interpreter for multi-tenant environments
 //!
-//! BashKit provides a fully sandboxed bash interpreter with a virtual filesystem,
-//! making it safe to execute untrusted scripts in multi-tenant environments like
-//! AI agents, CI/CD pipelines, and code sandboxes.
+//! Sandboxed bash interpreter for AI agents, CI/CD pipelines, and code sandboxes.
+//! Written in Rust.
 //!
 //! # Features
 //!
-//! - **Virtual Filesystem**: All file operations happen in memory by default
-//! - **Resource Limits**: Control command count, loop iterations, and function depth
-//! - **Sandboxed Identity**: Customizable username/hostname for `whoami`, `hostname`, etc.
-//! - **Custom Builtins**: Extend with domain-specific commands (psql, kubectl, etc.)
-//! - **66 Built-in Commands**: Shell builtins, text processing, file operations, and networking
-//! - **Full Bash Syntax**: Variables, pipelines, redirects, loops, functions, arrays
+//! - **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance
+//! - **Sandboxed execution** - No real filesystem access by default
+//! - **Virtual filesystem** - [`InMemoryFs`], [`OverlayFs`], [`MountableFs`]
+//! - **Resource limits** - Command count, loop iterations, function depth
+//! - **Network allowlist** - Control HTTP access per-domain
+//! - **Custom builtins** - Extend with domain-specific commands
+//! - **Async-first** - Built on tokio
+//!
+//! # Built-in Commands (66)
+//!
+//! | Category | Commands |
+//! |----------|----------|
+//! | Core | `echo`, `printf`, `cat`, `read` |
+//! | Navigation | `cd`, `pwd`, `ls`, `find` |
+//! | Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[` |
+//! | Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.` |
+//! | Text processing | `grep`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc` |
+//! | File operations | `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `rmdir` |
+//! | File inspection | `file`, `stat`, `less` |
+//! | Archives | `tar`, `gzip`, `gunzip` |
+//! | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `xargs`, `tee` |
+//! | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
+//! | Network | `curl`, `wget` (requires [`NetworkAllowlist`])
+//!
+//! # Shell Features
+//!
+//! - Variables and parameter expansion (`$VAR`, `${VAR:-default}`, `${#VAR}`)
+//! - Command substitution (`$(cmd)`)
+//! - Arithmetic expansion (`$((1 + 2))`)
+//! - Pipelines and redirections (`|`, `>`, `>>`, `<`, `<<<`, `2>&1`)
+//! - Control flow (`if`/`elif`/`else`, `for`, `while`, `case`)
+//! - Functions (POSIX and bash-style)
+//! - Arrays (`arr=(a b c)`, `${arr[@]}`, `${#arr[@]}`)
+//! - Glob expansion (`*`, `?`)
+//! - Here documents (`<<EOF`)
+//!
+//! - [`compatibility_scorecard`] - Full compatibility status
 //!
 //! # Quick Start
 //!
@@ -247,10 +277,6 @@
 //! # Guides
 //!
 //! - [`custom_builtins_guide`] - Creating custom builtins
-//!
-//! # References
-//!
-//! - [`compatibility_reference`] - Bash compatibility scorecard
 
 // Stricter panic prevention - prefer proper error handling over unwrap()
 #![warn(clippy::unwrap_used)]
@@ -745,21 +771,21 @@ impl BashBuilder {
 /// - Working with arguments, environment, and filesystem
 /// - Best practices and examples
 ///
-/// **Related:** [`BashBuilder::builtin`], [`compatibility_reference`]
+/// **Related:** [`BashBuilder::builtin`], [`compatibility_scorecard`]
 #[doc = include_str!("../docs/custom_builtins.md")]
 pub mod custom_builtins_guide {}
 
-/// Bash compatibility scorecard - tracks feature parity with real bash.
+/// Bash compatibility scorecard.
 ///
-/// This reference provides:
-/// - Quick status of implemented features vs bash
-/// - Detailed compatibility tables for builtins, syntax, expansions
+/// Tracks feature parity with real bash:
+/// - Implemented vs missing features
+/// - Builtins, syntax, expansions
 /// - POSIX compliance status
-/// - Resource limits and security boundaries
+/// - Resource limits
 ///
 /// **Related:** [`custom_builtins_guide`]
 #[doc = include_str!("../docs/compatibility.md")]
-pub mod compatibility_reference {}
+pub mod compatibility_scorecard {}
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

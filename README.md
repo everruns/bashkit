@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-## Built-in Commands (60+)
+## Built-in Commands (66)
 
 | Category | Commands |
 |----------|----------|
