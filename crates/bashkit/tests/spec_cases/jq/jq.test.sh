@@ -433,10 +433,14 @@ echo '-5' | jq 'abs'
 ### end
 
 ### jq_range
-### skip: range not implemented
-echo 'null' | jq '[range(3)]'
+# Range function generates sequence of numbers
+jq -n '[range(3)]'
 ### expect
-[0,1,2]
+[
+  0,
+  1,
+  2
+]
 ### end
 
 ### jq_nth
@@ -468,14 +472,16 @@ echo 'null' | jq 'try .foo catch "error"'
 ### end
 
 ### jq_recurse
-### skip: recurse not implemented
+# Recurse descends into nested structures
 echo '{"a":{"b":1}}' | jq '[recurse | scalars]'
 ### expect
-[1]
+[
+  1
+]
 ### end
 
 ### jq_getpath
-### skip: getpath not implemented
+# Get value at path
 echo '{"a":{"b":1}}' | jq 'getpath(["a","b"])'
 ### expect
 1
@@ -530,10 +536,18 @@ echo '{"a":1}' | jq 'with_entries(.value += 1)'
 ### end
 
 ### jq_paths
-### skip: paths not implemented
+# Get all paths in an object
 echo '{"a":{"b":1}}' | jq '[paths]'
 ### expect
-[["a"],["a","b"]]
+[
+  [
+    "a"
+  ],
+  [
+    "a",
+    "b"
+  ]
+]
 ### end
 
 ### jq_leaf_paths
@@ -558,24 +572,33 @@ true
 ### end
 
 ### jq_limit
-### skip: limit not implemented
+# Limit number of results
 echo '[1,2,3,4,5]' | jq '[limit(3;.[])]'
 ### expect
-[1,2,3]
+[
+  1,
+  2,
+  3
+]
 ### end
 
 ### jq_until
-### skip: until not implemented
+# Until loop
 echo '1' | jq 'until(. >= 5; . + 1)'
 ### expect
 5
 ### end
 
 ### jq_while
-### skip: while not implemented
+# While loop
 echo '1' | jq '[while(. < 5; . + 1)]'
 ### expect
-[1,2,3,4]
+[
+  1,
+  2,
+  3,
+  4
+]
 ### end
 
 ### jq_input
@@ -651,21 +674,21 @@ echo '{"a":[1,2]}' | jq 'walk(if type == "number" then . + 1 else . end)'
 ### end
 
 ### jq_gsub
-### skip: gsub not implemented
+# Global string substitution
 echo '"hello"' | jq 'gsub("l";"x")'
 ### expect
 "hexxo"
 ### end
 
 ### jq_sub
-### skip: sub not implemented
+# Single string substitution
 echo '"hello"' | jq 'sub("l";"x")'
 ### expect
 "hexlo"
 ### end
 
 ### jq_test
-### skip: test not implemented
+# Test string against regex
 echo '"hello"' | jq 'test("ell")'
 ### expect
 true
@@ -693,17 +716,20 @@ echo '["a","b","c"]' | jq 'index("b")'
 ### end
 
 ### jq_rindex
-### skip: rindex not implemented
+# Find last index of element
 echo '["a","b","a"]' | jq 'rindex("a")'
 ### expect
 2
 ### end
 
 ### jq_indices
-### skip: indices not implemented
+# Find all indices of element
 echo '["a","b","a"]' | jq 'indices("a")'
 ### expect
-[0,2]
+[
+  0,
+  2
+]
 ### end
 
 ### jq_null_input
