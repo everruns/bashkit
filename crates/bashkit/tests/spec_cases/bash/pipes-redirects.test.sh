@@ -114,3 +114,41 @@ echo err1 2>/tmp/err_append.txt; echo err2 2>>/tmp/err_append.txt; cat /tmp/err_
 err1
 err2
 ### end
+
+### heredoc_single_quoted_delimiter
+# Heredoc with single-quoted delimiter disables variable expansion
+NAME=world; cat <<'EOF'
+hello $NAME
+EOF
+### expect
+hello $NAME
+### end
+
+### heredoc_double_quoted_delimiter
+# Heredoc with double-quoted delimiter also disables expansion
+NAME=world; cat <<"EOF"
+hello $NAME
+EOF
+### expect
+hello $NAME
+### end
+
+### heredoc_quoted_with_special_chars
+# Single-quoted heredoc preserves special characters
+cat <<'PY'
+price = 100
+print(f"${price}")
+PY
+### expect
+price = 100
+print(f"${price}")
+### end
+
+### heredoc_unquoted_expands
+# Unquoted delimiter allows variable expansion (control test)
+VAR=expanded; cat <<END
+value is $VAR
+END
+### expect
+value is expanded
+### end
