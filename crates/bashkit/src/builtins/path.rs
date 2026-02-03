@@ -143,6 +143,8 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         Basename.execute(ctx).await.unwrap()
@@ -162,6 +164,8 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         Dirname.execute(ctx).await.unwrap()

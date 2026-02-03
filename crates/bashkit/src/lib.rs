@@ -421,6 +421,9 @@ pub struct BashBuilder {
     username: Option<String>,
     hostname: Option<String>,
     custom_builtins: HashMap<String, Box<dyn Builtin>>,
+    /// Network allowlist for curl/wget builtins
+    #[cfg(feature = "network")]
+    network_allowlist: Option<NetworkAllowlist>,
 }
 
 impl BashBuilder {
@@ -462,6 +465,43 @@ impl BashBuilder {
     /// This configures `hostname` and `uname -n` builtins to return this hostname.
     pub fn hostname(mut self, hostname: impl Into<String>) -> Self {
         self.hostname = Some(hostname.into());
+        self
+    }
+
+    /// Configure network access for curl/wget builtins.
+    ///
+    /// Network access is disabled by default. Use this method to enable HTTP
+    /// requests from scripts with a URL allowlist for security.
+    ///
+    /// # Security
+    ///
+    /// The allowlist uses a default-deny model:
+    /// - Only URLs matching allowlist patterns can be accessed
+    /// - Pattern matching is literal (no DNS resolution) to prevent DNS rebinding
+    /// - Scheme, host, port, and path prefix are all validated
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, NetworkAllowlist};
+    ///
+    /// // Allow access to specific APIs only
+    /// let allowlist = NetworkAllowlist::new()
+    ///     .allow("https://api.example.com")
+    ///     .allow("https://cdn.example.com/assets");
+    ///
+    /// let bash = Bash::builder()
+    ///     .network(allowlist)
+    ///     .build();
+    /// ```
+    ///
+    /// # Warning
+    ///
+    /// Using [`NetworkAllowlist::allow_all()`] is dangerous and should only be
+    /// used for testing or when the script is fully trusted.
+    #[cfg(feature = "network")]
+    pub fn network(mut self, allowlist: NetworkAllowlist) -> Self {
+        self.network_allowlist = Some(allowlist);
         self
     }
 
@@ -528,6 +568,13 @@ impl BashBuilder {
 
         if let Some(cwd) = self.cwd {
             interpreter.set_cwd(cwd);
+        }
+
+        // Configure HTTP client for network builtins
+        #[cfg(feature = "network")]
+        if let Some(allowlist) = self.network_allowlist {
+            let client = network::HttpClient::new(allowlist);
+            interpreter.set_http_client(client);
         }
 
         let parser_timeout = self.limits.parser_timeout;

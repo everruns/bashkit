@@ -65,6 +65,8 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         Wait.execute(ctx).await.unwrap()

@@ -7,6 +7,9 @@
 //! - Network access is disabled by default
 //! - URLs must match an entry in the allowlist
 //! - Allowlist entries can match by scheme, host, and path prefix
+//! - Response size is limited to prevent memory exhaustion
+//! - Timeouts prevent hanging on unresponsive servers
+//! - Redirects are not followed automatically (prevents allowlist bypass)
 
 mod allowlist;
 
@@ -17,4 +20,4 @@ mod client;
 pub use allowlist::{NetworkAllowlist, UrlMatch};
 
 #[cfg(feature = "network")]
-pub use client::HttpClient;
+pub use client::{HttpClient, Method, Response};

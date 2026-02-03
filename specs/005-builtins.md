@@ -122,9 +122,24 @@ Bash::builder()
 - `tee` - Write to files and stdout (`-a` append)
 - `watch` - Execute command periodically (sandbox: shows command info, no continuous execution)
 
-#### Network (Stubs)
+#### Network
 - `curl` - HTTP client (requires network feature + allowlist)
+  - Options: `-s/--silent`, `-o FILE`, `-X METHOD`, `-d DATA`, `-H HEADER`, `-I/--head`, `-f/--fail`, `-L/--location`, `-w FORMAT`
+  - Security: URL allowlist enforced, 10MB response limit, 30s timeout
 - `wget` - Download files (requires network feature + allowlist)
+  - Options: `-q/--quiet`, `-O FILE`, `--spider`
+  - Security: URL allowlist enforced, 10MB response limit, 30s timeout
+
+**Network Configuration**:
+```rust
+use bashkit::{Bash, NetworkAllowlist};
+
+let bash = Bash::builder()
+    .network(NetworkAllowlist::new()
+        .allow("https://api.example.com")
+        .allow("https://cdn.example.com"))
+    .build();
+```
 
 ### Builtin Trait
 
@@ -141,6 +156,9 @@ pub struct Context<'a> {
     pub cwd: &'a mut PathBuf,
     pub fs: Arc<dyn FileSystem>,
     pub stdin: Option<&'a str>,
+    // Only available with network feature:
+    #[cfg(feature = "network")]
+    pub http_client: Option<&'a HttpClient>,
 }
 ```
 
@@ -183,8 +201,9 @@ See `crates/bashkit/docs/custom_builtins.md` for detailed documentation.
 ### Implementation Notes
 
 - Background execution (`&`) is parsed but runs synchronously
-- Network builtins are stubs requiring explicit configuration
+- Network builtins require explicit allowlist configuration for security
 - File operations respect virtual filesystem permissions
+- Network responses are limited to 10MB by default to prevent memory exhaustion
 
 ## Verification
 

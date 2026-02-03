@@ -769,6 +769,8 @@ impl Builtin for Gunzip {
             cwd: ctx.cwd,
             fs: ctx.fs,
             stdin: ctx.stdin,
+            #[cfg(feature = "network")]
+            http_client: ctx.http_client,
         };
 
         Gzip.execute(new_ctx).await
@@ -830,6 +832,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -845,6 +849,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -875,6 +881,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -893,6 +901,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -925,6 +935,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -945,6 +957,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -969,6 +983,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -999,6 +1015,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -1013,6 +1031,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -1040,6 +1060,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Gzip.execute(ctx).await.unwrap();
@@ -1066,6 +1088,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         Gzip.execute(ctx).await.unwrap();
@@ -1079,6 +1103,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Gzip.execute(ctx).await.unwrap();
@@ -1106,6 +1132,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Gzip.execute(ctx).await.unwrap();
@@ -1127,6 +1155,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Gzip.execute(ctx).await.unwrap();
@@ -1151,6 +1181,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Gzip.execute(ctx).await.unwrap();
@@ -1173,6 +1205,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Gzip.execute(ctx).await.unwrap();
@@ -1200,6 +1234,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
         Gzip.execute(ctx).await.unwrap();
 
@@ -1212,6 +1248,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Gunzip.execute(ctx).await.unwrap();

@@ -158,6 +158,40 @@ pub struct Context<'a> {
     /// Contains output from the previous command in a pipeline.
     /// For `echo hello | mycommand`, stdin will be `Some("hello\n")`.
     pub stdin: Option<&'a str>,
+
+    /// HTTP client for network operations (curl, wget).
+    ///
+    /// Only available when the `network` feature is enabled and
+    /// a [`NetworkAllowlist`](crate::NetworkAllowlist) is configured via
+    /// [`BashBuilder::network`](crate::BashBuilder::network).
+    #[cfg(feature = "network")]
+    pub http_client: Option<&'a crate::network::HttpClient>,
+}
+
+impl<'a> Context<'a> {
+    /// Create a new Context for testing purposes.
+    ///
+    /// This helper handles the conditional `http_client` field automatically.
+    #[cfg(test)]
+    pub fn new_for_test(
+        args: &'a [String],
+        env: &'a std::collections::HashMap<String, String>,
+        variables: &'a mut std::collections::HashMap<String, String>,
+        cwd: &'a mut std::path::PathBuf,
+        fs: std::sync::Arc<dyn crate::fs::FileSystem>,
+        stdin: Option<&'a str>,
+    ) -> Self {
+        Self {
+            args,
+            env,
+            variables,
+            cwd,
+            fs,
+            stdin,
+            #[cfg(feature = "network")]
+            http_client: None,
+        }
+    }
 }
 
 /// Trait for implementing builtin commands.

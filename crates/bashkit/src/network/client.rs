@@ -1,6 +1,15 @@
 //! HTTP client for secure network access
 //!
-//! Provides a sandboxed HTTP client that respects the allowlist.
+//! Provides a sandboxed HTTP client that respects the allowlist with
+//! security mitigations for common HTTP attacks.
+//!
+//! # Security Mitigations
+//!
+//! - **URL Allowlist**: Only URLs matching configured patterns are allowed
+//! - **Response Size Limit**: Prevents memory exhaustion from large responses (default: 10MB)
+//! - **Connection Timeout**: Prevents hanging on unresponsive servers (default: 30s)
+//! - **No Redirects to Different Hosts**: Prevents redirect-based allowlist bypass
+//! - **DNS via Host Header Only**: Allowlist matching uses literal hostname (no DNS resolution)
 
 use reqwest::Client;
 use std::time::Duration;
@@ -8,10 +17,25 @@ use std::time::Duration;
 use super::allowlist::{NetworkAllowlist, UrlMatch};
 use crate::error::{Error, Result};
 
+/// Default maximum response body size (10 MB)
+pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+
+/// Default request timeout (30 seconds)
+pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
 /// HTTP client with allowlist-based access control.
+///
+/// # Security Features
+///
+/// - URL allowlist enforcement
+/// - Response size limits to prevent memory exhaustion
+/// - Configurable timeouts to prevent hanging
+/// - No automatic redirect following (to prevent allowlist bypass)
 pub struct HttpClient {
     client: Client,
     allowlist: NetworkAllowlist,
+    /// Maximum response body size in bytes
+    max_response_bytes: usize,
 }
 
 /// HTTP request method
@@ -63,25 +87,51 @@ impl Response {
 
 impl HttpClient {
     /// Create a new HTTP client with the given allowlist.
+    ///
+    /// Uses default security settings:
+    /// - 30 second timeout
+    /// - 10 MB max response size
+    /// - No automatic redirects
     pub fn new(allowlist: NetworkAllowlist) -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .user_agent("bashkit/0.1.0")
-            .build()
-            .expect("failed to build HTTP client");
-
-        Self { client, allowlist }
+        Self::with_config(
+            allowlist,
+            Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+            DEFAULT_MAX_RESPONSE_BYTES,
+        )
     }
 
     /// Create a client with custom timeout.
     pub fn with_timeout(allowlist: NetworkAllowlist, timeout: Duration) -> Self {
+        Self::with_config(allowlist, timeout, DEFAULT_MAX_RESPONSE_BYTES)
+    }
+
+    /// Create a client with full configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `allowlist` - URL patterns to allow
+    /// * `timeout` - Request timeout duration
+    /// * `max_response_bytes` - Maximum response body size (prevents memory exhaustion)
+    pub fn with_config(
+        allowlist: NetworkAllowlist,
+        timeout: Duration,
+        max_response_bytes: usize,
+    ) -> Self {
         let client = Client::builder()
             .timeout(timeout)
+            .connect_timeout(Duration::from_secs(10)) // Separate connect timeout
             .user_agent("bashkit/0.1.0")
+            // Disable automatic redirects to prevent allowlist bypass via redirect
+            // Scripts can follow redirects manually if needed
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("failed to build HTTP client");
 
-        Self { client, allowlist }
+        Self {
+            client,
+            allowlist,
+            max_response_bytes,
+        }
     }
 
     /// Make a GET request.
@@ -111,7 +161,24 @@ impl HttpClient {
         url: &str,
         body: Option<&[u8]>,
     ) -> Result<Response> {
-        // Check allowlist
+        self.request_with_headers(method, url, body, &[]).await
+    }
+
+    /// Make an HTTP request with custom headers.
+    ///
+    /// # Security
+    ///
+    /// - URL is validated against the allowlist before making the request
+    /// - Response body is limited to `max_response_bytes` to prevent memory exhaustion
+    /// - Redirects are not automatically followed (to prevent allowlist bypass)
+    pub async fn request_with_headers(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<&[u8]>,
+        headers: &[(String, String)],
+    ) -> Result<Response> {
+        // Check allowlist BEFORE making any network request
         match self.allowlist.check(url) {
             UrlMatch::Allowed => {}
             UrlMatch::Blocked { reason } => {
@@ -125,6 +192,11 @@ impl HttpClient {
         // Build request
         let mut request = self.client.request(method.as_reqwest(), url);
 
+        // Add custom headers
+        for (name, value) in headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+
         if let Some(body_data) = body {
             request = request.body(body_data.to_vec());
         }
@@ -137,23 +209,68 @@ impl HttpClient {
 
         // Extract response data
         let status = response.status().as_u16();
-        let headers: Vec<(String, String)> = response
+        let resp_headers: Vec<(String, String)> = response
             .headers()
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
             .collect();
 
-        let body = response
-            .bytes()
-            .await
-            .map_err(|e| Error::Network(format!("failed to read response: {}", e)))?
-            .to_vec();
+        // Check Content-Length header to fail fast on large responses
+        if let Some(content_length) = response.content_length() {
+            if content_length as usize > self.max_response_bytes {
+                return Err(Error::Network(format!(
+                    "response too large: {} bytes (max: {} bytes)",
+                    content_length, self.max_response_bytes
+                )));
+            }
+        }
+
+        // Read body with size limit enforcement
+        // We stream the response to avoid loading huge responses into memory
+        let body = self.read_body_with_limit(response).await?;
 
         Ok(Response {
             status,
-            headers,
+            headers: resp_headers,
             body,
         })
+    }
+
+    /// Read response body with size limit enforcement.
+    ///
+    /// This streams the response to avoid allocating memory for oversized responses.
+    async fn read_body_with_limit(&self, response: reqwest::Response) -> Result<Vec<u8>> {
+        use futures::StreamExt;
+
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result
+                .map_err(|e| Error::Network(format!("failed to read response chunk: {}", e)))?;
+
+            // Check if adding this chunk would exceed the limit
+            if body.len() + chunk.len() > self.max_response_bytes {
+                return Err(Error::Network(format!(
+                    "response too large: exceeded {} bytes limit",
+                    self.max_response_bytes
+                )));
+            }
+
+            body.extend_from_slice(&chunk);
+        }
+
+        Ok(body)
+    }
+
+    /// Make a HEAD request to get headers without body.
+    pub async fn head(&self, url: &str) -> Result<Response> {
+        self.request(Method::Head, url, None).await
+    }
+
+    /// Get the maximum response size in bytes.
+    pub fn max_response_bytes(&self) -> usize {
+        self.max_response_bytes
     }
 }
 

@@ -83,6 +83,8 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         Date.execute(ctx).await.unwrap()

@@ -165,6 +165,14 @@ impl NetworkAllowlist {
         true
     }
 
+    /// Check if a URL is allowed (convenience method).
+    ///
+    /// Returns `true` if the URL is allowed, `false` otherwise.
+    /// This is equivalent to checking if `check(url)` returns `UrlMatch::Allowed`.
+    pub fn is_allowed(&self, url: &str) -> bool {
+        matches!(self.check(url), UrlMatch::Allowed)
+    }
+
     /// Check if network access is enabled (has any patterns or allow_all)
     pub fn is_enabled(&self) -> bool {
         self.allow_all || !self.patterns.is_empty()

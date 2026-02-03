@@ -583,6 +583,8 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         sed.execute(ctx).await

@@ -279,6 +279,111 @@ allowlist.allow("https://api.example.com");
 
 **Current Risk**: LOW - Strict allowlist enforcement
 
+#### 5.3 HTTP Attack Vectors
+
+| Threat | Attack Vector | Mitigation | Status |
+|--------|--------------|------------|--------|
+| Large response DoS | `curl https://evil.com/huge.bin` | Response size limit (10MB) | **MITIGATED** |
+| Connection hang | Server never responds | Connection timeout (10s) + read timeout (30s) | **MITIGATED** |
+| Slowloris attack | Slow response dripping | Read timeout (30s) | **MITIGATED** |
+| Redirect bypass | `Location: http://evil.com` | Redirects not auto-followed | **MITIGATED** |
+| Chunked encoding bomb | Infinite chunked response | Response size limit (streaming) | **MITIGATED** |
+| DNS rebind via redirect | Redirect to rebinded IP | Manual redirect requires allowlist check | **MITIGATED** |
+
+**Current Risk**: LOW - Multiple mitigations in place
+
+**Code Reference**: `network/client.rs`
+```rust
+// Security defaults
+const DEFAULT_MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;  // 10MB
+const DEFAULT_TIMEOUT_SECS: u64 = 30;
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+// Redirects disabled by default
+.redirect(reqwest::redirect::Policy::none())
+
+// Response size checked during streaming
+async fn read_body_with_limit(&self, response: Response) -> Result<Vec<u8>> {
+    // Streams response, checks size at each chunk
+}
+```
+
+#### 5.4 HTTP Client Mitigations
+
+| Mitigation | Implementation | Purpose |
+|------------|---------------|---------|
+| URL allowlist | Pre-request validation | Prevent unauthorized destinations |
+| Response size limit | Streaming with byte counting | Prevent memory exhaustion |
+| Connection timeout | 10s connect timeout | Prevent connection hang |
+| Read timeout | 30s total timeout | Prevent slow-response DoS |
+| No auto-redirect | Policy::none() | Prevent redirect-based bypass |
+| Content-Length check | Pre-download validation | Fail fast on huge files |
+| User-Agent fixed | "bashkit/0.1.0" | Identify requests, prevent spoofing |
+
+#### 5.5 curl/wget Security Model
+
+**Request Flow**:
+```
+Script: curl https://api.example.com/data
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│ 1. URL Allowlist Check (BEFORE network) │
+│    - Scheme match (https)               │
+│    - Host match (literal)               │
+│    - Port match (443 default)           │
+│    - Path prefix match                  │
+└─────────────────────────────────────────┘
+         │ Allowed?
+         │ No → Return "access denied" (exit 7)
+         │ Yes ↓
+┌─────────────────────────────────────────┐
+│ 2. Connect with Timeout (10s)           │
+│    - TCP connection                     │
+│    - TLS handshake                      │
+└─────────────────────────────────────────┘
+         │ Success?
+         │ No → Return "request failed" (exit 1)
+         │ Yes ↓
+┌─────────────────────────────────────────┐
+│ 3. Content-Length Check                 │
+│    - If header present, check < 10MB    │
+│    - If > 10MB, abort early             │
+└─────────────────────────────────────────┘
+         │ Size OK?
+         │ No → Return "response too large" (exit 63)
+         │ Yes ↓
+┌─────────────────────────────────────────┐
+│ 4. Stream Response with Size Limit      │
+│    - Read chunks                        │
+│    - Accumulate bytes                   │
+│    - Abort if total > 10MB              │
+└─────────────────────────────────────────┘
+         │ Complete?
+         │ No → Return "response too large" (exit 63)
+         │ Yes ↓
+┌─────────────────────────────────────────┐
+│ 5. Handle Redirect (if -L flag)         │
+│    - Extract Location header            │
+│    - Check EACH redirect URL against    │
+│      allowlist (go to step 1)           │
+│    - Max 10 redirects                   │
+└─────────────────────────────────────────┘
+         │
+         ▼
+     Return response to script
+```
+
+**Exit Codes**:
+- 0: Success
+- 1: General error
+- 3: URL malformed
+- 7: Access denied (allowlist)
+- 22: HTTP error (with -f flag)
+- 28: Timeout
+- 47: Max redirects exceeded
+- 63: Response too large
+
 ---
 
 ### 6. Multi-Tenant Isolation
@@ -357,6 +462,12 @@ let tenant_b = Bash::builder()
 | Fail-point testing | Control bypass | `security_failpoint_tests.rs` | Yes |
 | Builtin panic catching | Custom builtin crashes | `interpreter/mod.rs` | Yes |
 | Error message sanitization | Information disclosure | `builtin_error_security_tests.rs` | Yes |
+| HTTP response size limit | Memory exhaustion | `network/client.rs` | Yes |
+| HTTP connect timeout | Connection hang | `network/client.rs` | Yes |
+| HTTP read timeout | Slow response DoS | `network/client.rs` | Yes |
+| No auto-redirect | Redirect bypass | `network/client.rs` | Yes |
+| Streaming body read | Large response DoS | `network/client.rs` | Yes |
+| Zip bomb protection | Compression attacks | `builtins/curl.rs` | Yes |
 
 ---
 
@@ -395,6 +506,7 @@ ExecutionLimits::new()
 | Injection attacks | ✅ | ❌ | ✅ | ✅ | ✅ |
 | Information disclosure | ✅ | ✅ | ✅ | - | - |
 | Network bypass | ✅ | ❌ | ✅ | - | - |
+| HTTP attacks | ✅ | ❌ | ✅ | - | - |
 | Multi-tenant isolation | ✅ | ❌ | ✅ | - | - |
 | Parser edge cases | ✅ | ❌ | ✅ | ✅ | ✅ |
 | Custom builtin errors | ✅ | ✅ | ✅ | - | - |
@@ -403,6 +515,7 @@ ExecutionLimits::new()
 - `tests/threat_model_tests.rs` - 51 threat-based security tests
 - `tests/security_failpoint_tests.rs` - Fail-point injection tests
 - `tests/builtin_error_security_tests.rs` - Custom builtin error handling tests (34 tests)
+- `tests/network_security_tests.rs` - HTTP security tests (43 tests: allowlist, size limits, timeouts)
 
 **Recommendation**: Add cargo-fuzz for parser and input handling.
 

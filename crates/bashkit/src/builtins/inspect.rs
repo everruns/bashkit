@@ -447,6 +447,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Less.execute(ctx).await.unwrap();
@@ -467,6 +469,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("stdin content"),
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Less.execute(ctx).await.unwrap();
@@ -494,6 +498,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Less.execute(ctx).await.unwrap();
@@ -517,6 +523,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Less.execute(ctx).await.unwrap();
@@ -539,6 +547,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Less.execute(ctx).await.unwrap();
@@ -565,6 +575,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = File.execute(ctx).await.unwrap();
@@ -588,6 +600,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = File.execute(ctx).await.unwrap();
@@ -610,6 +624,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = File.execute(ctx).await.unwrap();
@@ -634,6 +650,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = File.execute(ctx).await.unwrap();
@@ -658,6 +676,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = File.execute(ctx).await.unwrap();
@@ -678,6 +698,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = File.execute(ctx).await.unwrap();
@@ -698,6 +720,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = File.execute(ctx).await.unwrap();
@@ -724,6 +748,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
@@ -749,6 +775,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
@@ -773,6 +801,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
@@ -798,6 +828,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
@@ -820,6 +852,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
@@ -840,6 +874,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
@@ -860,6 +896,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
@@ -880,6 +918,8 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
+            #[cfg(feature = "network")]
+            http_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
