@@ -221,6 +221,27 @@ impl OverlayFs {
         }
     }
 
+    /// Access the upper (writable) filesystem layer.
+    ///
+    /// This provides direct access to the [`InMemoryFs`] that stores all writes.
+    /// Useful for pre-populating files during construction.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{InMemoryFs, OverlayFs};
+    /// use std::sync::Arc;
+    ///
+    /// let base = Arc::new(InMemoryFs::new());
+    /// let overlay = OverlayFs::new(base);
+    ///
+    /// // Add files directly to upper layer
+    /// overlay.upper().add_file("/config/app.conf", "debug=true\n", 0o644);
+    /// ```
+    pub fn upper(&self) -> &InMemoryFs {
+        &self.upper
+    }
+
     /// Compute combined usage (upper + visible lower).
     fn compute_usage(&self) -> FsUsage {
         // Get upper layer usage

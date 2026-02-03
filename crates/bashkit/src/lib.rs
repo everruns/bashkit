@@ -479,8 +479,8 @@ impl Bash {
 ///     .builtin("mycommand", Box::new(MyCommand))
 ///     .build();
 /// ```
-/// A text file to be added during builder construction.
-struct PendingTextFile {
+/// A file to be mounted during builder construction.
+struct MountedFile {
     path: PathBuf,
     content: String,
     mode: u32,
@@ -495,8 +495,8 @@ pub struct BashBuilder {
     username: Option<String>,
     hostname: Option<String>,
     custom_builtins: HashMap<String, Box<dyn Builtin>>,
-    /// Text files to add to the default InMemoryFs
-    text_files: Vec<PendingTextFile>,
+    /// Files to mount in the virtual filesystem
+    mounted_files: Vec<MountedFile>,
     /// Network allowlist for curl/wget builtins
     #[cfg(feature = "http_client")]
     network_allowlist: Option<NetworkAllowlist>,
@@ -622,14 +622,16 @@ impl BashBuilder {
         self
     }
 
-    /// Add a text file to the virtual filesystem.
+    /// Mount a text file in the virtual filesystem.
     ///
     /// This creates a regular file (mode `0o644`) with the specified content at
     /// the given path. Parent directories are created automatically.
     ///
-    /// This method only works when using the default [`InMemoryFs`]. If you call
-    /// [`.fs()`](Self::fs) to set a custom filesystem, text files are ignored.
-    /// Use the filesystem's async methods directly for custom filesystems.
+    /// Mounted files are added via an [`OverlayFs`] layer on top of the base
+    /// filesystem. This means:
+    /// - The base filesystem remains unchanged
+    /// - Mounted files take precedence over base filesystem files
+    /// - Works with any filesystem implementation
     ///
     /// # Example
     ///
@@ -639,8 +641,8 @@ impl BashBuilder {
     /// # #[tokio::main]
     /// # async fn main() -> bashkit::Result<()> {
     /// let mut bash = Bash::builder()
-    ///     .text_file("/config/app.conf", "debug=true\nport=8080\n")
-    ///     .text_file("/data/users.json", r#"["alice", "bob"]"#)
+    ///     .mount_text("/config/app.conf", "debug=true\nport=8080\n")
+    ///     .mount_text("/data/users.json", r#"["alice", "bob"]"#)
     ///     .build();
     ///
     /// let result = bash.exec("cat /config/app.conf").await?;
@@ -648,8 +650,8 @@ impl BashBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn text_file(mut self, path: impl Into<PathBuf>, content: impl Into<String>) -> Self {
-        self.text_files.push(PendingTextFile {
+    pub fn mount_text(mut self, path: impl Into<PathBuf>, content: impl Into<String>) -> Self {
+        self.mounted_files.push(MountedFile {
             path: path.into(),
             content: content.into(),
             mode: 0o644,
@@ -657,7 +659,7 @@ impl BashBuilder {
         self
     }
 
-    /// Add a readonly text file to the virtual filesystem.
+    /// Mount a readonly text file in the virtual filesystem.
     ///
     /// This creates a readonly file (mode `0o444`) with the specified content.
     /// Parent directories are created automatically.
@@ -667,8 +669,11 @@ impl BashBuilder {
     /// - Reference data that should remain immutable
     /// - Simulating system files like `/etc/passwd`
     ///
-    /// This method only works when using the default [`InMemoryFs`]. If you call
-    /// [`.fs()`](Self::fs) to set a custom filesystem, text files are ignored.
+    /// Mounted files are added via an [`OverlayFs`] layer on top of the base
+    /// filesystem. This means:
+    /// - The base filesystem remains unchanged
+    /// - Mounted files take precedence over base filesystem files
+    /// - Works with any filesystem implementation
     ///
     /// # Example
     ///
@@ -678,8 +683,8 @@ impl BashBuilder {
     /// # #[tokio::main]
     /// # async fn main() -> bashkit::Result<()> {
     /// let mut bash = Bash::builder()
-    ///     .readonly_text("/etc/version", "1.2.3")
-    ///     .readonly_text("/etc/app.conf", "production=true\n")
+    ///     .mount_readonly_text("/etc/version", "1.2.3")
+    ///     .mount_readonly_text("/etc/app.conf", "production=true\n")
     ///     .build();
     ///
     /// // Can read the file
@@ -692,8 +697,12 @@ impl BashBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn readonly_text(mut self, path: impl Into<PathBuf>, content: impl Into<String>) -> Self {
-        self.text_files.push(PendingTextFile {
+    pub fn mount_readonly_text(
+        mut self,
+        path: impl Into<PathBuf>,
+        content: impl Into<String>,
+    ) -> Self {
+        self.mounted_files.push(MountedFile {
             path: path.into(),
             content: content.into(),
             mode: 0o444,
@@ -702,51 +711,108 @@ impl BashBuilder {
     }
 
     /// Build the Bash instance.
+    ///
+    /// If mounted files are specified, they are added via an [`OverlayFs`] layer
+    /// on top of the base filesystem. This means:
+    /// - The base filesystem remains unchanged
+    /// - Mounted files take precedence over base filesystem files
+    /// - Works with any filesystem implementation
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, InMemoryFs};
+    /// use std::sync::Arc;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// // Works with default InMemoryFs
+    /// let mut bash = Bash::builder()
+    ///     .mount_text("/config/app.conf", "debug=true\n")
+    ///     .build();
+    ///
+    /// // Also works with custom filesystems
+    /// let custom_fs = Arc::new(InMemoryFs::new());
+    /// let mut bash = Bash::builder()
+    ///     .fs(custom_fs)
+    ///     .mount_text("/config/app.conf", "debug=true\n")
+    ///     .mount_readonly_text("/etc/version", "1.0.0")
+    ///     .build();
+    ///
+    /// let result = bash.exec("cat /config/app.conf").await?;
+    /// assert_eq!(result.stdout, "debug=true\n");
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn build(self) -> Bash {
-        let fs = match self.fs {
-            Some(custom_fs) => custom_fs,
-            None => {
-                let mem_fs = InMemoryFs::new();
-                // Add text files to the default InMemoryFs
-                for tf in &self.text_files {
-                    mem_fs.add_file(&tf.path, &tf.content, tf.mode);
-                }
-                Arc::new(mem_fs)
+        let base_fs = self.fs.unwrap_or_else(|| Arc::new(InMemoryFs::new()));
+
+        // If there are mounted files, wrap in an OverlayFs
+        let fs: Arc<dyn FileSystem> = if self.mounted_files.is_empty() {
+            base_fs
+        } else {
+            let overlay = OverlayFs::new(base_fs);
+            // Add mounted files to the overlay layer
+            for mf in &self.mounted_files {
+                overlay.upper().add_file(&mf.path, &mf.content, mf.mode);
             }
+            Arc::new(overlay)
         };
-        let mut interpreter = Interpreter::with_config(
-            Arc::clone(&fs),
-            self.username.clone(),
+
+        Self::build_with_fs(
+            fs,
+            self.env,
+            self.username,
             self.hostname,
+            self.cwd,
+            self.limits,
             self.custom_builtins,
-        );
+            #[cfg(feature = "http_client")]
+            self.network_allowlist,
+        )
+    }
+
+    /// Internal helper to build Bash with a configured filesystem.
+    #[allow(clippy::too_many_arguments)]
+    fn build_with_fs(
+        fs: Arc<dyn FileSystem>,
+        env: HashMap<String, String>,
+        username: Option<String>,
+        hostname: Option<String>,
+        cwd: Option<PathBuf>,
+        limits: ExecutionLimits,
+        custom_builtins: HashMap<String, Box<dyn Builtin>>,
+        #[cfg(feature = "http_client")] network_allowlist: Option<NetworkAllowlist>,
+    ) -> Bash {
+        let mut interpreter =
+            Interpreter::with_config(Arc::clone(&fs), username.clone(), hostname, custom_builtins);
 
         // Set environment variables
-        for (key, value) in self.env {
+        for (key, value) in env {
             interpreter.set_env(&key, &value);
         }
 
         // If username is set, automatically set USER env var
-        if let Some(ref username) = self.username {
+        if let Some(ref username) = username {
             interpreter.set_env("USER", username);
         }
 
-        if let Some(cwd) = self.cwd {
+        if let Some(cwd) = cwd {
             interpreter.set_cwd(cwd);
         }
 
         // Configure HTTP client for network builtins
         #[cfg(feature = "http_client")]
-        if let Some(allowlist) = self.network_allowlist {
+        if let Some(allowlist) = network_allowlist {
             let client = network::HttpClient::new(allowlist);
             interpreter.set_http_client(client);
         }
 
-        let parser_timeout = self.limits.parser_timeout;
-        let max_input_bytes = self.limits.max_input_bytes;
-        let max_ast_depth = self.limits.max_ast_depth;
-        let max_parser_operations = self.limits.max_parser_operations;
-        interpreter.set_limits(self.limits);
+        let parser_timeout = limits.parser_timeout;
+        let max_input_bytes = limits.max_input_bytes;
+        let max_ast_depth = limits.max_ast_depth;
+        let max_parser_operations = limits.max_parser_operations;
+        interpreter.set_limits(limits);
 
         Bash {
             fs,
@@ -2993,7 +3059,7 @@ mod tests {
     #[tokio::test]
     async fn test_text_file_basic() {
         let mut bash = Bash::builder()
-            .text_file("/config/app.conf", "debug=true\nport=8080\n")
+            .mount_text("/config/app.conf", "debug=true\nport=8080\n")
             .build();
 
         let result = bash.exec("cat /config/app.conf").await.unwrap();
@@ -3003,9 +3069,9 @@ mod tests {
     #[tokio::test]
     async fn test_text_file_multiple() {
         let mut bash = Bash::builder()
-            .text_file("/data/file1.txt", "content one")
-            .text_file("/data/file2.txt", "content two")
-            .text_file("/other/file3.txt", "content three")
+            .mount_text("/data/file1.txt", "content one")
+            .mount_text("/data/file2.txt", "content two")
+            .mount_text("/other/file3.txt", "content three")
             .build();
 
         let result = bash.exec("cat /data/file1.txt").await.unwrap();
@@ -3022,7 +3088,7 @@ mod tests {
     async fn test_text_file_nested_directory() {
         // Parent directories should be created automatically
         let mut bash = Bash::builder()
-            .text_file("/a/b/c/d/file.txt", "nested content")
+            .mount_text("/a/b/c/d/file.txt", "nested content")
             .build();
 
         let result = bash.exec("cat /a/b/c/d/file.txt").await.unwrap();
@@ -3032,7 +3098,7 @@ mod tests {
     #[tokio::test]
     async fn test_text_file_mode() {
         let bash = Bash::builder()
-            .text_file("/tmp/writable.txt", "content")
+            .mount_text("/tmp/writable.txt", "content")
             .build();
 
         let stat = bash
@@ -3046,7 +3112,7 @@ mod tests {
     #[tokio::test]
     async fn test_readonly_text_basic() {
         let mut bash = Bash::builder()
-            .readonly_text("/etc/version", "1.2.3")
+            .mount_readonly_text("/etc/version", "1.2.3")
             .build();
 
         let result = bash.exec("cat /etc/version").await.unwrap();
@@ -3056,7 +3122,7 @@ mod tests {
     #[tokio::test]
     async fn test_readonly_text_mode() {
         let bash = Bash::builder()
-            .readonly_text("/etc/readonly.conf", "immutable")
+            .mount_readonly_text("/etc/readonly.conf", "immutable")
             .build();
 
         let stat = bash
@@ -3070,8 +3136,8 @@ mod tests {
     #[tokio::test]
     async fn test_text_file_mixed_readonly_writable() {
         let bash = Bash::builder()
-            .text_file("/data/writable.txt", "can edit")
-            .readonly_text("/data/readonly.txt", "cannot edit")
+            .mount_text("/data/writable.txt", "can edit")
+            .mount_readonly_text("/data/readonly.txt", "cannot edit")
             .build();
 
         let writable_stat = bash
@@ -3094,7 +3160,7 @@ mod tests {
         // text_file should work alongside other builder methods
         let mut bash = Bash::builder()
             .env("APP_NAME", "testapp")
-            .text_file("/config/app.conf", "name=${APP_NAME}")
+            .mount_text("/config/app.conf", "name=${APP_NAME}")
             .build();
 
         let result = bash.exec("echo $APP_NAME").await.unwrap();
@@ -3107,10 +3173,65 @@ mod tests {
     #[tokio::test]
     async fn test_text_file_json() {
         let mut bash = Bash::builder()
-            .text_file("/data/users.json", r#"["alice", "bob", "charlie"]"#)
+            .mount_text("/data/users.json", r#"["alice", "bob", "charlie"]"#)
             .build();
 
         let result = bash.exec("cat /data/users.json | jq '.[0]'").await.unwrap();
         assert_eq!(result.stdout, "\"alice\"\n");
+    }
+
+    #[tokio::test]
+    async fn test_mount_with_custom_filesystem() {
+        // Mount files work with custom filesystems via OverlayFs
+        let custom_fs = std::sync::Arc::new(InMemoryFs::new());
+
+        // Pre-populate the base filesystem
+        custom_fs
+            .write_file(std::path::Path::new("/base.txt"), b"from base")
+            .await
+            .unwrap();
+
+        let mut bash = Bash::builder()
+            .fs(custom_fs)
+            .mount_text("/mounted.txt", "from mount")
+            .mount_readonly_text("/readonly.txt", "immutable")
+            .build();
+
+        // Can read base file
+        let result = bash.exec("cat /base.txt").await.unwrap();
+        assert_eq!(result.stdout, "from base");
+
+        // Can read mounted files
+        let result = bash.exec("cat /mounted.txt").await.unwrap();
+        assert_eq!(result.stdout, "from mount");
+
+        let result = bash.exec("cat /readonly.txt").await.unwrap();
+        assert_eq!(result.stdout, "immutable");
+
+        // Mounted readonly file has correct permissions
+        let stat = bash
+            .fs()
+            .stat(std::path::Path::new("/readonly.txt"))
+            .await
+            .unwrap();
+        assert_eq!(stat.mode, 0o444);
+    }
+
+    #[tokio::test]
+    async fn test_mount_overwrites_base_file() {
+        // Mounted files take precedence over base filesystem
+        let custom_fs = std::sync::Arc::new(InMemoryFs::new());
+        custom_fs
+            .write_file(std::path::Path::new("/config.txt"), b"original")
+            .await
+            .unwrap();
+
+        let mut bash = Bash::builder()
+            .fs(custom_fs)
+            .mount_text("/config.txt", "overwritten")
+            .build();
+
+        let result = bash.exec("cat /config.txt").await.unwrap();
+        assert_eq!(result.stdout, "overwritten");
     }
 }
