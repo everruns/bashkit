@@ -123,10 +123,10 @@ Bash::builder()
 - `watch` - Execute command periodically (sandbox: shows command info, no continuous execution)
 
 #### Network
-- `curl` - HTTP client (requires network feature + allowlist)
+- `curl` - HTTP client (requires http_client feature + allowlist)
   - Options: `-s/--silent`, `-o FILE`, `-X METHOD`, `-d DATA`, `-H HEADER`, `-I/--head`, `-f/--fail`, `-L/--location`, `-w FORMAT`, `--compressed`, `-u/--user`, `-A/--user-agent`, `-e/--referer`, `-v/--verbose`, `-m/--max-time`
   - Security: URL allowlist enforced, 10MB response limit, 30s timeout, zip bomb protection via size-limited decompression
-- `wget` - Download files (requires network feature + allowlist)
+- `wget` - Download files (requires http_client feature + allowlist)
   - Options: `-q/--quiet`, `-O FILE`, `--spider`, `--header`, `-U/--user-agent`, `--post-data`, `-t/--tries`
   - Security: URL allowlist enforced, 10MB response limit, 30s timeout
 
@@ -156,8 +156,8 @@ pub struct Context<'a> {
     pub cwd: &'a mut PathBuf,
     pub fs: Arc<dyn FileSystem>,
     pub stdin: Option<&'a str>,
-    // Only available with network feature:
-    #[cfg(feature = "network")]
+    // Only available with http_client feature:
+    #[cfg(feature = "http_client")]
     pub http_client: Option<&'a HttpClient>,
 }
 ```

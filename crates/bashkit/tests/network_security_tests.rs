@@ -10,9 +10,9 @@
 //! - Redirect security
 //! - curl/wget builtin security
 //!
-//! Run with: `cargo test --features network network_security`
+//! Run with: `cargo test --features http_client network_security`
 
-#![cfg(feature = "network")]
+#![cfg(feature = "http_client")]
 
 use bashkit::{Bash, NetworkAllowlist};
 

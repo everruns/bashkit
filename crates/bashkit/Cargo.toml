@@ -36,7 +36,7 @@ globset = { workspace = true }
 # Date/Time
 chrono = { workspace = true }
 
-# HTTP client (for curl) - optional, enabled with network feature
+# HTTP client (for curl/wget) - optional, enabled with http_client feature
 reqwest = { workspace = true, optional = true }
 
 # Fault injection for testing (optional)
@@ -58,7 +58,7 @@ base64 = { workspace = true, optional = true }
 
 [features]
 default = []
-network = ["reqwest", "base64"]
+http_client = ["reqwest", "base64"]
 # Enable fail points for security/fault injection testing
 # Usage: FAILPOINTS="fail_point_name=action" cargo test --features failpoints
 failpoints = ["fail/failpoints"]
@@ -76,4 +76,4 @@ harness = false
 
 [[example]]
 name = "agent_tool"
-required-features = ["network"]
+required-features = ["http_client"]

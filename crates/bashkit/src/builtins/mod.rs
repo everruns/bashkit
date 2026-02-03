@@ -164,7 +164,7 @@ pub struct Context<'a> {
     /// Only available when the `network` feature is enabled and
     /// a [`NetworkAllowlist`](crate::NetworkAllowlist) is configured via
     /// [`BashBuilder::network`](crate::BashBuilder::network).
-    #[cfg(feature = "network")]
+    #[cfg(feature = "http_client")]
     pub http_client: Option<&'a crate::network::HttpClient>,
 }
 
@@ -188,7 +188,7 @@ impl<'a> Context<'a> {
             cwd,
             fs,
             stdin,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         }
     }

@@ -182,7 +182,7 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin: Some(input),
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -244,7 +244,7 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin: Some(input),
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 

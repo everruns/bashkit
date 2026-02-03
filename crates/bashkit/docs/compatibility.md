@@ -88,8 +88,8 @@ for sandbox security reasons. See the compliance spec for details.
 | `tr` | `-d`, character ranges | Translate/delete chars |
 | `date` | `+FORMAT`, `-u` | Display/format date |
 | `wait` | `[JOB_ID...]` | Wait for background jobs |
-| `curl` | `-s`, `-o`, `-X`, `-d`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` | HTTP client (requires network feature) |
-| `wget` | `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` | Download files (requires network feature) |
+| `curl` | `-s`, `-o`, `-X`, `-d`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` | HTTP client (requires http_client feature) |
+| `wget` | `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` | Download files (requires http_client feature) |
 | `timeout` | `DURATION COMMAND` | Run with time limit (stub) |
 | `ls` | `-l`, `-a`, `-h`, `-1`, `-R` | List directory contents |
 | `find` | `-name`, `-type`, `-maxdepth`, `-print` | Search for files |

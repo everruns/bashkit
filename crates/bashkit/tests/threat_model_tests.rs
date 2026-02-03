@@ -418,13 +418,13 @@ mod information_disclosure {
 }
 
 // =============================================================================
-// 5. NETWORK SECURITY TESTS (when network feature enabled)
+// 5. NETWORK SECURITY TESTS (when http_client feature enabled)
 // =============================================================================
 
 mod network_security {
     use super::*;
 
-    /// Test that curl/wget commands aren't available without network feature
+    /// Test that curl/wget commands aren't available without http_client feature
     #[tokio::test]
     async fn threat_network_commands_not_builtin() {
         let mut bash = Bash::new();

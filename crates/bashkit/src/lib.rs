@@ -239,7 +239,7 @@ pub use interpreter::{ControlFlow, ExecResult};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
 
-#[cfg(feature = "network")]
+#[cfg(feature = "http_client")]
 pub use network::HttpClient;
 
 use interpreter::Interpreter;
@@ -422,7 +422,7 @@ pub struct BashBuilder {
     hostname: Option<String>,
     custom_builtins: HashMap<String, Box<dyn Builtin>>,
     /// Network allowlist for curl/wget builtins
-    #[cfg(feature = "network")]
+    #[cfg(feature = "http_client")]
     network_allowlist: Option<NetworkAllowlist>,
 }
 
@@ -499,7 +499,7 @@ impl BashBuilder {
     ///
     /// Using [`NetworkAllowlist::allow_all()`] is dangerous and should only be
     /// used for testing or when the script is fully trusted.
-    #[cfg(feature = "network")]
+    #[cfg(feature = "http_client")]
     pub fn network(mut self, allowlist: NetworkAllowlist) -> Self {
         self.network_allowlist = Some(allowlist);
         self
@@ -571,7 +571,7 @@ impl BashBuilder {
         }
 
         // Configure HTTP client for network builtins
-        #[cfg(feature = "network")]
+        #[cfg(feature = "http_client")]
         if let Some(allowlist) = self.network_allowlist {
             let client = network::HttpClient::new(allowlist);
             interpreter.set_http_client(client);

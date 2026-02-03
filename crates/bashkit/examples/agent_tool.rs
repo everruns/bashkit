@@ -3,7 +3,7 @@
 //! Demonstrates a real AI agent using Claude to execute bash commands
 //! in a sandboxed BashKit session.
 //!
-//! Run with: ANTHROPIC_API_KEY=your-key cargo run --example agent_tool --features network
+//! Run with: ANTHROPIC_API_KEY=your-key cargo run --example agent_tool --features http_client
 //!
 //! The agent will autonomously create folders and write poems using the Bash tool.
 
@@ -258,7 +258,7 @@ async fn main() -> anyhow::Result<()> {
     let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| {
         eprintln!("Error: ANTHROPIC_API_KEY environment variable not set");
         eprintln!(
-            "Usage: ANTHROPIC_API_KEY=your-key cargo run --example agent_tool --features network"
+            "Usage: ANTHROPIC_API_KEY=your-key cargo run --example agent_tool --features http_client"
         );
         std::process::exit(1);
     });

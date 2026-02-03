@@ -547,7 +547,7 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 

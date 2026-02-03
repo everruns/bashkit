@@ -312,7 +312,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("foo bar baz"),
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -334,7 +334,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("file1 file2"),
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -356,7 +356,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("a b c"),
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -388,7 +388,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("file1\nfile2"),
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -411,7 +411,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("a:b:c"),
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -433,7 +433,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some(""),
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -455,7 +455,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("test"),
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -479,7 +479,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("Hello, world!"),
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -505,7 +505,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("content"),
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -538,7 +538,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("appended"),
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -563,7 +563,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("pass through"),
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -585,7 +585,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some("test"),
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -609,7 +609,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -632,7 +632,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -655,7 +655,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -677,7 +677,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 

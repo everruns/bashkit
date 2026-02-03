@@ -769,7 +769,7 @@ impl Builtin for Gunzip {
             cwd: ctx.cwd,
             fs: ctx.fs,
             stdin: ctx.stdin,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: ctx.http_client,
         };
 
@@ -832,7 +832,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -849,7 +849,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -881,7 +881,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -901,7 +901,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -935,7 +935,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -957,7 +957,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -983,7 +983,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -1015,7 +1015,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -1031,7 +1031,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -1060,7 +1060,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -1088,7 +1088,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -1103,7 +1103,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -1132,7 +1132,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -1155,7 +1155,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -1181,7 +1181,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -1205,7 +1205,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -1234,7 +1234,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
         Gzip.execute(ctx).await.unwrap();
@@ -1248,7 +1248,7 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 

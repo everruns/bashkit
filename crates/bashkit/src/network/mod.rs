@@ -13,11 +13,11 @@
 
 mod allowlist;
 
-#[cfg(feature = "network")]
+#[cfg(feature = "http_client")]
 mod client;
 
 #[allow(unused_imports)] // UrlMatch is used internally but may not be exported
 pub use allowlist::{NetworkAllowlist, UrlMatch};
 
-#[cfg(feature = "network")]
+#[cfg(feature = "http_client")]
 pub use client::{HttpClient, Method, Response};

@@ -38,7 +38,7 @@ use crate::interpreter::ExecResult;
 ///   -m, --max-time S   Maximum time in seconds for operation
 ///   -v, --verbose      Verbose output
 ///
-/// Note: Network access requires the 'network' feature and proper
+/// Note: Network access requires the 'http_client' feature and proper
 /// URL allowlist configuration. Without configuration, all requests
 /// will fail with an access denied error.
 ///
@@ -160,7 +160,7 @@ impl Builtin for Curl {
         };
 
         // Check if network is configured
-        #[cfg(feature = "network")]
+        #[cfg(feature = "http_client")]
         {
             if let Some(http_client) = ctx.http_client {
                 return execute_curl_request(
@@ -209,7 +209,7 @@ impl Builtin for Curl {
         Ok(ExecResult::err(
             format!(
                 "curl: network access not configured\nURL: {}\n\
-                 Note: Network builtins require the 'network' feature and\n\
+                 Note: Network builtins require the 'http_client' feature and\n\
                  URL allowlist configuration for security.\n",
                 url
             ),
@@ -218,8 +218,8 @@ impl Builtin for Curl {
     }
 }
 
-/// Execute the actual curl request when network feature is enabled.
-#[cfg(feature = "network")]
+/// Execute the actual curl request when http_client feature is enabled.
+#[cfg(feature = "http_client")]
 #[allow(clippy::too_many_arguments)]
 async fn execute_curl_request(
     http_client: &crate::network::HttpClient,
@@ -447,7 +447,7 @@ async fn execute_curl_request(
 }
 
 /// Resolve a redirect URL which may be relative.
-#[cfg(feature = "network")]
+#[cfg(feature = "http_client")]
 fn resolve_redirect_url(base: &str, location: &str) -> String {
     if location.starts_with("http://") || location.starts_with("https://") {
         location.to_string()
@@ -475,7 +475,7 @@ fn resolve_redirect_url(base: &str, location: &str) -> String {
 }
 
 /// Format the -w/--write-out output.
-#[cfg(feature = "network")]
+#[cfg(feature = "http_client")]
 fn format_write_out(fmt: &str, response: &crate::network::Response, size: usize) -> String {
     let mut output = fmt.to_string();
     output = output.replace("%{http_code}", &response.status.to_string());
@@ -496,7 +496,7 @@ fn format_write_out(fmt: &str, response: &crate::network::Response, size: usize)
 /// Decompress gzip data with size limit.
 ///
 /// Returns error if decompressed size exceeds max_size (prevents zip bombs).
-#[cfg(feature = "network")]
+#[cfg(feature = "http_client")]
 fn decompress_gzip(data: &[u8], max_size: usize) -> Result<Vec<u8>> {
     use flate2::read::GzDecoder;
     use std::io::Read;
@@ -532,7 +532,7 @@ fn decompress_gzip(data: &[u8], max_size: usize) -> Result<Vec<u8>> {
 /// Decompress deflate data with size limit.
 ///
 /// Returns error if decompressed size exceeds max_size (prevents zip bombs).
-#[cfg(feature = "network")]
+#[cfg(feature = "http_client")]
 fn decompress_deflate(data: &[u8], max_size: usize) -> Result<Vec<u8>> {
     use flate2::read::DeflateDecoder;
     use std::io::Read;
@@ -588,7 +588,7 @@ fn resolve_path(cwd: &std::path::Path, path_str: &str) -> std::path::PathBuf {
 ///   --post-data DATA   POST data with request
 ///   -t, --tries N      Number of retries (ignored, for compatibility)
 ///
-/// Note: Network access requires the 'network' feature and proper
+/// Note: Network access requires the 'http_client' feature and proper
 /// URL allowlist configuration.
 ///
 /// # Security
@@ -662,7 +662,7 @@ impl Builtin for Wget {
         };
 
         // Check if network is configured
-        #[cfg(feature = "network")]
+        #[cfg(feature = "http_client")]
         {
             if let Some(http_client) = ctx.http_client {
                 return execute_wget_request(
@@ -686,7 +686,7 @@ impl Builtin for Wget {
         Ok(ExecResult::err(
             format!(
                 "wget: network access not configured\nURL: {}\n\
-                 Note: Network builtins require the 'network' feature and\n\
+                 Note: Network builtins require the 'http_client' feature and\n\
                  URL allowlist configuration for security.\n",
                 url
             ),
@@ -695,8 +695,8 @@ impl Builtin for Wget {
     }
 }
 
-/// Execute the actual wget request when network feature is enabled.
-#[cfg(feature = "network")]
+/// Execute the actual wget request when http_client feature is enabled.
+#[cfg(feature = "http_client")]
 #[allow(clippy::too_many_arguments)]
 async fn execute_wget_request(
     http_client: &crate::network::HttpClient,
@@ -837,7 +837,7 @@ async fn execute_wget_request(
 }
 
 /// Extract filename from URL for wget default output.
-#[cfg(feature = "network")]
+#[cfg(feature = "http_client")]
 fn extract_filename_from_url(url: &str) -> String {
     if let Ok(parsed) = url::Url::parse(url) {
         let path = parsed.path();
@@ -851,7 +851,7 @@ fn extract_filename_from_url(url: &str) -> String {
 }
 
 /// Extract host from URL for wget progress output.
-#[cfg(feature = "network")]
+#[cfg(feature = "http_client")]
 fn extract_host_from_url(url: &str) -> String {
     if let Ok(parsed) = url::Url::parse(url) {
         if let Some(host) = parsed.host_str() {
@@ -885,7 +885,7 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -906,7 +906,7 @@ mod tests {
             cwd: &mut cwd,
             fs,
             stdin: None,
-            #[cfg(feature = "network")]
+            #[cfg(feature = "http_client")]
             http_client: None,
         };
 
@@ -956,7 +956,7 @@ mod tests {
         assert_eq!(result, PathBuf::from("/home/user/downloads/file.txt"));
     }
 
-    #[cfg(feature = "network")]
+    #[cfg(feature = "http_client")]
     mod network_tests {
         use super::*;
 
