@@ -1,6 +1,6 @@
 //! Curl and wget builtins - transfer data from URLs
 //!
-//! Note: These builtins require the `network` feature and proper configuration.
+//! Note: These builtins require the `http_client` feature and proper configuration.
 //! Network access is restricted by allowlist for security.
 //!
 //! # Security
@@ -9,6 +9,7 @@
 //! - Response size is limited (default: 10MB) to prevent memory exhaustion
 //! - Timeouts prevent hanging on unresponsive servers
 //! - Redirects are not followed automatically (to prevent allowlist bypass)
+//! - Compression decompression is size-limited to prevent zip bombs
 
 use async_trait::async_trait;
 use std::path::Path;

@@ -5,10 +5,33 @@
 use std::collections::HashSet;
 use url::Url;
 
-/// Network allowlist configuration.
+/// Network allowlist configuration for controlling HTTP access.
 ///
 /// URLs must match an entry in the allowlist to be accessed.
-/// An empty allowlist means all URLs are blocked.
+/// An empty allowlist means all URLs are blocked (secure by default).
+///
+/// # Examples
+///
+/// ```rust
+/// use bashkit::NetworkAllowlist;
+///
+/// // Create allowlist for specific APIs
+/// let allowlist = NetworkAllowlist::new()
+///     .allow("https://api.example.com")        // Allow entire host
+///     .allow("https://cdn.example.com/assets/"); // Allow path prefix
+///
+/// // Check URLs
+/// assert!(allowlist.is_allowed("https://api.example.com/v1/users"));
+/// assert!(allowlist.is_allowed("https://cdn.example.com/assets/logo.png"));
+/// assert!(!allowlist.is_allowed("https://evil.com"));
+/// ```
+///
+/// # Pattern Matching
+///
+/// - **Scheme**: Must match exactly (https vs http)
+/// - **Host**: Must match exactly (no wildcards)
+/// - **Port**: Must match (defaults apply: 443 for https, 80 for http)
+/// - **Path**: Pattern path is treated as a prefix
 #[derive(Debug, Clone, Default)]
 pub struct NetworkAllowlist {
     /// URL patterns that are allowed

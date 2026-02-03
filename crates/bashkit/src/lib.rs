@@ -202,6 +202,36 @@
 //! # }
 //! ```
 //!
+//! # HTTP Access (curl/wget)
+//!
+//! Enable the `http_client` feature and configure an allowlist for network access:
+//!
+//! ```rust,no_run
+//! use bashkit::{Bash, NetworkAllowlist};
+//!
+//! # #[tokio::main]
+//! # async fn main() -> bashkit::Result<()> {
+//! let mut bash = Bash::builder()
+//!     .network(NetworkAllowlist::new()
+//!         .allow("https://httpbin.org"))
+//!     .build();
+//!
+//! // curl and wget now work for allowed URLs
+//! let result = bash.exec("curl -s https://httpbin.org/get").await?;
+//! assert!(result.stdout.contains("httpbin.org"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Security features:
+//! - URL allowlist enforcement (no access without explicit configuration)
+//! - 10MB response size limit (prevents memory exhaustion)
+//! - 30 second timeout (prevents hanging)
+//! - No automatic redirects (prevents allowlist bypass)
+//! - Zip bomb protection for compressed responses
+//!
+//! See the [`network`] module for detailed documentation.
+//!
 //! # Examples
 //!
 //! See the `examples/` directory for complete working examples:
