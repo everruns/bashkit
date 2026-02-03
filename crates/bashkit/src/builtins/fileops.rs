@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use std::path::Path;
 
-use super::{Builtin, Context};
+use super::{resolve_path, Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -351,16 +351,6 @@ impl Builtin for Chmod {
         }
 
         Ok(ExecResult::ok(String::new()))
-    }
-}
-
-/// Resolve a path relative to cwd
-fn resolve_path(cwd: &std::path::Path, path_str: &str) -> std::path::PathBuf {
-    let path = Path::new(path_str);
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        cwd.join(path)
     }
 }
 
