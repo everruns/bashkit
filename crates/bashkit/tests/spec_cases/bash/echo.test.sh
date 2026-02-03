@@ -81,7 +81,6 @@ world
 ### end
 
 ### echo_combined_en
-### skip: combined flag handling differs
 # Combined -en flags
 echo -en "hello\nworld"
 printf '\n'
@@ -91,7 +90,6 @@ world
 ### end
 
 ### echo_combined_ne
-### skip: combined flag handling differs
 # Combined -ne flags
 echo -ne "a\tb"
 printf '\n'
@@ -100,7 +98,7 @@ a	b
 ### end
 
 ### echo_E_flag
-### skip: -E flag (disable escapes) not implemented
+# -E flag disables escape interpretation
 echo -E "hello\nworld"
 ### expect
 hello\nworld
@@ -165,15 +163,15 @@ echo "?"
 ### end
 
 ### echo_escape_hex
-### skip: hex escapes in echo -e not implemented
+# Hex escapes in echo -e
 echo -e "\x48\x65\x6c\x6c\x6f"
 ### expect
 Hello
 ### end
 
 ### echo_escape_octal
-### skip: octal escapes in echo -e not implemented
-echo -e "\110\145\154\154\157"
+# Octal escapes in echo -e use \0nnn format
+echo -e "\0110\0145\0154\0154\0157"
 ### expect
 Hello
 ### end

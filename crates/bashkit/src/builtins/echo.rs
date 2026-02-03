@@ -20,22 +20,34 @@ impl Builtin for Echo {
         let mut interpret_escapes = false;
         let mut args_iter = ctx.args.iter().peekable();
 
-        // Parse options
+        // Parse options - support combined flags like -en, -ne, -neE
         while let Some(arg) = args_iter.peek() {
-            match arg.as_str() {
-                "-n" => {
-                    add_newline = false;
-                    args_iter.next();
+            let arg_str = arg.as_str();
+            if arg_str.starts_with('-') && arg_str.len() > 1 && !arg_str.starts_with("--") {
+                let mut is_valid_option = true;
+                // Check if all characters after '-' are valid options
+                for c in arg_str[1..].chars() {
+                    if !matches!(c, 'n' | 'e' | 'E') {
+                        is_valid_option = false;
+                        break;
+                    }
                 }
-                "-e" => {
-                    interpret_escapes = true;
+                if is_valid_option {
+                    // Process each flag character
+                    for c in arg_str[1..].chars() {
+                        match c {
+                            'n' => add_newline = false,
+                            'e' => interpret_escapes = true,
+                            'E' => interpret_escapes = false,
+                            _ => {}
+                        }
+                    }
                     args_iter.next();
+                } else {
+                    break;
                 }
-                "-E" => {
-                    interpret_escapes = false;
-                    args_iter.next();
-                }
-                _ => break,
+            } else {
+                break;
             }
         }
 
