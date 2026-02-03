@@ -69,3 +69,6 @@ fail = "0.5"
 
 # Property-based testing
 proptest = "1"
+
+# JSON Schema generation
+schemars = "0.8"
