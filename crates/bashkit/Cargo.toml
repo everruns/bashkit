@@ -57,12 +57,18 @@ flate2 = { workspace = true }
 # Base64 encoding (for HTTP basic auth)
 base64 = { workspace = true, optional = true }
 
+# Logging/tracing (optional)
+tracing = { workspace = true, optional = true }
+
 [features]
 default = []
 http_client = ["reqwest", "base64"]
 # Enable fail points for security/fault injection testing
 # Usage: FAILPOINTS="fail_point_name=action" cargo test --features failpoints
 failpoints = ["fail/failpoints"]
+# Enable structured logging via tracing crate
+# Usage: cargo build --features logging
+logging = ["tracing"]
 
 [dev-dependencies]
 tokio-test = { workspace = true }
