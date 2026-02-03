@@ -147,9 +147,10 @@ fail_point!("module::function", |action| {
 ## Related Files
 
 - `crates/bashkit/tests/security_failpoint_tests.rs` - Fail-point security tests
-- `crates/bashkit/tests/threat_model_tests.rs` - Threat model tests (39 tests)
+- `crates/bashkit/tests/threat_model_tests.rs` - Threat model tests (51 tests)
+- `crates/bashkit/tests/builtin_error_security_tests.rs` - Custom builtin error security tests (34 tests)
 - `crates/bashkit/src/limits.rs` - Resource limit fail points
 - `crates/bashkit/src/fs/memory.rs` - Filesystem fail points
-- `crates/bashkit/src/interpreter/mod.rs` - Interpreter fail points
+- `crates/bashkit/src/interpreter/mod.rs` - Interpreter fail points, panic catching
 - `crates/bashkit/src/builtins/system.rs` - Hardcoded system builtins
 - `specs/006-threat-model.md` - Threat model specification
