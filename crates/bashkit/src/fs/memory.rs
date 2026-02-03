@@ -263,6 +263,75 @@ impl InMemoryFs {
 
         result
     }
+
+    /// Add a file with specific mode (synchronous, for initial setup).
+    ///
+    /// This method is primarily used by [`BashBuilder`](crate::BashBuilder) to
+    /// pre-populate the filesystem during construction. For runtime file operations,
+    /// use the async [`FileSystem::write_file`] method instead.
+    ///
+    /// Parent directories are created automatically.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Absolute path where the file will be created
+    /// * `content` - File content (will be converted to bytes)
+    /// * `mode` - Unix permission mode (e.g., `0o644` for writable, `0o444` for readonly)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::InMemoryFs;
+    ///
+    /// let fs = InMemoryFs::new();
+    ///
+    /// // Add a writable config file
+    /// fs.add_file("/config/app.conf", "debug=true\n", 0o644);
+    ///
+    /// // Add a readonly file
+    /// fs.add_file("/etc/version", "1.0.0", 0o444);
+    /// ```
+    pub fn add_file(&self, path: impl AsRef<Path>, content: impl AsRef<[u8]>, mode: u32) {
+        let path = Self::normalize_path(path.as_ref());
+        let content = content.as_ref();
+        let mut entries = self.entries.write().unwrap();
+
+        // Ensure parent directories exist
+        if let Some(parent) = path.parent() {
+            let mut current = PathBuf::from("/");
+            for component in parent.components().skip(1) {
+                current.push(component);
+                if !entries.contains_key(&current) {
+                    entries.insert(
+                        current.clone(),
+                        FsEntry::Directory {
+                            metadata: Metadata {
+                                file_type: FileType::Directory,
+                                size: 0,
+                                mode: 0o755,
+                                modified: SystemTime::now(),
+                                created: SystemTime::now(),
+                            },
+                        },
+                    );
+                }
+            }
+        }
+
+        entries.insert(
+            path,
+            FsEntry::File {
+                content: content.to_vec(),
+                metadata: Metadata {
+                    file_type: FileType::File,
+                    size: content.len() as u64,
+                    mode,
+                    modified: SystemTime::now(),
+                    created: SystemTime::now(),
+                },
+            },
+        );
+    }
 }
 
 #[async_trait]
@@ -659,5 +728,55 @@ mod tests {
 
         assert!(fs.exists(Path::new("/tmp")).await.unwrap());
         assert!(!fs.exists(Path::new("/tmp/nonexistent")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_add_file_basic() {
+        let fs = InMemoryFs::new();
+        fs.add_file("/tmp/added.txt", "hello from add_file", 0o644);
+
+        let content = fs.read_file(Path::new("/tmp/added.txt")).await.unwrap();
+        assert_eq!(content, b"hello from add_file");
+    }
+
+    #[tokio::test]
+    async fn test_add_file_with_mode() {
+        let fs = InMemoryFs::new();
+        fs.add_file("/etc/readonly.conf", "secret", 0o444);
+
+        let stat = fs.stat(Path::new("/etc/readonly.conf")).await.unwrap();
+        assert_eq!(stat.mode, 0o444);
+    }
+
+    #[tokio::test]
+    async fn test_add_file_creates_parent_directories() {
+        let fs = InMemoryFs::new();
+        fs.add_file("/a/b/c/d/nested.txt", "deep content", 0o644);
+
+        // File should exist
+        assert!(fs.exists(Path::new("/a/b/c/d/nested.txt")).await.unwrap());
+
+        // Parent directories should exist
+        assert!(fs.exists(Path::new("/a")).await.unwrap());
+        assert!(fs.exists(Path::new("/a/b")).await.unwrap());
+        assert!(fs.exists(Path::new("/a/b/c")).await.unwrap());
+        assert!(fs.exists(Path::new("/a/b/c/d")).await.unwrap());
+
+        // Verify content
+        let content = fs
+            .read_file(Path::new("/a/b/c/d/nested.txt"))
+            .await
+            .unwrap();
+        assert_eq!(content, b"deep content");
+    }
+
+    #[tokio::test]
+    async fn test_add_file_binary() {
+        let fs = InMemoryFs::new();
+        let binary_data = vec![0x00, 0xFF, 0x89, 0x50, 0x4E, 0x47];
+        fs.add_file("/data/binary.bin", &binary_data, 0o644);
+
+        let content = fs.read_file(Path::new("/data/binary.bin")).await.unwrap();
+        assert_eq!(content, binary_data);
     }
 }
