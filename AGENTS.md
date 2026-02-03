@@ -35,9 +35,9 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 
 ### Documentation
 
-- Guides live in `docs/` as markdown files
+- Guides live in `crates/bashkit/docs/` as markdown files
 - Embedded into rustdoc via `include_str!` (see `specs/008-documentation.md`)
-- Edit `docs/*.md`, not the doc modules in `lib.rs`
+- Edit `crates/bashkit/docs/*.md`, not the doc modules in `lib.rs`
 - Add "See also" cross-links when creating new guides
 - Run `cargo doc --open` to preview changes
 

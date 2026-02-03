@@ -551,7 +551,7 @@ impl BashBuilder {
 // Documentation Modules
 // =============================================================================
 // These modules embed external markdown guides into rustdoc.
-// Source files live in docs/ - edit there, not here.
+// Source files live in crates/bashkit/docs/ - edit there, not here.
 // See specs/008-documentation.md for the documentation approach.
 
 /// Guide for creating custom builtins to extend BashKit.
@@ -563,7 +563,7 @@ impl BashBuilder {
 /// - Best practices and examples
 ///
 /// **Related:** [`BashBuilder::builtin`], [`compatibility_guide`]
-#[doc = include_str!("../../../docs/custom_builtins.md")]
+#[doc = include_str!("../docs/custom_builtins.md")]
 pub mod custom_builtins_guide {}
 
 /// Comprehensive reference for supported bash features.
@@ -575,7 +575,7 @@ pub mod custom_builtins_guide {}
 /// - Arrays, test operators, and resource limits
 ///
 /// **Related:** [`custom_builtins_guide`]
-#[doc = include_str!("../../../docs/compatibility.md")]
+#[doc = include_str!("../docs/compatibility.md")]
 pub mod compatibility_guide {}
 
 #[cfg(test)]

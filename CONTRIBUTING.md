@@ -60,7 +60,7 @@ test: add array edge case tests
 1. Check if the feature is documented in `specs/`
 2. Add spec tests in `crates/bashkit/tests/spec_cases/`
 3. Implement the feature
-4. Update `docs/compatibility.md` if applicable
+4. Update `crates/bashkit/docs/compatibility.md` if applicable
 5. Update `KNOWN_LIMITATIONS.md` if removing a limitation
 
 ## Spec Test Format
