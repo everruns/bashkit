@@ -450,6 +450,13 @@ impl Bash {
 ///     .builtin("mycommand", Box::new(MyCommand))
 ///     .build();
 /// ```
+/// A text file to be added during builder construction.
+struct PendingTextFile {
+    path: PathBuf,
+    content: String,
+    mode: u32,
+}
+
 #[derive(Default)]
 pub struct BashBuilder {
     fs: Option<Arc<dyn FileSystem>>,
@@ -459,6 +466,8 @@ pub struct BashBuilder {
     username: Option<String>,
     hostname: Option<String>,
     custom_builtins: HashMap<String, Box<dyn Builtin>>,
+    /// Text files to add to the default InMemoryFs
+    text_files: Vec<PendingTextFile>,
     /// Network allowlist for curl/wget builtins
     #[cfg(feature = "http_client")]
     network_allowlist: Option<NetworkAllowlist>,
@@ -584,9 +593,98 @@ impl BashBuilder {
         self
     }
 
+    /// Add a text file to the virtual filesystem.
+    ///
+    /// This creates a regular file (mode `0o644`) with the specified content at
+    /// the given path. Parent directories are created automatically.
+    ///
+    /// This method only works when using the default [`InMemoryFs`]. If you call
+    /// [`.fs()`](Self::fs) to set a custom filesystem, text files are ignored.
+    /// Use the filesystem's async methods directly for custom filesystems.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::Bash;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::builder()
+    ///     .text_file("/config/app.conf", "debug=true\nport=8080\n")
+    ///     .text_file("/data/users.json", r#"["alice", "bob"]"#)
+    ///     .build();
+    ///
+    /// let result = bash.exec("cat /config/app.conf").await?;
+    /// assert_eq!(result.stdout, "debug=true\nport=8080\n");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn text_file(mut self, path: impl Into<PathBuf>, content: impl Into<String>) -> Self {
+        self.text_files.push(PendingTextFile {
+            path: path.into(),
+            content: content.into(),
+            mode: 0o644,
+        });
+        self
+    }
+
+    /// Add a readonly text file to the virtual filesystem.
+    ///
+    /// This creates a readonly file (mode `0o444`) with the specified content.
+    /// Parent directories are created automatically.
+    ///
+    /// Readonly files are useful for:
+    /// - Configuration that shouldn't be modified by scripts
+    /// - Reference data that should remain immutable
+    /// - Simulating system files like `/etc/passwd`
+    ///
+    /// This method only works when using the default [`InMemoryFs`]. If you call
+    /// [`.fs()`](Self::fs) to set a custom filesystem, text files are ignored.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::Bash;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::builder()
+    ///     .readonly_text("/etc/version", "1.2.3")
+    ///     .readonly_text("/etc/app.conf", "production=true\n")
+    ///     .build();
+    ///
+    /// // Can read the file
+    /// let result = bash.exec("cat /etc/version").await?;
+    /// assert_eq!(result.stdout, "1.2.3");
+    ///
+    /// // File has readonly permissions
+    /// let stat = bash.fs().stat(std::path::Path::new("/etc/version")).await?;
+    /// assert_eq!(stat.mode, 0o444);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn readonly_text(mut self, path: impl Into<PathBuf>, content: impl Into<String>) -> Self {
+        self.text_files.push(PendingTextFile {
+            path: path.into(),
+            content: content.into(),
+            mode: 0o444,
+        });
+        self
+    }
+
     /// Build the Bash instance.
     pub fn build(self) -> Bash {
-        let fs = self.fs.unwrap_or_else(|| Arc::new(InMemoryFs::new()));
+        let fs = match self.fs {
+            Some(custom_fs) => custom_fs,
+            None => {
+                let mem_fs = InMemoryFs::new();
+                // Add text files to the default InMemoryFs
+                for tf in &self.text_files {
+                    mem_fs.add_file(&tf.path, &tf.content, tf.mode);
+                }
+                Arc::new(mem_fs)
+            }
+        };
         let mut interpreter = Interpreter::with_config(
             Arc::clone(&fs),
             self.username.clone(),
@@ -2857,5 +2955,133 @@ mod tests {
         let mut bash = Bash::new();
         let result = bash.exec("arr=(); echo \"${!arr[@]}\"").await.unwrap();
         assert_eq!(result.stdout, "\n");
+    }
+
+    // ============================================================
+    // Text file builder methods
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_text_file_basic() {
+        let mut bash = Bash::builder()
+            .text_file("/config/app.conf", "debug=true\nport=8080\n")
+            .build();
+
+        let result = bash.exec("cat /config/app.conf").await.unwrap();
+        assert_eq!(result.stdout, "debug=true\nport=8080\n");
+    }
+
+    #[tokio::test]
+    async fn test_text_file_multiple() {
+        let mut bash = Bash::builder()
+            .text_file("/data/file1.txt", "content one")
+            .text_file("/data/file2.txt", "content two")
+            .text_file("/other/file3.txt", "content three")
+            .build();
+
+        let result = bash.exec("cat /data/file1.txt").await.unwrap();
+        assert_eq!(result.stdout, "content one");
+
+        let result = bash.exec("cat /data/file2.txt").await.unwrap();
+        assert_eq!(result.stdout, "content two");
+
+        let result = bash.exec("cat /other/file3.txt").await.unwrap();
+        assert_eq!(result.stdout, "content three");
+    }
+
+    #[tokio::test]
+    async fn test_text_file_nested_directory() {
+        // Parent directories should be created automatically
+        let mut bash = Bash::builder()
+            .text_file("/a/b/c/d/file.txt", "nested content")
+            .build();
+
+        let result = bash.exec("cat /a/b/c/d/file.txt").await.unwrap();
+        assert_eq!(result.stdout, "nested content");
+    }
+
+    #[tokio::test]
+    async fn test_text_file_mode() {
+        let bash = Bash::builder()
+            .text_file("/tmp/writable.txt", "content")
+            .build();
+
+        let stat = bash
+            .fs()
+            .stat(std::path::Path::new("/tmp/writable.txt"))
+            .await
+            .unwrap();
+        assert_eq!(stat.mode, 0o644);
+    }
+
+    #[tokio::test]
+    async fn test_readonly_text_basic() {
+        let mut bash = Bash::builder()
+            .readonly_text("/etc/version", "1.2.3")
+            .build();
+
+        let result = bash.exec("cat /etc/version").await.unwrap();
+        assert_eq!(result.stdout, "1.2.3");
+    }
+
+    #[tokio::test]
+    async fn test_readonly_text_mode() {
+        let bash = Bash::builder()
+            .readonly_text("/etc/readonly.conf", "immutable")
+            .build();
+
+        let stat = bash
+            .fs()
+            .stat(std::path::Path::new("/etc/readonly.conf"))
+            .await
+            .unwrap();
+        assert_eq!(stat.mode, 0o444);
+    }
+
+    #[tokio::test]
+    async fn test_text_file_mixed_readonly_writable() {
+        let bash = Bash::builder()
+            .text_file("/data/writable.txt", "can edit")
+            .readonly_text("/data/readonly.txt", "cannot edit")
+            .build();
+
+        let writable_stat = bash
+            .fs()
+            .stat(std::path::Path::new("/data/writable.txt"))
+            .await
+            .unwrap();
+        let readonly_stat = bash
+            .fs()
+            .stat(std::path::Path::new("/data/readonly.txt"))
+            .await
+            .unwrap();
+
+        assert_eq!(writable_stat.mode, 0o644);
+        assert_eq!(readonly_stat.mode, 0o444);
+    }
+
+    #[tokio::test]
+    async fn test_text_file_with_env() {
+        // text_file should work alongside other builder methods
+        let mut bash = Bash::builder()
+            .env("APP_NAME", "testapp")
+            .text_file("/config/app.conf", "name=${APP_NAME}")
+            .build();
+
+        let result = bash.exec("echo $APP_NAME").await.unwrap();
+        assert_eq!(result.stdout, "testapp\n");
+
+        let result = bash.exec("cat /config/app.conf").await.unwrap();
+        assert_eq!(result.stdout, "name=${APP_NAME}");
+    }
+
+    #[tokio::test]
+    async fn test_text_file_json() {
+        let mut bash = Bash::builder()
+            .text_file("/data/users.json", r#"["alice", "bob", "charlie"]"#)
+            .build();
+
+        let result = bash.exec("cat /data/users.json | jq '.[0]'").await.unwrap();
+        assert_eq!(result.stdout, "\"alice\"\n");
     }
 }
