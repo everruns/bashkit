@@ -3,6 +3,16 @@
 //! [`InMemoryFs`] provides a simple, fast, thread-safe filesystem that stores
 //! all data in memory using a `HashMap`.
 //!
+//! # Security Mitigations
+//!
+//! This module mitigates the following threats (see `specs/006-threat-model.md`):
+//!
+//! - **TM-ESC-001**: Path traversal → `normalize_path()` collapses `..` safely
+//! - **TM-ESC-002**: Symlink escape → symlinks stored but not followed
+//! - **TM-ESC-003**: Real FS access → in-memory by default, no real syscalls
+//! - **TM-DOS-011**: Symlink loops → no symlink resolution during path lookup
+//! - **TM-INJ-005**: Path injection → path normalization at all entry points
+//!
 //! # Resource Limits
 //!
 //! `InMemoryFs` enforces configurable limits to prevent memory exhaustion:

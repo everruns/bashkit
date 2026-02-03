@@ -2,12 +2,17 @@
 //!
 //! These limits prevent scripts from exhausting memory via filesystem operations.
 //!
-//! # Threat Mitigation
+//! # Security Mitigations
 //!
-//! - Large file creation: Limited by `max_file_size`
-//! - Many small files: Limited by `max_file_count`
-//! - Zip bombs: Decompression checked against limits
-//! - Total memory: Limited by `max_total_bytes`
+//! This module mitigates the following threats (see `specs/006-threat-model.md`):
+//!
+//! - **TM-DOS-005**: Large file creation → `max_file_size`
+//! - **TM-DOS-006**: Many small files → `max_file_count`
+//! - **TM-DOS-007**: Zip bomb decompression → limits checked during extraction
+//! - **TM-DOS-008**: Tar bomb extraction → `max_total_bytes`, `max_file_count`
+//! - **TM-DOS-009**: Recursive copy → `max_total_bytes`
+//! - **TM-DOS-010**: Append flood → `max_total_bytes`, `max_file_size`
+//! - **TM-DOS-014**: Many directory entries → `max_file_count`
 
 use std::fmt;
 

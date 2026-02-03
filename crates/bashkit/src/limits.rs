@@ -1,6 +1,18 @@
-//! Resource limits for sandboxed execution
+//! Resource limits for sandboxed execution.
 //!
 //! These limits prevent runaway scripts from consuming excessive resources.
+//!
+//! # Security Mitigations
+//!
+//! This module mitigates the following threats (see `specs/006-threat-model.md`):
+//!
+//! - **TM-DOS-001**: Large script input → `max_input_bytes`
+//! - **TM-DOS-002, TM-DOS-004, TM-DOS-019**: Command flooding → `max_commands`
+//! - **TM-DOS-016, TM-DOS-017**: Infinite loops → `max_loop_iterations`
+//! - **TM-DOS-020, TM-DOS-021**: Function recursion → `max_function_depth`
+//! - **TM-DOS-022**: Parser recursion → `max_ast_depth`
+//! - **TM-DOS-023**: CPU exhaustion → `timeout`
+//! - **TM-DOS-024**: Parser hang → `parser_timeout`, `max_parser_operations`
 //!
 //! # Fail Points (enabled with `failpoints` feature)
 //!
