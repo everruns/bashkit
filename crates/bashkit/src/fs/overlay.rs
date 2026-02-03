@@ -2,6 +2,11 @@
 //!
 //! [`OverlayFs`] provides copy-on-write semantics by layering a writable upper
 //! filesystem on top of a read-only lower (base) filesystem.
+//!
+//! # Resource Limits
+//!
+//! Limits apply to the combined filesystem view (upper + lower).
+//! See [`FsLimits`](crate::FsLimits) for configuration.
 
 // RwLock.read()/write().unwrap() only panics on lock poisoning (prior panic
 // while holding lock). This is intentional - corrupted state should not propagate.
@@ -13,6 +18,7 @@ use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+use super::limits::{FsLimits, FsUsage};
 use super::memory::InMemoryFs;
 use super::traits::{DirEntry, FileSystem, FileType, Metadata};
 use crate::error::Result;
@@ -140,10 +146,12 @@ pub struct OverlayFs {
     upper: InMemoryFs,
     /// Paths that have been deleted (whiteouts)
     whiteouts: RwLock<HashSet<PathBuf>>,
+    /// Combined limits for the overlay view
+    limits: FsLimits,
 }
 
 impl OverlayFs {
-    /// Create a new overlay filesystem with the given base layer.
+    /// Create a new overlay filesystem with the given base layer and default limits.
     ///
     /// The `lower` filesystem is treated as read-only - all reads will first
     /// check the upper layer, then fall back to the lower layer. All writes
@@ -180,11 +188,88 @@ impl OverlayFs {
     /// # }
     /// ```
     pub fn new(lower: Arc<dyn FileSystem>) -> Self {
+        Self::with_limits(lower, FsLimits::default())
+    }
+
+    /// Create a new overlay filesystem with custom limits.
+    ///
+    /// Limits apply to the combined view (upper layer writes + lower layer content).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{FileSystem, InMemoryFs, OverlayFs, FsLimits};
+    /// use std::path::Path;
+    /// use std::sync::Arc;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let base = Arc::new(InMemoryFs::new());
+    /// let limits = FsLimits::new().max_total_bytes(10_000_000); // 10MB
+    ///
+    /// let overlay = OverlayFs::with_limits(base, limits);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_limits(lower: Arc<dyn FileSystem>, limits: FsLimits) -> Self {
+        // Upper layer uses unlimited limits - we enforce limits at the OverlayFs level
         Self {
             lower,
-            upper: InMemoryFs::new(),
+            upper: InMemoryFs::with_limits(FsLimits::unlimited()),
             whiteouts: RwLock::new(HashSet::new()),
+            limits,
         }
+    }
+
+    /// Compute combined usage (upper + visible lower).
+    fn compute_usage(&self) -> FsUsage {
+        // Get upper layer usage
+        let upper_usage = self.upper.usage();
+
+        // Lower layer usage is counted but we don't double-count
+        // files that are overwritten in upper or whited out
+        let lower_usage = self.lower.usage();
+
+        // Combine both layers
+        let total_bytes = upper_usage.total_bytes + lower_usage.total_bytes;
+        let file_count = upper_usage.file_count + lower_usage.file_count;
+        let dir_count = upper_usage.dir_count + lower_usage.dir_count;
+
+        FsUsage::new(total_bytes, file_count, dir_count)
+    }
+
+    /// Check limits before writing.
+    fn check_write_limits(&self, content_size: usize) -> Result<()> {
+        // Check file size limit
+        if content_size as u64 > self.limits.max_file_size {
+            return Err(IoError::other(format!(
+                "file too large: {} bytes exceeds {} byte limit",
+                content_size, self.limits.max_file_size
+            ))
+            .into());
+        }
+
+        // Check total size limit (upper layer only, since lower is read-only)
+        let usage = self.upper.usage();
+        let new_total = usage.total_bytes + content_size as u64;
+        if new_total > self.limits.max_total_bytes {
+            return Err(IoError::other(format!(
+                "filesystem full: {} bytes would exceed {} byte limit",
+                new_total, self.limits.max_total_bytes
+            ))
+            .into());
+        }
+
+        // Check file count limit
+        if usage.file_count >= self.limits.max_file_count {
+            return Err(IoError::other(format!(
+                "too many files: {} files at {} file limit",
+                usage.file_count, self.limits.max_file_count
+            ))
+            .into());
+        }
+
+        Ok(())
     }
 
     /// Normalize a path for consistent lookups
@@ -258,6 +343,9 @@ impl FileSystem for OverlayFs {
     async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
         let path = Self::normalize_path(path);
 
+        // Check limits before writing
+        self.check_write_limits(content.len())?;
+
         // Remove any whiteout for this path
         self.remove_whiteout(&path);
 
@@ -289,12 +377,17 @@ impl FileSystem for OverlayFs {
 
         // If file exists in upper, append there
         if self.upper.exists(&path).await.unwrap_or(false) {
+            // Check limits for appended content
+            self.check_write_limits(content.len())?;
             return self.upper.append_file(&path, content).await;
         }
 
         // If file exists in lower, copy-on-write
         if self.lower.exists(&path).await.unwrap_or(false) {
             let existing = self.lower.read_file(&path).await?;
+
+            // Check limits for combined content
+            self.check_write_limits(existing.len() + content.len())?;
 
             // Ensure parent exists in upper
             if let Some(parent) = path.parent() {
@@ -310,6 +403,7 @@ impl FileSystem for OverlayFs {
         }
 
         // Create new file in upper
+        self.check_write_limits(content.len())?;
         self.upper.write_file(&path, content).await
     }
 
@@ -506,6 +600,14 @@ impl FileSystem for OverlayFs {
         }
 
         Err(IoError::new(ErrorKind::NotFound, "not found").into())
+    }
+
+    fn usage(&self) -> FsUsage {
+        self.compute_usage()
+    }
+
+    fn limits(&self) -> FsLimits {
+        self.limits.clone()
     }
 }
 
