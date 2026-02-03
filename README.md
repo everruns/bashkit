@@ -140,11 +140,6 @@ just bench-verbose      # Detailed output
 just bench-list         # List all benchmarks
 ```
 
-Key findings:
-- **~2000x faster startup** - No subprocess overhead (0.004ms vs 9ms)
-- **~200-1000x faster for tools** - grep/sed/awk run in-process
-- **~550x faster recursive functions** - Fibonacci(10): 1ms vs 586ms
-
 See [crates/bashkit-bench/README.md](crates/bashkit-bench/README.md) for methodology and assumptions.
 
 ## Acknowledgments
