@@ -39,12 +39,12 @@ crates/bashkit/tests/
 ├── security_failpoint_tests.rs  # Fault injection tests
 ├── proptest_differential.rs # Grammar-based differential fuzzing
 └── spec_cases/
-    ├── bash/           # Core bash compatibility (19 files, 331 cases)
+    ├── bash/           # Core bash compatibility (20 files, 362 cases)
     │   ├── arithmetic.test.sh
     │   ├── arrays.test.sh
     │   ├── background.test.sh
     │   ├── command-subst.test.sh
-    │   ├── control-flow.test.sh.skip  # Skipped - needs implementation
+    │   ├── control-flow.test.sh
     │   ├── cuttr.test.sh
     │   ├── date.test.sh
     │   ├── echo.test.sh
@@ -70,12 +70,12 @@ crates/bashkit/tests/
 
 | Category | Test Cases | In CI | Pass | Skip |
 |----------|------------|-------|------|------|
-| Bash | 331 | Yes | 223 | 108 |
+| Bash | 362 | Yes | 254 | 108 |
 | AWK | 19 | Yes | 17 | 2 |
 | Grep | 15 | Yes | 15 | 0 |
 | Sed | 17 | Yes | 17 | 0 |
 | JQ | 21 | Yes | 21 | 0 |
-| **Total** | **403** | **403** | 293 | 110 |
+| **Total** | **434** | **434** | 324 | 110 |
 
 ### Test File Format
 
@@ -142,17 +142,17 @@ cargo test --test spec_tests -- compatibility_report --ignored --nocapture
 Coverage is tracked manually via spec test pass rates.
 
 ### Current Status
-- All spec tests: 73% pass rate (293/403 running in CI, 110 skipped)
+- All spec tests: 75% pass rate (324/434 running in CI, 110 skipped)
 - Text processing tools: 97% pass rate (70/72 running, 2 AWK skipped)
-- Core bash specs: 100% pass rate (223/223 running, 108 skipped)
+- Core bash specs: 100% pass rate (254/254 running, 108 skipped)
 
 ## TODO: Testing Gaps
 
 The following items need attention:
 
-- [x] **Enable bash_spec_tests in CI** - Done! 223/331 tests running
-- [x] **Add bash_comparison_tests to CI** - Done! 275 tests compared against real bash
-- [ ] **Fix control-flow.test.sh** - Currently skipped (.skip suffix)
+- [x] **Enable bash_spec_tests in CI** - Done! 325/435 tests running
+- [x] **Add bash_comparison_tests to CI** - Done! 304 tests compared against real bash
+- [x] **Fix control-flow.test.sh** - Enabled! 31 tests now running
 - [ ] **Add coverage tooling** - Consider cargo-tarpaulin or codecov
 - [ ] **Fix skipped spec tests** (110 total):
   - Bash: 108 skipped (various implementation gaps)

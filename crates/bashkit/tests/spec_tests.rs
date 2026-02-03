@@ -85,8 +85,8 @@
 //! ### arithmetic.test.sh (1 skipped)
 //! - [ ] arith_assign - assignment inside $(()) not implemented
 //!
-//! ### control-flow.test.sh.skip (entire file skipped)
-//! - [ ] Control flow tests need implementation
+//! ### control-flow.test.sh (enabled)
+//! - [x] Control flow tests enabled (31 tests passing)
 
 mod spec_runner;
 

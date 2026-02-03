@@ -12,6 +12,7 @@
 //! - Compression decompression is size-limited to prevent zip bombs
 
 use async_trait::async_trait;
+#[cfg(feature = "http_client")]
 use std::path::Path;
 
 use super::{Builtin, Context};
@@ -567,6 +568,7 @@ fn decompress_deflate(data: &[u8], max_size: usize) -> Result<Vec<u8>> {
 }
 
 /// Resolve a path relative to cwd.
+#[cfg(feature = "http_client")]
 fn resolve_path(cwd: &std::path::Path, path_str: &str) -> std::path::PathBuf {
     let path = Path::new(path_str);
     if path.is_absolute() {
@@ -943,6 +945,7 @@ mod tests {
         assert!(result.stderr.contains("network access not configured"));
     }
 
+    #[cfg(feature = "http_client")]
     #[test]
     fn test_resolve_path_absolute() {
         let cwd = PathBuf::from("/home/user");
@@ -950,6 +953,7 @@ mod tests {
         assert_eq!(result, PathBuf::from("/tmp/file.txt"));
     }
 
+    #[cfg(feature = "http_client")]
     #[test]
     fn test_resolve_path_relative() {
         let cwd = PathBuf::from("/home/user");
