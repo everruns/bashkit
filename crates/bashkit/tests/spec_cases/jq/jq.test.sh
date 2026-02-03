@@ -199,7 +199,7 @@ echo '{"a":{"b":{"c":1}}}' | jq '.'
 ### end
 
 ### jq_compact_output
-### skip: -c flag not implemented
+# Compact output mode outputs JSON without pretty-printing
 echo '{"a": 1, "b": 2}' | jq -c '.'
 ### expect
 {"a":1,"b":2}
@@ -412,21 +412,21 @@ echo '3.7' | jq 'floor'
 ### end
 
 ### jq_ceil
-### skip: ceil not implemented
+# Ceiling function
 echo '3.2' | jq 'ceil'
 ### expect
 4
 ### end
 
 ### jq_round
-### skip: round not implemented
+# Round function
 echo '3.5' | jq 'round'
 ### expect
 4
 ### end
 
 ### jq_abs
-### skip: abs not implemented
+# Absolute value
 echo '-5' | jq 'abs'
 ### expect
 5
@@ -707,8 +707,8 @@ echo '["a","b","a"]' | jq 'indices("a")'
 ### end
 
 ### jq_null_input
-### skip: -n flag not implemented
-echo '' | jq -n '1 + 1'
+# Null input mode allows expressions without stdin input
+jq -n '1 + 1'
 ### expect
 2
 ### end
