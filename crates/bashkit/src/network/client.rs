@@ -124,6 +124,12 @@ impl HttpClient {
             // Disable automatic redirects to prevent allowlist bypass via redirect
             // Scripts can follow redirects manually if needed
             .redirect(reqwest::redirect::Policy::none())
+            // Disable automatic decompression to prevent zip bomb attacks
+            // and match real curl behavior (which requires --compressed flag)
+            // With decompression enabled, a 10KB gzip could expand to 10GB
+            .no_gzip()
+            .no_brotli()
+            .no_deflate()
             .build()
             .expect("failed to build HTTP client");
 

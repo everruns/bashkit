@@ -288,6 +288,7 @@ allowlist.allow("https://api.example.com");
 | Slowloris attack | Slow response dripping | Read timeout (30s) | **MITIGATED** |
 | Redirect bypass | `Location: http://evil.com` | Redirects not auto-followed | **MITIGATED** |
 | Chunked encoding bomb | Infinite chunked response | Response size limit (streaming) | **MITIGATED** |
+| Gzip bomb / Zip bomb | 10KB gzip → 10GB decompressed | Auto-decompression disabled | **MITIGATED** |
 | DNS rebind via redirect | Redirect to rebinded IP | Manual redirect requires allowlist check | **MITIGATED** |
 
 **Current Risk**: LOW - Multiple mitigations in place
@@ -301,6 +302,11 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 // Redirects disabled by default
 .redirect(reqwest::redirect::Policy::none())
+
+// Decompression disabled to prevent zip bombs
+.no_gzip()
+.no_brotli()
+.no_deflate()
 
 // Response size checked during streaming
 async fn read_body_with_limit(&self, response: Response) -> Result<Vec<u8>> {
@@ -317,6 +323,7 @@ async fn read_body_with_limit(&self, response: Response) -> Result<Vec<u8>> {
 | Connection timeout | 10s connect timeout | Prevent connection hang |
 | Read timeout | 30s total timeout | Prevent slow-response DoS |
 | No auto-redirect | Policy::none() | Prevent redirect-based bypass |
+| No auto-decompress | no_gzip/no_brotli/no_deflate | Prevent zip bomb attacks |
 | Content-Length check | Pre-download validation | Fail fast on huge files |
 | User-Agent fixed | "bashkit/0.1.0" | Identify requests, prevent spoofing |
 
