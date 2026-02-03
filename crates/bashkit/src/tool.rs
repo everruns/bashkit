@@ -2,36 +2,40 @@
 //!
 //! Provides a standardized interface for LLM tool integration.
 
+use crate::builtins::Builtin;
 use crate::error::Error;
 use crate::{Bash, ExecResult, ExecutionLimits};
 use schemars::{schema_for, JsonSchema};
 use serde::{Deserialize, Serialize};
 
-/// Tool description for LLM consumption
-pub const TOOL_DESCRIPTION: &str = r#"Executes bash scripts in a sandboxed environment with a virtual filesystem.
+/// Short tool description for LLM consumption (one-liner)
+pub const TOOL_DESCRIPTION: &str =
+    "Executes bash scripts in a sandboxed environment with a virtual filesystem.";
 
-- Full bash syntax: variables, pipelines, redirects, loops, functions, arrays
-- 30+ built-in commands: echo, cat, grep, sed, awk, jq, and more
-- Resource limits for safety
-- All file operations in virtual filesystem"#;
-
-/// Extended documentation for LLM consumption (llmtxt)
+/// Extended documentation for LLM consumption (llmtxt format)
+///
+/// This is the base documentation. Use [`Tool::llmtxt()`] for dynamic
+/// documentation that includes custom builtins and configuration.
 pub const TOOL_LLMTXT: &str = r#"# BashKit Tool
 
 Executes bash scripts in a sandboxed environment with a virtual filesystem.
 
 ## Capabilities
-- Full bash syntax support (variables, pipelines, redirects, loops, functions, arrays)
-- 30+ built-in commands (echo, cat, grep, sed, awk, jq, curl, etc.)
+
+- Full bash syntax: variables, pipelines, redirects, loops, functions, arrays
+- 30+ built-in commands: echo, cat, grep, sed, awk, jq, curl, etc.
 - Virtual filesystem (all file operations are sandboxed)
 - Resource limits (max commands, loop iterations, function depth)
 - Custom identity (username, hostname)
+- Extensible with custom builtins
 
 ## Input Parameters
+
 - `script` (required): The bash script to execute
 - `timeout_ms` (optional): Maximum execution time in milliseconds
 
 ## Output Fields
+
 - `stdout`: Standard output from the script
 - `stderr`: Standard error from the script
 - `exit_code`: Exit code (0 = success)
@@ -69,6 +73,7 @@ Output: `{"stdout": "data\n", "stderr": "", "exit_code": 0}`
 Output: `{"stdout": "\"test\"\n", "stderr": "", "exit_code": 0}`
 
 ## Error Handling
+
 - Syntax errors return non-zero exit code with error in stderr
 - Resource limit violations return specific error messages
 - Command not found returns exit code 127
@@ -156,7 +161,7 @@ impl ToolStatus {
 }
 
 /// Builder for configuring the BashKit tool
-#[derive(Debug, Clone, Default)]
+#[derive(Default)]
 pub struct ToolBuilder {
     /// Custom username for sandbox identity
     username: Option<String>,
@@ -166,6 +171,8 @@ pub struct ToolBuilder {
     limits: Option<ExecutionLimits>,
     /// Environment variables to set
     env_vars: Vec<(String, String)>,
+    /// Custom builtins (name, implementation)
+    builtins: Vec<(String, Box<dyn Builtin>)>,
 }
 
 impl ToolBuilder {
@@ -198,24 +205,39 @@ impl ToolBuilder {
         self
     }
 
+    /// Register a custom builtin command
+    ///
+    /// Custom builtins extend the shell with domain-specific commands.
+    /// They will be documented in the tool's llmtxt output.
+    pub fn builtin(mut self, name: impl Into<String>, builtin: Box<dyn Builtin>) -> Self {
+        self.builtins.push((name.into(), builtin));
+        self
+    }
+
     /// Build the tool
     pub fn build(self) -> Tool {
+        let builtin_names: Vec<String> = self.builtins.iter().map(|(n, _)| n.clone()).collect();
         Tool {
             username: self.username,
             hostname: self.hostname,
             limits: self.limits,
             env_vars: self.env_vars,
+            builtins: self.builtins,
+            builtin_names,
         }
     }
 }
 
 /// Configured BashKit tool
-#[derive(Debug, Clone, Default)]
+#[derive(Default)]
 pub struct Tool {
     username: Option<String>,
     hostname: Option<String>,
     limits: Option<ExecutionLimits>,
     env_vars: Vec<(String, String)>,
+    builtins: Vec<(String, Box<dyn Builtin>)>,
+    /// Names of custom builtins (for documentation)
+    builtin_names: Vec<String>,
 }
 
 impl Tool {
@@ -224,9 +246,17 @@ impl Tool {
         ToolBuilder::new()
     }
 
-    /// Get tool description
-    pub fn description(&self) -> &'static str {
-        TOOL_DESCRIPTION
+    /// Get tool description (dynamic, includes custom builtins)
+    pub fn description(&self) -> String {
+        if self.builtin_names.is_empty() {
+            TOOL_DESCRIPTION.to_string()
+        } else {
+            format!(
+                "{} Custom commands: {}.",
+                TOOL_DESCRIPTION,
+                self.builtin_names.join(", ")
+            )
+        }
     }
 
     /// Get system prompt (empty for this tool)
@@ -234,9 +264,69 @@ impl Tool {
         ""
     }
 
-    /// Get full documentation (llmtxt)
-    pub fn llmtxt(&self) -> &'static str {
-        TOOL_LLMTXT
+    /// Get full documentation (dynamic llmtxt with configuration details)
+    pub fn llmtxt(&self) -> String {
+        let mut doc = TOOL_LLMTXT.to_string();
+
+        // Append configuration section if any dynamic config exists
+        let has_config = !self.builtin_names.is_empty()
+            || self.username.is_some()
+            || self.hostname.is_some()
+            || self.limits.is_some()
+            || !self.env_vars.is_empty();
+
+        if has_config {
+            doc.push_str("\n## Current Configuration\n\n");
+
+            if !self.builtin_names.is_empty() {
+                doc.push_str("### Custom Commands\n\n");
+                doc.push_str("The following custom commands are available in addition to built-in commands:\n\n");
+                for name in &self.builtin_names {
+                    doc.push_str(&format!("- `{name}`\n"));
+                }
+                doc.push('\n');
+            }
+
+            if self.username.is_some() || self.hostname.is_some() {
+                doc.push_str("### Sandbox Identity\n\n");
+                if let Some(ref username) = self.username {
+                    doc.push_str(&format!(
+                        "- Username: `{username}` (returned by `whoami`)\n"
+                    ));
+                }
+                if let Some(ref hostname) = self.hostname {
+                    doc.push_str(&format!(
+                        "- Hostname: `{hostname}` (returned by `hostname`)\n"
+                    ));
+                }
+                doc.push('\n');
+            }
+
+            if let Some(ref limits) = self.limits {
+                doc.push_str("### Resource Limits\n\n");
+                doc.push_str(&format!("- Max commands: {}\n", limits.max_commands));
+                doc.push_str(&format!(
+                    "- Max loop iterations: {}\n",
+                    limits.max_loop_iterations
+                ));
+                doc.push_str(&format!(
+                    "- Max function depth: {}\n",
+                    limits.max_function_depth
+                ));
+                doc.push('\n');
+            }
+
+            if !self.env_vars.is_empty() {
+                doc.push_str("### Environment Variables\n\n");
+                doc.push_str("The following environment variables are pre-set:\n\n");
+                for (key, _) in &self.env_vars {
+                    doc.push_str(&format!("- `{key}`\n"));
+                }
+                doc.push('\n');
+            }
+        }
+
+        doc
     }
 
     /// Get input schema as JSON
@@ -252,7 +342,7 @@ impl Tool {
     }
 
     /// Create a new Bash instance with tool configuration
-    fn create_bash(&self) -> Bash {
+    fn create_bash(&mut self) -> Bash {
         let mut builder = Bash::builder();
 
         if let Some(ref username) = self.username {
@@ -267,12 +357,16 @@ impl Tool {
         for (key, value) in &self.env_vars {
             builder = builder.env(key, value);
         }
+        // Move builtins out to avoid borrow issues
+        for (name, builtin) in std::mem::take(&mut self.builtins) {
+            builder = builder.builtin(name, builtin);
+        }
 
         builder.build()
     }
 
     /// Execute the tool with the given request
-    pub async fn execute(&self, req: ToolRequest) -> ToolResponse {
+    pub async fn execute(&mut self, req: ToolRequest) -> ToolResponse {
         if req.script.is_empty() {
             return ToolResponse {
                 stdout: String::new(),
@@ -297,7 +391,7 @@ impl Tool {
 
     /// Execute the tool with status updates
     pub async fn execute_with_status<F>(
-        &self,
+        &mut self,
         req: ToolRequest,
         mut status_callback: F,
     ) -> ToolResponse
@@ -369,11 +463,35 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_description() {
+    fn test_tool_description_default() {
         let tool = Tool::default();
-        assert!(!tool.description().is_empty());
+        assert_eq!(tool.description(), TOOL_DESCRIPTION);
         assert!(tool.system_prompt().is_empty());
-        assert!(!tool.llmtxt().is_empty());
+        assert!(tool.llmtxt().starts_with(TOOL_LLMTXT));
+    }
+
+    #[test]
+    fn test_tool_description_with_config() {
+        let tool = Tool::builder()
+            .username("agent")
+            .hostname("sandbox")
+            .env("API_KEY", "secret")
+            .limits(ExecutionLimits::new().max_commands(50))
+            .build();
+
+        // Description is just the base description (no custom builtins)
+        assert_eq!(tool.description(), TOOL_DESCRIPTION);
+
+        // llmtxt should include configuration
+        let llmtxt = tool.llmtxt();
+        assert!(llmtxt.contains("## Current Configuration"));
+        assert!(llmtxt.contains("### Sandbox Identity"));
+        assert!(llmtxt.contains("Username: `agent`"));
+        assert!(llmtxt.contains("Hostname: `sandbox`"));
+        assert!(llmtxt.contains("### Resource Limits"));
+        assert!(llmtxt.contains("Max commands: 50"));
+        assert!(llmtxt.contains("### Environment Variables"));
+        assert!(llmtxt.contains("`API_KEY`"));
     }
 
     #[test]
@@ -406,7 +524,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_execute_empty() {
-        let tool = Tool::default();
+        let mut tool = Tool::default();
         let req = ToolRequest {
             script: String::new(),
             timeout_ms: None,
@@ -418,7 +536,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_execute_echo() {
-        let tool = Tool::default();
+        let mut tool = Tool::default();
         let req = ToolRequest {
             script: "echo hello".to_string(),
             timeout_ms: None,
@@ -431,7 +549,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_execute_with_status() {
-        let tool = Tool::default();
+        let mut tool = Tool::default();
         let req = ToolRequest {
             script: "echo test".to_string(),
             timeout_ms: None,
