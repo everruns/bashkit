@@ -7,6 +7,7 @@ This document describes the security threats we address and how they are mitigat
 - [API Documentation](https://docs.rs/bashkit) - Full API reference
 - [Custom Builtins](./custom_builtins.md) - Extending BashKit safely
 - [Compatibility Reference](./compatibility.md) - Supported bash features
+- [Logging Guide](./logging.md) - Structured logging with security (TM-LOG-*)
 
 ## Overview
 
@@ -226,6 +227,39 @@ Error messages never expose:
 - Real filesystem paths (only virtual paths)
 - Panic messages that may contain secrets
 
+### Logging Security (TM-LOG-*)
+
+When the `logging` feature is enabled, BashKit emits structured logs. Security features
+prevent sensitive data leakage:
+
+| Threat | Attack Example | Mitigation |
+|--------|---------------|------------|
+| Secrets in logs (TM-LOG-001) | Log `$PASSWORD` value | Env var redaction |
+| Script leak (TM-LOG-002) | Log script with embedded secrets | Script content disabled by default |
+| URL credentials (TM-LOG-003) | Log `https://user:pass@host` | URL credential redaction |
+| API key leak (TM-LOG-004) | Log JWT or API key values | Entropy-based detection |
+| Log injection (TM-LOG-005) | Script with `\n[ERROR]` | Newline escaping |
+
+**Logging Configuration:**
+
+```rust,ignore
+use bashkit::{Bash, LogConfig};
+
+// Default: secure (redaction enabled, script content hidden)
+let bash = Bash::builder()
+    .log_config(LogConfig::new())
+    .build();
+
+// Add custom redaction patterns
+let bash = Bash::builder()
+    .log_config(LogConfig::new()
+        .redact_env("MY_CUSTOM_SECRET"))
+    .build();
+```
+
+**Warning:** Do not use `LogConfig::unsafe_disable_redaction()` or
+`LogConfig::unsafe_log_scripts()` in production.
+
 ## Security Testing
 
 BashKit includes comprehensive security tests:
@@ -253,6 +287,7 @@ All threats use stable IDs in the format `TM-<CATEGORY>-<NUMBER>`:
 | TM-NET | Network Security |
 | TM-ISO | Multi-Tenant Isolation |
 | TM-INT | Internal Error Handling |
+| TM-LOG | Logging Security |
 
 Full threat analysis: [`specs/006-threat-model.md`][spec]
 
