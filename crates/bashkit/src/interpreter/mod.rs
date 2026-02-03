@@ -18,8 +18,11 @@ pub use jobs::{JobTable, SharedJobTable};
 pub use state::{ControlFlow, ExecResult};
 
 use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use futures::FutureExt;
 
 use crate::builtins::{self, Builtin};
 use crate::error::{Error, Result};
@@ -1568,7 +1571,25 @@ impl Interpreter {
                 stdin: stdin.as_deref(),
             };
 
-            let result = builtin.execute(ctx).await?;
+            // Execute builtin with panic catching for security
+            // SECURITY: Custom builtins may panic - we catch this to:
+            // 1. Prevent interpreter crash
+            // 2. Avoid leaking panic message (may contain sensitive info)
+            // 3. Return sanitized error to user
+            let result = AssertUnwindSafe(builtin.execute(ctx)).catch_unwind().await;
+
+            let result = match result {
+                Ok(Ok(exec_result)) => exec_result,
+                Ok(Err(e)) => return Err(e),
+                Err(_panic) => {
+                    // Panic caught! Return sanitized error message.
+                    // SECURITY: Do NOT include panic message - it may contain:
+                    // - Stack traces with internal paths
+                    // - Memory addresses
+                    // - Secret values from variables
+                    ExecResult::err(format!("bash: {}: builtin failed unexpectedly\n", name), 1)
+                }
+            };
 
             // Handle output redirections
             return self.apply_redirections(result, &command.redirects).await;
