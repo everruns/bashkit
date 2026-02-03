@@ -652,7 +652,7 @@ mod edge_cases {
         let mut bash = Bash::new();
 
         // Commands that are NOT implemented as builtins
-        for cmd in &["ssh", "du", "apt", "yum", "docker", "git", "vim", "nano"] {
+        for cmd in &["ssh", "apt", "yum", "docker", "git", "vim", "nano"] {
             let result = bash.exec(cmd).await.unwrap();
             assert_eq!(
                 result.exit_code, 127,

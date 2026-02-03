@@ -3,6 +3,16 @@
 //! [`InMemoryFs`] provides a simple, fast, thread-safe filesystem that stores
 //! all data in memory using a `HashMap`.
 //!
+//! # Resource Limits
+//!
+//! `InMemoryFs` enforces configurable limits to prevent memory exhaustion:
+//!
+//! - `max_total_bytes`: Maximum total size of all files (default: 100MB)
+//! - `max_file_size`: Maximum size of a single file (default: 10MB)
+//! - `max_file_count`: Maximum number of files (default: 10,000)
+//!
+//! See [`FsLimits`](crate::FsLimits) for configuration.
+//!
 //! # Fail Points (enabled with `failpoints` feature)
 //!
 //! For testing error handling, the following fail points are available:
@@ -25,6 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use std::time::SystemTime;
 
+use super::limits::{FsLimits, FsUsage};
 use super::traits::{DirEntry, FileSystem, FileType, Metadata};
 use crate::error::Result;
 
@@ -117,8 +128,36 @@ use fail::fail_point;
 /// # Ok(())
 /// # }
 /// ```
+///
+/// # Resource Limits
+///
+/// Configure limits to prevent memory exhaustion:
+///
+/// ```rust
+/// use bashkit::{FileSystem, InMemoryFs, FsLimits};
+/// use std::path::Path;
+///
+/// # #[tokio::main]
+/// # async fn main() -> bashkit::Result<()> {
+/// let limits = FsLimits::new()
+///     .max_total_bytes(1_000_000)   // 1MB total
+///     .max_file_size(100_000)       // 100KB per file
+///     .max_file_count(100);         // 100 files max
+///
+/// let fs = InMemoryFs::with_limits(limits);
+///
+/// // This works
+/// fs.write_file(Path::new("/tmp/small.txt"), b"hello").await?;
+///
+/// // This would fail with "file too large" error:
+/// // let big_data = vec![0u8; 200_000];
+/// // fs.write_file(Path::new("/tmp/big.bin"), &big_data).await?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct InMemoryFs {
     entries: RwLock<HashMap<PathBuf, FsEntry>>,
+    limits: FsLimits,
 }
 
 #[derive(Debug, Clone)]
@@ -143,7 +182,7 @@ impl Default for InMemoryFs {
 }
 
 impl InMemoryFs {
-    /// Create a new in-memory filesystem with default directories.
+    /// Create a new in-memory filesystem with default directories and default limits.
     ///
     /// Creates the following directory structure:
     /// - `/` - Root directory
@@ -152,6 +191,14 @@ impl InMemoryFs {
     /// - `/home/user` - Default user home
     /// - `/dev` - Device files
     /// - `/dev/null` - Null device (discards writes, returns empty)
+    ///
+    /// # Default Limits
+    ///
+    /// - Total filesystem: 100MB
+    /// - Single file: 10MB
+    /// - File count: 10,000
+    ///
+    /// Use [`InMemoryFs::with_limits`] for custom limits.
     ///
     /// # Example
     ///
@@ -171,6 +218,28 @@ impl InMemoryFs {
     /// # }
     /// ```
     pub fn new() -> Self {
+        Self::with_limits(FsLimits::default())
+    }
+
+    /// Create a new in-memory filesystem with custom limits.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{FileSystem, InMemoryFs, FsLimits};
+    /// use std::path::Path;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let limits = FsLimits::new()
+    ///     .max_total_bytes(50_000_000)  // 50MB
+    ///     .max_file_size(5_000_000);    // 5MB per file
+    ///
+    /// let fs = InMemoryFs::with_limits(limits);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_limits(limits: FsLimits) -> Self {
         let mut entries = HashMap::new();
 
         // Create root directory
@@ -235,7 +304,83 @@ impl InMemoryFs {
 
         Self {
             entries: RwLock::new(entries),
+            limits,
         }
+    }
+
+    /// Compute current usage statistics.
+    fn compute_usage(&self) -> FsUsage {
+        let entries = self.entries.read().unwrap();
+        let mut total_bytes = 0u64;
+        let mut file_count = 0u64;
+        let mut dir_count = 0u64;
+
+        for entry in entries.values() {
+            match entry {
+                FsEntry::File { content, .. } => {
+                    total_bytes += content.len() as u64;
+                    file_count += 1;
+                }
+                FsEntry::Directory { .. } => {
+                    dir_count += 1;
+                }
+                FsEntry::Symlink { .. } => {
+                    // Symlinks don't count toward file count or size
+                }
+            }
+        }
+
+        FsUsage::new(total_bytes, file_count, dir_count)
+    }
+
+    /// Check limits before writing. Returns error if limits exceeded.
+    fn check_write_limits(
+        &self,
+        entries: &HashMap<PathBuf, FsEntry>,
+        path: &Path,
+        new_size: usize,
+    ) -> Result<()> {
+        // Check single file size limit
+        self.limits
+            .check_file_size(new_size as u64)
+            .map_err(|e| IoError::other(e.to_string()))?;
+
+        // Calculate current total and what the new total would be
+        let mut current_total = 0u64;
+        let mut current_file_count = 0u64;
+        let mut old_file_size = 0u64;
+        let mut is_new_file = true;
+
+        for (entry_path, entry) in entries.iter() {
+            if let FsEntry::File { content, .. } = entry {
+                current_total += content.len() as u64;
+                current_file_count += 1;
+                if entry_path == path {
+                    old_file_size = content.len() as u64;
+                    is_new_file = false;
+                }
+            }
+        }
+
+        // Check file count limit (only if this is a new file)
+        if is_new_file {
+            self.limits
+                .check_file_count(current_file_count)
+                .map_err(|e| IoError::other(e.to_string()))?;
+        }
+
+        // Check total bytes limit
+        // New total = current - old_file_size + new_size
+        let new_total = current_total - old_file_size + new_size as u64;
+        if new_total > self.limits.max_total_bytes {
+            return Err(IoError::other(format!(
+                "filesystem full: {} bytes would exceed {} byte limit",
+                new_total, self.limits.max_total_bytes
+            ))
+            .into());
+        }
+
+        Ok(())
     }
 
     fn normalize_path(path: &Path) -> PathBuf {
@@ -414,6 +559,9 @@ impl FileSystem for InMemoryFs {
             }
         }
 
+        // Check limits before writing
+        self.check_write_limits(&entries, &path, content.len())?;
+
         entries.insert(
             path,
             FsEntry::File {
@@ -439,36 +587,73 @@ impl FileSystem for InMemoryFs {
             return Ok(());
         }
 
-        // Check if file exists and handle accordingly
-        // We need to release the lock before potentially calling write_file
-        let should_create = {
-            let mut entries = self.entries.write().unwrap();
-
-            match entries.get_mut(&path) {
+        // Check if file exists and get the info we need
+        let (should_create, current_size) = {
+            let entries = self.entries.read().unwrap();
+            match entries.get(&path) {
                 Some(FsEntry::File {
-                    content: existing,
-                    metadata,
-                }) => {
-                    existing.extend_from_slice(content);
-                    metadata.size = existing.len() as u64;
-                    metadata.modified = SystemTime::now();
-                    return Ok(());
-                }
+                    content: existing, ..
+                }) => (false, Some(existing.len())),
                 Some(FsEntry::Directory { .. }) => {
                     return Err(IoError::other("is a directory").into());
                 }
                 Some(FsEntry::Symlink { .. }) => {
                     return Err(IoError::new(ErrorKind::NotFound, "file not found").into());
                 }
-                None => true,
+                None => (true, None),
             }
         };
 
         if should_create {
-            self.write_file(&path, content).await
-        } else {
-            Ok(())
+            return self.write_file(&path, content).await;
         }
+
+        // File exists, need to append
+        let current_file_size = current_size.unwrap();
+        let new_size = current_file_size + content.len();
+
+        // Check file size limit
+        self.limits
+            .check_file_size(new_size as u64)
+            .map_err(|e| IoError::other(e.to_string()))?;
+
+        // Now do the actual append with write lock
+        let mut entries = self.entries.write().unwrap();
+
+        // Calculate current total for limit check
+        let mut current_total = 0u64;
+        for entry in entries.values() {
+            if let FsEntry::File {
+                content: file_content,
+                ..
+            } = entry
+            {
+                current_total += file_content.len() as u64;
+            }
+        }
+
+        // Check total bytes limit
+        let new_total = current_total + content.len() as u64;
+        if new_total > self.limits.max_total_bytes {
+            return Err(IoError::other(format!(
+                "filesystem full: {} bytes would exceed {} byte limit",
+                new_total, self.limits.max_total_bytes
+            ))
+            .into());
+        }
+
+        // Actually append
+        if let Some(FsEntry::File {
+            content: existing,
+            metadata,
+        }) = entries.get_mut(&path)
+        {
+            existing.extend_from_slice(content);
+            metadata.size = existing.len() as u64;
+            metadata.modified = SystemTime::now();
+        }
+
+        Ok(())
     }
 
     async fn mkdir(&self, path: &Path, recursive: bool) -> Result<()> {
@@ -689,6 +874,14 @@ impl FileSystem for InMemoryFs {
             None => Err(IoError::new(ErrorKind::NotFound, "not found").into()),
         }
     }
+
+    fn usage(&self) -> FsUsage {
+        self.compute_usage()
+    }
+
+    fn limits(&self) -> FsLimits {
+        self.limits.clone()
+    }
 }
 
 #[cfg(test)]
@@ -778,5 +971,193 @@ mod tests {
 
         let content = fs.read_file(Path::new("/data/binary.bin")).await.unwrap();
         assert_eq!(content, binary_data);
+    }
+    // ==================== Limit tests ====================
+
+    #[tokio::test]
+    async fn test_file_size_limit() {
+        let limits = FsLimits::new().max_file_size(100);
+        let fs = InMemoryFs::with_limits(limits);
+
+        // Should succeed - under limit
+        fs.write_file(Path::new("/tmp/small.txt"), &[0u8; 50])
+            .await
+            .unwrap();
+
+        // Should succeed - at limit
+        fs.write_file(Path::new("/tmp/exact.txt"), &[0u8; 100])
+            .await
+            .unwrap();
+
+        // Should fail - over limit
+        let result = fs
+            .write_file(Path::new("/tmp/large.txt"), &[0u8; 101])
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("file too large") || err.contains("exceeds"));
+    }
+
+    #[tokio::test]
+    async fn test_total_bytes_limit() {
+        let limits = FsLimits::new().max_total_bytes(200);
+        let fs = InMemoryFs::with_limits(limits);
+
+        // Should succeed
+        fs.write_file(Path::new("/tmp/file1.txt"), &[0u8; 100])
+            .await
+            .unwrap();
+
+        // Should succeed - still under total limit
+        fs.write_file(Path::new("/tmp/file2.txt"), &[0u8; 50])
+            .await
+            .unwrap();
+
+        // Should fail - would exceed total limit
+        let result = fs
+            .write_file(Path::new("/tmp/file3.txt"), &[0u8; 100])
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("filesystem full") || err.contains("exceeds"));
+    }
+
+    #[tokio::test]
+    async fn test_file_count_limit() {
+        // Note: InMemoryFs starts with /dev/null as 1 file
+        let limits = FsLimits::new().max_file_count(4); // 1 existing + 3 new
+        let fs = InMemoryFs::with_limits(limits);
+
+        // Should succeed - under limit
+        fs.write_file(Path::new("/tmp/file1.txt"), b"1")
+            .await
+            .unwrap();
+        fs.write_file(Path::new("/tmp/file2.txt"), b"2")
+            .await
+            .unwrap();
+        fs.write_file(Path::new("/tmp/file3.txt"), b"3")
+            .await
+            .unwrap();
+
+        // Should fail - at limit (4 files: /dev/null + 3 new)
+        let result = fs.write_file(Path::new("/tmp/file4.txt"), b"4").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("too many files") || err.contains("limit"));
+    }
+
+    #[tokio::test]
+    async fn test_overwrite_does_not_increase_count() {
+        // Note: InMemoryFs starts with /dev/null as 1 file
+        let limits = FsLimits::new().max_file_count(3); // 1 existing + 2 new
+        let fs = InMemoryFs::with_limits(limits);
+
+        // Create two files
+        fs.write_file(Path::new("/tmp/file1.txt"), b"original")
+            .await
+            .unwrap();
+        fs.write_file(Path::new("/tmp/file2.txt"), b"original")
+            .await
+            .unwrap();
+
+        // Overwrite existing file - should succeed
+        fs.write_file(Path::new("/tmp/file1.txt"), b"updated")
+            .await
+            .unwrap();
+
+        // New file should fail (we're at 3: /dev/null + 2 files)
+        let result = fs.write_file(Path::new("/tmp/file3.txt"), b"new").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_append_respects_limits() {
+        let limits = FsLimits::new().max_file_size(100);
+        let fs = InMemoryFs::with_limits(limits);
+
+        // Create file
+        fs.write_file(Path::new("/tmp/append.txt"), &[0u8; 50])
+            .await
+            .unwrap();
+
+        // Append under limit - should succeed
+        fs.append_file(Path::new("/tmp/append.txt"), &[0u8; 30])
+            .await
+            .unwrap();
+
+        // Append over limit - should fail
+        let result = fs
+            .append_file(Path::new("/tmp/append.txt"), &[0u8; 50])
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_usage_tracking() {
+        let fs = InMemoryFs::new();
+
+        // Initial usage (only default directories)
+        let usage = fs.usage();
+        assert_eq!(usage.total_bytes, 0); // No file content yet
+        assert_eq!(usage.file_count, 1); // /dev/null
+
+        // Add a file
+        fs.write_file(Path::new("/tmp/test.txt"), b"hello")
+            .await
+            .unwrap();
+
+        let usage = fs.usage();
+        assert_eq!(usage.total_bytes, 5);
+        assert_eq!(usage.file_count, 2); // /dev/null + test.txt
+    }
+
+    #[tokio::test]
+    async fn test_limits_method() {
+        let limits = FsLimits::new()
+            .max_total_bytes(1000)
+            .max_file_size(500)
+            .max_file_count(10);
+        let fs = InMemoryFs::with_limits(limits.clone());
+
+        let returned = fs.limits();
+        assert_eq!(returned.max_total_bytes, 1000);
+        assert_eq!(returned.max_file_size, 500);
+        assert_eq!(returned.max_file_count, 10);
+    }
+
+    #[tokio::test]
+    async fn test_unlimited_fs() {
+        let fs = InMemoryFs::with_limits(FsLimits::unlimited());
+
+        // Should allow very large files
+        fs.write_file(Path::new("/tmp/large.txt"), &[0u8; 10_000_000])
+            .await
+            .unwrap();
+
+        let limits = fs.limits();
+        assert_eq!(limits.max_total_bytes, u64::MAX);
+    }
+
+    #[tokio::test]
+    async fn test_delete_frees_space() {
+        let limits = FsLimits::new().max_total_bytes(100);
+        let fs = InMemoryFs::with_limits(limits);
+
+        // Fill up space
+        fs.write_file(Path::new("/tmp/file.txt"), &[0u8; 80])
+            .await
+            .unwrap();
+
+        // Can't add more
+        let result = fs.write_file(Path::new("/tmp/more.txt"), &[0u8; 80]).await;
+        assert!(result.is_err());
+
+        // Delete file
+        fs.remove(Path::new("/tmp/file.txt"), false).await.unwrap();
+
+        // Now we can add
+        fs.write_file(Path::new("/tmp/more.txt"), &[0u8; 80])
+            .await
+            .unwrap();
     }
 }

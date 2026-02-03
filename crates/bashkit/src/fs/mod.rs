@@ -246,11 +246,13 @@
 //! - `/dev` - Device files
 //! - `/dev/null` - Null device (discards writes, returns empty on read)
 
+mod limits;
 mod memory;
 mod mountable;
 mod overlay;
 mod traits;
 
+pub use limits::{FsLimitExceeded, FsLimits, FsUsage};
 pub use memory::InMemoryFs;
 pub use mountable::MountableFs;
 pub use overlay::OverlayFs;

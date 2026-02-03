@@ -195,6 +195,9 @@ impl Interpreter {
         builtins.insert("tar".to_string(), Box::new(builtins::Tar));
         builtins.insert("gzip".to_string(), Box::new(builtins::Gzip));
         builtins.insert("gunzip".to_string(), Box::new(builtins::Gunzip));
+        // Disk usage
+        builtins.insert("du".to_string(), Box::new(builtins::Du));
+        builtins.insert("df".to_string(), Box::new(builtins::Df));
         // Environment builtins
         builtins.insert("env".to_string(), Box::new(builtins::Env));
         builtins.insert("printenv".to_string(), Box::new(builtins::Printenv));

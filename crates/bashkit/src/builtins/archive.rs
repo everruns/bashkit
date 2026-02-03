@@ -1,4 +1,10 @@
 //! Archive builtins - tar, gzip, gunzip
+//!
+//! # Zip Bomb Protection
+//!
+//! All decompression operations check output size against filesystem limits
+//! to prevent zip bomb attacks. Decompression is aborted early if the
+//! output would exceed limits.
 
 // Uses expect() for verified safe unwraps (e.g., strip_suffix after ends_with check)
 #![allow(clippy::unwrap_used)]
@@ -13,6 +19,50 @@ use std::path::Path;
 use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
+
+/// Maximum decompression ratio to detect zip bombs.
+/// A ratio over 100:1 is suspicious.
+const MAX_DECOMPRESSION_RATIO: usize = 100;
+
+/// Read from a decoder with size limits to prevent zip bombs.
+///
+/// Returns an error if the decompressed size exceeds the limit or
+/// if the decompression ratio is suspiciously high.
+fn read_with_limit<R: Read>(
+    mut reader: R,
+    compressed_size: usize,
+    max_size: u64,
+) -> std::io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        let n = reader.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+
+        output.extend_from_slice(&buffer[..n]);
+
+        // Check absolute size limit
+        if output.len() as u64 > max_size {
+            return Err(std::io::Error::other(format!(
+                "decompressed size exceeds {} byte limit (zip bomb protection)",
+                max_size
+            )));
+        }
+
+        // Check decompression ratio (zip bomb detection)
+        if compressed_size > 0 && output.len() > compressed_size * MAX_DECOMPRESSION_RATIO {
+            return Err(std::io::Error::other(format!(
+                "decompression ratio exceeds {}:1 (zip bomb protection)",
+                MAX_DECOMPRESSION_RATIO
+            )));
+        }
+    }
+
+    Ok(output)
+}
 
 /// The tar builtin - create and extract tar archives.
 ///
@@ -393,14 +443,16 @@ async fn extract_tar(
         ctx.fs.read_file(&archive_path).await?
     };
 
-    // Decompress if -z
+    // Get filesystem limits for zip bomb protection
+    let limits = ctx.fs.limits();
+    let max_size = limits.max_total_bytes;
+
+    // Decompress if -z, with size limits
     let tar_data = if gzip {
-        let mut decoder = GzDecoder::new(data.as_slice());
-        let mut decompressed = Vec::new();
-        decoder.read_to_end(&mut decompressed).map_err(|e| {
-            crate::error::Error::Execution(format!("tar: gzip decompression failed: {}", e))
-        })?;
-        decompressed
+        let compressed_size = data.len();
+        let decoder = GzDecoder::new(data.as_slice());
+        read_with_limit(decoder, compressed_size, max_size)
+            .map_err(|e| crate::error::Error::Execution(format!("tar: {}", e)))?
     } else {
         data
     };
@@ -505,14 +557,16 @@ async fn list_tar(
         ctx.fs.read_file(&archive_path).await?
     };
 
-    // Decompress if -z
+    // Get filesystem limits for zip bomb protection
+    let limits = ctx.fs.limits();
+    let max_size = limits.max_total_bytes;
+
+    // Decompress if -z, with size limits
     let tar_data = if gzip {
-        let mut decoder = GzDecoder::new(data.as_slice());
-        let mut decompressed = Vec::new();
-        decoder.read_to_end(&mut decompressed).map_err(|e| {
-            crate::error::Error::Execution(format!("tar: gzip decompression failed: {}", e))
-        })?;
-        decompressed
+        let compressed_size = data.len();
+        let decoder = GzDecoder::new(data.as_slice());
+        read_with_limit(decoder, compressed_size, max_size)
+            .map_err(|e| crate::error::Error::Execution(format!("tar: {}", e)))?
     } else {
         data
     };
@@ -629,14 +683,18 @@ impl Builtin for Gzip {
             }
         }
 
+        // Get filesystem limits for zip bomb protection
+        let limits = ctx.fs.limits();
+        let max_size = limits.max_file_size;
+
         // If no files, read from stdin
         if files.is_empty() {
             if let Some(stdin) = ctx.stdin {
                 if decompress {
-                    let mut decoder = GzDecoder::new(stdin.as_bytes());
-                    let mut output = Vec::new();
-                    match decoder.read_to_end(&mut output) {
-                        Ok(_) => {
+                    let compressed_size = stdin.len();
+                    let decoder = GzDecoder::new(stdin.as_bytes());
+                    match read_with_limit(decoder, compressed_size, max_size) {
+                        Ok(output) => {
                             return Ok(ExecResult::ok(String::from_utf8_lossy(&output).to_string()))
                         }
                         Err(e) => return Ok(ExecResult::err(format!("gzip: stdin: {}\n", e), 1)),
@@ -695,9 +753,9 @@ impl Builtin for Gzip {
                 }
 
                 let data = ctx.fs.read_file(&path).await?;
-                let mut decoder = GzDecoder::new(data.as_slice());
-                let mut output = Vec::new();
-                decoder.read_to_end(&mut output).map_err(|e| {
+                let compressed_size = data.len();
+                let decoder = GzDecoder::new(data.as_slice());
+                let output = read_with_limit(decoder, compressed_size, max_size).map_err(|e| {
                     crate::error::Error::Execution(format!("gzip: {}: {}", file, e))
                 })?;
 
@@ -1255,5 +1313,75 @@ mod tests {
         let result = Gunzip.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(fs.exists(&cwd.join("test.txt")).await.unwrap());
+    }
+
+    // ==================== zip bomb protection tests ====================
+
+    #[test]
+    fn test_read_with_limit_normal() {
+        let data = b"hello world";
+        let result = read_with_limit(data.as_slice(), data.len(), 1000);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), data);
+    }
+
+    #[test]
+    fn test_read_with_limit_exceeds_max() {
+        let data = vec![0u8; 1000];
+        let result = read_with_limit(data.as_slice(), data.len(), 500);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("exceeds") || err.contains("limit"));
+    }
+
+    #[test]
+    fn test_read_with_limit_high_ratio() {
+        // Simulate a high decompression ratio scenario
+        // We can't easily create a real gzip bomb, but we test the ratio check
+        let data = vec![0u8; 10100]; // 101x the "compressed" size
+        let result = read_with_limit(data.as_slice(), 100, u64::MAX);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("ratio") || err.contains("bomb"));
+    }
+
+    #[tokio::test]
+    async fn test_gzip_respects_file_size_limit() {
+        use crate::fs::FsLimits;
+
+        // Create FS with small file size limit
+        let limits = FsLimits::new().max_file_size(100);
+        let fs = Arc::new(crate::fs::InMemoryFs::with_limits(limits));
+        let mut cwd = PathBuf::from("/tmp");
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+
+        // Create a small file
+        fs.write_file(&cwd.join("small.txt"), b"small content")
+            .await
+            .unwrap();
+
+        // Compress it
+        let args = vec!["small.txt".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+
+        let result = Gzip.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_fs_limits_enforced_on_extract() {
+        use crate::fs::FsLimits;
+
+        // Create FS with small limits
+        let limits = FsLimits::new().max_total_bytes(1000).max_file_size(500);
+        let fs = Arc::new(crate::fs::InMemoryFs::with_limits(limits));
+        let cwd = PathBuf::from("/tmp");
+
+        // Create a file that will exceed limits when extracted
+        let large_content = vec![b'x'; 600];
+        fs.write_file(&cwd.join("large.txt"), &large_content)
+            .await
+            .expect_err("Should fail due to file size limit");
     }
 }

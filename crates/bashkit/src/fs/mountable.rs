@@ -13,6 +13,7 @@ use std::io::Error as IoError;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+use super::limits::{FsLimits, FsUsage};
 use super::traits::{DirEntry, FileSystem, FileType, Metadata};
 use crate::error::Result;
 
@@ -466,6 +467,26 @@ impl FileSystem for MountableFs {
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
         let (fs, resolved) = self.resolve(path);
         fs.chmod(&resolved, mode).await
+    }
+
+    fn usage(&self) -> FsUsage {
+        // Aggregate usage from root and all mounts
+        let mut total = self.root.usage();
+
+        let mounts = self.mounts.read().unwrap();
+        for fs in mounts.values() {
+            let mount_usage = fs.usage();
+            total.total_bytes += mount_usage.total_bytes;
+            total.file_count += mount_usage.file_count;
+            total.dir_count += mount_usage.dir_count;
+        }
+
+        total
+    }
+
+    fn limits(&self) -> FsLimits {
+        // Return root filesystem limits as the overall limits
+        self.root.limits()
     }
 }
 

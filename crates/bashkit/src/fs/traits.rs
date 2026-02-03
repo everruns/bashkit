@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use std::path::Path;
 use std::time::SystemTime;
 
+use super::limits::{FsLimits, FsUsage};
 use crate::error::Result;
 
 /// Async virtual filesystem trait.
@@ -191,6 +192,30 @@ pub trait FileSystem: Send + Sync {
     ///
     /// Returns an error if the path does not exist.
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()>;
+
+    /// Get current filesystem usage statistics.
+    ///
+    /// Returns total bytes used, file count, and directory count.
+    /// Used by `du` and `df` builtins.
+    ///
+    /// # Default Implementation
+    ///
+    /// Returns zeros. Implementations should override for accurate stats.
+    fn usage(&self) -> FsUsage {
+        FsUsage::default()
+    }
+
+    /// Get filesystem limits.
+    ///
+    /// Returns the configured limits for this filesystem.
+    /// Used by `df` builtin to show available space.
+    ///
+    /// # Default Implementation
+    ///
+    /// Returns unlimited limits.
+    fn limits(&self) -> FsLimits {
+        FsLimits::unlimited()
+    }
 }
 
 /// File or directory metadata.
