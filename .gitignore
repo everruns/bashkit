@@ -16,3 +16,6 @@ local*
 
 # OS
 .DS_Store
+
+# Coverage reports
+coverage/
