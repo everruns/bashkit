@@ -1862,6 +1862,64 @@ impl Interpreter {
                         result.push_str(&index_strs.join(" "));
                     }
                 }
+                WordPart::Substring {
+                    name,
+                    offset,
+                    length,
+                } => {
+                    // ${var:offset} or ${var:offset:length}
+                    let value = self.expand_variable(name);
+                    let offset_val: isize = self.evaluate_arithmetic(offset) as isize;
+                    let start = if offset_val < 0 {
+                        // Negative offset counts from end
+                        (value.len() as isize + offset_val).max(0) as usize
+                    } else {
+                        (offset_val as usize).min(value.len())
+                    };
+                    let substr = if let Some(len_expr) = length {
+                        let len_val = self.evaluate_arithmetic(len_expr) as usize;
+                        let end = (start + len_val).min(value.len());
+                        &value[start..end]
+                    } else {
+                        &value[start..]
+                    };
+                    result.push_str(substr);
+                }
+                WordPart::ArraySlice {
+                    name,
+                    offset,
+                    length,
+                } => {
+                    // ${arr[@]:offset:length}
+                    if let Some(arr) = self.arrays.get(name) {
+                        let mut indices: Vec<_> = arr.keys().cloned().collect();
+                        indices.sort();
+                        let values: Vec<_> =
+                            indices.iter().filter_map(|i| arr.get(i).cloned()).collect();
+
+                        let offset_val: isize = self.evaluate_arithmetic(offset) as isize;
+                        let start = if offset_val < 0 {
+                            (values.len() as isize + offset_val).max(0) as usize
+                        } else {
+                            (offset_val as usize).min(values.len())
+                        };
+
+                        let sliced = if let Some(len_expr) = length {
+                            let len_val = self.evaluate_arithmetic(len_expr) as usize;
+                            let end = (start + len_val).min(values.len());
+                            &values[start..end]
+                        } else {
+                            &values[start..]
+                        };
+                        result.push_str(&sliced.join(" "));
+                    }
+                }
+                WordPart::IndirectExpansion(name) => {
+                    // ${!var} - indirect expansion
+                    let var_name = self.expand_variable(name);
+                    let value = self.expand_variable(&var_name);
+                    result.push_str(&value);
+                }
                 WordPart::ArrayLength(name) => {
                     // ${#arr[@]} - number of elements
                     if let Some(arr) = self.arrays.get(name) {
@@ -1989,6 +2047,99 @@ impl Interpreter {
                 // ${var%%pattern} - remove longest suffix match
                 self.remove_pattern(value, operand, false, true)
             }
+            ParameterOp::ReplaceFirst {
+                pattern,
+                replacement,
+            } => {
+                // ${var/pattern/replacement} - replace first occurrence
+                self.replace_pattern(value, pattern, replacement, false)
+            }
+            ParameterOp::ReplaceAll {
+                pattern,
+                replacement,
+            } => {
+                // ${var//pattern/replacement} - replace all occurrences
+                self.replace_pattern(value, pattern, replacement, true)
+            }
+            ParameterOp::UpperFirst => {
+                // ${var^} - uppercase first character
+                let mut chars = value.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
+                }
+            }
+            ParameterOp::UpperAll => {
+                // ${var^^} - uppercase all characters
+                value.to_uppercase()
+            }
+            ParameterOp::LowerFirst => {
+                // ${var,} - lowercase first character
+                let mut chars = value.chars();
+                match chars.next() {
+                    Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
+                }
+            }
+            ParameterOp::LowerAll => {
+                // ${var,,} - lowercase all characters
+                value.to_lowercase()
+            }
+        }
+    }
+
+    /// Replace pattern in value
+    fn replace_pattern(
+        &self,
+        value: &str,
+        pattern: &str,
+        replacement: &str,
+        global: bool,
+    ) -> String {
+        if pattern.is_empty() {
+            return value.to_string();
+        }
+
+        // Handle glob pattern with *
+        if pattern.contains('*') {
+            // Convert glob to regex-like behavior
+            // For simplicity, we'll handle basic cases: prefix*, *suffix, *middle*
+            if pattern == "*" {
+                // Replace everything
+                return replacement.to_string();
+            }
+
+            if let Some(star_pos) = pattern.find('*') {
+                let prefix = &pattern[..star_pos];
+                let suffix = &pattern[star_pos + 1..];
+
+                if prefix.is_empty() && !suffix.is_empty() {
+                    // *suffix - match anything ending with suffix
+                    if let Some(pos) = value.find(suffix) {
+                        let after = &value[pos + suffix.len()..];
+                        if global {
+                            return replacement.to_string()
+                                + &self.replace_pattern(after, pattern, replacement, true);
+                        } else {
+                            return replacement.to_string() + after;
+                        }
+                    }
+                } else if !prefix.is_empty() && suffix.is_empty() {
+                    // prefix* - match prefix and anything after
+                    if value.starts_with(prefix) {
+                        return replacement.to_string();
+                    }
+                }
+            }
+            // If we can't match the glob pattern, return as-is
+            return value.to_string();
+        }
+
+        // Simple string replacement
+        if global {
+            value.replace(pattern, replacement)
+        } else {
+            value.replacen(pattern, replacement, 1)
         }
     }
 
