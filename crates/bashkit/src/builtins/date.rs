@@ -1,8 +1,14 @@
 //! Date builtin - display or format date and time
+//!
+//! SECURITY: Format strings are validated before use to prevent panics.
+//! Invalid format specifiers result in an error message, not a crash.
+//! Additionally, runtime format errors (e.g., timezone unavailable) are
+//! caught and return graceful errors.
 
 use std::fmt::Write;
 
 use async_trait::async_trait;
+use chrono::format::{Item, StrftimeItems};
 use chrono::{Local, Utc};
 
 use super::{Builtin, Context};
@@ -38,6 +44,21 @@ use crate::interpreter::ExecResult;
 ///   %%  Literal %
 pub struct Date;
 
+/// Validate a strftime format string.
+/// Returns Ok(()) if valid, or an error message describing the issue.
+///
+/// THREAT[TM-INT-003]: chrono::format() can panic on invalid format specifiers
+/// Mitigation: Pre-validate format string and return human-readable error
+fn validate_format(format: &str) -> std::result::Result<(), String> {
+    // StrftimeItems parses the format string and yields Item::Error for invalid specifiers
+    for item in StrftimeItems::new(format) {
+        if let Item::Error = item {
+            return Err(format!("invalid format string: '{}'", format));
+        }
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl Builtin for Date {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -48,6 +69,17 @@ impl Builtin for Date {
             Some(fmt) => &fmt[1..],            // Strip leading '+'
             None => "%a %b %e %H:%M:%S %Z %Y", // Default format like: "Mon Jan  1 12:00:00 UTC 2024"
         };
+
+        // SECURITY: Validate format string before use to prevent panics
+        // THREAT[TM-INT-003]: Invalid format strings could cause chrono to panic
+        if let Err(e) = validate_format(format) {
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: format!("date: {}\n", e),
+                exit_code: 1,
+                control_flow: crate::interpreter::ControlFlow::None,
+            });
+        }
 
         // Format the date, handling potential errors gracefully.
         // chrono's Display::fmt can return an error (e.g., when %Z timezone name
@@ -163,6 +195,7 @@ mod tests {
         assert_eq!(parts.len(), 3);
     }
 
+    // Tests from main: timezone handling
     #[tokio::test]
     async fn test_date_timezone_utc() {
         // %Z with UTC should always work and produce "UTC"
@@ -228,5 +261,31 @@ mod tests {
         let result = run_date(&["+Today is %A"]).await;
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.starts_with("Today is "));
+    }
+
+    // Tests for invalid format validation (TM-INT-003)
+    #[tokio::test]
+    async fn test_date_invalid_format_specifier() {
+        // Invalid format specifier should return error, not panic
+        let result = run_date(&["+%Q"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid format string"));
+        assert!(result.stdout.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_date_incomplete_format_specifier() {
+        // Incomplete specifier at end should return error, not panic
+        let result = run_date(&["+%Y-%m-%"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid format string"));
+    }
+
+    #[tokio::test]
+    async fn test_date_mixed_valid_invalid_format() {
+        // Mix of valid and invalid should still error
+        let result = run_date(&["+%Y-%Q-%d"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid format string"));
     }
 }

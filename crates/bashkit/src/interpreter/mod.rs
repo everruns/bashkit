@@ -1590,7 +1590,8 @@ impl Interpreter {
             };
 
             // Execute builtin with panic catching for security
-            // SECURITY: Custom builtins may panic - we catch this to:
+            // THREAT[TM-INT-001]: Builtins may panic on unexpected input
+            // SECURITY: All builtins (built-in and custom) may panic - we catch this to:
             // 1. Prevent interpreter crash
             // 2. Avoid leaking panic message (may contain sensitive info)
             // 3. Return sanitized error to user

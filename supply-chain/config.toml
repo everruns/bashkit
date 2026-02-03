@@ -99,7 +99,7 @@ version = "1.25.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.bytes]]
-version = "1.11.0"
+version = "1.11.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.cast]]
@@ -131,11 +131,11 @@ version = "0.2.2"
 criteria = "safe-to-run"
 
 [[exemptions.clap]]
-version = "4.5.56"
+version = "4.5.57"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_builder]]
-version = "4.5.56"
+version = "4.5.57"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_derive]]
@@ -239,7 +239,7 @@ version = "0.1.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.flate2]]
-version = "1.1.8"
+version = "1.1.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.fnv]]
@@ -364,14 +364,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.hyper-tls]]
 version = "0.6.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.hyper-util]]
-version = "0.1.20"
-criteria = "safe-to-deploy"
-
-[[exemptions.hyper-util]]
-version = "0.1.20"
 criteria = "safe-to-deploy"
 
 [[exemptions.hyper-util]]
@@ -711,19 +703,19 @@ version = "0.5.18"
 criteria = "safe-to-deploy"
 
 [[exemptions.regex]]
-version = "1.12.2"
+version = "1.12.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.regex-automata]]
-version = "0.4.13"
+version = "0.4.14"
 criteria = "safe-to-deploy"
 
 [[exemptions.regex-lite]]
-version = "0.1.8"
+version = "0.1.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.regex-syntax]]
-version = "0.8.8"
+version = "0.8.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.reqwest]]
@@ -880,14 +872,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.synstructure]]
 version = "0.13.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.system-configuration]]
-version = "0.7.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.system-configuration]]
-version = "0.7.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.system-configuration]]
@@ -1219,11 +1203,11 @@ version = "0.8.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy]]
-version = "0.8.37"
+version = "0.8.38"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy-derive]]
-version = "0.8.37"
+version = "0.8.38"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerofrom]]

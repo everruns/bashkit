@@ -197,6 +197,35 @@ let tenant_b = Bash::builder()
 // tenant_a cannot access tenant_b's files or state
 ```
 
+### Internal Error Handling (TM-INT-*)
+
+BashKit is designed to never crash, even when processing malicious or malformed input.
+All unexpected errors are caught and converted to safe, human-readable messages.
+
+| Threat | Attack Example | Mitigation | Code Reference |
+|--------|---------------|------------|----------------|
+| Builtin panic (TM-INT-001) | Trigger panic in builtin | `catch_unwind` wrapper | [`interpreter/mod.rs`][interp] |
+| Info leak in panic (TM-INT-002) | Panic exposes secrets | Sanitized error messages | [`interpreter/mod.rs`][interp] |
+| Date format crash (TM-INT-003) | Invalid strftime: `+%Q` | Pre-validation | [`builtins/date.rs`][date] |
+
+**Panic Recovery:**
+
+All builtins (both built-in and custom) are wrapped with panic catching:
+
+```text
+If a builtin panics, the script continues with a sanitized error.
+The panic message is NOT exposed (may contain sensitive data).
+Output: "bash: <command>: builtin failed unexpectedly"
+```
+
+**Error Message Safety:**
+
+Error messages never expose:
+- Stack traces or call stacks
+- Memory addresses
+- Real filesystem paths (only virtual paths)
+- Panic messages that may contain secrets
+
 ## Security Testing
 
 BashKit includes comprehensive security tests:
@@ -223,6 +252,7 @@ All threats use stable IDs in the format `TM-<CATEGORY>-<NUMBER>`:
 | TM-INJ | Injection |
 | TM-NET | Network Security |
 | TM-ISO | Multi-Tenant Isolation |
+| TM-INT | Internal Error Handling |
 
 Full threat analysis: [`specs/006-threat-model.md`][spec]
 
@@ -237,3 +267,5 @@ Full threat analysis: [`specs/006-threat-model.md`][spec]
 [network_tests]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/tests/network_security_tests.rs
 [fuzz]: https://github.com/anthropics/bashkit/tree/main/crates/bashkit/fuzz
 [spec]: https://github.com/anthropics/bashkit/blob/main/specs/006-threat-model.md
+[interp]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/src/interpreter/mod.rs
+[date]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/src/builtins/date.rs
