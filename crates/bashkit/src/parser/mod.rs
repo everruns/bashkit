@@ -370,7 +370,9 @@ impl<'a> Parser<'a> {
 
         // Expect variable name
         let variable = match &self.current_token {
-            Some(tokens::Token::Word(w)) | Some(tokens::Token::LiteralWord(w)) => w.clone(),
+            Some(tokens::Token::Word(w))
+            | Some(tokens::Token::LiteralWord(w))
+            | Some(tokens::Token::QuotedWord(w)) => w.clone(),
             _ => {
                 self.pop_depth();
                 return Err(Error::Parse(
@@ -389,7 +391,7 @@ impl<'a> Parser<'a> {
             loop {
                 match &self.current_token {
                     Some(tokens::Token::Word(w)) if w == "do" => break,
-                    Some(tokens::Token::Word(w)) => {
+                    Some(tokens::Token::Word(w)) | Some(tokens::Token::QuotedWord(w)) => {
                         words.push(self.parse_word(w.clone()));
                         self.advance();
                     }
@@ -475,17 +477,9 @@ impl<'a> Parser<'a> {
                     }
                     self.advance();
                 }
-                Some(tokens::Token::Word(w)) => {
-                    if !current_expr.is_empty()
-                        && !current_expr.ends_with(' ')
-                        && !current_expr.ends_with('(')
-                    {
-                        current_expr.push(' ');
-                    }
-                    current_expr.push_str(w);
-                    self.advance();
-                }
-                Some(tokens::Token::LiteralWord(w)) => {
+                Some(tokens::Token::Word(w))
+                | Some(tokens::Token::LiteralWord(w))
+                | Some(tokens::Token::QuotedWord(w)) => {
                     if !current_expr.is_empty()
                         && !current_expr.ends_with(' ')
                         && !current_expr.ends_with('(')
@@ -644,8 +638,19 @@ impl<'a> Parser<'a> {
             }
 
             let mut patterns = Vec::new();
-            while let Some(tokens::Token::Word(w)) = &self.current_token {
-                patterns.push(self.parse_word(w.clone()));
+            while matches!(
+                &self.current_token,
+                Some(tokens::Token::Word(_))
+                    | Some(tokens::Token::LiteralWord(_))
+                    | Some(tokens::Token::QuotedWord(_))
+            ) {
+                let w = match &self.current_token {
+                    Some(tokens::Token::Word(w))
+                    | Some(tokens::Token::LiteralWord(w))
+                    | Some(tokens::Token::QuotedWord(w)) => w.clone(),
+                    _ => unreachable!(),
+                };
+                patterns.push(self.parse_word(w));
                 self.advance();
 
                 // Check for | between patterns
@@ -828,14 +833,9 @@ impl<'a> Parser<'a> {
                     expr.push(')');
                     self.advance();
                 }
-                Some(tokens::Token::Word(w)) => {
-                    if !expr.is_empty() && !expr.ends_with(' ') && !expr.ends_with('(') {
-                        expr.push(' ');
-                    }
-                    expr.push_str(w);
-                    self.advance();
-                }
-                Some(tokens::Token::LiteralWord(w)) => {
+                Some(tokens::Token::Word(w))
+                | Some(tokens::Token::LiteralWord(w))
+                | Some(tokens::Token::QuotedWord(w)) => {
                     if !expr.is_empty() && !expr.ends_with(' ') && !expr.ends_with('(') {
                         expr.push(' ');
                     }
@@ -1103,7 +1103,9 @@ impl<'a> Parser<'a> {
 
         loop {
             match &self.current_token {
-                Some(tokens::Token::Word(w)) | Some(tokens::Token::LiteralWord(w)) => {
+                Some(tokens::Token::Word(w))
+                | Some(tokens::Token::LiteralWord(w))
+                | Some(tokens::Token::QuotedWord(w)) => {
                     let is_literal =
                         matches!(&self.current_token, Some(tokens::Token::LiteralWord(_)));
 
@@ -1148,7 +1150,8 @@ impl<'a> Parser<'a> {
                                                 break;
                                             }
                                             Some(tokens::Token::Word(elem))
-                                            | Some(tokens::Token::LiteralWord(elem)) => {
+                                            | Some(tokens::Token::LiteralWord(elem))
+                                            | Some(tokens::Token::QuotedWord(elem)) => {
                                                 let elem_clone = elem.clone();
                                                 let word = if matches!(
                                                     &self.current_token,
@@ -1267,9 +1270,12 @@ impl<'a> Parser<'a> {
                 }
                 Some(tokens::Token::HereDoc) => {
                     self.advance();
-                    // Get the delimiter word
-                    let delimiter = match &self.current_token {
-                        Some(tokens::Token::Word(w)) => w.clone(),
+                    // Get the delimiter word and track if it was quoted
+                    // Quoted delimiters (single or double quotes) disable variable expansion
+                    let (delimiter, quoted) = match &self.current_token {
+                        Some(tokens::Token::Word(w)) => (w.clone(), false),
+                        Some(tokens::Token::LiteralWord(w)) => (w.clone(), true),
+                        Some(tokens::Token::QuotedWord(w)) => (w.clone(), true),
                         _ => return Err(Error::Parse("expected delimiter after <<".to_string())),
                     };
                     // Don't advance - let read_heredoc consume directly from lexer position
@@ -1280,11 +1286,18 @@ impl<'a> Parser<'a> {
                     // Now advance to get the next token after the heredoc
                     self.advance();
 
-                    // Parse the heredoc content to allow variable expansion
+                    // If delimiter was quoted, content is literal (no expansion)
+                    // Otherwise, parse for variable expansion
+                    let target = if quoted {
+                        Word::quoted_literal(content)
+                    } else {
+                        self.parse_word(content)
+                    };
+
                     redirects.push(Redirect {
                         fd: None,
                         kind: RedirectKind::HereDoc,
-                        target: self.parse_word(content),
+                        target,
                     });
                 }
                 Some(tokens::Token::ProcessSubIn) | Some(tokens::Token::ProcessSubOut) => {
@@ -1398,6 +1411,12 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(word)
             }
+            Some(tokens::Token::QuotedWord(w)) => {
+                // Double-quoted: parse for variable expansion
+                let word = self.parse_word(w.clone());
+                self.advance();
+                Ok(word)
+            }
             Some(tokens::Token::ProcessSubIn) | Some(tokens::Token::ProcessSubOut) => {
                 // Process substitution <(cmd) or >(cmd)
                 let is_input = matches!(self.current_token, Some(tokens::Token::ProcessSubIn));
@@ -1422,7 +1441,7 @@ impl<'a> Parser<'a> {
                             cmd_str.push(')');
                             self.advance();
                         }
-                        Some(tokens::Token::Word(w)) => {
+                        Some(tokens::Token::Word(w)) | Some(tokens::Token::QuotedWord(w)) => {
                             if !cmd_str.is_empty() {
                                 cmd_str.push(' ');
                             }
@@ -1475,10 +1494,12 @@ impl<'a> Parser<'a> {
 
     // Helper methods for word handling - kept for potential future use
     #[allow(dead_code)]
-    /// Convert current word token to Word (handles both Word and LiteralWord)
+    /// Convert current word token to Word (handles Word, LiteralWord, QuotedWord)
     fn current_word_to_word(&self) -> Option<Word> {
         match &self.current_token {
-            Some(tokens::Token::Word(w)) => Some(self.parse_word(w.clone())),
+            Some(tokens::Token::Word(w)) | Some(tokens::Token::QuotedWord(w)) => {
+                Some(self.parse_word(w.clone()))
+            }
             Some(tokens::Token::LiteralWord(w)) => Some(Word {
                 parts: vec![WordPart::Literal(w.clone())],
                 quoted: true,
@@ -1488,11 +1509,13 @@ impl<'a> Parser<'a> {
     }
 
     #[allow(dead_code)]
-    /// Check if current token is a word (either Word or LiteralWord)
+    /// Check if current token is a word (Word, LiteralWord, or QuotedWord)
     fn is_current_word(&self) -> bool {
         matches!(
             &self.current_token,
-            Some(tokens::Token::Word(_)) | Some(tokens::Token::LiteralWord(_))
+            Some(tokens::Token::Word(_))
+                | Some(tokens::Token::LiteralWord(_))
+                | Some(tokens::Token::QuotedWord(_))
         )
     }
 
@@ -1500,8 +1523,9 @@ impl<'a> Parser<'a> {
     /// Get the string content if current token is a word
     fn current_word_str(&self) -> Option<String> {
         match &self.current_token {
-            Some(tokens::Token::Word(w)) => Some(w.clone()),
-            Some(tokens::Token::LiteralWord(w)) => Some(w.clone()),
+            Some(tokens::Token::Word(w))
+            | Some(tokens::Token::LiteralWord(w))
+            | Some(tokens::Token::QuotedWord(w)) => Some(w.clone()),
             _ => None,
         }
     }

@@ -13,6 +13,10 @@ pub enum Token {
     /// A literal word (single-quoted) - no variable expansion
     LiteralWord(String),
 
+    /// A double-quoted word - may contain variable expansions inside,
+    /// but is marked as quoted (affects heredoc delimiter semantics)
+    QuotedWord(String),
+
     /// Newline character
     Newline,
 
