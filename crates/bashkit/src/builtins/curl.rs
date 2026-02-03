@@ -12,9 +12,9 @@
 //! - Compression decompression is size-limited to prevent zip bombs
 
 use async_trait::async_trait;
-#[cfg(feature = "http_client")]
-use std::path::Path;
 
+#[cfg(feature = "http_client")]
+use super::resolve_path;
 use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -567,17 +567,6 @@ fn decompress_deflate(data: &[u8], max_size: usize) -> Result<Vec<u8>> {
     Ok(decompressed)
 }
 
-/// Resolve a path relative to cwd.
-#[cfg(feature = "http_client")]
-fn resolve_path(cwd: &std::path::Path, path_str: &str) -> std::path::PathBuf {
-    let path = Path::new(path_str);
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        cwd.join(path)
-    }
-}
-
 /// The wget builtin - download files from URLs.
 ///
 /// Usage: wget [OPTIONS] URL
@@ -943,22 +932,6 @@ mod tests {
         let result = run_wget(&["https://example.com"]).await;
         assert_ne!(result.exit_code, 0);
         assert!(result.stderr.contains("network access not configured"));
-    }
-
-    #[cfg(feature = "http_client")]
-    #[test]
-    fn test_resolve_path_absolute() {
-        let cwd = PathBuf::from("/home/user");
-        let result = resolve_path(&cwd, "/tmp/file.txt");
-        assert_eq!(result, PathBuf::from("/tmp/file.txt"));
-    }
-
-    #[cfg(feature = "http_client")]
-    #[test]
-    fn test_resolve_path_relative() {
-        let cwd = PathBuf::from("/home/user");
-        let result = resolve_path(&cwd, "downloads/file.txt");
-        assert_eq!(result, PathBuf::from("/home/user/downloads/file.txt"));
     }
 
     #[cfg(feature = "http_client")]
