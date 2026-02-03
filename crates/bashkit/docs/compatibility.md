@@ -1,10 +1,12 @@
-# BashKit Compatibility Reference
+# BashKit Compatibility Scorecard
 
-> Dense reference for all bash features and builtins
+> Feature parity tracking for bash and common tools
 
 **See also:**
 - [API Documentation](https://docs.rs/bashkit) - Full API reference
 - [Custom Builtins Guide](./custom_builtins.md) - Extending BashKit with custom commands
+
+**Legend:** ✅ Implemented | ⚠️ Partial | ❌ Not implemented | N/A Security exclusion
 
 ## POSIX Shell Compliance
 
