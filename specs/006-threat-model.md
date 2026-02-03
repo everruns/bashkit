@@ -355,6 +355,8 @@ let tenant_b = Bash::builder()
 | Network allowlist | Data exfiltration | `network/allowlist.rs` | Yes |
 | Sandboxed eval, no exec | Code injection | eval runs builtins only, exec not implemented | Yes |
 | Fail-point testing | Control bypass | `security_failpoint_tests.rs` | Yes |
+| Builtin panic catching | Custom builtin crashes | `interpreter/mod.rs` | Yes |
+| Error message sanitization | Information disclosure | `builtin_error_security_tests.rs` | Yes |
 
 ---
 
@@ -391,14 +393,16 @@ ExecutionLimits::new()
 | Resource limits | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Filesystem escape | ✅ | ✅ | ✅ | - | ✅ |
 | Injection attacks | ✅ | ❌ | ✅ | ✅ | ✅ |
-| Information disclosure | ✅ | ❌ | ✅ | - | - |
+| Information disclosure | ✅ | ✅ | ✅ | - | - |
 | Network bypass | ✅ | ❌ | ✅ | - | - |
 | Multi-tenant isolation | ✅ | ❌ | ✅ | - | - |
 | Parser edge cases | ✅ | ❌ | ✅ | ✅ | ✅ |
+| Custom builtin errors | ✅ | ✅ | ✅ | - | - |
 
 **Test Files**:
-- `tests/threat_model_tests.rs` - 39 threat-based security tests
+- `tests/threat_model_tests.rs` - 51 threat-based security tests
 - `tests/security_failpoint_tests.rs` - Fail-point injection tests
+- `tests/builtin_error_security_tests.rs` - Custom builtin error handling tests (34 tests)
 
 **Recommendation**: Add cargo-fuzz for parser and input handling.
 
