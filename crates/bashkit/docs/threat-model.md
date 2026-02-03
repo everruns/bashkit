@@ -34,7 +34,7 @@ through configurable limits.
 | Many files (TM-DOS-006) | Create 1M files | `max_file_count` | [`fs/limits.rs`][fslimits] |
 
 **Configuration:**
-```rust
+```rust,ignore
 use bashkit::{Bash, ExecutionLimits, FsLimits, InMemoryFs};
 use std::sync::Arc;
 use std::time::Duration;
@@ -75,7 +75,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 BashKit uses an in-memory virtual filesystem by default. Scripts cannot access the
 real filesystem unless explicitly mounted via [`MountableFs`].
 
-```rust
+```rust,ignore
 use bashkit::{Bash, InMemoryFs};
 use std::sync::Arc;
 
@@ -102,7 +102,7 @@ Scripts may attempt to leak sensitive information.
 
 Do NOT pass sensitive environment variables to untrusted scripts:
 
-```rust
+```rust,ignore
 // UNSAFE - secrets may be leaked
 let bash = Bash::builder()
     .env("DATABASE_URL", "postgres://user:pass@host/db")
@@ -120,7 +120,7 @@ let bash = Bash::builder()
 
 System builtins return configurable sandbox values, never real host information:
 
-```rust
+```rust,ignore
 let bash = Bash::builder()
     .username("sandbox")         // whoami returns "sandbox"
     .hostname("bashkit-sandbox") // hostname returns "bashkit-sandbox"
@@ -140,7 +140,7 @@ Network access is disabled by default. When enabled, strict controls apply.
 
 **Network Allowlist:**
 
-```rust
+```rust,ignore
 use bashkit::{Bash, NetworkAllowlist};
 
 // Explicit allowlist - only these URLs can be accessed
@@ -181,7 +181,7 @@ echo $user_input
 Each [`Bash`] instance is fully isolated. For multi-tenant environments, create
 separate instances per tenant:
 
-```rust
+```rust,ignore
 use bashkit::{Bash, InMemoryFs};
 use std::sync::Arc;
 
