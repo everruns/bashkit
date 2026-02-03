@@ -95,8 +95,22 @@ arr=(a b c); echo ${!arr[@]}
 ### end
 
 ### array_slice
-### skip: array slicing not implemented
+# Array slicing with offset and length
 arr=(a b c d e); echo ${arr[@]:1:3}
 ### expect
 b c d
+### end
+
+### array_slice_no_length
+# Array slicing with offset only
+arr=(a b c d e); echo ${arr[@]:2}
+### expect
+c d e
+### end
+
+### array_slice_from_start
+# Array slicing from start
+arr=(a b c d e); echo ${arr[@]:0:2}
+### expect
+a b
 ### end
