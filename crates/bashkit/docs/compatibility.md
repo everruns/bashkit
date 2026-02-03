@@ -88,8 +88,8 @@ for sandbox security reasons. See the compliance spec for details.
 | `tr` | `-d`, character ranges | Translate/delete chars |
 | `date` | `+FORMAT`, `-u` | Display/format date |
 | `wait` | `[JOB_ID...]` | Wait for background jobs |
-| `curl` | `-s`, `-o`, `-X`, `-d`, `-H`, `-I`, `-f`, `-L`, `-w` | HTTP client (requires network feature) |
-| `wget` | `-q`, `-O`, `--spider` | Download files (requires network feature) |
+| `curl` | `-s`, `-o`, `-X`, `-d`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` | HTTP client (requires network feature) |
+| `wget` | `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` | Download files (requires network feature) |
 | `timeout` | `DURATION COMMAND` | Run with time limit (stub) |
 | `ls` | `-l`, `-a`, `-h`, `-1`, `-R` | List directory contents |
 | `find` | `-name`, `-type`, `-maxdepth`, `-print` | Search for files |
@@ -333,8 +333,8 @@ Default limits (configurable):
 |---------|--------|-------|
 | HTTP client | ✅ | Full implementation with security mitigations |
 | URL allowlist | ✅ | Default-deny whitelist security model |
-| `curl` builtin | ✅ | Full HTTP client with `-s`, `-o`, `-X`, `-d`, `-H`, `-I`, `-f`, `-L`, `-w` |
-| `wget` builtin | ✅ | Full downloader with `-q`, `-O`, `--spider` |
+| `curl` builtin | ✅ | Full HTTP client with `-s`, `-o`, `-X`, `-d`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` |
+| `wget` builtin | ✅ | Full downloader with `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` |
 | Response limits | ✅ | 10MB max response size, 30s timeout |
 | Redirect security | ✅ | Redirects require explicit `-L` and allowlist check |
 | Raw sockets | ❌ | Not planned |

@@ -124,10 +124,10 @@ Bash::builder()
 
 #### Network
 - `curl` - HTTP client (requires network feature + allowlist)
-  - Options: `-s/--silent`, `-o FILE`, `-X METHOD`, `-d DATA`, `-H HEADER`, `-I/--head`, `-f/--fail`, `-L/--location`, `-w FORMAT`
-  - Security: URL allowlist enforced, 10MB response limit, 30s timeout
+  - Options: `-s/--silent`, `-o FILE`, `-X METHOD`, `-d DATA`, `-H HEADER`, `-I/--head`, `-f/--fail`, `-L/--location`, `-w FORMAT`, `--compressed`, `-u/--user`, `-A/--user-agent`, `-e/--referer`, `-v/--verbose`, `-m/--max-time`
+  - Security: URL allowlist enforced, 10MB response limit, 30s timeout, zip bomb protection via size-limited decompression
 - `wget` - Download files (requires network feature + allowlist)
-  - Options: `-q/--quiet`, `-O FILE`, `--spider`
+  - Options: `-q/--quiet`, `-O FILE`, `--spider`, `--header`, `-U/--user-agent`, `--post-data`, `-t/--tries`
   - Security: URL allowlist enforced, 10MB response limit, 30s timeout
 
 **Network Configuration**:

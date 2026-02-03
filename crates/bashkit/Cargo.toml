@@ -53,9 +53,12 @@ jaq-json = { workspace = true }
 # Compression (for gzip/gunzip)
 flate2 = { workspace = true }
 
+# Base64 encoding (for HTTP basic auth)
+base64 = { workspace = true, optional = true }
+
 [features]
 default = []
-network = ["reqwest"]
+network = ["reqwest", "base64"]
 # Enable fail points for security/fault injection testing
 # Usage: FAILPOINTS="fail_point_name=action" cargo test --features failpoints
 failpoints = ["fail/failpoints"]

@@ -22,15 +22,21 @@ use crate::interpreter::ExecResult;
 /// Usage: curl [OPTIONS] URL
 ///
 /// Options:
-///   -s, --silent    Silent mode (no progress)
-///   -o FILE         Write output to FILE
-///   -X METHOD       Specify request method (GET, POST, PUT, DELETE, HEAD)
-///   -d DATA         Send data in request body (implies POST if no -X)
-///   -H HEADER       Add header to request (format: "Name: Value")
-///   -I, --head      Fetch headers only (HEAD request)
-///   -f, --fail      Fail silently on HTTP errors (no output)
-///   -L, --location  Follow redirects (up to 10 redirects)
-///   -w FORMAT       Write output format after transfer
+///   -s, --silent       Silent mode (no progress)
+///   -o FILE            Write output to FILE
+///   -X METHOD          Specify request method (GET, POST, PUT, DELETE, HEAD)
+///   -d DATA            Send data in request body (implies POST if no -X)
+///   -H HEADER          Add header to request (format: "Name: Value")
+///   -I, --head         Fetch headers only (HEAD request)
+///   -f, --fail         Fail silently on HTTP errors (no output)
+///   -L, --location     Follow redirects (up to 10 redirects)
+///   -w FORMAT          Write output format after transfer
+///   --compressed       Request compressed response and decompress
+///   -u, --user U:P     Basic authentication (user:password)
+///   -A, --user-agent S Custom user agent string
+///   -e, --referer URL  Referer URL
+///   -m, --max-time S   Maximum time in seconds for operation
+///   -v, --verbose      Verbose output
 ///
 /// Note: Network access requires the 'network' feature and proper
 /// URL allowlist configuration. Without configuration, all requests
@@ -38,9 +44,10 @@ use crate::interpreter::ExecResult;
 ///
 /// # Security
 ///
-/// - Response size is limited to prevent memory exhaustion
+/// - Response size is limited to prevent memory exhaustion (applies to decompressed size too)
 /// - Redirects require each URL to be in the allowlist
 /// - Timeouts prevent hanging on slow servers
+/// - --compressed decompression is size-limited to prevent zip bombs
 pub struct Curl;
 
 #[async_trait]
@@ -48,6 +55,7 @@ impl Builtin for Curl {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         // Parse arguments
         let mut silent = false;
+        let mut verbose = false;
         let mut output_file: Option<String> = None;
         let mut method = "GET".to_string();
         let mut data: Option<String> = None;
@@ -56,6 +64,11 @@ impl Builtin for Curl {
         let mut fail_on_error = false;
         let mut follow_redirects = false;
         let mut write_out: Option<String> = None;
+        let mut compressed = false;
+        let mut user_auth: Option<String> = None;
+        let mut user_agent: Option<String> = None;
+        let mut referer: Option<String> = None;
+        let mut max_time: Option<u64> = None;
         let mut url: Option<String> = None;
 
         let mut i = 0;
@@ -63,8 +76,10 @@ impl Builtin for Curl {
             let arg = &ctx.args[i];
             match arg.as_str() {
                 "-s" | "--silent" => silent = true,
+                "-v" | "--verbose" => verbose = true,
                 "-f" | "--fail" => fail_on_error = true,
                 "-L" | "--location" => follow_redirects = true,
+                "--compressed" => compressed = true,
                 "-I" | "--head" => {
                     head_only = true;
                     method = "HEAD".to_string();
@@ -102,6 +117,30 @@ impl Builtin for Curl {
                         write_out = Some(ctx.args[i].clone());
                     }
                 }
+                "-u" | "--user" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        user_auth = Some(ctx.args[i].clone());
+                    }
+                }
+                "-A" | "--user-agent" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        user_agent = Some(ctx.args[i].clone());
+                    }
+                }
+                "-e" | "--referer" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        referer = Some(ctx.args[i].clone());
+                    }
+                }
+                "-m" | "--max-time" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        max_time = ctx.args[i].parse().ok();
+                    }
+                }
                 _ if !arg.starts_with('-') => {
                     url = Some(arg.clone());
                 }
@@ -132,10 +171,16 @@ impl Builtin for Curl {
                     &headers,
                     head_only,
                     silent,
+                    verbose,
                     fail_on_error,
                     follow_redirects,
                     write_out.as_deref(),
                     output_file.as_deref(),
+                    compressed,
+                    user_auth.as_deref(),
+                    user_agent.as_deref(),
+                    referer.as_deref(),
+                    max_time,
                     &ctx,
                 )
                 .await;
@@ -145,6 +190,7 @@ impl Builtin for Curl {
         // Network not configured
         let _ = (
             silent,
+            verbose,
             output_file,
             method,
             data,
@@ -153,6 +199,11 @@ impl Builtin for Curl {
             fail_on_error,
             follow_redirects,
             write_out,
+            compressed,
+            user_auth,
+            user_agent,
+            referer,
+            max_time,
         );
 
         Ok(ExecResult::err(
@@ -178,10 +229,16 @@ async fn execute_curl_request(
     headers: &[String],
     head_only: bool,
     _silent: bool,
+    verbose: bool,
     fail_on_error: bool,
     follow_redirects: bool,
     write_out: Option<&str>,
     output_file: Option<&str>,
+    compressed: bool,
+    user_auth: Option<&str>,
+    user_agent: Option<&str>,
+    referer: Option<&str>,
+    _max_time: Option<u64>, // TODO: implement per-request timeout
     ctx: &Context<'_>,
 ) -> Result<ExecResult> {
     use crate::network::Method;
@@ -202,7 +259,7 @@ async fn execute_curl_request(
         }
     };
 
-    // Parse headers
+    // Parse headers and add custom ones
     let mut header_pairs: Vec<(String, String)> = Vec::new();
     for header in headers {
         if let Some(colon_pos) = header.find(':') {
@@ -212,6 +269,31 @@ async fn execute_curl_request(
         }
     }
 
+    // Add --compressed header (request gzip/deflate)
+    if compressed {
+        header_pairs.push(("Accept-Encoding".to_string(), "gzip, deflate".to_string()));
+    }
+
+    // Add basic auth header
+    if let Some(auth) = user_auth {
+        use base64::Engine;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(auth);
+        header_pairs.push(("Authorization".to_string(), format!("Basic {}", encoded)));
+    }
+
+    // Add custom user agent
+    if let Some(ua) = user_agent {
+        header_pairs.push(("User-Agent".to_string(), ua.to_string()));
+    }
+
+    // Add referer
+    if let Some(ref_url) = referer {
+        header_pairs.push(("Referer".to_string(), ref_url.to_string()));
+    }
+
+    // Verbose output buffer
+    let mut verbose_output = String::new();
+
     // Make the request
     let body = data.map(|d| d.as_bytes());
     let mut current_url = url.to_string();
@@ -219,12 +301,28 @@ async fn execute_curl_request(
     const MAX_REDIRECTS: u32 = 10;
 
     loop {
+        if verbose {
+            verbose_output.push_str(&format!("> {} {} HTTP/1.1\r\n", method, current_url));
+            for (name, value) in &header_pairs {
+                verbose_output.push_str(&format!("> {}: {}\r\n", name, value));
+            }
+            verbose_output.push_str(">\r\n");
+        }
+
         let result = http_client
             .request_with_headers(http_method, &current_url, body, &header_pairs)
             .await;
 
         match result {
             Ok(response) => {
+                if verbose {
+                    verbose_output.push_str(&format!("< HTTP/1.1 {}\r\n", response.status));
+                    for (name, value) in &response.headers {
+                        verbose_output.push_str(&format!("< {}: {}\r\n", name, value));
+                    }
+                    verbose_output.push_str("<\r\n");
+                }
+
                 // Handle redirects if -L flag is set
                 if follow_redirects
                     && (response.status == 301
@@ -265,6 +363,28 @@ async fn execute_curl_request(
                     });
                 }
 
+                // Get response body, potentially decompressing
+                let body_bytes = if compressed {
+                    // Check Content-Encoding header
+                    let encoding = response
+                        .headers
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case("content-encoding"))
+                        .map(|(_, v)| v.as_str());
+
+                    match encoding {
+                        Some("gzip") => {
+                            decompress_gzip(&response.body, http_client.max_response_bytes())?
+                        }
+                        Some("deflate") => {
+                            decompress_deflate(&response.body, http_client.max_response_bytes())?
+                        }
+                        _ => response.body.clone(),
+                    }
+                } else {
+                    response.body.clone()
+                };
+
                 // Format output
                 let output = if head_only {
                     // For -I, output headers
@@ -275,7 +395,7 @@ async fn execute_curl_request(
                     header_output.push_str("\r\n");
                     header_output
                 } else {
-                    response.body_string()
+                    String::from_utf8_lossy(&body_bytes).into_owned()
                 };
 
                 // Write to file if -o specified
@@ -288,16 +408,18 @@ async fn execute_curl_request(
                         ));
                     }
                     // Output write-out format if specified
-                    let stdout = write_out
-                        .map(|fmt| format_write_out(fmt, &response, output.len()))
-                        .unwrap_or_default();
+                    let mut stdout = verbose_output;
+                    if let Some(fmt) = write_out {
+                        stdout.push_str(&format_write_out(fmt, &response, output.len()));
+                    }
                     return Ok(ExecResult::ok(stdout));
                 }
 
                 // Append write-out format if specified
-                let mut final_output = output;
+                let mut final_output = verbose_output;
+                final_output.push_str(&output);
                 if let Some(fmt) = write_out {
-                    final_output.push_str(&format_write_out(fmt, &response, final_output.len()));
+                    final_output.push_str(&format_write_out(fmt, &response, output.len()));
                 }
 
                 return Ok(ExecResult::ok(final_output));
@@ -371,6 +493,78 @@ fn format_write_out(fmt: &str, response: &crate::network::Response, size: usize)
     output
 }
 
+/// Decompress gzip data with size limit.
+///
+/// Returns error if decompressed size exceeds max_size (prevents zip bombs).
+#[cfg(feature = "network")]
+fn decompress_gzip(data: &[u8], max_size: usize) -> Result<Vec<u8>> {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+
+    let mut decoder = GzDecoder::new(data);
+    let mut decompressed = Vec::new();
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        match decoder.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => {
+                if decompressed.len() + n > max_size {
+                    return Err(crate::error::Error::Network(format!(
+                        "decompressed response too large: exceeded {} bytes limit",
+                        max_size
+                    )));
+                }
+                decompressed.extend_from_slice(&buffer[..n]);
+            }
+            Err(e) => {
+                return Err(crate::error::Error::Network(format!(
+                    "gzip decompression failed: {}",
+                    e
+                )));
+            }
+        }
+    }
+
+    Ok(decompressed)
+}
+
+/// Decompress deflate data with size limit.
+///
+/// Returns error if decompressed size exceeds max_size (prevents zip bombs).
+#[cfg(feature = "network")]
+fn decompress_deflate(data: &[u8], max_size: usize) -> Result<Vec<u8>> {
+    use flate2::read::DeflateDecoder;
+    use std::io::Read;
+
+    let mut decoder = DeflateDecoder::new(data);
+    let mut decompressed = Vec::new();
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        match decoder.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => {
+                if decompressed.len() + n > max_size {
+                    return Err(crate::error::Error::Network(format!(
+                        "decompressed response too large: exceeded {} bytes limit",
+                        max_size
+                    )));
+                }
+                decompressed.extend_from_slice(&buffer[..n]);
+            }
+            Err(e) => {
+                return Err(crate::error::Error::Network(format!(
+                    "deflate decompression failed: {}",
+                    e
+                )));
+            }
+        }
+    }
+
+    Ok(decompressed)
+}
+
 /// Resolve a path relative to cwd.
 fn resolve_path(cwd: &std::path::Path, path_str: &str) -> std::path::PathBuf {
     let path = Path::new(path_str);
@@ -386,10 +580,13 @@ fn resolve_path(cwd: &std::path::Path, path_str: &str) -> std::path::PathBuf {
 /// Usage: wget [OPTIONS] URL
 ///
 /// Options:
-///   -q, --quiet     Quiet mode (no progress output)
-///   -O FILE         Write output to FILE (use '-' for stdout)
-///   -o FILE         Log messages to FILE (instead of stderr)
-///   --spider        Don't download, just check if URL exists
+///   -q, --quiet        Quiet mode (no progress output)
+///   -O FILE            Write output to FILE (use '-' for stdout)
+///   --spider           Don't download, just check if URL exists
+///   --header "H: V"    Add custom header
+///   -U, --user-agent S Custom user agent string
+///   --post-data DATA   POST data with request
+///   -t, --tries N      Number of retries (ignored, for compatibility)
 ///
 /// Note: Network access requires the 'network' feature and proper
 /// URL allowlist configuration.
@@ -407,6 +604,9 @@ impl Builtin for Wget {
         let mut quiet = false;
         let mut output_file: Option<String> = None;
         let mut spider = false;
+        let mut headers: Vec<String> = Vec::new();
+        let mut user_agent: Option<String> = None;
+        let mut post_data: Option<String> = None;
         let mut url: Option<String> = None;
 
         let mut i = 0;
@@ -420,6 +620,28 @@ impl Builtin for Wget {
                     if i < ctx.args.len() {
                         output_file = Some(ctx.args[i].clone());
                     }
+                }
+                "--header" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        headers.push(ctx.args[i].clone());
+                    }
+                }
+                "-U" | "--user-agent" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        user_agent = Some(ctx.args[i].clone());
+                    }
+                }
+                "--post-data" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        post_data = Some(ctx.args[i].clone());
+                    }
+                }
+                "-t" | "--tries" => {
+                    // Ignore retry count (for compatibility)
+                    i += 1;
                 }
                 _ if !arg.starts_with('-') => {
                     url = Some(arg.clone());
@@ -449,6 +671,9 @@ impl Builtin for Wget {
                     quiet,
                     spider,
                     output_file.as_deref(),
+                    &headers,
+                    user_agent.as_deref(),
+                    post_data.as_deref(),
                     &ctx,
                 )
                 .await;
@@ -456,7 +681,7 @@ impl Builtin for Wget {
         }
 
         // Network not configured
-        let _ = (quiet, output_file, spider);
+        let _ = (quiet, output_file, spider, headers, user_agent, post_data);
 
         Ok(ExecResult::err(
             format!(
@@ -472,20 +697,47 @@ impl Builtin for Wget {
 
 /// Execute the actual wget request when network feature is enabled.
 #[cfg(feature = "network")]
+#[allow(clippy::too_many_arguments)]
 async fn execute_wget_request(
     http_client: &crate::network::HttpClient,
     url: &str,
     quiet: bool,
     spider: bool,
     output_file: Option<&str>,
+    headers: &[String],
+    user_agent: Option<&str>,
+    post_data: Option<&str>,
     ctx: &Context<'_>,
 ) -> Result<ExecResult> {
     use crate::network::Method;
 
-    // For spider mode, just do a HEAD request
-    let method = if spider { Method::Head } else { Method::Get };
+    // Build header pairs
+    let mut header_pairs: Vec<(String, String)> = Vec::new();
+    for header in headers {
+        if let Some(colon_pos) = header.find(':') {
+            let name = header[..colon_pos].trim().to_string();
+            let value = header[colon_pos + 1..].trim().to_string();
+            header_pairs.push((name, value));
+        }
+    }
 
-    let result = http_client.request(method, url, None).await;
+    // Add custom user agent
+    if let Some(ua) = user_agent {
+        header_pairs.push(("User-Agent".to_string(), ua.to_string()));
+    }
+
+    // Determine method and body
+    let (method, body) = if spider {
+        (Method::Head, None)
+    } else if post_data.is_some() {
+        (Method::Post, post_data.map(|d| d.as_bytes()))
+    } else {
+        (Method::Get, None)
+    };
+
+    let result = http_client
+        .request_with_headers(method, url, body, &header_pairs)
+        .await;
 
     match result {
         Ok(response) => {

@@ -413,3 +413,224 @@ mod allowlist_unit {
         assert!(!allowlist.is_allowed("http://example.com"));
     }
 }
+
+// =============================================================================
+// 8. NEW FLAG TESTS
+// =============================================================================
+
+mod new_curl_flags {
+    use super::*;
+
+    /// Test curl --compressed flag parsing
+    #[tokio::test]
+    async fn curl_compressed_flag() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        // Should parse --compressed but still fail on allowlist
+        let result = bash
+            .exec("curl --compressed https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test curl -u/--user flag parsing
+    #[tokio::test]
+    async fn curl_user_auth_flag() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        // Should parse -u but still fail on allowlist
+        let result = bash
+            .exec("curl -u user:pass https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        // Also test --user variant
+        let result = bash
+            .exec("curl --user admin:secret https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test curl -A/--user-agent flag parsing
+    #[tokio::test]
+    async fn curl_user_agent_flag() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash
+            .exec("curl -A 'Mozilla/5.0' https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        let result = bash
+            .exec("curl --user-agent 'CustomAgent/1.0' https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test curl -e/--referer flag parsing
+    #[tokio::test]
+    async fn curl_referer_flag() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash
+            .exec("curl -e 'https://example.com' https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test curl -v/--verbose flag parsing
+    #[tokio::test]
+    async fn curl_verbose_flag() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash.exec("curl -v https://blocked.com 2>&1").await.unwrap();
+        // Verbose output should include request info even on failure
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test curl -m/--max-time flag parsing
+    #[tokio::test]
+    async fn curl_max_time_flag() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash
+            .exec("curl -m 10 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        let result = bash
+            .exec("curl --max-time 30 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test curl with multiple flags combined
+    #[tokio::test]
+    async fn curl_combined_flags() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash
+            .exec("curl -s --compressed -u user:pass -A 'Agent' -e 'http://ref.com' -m 30 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+}
+
+mod new_wget_flags {
+    use super::*;
+
+    /// Test wget --header flag parsing
+    #[tokio::test]
+    async fn wget_header_flag() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash
+            .exec("wget --header 'X-Custom: value' https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test wget -U/--user-agent flag parsing
+    #[tokio::test]
+    async fn wget_user_agent_flag() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash
+            .exec("wget -U 'CustomAgent' https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        let result = bash
+            .exec("wget --user-agent 'Mozilla/5.0' https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test wget --post-data flag parsing
+    #[tokio::test]
+    async fn wget_post_data_flag() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash
+            .exec("wget --post-data 'key=value' https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test wget -t/--tries flag parsing (should be ignored gracefully)
+    #[tokio::test]
+    async fn wget_tries_flag() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash
+            .exec("wget -t 3 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        let result = bash
+            .exec("wget --tries 5 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test wget with multiple flags combined
+    #[tokio::test]
+    async fn wget_combined_flags() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash
+            .exec("wget -q --header 'Accept: application/json' -U 'Agent' -t 3 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+}
+
+// =============================================================================
+// 9. DECOMPRESSION SECURITY TESTS
+// =============================================================================
+
+mod decompression_security {
+    use super::*;
+
+    /// Test that --compressed with blocked URL still respects allowlist
+    #[tokio::test]
+    async fn compressed_respects_allowlist() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash
+            .exec("curl --compressed https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        // Allowlist check happens BEFORE any network activity
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+}
