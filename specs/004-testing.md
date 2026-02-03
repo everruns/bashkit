@@ -138,8 +138,18 @@ cargo test --test spec_tests -- compatibility_report --ignored --nocapture
 
 ## Coverage
 
-**Note:** No formal coverage tooling (codecov, tarpaulin) is currently configured.
-Coverage is tracked manually via spec test pass rates.
+Coverage is tracked with cargo-tarpaulin and uploaded to Codecov.
+
+```bash
+# Generate local coverage report
+cargo tarpaulin --features http_client --out html --output-dir coverage
+
+# View coverage report
+open coverage/tarpaulin-report.html
+```
+
+The coverage workflow runs on every PR and push to main. Reports are uploaded
+to Codecov and available as CI artifacts.
 
 ### Current Status
 - All spec tests: 75% pass rate (324/434 running in CI, 110 skipped)
@@ -153,7 +163,7 @@ The following items need attention:
 - [x] **Enable bash_spec_tests in CI** - Done! 325/435 tests running
 - [x] **Add bash_comparison_tests to CI** - Done! 304 tests compared against real bash
 - [x] **Fix control-flow.test.sh** - Enabled! 31 tests now running
-- [ ] **Add coverage tooling** - Consider cargo-tarpaulin or codecov
+- [x] **Add coverage tooling** - cargo-tarpaulin + Codecov via `.github/workflows/coverage.yml`
 - [ ] **Fix skipped spec tests** (110 total):
   - Bash: 108 skipped (various implementation gaps)
   - AWK: 2 skipped (blocked by multi-statement action parsing bug)
