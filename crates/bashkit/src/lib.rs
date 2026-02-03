@@ -277,7 +277,10 @@
 //! # Guides
 //!
 //! - [`custom_builtins_guide`] - Creating custom builtins
-//! - [`threat_model_guide`] - Security threats and mitigations
+//!
+//! # Resources
+//!
+//! - [`threat_model`] - Security threats and mitigations
 
 // Stricter panic prevention - prefer proper error handling over unwrap()
 #![warn(clippy::unwrap_used)]
@@ -787,7 +790,7 @@ pub mod custom_builtins_guide {}
 /// - POSIX compliance status
 /// - Resource limits
 ///
-/// **Related:** [`custom_builtins_guide`], [`threat_model_guide`]
+/// **Related:** [`custom_builtins_guide`], [`threat_model`]
 #[doc = include_str!("../docs/compatibility.md")]
 pub mod compatibility_scorecard {}
 
@@ -805,7 +808,7 @@ pub mod compatibility_scorecard {}
 ///
 /// **Related:** [`ExecutionLimits`], [`FsLimits`], [`NetworkAllowlist`]
 #[doc = include_str!("../docs/threat-model.md")]
-pub mod threat_model_guide {}
+pub mod threat_model {}
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
