@@ -8,6 +8,7 @@ virtual filesystem.
 **See also:**
 - [API Documentation](https://docs.rs/bashkit) - Full API reference
 - [Compatibility Reference](./compatibility.md) - Supported bash features
+- [Threat Model](./threat-model.md) - Security considerations
 
 ## Quick Start
 

@@ -1,6 +1,18 @@
-//! URL allowlist for network access control
+//! URL allowlist for network access control.
 //!
 //! Provides a whitelist-based security model for network access.
+//!
+//! # Security Mitigations
+//!
+//! This module mitigates the following threats (see `specs/006-threat-model.md`):
+//!
+//! - **TM-NET-001**: DNS spoofing → literal host matching, no DNS resolution
+//! - **TM-NET-002**: DNS rebinding → allowlist uses literal strings
+//! - **TM-NET-004**: IP-based bypass → IPs must be explicitly allowed
+//! - **TM-NET-005**: Port scanning → port must match allowlist entry
+//! - **TM-NET-006**: Protocol downgrade → scheme must match exactly
+//! - **TM-NET-007**: Subdomain bypass → exact host match required
+//! - **TM-INF-010**: Data exfiltration → default-deny blocks unauthorized destinations
 
 use std::collections::HashSet;
 use url::Url;
