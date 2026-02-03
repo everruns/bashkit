@@ -33,13 +33,13 @@
 //! - [ ] sort -f, -t, -k, -s, -c, -m, -h, -M, -o, -z - not implemented
 //! - [ ] uniq -d, -u, -i, -f - not implemented
 //!
-//! ### echo.test.sh (9 skipped)
-//! - [ ] echo_empty_* (2) - test format expects empty/newline mismatch
+//! ### echo.test.sh (4 skipped)
+//! - [x] echo_combined_en, echo_combined_ne - combined flag handling fixed
+//! - [x] echo_E_flag - -E flag now works
+//! - [x] echo_escape_hex, echo_escape_octal - hex/octal escapes work
+//! - [ ] echo_empty, echo_no_newline - test format expects empty/newline mismatch
 //! - [ ] echo_escape_r - carriage return handling differs
-//! - [ ] echo_combined_en, echo_combined_ne - combined flag handling differs
-//! - [ ] echo_E_flag - -E flag (disable escapes) not implemented
-//! - [ ] echo_option_end - -- to end options not implemented
-//! - [ ] echo_escape_hex, echo_escape_octal - hex/octal escapes not implemented
+//! - [ ] echo_double_dash - -- to end options not implemented
 //!
 //! ### fileops.test.sh (5 skipped) - filesystem visibility
 //! - [ ] mkdir_*, touch_*, mv_file - test conditionals not seeing fs changes
