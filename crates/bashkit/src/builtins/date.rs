@@ -1,5 +1,7 @@
 //! Date builtin - display or format date and time
 
+use std::fmt::Write;
+
 use async_trait::async_trait;
 use chrono::{Local, Utc};
 
@@ -47,15 +49,26 @@ impl Builtin for Date {
             None => "%a %b %e %H:%M:%S %Z %Y", // Default format like: "Mon Jan  1 12:00:00 UTC 2024"
         };
 
-        let output = if utc {
+        // Format the date, handling potential errors gracefully.
+        // chrono's Display::fmt can return an error (e.g., when %Z timezone name
+        // cannot be determined), which would cause to_string() to panic.
+        // We use write! to a String instead, which returns a Result.
+        let mut output = String::new();
+        let format_result = if utc {
             let now = Utc::now();
-            now.format(format).to_string()
+            write!(output, "{}", now.format(format))
         } else {
             let now = Local::now();
-            now.format(format).to_string()
+            write!(output, "{}", now.format(format))
         };
 
-        Ok(ExecResult::ok(format!("{}\n", output)))
+        match format_result {
+            Ok(()) => Ok(ExecResult::ok(format!("{}\n", output))),
+            Err(_) => Ok(ExecResult::err(
+                format!("date: failed to format date with '{}'\n", format),
+                1,
+            )),
+        }
     }
 }
 
@@ -148,5 +161,72 @@ mod tests {
         assert_eq!(time.len(), 8);
         let parts: Vec<&str> = time.split(':').collect();
         assert_eq!(parts.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_date_timezone_utc() {
+        // %Z with UTC should always work and produce "UTC"
+        let result = run_date(&["-u", "+%Z"]).await;
+        assert_eq!(result.exit_code, 0);
+        let tz = result.stdout.trim();
+        assert!(tz.contains("UTC") || tz == "+0000" || tz == "+00:00");
+    }
+
+    #[tokio::test]
+    async fn test_date_default_format_includes_timezone() {
+        // The default format includes %Z - this tests that it doesn't panic
+        let result = run_date(&[]).await;
+        assert_eq!(result.exit_code, 0);
+        // Default format: "%a %b %e %H:%M:%S %Z %Y"
+        // Should contain a year
+        let output = result.stdout.trim();
+        assert!(
+            output.len() > 15,
+            "Default format should produce substantial output"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_date_timezone_local() {
+        // %Z with local time - this is the case that can fail in some environments
+        // With our fix, it should either succeed or return a graceful error
+        let result = run_date(&["+%Z"]).await;
+        // Either succeeds with exit_code 0, or fails gracefully with exit_code 1
+        if result.exit_code == 0 {
+            // Successful: output should be non-empty
+            assert!(!result.stdout.trim().is_empty());
+        } else {
+            // Failed gracefully: should have error message
+            assert!(result.stderr.contains("date:"));
+            assert!(result.stderr.contains("failed to format"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_date_combined_format_with_timezone() {
+        // Test combination of formats including %Z
+        let result = run_date(&["-u", "+%Y-%m-%d %H:%M:%S %Z"]).await;
+        assert_eq!(result.exit_code, 0);
+        let output = result.stdout.trim();
+        // Should have date, time, and timezone
+        assert!(output.contains('-')); // Date separator
+        assert!(output.contains(':')); // Time separator
+    }
+
+    #[tokio::test]
+    async fn test_date_empty_format() {
+        // Empty format string (just "+")
+        let result = run_date(&["+"]).await;
+        assert_eq!(result.exit_code, 0);
+        // Should produce just a newline
+        assert_eq!(result.stdout, "\n");
+    }
+
+    #[tokio::test]
+    async fn test_date_literal_text_in_format() {
+        // Format with literal text
+        let result = run_date(&["+Today is %A"]).await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.starts_with("Today is "));
     }
 }
