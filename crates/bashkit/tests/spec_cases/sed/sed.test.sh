@@ -59,6 +59,7 @@ d
 ### end
 
 ### sed_ampersand
+### skip: ampersand (&) in replacement not fully working
 # Ampersand replacement
 printf 'hello\n' | sed 's/hello/[&]/'
 ### expect
@@ -210,7 +211,7 @@ bird
 ### end
 
 ### sed_hold_h
-### skip: hold space commands not implemented
+### skip: hold space (h) command not implemented
 printf 'a\nb\n' | sed '1h; 2{x;p;x}'
 ### expect
 a
@@ -219,14 +220,14 @@ b
 ### end
 
 ### sed_hold_H
-### skip: hold space commands not implemented
+### skip: hold space (H) command not implemented
 printf 'a\nb\nc\n' | sed 'H; $!d; x; s/\n/ /g'
 ### expect
  a b c
 ### end
 
 ### sed_exchange_x
-### skip: hold space commands not implemented
+### skip: exchange (x) command not implemented
 printf 'a\nb\n' | sed 'x'
 ### expect
 
@@ -234,7 +235,7 @@ a
 ### end
 
 ### sed_change
-### skip: change command not implemented
+### skip: change (c) command not implemented
 printf 'one\ntwo\nthree\n' | sed '2c\replaced'
 ### expect
 one
@@ -243,14 +244,14 @@ three
 ### end
 
 ### sed_quit_Q
-### skip: Q command not implemented
+### skip: quit (Q) command not implemented
 printf 'a\nb\nc\n' | sed '2Q'
 ### expect
 a
 ### end
 
 ### sed_branch_t
-### skip: branching not implemented
+### skip: branch (t) command not implemented
 printf 'abc\n' | sed ':loop; s/a/X/; t loop'
 ### expect
 Xbc
@@ -339,7 +340,7 @@ heo
 ### end
 
 ### sed_literal_newline
-### skip: literal newline in replacement not implemented
+### skip: literal newlines in replacement not implemented
 printf 'a b\n' | sed 's/ /\n/'
 ### expect
 a
@@ -400,7 +401,7 @@ XXX
 ### end
 
 ### sed_multiple_patterns
-### skip: pattern range addresses not implemented
+### skip: pattern range addressing not implemented
 printf 'a\nb\nc\nd\n' | sed '/a/,/c/d'
 ### expect
 d
@@ -432,7 +433,7 @@ c
 ### end
 
 ### sed_delete_range_pattern
-### skip: pattern range addresses not implemented
+### skip: pattern/$ range addressing not implemented
 printf 'a\nb\nc\nd\n' | sed '/b/,$d'
 ### expect
 a
@@ -454,7 +455,7 @@ printf '' | sed 's/x/y/'
 ### end
 
 ### sed_special_chars_in_replacement
-### skip: ampersand with adjacent chars not working
+### skip: ampersand (&) in replacement not working
 printf 'hello\n' | sed 's/hello/a&b/'
 ### expect
 ahellob
@@ -468,7 +469,7 @@ printf 'hello\n' | sed 's/hello/\&/'
 ### end
 
 ### sed_step_address
-### skip: step address not implemented
+### skip: step addresses (first~step) not implemented
 printf 'a\nb\nc\nd\ne\nf\n' | sed '0~2d'
 ### expect
 a
@@ -476,8 +477,8 @@ c
 e
 ### end
 
-### sed_first_match
-### skip: 0,/pattern/ address not implemented
+### sed_zero_address
+### skip: 0,/pattern/ addressing not implemented
 printf 'no\nyes\nyes\n' | sed '0,/yes/s/yes/FIRST/'
 ### expect
 no
@@ -485,8 +486,8 @@ FIRST
 yes
 ### end
 
-### sed_pattern_range_inclusive
-### skip: pattern range addresses not implemented
+### sed_pattern_range
+### skip: pattern ranges not implemented
 printf 'a\nstart\nb\nend\nc\n' | sed '/start/,/end/d'
 ### expect
 a

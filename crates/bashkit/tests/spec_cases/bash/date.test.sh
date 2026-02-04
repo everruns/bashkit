@@ -1,23 +1,23 @@
 ### date_year_format
-### skip: test expects empty output but grep outputs matching lines
 # Get just the year
 year=$(date +%Y)
-echo "$year" | grep -E '^[0-9]{4}$'
+echo "$year" | grep -qE '^[0-9]{4}$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_iso_format
-### skip: test expects empty output but grep outputs matching lines
 # Get ISO date format
-date +%Y-%m-%d | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+date +%Y-%m-%d | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_time_format
-### skip: test expects empty output but grep outputs matching lines
 # Get time format
-date +%H:%M:%S | grep -E '^[0-9]{2}:[0-9]{2}:[0-9]{2}$'
+date +%H:%M:%S | grep -qE '^[0-9]{2}:[0-9]{2}:[0-9]{2}$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_epoch
@@ -29,183 +29,191 @@ valid
 ### end
 
 ### date_day_format
-### skip: test expects empty output but grep outputs matching lines
 # Day of month
-date +%d | grep -E '^[0-3][0-9]$'
+date +%d | grep -qE '^[0-3][0-9]$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_month_format
-### skip: test expects empty output but grep outputs matching lines
 # Month number
-date +%m | grep -E '^[0-1][0-9]$'
+date +%m | grep -qE '^[0-1][0-9]$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_hour_format
-### skip: test expects empty output but grep outputs matching lines
 # Hour (24h)
-date +%H | grep -E '^[0-2][0-9]$'
+date +%H | grep -qE '^[0-2][0-9]$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_minute_format
-### skip: test expects empty output but grep outputs matching lines
 # Minute
-date +%M | grep -E '^[0-5][0-9]$'
+date +%M | grep -qE '^[0-5][0-9]$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_second_format
-### skip: test expects empty output but grep outputs matching lines
 # Second
-date +%S | grep -E '^[0-6][0-9]$'
+date +%S | grep -qE '^[0-6][0-9]$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_weekday_short
-### skip: test expects empty output but grep outputs matching lines
 # Short weekday name
-date +%a | grep -E '^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)$'
+date +%a | grep -qE '^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_weekday_full
-### skip: test expects empty output but grep outputs matching lines
 # Full weekday name
-date +%A | grep -E '^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)$'
+date +%A | grep -qE '^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_month_short
-### skip: test expects empty output but grep outputs matching lines
 # Short month name
-date +%b | grep -E '^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$'
+date +%b | grep -qE '^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_month_full
-### skip: test expects empty output but grep outputs matching lines
 # Full month name
-date +%B | grep -E '^(January|February|March|April|May|June|July|August|September|October|November|December)$'
+date +%B | grep -qE '^(January|February|March|April|May|June|July|August|September|October|November|December)$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_12hour
-### skip: test expects empty output but grep outputs matching lines
 # 12-hour format
-date +%I | grep -E '^(0[1-9]|1[0-2])$'
+date +%I | grep -qE '^(0[1-9]|1[0-2])$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_ampm
-### skip: test expects empty output but grep outputs matching lines
 # AM/PM indicator
-date +%p | grep -E '^(AM|PM)$'
+date +%p | grep -qE '^(AM|PM)$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_day_of_year
-### skip: test expects empty output but grep outputs matching lines
 # Day of year
-date +%j | grep -E '^[0-3][0-9][0-9]$'
+date +%j | grep -qE '^[0-3][0-9][0-9]$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_week_number
-### skip: test expects empty output but grep outputs matching lines
 # Week number
-date +%U | grep -E '^[0-5][0-9]$'
+date +%U | grep -qE '^[0-5][0-9]$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_combined_format
-### skip: test expects empty output but grep outputs matching lines
+### skip: quoted format string not handling space correctly
 # Multiple format specifiers
-date +"%Y-%m-%d %H:%M:%S" | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$'
+date +"%Y-%m-%d %H:%M:%S" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_literal_percent
-### skip: test expects empty output but grep outputs matching lines
 # Literal percent
-date +%% | grep -E '^%$'
+date +%% | grep -qE '^%$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_rfc_format
-### skip: -R flag not implemented
-date -R | grep -E '^[A-Z][a-z]{2},'
+### skip: date -R flag not implemented
+date -R | grep -qE '^[A-Z][a-z]{2},' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_iso_flag
-### skip: -I flag not implemented
-date -I | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+### skip: date -I flag not implemented
+date -I | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_utc_flag
-### skip: -u UTC flag not implemented
-date -u +%Z | grep -E '^UTC$'
+date -u +%Z | grep -qE '^UTC$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_date_string
-### skip: -d date string parsing not implemented
+### skip: date -d string parsing not fully implemented
 date -d '2024-01-15T12:00:00' +%Y-%m-%d
 ### expect
 2024-01-15
 ### end
 
 ### date_relative_yesterday
-### skip: relative date parsing not implemented
-date -d 'yesterday' +%Y-%m-%d
+### skip: date -d relative dates not implemented
+date -d 'yesterday' +%Y-%m-%d | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_relative_tomorrow
-### skip: relative date parsing not implemented
-date -d 'tomorrow' +%Y-%m-%d
+### skip: date -d relative dates not implemented
+date -d 'tomorrow' +%Y-%m-%d | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_set_time
-### skip: date setting not implemented
-date -s '2024-01-01 12:00:00'
+### skip: date -s (set time) not implemented and requires privileges
+date -s '2024-01-01 12:00:00' 2>/dev/null || echo "skip"
 ### expect
+skip
 ### end
 
 ### date_timezone
-### skip: test expects empty output but grep outputs matching lines
+### skip: timezone abbreviation format varies
 # Timezone abbreviation
-date +%Z | grep -E '^[A-Z]{3,4}$'
+date +%Z | grep -qE '^[A-Z]{3,4}$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_nanoseconds
-### skip: nanoseconds not implemented
-date +%N | grep -E '^[0-9]{9}$'
+### skip: %N (nanoseconds) not implemented
+date +%N | grep -qE '^[0-9]{9}$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_century
-### skip: test expects empty output but grep outputs matching lines
 # Century
-date +%C | grep -E '^[0-9]{2}$'
+date +%C | grep -qE '^[0-9]{2}$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_day_space_padded
-### skip: test expects empty output but grep outputs matching lines
 # Day space-padded
-date +%e | grep -E '^[ 1-3][0-9]$'
+date +%e | grep -qE '^[ 1-3][0-9]$' && echo "valid"
 ### expect
+valid
 ### end
 
 ### date_weekday_number
-### skip: test expects empty output but grep outputs matching lines
 # Day of week (0-6, Sunday=0)
-date +%w | grep -E '^[0-6]$'
+date +%w | grep -qE '^[0-6]$' && echo "valid"
 ### expect
+valid
 ### end
