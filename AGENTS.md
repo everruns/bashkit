@@ -106,6 +106,8 @@ just pre-pr       # Pre-PR checks
 
 Types: feat, fix, docs, refactor, test, chore
 
+- Updates to `specs/` and `AGENTS.md`: use `chore` type
+
 ### PRs
 
 Squash and Merge. Use PR template if exists.
