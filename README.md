@@ -146,6 +146,10 @@ See [crates/bashkit-bench/README.md](crates/bashkit-bench/README.md) for methodo
 
 This project was inspired by [just-bash](https://github.com/vercel-labs/just-bash) from Vercel Labs. Huge kudos to the Vercel team for pioneering the idea of a sandboxed bash interpreter for AI-powered environments. Their work laid the conceptual foundation that made BashKit possible.
 
+## Ecosystem
+
+BashKit is part of the [Everruns](https://everruns.com) ecosystem.
+
 ## License
 
 MIT
