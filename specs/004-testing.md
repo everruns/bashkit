@@ -72,7 +72,7 @@ crates/bashkit/tests/
 |----------|------------|-------|------|------|
 | Bash | 471 | Yes | 367 | 104 |
 | AWK | 89 | Yes | 48 | 41 |
-| Grep | 70 | Yes | 56 | 14 |
+| Grep | 70 | Yes | 65 | 5 |
 | Sed | 65 | Yes | 50 | 15 |
 | JQ | 95 | Yes | 80 | 15 |
 | **Total** | **790** | **790** | 601 | 189 |
@@ -167,7 +167,7 @@ The following items need attention:
 - [ ] **Fix skipped spec tests** (189 total):
   - Bash: 104 skipped (various implementation gaps)
   - AWK: 41 skipped (operators, control flow, functions)
-  - Grep: 14 skipped (flags, features)
+  - Grep: 5 skipped (include/exclude, binary detection)
   - Sed: 15 skipped (features)
   - JQ: 15 skipped (functions, flags)
 - [ ] **Fix bash_diff tests** (21 total):
