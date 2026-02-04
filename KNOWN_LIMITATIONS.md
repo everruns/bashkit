@@ -18,7 +18,6 @@ stateless, sandboxed execution model or pose security risks.
 | Symlink following | Prevents symlink loop attacks and sandbox escape | TM-DOS-011 |
 | Process spawning | External commands run as builtins, not subprocesses | - |
 | Raw network sockets | Only allowlisted HTTP via curl builtin | - |
-| `sed -i` (in-place edit) | Security: could bypass VFS protections | - |
 
 ### Design Rationale
 
@@ -172,7 +171,7 @@ control, symlink following), see [Intentionally Unimplemented Features](#intenti
 | NR/NF in conditions | 3 | `NR > 1`, `NF == 3` |
 
 ### Sed Limitations
-- In-place editing (`-i`) - not implemented for security
+- In-place editing (`-i`) - not yet implemented
 
 **Implemented (previously missing):**
 - Extended regex `-E` (`+`, `?`, `|`, `()` grouping)
