@@ -83,12 +83,15 @@ just pre-pr       # Pre-PR checks
 2. `cargo fmt --check`
 3. `cargo clippy --all-targets --all-features -- -D warnings`
 4. `cargo test --all-features`
-5. Rebase on main: `git fetch origin main && git rebase origin/main`
-6. Update specs if behavior changes
-7. CI green before merge
-8. Resolve all PR comments
-9. `cargo bench --bench parallel_execution` if touching Arc/async/Interpreter/builtins (see `specs/007-parallel-execution.md`)
-10. `just bench` if changes might impact performance (interpreter, builtins, tools)
+5. Unit tests cover both positive (expected behavior) and negative (error handling, edge cases) scenarios
+6. Security tests if change touches user input, parsing, sandboxing, or permissions (see `specs/005-security-testing.md`)
+7. Compatibility/differential tests if change affects Bash behavior parity (compare against real Bash)
+8. Rebase on main: `git fetch origin main && git rebase origin/main`
+9. Update specs if behavior changes
+10. CI green before merge
+11. Resolve all PR comments
+12. `cargo bench --bench parallel_execution` if touching Arc/async/Interpreter/builtins (see `specs/007-parallel-execution.md`)
+13. `just bench` if changes might impact performance (interpreter, builtins, tools)
 
 ### CI
 
