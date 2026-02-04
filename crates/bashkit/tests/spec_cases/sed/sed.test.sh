@@ -175,7 +175,7 @@ hi there
 ### end
 
 ### sed_inplace
-### skip: -i flag not implemented
+# In-place editing
 echo 'test' > /tmp/sedtest.txt && sed -i 's/test/done/' /tmp/sedtest.txt && cat /tmp/sedtest.txt
 ### expect
 done
