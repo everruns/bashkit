@@ -17,6 +17,41 @@ use crate::interpreter::ExecResult;
 /// jq command - JSON processor
 pub struct Jq;
 
+/// Recursively sort all object keys in a JSON value
+fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut sorted: Vec<(String, serde_json::Value)> = map
+                .into_iter()
+                .map(|(k, v)| (k, sort_json_keys(v)))
+                .collect();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            serde_json::Value::Object(sorted.into_iter().collect())
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(sort_json_keys).collect())
+        }
+        other => other,
+    }
+}
+
+/// Format JSON with tabs instead of spaces
+fn format_with_tabs(value: &serde_json::Value) -> String {
+    let pretty = serde_json::to_string_pretty(value).unwrap_or_default();
+    // Replace 2-space indentation with tabs
+    let mut result = String::new();
+    for line in pretty.lines() {
+        let spaces = line.len() - line.trim_start().len();
+        let tabs = spaces / 2;
+        result.push_str(&"\t".repeat(tabs));
+        result.push_str(line.trim_start());
+        result.push('\n');
+    }
+    // Remove trailing newline to match pattern
+    result.truncate(result.trim_end_matches('\n').len());
+    result
+}
+
 #[async_trait]
 impl Builtin for Jq {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -24,6 +59,11 @@ impl Builtin for Jq {
         let mut raw_output = false;
         let mut compact_output = false;
         let mut null_input = false;
+        let mut sort_keys = false;
+        let mut slurp = false;
+        let mut exit_status = false;
+        let mut tab_indent = false;
+        let mut join_output = false;
         let mut filter = ".";
 
         for arg in ctx.args {
@@ -33,6 +73,16 @@ impl Builtin for Jq {
                 compact_output = true;
             } else if arg == "-n" || arg == "--null-input" {
                 null_input = true;
+            } else if arg == "-S" || arg == "--sort-keys" {
+                sort_keys = true;
+            } else if arg == "-s" || arg == "--slurp" {
+                slurp = true;
+            } else if arg == "-e" || arg == "--exit-status" {
+                exit_status = true;
+            } else if arg == "--tab" {
+                tab_indent = true;
+            } else if arg == "-j" || arg == "--join-output" {
+                join_output = true;
             } else if !arg.starts_with('-') {
                 filter = arg;
                 break;
@@ -88,6 +138,19 @@ impl Builtin for Jq {
         let inputs_to_process: Vec<Val> = if null_input {
             // -n flag: use null as input
             vec![Val::from(serde_json::Value::Null)]
+        } else if slurp {
+            // -s flag: read all inputs into a single array
+            let mut vals = Vec::new();
+            for line in input.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let json_input: serde_json::Value = serde_json::from_str(line)
+                    .map_err(|e| Error::Execution(format!("jq: invalid JSON: {}", e)))?;
+                vals.push(json_input);
+            }
+            vec![Val::from(serde_json::Value::Array(vals))]
         } else {
             // Process each line of input as JSON
             let mut vals = Vec::new();
@@ -103,6 +166,10 @@ impl Builtin for Jq {
             vals
         };
 
+        // Track for -e exit status
+        let mut has_output = false;
+        let mut all_null_or_false = true;
+
         for jaq_input in inputs_to_process {
             // Create empty inputs iterator
             let inputs = RcIter::new(core::iter::empty());
@@ -112,17 +179,41 @@ impl Builtin for Jq {
             for result in filter.run((ctx, jaq_input)) {
                 match result {
                     Ok(val) => {
+                        has_output = true;
                         // Convert back to serde_json::Value and format
                         let json: serde_json::Value = val.into();
-                        // In raw mode, strings are output without quotes
-                        if raw_output {
-                            if let serde_json::Value::String(s) = json {
-                                output.push_str(&s);
-                                output.push('\n');
+
+                        // Track for -e exit status
+                        if !matches!(
+                            json,
+                            serde_json::Value::Null | serde_json::Value::Bool(false)
+                        ) {
+                            all_null_or_false = false;
+                        }
+
+                        // Apply sort_keys if -S flag is set
+                        let json = if sort_keys {
+                            sort_json_keys(json)
+                        } else {
+                            json
+                        };
+
+                        // -j implies raw output for strings
+                        let effective_raw = raw_output || join_output;
+
+                        // In raw mode or join mode, strings are output without quotes
+                        if effective_raw {
+                            if let serde_json::Value::String(s) = &json {
+                                output.push_str(s);
+                                if !join_output {
+                                    output.push('\n');
+                                }
                             } else {
-                                // For non-strings in raw mode, use compact or pretty based on -c flag
+                                // For non-strings, use appropriate formatting
                                 let formatted = if compact_output {
                                     serde_json::to_string(&json)
+                                } else if tab_indent {
+                                    Ok(format_with_tabs(&json))
                                 } else {
                                     match &json {
                                         serde_json::Value::Array(_)
@@ -135,7 +226,9 @@ impl Builtin for Jq {
                                 match formatted {
                                     Ok(s) => {
                                         output.push_str(&s);
-                                        output.push('\n');
+                                        if !join_output {
+                                            output.push('\n');
+                                        }
                                     }
                                     Err(e) => {
                                         return Err(Error::Execution(format!(
@@ -159,6 +252,11 @@ impl Builtin for Jq {
                                     )));
                                 }
                             }
+                        } else if tab_indent {
+                            // Tab indentation mode
+                            let formatted = format_with_tabs(&json);
+                            output.push_str(&formatted);
+                            output.push('\n');
                         } else {
                             // Use pretty-print for arrays/objects to match real jq behavior
                             let formatted = match &json {
@@ -186,6 +284,16 @@ impl Builtin for Jq {
                     }
                 }
             }
+        }
+
+        // Ensure output ends with newline if there's output (for consistency)
+        if !output.is_empty() && !output.ends_with('\n') {
+            output.push('\n');
+        }
+
+        // Handle -e exit status flag
+        if exit_status && (!has_output || all_null_or_false) {
+            return Ok(ExecResult::with_code(output, 1));
         }
 
         Ok(ExecResult::ok(output))
