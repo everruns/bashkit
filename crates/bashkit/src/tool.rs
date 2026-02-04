@@ -1,12 +1,35 @@
 //! Tool trait and BashTool implementation
 //!
-//! Provides a standardized interface for LLM tool integration.
+//! # Public Library Contract
+//!
+//! The `Tool` trait is a **public contract** - breaking changes require a major version bump.
+//! See `specs/009-tool-contract.md` for the full specification.
 //!
 //! # Architecture
 //!
-//! - `Tool` trait: Contract that all tools must implement
-//! - `BashTool`: Sandboxed bash interpreter implementing Tool
-//! - `ToolBuilder`: Builder pattern for configuring BashTool
+//! - [`Tool`] trait: Contract that all tools must implement
+//! - [`BashTool`]: Sandboxed bash interpreter implementing Tool
+//! - [`BashToolBuilder`]: Builder pattern for configuring BashTool
+//!
+//! # Example
+//!
+//! ```
+//! use bashkit::{BashTool, Tool, ToolRequest};
+//!
+//! # tokio_test::block_on(async {
+//! let mut tool = BashTool::default();
+//!
+//! // Introspection
+//! assert_eq!(tool.name(), "bashkit");
+//! assert!(!tool.llmtext().is_empty());
+//!
+//! // Execution
+//! let resp = tool.execute(ToolRequest {
+//!     commands: "echo hello".to_string(),
+//! }).await;
+//! assert_eq!(resp.stdout, "hello\n");
+//! # });
+//! ```
 
 use crate::builtins::Builtin;
 use crate::error::Error;
@@ -156,13 +179,22 @@ impl ToolStatus {
 }
 
 // ============================================================================
-// Tool Trait - The Contract
+// Tool Trait - Public Library Contract
 // ============================================================================
 
-/// Tool contract for LLM integration
+/// Tool contract for LLM integration.
+///
+/// # Public Contract
+///
+/// This trait is a **public library contract**. Breaking changes require a major version bump.
+/// See `specs/009-tool-contract.md` for the full specification.
 ///
 /// All tools must implement this trait to be usable by LLMs and agents.
 /// The trait provides introspection (schemas, docs) and execution methods.
+///
+/// # Implementors
+///
+/// - [`BashTool`]: Sandboxed bash interpreter
 #[async_trait]
 pub trait Tool: Send + Sync {
     /// Tool identifier (e.g., "bashkit", "calculator")
