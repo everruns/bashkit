@@ -206,17 +206,24 @@ echo '{"a": 1, "b": 2}' | jq -c '.'
 ### end
 
 ### jq_sort_keys
-### skip: -S flag not implemented
+# Sort keys mode outputs objects with keys in sorted order
 echo '{"z":1,"a":2}' | jq -S '.'
 ### expect
-{"a":2,"z":1}
+{
+  "a": 2,
+  "z": 1
+}
 ### end
 
 ### jq_slurp
-### skip: -s slurp flag not implemented
+# Slurp mode reads all inputs into a single array
 printf '1\n2\n3\n' | jq -s '.'
 ### expect
-[1,2,3]
+[
+  1,
+  2,
+  3
+]
 ### end
 
 ### jq_has
@@ -768,7 +775,7 @@ jq -n '1 + 1'
 ### end
 
 ### jq_exit_status
-### skip: -e flag not implemented
+# Exit status mode sets exit code 1 for null/false output
 echo 'null' | jq -e '.'
 ### exit_code: 1
 ### expect
@@ -776,7 +783,7 @@ null
 ### end
 
 ### jq_tab_indent
-### skip: --tab flag not implemented
+# Tab indent mode uses tabs instead of spaces for indentation
 echo '{"a":1}' | jq --tab '.'
 ### expect
 {
@@ -785,7 +792,7 @@ echo '{"a":1}' | jq --tab '.'
 ### end
 
 ### jq_join_output
-### skip: -j flag not implemented
+# Join output mode suppresses newlines between outputs
 echo '["a","b"]' | jq -j '.[]'
 ### expect
 ab
