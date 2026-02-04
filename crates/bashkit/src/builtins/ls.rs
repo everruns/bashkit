@@ -18,11 +18,12 @@ struct LsOptions {
     human: bool,
     one_per_line: bool,
     recursive: bool,
+    sort_by_time: bool,
 }
 
 /// The ls builtin - list directory contents.
 ///
-/// Usage: ls [-l] [-a] [-h] [-1] [-R] [PATH...]
+/// Usage: ls [-l] [-a] [-h] [-1] [-R] [-t] [PATH...]
 ///
 /// Options:
 ///   -l   Use long listing format
@@ -30,6 +31,7 @@ struct LsOptions {
 ///   -h   Human-readable sizes (with -l)
 ///   -1   One entry per line
 ///   -R   List subdirectories recursively
+///   -t   Sort by modification time, newest first
 pub struct Ls;
 
 #[async_trait]
@@ -41,6 +43,7 @@ impl Builtin for Ls {
             human: false,
             one_per_line: false,
             recursive: false,
+            sort_by_time: false,
         };
 
         // Parse flags
@@ -54,6 +57,7 @@ impl Builtin for Ls {
                         'h' => opts.human = true,
                         '1' => opts.one_per_line = true,
                         'R' => opts.recursive = true,
+                        't' => opts.sort_by_time = true,
                         _ => {
                             return Ok(ExecResult::err(
                                 format!("ls: invalid option -- '{}'\n", c),
@@ -150,9 +154,15 @@ async fn list_directory(
         .await
         .map_err(|e| format!("cannot open directory '{}': {}", display_path, e))?;
 
-    // Sort entries alphabetically
+    // Sort entries
     let mut sorted_entries = entries;
-    sorted_entries.sort_by(|a, b| a.name.cmp(&b.name));
+    if opts.sort_by_time {
+        // Sort by modification time, newest first
+        sorted_entries.sort_by(|a, b| b.metadata.modified.cmp(&a.metadata.modified));
+    } else {
+        // Sort alphabetically
+        sorted_entries.sort_by(|a, b| a.name.cmp(&b.name));
+    }
 
     // Filter hidden files unless -a
     let filtered: Vec<_> = sorted_entries
@@ -800,6 +810,38 @@ mod tests {
         let result = Ls.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 2);
         assert!(result.stderr.contains("invalid option"));
+    }
+
+    #[tokio::test]
+    async fn test_ls_sort_by_time() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        // Create files with different modification times
+        fs.write_file(&cwd.join("older.txt"), b"older")
+            .await
+            .unwrap();
+        fs.write_file(&cwd.join("newer.txt"), b"newer")
+            .await
+            .unwrap();
+
+        let args = vec!["-t".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        // -t should be accepted (not cause an error)
+        assert!(result.stdout.contains("older.txt"));
+        assert!(result.stdout.contains("newer.txt"));
     }
 
     #[tokio::test]

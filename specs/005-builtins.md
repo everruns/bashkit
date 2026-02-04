@@ -98,7 +98,7 @@ Bash::builder()
 ```
 
 #### Directory Listing and Search
-- `ls` - List directory contents (`-l`, `-a`, `-h`, `-1`, `-R`)
+- `ls` - List directory contents (`-l`, `-a`, `-h`, `-1`, `-R`, `-t`)
 - `find` - Search for files (`-name PATTERN`, `-type f|d|l`, `-maxdepth N`, `-print`)
 - `rmdir` - Remove empty directories (`-p` for parents)
 
