@@ -22,11 +22,17 @@ impl Builtin for Jq {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         // Parse arguments for flags
         let mut raw_output = false;
+        let mut compact_output = false;
+        let mut null_input = false;
         let mut filter = ".";
 
         for arg in ctx.args {
             if arg == "-r" || arg == "--raw-output" {
                 raw_output = true;
+            } else if arg == "-c" || arg == "--compact-output" {
+                compact_output = true;
+            } else if arg == "-n" || arg == "--null-input" {
+                null_input = true;
             } else if !arg.starts_with('-') {
                 filter = arg;
                 break;
@@ -36,8 +42,8 @@ impl Builtin for Jq {
         // Get input from stdin
         let input = ctx.stdin.unwrap_or("");
 
-        // If no input, return empty
-        if input.trim().is_empty() {
+        // If no input and not null_input mode, return empty
+        if input.trim().is_empty() && !null_input {
             return Ok(ExecResult::ok(String::new()));
         }
 
@@ -75,21 +81,29 @@ impl Builtin for Jq {
                 ))
             })?;
 
-        // Process each line of input as JSON
+        // Process input as JSON
         let mut output = String::new();
-        for line in input.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
+
+        // Build list of inputs to process
+        let inputs_to_process: Vec<Val> = if null_input {
+            // -n flag: use null as input
+            vec![Val::from(serde_json::Value::Null)]
+        } else {
+            // Process each line of input as JSON
+            let mut vals = Vec::new();
+            for line in input.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let json_input: serde_json::Value = serde_json::from_str(line)
+                    .map_err(|e| Error::Execution(format!("jq: invalid JSON: {}", e)))?;
+                vals.push(Val::from(json_input));
             }
+            vals
+        };
 
-            // Parse JSON input
-            let json_input: serde_json::Value = serde_json::from_str(line)
-                .map_err(|e| Error::Execution(format!("jq: invalid JSON: {}", e)))?;
-
-            // Convert to jaq value
-            let jaq_input = Val::from(json_input);
-
+        for jaq_input in inputs_to_process {
             // Create empty inputs iterator
             let inputs = RcIter::new(core::iter::empty());
 
@@ -106,12 +120,17 @@ impl Builtin for Jq {
                                 output.push_str(&s);
                                 output.push('\n');
                             } else {
-                                // For non-strings in raw mode, still use pretty-print for arrays/objects
-                                let formatted = match &json {
-                                    serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-                                        serde_json::to_string_pretty(&json)
+                                // For non-strings in raw mode, use compact or pretty based on -c flag
+                                let formatted = if compact_output {
+                                    serde_json::to_string(&json)
+                                } else {
+                                    match &json {
+                                        serde_json::Value::Array(_)
+                                        | serde_json::Value::Object(_) => {
+                                            serde_json::to_string_pretty(&json)
+                                        }
+                                        _ => serde_json::to_string(&json),
                                     }
-                                    _ => serde_json::to_string(&json),
                                 };
                                 match formatted {
                                     Ok(s) => {
@@ -124,6 +143,20 @@ impl Builtin for Jq {
                                             e
                                         )));
                                     }
+                                }
+                            }
+                        } else if compact_output {
+                            // Compact mode: no pretty-printing
+                            match serde_json::to_string(&json) {
+                                Ok(s) => {
+                                    output.push_str(&s);
+                                    output.push('\n');
+                                }
+                                Err(e) => {
+                                    return Err(Error::Execution(format!(
+                                        "jq: output error: {}",
+                                        e
+                                    )));
                                 }
                             }
                         } else {

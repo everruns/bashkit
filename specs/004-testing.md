@@ -39,7 +39,7 @@ crates/bashkit/tests/
 ├── security_failpoint_tests.rs  # Fault injection tests
 ├── proptest_differential.rs # Grammar-based differential fuzzing
 └── spec_cases/
-    ├── bash/           # Core bash compatibility (20 files, 362 cases)
+    ├── bash/           # Core bash compatibility (20 files, 471 cases)
     │   ├── arithmetic.test.sh
     │   ├── arrays.test.sh
     │   ├── background.test.sh
@@ -60,22 +60,22 @@ crates/bashkit/tests/
     │   ├── sortuniq.test.sh
     │   ├── variables.test.sh
     │   └── wc.test.sh
-    ├── awk/            # AWK builtin tests (19 cases)
-    ├── grep/           # Grep builtin tests (15 cases)
-    ├── sed/            # Sed builtin tests (17 cases)
-    └── jq/             # JQ builtin tests (21 cases)
+    ├── awk/            # AWK builtin tests (89 cases)
+    ├── grep/           # Grep builtin tests (70 cases)
+    ├── sed/            # Sed builtin tests (65 cases)
+    └── jq/             # JQ builtin tests (95 cases)
 ```
 
 ### Spec Test Counts
 
 | Category | Test Cases | In CI | Pass | Skip |
 |----------|------------|-------|------|------|
-| Bash | 362 | Yes | 259 | 103 |
-| AWK | 19 | Yes | 17 | 2 |
-| Grep | 15 | Yes | 15 | 0 |
-| Sed | 17 | Yes | 17 | 0 |
-| JQ | 21 | Yes | 21 | 0 |
-| **Total** | **434** | **434** | 329 | 105 |
+| Bash | 471 | Yes | 367 | 104 |
+| AWK | 89 | Yes | 48 | 41 |
+| Grep | 70 | Yes | 56 | 14 |
+| Sed | 65 | Yes | 50 | 15 |
+| JQ | 95 | Yes | 75 | 20 |
+| **Total** | **790** | **790** | 596 | 194 |
 
 ### Test File Format
 
@@ -152,9 +152,9 @@ The coverage workflow runs on every PR and push to main. Reports are uploaded
 to Codecov and available as CI artifacts.
 
 ### Current Status
-- All spec tests: 76% pass rate (329/434 running in CI, 105 skipped)
-- Text processing tools: 97% pass rate (70/72 running, 2 AWK skipped)
-- Core bash specs: 100% pass rate (259/259 running, 103 skipped)
+- All spec tests: 75% pass rate (596/790 running in CI, 194 skipped)
+- Text processing tools: 72% pass rate (229/319 running, 90 skipped)
+- Core bash specs: 78% pass rate (367/471 running, 104 skipped)
 
 ## TODO: Testing Gaps
 
@@ -164,9 +164,12 @@ The following items need attention:
 - [x] **Add bash_comparison_tests to CI** - Done! 309 tests compared against real bash
 - [x] **Fix control-flow.test.sh** - Enabled! 31 tests now running
 - [x] **Add coverage tooling** - cargo-tarpaulin + Codecov via `.github/workflows/coverage.yml`
-- [ ] **Fix skipped spec tests** (105 total):
-  - Bash: 103 skipped (various implementation gaps)
-  - AWK: 2 skipped (blocked by multi-statement action parsing bug)
+- [ ] **Fix skipped spec tests** (194 total):
+  - Bash: 104 skipped (various implementation gaps)
+  - AWK: 41 skipped (operators, control flow, functions)
+  - Grep: 14 skipped (flags, features)
+  - Sed: 15 skipped (features)
+  - JQ: 20 skipped (functions, flags)
 - [ ] **Fix bash_diff tests** (21 total):
   - wc: 14 tests (output formatting differs)
   - background: 2 tests (non-deterministic order)
