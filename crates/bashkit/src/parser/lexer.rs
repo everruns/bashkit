@@ -133,8 +133,19 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     Some(Token::DoubleLeftBracket)
                 } else {
-                    // Single [ is a command (test)
-                    Some(Token::Word("[".to_string()))
+                    // [ could be the test command OR a glob bracket expression
+                    // If followed by non-whitespace, treat as start of bracket expression
+                    // e.g., [abc] is a glob pattern, [ -f file ] is test command
+                    match self.peek_char() {
+                        Some(' ') | Some('\t') | Some('\n') | None => {
+                            // Followed by whitespace or EOF - it's the test command
+                            Some(Token::Word("[".to_string()))
+                        }
+                        _ => {
+                            // Part of a glob bracket expression [abc], read the whole thing
+                            self.read_bracket_word()
+                        }
+                    }
                 }
             }
             ']' => {
@@ -594,6 +605,33 @@ impl<'a> Lexer<'a> {
                     word.push(ch);
                     self.advance();
                 }
+            } else {
+                break;
+            }
+        }
+
+        Some(Token::Word(word))
+    }
+
+    /// Read a word starting with [ (glob bracket expression like [abc] or [a-z])
+    /// The opening [ has already been consumed
+    fn read_bracket_word(&mut self) -> Option<Token> {
+        let mut word = String::from("[");
+
+        // Read until we find the closing ] (handle nested correctly)
+        while let Some(ch) = self.peek_char() {
+            word.push(ch);
+            self.advance();
+            if ch == ']' {
+                break;
+            }
+        }
+
+        // Continue reading any remaining word characters (e.g., [abc]def)
+        while let Some(ch) = self.peek_char() {
+            if self.is_word_char(ch) {
+                word.push(ch);
+                self.advance();
             } else {
                 break;
             }

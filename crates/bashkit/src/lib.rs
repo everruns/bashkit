@@ -1232,6 +1232,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_for_loop_positional_params() {
+        let mut bash = Bash::new();
+        // for x; do ... done iterates over positional parameters inside a function
+        let result = bash
+            .exec("f() { for x; do echo $x; done; }; f one two three")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "one\ntwo\nthree\n");
+    }
+
+    #[tokio::test]
     async fn test_while_loop() {
         let mut bash = Bash::new();
         // While with false condition - executes 0 times
@@ -1325,6 +1336,39 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "matched\n");
+    }
+
+    #[tokio::test]
+    async fn test_case_bracket_expr() {
+        let mut bash = Bash::new();
+        // Test [abc] bracket expression
+        let result = bash
+            .exec("case b in [abc]) echo matched ;; esac")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "matched\n");
+    }
+
+    #[tokio::test]
+    async fn test_case_bracket_range() {
+        let mut bash = Bash::new();
+        // Test [a-z] range expression
+        let result = bash
+            .exec("case m in [a-z]) echo letter ;; esac")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "letter\n");
+    }
+
+    #[tokio::test]
+    async fn test_case_bracket_negation() {
+        let mut bash = Bash::new();
+        // Test [!abc] negation
+        let result = bash
+            .exec("case x in [!abc]) echo not_abc ;; esac")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "not_abc\n");
     }
 
     #[tokio::test]
@@ -1839,8 +1883,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_for_followed_by_echo_done() {
-        // This specific case causes a parsing issue - "done" after for loop
-        // TODO: Fix the parser to handle "done" as a regular word after for loop ends
         let mut bash = Bash::new();
         let result = bash
             .exec("for i in 1; do echo $i; done; echo ok")
