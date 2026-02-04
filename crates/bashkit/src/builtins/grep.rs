@@ -26,7 +26,9 @@
 //!   grep -H pattern file        # always show filename
 //!   grep -h pattern file        # never show filename
 //!   grep -b pattern file        # show byte offset
-//!   grep -a pattern file        # treat binary as text
+//!   grep -a pattern file        # treat binary as text (filter null bytes)
+//!   grep -z pattern file        # null-terminated lines
+//!   grep -r pattern dir         # recursive search
 //!   grep --color=always pattern # color output (no-op)
 //!   grep --line-buffered pattern # line-buffered (no-op)
 
@@ -56,11 +58,13 @@ struct GrepOptions {
     whole_line: bool,
     after_context: usize,
     before_context: usize,
-    // New options
     show_filename: bool,          // -H: always show filename
     no_filename: bool,            // -h: never show filename
     byte_offset: bool,            // -b: show byte offset
     pattern_file: Option<String>, // -f: read patterns from file
+    null_terminated: bool,        // -z: null-terminated lines
+    recursive: bool,              // -r: recursive search
+    binary_as_text: bool,         // -a: treat binary as text
 }
 
 impl GrepOptions {
@@ -85,6 +89,9 @@ impl GrepOptions {
             no_filename: false,
             byte_offset: false,
             pattern_file: None,
+            null_terminated: false,
+            recursive: false,
+            binary_as_text: false,
         };
 
         let mut positional = Vec::new();
@@ -114,7 +121,9 @@ impl GrepOptions {
                         'H' => opts.show_filename = true,
                         'h' => opts.no_filename = true,
                         'b' => opts.byte_offset = true,
-                        'a' => {} // Treat binary as text (we already do UTF-8 lossy)
+                        'a' => opts.binary_as_text = true,
+                        'z' => opts.null_terminated = true,
+                        'r' | 'R' => opts.recursive = true,
                         'e' => {
                             // -e pattern (remaining chars or next arg)
                             let rest: String = chars[j + 1..].iter().collect();
@@ -283,6 +292,10 @@ impl GrepOptions {
             .patterns
             .iter()
             .map(|p| {
+                // Empty pattern matches everything (like .*)
+                if p.is_empty() {
+                    return ".*".to_string();
+                }
                 let pat = if self.fixed_strings {
                     regex::escape(p)
                 } else {
@@ -370,11 +383,62 @@ impl Builtin for Grep {
         } else {
             ""
         };
-        let inputs: Vec<(&str, String)> = if opts.files.is_empty() {
+        // Helper to process content (filter null bytes if binary_as_text)
+        let process_content = |content: Vec<u8>, binary_as_text: bool| -> String {
+            if binary_as_text {
+                // Filter out null bytes for proper regex matching
+                let filtered: Vec<u8> = content.into_iter().filter(|&b| b != 0).collect();
+                String::from_utf8_lossy(&filtered).into_owned()
+            } else {
+                String::from_utf8_lossy(&content).into_owned()
+            }
+        };
+
+        let inputs: Vec<(String, String)> = if opts.files.is_empty() {
             // Read from stdin
-            vec![(stdin_name, ctx.stdin.unwrap_or("").to_string())]
+            let mut stdin_content = ctx.stdin.unwrap_or("").to_string();
+            if opts.binary_as_text {
+                // Filter null bytes for -a flag
+                stdin_content = stdin_content.replace('\0', "");
+            }
+            vec![(stdin_name.to_string(), stdin_content)]
+        } else if opts.recursive {
+            // Recursive mode: traverse directories
+            let mut inputs = Vec::new();
+            let mut dirs_to_process: Vec<std::path::PathBuf> = Vec::new();
+
+            for file in &opts.files {
+                let path = if file.starts_with('/') {
+                    std::path::PathBuf::from(file)
+                } else {
+                    ctx.cwd.join(file)
+                };
+                dirs_to_process.push(path);
+            }
+
+            while let Some(path) = dirs_to_process.pop() {
+                if let Ok(entries) = ctx.fs.read_dir(&path).await {
+                    for entry in entries {
+                        let entry_path = path.join(&entry.name);
+                        if entry.metadata.file_type.is_dir() {
+                            dirs_to_process.push(entry_path);
+                        } else if entry.metadata.file_type.is_file() {
+                            if let Ok(content) = ctx.fs.read_file(&entry_path).await {
+                                let text = process_content(content, opts.binary_as_text);
+                                inputs.push((entry_path.to_string_lossy().into_owned(), text));
+                            }
+                            // Skip unreadable files in recursive mode
+                        }
+                    }
+                } else if let Ok(content) = ctx.fs.read_file(&path).await {
+                    // It's a file, not a directory
+                    let text = process_content(content, opts.binary_as_text);
+                    inputs.push((path.to_string_lossy().into_owned(), text));
+                }
+            }
+            inputs
         } else {
-            // Read from files
+            // Read from specified files
             let mut inputs = Vec::new();
             for file in &opts.files {
                 let path = if file.starts_with('/') {
@@ -385,8 +449,8 @@ impl Builtin for Grep {
 
                 match ctx.fs.read_file(&path).await {
                     Ok(content) => {
-                        let text = String::from_utf8_lossy(&content).into_owned();
-                        inputs.push((file.as_str(), text));
+                        let text = process_content(content, opts.binary_as_text);
+                        inputs.push((file.clone(), text));
                     }
                     Err(e) => {
                         // Report error but continue with other files
@@ -411,7 +475,7 @@ impl Builtin for Grep {
 
         let mut max_reached = false;
 
-        'file_loop: for (filename, content) in inputs {
+        'file_loop: for (filename, content) in &inputs {
             // Check if we already reached max count from previous files
             if let Some(max) = opts.max_count {
                 if total_matches >= max {
@@ -421,7 +485,13 @@ impl Builtin for Grep {
 
             let mut match_count = 0;
             let mut file_matched = false;
-            let lines: Vec<&str> = content.lines().collect();
+
+            // Split on null bytes if -z flag is set, otherwise split on newlines
+            let lines: Vec<&str> = if opts.null_terminated {
+                content.split('\0').collect()
+            } else {
+                content.lines().collect()
+            };
 
             // Calculate byte offsets for each line (for -b flag)
             let byte_offsets: Vec<usize> = if opts.byte_offset {
@@ -429,7 +499,7 @@ impl Builtin for Grep {
                 let mut offset = 0usize;
                 for line in &lines {
                     offsets.push(offset);
-                    offset += line.len() + 1; // +1 for newline
+                    offset += line.len() + 1; // +1 for newline or null byte
                 }
                 offsets
             } else {
