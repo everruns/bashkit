@@ -184,7 +184,7 @@ The following items need attention:
 3. Run `just check-bash-compat` to verify expected output matches real bash
 4. If test fails due to unimplemented feature, add `### skip: reason`
 5. If BashKit intentionally differs from bash, add `### bash_diff: reason`
-6. Update `KNOWN_LIMITATIONS.md` for skipped tests
+6. Update `specs/009-implementation-status.md` for skipped tests
 
 ### Checking Expected Outputs
 
