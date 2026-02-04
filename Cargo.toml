@@ -78,3 +78,6 @@ schemars = "1"
 
 # Logging/tracing
 tracing = "0.1"
+
+# Serial test execution
+serial_test = "3"

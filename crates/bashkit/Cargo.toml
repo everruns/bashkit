@@ -76,6 +76,7 @@ pretty_assertions = { workspace = true }
 insta = { workspace = true }
 criterion = { version = "0.8", features = ["async_tokio"] }
 proptest = { workspace = true }
+serial_test = { workspace = true }
 
 [[bench]]
 name = "parallel_execution"
