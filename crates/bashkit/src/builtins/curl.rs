@@ -926,6 +926,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         Curl.execute(ctx).await.unwrap()
@@ -947,6 +949,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         Wget.execute(ctx).await.unwrap()

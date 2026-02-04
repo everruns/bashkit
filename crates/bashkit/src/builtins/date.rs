@@ -130,6 +130,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         Date.execute(ctx).await.unwrap()

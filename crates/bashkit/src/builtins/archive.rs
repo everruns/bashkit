@@ -829,6 +829,8 @@ impl Builtin for Gunzip {
             stdin: ctx.stdin,
             #[cfg(feature = "http_client")]
             http_client: ctx.http_client,
+            #[cfg(feature = "git")]
+            git_client: ctx.git_client,
         };
 
         Gzip.execute(new_ctx).await
@@ -882,6 +884,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -899,6 +903,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -931,6 +937,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -951,6 +959,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -985,6 +995,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -1007,6 +1019,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -1033,6 +1047,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -1065,6 +1081,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -1081,6 +1099,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Tar.execute(ctx).await.unwrap();
@@ -1110,6 +1130,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Gzip.execute(ctx).await.unwrap();
@@ -1138,6 +1160,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         Gzip.execute(ctx).await.unwrap();
@@ -1153,6 +1177,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Gzip.execute(ctx).await.unwrap();
@@ -1182,6 +1208,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Gzip.execute(ctx).await.unwrap();
@@ -1205,6 +1233,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Gzip.execute(ctx).await.unwrap();
@@ -1231,6 +1261,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Gzip.execute(ctx).await.unwrap();
@@ -1255,6 +1287,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Gzip.execute(ctx).await.unwrap();
@@ -1284,6 +1318,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
         Gzip.execute(ctx).await.unwrap();
 
@@ -1298,6 +1334,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Gunzip.execute(ctx).await.unwrap();

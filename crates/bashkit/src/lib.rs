@@ -292,6 +292,7 @@
 mod builtins;
 mod error;
 mod fs;
+mod git;
 mod interpreter;
 mod limits;
 #[cfg(feature = "logging")]
@@ -309,6 +310,7 @@ pub use fs::{
     DirEntry, FileSystem, FileType, FsLimitExceeded, FsLimits, FsUsage, InMemoryFs, Metadata,
     MountableFs, OverlayFs,
 };
+pub use git::GitConfig;
 pub use interpreter::{ControlFlow, ExecResult};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
@@ -316,6 +318,9 @@ pub use tool::{BashTool, BashToolBuilder, Tool, ToolRequest, ToolResponse, ToolS
 
 #[cfg(feature = "http_client")]
 pub use network::HttpClient;
+
+#[cfg(feature = "git")]
+pub use git::GitClient;
 
 /// Logging utilities module
 ///
@@ -601,6 +606,9 @@ pub struct BashBuilder {
     /// Logging configuration
     #[cfg(feature = "logging")]
     log_config: Option<logging::LogConfig>,
+    /// Git configuration for git builtins
+    #[cfg(feature = "git")]
+    git_config: Option<GitConfig>,
 }
 
 impl BashBuilder {
@@ -721,6 +729,40 @@ impl BashBuilder {
     #[cfg(feature = "logging")]
     pub fn log_config(mut self, config: logging::LogConfig) -> Self {
         self.log_config = Some(config);
+        self
+    }
+
+    /// Configure git support for git commands.
+    ///
+    /// Git access is disabled by default. Use this method to enable git
+    /// commands with the specified configuration.
+    ///
+    /// # Security
+    ///
+    /// - All operations are confined to the virtual filesystem
+    /// - Author identity is sandboxed (configurable, never from host)
+    /// - Remote operations (Phase 2) require URL allowlist
+    /// - No access to host git config or credentials
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, GitConfig};
+    ///
+    /// let bash = Bash::builder()
+    ///     .git(GitConfig::new()
+    ///         .author("CI Bot", "ci@example.com"))
+    ///     .build();
+    /// ```
+    ///
+    /// # Threat Mitigations
+    ///
+    /// - TM-GIT-002: Host identity leak - uses configured author, never host
+    /// - TM-GIT-003: Host config access - no filesystem access outside VFS
+    /// - TM-GIT-005: Repository escape - all paths within VFS
+    #[cfg(feature = "git")]
+    pub fn git(mut self, config: GitConfig) -> Self {
+        self.git_config = Some(config);
         self
     }
 
@@ -914,6 +956,8 @@ impl BashBuilder {
             self.network_allowlist,
             #[cfg(feature = "logging")]
             self.log_config,
+            #[cfg(feature = "git")]
+            self.git_config,
         )
     }
 
@@ -929,6 +973,7 @@ impl BashBuilder {
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
         #[cfg(feature = "http_client")] network_allowlist: Option<NetworkAllowlist>,
         #[cfg(feature = "logging")] log_config: Option<logging::LogConfig>,
+        #[cfg(feature = "git")] git_config: Option<GitConfig>,
     ) -> Bash {
         #[cfg(feature = "logging")]
         let log_config = log_config.unwrap_or_default();
@@ -963,6 +1008,13 @@ impl BashBuilder {
         if let Some(allowlist) = network_allowlist {
             let client = network::HttpClient::new(allowlist);
             interpreter.set_http_client(client);
+        }
+
+        // Configure git client for git builtins
+        #[cfg(feature = "git")]
+        if let Some(config) = git_config {
+            let client = git::GitClient::new(config);
+            interpreter.set_git_client(client);
         }
 
         let parser_timeout = limits.parser_timeout;

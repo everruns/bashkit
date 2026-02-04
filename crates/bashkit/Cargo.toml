@@ -69,6 +69,11 @@ failpoints = ["fail/failpoints"]
 # Enable structured logging via tracing crate
 # Usage: cargo build --features logging
 logging = ["tracing"]
+# Enable git builtin for sandboxed git operations
+# Phase 1: Local operations (init, config, add, commit, status, log)
+# Phase 2 will add gix dependency for remote operations
+# Usage: cargo build --features git
+git = []
 
 [dev-dependencies]
 tokio-test = { workspace = true }

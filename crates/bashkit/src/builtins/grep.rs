@@ -730,6 +730,8 @@ mod tests {
             stdin,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         grep.execute(ctx).await

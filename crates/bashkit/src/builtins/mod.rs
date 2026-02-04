@@ -55,6 +55,9 @@ mod vars;
 mod wait;
 mod wc;
 
+#[cfg(feature = "git")]
+mod git;
+
 pub use archive::{Gunzip, Gzip, Tar};
 pub use awk::Awk;
 pub use cat::Cat;
@@ -87,6 +90,9 @@ pub use timeout::Timeout;
 pub use vars::{Eval, Local, Readonly, Set, Shift, Times, Unset};
 pub use wait::Wait;
 pub use wc::Wc;
+
+#[cfg(feature = "git")]
+pub use git::Git;
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -191,6 +197,14 @@ pub struct Context<'a> {
     /// [`BashBuilder::network`](crate::BashBuilder::network).
     #[cfg(feature = "http_client")]
     pub http_client: Option<&'a crate::network::HttpClient>,
+
+    /// Git client for git operations.
+    ///
+    /// Only available when the `git` feature is enabled and
+    /// a [`GitConfig`](crate::GitConfig) is configured via
+    /// [`BashBuilder::git`](crate::BashBuilder::git).
+    #[cfg(feature = "git")]
+    pub git_client: Option<&'a crate::git::GitClient>,
 }
 
 impl<'a> Context<'a> {
@@ -215,6 +229,8 @@ impl<'a> Context<'a> {
             stdin,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         }
     }
 }

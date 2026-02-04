@@ -259,6 +259,8 @@ mod tests {
             stdin,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         Cut.execute(ctx).await.unwrap()
@@ -280,6 +282,8 @@ mod tests {
             stdin,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         Tr.execute(ctx).await.unwrap()

