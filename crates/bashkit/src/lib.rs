@@ -281,6 +281,10 @@
 //! # Resources
 //!
 //! - [`threat_model`] - Security threats and mitigations
+//!
+//! # Ecosystem
+//!
+//! BashKit is part of the [Everruns](https://everruns.com) ecosystem.
 
 // Stricter panic prevention - prefer proper error handling over unwrap()
 #![warn(clippy::unwrap_used)]
