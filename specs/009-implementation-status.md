@@ -104,7 +104,7 @@ BashKit implements IEEE 1003.1-2024 Shell Command Language. See
 |----------|-------|-------|------|------|-------|
 | Bash (core) | 471 | Yes | 406 | 65 | `bash_spec_tests` in CI |
 | AWK | 89 | Yes | 55 | 34 | loops, arrays, functions |
-| Grep | 70 | Yes | 59 | 11 | now with -A/-B/-C, -m, -q, -x, -e |
+| Grep | 70 | Yes | 65 | 5 | now with -z, -r, -a, -b, -H, -h, -f, -P |
 | Sed | 65 | Yes | 50 | 15 | now with -E, nth occurrence, ! negation |
 | JQ | 95 | Yes | 85 | 10 | reduce, walk, regex funcs |
 | **Total** | **790** | **Yes** | **655** | **135** | |
@@ -229,19 +229,27 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Grep Limitations
 
-**Skipped Tests (11):**
+**Skipped Tests (5):**
 
 | Feature | Count | Notes |
 |---------|-------|-------|
-| Recursive `-r` | 1 | Recursive search in directories |
-| Pattern file `-f` | 1 | Read patterns from file |
-| Null data `-z` | 1 | Null-terminated lines |
-| Byte offset `-b` | 1 | Show byte offset |
-| Show filename `-H` | 1 | Force filename display |
-| Color output | 1 | `--color` option |
+| Recursive test | 1 | Test needs VFS setup with files |
+| Pattern file `-f` | 1 | Requires file redirection support |
 | Include/exclude | 2 | `--include`, `--exclude` patterns |
-| Binary files | 2 | `-a`, binary detection |
-| Line buffering | 1 | `--line-buffered` |
+| Binary detection | 1 | Auto-detect binary files |
+
+**Implemented Features:**
+- Basic flags: `-i`, `-v`, `-c`, `-n`, `-o`, `-l`, `-w`, `-E`, `-F`, `-q`, `-m`, `-x`
+- Context: `-A`, `-B`, `-C` (after/before/context lines)
+- Multiple patterns: `-e`
+- Pattern file: `-f` (requires file to exist in VFS)
+- Filename control: `-H` (always show), `-h` (never show)
+- Byte offset: `-b`
+- Null-terminated: `-z` (split on `\0` instead of `\n`)
+- Recursive: `-r`/`-R` (uses VFS read_dir)
+- Binary handling: `-a` (filter null bytes)
+- Perl regex: `-P` (regex crate supports PCRE features)
+- No-op flags: `--color`, `--line-buffered`
 
 ### JQ Limitations
 

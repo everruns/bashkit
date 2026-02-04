@@ -198,10 +198,10 @@ fn format_string(format: &str, args: &[String], arg_index: &mut usize) -> String
                     '"' => output.push('"'),
                     '\'' => output.push('\''),
                     '0' => {
-                        // Octal escape sequence
-                        let mut octal = String::new();
+                        // Octal escape sequence - \0, \0N, \0NN, \0NNN
+                        let mut octal = String::from("0");
                         while let Some(&c) = chars.peek() {
-                            if c.is_ascii_digit() && c != '8' && c != '9' && octal.len() < 3 {
+                            if c.is_ascii_digit() && c != '8' && c != '9' && octal.len() < 4 {
                                 octal.push(chars.next().unwrap());
                             } else {
                                 break;
@@ -355,6 +355,20 @@ fn expand_escapes(s: &str) -> String {
                     't' => output.push('\t'),
                     'r' => output.push('\r'),
                     '\\' => output.push('\\'),
+                    '0' => {
+                        // Octal escape sequence
+                        let mut octal = String::from("0");
+                        while let Some(&c) = chars.peek() {
+                            if c.is_ascii_digit() && c != '8' && c != '9' && octal.len() < 4 {
+                                octal.push(chars.next().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                        if let Ok(val) = u8::from_str_radix(&octal, 8) {
+                            output.push(val as char);
+                        }
+                    }
                     _ => {
                         output.push('\\');
                         output.push(next);
