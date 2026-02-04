@@ -1,8 +1,12 @@
-# Known Limitations
+# 009: Implementation Status
 
-BashKit is a sandboxed bash interpreter designed for AI agents. It provides
-substantial POSIX shell compliance while prioritizing safety and security.
-This document tracks known limitations.
+## Status
+Living document (updated as features change)
+
+## Summary
+
+Tracks what's implemented, what's not, and why. Single source of truth for
+feature status across BashKit.
 
 ## Intentionally Unimplemented Features
 
@@ -40,13 +44,57 @@ handlers require persistent state (conflicts with stateless model) and there
 are no signal sources in the sandbox. Scripts should use exit-code-based error
 handling instead.
 
-See [specs/006-threat-model.md](specs/006-threat-model.md) for threat details.
+See [006-threat-model.md](006-threat-model.md) for threat details.
 
 ## POSIX Compliance
 
-BashKit implements most of IEEE 1003.1-2024 Shell Command Language with
-intentional security exclusions. See [specs/008-posix-compliance.md](specs/008-posix-compliance.md)
-for detailed compliance status.
+BashKit implements IEEE 1003.1-2024 Shell Command Language. See
+[008-posix-compliance.md](008-posix-compliance.md) for design rationale.
+
+### Compliance Level
+
+| Category | Status | Notes |
+|----------|--------|-------|
+| Reserved Words | Full | All 16 reserved words supported |
+| Special Parameters | Full | All 8 POSIX parameters supported |
+| Special Built-in Utilities | Substantial | 13/15 implemented (2 excluded) |
+| Regular Built-in Utilities | Full | Core set implemented |
+| Quoting | Full | All quoting mechanisms supported |
+| Word Expansions | Substantial | Most expansions supported |
+| Redirections | Full | All POSIX redirection operators |
+| Compound Commands | Full | All compound command types |
+| Functions | Full | Both syntax forms supported |
+
+### POSIX Special Built-in Utilities
+
+| Utility | Status | Notes |
+|---------|--------|-------|
+| `.` (dot) | Implemented | Execute commands in current environment |
+| `:` (colon) | Implemented | Null utility (no-op, returns success) |
+| `break` | Implemented | Exit from loop with optional level count |
+| `continue` | Implemented | Continue loop with optional level count |
+| `eval` | Implemented | Construct and execute command |
+| `exec` | **Excluded** | See [Intentionally Unimplemented](#intentionally-unimplemented-features) |
+| `exit` | Implemented | Exit shell with status code |
+| `export` | Implemented | Export variables to environment |
+| `readonly` | Implemented | Mark variables as read-only |
+| `return` | Implemented | Return from function with status |
+| `set` | Implemented | Set options and positional parameters |
+| `shift` | Implemented | Shift positional parameters |
+| `times` | Implemented | Display process times (returns zeros in sandbox) |
+| `trap` | **Excluded** | See [Intentionally Unimplemented](#intentionally-unimplemented-features) |
+| `unset` | Implemented | Remove variables and functions |
+
+### Pipelines and Lists
+
+| Operator | Status | Description |
+|----------|--------|-------------|
+| `\|` | Implemented | Pipeline |
+| `&&` | Implemented | AND list |
+| `\|\|` | Implemented | OR list |
+| `;` | Implemented | Sequential execution |
+| `&` | Parsed only | Runs synchronously (stateless model) |
+| `!` | Implemented | Pipeline negation |
 
 ## Spec Test Coverage
 
@@ -68,25 +116,25 @@ for detailed compliance status.
 | arithmetic.test.sh | 22 | includes logical operators |
 | arrays.test.sh | 14 | includes indices |
 | background.test.sh | 2 | |
-| brace-expansion.test.sh | 10 | NEW: {a,b,c}, {1..5} |
+| brace-expansion.test.sh | 10 | {a,b,c}, {1..5} |
 | command-subst.test.sh | 14 | |
 | control-flow.test.sh | 31 | if/elif/else, for, while, case |
 | cuttr.test.sh | 35 | cut and tr commands |
 | date.test.sh | 31 | format specifiers |
 | echo.test.sh | 26 | escape sequences |
-| errexit.test.sh | 10 | NEW: set -e tests |
+| errexit.test.sh | 10 | set -e tests |
 | fileops.test.sh | 15 | |
 | functions.test.sh | 14 | |
 | globs.test.sh | 7 | |
 | headtail.test.sh | 14 | |
 | herestring.test.sh | 8 | |
-| negative-tests.test.sh | 8 | NEW: error conditions |
+| negative-tests.test.sh | 8 | error conditions |
 | path.test.sh | 14 | |
 | pipes-redirects.test.sh | 13 | includes stderr redirects |
 | procsub.test.sh | 6 | |
 | sleep.test.sh | 6 | |
 | sortuniq.test.sh | 31 | sort and uniq |
-| test-operators.test.sh | 12 | NEW: file/string tests |
+| test-operators.test.sh | 12 | file/string tests |
 | time.test.sh | 12 | Wall-clock only (user/sys always 0) |
 | timeout.test.sh | 17 | 2 skipped (timing-dependent) |
 | variables.test.sh | 20 | includes special vars |
@@ -109,23 +157,6 @@ Features that may be added in the future (not intentionally excluded):
 | `alias` | Low | Interactive feature |
 | History expansion | Out of scope | Interactive only |
 
-For intentionally excluded features (`exec`, `trap`, background execution, job
-control, symlink following), see [Intentionally Unimplemented Features](#intentionally-unimplemented-features) above.
-
-### Implemented (previously missing)
-- Process substitution `<(cmd)` - works
-- `set -e` (errexit) - exits on command failure, respects conditionals
-- Brace expansion `{a,b,c}`, `{1..5}` - full support
-- Tilde expansion `~` - expands to $HOME
-- Special variables `$$`, `$RANDOM`, `$LINENO`
-- File test operators `-r`, `-w`, `-x`, `-L`
-- Stderr redirections `2>`, `2>&1`, `&>`
-- Arithmetic logical operators `&&`, `||` with short-circuit
-- String comparison `<`, `>` in test
-- Array indices `${!arr[@]}`
-- POSIX special parameters `$-` (current options) and `$!` (last bg PID)
-- POSIX special builtins: `:` (colon/null), `eval`, `readonly`, `times`
-
 ### Partially Implemented
 
 | Feature | What Works | What's Missing |
@@ -135,28 +166,36 @@ control, symlink following), see [Intentionally Unimplemented Features](#intenti
 | Heredocs | Basic | Variable expansion inside |
 | Arrays | Indexing, `[@]`, `${!arr[@]}`, `+=` | Slice `${arr[@]:1:2}` |
 | `echo -n` | Flag parsed | Trailing newline handling |
-| `time` | Wall-clock timing | **User/sys CPU time not tracked (always 0)** |
-| `timeout` | Basic usage | `-k` kill timeout (always terminates immediately) |
+| `time` | Wall-clock timing | User/sys CPU time (always 0) |
+| `timeout` | Basic usage | `-k` kill timeout |
 
 ## Builtins
 
 ### Implemented
-`echo`, `printf`, `cat`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`, `export`, `set`, `unset`, `local`, `source`, `read`, `shift`, `break`, `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`, `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`, `sort`, `uniq`, `cut`, `tr`, `date`, `wait`, `curl`, `wget`, `timeout`, `time` (keyword), `whoami`, `hostname`, `ls`, `rmdir`, `find`, `xargs`, `tee`, `:` (colon), `eval`, `readonly`, `times`
 
-### Not Implemented
-`ln`, `chown`, `diff`, `type`, `which`, `command`, `hash`, `declare`, `typeset`, `getopts`, `kill`
+`echo`, `printf`, `cat`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
+`export`, `set`, `unset`, `local`, `source`, `read`, `shift`, `break`,
+`continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`,
+`basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`,
+`sort`, `uniq`, `cut`, `tr`, `date`, `wait`, `curl`, `wget`, `timeout`,
+`time` (keyword), `whoami`, `hostname`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
+`:` (colon), `eval`, `readonly`, `times`
 
-### Security Exclusions (Intentional)
-`exec`, `trap` - See [Intentionally Unimplemented Features](#intentionally-unimplemented-features).
+### Not Yet Implemented
+
+`ln`, `chown`, `diff`, `type`, `which`, `command`, `hash`, `declare`,
+`typeset`, `getopts`, `kill`
 
 ## Text Processing
 
 ### AWK Limitations
+
 - Regex literals in function args: `gsub(/pattern/, replacement)`
 - Array assignment in split: `split($0, arr, ":")`
 - Complex regex patterns
 
 **Skipped Tests (41):**
+
 | Feature | Count | Notes |
 |---------|-------|-------|
 | Arrays | 8 | `arr[key]`, associative arrays, `in` operator |
@@ -173,16 +212,11 @@ control, symlink following), see [Intentionally Unimplemented Features](#intenti
 | NR/NF in conditions | 3 | `NR > 1`, `NF == 3` |
 
 ### Sed Limitations
+
 - In-place editing (`-i`) - not yet implemented
 
-**Implemented (previously missing):**
-- Extended regex `-E` (`+`, `?`, `|`, `()` grouping)
-- Nth occurrence replacement (`s/a/X/2`, `s/a/X/3`)
-- Address negation (`!`) for inverted matches
-- Append/insert (`a\`, `i\`) commands
-- Multiple `-e` expressions (`sed -e 's/a/b/' -e 's/c/d/'`)
-
 **Skipped Tests (16):**
+
 | Feature | Count | Notes |
 |---------|-------|-------|
 | Hold space | 3 | `h`, `H`, `x` commands |
@@ -198,14 +232,8 @@ control, symlink following), see [Intentionally Unimplemented Features](#intenti
 
 ### Grep Limitations
 
-**Implemented (previously missing):**
-- Context flags `-A`, `-B`, `-C` (after/before/context)
-- Max count `-m` (stop after N matches)
-- Whole line match `-x`
-- Quiet mode `-q` (exit status only)
-- Multiple `-e` patterns (`-e pat1 -e pat2`)
-
 **Skipped Tests (8):**
+
 | Feature | Count | Notes |
 |---------|-------|-------|
 | Recursive `-r` | 2 | Recursive search in directories |
@@ -218,6 +246,7 @@ control, symlink following), see [Intentionally Unimplemented Features](#intenti
 ### JQ Limitations
 
 **Skipped Tests (37):**
+
 | Feature | Count | Notes |
 |---------|-------|-------|
 | CLI flags | 8 | `-c`, `-S`, `-s`, `-n`, `-e`, `-j`, `--tab` |
@@ -234,13 +263,8 @@ control, symlink following), see [Intentionally Unimplemented Features](#intenti
 
 ### Curl Limitations
 
-**Tests NOT Ported:** Curl tests from just-bash were not ported because:
-1. Requires http_client feature flag (`--features http_client`)
-2. Needs URL allowlist configuration
-3. just-bash tests mock HTTP responses; bashkit uses real requests
-4. Different error handling semantics
+Tests not ported (requires `--features http_client` and URL allowlist):
 
-**Coverage Gap:** ~25 curl test patterns from just-bash not yet adapted:
 - HTTP methods (GET, POST, PUT, DELETE)
 - Headers (`-H`)
 - Data payloads (`-d`, `--data-raw`)
@@ -250,20 +274,18 @@ control, symlink following), see [Intentionally Unimplemented Features](#intenti
 - Silent mode (`-s`)
 - Timeout (`--connect-timeout`)
 
-**TODO:** Create curl.test.sh with mock server or allowlisted test endpoints.
-
 ## Parser Limitations
 
 - Single-quoted strings are completely literal (correct behavior)
 - Some complex nested structures may timeout
 - Very long pipelines may cause stack issues
-- Parser has configurable limits: timeout, fuel (operations), input size, AST depth
+- Configurable limits: timeout, fuel, input size, AST depth
 
 ## Filesystem
 
 - Virtual filesystem only (InMemoryFs, OverlayFs, MountableFs)
 - No real filesystem access by default
-- Symlinks stored but not followed (see [Intentionally Unimplemented Features](#intentionally-unimplemented-features))
+- Symlinks stored but not followed (see [Intentionally Unimplemented](#intentionally-unimplemented-features))
 - No file permissions enforcement
 
 ## Network
@@ -276,25 +298,29 @@ control, symlink following), see [Intentionally Unimplemented Features](#intenti
 ## Resource Limits
 
 Default limits (configurable):
-- Commands: 10,000
-- Loop iterations: 100,000
-- Function depth: 100
-- Output size: 10MB
-- Parser timeout: 5 seconds
-- Parser operations (fuel): 100,000
-- Input size: 10MB
-- AST depth: 100
 
-## Comparison with Real Bash
+| Limit | Default |
+|-------|---------|
+| Commands | 10,000 |
+| Loop iterations | 100,000 |
+| Function depth | 100 |
+| Output size | 10MB |
+| Parser timeout | 5 seconds |
+| Parser operations (fuel) | 100,000 |
+| Input size | 10MB |
+| AST depth | 100 |
 
-Run comparison tests:
+## Testing
+
+### Comparison with Real Bash
+
 ```bash
 cargo test --test spec_tests -- bash_comparison_tests --ignored
 ```
 
-This runs each spec test against both BashKit and real bash, reporting differences.
+Runs each spec test against both BashKit and real bash, reporting differences.
 
-## Contributing
+### Contributing
 
 To add a known limitation:
 1. Add a spec test that demonstrates the limitation
