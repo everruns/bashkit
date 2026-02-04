@@ -240,10 +240,11 @@ async fn execute_curl_request(
     user_auth: Option<&str>,
     user_agent: Option<&str>,
     referer: Option<&str>,
-    _max_time: Option<u64>, // TODO: implement per-request timeout
+    max_time: Option<u64>,
     ctx: &Context<'_>,
 ) -> Result<ExecResult> {
     use crate::network::Method;
+    use std::time::Duration;
 
     // Parse method
     let http_method = match method {
@@ -311,9 +312,22 @@ async fn execute_curl_request(
             verbose_output.push_str(">\r\n");
         }
 
-        let result = http_client
-            .request_with_headers(http_method, &current_url, body, &header_pairs)
-            .await;
+        let request_future =
+            http_client.request_with_headers(http_method, &current_url, body, &header_pairs);
+
+        let result = if let Some(secs) = max_time {
+            match tokio::time::timeout(Duration::from_secs(secs), request_future).await {
+                Ok(res) => res,
+                Err(_elapsed) => {
+                    return Ok(ExecResult::err(
+                        format!("curl: (28) Operation timed out after {} seconds\n", secs),
+                        28,
+                    ));
+                }
+            }
+        } else {
+            request_future.await
+        };
 
         match result {
             Ok(response) => {
