@@ -327,6 +327,7 @@ Default limits (configurable):
 | Real filesystem | ❌ | Sandboxed by default |
 | Symlinks | ✅ | Stored but not followed |
 | Permissions | ✅ | Metadata stored, not enforced |
+| `/dev/null` | ✅ | Interpreter-level handling (cannot be bypassed) |
 
 ---
 
@@ -398,6 +399,7 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] Brace expansion ({a,b,c}, {1..5})
 - [x] String comparison operators (< >) in test
 - [x] Array indices `${!arr[@]}`
+- [x] `/dev/null` support (interpreter-level, cannot be bypassed by custom fs)
 
 ### Not Planned
 - Interactive features (history, job control UI)
