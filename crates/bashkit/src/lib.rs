@@ -1232,6 +1232,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_for_loop_positional_params() {
+        let mut bash = Bash::new();
+        // for x; do ... done iterates over positional parameters inside a function
+        let result = bash
+            .exec("f() { for x; do echo $x; done; }; f one two three")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "one\ntwo\nthree\n");
+    }
+
+    #[tokio::test]
     async fn test_while_loop() {
         let mut bash = Bash::new();
         // While with false condition - executes 0 times

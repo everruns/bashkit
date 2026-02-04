@@ -414,8 +414,11 @@ impl Interpreter {
             }
             vals
         } else {
-            // TODO: Use positional parameters
-            Vec::new()
+            // No words specified - iterate over positional parameters ($@)
+            self.call_stack
+                .last()
+                .map(|frame| frame.positional.clone())
+                .unwrap_or_default()
         };
 
         // Reset loop counter for this loop
