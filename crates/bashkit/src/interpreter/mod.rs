@@ -38,6 +38,32 @@ use crate::parser::{
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
 
+/// The canonical /dev/null path.
+/// This is handled at the interpreter level to prevent custom filesystems from bypassing it.
+const DEV_NULL: &str = "/dev/null";
+
+/// Check if a path refers to /dev/null after normalization.
+/// Handles attempts to bypass via paths like `/dev/../dev/null`.
+fn is_dev_null(path: &Path) -> bool {
+    // Normalize the path to handle .. and . components
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::RootDir => normalized.push("/"),
+            std::path::Component::Normal(name) => normalized.push(name),
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::Prefix(_) => {}
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        normalized.push("/");
+    }
+    normalized == Path::new(DEV_NULL)
+}
+
 /// A frame in the call stack for local variable scoping
 #[derive(Debug, Clone)]
 struct CallFrame {
@@ -1730,8 +1756,13 @@ impl Interpreter {
                 RedirectKind::Input => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    let content = self.fs.read_file(&path).await?;
-                    stdin = Some(String::from_utf8_lossy(&content).to_string());
+                    // Handle /dev/null at interpreter level - cannot be bypassed
+                    if is_dev_null(&path) {
+                        stdin = Some(String::new()); // EOF
+                    } else {
+                        let content = self.fs.read_file(&path).await?;
+                        stdin = Some(String::from_utf8_lossy(&content).to_string());
+                    }
                 }
                 RedirectKind::HereString => {
                     // <<< string - use the target as stdin content
@@ -1763,34 +1794,52 @@ impl Interpreter {
                 RedirectKind::Output => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    // Check which fd we're redirecting
-                    match redirect.fd {
-                        Some(2) => {
-                            // 2> - redirect stderr to file
-                            self.fs.write_file(&path, result.stderr.as_bytes()).await?;
-                            result.stderr = String::new();
+                    // Handle /dev/null at interpreter level - cannot be bypassed
+                    if is_dev_null(&path) {
+                        // Discard output without calling filesystem
+                        match redirect.fd {
+                            Some(2) => result.stderr = String::new(),
+                            _ => result.stdout = String::new(),
                         }
-                        _ => {
-                            // Default (stdout) - write stdout to file
-                            self.fs.write_file(&path, result.stdout.as_bytes()).await?;
-                            result.stdout = String::new();
+                    } else {
+                        // Check which fd we're redirecting
+                        match redirect.fd {
+                            Some(2) => {
+                                // 2> - redirect stderr to file
+                                self.fs.write_file(&path, result.stderr.as_bytes()).await?;
+                                result.stderr = String::new();
+                            }
+                            _ => {
+                                // Default (stdout) - write stdout to file
+                                self.fs.write_file(&path, result.stdout.as_bytes()).await?;
+                                result.stdout = String::new();
+                            }
                         }
                     }
                 }
                 RedirectKind::Append => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    // Check which fd we're appending
-                    match redirect.fd {
-                        Some(2) => {
-                            // 2>> - append stderr to file
-                            self.fs.append_file(&path, result.stderr.as_bytes()).await?;
-                            result.stderr = String::new();
+                    // Handle /dev/null at interpreter level - cannot be bypassed
+                    if is_dev_null(&path) {
+                        // Discard output without calling filesystem
+                        match redirect.fd {
+                            Some(2) => result.stderr = String::new(),
+                            _ => result.stdout = String::new(),
                         }
-                        _ => {
-                            // Default (stdout) - append stdout to file
-                            self.fs.append_file(&path, result.stdout.as_bytes()).await?;
-                            result.stdout = String::new();
+                    } else {
+                        // Check which fd we're appending
+                        match redirect.fd {
+                            Some(2) => {
+                                // 2>> - append stderr to file
+                                self.fs.append_file(&path, result.stderr.as_bytes()).await?;
+                                result.stderr = String::new();
+                            }
+                            _ => {
+                                // Default (stdout) - append stdout to file
+                                self.fs.append_file(&path, result.stdout.as_bytes()).await?;
+                                result.stdout = String::new();
+                            }
                         }
                     }
                 }
@@ -1798,11 +1847,18 @@ impl Interpreter {
                     // &> - redirect both stdout and stderr to file
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    // Write both stdout and stderr to file
-                    let combined = format!("{}{}", result.stdout, result.stderr);
-                    self.fs.write_file(&path, combined.as_bytes()).await?;
-                    result.stdout = String::new();
-                    result.stderr = String::new();
+                    // Handle /dev/null at interpreter level - cannot be bypassed
+                    if is_dev_null(&path) {
+                        // Discard both outputs without calling filesystem
+                        result.stdout = String::new();
+                        result.stderr = String::new();
+                    } else {
+                        // Write both stdout and stderr to file
+                        let combined = format!("{}{}", result.stdout, result.stderr);
+                        self.fs.write_file(&path, combined.as_bytes()).await?;
+                        result.stdout = String::new();
+                        result.stderr = String::new();
+                    }
                 }
                 RedirectKind::DupOutput => {
                     // Handle fd duplication (e.g., 2>&1, >&2)
