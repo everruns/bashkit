@@ -495,10 +495,12 @@ echo '{"a":1}' | jq 'setpath(["b"];2)'
 ### end
 
 ### jq_del
-### skip: del not implemented
+# Delete a key from an object
 echo '{"a":1,"b":2}' | jq 'del(.a)'
 ### expect
-{"b":2}
+{
+  "b": 2
+}
 ### end
 
 ### jq_to_entries
