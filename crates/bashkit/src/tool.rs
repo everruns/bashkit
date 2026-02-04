@@ -41,64 +41,69 @@ use serde::{Deserialize, Serialize};
 /// Library version from Cargo.toml
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Base llmtext documentation template
-const BASE_LLMTEXT: &str = r#"# BashKit
+/// List of built-in commands
+const BUILTINS: &str = "echo cat grep sed awk jq curl head tail sort uniq cut tr wc date sleep mkdir rm cp mv touch chmod printf test [ true false exit cd pwd ls find xargs basename dirname env export read";
 
-Sandboxed bash interpreter with virtual filesystem.
+/// Base llmtext documentation template (generic help format)
+const BASE_LLMTEXT: &str = r#"BASH(1)                          User Commands                         BASH(1)
 
-## Capabilities
+NAME
+       bashkit - sandboxed bash-like interpreter with virtual filesystem
 
-- Full bash syntax: variables, pipelines, redirects, loops, functions, arrays
-- 30+ builtins: echo, cat, grep, sed, awk, jq, curl, etc.
-- Virtual filesystem (all operations sandboxed)
-- Resource limits (commands, iterations, function depth)
+SYNOPSIS
+       {"commands": "<bash commands>"}
 
-## Input
+DESCRIPTION
+       BashKit executes bash commands in an isolated sandbox with a virtual
+       filesystem. All file operations are contained within the sandbox.
 
-- `commands` (required): Bash commands to execute (like `bash -c`)
+       Supports full bash syntax including variables, pipelines, redirects,
+       loops, conditionals, functions, and arrays.
 
-## Output
+BUILTINS
+       echo, cat, grep, sed, awk, jq, curl, head, tail, sort, uniq, cut, tr,
+       wc, date, sleep, mkdir, rm, cp, mv, touch, chmod, printf, test, [,
+       true, false, exit, cd, pwd, ls, find, xargs, basename, dirname, env,
+       export, read
 
-- `stdout`: Standard output
-- `stderr`: Standard error
-- `exit_code`: 0 = success
+INPUT
+       commands    Bash commands to execute (like bash -c "commands")
 
-## Examples
+OUTPUT
+       stdout      Standard output from the commands
+       stderr      Standard error from the commands
+       exit_code   Exit status (0 = success)
 
-```json
-{"commands": "echo 'Hello'"}
-```
-→ `{"stdout": "Hello\n", "stderr": "", "exit_code": 0}`
+EXAMPLES
+       Simple echo:
+           {"commands": "echo 'Hello, World!'"}
 
-```json
-{"commands": "x=5; y=3; echo $((x + y))"}
-```
-→ `{"stdout": "8\n", "stderr": "", "exit_code": 0}`
+       Arithmetic:
+           {"commands": "x=5; y=3; echo $((x + y))"}
 
-```json
-{"commands": "echo '{\"n\":1}' | jq '.n'"}
-```
-→ `{"stdout": "1\n", "stderr": "", "exit_code": 0}`
+       Pipeline:
+           {"commands": "echo -e 'apple\nbanana' | grep a"}
 
-## Running Scripts from VFS
+       JSON processing:
+           {"commands": "echo '{\"n\":1}' | jq '.n'"}
 
-```json
-{"commands": "source /path/to/script.sh"}
-```
+       File operations (virtual):
+           {"commands": "echo data > /tmp/f.txt && cat /tmp/f.txt"}
 
-## Errors
+       Run script from VFS:
+           {"commands": "source /path/to/script.sh"}
 
-- Syntax error: non-zero exit, error in stderr
-- Command not found: exit code 127
-- Resource limit: specific error message
+EXIT STATUS
+       0      Success
+       1-125  Command-specific error
+       126    Command not executable
+       127    Command not found
+
+SEE ALSO
+       bash(1), sh(1)
 "#;
 
-/// Condensed system prompt template (token-efficient)
-const BASE_SYSTEM_PROMPT: &str = r#"bashkit: sandboxed bash with vfs.
-Input: {"commands": "..."}
-Output: {stdout, stderr, exit_code}
-Builtins: echo cat grep sed awk jq curl head tail sort uniq cut tr wc date sleep mkdir rm cp mv touch chmod printf test [ true false exit cd pwd ls find xargs basename dirname env export read
-"#;
+// Note: system_prompt() is built dynamically in build_system_prompt()
 
 /// Request to execute bash commands
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -346,14 +351,16 @@ impl BashTool {
         builder.build()
     }
 
-    /// Build dynamic description with custom builtins
+    /// Build dynamic description with supported tools
     fn build_description(&self) -> String {
-        const SHORT: &str = "Sandboxed bash interpreter with virtual filesystem";
-        if self.builtin_names.is_empty() {
-            SHORT.to_string()
-        } else {
-            format!("{}. Custom: {}", SHORT, self.builtin_names.join(", "))
+        let mut desc =
+            String::from("Sandboxed bash-like interpreter with virtual filesystem. Supported tools: ");
+        desc.push_str(BUILTINS);
+        if !self.builtin_names.is_empty() {
+            desc.push(' ');
+            desc.push_str(&self.builtin_names.join(" "));
         }
+        desc
     }
 
     /// Build dynamic llmtext with configuration
@@ -368,52 +375,32 @@ impl BashTool {
             || !self.env_vars.is_empty();
 
         if has_config {
-            doc.push_str("\n## Current Configuration\n\n");
+            doc.push_str("\nCONFIGURATION\n");
 
             if !self.builtin_names.is_empty() {
-                doc.push_str("### Custom Commands\n\n");
-                doc.push_str("The following custom commands are available in addition to built-in commands:\n\n");
-                for name in &self.builtin_names {
-                    doc.push_str(&format!("- `{name}`\n"));
-                }
+                doc.push_str("       Custom commands: ");
+                doc.push_str(&self.builtin_names.join(", "));
                 doc.push('\n');
             }
 
-            if self.username.is_some() || self.hostname.is_some() {
-                doc.push_str("### Sandbox Identity\n\n");
-                if let Some(ref username) = self.username {
-                    doc.push_str(&format!(
-                        "- Username: `{username}` (returned by `whoami`)\n"
-                    ));
-                }
-                if let Some(ref hostname) = self.hostname {
-                    doc.push_str(&format!(
-                        "- Hostname: `{hostname}` (returned by `hostname`)\n"
-                    ));
-                }
-                doc.push('\n');
+            if let Some(ref username) = self.username {
+                doc.push_str(&format!("       User: {} (whoami)\n", username));
+            }
+            if let Some(ref hostname) = self.hostname {
+                doc.push_str(&format!("       Host: {} (hostname)\n", hostname));
             }
 
             if let Some(ref limits) = self.limits {
-                doc.push_str("### Resource Limits\n\n");
-                doc.push_str(&format!("- Max commands: {}\n", limits.max_commands));
                 doc.push_str(&format!(
-                    "- Max loop iterations: {}\n",
-                    limits.max_loop_iterations
+                    "       Limits: {} commands, {} iterations, {} depth\n",
+                    limits.max_commands, limits.max_loop_iterations, limits.max_function_depth
                 ));
-                doc.push_str(&format!(
-                    "- Max function depth: {}\n",
-                    limits.max_function_depth
-                ));
-                doc.push('\n');
             }
 
             if !self.env_vars.is_empty() {
-                doc.push_str("### Environment Variables\n\n");
-                doc.push_str("The following environment variables are pre-set:\n\n");
-                for (key, _) in &self.env_vars {
-                    doc.push_str(&format!("- `{key}`\n"));
-                }
+                doc.push_str("       Environment: ");
+                let keys: Vec<&str> = self.env_vars.iter().map(|(k, _)| k.as_str()).collect();
+                doc.push_str(&keys.join(", "));
                 doc.push('\n');
             }
         }
@@ -421,14 +408,24 @@ impl BashTool {
         doc
     }
 
-    /// Build dynamic system prompt with custom builtins
+    /// Build dynamic system prompt
     fn build_system_prompt(&self) -> String {
-        let mut prompt = BASE_SYSTEM_PROMPT.to_string();
-        if !self.builtin_names.is_empty() {
-            prompt.push_str("Custom: ");
-            prompt.push_str(&self.builtin_names.join(" "));
-            prompt.push('\n');
+        let mut prompt = String::from("# Bash Tool\n\n");
+
+        // Description with workspace info
+        prompt.push_str("Sandboxed bash-like interpreter with virtual filesystem.\n");
+
+        // Home directory info if username is set
+        if let Some(ref username) = self.username {
+            prompt.push_str(&format!("Home: /home/{}\n", username));
         }
+
+        prompt.push('\n');
+
+        // Input/Output format
+        prompt.push_str("Input: {\"commands\": \"<bash commands>\"}\n");
+        prompt.push_str("Output: {stdout, stderr, exit_code}\n");
+
         prompt
     }
 }
@@ -572,9 +569,11 @@ mod tests {
             tool.short_description(),
             "Sandboxed bash interpreter with virtual filesystem"
         );
-        assert!(tool.description().contains("Sandboxed bash"));
-        assert!(tool.llmtext().contains("# BashKit"));
-        assert!(tool.system_prompt().contains("bashkit"));
+        assert!(tool.description().contains("Sandboxed bash-like interpreter"));
+        assert!(tool.description().contains("Supported tools:"));
+        assert!(tool.llmtext().contains("BASH(1)"));
+        assert!(tool.llmtext().contains("SYNOPSIS"));
+        assert!(tool.system_prompt().contains("# Bash Tool"));
         assert_eq!(tool.version(), VERSION);
     }
 
@@ -587,16 +586,18 @@ mod tests {
             .limits(ExecutionLimits::new().max_commands(50))
             .build();
 
-        // llmtxt should include configuration
+        // llmtxt should include configuration in man-page style
         let llmtxt = tool.llmtext();
-        assert!(llmtxt.contains("## Current Configuration"));
-        assert!(llmtxt.contains("### Sandbox Identity"));
-        assert!(llmtxt.contains("Username: `agent`"));
-        assert!(llmtxt.contains("Hostname: `sandbox`"));
-        assert!(llmtxt.contains("### Resource Limits"));
-        assert!(llmtxt.contains("Max commands: 50"));
-        assert!(llmtxt.contains("### Environment Variables"));
-        assert!(llmtxt.contains("`API_KEY`"));
+        assert!(llmtxt.contains("CONFIGURATION"));
+        assert!(llmtxt.contains("User: agent"));
+        assert!(llmtxt.contains("Host: sandbox"));
+        assert!(llmtxt.contains("50 commands"));
+        assert!(llmtxt.contains("API_KEY"));
+
+        // system_prompt should include home
+        let sysprompt = tool.system_prompt();
+        assert!(sysprompt.contains("# Bash Tool"));
+        assert!(sysprompt.contains("Home: /home/agent"));
     }
 
     #[test]

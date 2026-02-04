@@ -37,9 +37,9 @@ pub trait Tool: Send + Sync {
 |--------|---------|---------|
 | `name()` | Tool identifier for registries | No |
 | `short_description()` | One-liner for tool listings | No |
-| `description()` | Full description with config | Yes |
-| `llmtext()` | Full docs for LLM consumption | Yes |
-| `system_prompt()` | Token-efficient for sysprompt | Yes |
+| `description()` | Full description with supported tools | Yes |
+| `llmtext()` | Man-page style docs for LLMs | Yes |
+| `system_prompt()` | Structured prompt header | Yes |
 | `input_schema()` | JSON Schema for validation | No |
 | `output_schema()` | JSON Schema for output | No |
 | `version()` | Library version | No |
@@ -60,65 +60,97 @@ Sandboxed bash interpreter with virtual filesystem
 
 #### `description()`
 ```
-Sandboxed bash interpreter with virtual filesystem
+Sandboxed bash-like interpreter with virtual filesystem. Supported tools: echo cat grep sed awk jq curl head tail sort uniq cut tr wc date sleep mkdir rm cp mv touch chmod printf test [ true false exit cd pwd ls find xargs basename dirname env export read
 ```
 
-With custom builtins:
+#### `system_prompt()`
 ```
-Sandboxed bash interpreter with virtual filesystem. Custom: my_cmd, other_cmd
-```
+# Bash Tool
 
-#### `system_prompt()` (token-efficient)
-```
-bashkit: sandboxed bash with vfs.
-Input: {"commands": "..."}
+Sandboxed bash-like interpreter with virtual filesystem.
+
+Input: {"commands": "<bash commands>"}
 Output: {stdout, stderr, exit_code}
-Builtins: echo cat grep sed awk jq curl head tail sort uniq cut tr wc date sleep mkdir rm cp mv touch chmod printf test [ true false exit cd pwd ls find xargs basename dirname env export read
 ```
 
-#### `llmtext()` (full documentation)
-```markdown
-# BashKit
+With username configured:
+```
+# Bash Tool
 
-Sandboxed bash interpreter with virtual filesystem.
+Sandboxed bash-like interpreter with virtual filesystem.
+Home: /home/agent
 
-## Capabilities
+Input: {"commands": "<bash commands>"}
+Output: {stdout, stderr, exit_code}
+```
 
-- Full bash syntax: variables, pipelines, redirects, loops, functions, arrays
-- 30+ builtins: echo, cat, grep, sed, awk, jq, curl, etc.
-- Virtual filesystem (all operations sandboxed)
-- Resource limits (commands, iterations, function depth)
+#### `llmtext()` (man-page format)
+```
+BASH(1)                          User Commands                         BASH(1)
 
-## Input
+NAME
+       bashkit - sandboxed bash-like interpreter with virtual filesystem
 
-- `commands` (required): Bash commands to execute (like `bash -c`)
+SYNOPSIS
+       {"commands": "<bash commands>"}
 
-## Output
+DESCRIPTION
+       BashKit executes bash commands in an isolated sandbox with a virtual
+       filesystem. All file operations are contained within the sandbox.
 
-- `stdout`: Standard output
-- `stderr`: Standard error
-- `exit_code`: 0 = success
+       Supports full bash syntax including variables, pipelines, redirects,
+       loops, conditionals, functions, and arrays.
 
-## Examples
+BUILTINS
+       echo, cat, grep, sed, awk, jq, curl, head, tail, sort, uniq, cut, tr,
+       wc, date, sleep, mkdir, rm, cp, mv, touch, chmod, printf, test, [,
+       true, false, exit, cd, pwd, ls, find, xargs, basename, dirname, env,
+       export, read
 
-{"commands": "echo 'Hello'"}
-→ {"stdout": "Hello\n", "stderr": "", "exit_code": 0}
+INPUT
+       commands    Bash commands to execute (like bash -c "commands")
 
-{"commands": "x=5; y=3; echo $((x + y))"}
-→ {"stdout": "8\n", "stderr": "", "exit_code": 0}
+OUTPUT
+       stdout      Standard output from the commands
+       stderr      Standard error from the commands
+       exit_code   Exit status (0 = success)
 
-{"commands": "echo '{\"n\":1}' | jq '.n'"}
-→ {"stdout": "1\n", "stderr": "", "exit_code": 0}
+EXAMPLES
+       Simple echo:
+           {"commands": "echo 'Hello, World!'"}
 
-## Running Scripts from VFS
+       Arithmetic:
+           {"commands": "x=5; y=3; echo $((x + y))"}
 
-{"commands": "source /path/to/script.sh"}
+       Pipeline:
+           {"commands": "echo -e 'apple\nbanana' | grep a"}
 
-## Errors
+       JSON processing:
+           {"commands": "echo '{\"n\":1}' | jq '.n'"}
 
-- Syntax error: non-zero exit, error in stderr
-- Command not found: exit code 127
-- Resource limit: specific error message
+       File operations (virtual):
+           {"commands": "echo data > /tmp/f.txt && cat /tmp/f.txt"}
+
+       Run script from VFS:
+           {"commands": "source /path/to/script.sh"}
+
+EXIT STATUS
+       0      Success
+       1-125  Command-specific error
+       126    Command not executable
+       127    Command not found
+
+SEE ALSO
+       bash(1), sh(1)
+```
+
+With configuration, appends:
+```
+CONFIGURATION
+       User: agent (whoami)
+       Host: sandbox (hostname)
+       Limits: 500 commands, 10000 iterations, 100 depth
+       Environment: API_KEY
 ```
 
 ### Request/Response
@@ -156,12 +188,11 @@ let response = tool.execute(ToolRequest {
 
 ### Dynamic Documentation
 
-When configured, `llmtext()` and `system_prompt()` automatically include:
+When configured, outputs automatically include:
 
-- Custom builtin names
-- Sandbox identity (username/hostname)
-- Resource limits
-- Pre-set environment variable names (not values)
+- `description()`: Appends custom builtin names to supported tools
+- `system_prompt()`: Adds `Home: /home/<username>` if username set
+- `llmtext()`: Adds CONFIGURATION section with user, host, limits, env vars
 
 ## Design Rationale
 
@@ -176,6 +207,12 @@ Aligns with `bash -c "commands"` semantics. Clearer that it's inline commands, n
 ### Why no `timeout_ms`?
 
 Use `timeout` builtin in commands: `timeout 5 long_running_cmd`. Keeps the API simple.
+
+### Why man-page format for `llmtext()`?
+
+- Universal format familiar to developers
+- Structured sections (NAME, SYNOPSIS, DESCRIPTION, EXAMPLES)
+- Works well with LLM context windows
 
 ### Why `system_prompt()` separate from `llmtext()`?
 
