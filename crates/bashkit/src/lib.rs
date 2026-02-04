@@ -313,7 +313,7 @@ pub use interpreter::{ControlFlow, ExecResult};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
 pub use tool::{
-    Tool, ToolBuilder, ToolRequest, ToolResponse, ToolStatus, TOOL_DESCRIPTION, TOOL_LLMTXT,
+    BashTool, BashToolBuilder, Tool, ToolRequest, ToolResponse, ToolStatus, VERSION,
 };
 
 #[cfg(feature = "http_client")]
@@ -450,9 +450,9 @@ impl Bash {
                         #[cfg(feature = "logging")]
                         tracing::debug!(target: "bashkit::parser", "Parse completed successfully");
                     }
-                    Err(e) => {
+                    Err(_e) => {
                         #[cfg(feature = "logging")]
-                        tracing::warn!(target: "bashkit::parser", error = %e, "Parse error");
+                        tracing::warn!(target: "bashkit::parser", error = %_e, "Parse error");
                     }
                 }
                 result?

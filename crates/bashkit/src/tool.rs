@@ -1,92 +1,87 @@
-//! Tool builder and contract for BashKit
+//! Tool trait and BashTool implementation
 //!
 //! Provides a standardized interface for LLM tool integration.
+//!
+//! # Architecture
+//!
+//! - `Tool` trait: Contract that all tools must implement
+//! - `BashTool`: Sandboxed bash interpreter implementing Tool
+//! - `ToolBuilder`: Builder pattern for configuring BashTool
 
 use crate::builtins::Builtin;
 use crate::error::Error;
 use crate::{Bash, ExecResult, ExecutionLimits};
+use async_trait::async_trait;
 use schemars::{schema_for, JsonSchema};
 use serde::{Deserialize, Serialize};
 
-/// Short tool description for LLM consumption (one-liner)
-pub const TOOL_DESCRIPTION: &str =
-    "Executes bash scripts in a sandboxed environment with a virtual filesystem.";
+/// Library version from Cargo.toml
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Extended documentation for LLM consumption (llmtxt format)
-///
-/// This is the base documentation. Use [`Tool::llmtxt()`] for dynamic
-/// documentation that includes custom builtins and configuration.
-pub const TOOL_LLMTXT: &str = r#"# BashKit Tool
+/// Base llmtext documentation template
+const BASE_LLMTEXT: &str = r#"# BashKit
 
-Executes bash scripts in a sandboxed environment with a virtual filesystem.
+Sandboxed bash interpreter with virtual filesystem.
 
 ## Capabilities
 
 - Full bash syntax: variables, pipelines, redirects, loops, functions, arrays
-- 30+ built-in commands: echo, cat, grep, sed, awk, jq, curl, etc.
-- Virtual filesystem (all file operations are sandboxed)
-- Resource limits (max commands, loop iterations, function depth)
-- Custom identity (username, hostname)
-- Extensible with custom builtins
+- 30+ builtins: echo, cat, grep, sed, awk, jq, curl, etc.
+- Virtual filesystem (all operations sandboxed)
+- Resource limits (commands, iterations, function depth)
 
-## Input Parameters
+## Input
 
-- `script` (required): The bash script to execute
-- `timeout_ms` (optional): Maximum execution time in milliseconds
+- `commands` (required): Bash commands to execute (like `bash -c`)
 
-## Output Fields
+## Output
 
-- `stdout`: Standard output from the script
-- `stderr`: Standard error from the script
-- `exit_code`: Exit code (0 = success)
+- `stdout`: Standard output
+- `stderr`: Standard error
+- `exit_code`: 0 = success
 
 ## Examples
 
-### Simple echo
 ```json
-{"script": "echo 'Hello, World!'"}
+{"commands": "echo 'Hello'"}
 ```
-Output: `{"stdout": "Hello, World!\n", "stderr": "", "exit_code": 0}`
+→ `{"stdout": "Hello\n", "stderr": "", "exit_code": 0}`
 
-### Pipeline with grep
 ```json
-{"script": "echo -e 'apple\\nbanana\\ncherry' | grep a"}
+{"commands": "x=5; y=3; echo $((x + y))"}
 ```
-Output: `{"stdout": "apple\nbanana\n", "stderr": "", "exit_code": 0}`
+→ `{"stdout": "8\n", "stderr": "", "exit_code": 0}`
 
-### Variables and arithmetic
 ```json
-{"script": "x=5; y=3; echo $((x + y))"}
+{"commands": "echo '{\"n\":1}' | jq '.n'"}
 ```
-Output: `{"stdout": "8\n", "stderr": "", "exit_code": 0}`
+→ `{"stdout": "1\n", "stderr": "", "exit_code": 0}`
 
-### File operations (virtual filesystem)
+## Running Scripts from VFS
+
 ```json
-{"script": "echo 'data' > /tmp/file.txt && cat /tmp/file.txt"}
+{"commands": "source /path/to/script.sh"}
 ```
-Output: `{"stdout": "data\n", "stderr": "", "exit_code": 0}`
 
-### JSON processing with jq
-```json
-{"script": "echo '{\"name\": \"test\"}' | jq '.name'"}
-```
-Output: `{"stdout": "\"test\"\n", "stderr": "", "exit_code": 0}`
+## Errors
 
-## Error Handling
-
-- Syntax errors return non-zero exit code with error in stderr
-- Resource limit violations return specific error messages
-- Command not found returns exit code 127
+- Syntax error: non-zero exit, error in stderr
+- Command not found: exit code 127
+- Resource limit: specific error message
 "#;
 
-/// Request to execute a bash script
+/// Condensed system prompt template (token-efficient)
+const BASE_SYSTEM_PROMPT: &str = r#"bashkit: sandboxed bash with vfs.
+Input: {"commands": "..."}
+Output: {stdout, stderr, exit_code}
+Builtins: echo cat grep sed awk jq curl head tail sort uniq cut tr wc date sleep mkdir rm cp mv touch chmod printf test [ true false exit cd pwd ls find xargs basename dirname env export read
+"#;
+
+/// Request to execute bash commands
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ToolRequest {
-    /// The bash script to execute
-    pub script: String,
-    /// Maximum execution time in milliseconds (optional)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<u64>,
+    /// Bash commands to execute (like `bash -c "commands"`)
+    pub commands: String,
 }
 
 /// Response from executing a bash script
@@ -160,9 +155,58 @@ impl ToolStatus {
     }
 }
 
-/// Builder for configuring the BashKit tool
+// ============================================================================
+// Tool Trait - The Contract
+// ============================================================================
+
+/// Tool contract for LLM integration
+///
+/// All tools must implement this trait to be usable by LLMs and agents.
+/// The trait provides introspection (schemas, docs) and execution methods.
+#[async_trait]
+pub trait Tool: Send + Sync {
+    /// Tool identifier (e.g., "bashkit", "calculator")
+    fn name(&self) -> &str;
+
+    /// One-line description for tool listings
+    fn short_description(&self) -> &str;
+
+    /// Full description, may include dynamic config info
+    fn description(&self) -> String;
+
+    /// Full documentation for LLMs (human readable, with examples)
+    fn llmtext(&self) -> String;
+
+    /// Condensed description for system prompts (token-efficient)
+    fn system_prompt(&self) -> String;
+
+    /// JSON Schema for input validation
+    fn input_schema(&self) -> serde_json::Value;
+
+    /// JSON Schema for output structure
+    fn output_schema(&self) -> serde_json::Value;
+
+    /// Library/tool version
+    fn version(&self) -> &str;
+
+    /// Execute the tool
+    async fn execute(&mut self, req: ToolRequest) -> ToolResponse;
+
+    /// Execute with status callbacks for progress tracking
+    async fn execute_with_status(
+        &mut self,
+        req: ToolRequest,
+        status_callback: Box<dyn FnMut(ToolStatus) + Send>,
+    ) -> ToolResponse;
+}
+
+// ============================================================================
+// BashTool - Implementation
+// ============================================================================
+
+/// Builder for configuring BashTool
 #[derive(Default)]
-pub struct ToolBuilder {
+pub struct BashToolBuilder {
     /// Custom username for sandbox identity
     username: Option<String>,
     /// Custom hostname for sandbox identity
@@ -175,7 +219,7 @@ pub struct ToolBuilder {
     builtins: Vec<(String, Box<dyn Builtin>)>,
 }
 
-impl ToolBuilder {
+impl BashToolBuilder {
     /// Create a new tool builder with defaults
     pub fn new() -> Self {
         Self::default()
@@ -214,10 +258,10 @@ impl ToolBuilder {
         self
     }
 
-    /// Build the tool
-    pub fn build(self) -> Tool {
+    /// Build the BashTool
+    pub fn build(self) -> BashTool {
         let builtin_names: Vec<String> = self.builtins.iter().map(|(n, _)| n.clone()).collect();
-        Tool {
+        BashTool {
             username: self.username,
             hostname: self.hostname,
             limits: self.limits,
@@ -228,9 +272,9 @@ impl ToolBuilder {
     }
 }
 
-/// Configured BashKit tool
+/// Sandboxed bash interpreter implementing the Tool trait
 #[derive(Default)]
-pub struct Tool {
+pub struct BashTool {
     username: Option<String>,
     hostname: Option<String>,
     limits: Option<ExecutionLimits>,
@@ -240,33 +284,49 @@ pub struct Tool {
     builtin_names: Vec<String>,
 }
 
-impl Tool {
+impl BashTool {
     /// Create a new tool builder
-    pub fn builder() -> ToolBuilder {
-        ToolBuilder::new()
+    pub fn builder() -> BashToolBuilder {
+        BashToolBuilder::new()
     }
 
-    /// Get tool description (dynamic, includes custom builtins)
-    pub fn description(&self) -> String {
+    /// Create a Bash instance with configured settings
+    fn create_bash(&mut self) -> Bash {
+        let mut builder = Bash::builder();
+
+        if let Some(ref username) = self.username {
+            builder = builder.username(username);
+        }
+        if let Some(ref hostname) = self.hostname {
+            builder = builder.hostname(hostname);
+        }
+        if let Some(ref limits) = self.limits {
+            builder = builder.limits(limits.clone());
+        }
+        for (key, value) in &self.env_vars {
+            builder = builder.env(key, value);
+        }
+        // Move builtins out to avoid borrow issues
+        for (name, builtin) in std::mem::take(&mut self.builtins) {
+            builder = builder.builtin(name, builtin);
+        }
+
+        builder.build()
+    }
+
+    /// Build dynamic description with custom builtins
+    fn build_description(&self) -> String {
+        const SHORT: &str = "Sandboxed bash interpreter with virtual filesystem";
         if self.builtin_names.is_empty() {
-            TOOL_DESCRIPTION.to_string()
+            SHORT.to_string()
         } else {
-            format!(
-                "{} Custom commands: {}.",
-                TOOL_DESCRIPTION,
-                self.builtin_names.join(", ")
-            )
+            format!("{}. Custom: {}", SHORT, self.builtin_names.join(", "))
         }
     }
 
-    /// Get system prompt (empty for this tool)
-    pub fn system_prompt(&self) -> &'static str {
-        ""
-    }
-
-    /// Get full documentation (dynamic llmtxt with configuration details)
-    pub fn llmtxt(&self) -> String {
-        let mut doc = TOOL_LLMTXT.to_string();
+    /// Build dynamic llmtext with configuration
+    fn build_llmtext(&self) -> String {
+        let mut doc = BASE_LLMTEXT.to_string();
 
         // Append configuration section if any dynamic config exists
         let has_config = !self.builtin_names.is_empty()
@@ -329,45 +389,56 @@ impl Tool {
         doc
     }
 
-    /// Get input schema as JSON
-    pub fn input_schema(&self) -> serde_json::Value {
+    /// Build dynamic system prompt with custom builtins
+    fn build_system_prompt(&self) -> String {
+        let mut prompt = BASE_SYSTEM_PROMPT.to_string();
+        if !self.builtin_names.is_empty() {
+            prompt.push_str("Custom: ");
+            prompt.push_str(&self.builtin_names.join(" "));
+            prompt.push('\n');
+        }
+        prompt
+    }
+}
+
+#[async_trait]
+impl Tool for BashTool {
+    fn name(&self) -> &str {
+        "bashkit"
+    }
+
+    fn short_description(&self) -> &str {
+        "Sandboxed bash interpreter with virtual filesystem"
+    }
+
+    fn description(&self) -> String {
+        self.build_description()
+    }
+
+    fn llmtext(&self) -> String {
+        self.build_llmtext()
+    }
+
+    fn system_prompt(&self) -> String {
+        self.build_system_prompt()
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
         let schema = schema_for!(ToolRequest);
         serde_json::to_value(schema).unwrap_or_default()
     }
 
-    /// Get output schema as JSON
-    pub fn output_schema(&self) -> serde_json::Value {
+    fn output_schema(&self) -> serde_json::Value {
         let schema = schema_for!(ToolResponse);
         serde_json::to_value(schema).unwrap_or_default()
     }
 
-    /// Create a new Bash instance with tool configuration
-    fn create_bash(&mut self) -> Bash {
-        let mut builder = Bash::builder();
-
-        if let Some(ref username) = self.username {
-            builder = builder.username(username);
-        }
-        if let Some(ref hostname) = self.hostname {
-            builder = builder.hostname(hostname);
-        }
-        if let Some(ref limits) = self.limits {
-            builder = builder.limits(limits.clone());
-        }
-        for (key, value) in &self.env_vars {
-            builder = builder.env(key, value);
-        }
-        // Move builtins out to avoid borrow issues
-        for (name, builtin) in std::mem::take(&mut self.builtins) {
-            builder = builder.builtin(name, builtin);
-        }
-
-        builder.build()
+    fn version(&self) -> &str {
+        VERSION
     }
 
-    /// Execute the tool with the given request
-    pub async fn execute(&mut self, req: ToolRequest) -> ToolResponse {
-        if req.script.is_empty() {
+    async fn execute(&mut self, req: ToolRequest) -> ToolResponse {
+        if req.commands.is_empty() {
             return ToolResponse {
                 stdout: String::new(),
                 stderr: String::new(),
@@ -378,7 +449,7 @@ impl Tool {
 
         let mut bash = self.create_bash();
 
-        match bash.exec(&req.script).await {
+        match bash.exec(&req.commands).await {
             Ok(result) => result.into(),
             Err(e) => ToolResponse {
                 stdout: String::new(),
@@ -389,18 +460,14 @@ impl Tool {
         }
     }
 
-    /// Execute the tool with status updates
-    pub async fn execute_with_status<F>(
+    async fn execute_with_status(
         &mut self,
         req: ToolRequest,
-        mut status_callback: F,
-    ) -> ToolResponse
-    where
-        F: FnMut(ToolStatus),
-    {
+        mut status_callback: Box<dyn FnMut(ToolStatus) + Send>,
+    ) -> ToolResponse {
         status_callback(ToolStatus::new("validate").with_percent(0.0));
 
-        if req.script.is_empty() {
+        if req.commands.is_empty() {
             status_callback(ToolStatus::new("complete").with_percent(100.0));
             return ToolResponse {
                 stdout: String::new(),
@@ -416,7 +483,7 @@ impl Tool {
 
         status_callback(ToolStatus::new("execute").with_percent(20.0));
 
-        let response = match bash.exec(&req.script).await {
+        let response = match bash.exec(&req.commands).await {
             Ok(result) => result.into(),
             Err(e) => ToolResponse {
                 stdout: String::new(),
@@ -450,8 +517,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tool_builder() {
-        let tool = Tool::builder()
+    fn test_bash_tool_builder() {
+        let tool = BashTool::builder()
             .username("testuser")
             .hostname("testhost")
             .env("FOO", "bar")
@@ -464,27 +531,32 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_description_default() {
-        let tool = Tool::default();
-        assert_eq!(tool.description(), TOOL_DESCRIPTION);
-        assert!(tool.system_prompt().is_empty());
-        assert!(tool.llmtxt().starts_with(TOOL_LLMTXT));
+    fn test_tool_trait_methods() {
+        let tool = BashTool::default();
+
+        // Test trait methods
+        assert_eq!(tool.name(), "bashkit");
+        assert_eq!(
+            tool.short_description(),
+            "Sandboxed bash interpreter with virtual filesystem"
+        );
+        assert!(tool.description().contains("Sandboxed bash"));
+        assert!(tool.llmtext().contains("# BashKit"));
+        assert!(tool.system_prompt().contains("bashkit"));
+        assert_eq!(tool.version(), VERSION);
     }
 
     #[test]
     fn test_tool_description_with_config() {
-        let tool = Tool::builder()
+        let tool = BashTool::builder()
             .username("agent")
             .hostname("sandbox")
             .env("API_KEY", "secret")
             .limits(ExecutionLimits::new().max_commands(50))
             .build();
 
-        // Description is just the base description (no custom builtins)
-        assert_eq!(tool.description(), TOOL_DESCRIPTION);
-
         // llmtxt should include configuration
-        let llmtxt = tool.llmtxt();
+        let llmtxt = tool.llmtext();
         assert!(llmtxt.contains("## Current Configuration"));
         assert!(llmtxt.contains("### Sandbox Identity"));
         assert!(llmtxt.contains("Username: `agent`"));
@@ -497,12 +569,12 @@ mod tests {
 
     #[test]
     fn test_tool_schemas() {
-        let tool = Tool::default();
+        let tool = BashTool::default();
         let input_schema = tool.input_schema();
         let output_schema = tool.output_schema();
 
-        // Input schema should have script property
-        assert!(input_schema["properties"]["script"].is_object());
+        // Input schema should have commands property
+        assert!(input_schema["properties"]["commands"].is_object());
 
         // Output schema should have stdout, stderr, exit_code
         assert!(output_schema["properties"]["stdout"].is_object());
@@ -513,22 +585,21 @@ mod tests {
     #[test]
     fn test_tool_status() {
         let status = ToolStatus::new("execute")
-            .with_message("Running script")
+            .with_message("Running commands")
             .with_percent(50.0)
             .with_eta(5000);
 
         assert_eq!(status.phase, "execute");
-        assert_eq!(status.message, Some("Running script".to_string()));
+        assert_eq!(status.message, Some("Running commands".to_string()));
         assert_eq!(status.percent_complete, Some(50.0));
         assert_eq!(status.eta_ms, Some(5000));
     }
 
     #[tokio::test]
     async fn test_tool_execute_empty() {
-        let mut tool = Tool::default();
+        let mut tool = BashTool::default();
         let req = ToolRequest {
-            script: String::new(),
-            timeout_ms: None,
+            commands: String::new(),
         };
         let resp = tool.execute(req).await;
         assert_eq!(resp.exit_code, 0);
@@ -537,10 +608,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_execute_echo() {
-        let mut tool = Tool::default();
+        let mut tool = BashTool::default();
         let req = ToolRequest {
-            script: "echo hello".to_string(),
-            timeout_ms: None,
+            commands: "echo hello".to_string(),
         };
         let resp = tool.execute(req).await;
         assert_eq!(resp.stdout, "hello\n");
@@ -550,20 +620,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_execute_with_status() {
-        let mut tool = Tool::default();
+        use std::sync::{Arc, Mutex};
+
+        let mut tool = BashTool::default();
         let req = ToolRequest {
-            script: "echo test".to_string(),
-            timeout_ms: None,
+            commands: "echo test".to_string(),
         };
 
-        let mut phases = Vec::new();
+        let phases = Arc::new(Mutex::new(Vec::new()));
+        let phases_clone = phases.clone();
+
         let resp = tool
-            .execute_with_status(req, |status| {
-                phases.push(status.phase.clone());
-            })
+            .execute_with_status(
+                req,
+                Box::new(move |status| {
+                    phases_clone.lock().unwrap().push(status.phase.clone());
+                }),
+            )
             .await;
 
         assert_eq!(resp.stdout, "test\n");
+        let phases = phases.lock().unwrap();
         assert!(phases.contains(&"validate".to_string()));
         assert!(phases.contains(&"complete".to_string()));
     }

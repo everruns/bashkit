@@ -81,18 +81,26 @@ pub struct ExecResult {
 }
 
 // LLM Tool Contract
-pub struct Tool { /* configured tool */ }
-pub struct ToolBuilder { /* builder pattern */ }
-pub struct ToolRequest { script: String, timeout_ms: Option<u64> }
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &str;
+    fn short_description(&self) -> &str;
+    fn description(&self) -> String;          // Dynamic, includes custom builtins
+    fn llmtext(&self) -> String;              // Full docs for LLMs
+    fn system_prompt(&self) -> String;        // Token-efficient for sysprompt
+    fn input_schema(&self) -> serde_json::Value;
+    fn output_schema(&self) -> serde_json::Value;
+    fn version(&self) -> &str;
+    async fn execute(&mut self, req: ToolRequest) -> ToolResponse;
+    async fn execute_with_status(...) -> ToolResponse;
+}
+
+pub struct BashTool { /* sandboxed bash implementing Tool */ }
+pub struct BashToolBuilder { /* builder pattern */ }
+pub struct ToolRequest { commands: String }   // Like bash -c
 pub struct ToolResponse { stdout, stderr, exit_code, error }
 
-impl Tool {
-    pub fn builder() -> ToolBuilder;
-    pub fn description(&self) -> String;      // Dynamic, includes custom builtins
-    pub fn llmtxt(&self) -> String;           // Dynamic, includes configuration
-    pub fn input_schema(&self) -> serde_json::Value;
-    pub fn output_schema(&self) -> serde_json::Value;
-    pub async fn execute(&mut self, req: ToolRequest) -> ToolResponse;
+impl BashTool {
+    pub fn builder() -> BashToolBuilder;
 }
 ```
 
