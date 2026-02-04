@@ -597,6 +597,8 @@ fn decompress_deflate(data: &[u8], max_size: usize) -> Result<Vec<u8>> {
 ///   -U, --user-agent S Custom user agent string
 ///   --post-data DATA   POST data with request
 ///   -t, --tries N      Number of retries (ignored, for compatibility)
+///   -T, --timeout S    Timeout in seconds for all operations
+///   --connect-timeout S Timeout in seconds for connection
 ///
 /// Note: Network access requires the 'http_client' feature and proper
 /// URL allowlist configuration.
@@ -617,6 +619,8 @@ impl Builtin for Wget {
         let mut headers: Vec<String> = Vec::new();
         let mut user_agent: Option<String> = None;
         let mut post_data: Option<String> = None;
+        let mut timeout: Option<u64> = None;
+        let mut connect_timeout: Option<u64> = None;
         let mut url: Option<String> = None;
 
         let mut i = 0;
@@ -653,6 +657,18 @@ impl Builtin for Wget {
                     // Ignore retry count (for compatibility)
                     i += 1;
                 }
+                "-T" | "--timeout" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        timeout = ctx.args[i].parse().ok();
+                    }
+                }
+                "--connect-timeout" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        connect_timeout = ctx.args[i].parse().ok();
+                    }
+                }
                 _ if !arg.starts_with('-') => {
                     url = Some(arg.clone());
                 }
@@ -684,6 +700,8 @@ impl Builtin for Wget {
                     &headers,
                     user_agent.as_deref(),
                     post_data.as_deref(),
+                    timeout,
+                    connect_timeout,
                     &ctx,
                 )
                 .await;
@@ -691,7 +709,16 @@ impl Builtin for Wget {
         }
 
         // Network not configured
-        let _ = (quiet, output_file, spider, headers, user_agent, post_data);
+        let _ = (
+            quiet,
+            output_file,
+            spider,
+            headers,
+            user_agent,
+            post_data,
+            timeout,
+            connect_timeout,
+        );
 
         Ok(ExecResult::err(
             format!(
@@ -717,6 +744,8 @@ async fn execute_wget_request(
     headers: &[String],
     user_agent: Option<&str>,
     post_data: Option<&str>,
+    timeout: Option<u64>,
+    connect_timeout: Option<u64>,
     ctx: &Context<'_>,
 ) -> Result<ExecResult> {
     use crate::network::Method;
@@ -746,7 +775,7 @@ async fn execute_wget_request(
     };
 
     let result = http_client
-        .request_with_headers(method, url, body, &header_pairs)
+        .request_with_timeouts(method, url, body, &header_pairs, timeout, connect_timeout)
         .await;
 
     match result {

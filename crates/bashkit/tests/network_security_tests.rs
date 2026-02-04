@@ -632,6 +632,34 @@ mod new_curl_flags {
         assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
     }
 
+    /// Test timeout safety limits - values are clamped to [1, 3600] seconds
+    #[tokio::test]
+    async fn curl_timeout_safety_limits() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        // Very large timeout should be clamped to MAX_TIMEOUT_SECS (3600)
+        let result = bash
+            .exec("curl -m 999999 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        // Zero timeout should be clamped to MIN_TIMEOUT_SECS (1)
+        let result = bash
+            .exec("curl -m 0 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        // Same for connect-timeout
+        let result = bash
+            .exec("curl --connect-timeout 999999 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
     /// Test curl with multiple flags combined
     #[tokio::test]
     async fn curl_combined_flags() {
@@ -721,6 +749,72 @@ mod new_wget_flags {
 
         let result = bash
             .exec("wget -q --header 'Accept: application/json' -U 'Agent' -t 3 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test wget -T/--timeout flag parsing
+    #[tokio::test]
+    async fn wget_timeout_flag() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash
+            .exec("wget -T 10 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        let result = bash
+            .exec("wget --timeout 30 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test wget --connect-timeout flag parsing
+    #[tokio::test]
+    async fn wget_connect_timeout_flag() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash
+            .exec("wget --connect-timeout 5 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test wget with both timeout flags
+    #[tokio::test]
+    async fn wget_both_timeout_flags() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash
+            .exec("wget -T 30 --connect-timeout 5 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test wget timeout safety limits
+    #[tokio::test]
+    async fn wget_timeout_safety_limits() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        // Very large timeout should be clamped
+        let result = bash
+            .exec("wget -T 999999 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        // Zero timeout should be clamped
+        let result = bash
+            .exec("wget -T 0 https://blocked.com 2>&1")
             .await
             .unwrap();
         assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));

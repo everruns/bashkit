@@ -274,8 +274,14 @@ Tests not ported (requires `--features http_client` and URL allowlist):
 - Silent mode (`-s`)
 
 **Implemented:**
-- Timeout (`-m`/`--max-time`) - per-request timeout support
-- Connection timeout (`--connect-timeout`) - connection establishment timeout
+- curl: Timeout (`-m`/`--max-time`) - per-request timeout support
+- curl: Connection timeout (`--connect-timeout`) - connection establishment timeout
+- wget: Timeout (`-T`/`--timeout`) - per-request timeout support
+- wget: Connection timeout (`--connect-timeout`) - connection establishment timeout
+
+**Safety Limits:**
+- Timeout values are clamped to [1, 3600] seconds (1 second to 1 hour)
+- Prevents resource exhaustion from very long timeouts or instant timeouts
 
 ## Parser Limitations
 

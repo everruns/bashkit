@@ -27,6 +27,12 @@ pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 /// Default request timeout (30 seconds)
 pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
+/// Maximum allowed timeout (1 hour) - prevents resource exhaustion from very long timeouts
+pub const MAX_TIMEOUT_SECS: u64 = 3600;
+
+/// Minimum allowed timeout (1 second) - prevents instant timeouts that waste resources
+pub const MIN_TIMEOUT_SECS: u64 = 1;
+
 /// HTTP client with allowlist-based access control.
 ///
 /// # Security Features
@@ -353,14 +359,16 @@ impl HttpClient {
 
         // Use the custom timeout client if any timeout is specified, otherwise use default client
         let client = if timeout_secs.is_some() || connect_timeout_secs.is_some() {
-            let timeout = timeout_secs.map_or(
-                Duration::from_secs(DEFAULT_TIMEOUT_SECS),
-                Duration::from_secs,
-            );
+            // Clamp timeout values to safe range [MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS]
+            let clamp_timeout = |secs: u64| secs.clamp(MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS);
+
+            let timeout = timeout_secs.map_or(Duration::from_secs(DEFAULT_TIMEOUT_SECS), |s| {
+                Duration::from_secs(clamp_timeout(s))
+            });
             // Connect timeout: use explicit connect_timeout, or derive from overall timeout, or use default 10s
             let connect_timeout = connect_timeout_secs.map_or_else(
                 || std::cmp::min(timeout, Duration::from_secs(10)),
-                Duration::from_secs,
+                |s| Duration::from_secs(clamp_timeout(s)),
             );
             Client::builder()
                 .timeout(timeout)
