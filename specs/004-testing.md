@@ -74,8 +74,8 @@ crates/bashkit/tests/
 | AWK | 89 | Yes | 48 | 41 |
 | Grep | 70 | Yes | 56 | 14 |
 | Sed | 65 | Yes | 50 | 15 |
-| JQ | 95 | Yes | 76 | 19 |
-| **Total** | **790** | **790** | 597 | 193 |
+| JQ | 95 | Yes | 80 | 15 |
+| **Total** | **790** | **790** | 601 | 189 |
 
 ### Test File Format
 
@@ -152,8 +152,8 @@ The coverage workflow runs on every PR and push to main. Reports are uploaded
 to Codecov and available as CI artifacts.
 
 ### Current Status
-- All spec tests: 76% pass rate (597/790 running in CI, 193 skipped)
-- Text processing tools: 72% pass rate (230/319 running, 89 skipped)
+- All spec tests: 76% pass rate (601/790 running in CI, 189 skipped)
+- Text processing tools: 73% pass rate (234/319 running, 85 skipped)
 - Core bash specs: 78% pass rate (367/471 running, 104 skipped)
 
 ## TODO: Testing Gaps
@@ -164,12 +164,12 @@ The following items need attention:
 - [x] **Add bash_comparison_tests to CI** - Done! 309 tests compared against real bash
 - [x] **Fix control-flow.test.sh** - Enabled! 31 tests now running
 - [x] **Add coverage tooling** - cargo-tarpaulin + Codecov via `.github/workflows/coverage.yml`
-- [ ] **Fix skipped spec tests** (193 total):
+- [ ] **Fix skipped spec tests** (189 total):
   - Bash: 104 skipped (various implementation gaps)
   - AWK: 41 skipped (operators, control flow, functions)
   - Grep: 14 skipped (flags, features)
   - Sed: 15 skipped (features)
-  - JQ: 19 skipped (functions, flags)
+  - JQ: 15 skipped (functions, flags)
 - [ ] **Fix bash_diff tests** (21 total):
   - wc: 14 tests (output formatting differs)
   - background: 2 tests (non-deterministic order)
