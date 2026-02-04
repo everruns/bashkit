@@ -411,7 +411,12 @@ impl<'a> Parser<'a> {
             }
             Some(words)
         } else {
-            None // for var; do ... (iterates over positional params)
+            // for var; do ... (iterates over positional params)
+            // Consume optional semicolon before 'do'
+            if matches!(self.current_token, Some(tokens::Token::Semicolon)) {
+                self.advance();
+            }
+            None
         };
 
         self.skip_newlines()?;
