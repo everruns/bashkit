@@ -272,7 +272,10 @@ Tests not ported (requires `--features http_client` and URL allowlist):
 - Authentication (`-u`)
 - Follow redirects (`-L`)
 - Silent mode (`-s`)
-- Timeout (`--connect-timeout`)
+
+**Implemented:**
+- Timeout (`-m`/`--max-time`) - per-request timeout support
+- Connection timeout (`--connect-timeout`) - connection establishment timeout
 
 ## Parser Limitations
 

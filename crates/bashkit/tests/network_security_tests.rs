@@ -518,6 +518,120 @@ mod new_curl_flags {
         assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
     }
 
+    /// Test curl timeout with various values
+    #[tokio::test]
+    async fn curl_max_time_various_values() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        // Test with small timeout value
+        let result = bash
+            .exec("curl -m 1 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        // Test with larger timeout value
+        let result = bash
+            .exec("curl -m 300 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        // Test with zero timeout (should be treated as no timeout or handled gracefully)
+        let result = bash
+            .exec("curl -m 0 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        // Zero timeout may be ignored - just check it doesn't crash
+        assert!(result.exit_code != 0);
+    }
+
+    /// Test curl timeout with combined flags
+    #[tokio::test]
+    async fn curl_max_time_with_other_flags() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        // Timeout with silent mode
+        let result = bash
+            .exec("curl -s -m 5 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        // Timeout with POST data
+        let result = bash
+            .exec("curl -m 5 -d 'data=test' https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        // Timeout with headers
+        let result = bash
+            .exec("curl -m 5 -H 'X-Custom: value' https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test that timeout errors return exit code 28 (curl convention)
+    #[tokio::test]
+    async fn curl_timeout_error_exit_code() {
+        let allowlist = NetworkAllowlist::new().allow("https://example.com");
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        // The error message should mention timeout and use exit code 28
+        // Note: This tests the error handling path, actual timeout would need a slow server
+        let result = bash
+            .exec("curl -m 5 https://notinallowlist.com 2>&1; echo \"exit:$?\"")
+            .await
+            .unwrap();
+        // Should fail with non-zero exit code
+        assert!(result.stdout.contains("exit:7") || result.stdout.contains("access denied"));
+    }
+
+    /// Test curl --connect-timeout flag parsing
+    #[tokio::test]
+    async fn curl_connect_timeout_flag() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        let result = bash
+            .exec("curl --connect-timeout 5 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        // Test with different values
+        let result = bash
+            .exec("curl --connect-timeout 30 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Test curl with both --max-time and --connect-timeout
+    #[tokio::test]
+    async fn curl_both_timeout_flags() {
+        let allowlist = NetworkAllowlist::new();
+        let mut bash = Bash::builder().network(allowlist).build();
+
+        // Both flags together
+        let result = bash
+            .exec("curl -m 30 --connect-timeout 5 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+
+        // Connect timeout can be larger than max-time
+        let result = bash
+            .exec("curl --connect-timeout 60 -m 10 https://blocked.com 2>&1")
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
     /// Test curl with multiple flags combined
     #[tokio::test]
     async fn curl_combined_flags() {

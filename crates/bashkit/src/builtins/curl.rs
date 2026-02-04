@@ -38,6 +38,7 @@ use crate::interpreter::ExecResult;
 ///   -A, --user-agent S Custom user agent string
 ///   -e, --referer URL  Referer URL
 ///   -m, --max-time S   Maximum time in seconds for operation
+///   --connect-timeout S Maximum time in seconds for connection
 ///   -v, --verbose      Verbose output
 ///
 /// Note: Network access requires the 'http_client' feature and proper
@@ -71,6 +72,7 @@ impl Builtin for Curl {
         let mut user_agent: Option<String> = None;
         let mut referer: Option<String> = None;
         let mut max_time: Option<u64> = None;
+        let mut connect_timeout: Option<u64> = None;
         let mut url: Option<String> = None;
 
         let mut i = 0;
@@ -143,6 +145,12 @@ impl Builtin for Curl {
                         max_time = ctx.args[i].parse().ok();
                     }
                 }
+                "--connect-timeout" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        connect_timeout = ctx.args[i].parse().ok();
+                    }
+                }
                 _ if !arg.starts_with('-') => {
                     url = Some(arg.clone());
                 }
@@ -183,6 +191,7 @@ impl Builtin for Curl {
                     user_agent.as_deref(),
                     referer.as_deref(),
                     max_time,
+                    connect_timeout,
                     &ctx,
                 )
                 .await;
@@ -206,6 +215,7 @@ impl Builtin for Curl {
             user_agent,
             referer,
             max_time,
+            connect_timeout,
         );
 
         Ok(ExecResult::err(
@@ -241,10 +251,10 @@ async fn execute_curl_request(
     user_agent: Option<&str>,
     referer: Option<&str>,
     max_time: Option<u64>,
+    connect_timeout: Option<u64>,
     ctx: &Context<'_>,
 ) -> Result<ExecResult> {
     use crate::network::Method;
-    use std::time::Duration;
 
     // Parse method
     let http_method = match method {
@@ -312,22 +322,16 @@ async fn execute_curl_request(
             verbose_output.push_str(">\r\n");
         }
 
-        let request_future =
-            http_client.request_with_headers(http_method, &current_url, body, &header_pairs);
-
-        let result = if let Some(secs) = max_time {
-            match tokio::time::timeout(Duration::from_secs(secs), request_future).await {
-                Ok(res) => res,
-                Err(_elapsed) => {
-                    return Ok(ExecResult::err(
-                        format!("curl: (28) Operation timed out after {} seconds\n", secs),
-                        28,
-                    ));
-                }
-            }
-        } else {
-            request_future.await
-        };
+        let result = http_client
+            .request_with_timeouts(
+                http_method,
+                &current_url,
+                body,
+                &header_pairs,
+                max_time,
+                connect_timeout,
+            )
+            .await;
 
         match result {
             Ok(response) => {
