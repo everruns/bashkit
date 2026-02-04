@@ -26,12 +26,11 @@ Run with:
     uv run examples/treasure_hunt_agent.py
 """
 
+import asyncio
 import os
 import sys
-from typing import Any
 
 from langchain.agents import create_agent
-from langchain_core.callbacks import BaseCallbackHandler
 
 # Try to import from installed package
 try:
@@ -39,38 +38,6 @@ try:
 except ImportError:
     print("bashkit not found. Install with: cd crates/bashkit-python && maturin develop")
     sys.exit(1)
-
-
-class ToolVisualizerCallback(BaseCallbackHandler):
-    """Callback handler to visualize tool invocations."""
-
-    def __init__(self):
-        self.tool_count = 0
-
-    def on_tool_start(
-        self, serialized: dict[str, Any], input_str: str, **kwargs: Any
-    ) -> None:
-        """Called when a tool starts running."""
-        self.tool_count += 1
-        # Extract command from input
-        if isinstance(input_str, str) and input_str.startswith("{"):
-            import ast
-            try:
-                cmd = ast.literal_eval(input_str).get("commands", input_str)
-            except Exception:
-                cmd = input_str
-        else:
-            cmd = str(input_str) if not isinstance(input_str, str) else input_str
-        print(f"\n> Bash {cmd}")
-
-    def on_tool_end(self, output: Any, **kwargs: Any) -> None:
-        """Called when a tool finishes."""
-        text = output.content if hasattr(output, "content") else str(output)
-        lines = text.strip().split("\n")
-        for line in lines[:10]:
-            print(f"  {line}")
-        if len(lines) > 10:
-            print(f"  ... ({len(lines) - 10} more lines)")
 
 
 # The treasure hunt setup script - creates clues in the virtual filesystem
@@ -204,7 +171,8 @@ Be methodical and narrate your adventure as you go!
 When you find the treasure (CONGRATULATIONS message), summarize your journey and stop."""
 
 
-def main():
+async def run_agent():
+    """Run the treasure hunt agent with streaming output."""
     # Check for API key
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("Please set ANTHROPIC_API_KEY environment variable")
@@ -230,7 +198,7 @@ def main():
     print(f"Setup: {setup_result.strip()}")
     print()
 
-    # Create the agent using LangChain v1's create_agent
+    # Create the agent
     agent = create_agent(
         model="claude-sonnet-4-20250514",
         tools=[bash_tool],
@@ -240,13 +208,9 @@ def main():
     print("-" * 60)
     print("THE QUEST BEGINS!")
     print("-" * 60)
-    print()
 
-    # Create callback for tool visualization
-    callback = ToolVisualizerCallback()
-
-    # Run the agent with callbacks
-    result = agent.invoke(
+    # Stream events for real-time output
+    async for event in agent.astream_events(
         {
             "messages": [
                 {
@@ -256,24 +220,41 @@ def main():
                 }
             ]
         },
-        config={"callbacks": [callback]},
-    )
+        version="v2",
+        config={"recursion_limit": 50},
+    ):
+        kind = event["event"]
 
-    # Print the final response
-    if "messages" in result:
-        for msg in result["messages"]:
-            if hasattr(msg, "content") and msg.content:
-                content = msg.content
-                if isinstance(content, str) and content.strip():
-                    print(content)
+        # Tool invocation
+        if kind == "on_tool_start":
+            cmd = event["data"].get("input", {}).get("commands", "")
+            print(f"\n> Bash {cmd}")
+
+        # Tool result
+        elif kind == "on_tool_end":
+            output = event["data"].get("output", "")
+            # Handle ToolMessage or string
+            if hasattr(output, "content"):
+                output = output.content
+            if output:
+                lines = str(output).strip().split("\n")
+                for line in lines[:10]:
+                    print(f"  {line}")
+                if len(lines) > 10:
+                    print(f"  ... ({len(lines) - 10} more lines)")
+
+        # Agent text output (streaming)
+        elif kind == "on_chat_model_stream":
+            chunk = event["data"].get("chunk")
+            if chunk and hasattr(chunk, "content") and chunk.content:
+                content = chunk.content
+                if isinstance(content, str):
+                    print(content, end="", flush=True)
                 elif isinstance(content, list):
                     for block in content:
                         if isinstance(block, dict) and block.get("type") == "text":
-                            text = block.get("text", "")
-                            if text.strip():
-                                print(text)
+                            print(block.get("text", ""), end="", flush=True)
 
-    # Print final message
     print()
     print("=" * 60)
     print("  QUEST COMPLETE!")
@@ -281,4 +262,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(run_agent())
