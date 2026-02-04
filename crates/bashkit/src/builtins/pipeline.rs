@@ -303,6 +303,8 @@ mod tests {
             stdin: Some("foo bar baz"),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -325,6 +327,8 @@ mod tests {
             stdin: Some("file1 file2"),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -347,6 +351,8 @@ mod tests {
             stdin: Some("a b c"),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -379,6 +385,8 @@ mod tests {
             stdin: Some("file1\nfile2"),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -402,6 +410,8 @@ mod tests {
             stdin: Some("a:b:c"),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -424,6 +434,8 @@ mod tests {
             stdin: Some(""),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -446,6 +458,8 @@ mod tests {
             stdin: Some("test"),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -470,6 +484,8 @@ mod tests {
             stdin: Some("Hello, world!"),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -496,6 +512,8 @@ mod tests {
             stdin: Some("content"),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -529,6 +547,8 @@ mod tests {
             stdin: Some("appended"),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -554,6 +574,8 @@ mod tests {
             stdin: Some("pass through"),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -576,6 +598,8 @@ mod tests {
             stdin: Some("test"),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -600,6 +624,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Watch.execute(ctx).await.unwrap();
@@ -623,6 +649,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Watch.execute(ctx).await.unwrap();
@@ -646,6 +674,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Watch.execute(ctx).await.unwrap();
@@ -668,6 +698,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Watch.execute(ctx).await.unwrap();
