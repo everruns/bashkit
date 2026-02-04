@@ -47,7 +47,7 @@ printf 'one\ntwo\nthree\n' | wc -l
 ### end
 
 ### wc_chars_m_flag
-### skip: wc -m outputs full stats not just chars
+### skip: wc -m flag not fully implemented
 # Count characters with -m
 printf 'hello' | wc -m
 ### expect
@@ -103,7 +103,7 @@ printf '   \t   ' | wc -w
 ### end
 
 ### wc_max_line_length
-### skip: -L max line length not implemented
+### skip: wc -L flag not implemented
 printf 'short\nlongerline\n' | wc -L
 ### expect
       10
@@ -126,7 +126,7 @@ printf 'one two three' | wc --words
 ### end
 
 ### wc_long_bytes
-### skip: wc --bytes outputs full stats not just bytes
+### skip: wc --bytes with single flag not fully implemented
 # Long flag --bytes
 printf 'hello' | wc --bytes
 ### expect
@@ -134,7 +134,7 @@ printf 'hello' | wc --bytes
 ### end
 
 ### wc_bytes_vs_chars
-### skip: wc -m outputs full stats not just chars
+### skip: wc -m flag not fully implemented
 # Bytes vs chars for ASCII
 printf 'hello' | wc -c && printf 'hello' | wc -m
 ### expect
@@ -143,7 +143,7 @@ printf 'hello' | wc -c && printf 'hello' | wc -m
 ### end
 
 ### wc_unicode_chars
-### skip: unicode character counting not implemented
+### skip: wc -m flag not fully implemented
 printf 'héllo' | wc -m
 ### expect
        5

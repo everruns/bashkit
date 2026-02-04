@@ -158,7 +158,7 @@ c
 ### end
 
 ### grep_recursive
-### skip: recursive grep not implemented for virtual fs
+### skip: recursive grep (-r) not implemented
 grep -r pattern /some/dir
 ### exit_code: 1
 ### expect
@@ -173,7 +173,7 @@ bar
 ### end
 
 ### grep_pattern_file
-### skip: -f pattern file not implemented
+### skip: pattern file (-f) not implemented
 printf 'foo\nbar\nbaz\n' | grep -f /patterns.txt
 ### expect
 foo
@@ -181,7 +181,7 @@ bar
 ### end
 
 ### grep_null_data
-### skip: -z null-terminated not implemented
+### skip: null-terminated (-z) not implemented
 printf 'foo\0bar\0' | grep -z foo
 ### expect
 foo
@@ -255,7 +255,6 @@ b2
 ### end
 
 ### grep_word_boundary_extended
-### skip: word boundary in ERE not implemented
 printf 'foo\nfoobar\nbar foo baz\n' | grep -E '\bfoo\b'
 ### expect
 foo
@@ -279,7 +278,6 @@ a.b
 ### end
 
 ### grep_empty_pattern
-### skip: empty pattern handling differs
 printf 'foo\nbar\n' | grep ''
 ### expect
 foo
@@ -294,14 +292,14 @@ foo
 ### end
 
 ### grep_byte_offset
-### skip: -b byte offset not implemented
+### skip: byte offset (-b) not implemented
 printf 'foo\nbar\n' | grep -b bar
 ### expect
 4:bar
 ### end
 
 ### grep_show_filename
-### skip: filename display not implemented for stdin
+### skip: filename display (-H) not implemented
 printf 'foo\n' | grep -H foo
 ### expect
 (standard input):foo
@@ -315,42 +313,41 @@ foo
 ### end
 
 ### grep_color
-### skip: --color not implemented
+### skip: color output (--color) not implemented
 printf 'foo\n' | grep --color=always foo
 ### expect
 foo
 ### end
 
 ### grep_perl_regex
-### skip: -P perl regex not implemented
 printf 'foo123\n' | grep -P 'foo\d+'
 ### expect
 foo123
 ### end
 
 ### grep_ignore_binary
-### skip: binary file detection not implemented
+### skip: binary detection (-I) not implemented
 printf 'foo\0bar\n' | grep foo
 ### expect
 foo
 ### end
 
 ### grep_include_pattern
-### skip: --include not implemented
+### skip: include pattern (--include) not implemented
 grep --include='*.txt' pattern /some/dir
 ### exit_code: 1
 ### expect
 ### end
 
 ### grep_exclude_pattern
-### skip: --exclude not implemented
+### skip: exclude pattern (--exclude) not implemented
 grep --exclude='*.log' pattern /some/dir
 ### exit_code: 1
 ### expect
 ### end
 
 ### grep_line_buffered
-### skip: --line-buffered not implemented
+### skip: line buffered (--line-buffered) not implemented
 printf 'foo\nbar\n' | grep --line-buffered foo
 ### expect
 foo
@@ -381,7 +378,7 @@ printf '' | grep foo
 ### end
 
 ### grep_binary_files_text
-### skip: -a flag not implemented
+### skip: binary files as text (-a) not implemented
 printf 'foo\0bar\n' | grep -a foo
 ### expect
 foo

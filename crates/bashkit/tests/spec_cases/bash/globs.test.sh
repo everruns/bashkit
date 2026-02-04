@@ -29,20 +29,18 @@ echo "/*.txt"
 ### end
 
 ### glob_bracket
-### skip: bracket glob not fully implemented
 echo a > /x1.txt; echo b > /x2.txt; echo /x[12].txt
 ### expect
 /x1.txt /x2.txt
 ### end
 
 ### glob_recursive
-### skip: recursive glob not implemented
+### skip: recursive glob (**) not implemented
 echo /**/*.txt
 ### expect
 ### end
 
 ### glob_brace
-### skip: brace expansion not implemented
 echo file.{txt,log}
 ### expect
 file.txt file.log

@@ -22,8 +22,19 @@ impl Builtin for Printf {
         let format = &ctx.args[0];
         let args = &ctx.args[1..];
         let mut arg_index = 0;
+        let mut output = String::new();
 
-        let output = format_string(format, args, &mut arg_index);
+        // Bash printf repeats the format string until all args are consumed
+        loop {
+            let start_index = arg_index;
+            output.push_str(&format_string(format, args, &mut arg_index));
+
+            // If no args were consumed or we've used all args, stop
+            if arg_index == start_index || arg_index >= args.len() {
+                break;
+            }
+        }
+
         Ok(ExecResult::ok(output))
     }
 }

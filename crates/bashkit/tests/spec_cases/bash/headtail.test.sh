@@ -1,5 +1,4 @@
 ### head_default
-### skip: default line count not working with stdin
 # Head outputs first 10 lines by default
 printf '%s\n' 1 2 3 4 5 6 7 8 9 10 11 12 | head
 ### expect
@@ -33,7 +32,6 @@ b
 ### end
 
 ### tail_default
-### skip: default line count not working with stdin
 # Tail outputs last 10 lines by default
 printf '%s\n' 1 2 3 4 5 6 7 8 9 10 11 12 | tail
 ### expect
