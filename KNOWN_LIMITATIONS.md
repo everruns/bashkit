@@ -4,6 +4,43 @@ BashKit is a sandboxed bash interpreter designed for AI agents. It provides
 substantial POSIX shell compliance while prioritizing safety and security.
 This document tracks known limitations.
 
+## Intentionally Unimplemented Features
+
+These features are **by design** not implemented. They conflict with BashKit's
+stateless, sandboxed execution model or pose security risks.
+
+| Feature | Rationale | Threat ID |
+|---------|-----------|-----------|
+| `exec` builtin | Cannot replace shell process in sandbox; breaks containment | TM-ESC-005 |
+| `trap` builtin | Signal handling could interfere with host/other tenants | - |
+| Background execution (`&`) | Stateless model - no persistent processes between commands | TM-ESC-007 |
+| Job control (`bg`, `fg`, `jobs`) | Requires process state; interactive feature | - |
+| Symlink following | Prevents symlink loop attacks and sandbox escape | TM-DOS-011 |
+| Process spawning | External commands run as builtins, not subprocesses | - |
+| Raw network sockets | Only allowlisted HTTP via curl builtin | - |
+| `sed -i` (in-place edit) | Security: could bypass VFS protections | - |
+
+### Design Rationale
+
+**Stateless Execution Model**: BashKit runs scripts in isolated, stateless
+contexts. Each command executes to completion before the next begins. This
+design:
+- Prevents resource leaks from orphaned background processes
+- Simplifies resource accounting and limits enforcement
+- Enables deterministic execution for AI agent workflows
+
+**Symlinks**: Stored in the virtual filesystem but not followed during path
+resolution. The `ln -s` command works, and `read_link()` returns targets, but
+traversal is blocked. This prevents:
+- Infinite symlink loops (e.g., `a -> b -> a`)
+- Symlink-based sandbox escapes (e.g., `link -> /etc/passwd`)
+
+**Security Exclusions**: `exec` and `trap` are POSIX special builtins excluded
+for sandbox isolation. Scripts should use standard command execution and
+exit-code-based error handling instead.
+
+See [specs/006-threat-model.md](specs/006-threat-model.md) for threat details.
+
 ## POSIX Compliance
 
 BashKit implements most of IEEE 1003.1-2024 Shell Command Language with
@@ -56,12 +93,12 @@ for detailed compliance status.
 
 ## Shell Features
 
-### Not Implemented
+### Not Yet Implemented
+
+Features that may be added in the future (not intentionally excluded):
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| `exec` builtin | N/A | Security: intentionally excluded |
-| `trap` signal handling | N/A | Security: intentionally excluded |
 | Coprocesses `coproc` | Low | Rarely used |
 | Extended globs `@()` `!()` | Medium | Requires `shopt -s extglob` |
 | Associative arrays `declare -A` | Medium | Bash 4+ feature |
@@ -70,7 +107,9 @@ for detailed compliance status.
 | `command` builtin | Medium | POSIX command lookup |
 | `alias` | Low | Interactive feature |
 | History expansion | Out of scope | Interactive only |
-| Job control (bg/fg/jobs) | Out of scope | Requires process control |
+
+For intentionally excluded features (`exec`, `trap`, background execution, job
+control, symlink following), see [Intentionally Unimplemented Features](#intentionally-unimplemented-features) above.
 
 ### Implemented (previously missing)
 - Process substitution `<(cmd)` - works
@@ -107,7 +146,7 @@ for detailed compliance status.
 `ln`, `chown`, `diff`, `type`, `which`, `command`, `hash`, `declare`, `typeset`, `getopts`, `kill`
 
 ### Security Exclusions (Intentional)
-`exec`, `trap` - These POSIX special builtins are excluded for sandbox security reasons.
+`exec`, `trap` - See [Intentionally Unimplemented Features](#intentionally-unimplemented-features).
 
 ## Text Processing
 
@@ -223,7 +262,7 @@ for detailed compliance status.
 
 - Virtual filesystem only (InMemoryFs, OverlayFs, MountableFs)
 - No real filesystem access by default
-- Symlinks stored but not followed
+- Symlinks stored but not followed (see [Intentionally Unimplemented Features](#intentionally-unimplemented-features))
 - No file permissions enforcement
 
 ## Network

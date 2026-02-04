@@ -196,6 +196,9 @@ Implemented via `set` builtin:
 
 ## Intentional Deviations
 
+See [KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md#intentionally-unimplemented-features)
+for the complete list with threat IDs.
+
 ### Security-Motivated
 
 1. **No process spawning**: External commands run as builtins, not subprocesses
@@ -206,7 +209,7 @@ Implemented via `set` builtin:
 
 ### Simplification
 
-1. **Background execution**: `&` is parsed but runs synchronously
+1. **Background execution**: `&` is parsed but runs synchronously (stateless model)
 2. **Job control**: Not implemented (interactive feature)
 3. **Process times**: `times` returns zeros (no CPU tracking)
 
