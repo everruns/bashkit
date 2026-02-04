@@ -94,9 +94,10 @@ POSIX defines 15 special built-in utilities. BashKit implements 13:
 replaces the current shell process, which would break sandbox containment.
 Scripts requiring `exec` should be refactored to use standard command execution.
 
-**`trap`**: Signal handling is excluded for security reasons. In a multi-tenant
-sandbox, signal handling could interfere with the host process or other tenants.
-Scripts should handle errors through exit codes and conditional execution.
+**`trap`**: Signal handlers require persistent state across commands, conflicting
+with BashKit's stateless execution model. Additionally, there are no signal
+sources in the sandbox (no external processes send SIGINT/SIGTERM). Scripts
+should handle errors through exit codes and conditional execution.
 
 ## Word Expansions
 

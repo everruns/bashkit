@@ -12,7 +12,7 @@ stateless, sandboxed execution model or pose security risks.
 | Feature | Rationale | Threat ID |
 |---------|-----------|-----------|
 | `exec` builtin | Cannot replace shell process in sandbox; breaks containment | TM-ESC-005 |
-| `trap` builtin | Signal handling could interfere with host/other tenants | - |
+| `trap` builtin | Stateless model - no persistent handlers; no signal sources in sandbox | - |
 | Background execution (`&`) | Stateless model - no persistent processes between commands | TM-ESC-007 |
 | Job control (`bg`, `fg`, `jobs`) | Requires process state; interactive feature | - |
 | Symlink following | Prevents symlink loop attacks and sandbox escape | TM-DOS-011 |
@@ -34,9 +34,11 @@ traversal is blocked. This prevents:
 - Infinite symlink loops (e.g., `a -> b -> a`)
 - Symlink-based sandbox escapes (e.g., `link -> /etc/passwd`)
 
-**Security Exclusions**: `exec` and `trap` are POSIX special builtins excluded
-for sandbox isolation. Scripts should use standard command execution and
-exit-code-based error handling instead.
+**Security Exclusions**: `exec` is excluded because it would replace the shell
+process, breaking sandbox containment. `trap` is excluded because signal
+handlers require persistent state (conflicts with stateless model) and there
+are no signal sources in the sandbox. Scripts should use exit-code-based error
+handling instead.
 
 See [specs/006-threat-model.md](specs/006-threat-model.md) for threat details.
 
