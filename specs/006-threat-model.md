@@ -400,8 +400,8 @@ allowlist.allow("https://api.example.com");
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
 | TM-NET-008 | Large response DoS | `curl https://evil.com/huge.bin` | Response size limit (10MB) | **MITIGATED** |
-| TM-NET-009 | Connection hang | Server never responds | Connection timeout (10s) + read timeout (30s) | **MITIGATED** |
-| TM-NET-010 | Slowloris attack | Slow response dripping | Read timeout (30s) | **MITIGATED** |
+| TM-NET-009 | Connection hang | Server never responds | Connection timeout (10s default, user-configurable, clamped 1s-10min) | **MITIGATED** |
+| TM-NET-010 | Slowloris attack | Slow response dripping | Read timeout (30s default, user-configurable, clamped 1s-10min) | **MITIGATED** |
 | TM-NET-011 | Redirect bypass | `Location: http://evil.com` | Redirects not auto-followed | **MITIGATED** |
 | TM-NET-012 | Chunked encoding bomb | Infinite chunked response | Response size limit (streaming) | **MITIGATED** |
 | TM-NET-013 | Gzip bomb / Zip bomb | 10KB gzip → 10GB decompressed | Auto-decompression disabled | **MITIGATED** |
@@ -414,6 +414,8 @@ allowlist.allow("https://api.example.com");
 // Security defaults (TM-NET-008, TM-NET-009, TM-NET-010)
 const DEFAULT_MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;  // 10MB
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
+const MAX_TIMEOUT_SECS: u64 = 600;   // 10 min - prevents resource exhaustion
+const MIN_TIMEOUT_SECS: u64 = 1;     // Prevents instant timeouts
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 // Redirects disabled by default (TM-NET-011, TM-NET-014)
@@ -436,8 +438,9 @@ async fn read_body_with_limit(&self, response: Response) -> Result<Vec<u8>> {
 |------------|---------------|---------|
 | URL allowlist | Pre-request validation | Prevent unauthorized destinations |
 | Response size limit | Streaming with byte counting | Prevent memory exhaustion |
-| Connection timeout | 10s connect timeout | Prevent connection hang |
-| Read timeout | 30s total timeout | Prevent slow-response DoS |
+| Connection timeout | 10s default (user-configurable via `--connect-timeout`) | Prevent connection hang |
+| Read timeout | 30s default (user-configurable via `-m`/`-T`) | Prevent slow-response DoS |
+| Timeout clamping | All timeouts clamped to [1s, 10min] | Prevent resource exhaustion |
 | No auto-redirect | Policy::none() | Prevent redirect-based bypass |
 | No auto-decompress | no_gzip/no_brotli/no_deflate | Prevent zip bomb attacks |
 | Content-Length check | Pre-download validation | Fail fast on huge files |
@@ -800,7 +803,7 @@ ExecutionLimits::new()
 - `tests/threat_model_tests.rs` - 51+ threat-based security tests
 - `tests/security_failpoint_tests.rs` - Fail-point injection tests
 - `tests/builtin_error_security_tests.rs` - Custom builtin error handling tests (34 tests)
-- `tests/network_security_tests.rs` - HTTP security tests (43 tests: allowlist, size limits, timeouts)
+- `tests/network_security_tests.rs` - HTTP security tests (53 tests: allowlist, size limits, timeouts)
 - `tests/logging_security_tests.rs` - Logging security tests (redaction, injection)
 
 **Recommendation**: Add cargo-fuzz for parser and input handling.
