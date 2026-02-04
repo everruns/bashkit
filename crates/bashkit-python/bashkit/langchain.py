@@ -61,7 +61,7 @@ if LANGCHAIN_AVAILABLE:
             >>> print(result)  # Hello!
         """
 
-        name: str = "bashkit"
+        name: str = "Bash"
         description: str = """Sandboxed bash interpreter with virtual filesystem.
 Execute bash commands safely. Supports variables, pipelines, redirects, loops,
 conditionals, functions, and arrays. Built-in commands include: echo, cat, grep,

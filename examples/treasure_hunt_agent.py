@@ -52,44 +52,25 @@ class ToolVisualizerCallback(BaseCallbackHandler):
     ) -> None:
         """Called when a tool starts running."""
         self.tool_count += 1
-        tool_name = serialized.get("name", "unknown")
-        print(f"\n{'='*60}")
-        print(f"  TOOL CALL #{self.tool_count}: {tool_name}")
-        print(f"{'='*60}")
         # Extract command from input
-        if isinstance(input_str, str):
-            # Try to parse as dict repr
-            if input_str.startswith("{"):
-                import ast
-                try:
-                    d = ast.literal_eval(input_str)
-                    cmd = d.get("commands", input_str)
-                except Exception:
-                    cmd = input_str
-            else:
+        if isinstance(input_str, str) and input_str.startswith("{"):
+            import ast
+            try:
+                cmd = ast.literal_eval(input_str).get("commands", input_str)
+            except Exception:
                 cmd = input_str
         else:
-            cmd = str(input_str)
-        print(f"  $ {cmd}")
-        print()
+            cmd = str(input_str) if not isinstance(input_str, str) else input_str
+        print(f"\n> Bash {cmd}")
 
     def on_tool_end(self, output: Any, **kwargs: Any) -> None:
         """Called when a tool finishes."""
-        # Handle different output types
-        if hasattr(output, "content"):
-            text = output.content
-        elif isinstance(output, str):
-            text = output
-        else:
-            text = str(output)
-
-        print(f"  Output:")
+        text = output.content if hasattr(output, "content") else str(output)
         lines = text.strip().split("\n")
-        for line in lines[:15]:
-            print(f"    {line}")
-        if len(lines) > 15:
-            print(f"    ... ({len(lines) - 15} more lines)")
-        print(f"{'='*60}")
+        for line in lines[:10]:
+            print(f"  {line}")
+        if len(lines) > 10:
+            print(f"  ... ({len(lines) - 10} more lines)")
 
 
 # The treasure hunt setup script - creates clues in the virtual filesystem
