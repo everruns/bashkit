@@ -13,13 +13,22 @@
 //!   grep -l pattern file1 file2 # list matching files
 //!   grep -E pattern file        # extended regex (default)
 //!   grep -F pattern file        # fixed string match
+//!   grep -P pattern file        # Perl regex (same as default)
 //!   grep -q pattern file        # quiet mode (exit status only)
 //!   grep -m N pattern file      # stop after N matches
 //!   grep -x pattern file        # match whole line only
+//!   grep -w pattern file        # match whole words only
 //!   grep -A N pattern file      # show N lines after match
 //!   grep -B N pattern file      # show N lines before match
 //!   grep -C N pattern file      # show N lines before and after match
 //!   grep -e pat1 -e pat2 file   # multiple patterns
+//!   grep -f FILE pattern file   # read patterns from FILE
+//!   grep -H pattern file        # always show filename
+//!   grep -h pattern file        # never show filename
+//!   grep -b pattern file        # show byte offset
+//!   grep -a pattern file        # treat binary as text
+//!   grep --color=always pattern # color output (no-op)
+//!   grep --line-buffered pattern # line-buffered (no-op)
 
 use async_trait::async_trait;
 use regex::{Regex, RegexBuilder};
@@ -47,6 +56,11 @@ struct GrepOptions {
     whole_line: bool,
     after_context: usize,
     before_context: usize,
+    // New options
+    show_filename: bool,          // -H: always show filename
+    no_filename: bool,            // -h: never show filename
+    byte_offset: bool,            // -b: show byte offset
+    pattern_file: Option<String>, // -f: read patterns from file
 }
 
 impl GrepOptions {
@@ -67,6 +81,10 @@ impl GrepOptions {
             whole_line: false,
             after_context: 0,
             before_context: 0,
+            show_filename: false,
+            no_filename: false,
+            byte_offset: false,
+            pattern_file: None,
         };
 
         let mut positional = Vec::new();
@@ -90,9 +108,13 @@ impl GrepOptions {
                         'w' => opts.word_regex = true,
                         'F' => opts.fixed_strings = true,
                         'E' => {} // Extended regex is default
+                        'P' => {} // Perl regex - regex crate supports most Perl features
                         'q' => opts.quiet = true,
                         'x' => opts.whole_line = true,
-                        'h' => {} // No filename prefix (already default for single file)
+                        'H' => opts.show_filename = true,
+                        'h' => opts.no_filename = true,
+                        'b' => opts.byte_offset = true,
+                        'a' => {} // Treat binary as text (we already do UTF-8 lossy)
                         'e' => {
                             // -e pattern (remaining chars or next arg)
                             let rest: String = chars[j + 1..].iter().collect();
@@ -197,14 +219,44 @@ impl GrepOptions {
                             opts.after_context = ctx;
                             break;
                         }
+                        'f' => {
+                            // -f FILE (read patterns from file)
+                            let rest: String = chars[j + 1..].iter().collect();
+                            let file_path = if !rest.is_empty() {
+                                rest
+                            } else {
+                                i += 1;
+                                if i < args.len() {
+                                    args[i].clone()
+                                } else {
+                                    return Err(Error::Execution(
+                                        "grep: -f requires an argument".to_string(),
+                                    ));
+                                }
+                            };
+                            opts.pattern_file = Some(file_path);
+                            break;
+                        }
                         _ => {} // Ignore unknown flags
                     }
                     j += 1;
                 }
-            } else if arg == "--" {
-                // End of options
-                positional.extend(args[i + 1..].iter().cloned());
-                break;
+            } else if let Some(opt) = arg.strip_prefix("--") {
+                // Long options
+                if opt.is_empty() {
+                    // End of options
+                    positional.extend(args[i + 1..].iter().cloned());
+                    break;
+                } else if opt == "color" || opt.starts_with("color=") {
+                    // --color / --color=always/never/auto - no-op (we don't output ANSI)
+                } else if opt == "line-buffered" {
+                    // --line-buffered - no-op (output is already line-oriented)
+                } else if opt.starts_with("include=") {
+                    // --include=PATTERN - skip for now, requires -r
+                } else if opt.starts_with("exclude=") {
+                    // --exclude=PATTERN - skip for now, requires -r
+                }
+                // Ignore other unknown long options
             } else {
                 positional.push(arg.clone());
             }
@@ -273,7 +325,35 @@ impl GrepOptions {
 #[async_trait]
 impl Builtin for Grep {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let opts = GrepOptions::parse(ctx.args)?;
+        let mut opts = GrepOptions::parse(ctx.args)?;
+
+        // Load patterns from file if -f was specified
+        if let Some(ref pattern_file) = opts.pattern_file {
+            let path = if pattern_file.starts_with('/') {
+                std::path::PathBuf::from(pattern_file)
+            } else {
+                ctx.cwd.join(pattern_file)
+            };
+            match ctx.fs.read_file(&path).await {
+                Ok(content) => {
+                    let text = String::from_utf8_lossy(&content);
+                    for line in text.lines() {
+                        if !line.is_empty() {
+                            opts.patterns.push(line.to_string());
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(Error::Execution(format!("grep: {}: {}", pattern_file, e)));
+                }
+            }
+        }
+
+        // Ensure we have at least one pattern
+        if opts.patterns.is_empty() {
+            return Err(Error::Execution("grep: missing pattern".to_string()));
+        }
+
         let regex = opts.build_regex()?;
 
         let mut output = String::new();
@@ -282,8 +362,10 @@ impl Builtin for Grep {
         let mut total_matches = 0usize;
 
         // Determine input sources
-        // Use "(stdin)" for stdin when -l flag is set
-        let stdin_name = if opts.files_with_matches {
+        // Use "(standard input)" for -H flag, "(stdin)" for -l flag
+        let stdin_name = if opts.show_filename {
+            "(standard input)"
+        } else if opts.files_with_matches {
             "(stdin)"
         } else {
             ""
@@ -317,7 +399,14 @@ impl Builtin for Grep {
             inputs
         };
 
-        let show_filename = opts.files.len() > 1;
+        // -H forces filename display, -h suppresses it, otherwise show for multiple files
+        let show_filename = if opts.no_filename {
+            false
+        } else if opts.show_filename {
+            true
+        } else {
+            opts.files.len() > 1
+        };
         let has_context = opts.before_context > 0 || opts.after_context > 0;
 
         let mut max_reached = false;
@@ -333,6 +422,19 @@ impl Builtin for Grep {
             let mut match_count = 0;
             let mut file_matched = false;
             let lines: Vec<&str> = content.lines().collect();
+
+            // Calculate byte offsets for each line (for -b flag)
+            let byte_offsets: Vec<usize> = if opts.byte_offset {
+                let mut offsets = Vec::with_capacity(lines.len());
+                let mut offset = 0usize;
+                for line in &lines {
+                    offsets.push(offset);
+                    offset += line.len() + 1; // +1 for newline
+                }
+                offsets
+            } else {
+                Vec::new()
+            };
 
             // For context output, track which lines have been printed
             // Use a set of line indices that should be printed
@@ -437,6 +539,9 @@ impl Builtin for Grep {
                                 output.push_str(filename);
                                 output.push(':');
                             }
+                            if opts.byte_offset {
+                                output.push_str(&format!("{}:", byte_offsets[line_num]));
+                            }
                             if opts.line_numbers {
                                 output.push_str(&format!("{}:", line_num + 1));
                             }
@@ -483,6 +588,9 @@ impl Builtin for Grep {
                             output.push_str(filename);
                             output.push(separator);
                         }
+                        if opts.byte_offset {
+                            output.push_str(&format!("{}{}", byte_offsets[line_idx], separator));
+                        }
                         if opts.line_numbers {
                             output.push_str(&format!("{}{}", line_idx + 1, separator));
                         }
@@ -500,6 +608,9 @@ impl Builtin for Grep {
                         if show_filename {
                             output.push_str(filename);
                             output.push(':');
+                        }
+                        if opts.byte_offset {
+                            output.push_str(&format!("{}:", byte_offsets[line_idx]));
                         }
                         if opts.line_numbers {
                             output.push_str(&format!("{}:", line_idx + 1));
