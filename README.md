@@ -142,6 +142,12 @@ just bench-list         # List all benchmarks
 
 See [crates/bashkit-bench/README.md](crates/bashkit-bench/README.md) for methodology and assumptions.
 
+## Security
+
+The security of BashKit is our top priority. If you suspect you have uncovered a vulnerability,
+contact us privately, as outlined in our [security policy](SECURITY.md); we will immediately
+prioritize your disclosure.
+
 ## Acknowledgments
 
 This project was inspired by [just-bash](https://github.com/vercel-labs/just-bash) from Vercel Labs. Huge kudos to the Vercel team for pioneering the idea of a sandboxed bash interpreter for AI-powered environments. Their work laid the conceptual foundation that made BashKit possible.
