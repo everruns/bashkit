@@ -1126,8 +1126,7 @@ impl Interpreter {
             return true;
         }
 
-        // Simple pattern matching - for now just literal matching
-        // TODO: Implement full glob pattern matching (*, ?, [])
+        // Glob pattern matching with *, ?, and [] support
         if pattern.contains('*') || pattern.contains('?') || pattern.contains('[') {
             // Simple wildcard matching
             self.glob_match(value, pattern)
@@ -1137,14 +1136,13 @@ impl Interpreter {
         }
     }
 
-    /// Simple glob pattern matching
+    /// Simple glob pattern matching with support for *, ?, and [...]
     fn glob_match(&self, value: &str, pattern: &str) -> bool {
-        // Convert pattern to a simple regex-like matching
         let mut value_chars = value.chars().peekable();
         let mut pattern_chars = pattern.chars().peekable();
 
         loop {
-            match (pattern_chars.peek(), value_chars.peek()) {
+            match (pattern_chars.peek().copied(), value_chars.peek().copied()) {
                 (None, None) => return true,
                 (None, Some(_)) => return false,
                 (Some('*'), _) => {
@@ -1171,8 +1169,22 @@ impl Interpreter {
                     value_chars.next();
                 }
                 (Some('?'), None) => return false,
+                (Some('['), Some(v)) => {
+                    pattern_chars.next(); // consume '['
+                    if let Some(matched) = self.match_bracket_expr(&mut pattern_chars, v) {
+                        if matched {
+                            value_chars.next();
+                        } else {
+                            return false;
+                        }
+                    } else {
+                        // Invalid bracket expression, treat '[' as literal
+                        return false;
+                    }
+                }
+                (Some('['), None) => return false,
                 (Some(p), Some(v)) => {
-                    if *p == *v {
+                    if p == v {
                         pattern_chars.next();
                         value_chars.next();
                     } else {
@@ -1182,6 +1194,58 @@ impl Interpreter {
                 (Some(_), None) => return false,
             }
         }
+    }
+
+    /// Match a bracket expression [abc], [a-z], [!abc], [^abc]
+    /// Returns Some(true) if matched, Some(false) if not matched, None if invalid
+    fn match_bracket_expr(
+        &self,
+        pattern_chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+        value_char: char,
+    ) -> Option<bool> {
+        let mut chars_in_class = Vec::new();
+        let mut negate = false;
+
+        // Check for negation
+        if matches!(pattern_chars.peek(), Some('!') | Some('^')) {
+            negate = true;
+            pattern_chars.next();
+        }
+
+        // Collect all characters in the bracket expression
+        loop {
+            match pattern_chars.next() {
+                Some(']') if !chars_in_class.is_empty() => break,
+                Some(']') if chars_in_class.is_empty() => {
+                    // ] as first char is literal
+                    chars_in_class.push(']');
+                }
+                Some('-') if !chars_in_class.is_empty() => {
+                    // Could be a range
+                    if let Some(&next) = pattern_chars.peek() {
+                        if next == ']' {
+                            // - at end is literal
+                            chars_in_class.push('-');
+                        } else {
+                            // Range: prev-next
+                            pattern_chars.next();
+                            if let Some(&prev) = chars_in_class.last() {
+                                for c in prev..=next {
+                                    chars_in_class.push(c);
+                                }
+                            }
+                        }
+                    } else {
+                        return None; // Unclosed bracket
+                    }
+                }
+                Some(c) => chars_in_class.push(c),
+                None => return None, // Unclosed bracket
+            }
+        }
+
+        let matched = chars_in_class.contains(&value_char);
+        Some(if negate { !matched } else { matched })
     }
 
     /// Execute a sequence of commands (with errexit checking)

@@ -1339,6 +1339,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_case_bracket_expr() {
+        let mut bash = Bash::new();
+        // Test [abc] bracket expression
+        let result = bash
+            .exec("case b in [abc]) echo matched ;; esac")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "matched\n");
+    }
+
+    #[tokio::test]
+    async fn test_case_bracket_range() {
+        let mut bash = Bash::new();
+        // Test [a-z] range expression
+        let result = bash
+            .exec("case m in [a-z]) echo letter ;; esac")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "letter\n");
+    }
+
+    #[tokio::test]
+    async fn test_case_bracket_negation() {
+        let mut bash = Bash::new();
+        // Test [!abc] negation
+        let result = bash
+            .exec("case x in [!abc]) echo not_abc ;; esac")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "not_abc\n");
+    }
+
+    #[tokio::test]
     async fn test_break_as_command() {
         let mut bash = Bash::new();
         // Just run break alone - should not error
