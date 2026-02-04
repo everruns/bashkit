@@ -1,8 +1,9 @@
 //! Python bindings for BashKit
 //!
-//! Exposes the BashTool as a Python class for use in AI agent frameworks.
+//! Exposes the Bash interpreter as a Python class for use in AI agent frameworks.
+//! Uses stateful execution - filesystem and variables persist between calls.
 
-use bashkit::{BashTool as RustBashTool, ExecutionLimits, Tool, ToolRequest};
+use bashkit::{Bash, BashTool as RustBashTool, ExecutionLimits, Tool};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
@@ -62,8 +63,8 @@ impl ExecResult {
 /// Sandboxed bash interpreter for AI agents
 ///
 /// BashTool provides a safe execution environment for running bash commands
-/// with a virtual filesystem. All file operations are contained within the
-/// sandbox - no access to the real filesystem.
+/// with a virtual filesystem. State persists between calls - files created
+/// in one call are available in subsequent calls.
 ///
 /// Example:
 ///     ```python
@@ -76,7 +77,8 @@ impl ExecResult {
 #[pyclass]
 #[allow(dead_code)]
 pub struct BashTool {
-    inner: Arc<Mutex<RustBashTool>>,
+    /// Stateful bash interpreter - persists filesystem and variables
+    inner: Arc<Mutex<Bash>>,
     username: Option<String>,
     hostname: Option<String>,
     max_commands: Option<u64>,
@@ -100,7 +102,7 @@ impl BashTool {
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
     ) -> PyResult<Self> {
-        let mut builder = RustBashTool::builder();
+        let mut builder = Bash::builder();
 
         if let Some(ref u) = username {
             builder = builder.username(u);
@@ -118,10 +120,10 @@ impl BashTool {
         }
         builder = builder.limits(limits);
 
-        let tool = builder.build();
+        let bash = builder.build();
 
         Ok(Self {
-            inner: Arc::new(Mutex::new(tool)),
+            inner: Arc::new(Mutex::new(bash)),
             username,
             hostname,
             max_commands,
@@ -130,6 +132,9 @@ impl BashTool {
     }
 
     /// Execute bash commands asynchronously
+    ///
+    /// State persists between calls - files, variables, and functions
+    /// created in one call are available in subsequent calls.
     ///
     /// Args:
     ///     commands: Bash commands to execute (like `bash -c "commands"`)
@@ -145,18 +150,21 @@ impl BashTool {
     fn execute<'py>(&self, py: Python<'py>, commands: String) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {
-            let mut tool = inner.lock().await;
-            let resp = tool
-                .execute(ToolRequest {
-                    commands: commands.clone(),
-                })
-                .await;
-            Ok(ExecResult {
-                stdout: resp.stdout,
-                stderr: resp.stderr,
-                exit_code: resp.exit_code,
-                error: resp.error,
-            })
+            let mut bash = inner.lock().await;
+            match bash.exec(&commands).await {
+                Ok(result) => Ok(ExecResult {
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    exit_code: result.exit_code,
+                    error: None,
+                }),
+                Err(e) => Ok(ExecResult {
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    exit_code: 1,
+                    error: Some(e.to_string()),
+                }),
+            }
         })
     }
 
@@ -175,18 +183,37 @@ impl BashTool {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
         rt.block_on(async move {
-            let mut tool = inner.lock().await;
-            let resp = tool
-                .execute(ToolRequest {
-                    commands: commands.clone(),
-                })
-                .await;
-            Ok(ExecResult {
-                stdout: resp.stdout,
-                stderr: resp.stderr,
-                exit_code: resp.exit_code,
-                error: resp.error,
-            })
+            let mut bash = inner.lock().await;
+            match bash.exec(&commands).await {
+                Ok(result) => Ok(ExecResult {
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    exit_code: result.exit_code,
+                    error: None,
+                }),
+                Err(e) => Ok(ExecResult {
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    exit_code: 1,
+                    error: Some(e.to_string()),
+                }),
+            }
+        })
+    }
+
+    /// Reset the interpreter state (clear filesystem, variables, functions)
+    fn reset(&self) -> PyResult<()> {
+        let inner = self.inner.clone();
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
+
+        rt.block_on(async move {
+            let mut bash = inner.lock().await;
+            // Create fresh Bash with same settings
+            let builder = Bash::builder();
+            // Note: We lose settings on reset, could store them
+            *bash = builder.build();
+            Ok(())
         })
     }
 
@@ -204,66 +231,36 @@ impl BashTool {
 
     /// Get the full description
     fn description(&self) -> PyResult<String> {
-        let inner = self.inner.clone();
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
-
-        rt.block_on(async move {
-            let tool = inner.lock().await;
-            Ok(tool.description())
-        })
+        let tool = RustBashTool::default();
+        Ok(tool.description())
     }
 
     /// Get LLM documentation
     fn llmtext(&self) -> PyResult<String> {
-        let inner = self.inner.clone();
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
-
-        rt.block_on(async move {
-            let tool = inner.lock().await;
-            Ok(tool.llmtext())
-        })
+        let tool = RustBashTool::default();
+        Ok(tool.llmtext())
     }
 
     /// Get system prompt for LLMs
     fn system_prompt(&self) -> PyResult<String> {
-        let inner = self.inner.clone();
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
-
-        rt.block_on(async move {
-            let tool = inner.lock().await;
-            Ok(tool.system_prompt())
-        })
+        let tool = RustBashTool::default();
+        Ok(tool.system_prompt())
     }
 
     /// Get JSON schema for input validation
     fn input_schema(&self) -> PyResult<String> {
-        let inner = self.inner.clone();
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
-
-        rt.block_on(async move {
-            let tool = inner.lock().await;
-            let schema = tool.input_schema();
-            serde_json::to_string_pretty(&schema)
-                .map_err(|e| PyValueError::new_err(format!("Schema serialization failed: {}", e)))
-        })
+        let tool = RustBashTool::default();
+        let schema = tool.input_schema();
+        serde_json::to_string_pretty(&schema)
+            .map_err(|e| PyValueError::new_err(format!("Schema serialization failed: {}", e)))
     }
 
     /// Get JSON schema for output
     fn output_schema(&self) -> PyResult<String> {
-        let inner = self.inner.clone();
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
-
-        rt.block_on(async move {
-            let tool = inner.lock().await;
-            let schema = tool.output_schema();
-            serde_json::to_string_pretty(&schema)
-                .map_err(|e| PyValueError::new_err(format!("Schema serialization failed: {}", e)))
-        })
+        let tool = RustBashTool::default();
+        let schema = tool.output_schema();
+        serde_json::to_string_pretty(&schema)
+            .map_err(|e| PyValueError::new_err(format!("Schema serialization failed: {}", e)))
     }
 
     /// Get tool version

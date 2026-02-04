@@ -19,7 +19,7 @@ from typing import Optional, Type
 
 try:
     from langchain_core.tools import BaseTool, ToolException
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field, PrivateAttr
 
     LANGCHAIN_AVAILABLE = True
 except ImportError:
@@ -28,6 +28,9 @@ except ImportError:
     BaseModel = object
 
     def Field(*args, **kwargs):
+        return None
+
+    def PrivateAttr(*args, **kwargs):
         return None
 
 
@@ -67,8 +70,8 @@ All file operations use a virtual filesystem - changes don't affect real files."
         args_schema: Type[BaseModel] = BashToolInput
         handle_tool_error: bool = True
 
-        # Internal state
-        _bash_tool: Optional[NativeBashTool] = None
+        # Internal state - use PrivateAttr for pydantic v2 compatibility
+        _bash_tool: NativeBashTool = PrivateAttr()
 
         def __init__(
             self,
@@ -87,18 +90,19 @@ All file operations use a virtual filesystem - changes don't affect real files."
                 max_loop_iterations: Max loop iterations
             """
             super().__init__(**kwargs)
-            self._bash_tool = NativeBashTool(
-                username=username,
-                hostname=hostname,
-                max_commands=max_commands,
-                max_loop_iterations=max_loop_iterations,
+            object.__setattr__(
+                self,
+                "_bash_tool",
+                NativeBashTool(
+                    username=username,
+                    hostname=hostname,
+                    max_commands=max_commands,
+                    max_loop_iterations=max_loop_iterations,
+                ),
             )
 
         def _run(self, commands: str) -> str:
             """Execute bash commands synchronously."""
-            if self._bash_tool is None:
-                raise ToolException("BashTool not initialized")
-
             result = self._bash_tool.execute_sync(commands)
 
             if result.error:
@@ -115,9 +119,6 @@ All file operations use a virtual filesystem - changes don't affect real files."
 
         async def _arun(self, commands: str) -> str:
             """Execute bash commands asynchronously."""
-            if self._bash_tool is None:
-                raise ToolException("BashTool not initialized")
-
             result = await self._bash_tool.execute(commands)
 
             if result.error:
