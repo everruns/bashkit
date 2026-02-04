@@ -114,6 +114,9 @@ pub struct Interpreter {
     /// HTTP client for network builtins (curl, wget)
     #[cfg(feature = "http_client")]
     http_client: Option<crate::network::HttpClient>,
+    /// Git client for git builtins
+    #[cfg(feature = "git")]
+    git_client: Option<crate::git::GitClient>,
 }
 
 impl Interpreter {
@@ -192,6 +195,9 @@ impl Interpreter {
         builtins.insert("wait".to_string(), Box::new(builtins::Wait));
         builtins.insert("curl".to_string(), Box::new(builtins::Curl));
         builtins.insert("wget".to_string(), Box::new(builtins::Wget));
+        // Git builtin (requires git feature and configuration at runtime)
+        #[cfg(feature = "git")]
+        builtins.insert("git".to_string(), Box::new(builtins::Git));
         builtins.insert("timeout".to_string(), Box::new(builtins::Timeout));
         // System info builtins (configurable sandbox values)
         let hostname_val = hostname.unwrap_or_else(|| builtins::DEFAULT_HOSTNAME.to_string());
@@ -258,6 +264,8 @@ impl Interpreter {
             current_line: 1,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         }
     }
 
@@ -302,10 +310,18 @@ impl Interpreter {
 
     /// Set the HTTP client for network builtins (curl, wget).
     ///
-    /// This is only available when the `network` feature is enabled.
+    /// This is only available when the `http_client` feature is enabled.
     #[cfg(feature = "http_client")]
     pub fn set_http_client(&mut self, client: crate::network::HttpClient) {
         self.http_client = Some(client);
+    }
+
+    /// Set the git client for git builtins.
+    ///
+    /// This is only available when the `git` feature is enabled.
+    #[cfg(feature = "git")]
+    pub fn set_git_client(&mut self, client: crate::git::GitClient) {
+        self.git_client = Some(client);
     }
 
     /// Execute a script.
@@ -1709,6 +1725,8 @@ impl Interpreter {
                 stdin: stdin.as_deref(),
                 #[cfg(feature = "http_client")]
                 http_client: self.http_client.as_ref(),
+                #[cfg(feature = "git")]
+                git_client: self.git_client.as_ref(),
             };
 
             // Execute builtin with panic catching for security

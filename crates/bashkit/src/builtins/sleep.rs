@@ -81,6 +81,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         Sleep.execute(ctx).await.unwrap()

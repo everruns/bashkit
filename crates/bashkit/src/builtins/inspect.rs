@@ -438,6 +438,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Less.execute(ctx).await.unwrap();
@@ -460,6 +462,8 @@ mod tests {
             stdin: Some("stdin content"),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Less.execute(ctx).await.unwrap();
@@ -489,6 +493,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Less.execute(ctx).await.unwrap();
@@ -514,6 +520,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Less.execute(ctx).await.unwrap();
@@ -538,6 +546,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Less.execute(ctx).await.unwrap();
@@ -566,6 +576,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = File.execute(ctx).await.unwrap();
@@ -591,6 +603,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = File.execute(ctx).await.unwrap();
@@ -615,6 +629,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = File.execute(ctx).await.unwrap();
@@ -641,6 +657,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = File.execute(ctx).await.unwrap();
@@ -667,6 +685,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = File.execute(ctx).await.unwrap();
@@ -689,6 +709,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = File.execute(ctx).await.unwrap();
@@ -711,6 +733,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = File.execute(ctx).await.unwrap();
@@ -739,6 +763,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
@@ -766,6 +792,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
@@ -792,6 +820,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
@@ -819,6 +849,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
@@ -843,6 +875,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
@@ -865,6 +899,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
@@ -887,6 +923,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();
@@ -909,6 +947,8 @@ mod tests {
             stdin: None,
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = Stat.execute(ctx).await.unwrap();

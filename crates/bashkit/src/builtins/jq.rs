@@ -332,6 +332,8 @@ mod tests {
             stdin: Some(input),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = jq.execute(ctx).await?;
@@ -394,6 +396,8 @@ mod tests {
             stdin: Some(input),
             #[cfg(feature = "http_client")]
             http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
         };
 
         let result = jq.execute(ctx).await?;
