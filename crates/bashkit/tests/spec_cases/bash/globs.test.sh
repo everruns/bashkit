@@ -29,6 +29,7 @@ echo "/*.txt"
 ### end
 
 ### glob_bracket
+### bash_diff: BashKit VFS has files, real bash CI filesystem does not - glob expands differently
 echo a > /x1.txt; echo b > /x2.txt; echo /x[12].txt
 ### expect
 /x1.txt /x2.txt
