@@ -31,7 +31,8 @@ use crate::limits::{ExecutionCounters, ExecutionLimits};
 use crate::parser::{
     ArithmeticForCommand, AssignmentValue, CaseCommand, Command, CommandList, CompoundCommand,
     ForCommand, FunctionDef, IfCommand, ListOperator, ParameterOp, Pipeline, Redirect,
-    RedirectKind, Script, SimpleCommand, TimeCommand, UntilCommand, WhileCommand, Word, WordPart,
+    RedirectKind, Script, SimpleCommand, Span, TimeCommand, UntilCommand, WhileCommand, Word,
+    WordPart,
 };
 
 #[cfg(feature = "failpoints")]
@@ -82,6 +83,8 @@ pub struct Interpreter {
     jobs: JobTable,
     /// Shell options (set -e, set -x, etc.)
     options: ShellOptions,
+    /// Current line number for $LINENO
+    current_line: usize,
     /// HTTP client for network builtins (curl, wget)
     #[cfg(feature = "http_client")]
     http_client: Option<crate::network::HttpClient>,
@@ -226,6 +229,7 @@ impl Interpreter {
             counters: ExecutionCounters::new(),
             jobs: JobTable::new(),
             options: ShellOptions::default(),
+            current_line: 1,
             #[cfg(feature = "http_client")]
             http_client: None,
         }
@@ -305,11 +309,35 @@ impl Interpreter {
         })
     }
 
+    /// Get the source line number from a command's span
+    fn command_line(command: &Command) -> usize {
+        match command {
+            Command::Simple(c) => c.span.line(),
+            Command::Pipeline(c) => c.span.line(),
+            Command::List(c) => c.span.line(),
+            Command::Compound(c) => match c {
+                CompoundCommand::If(cmd) => cmd.span.line(),
+                CompoundCommand::For(cmd) => cmd.span.line(),
+                CompoundCommand::ArithmeticFor(cmd) => cmd.span.line(),
+                CompoundCommand::While(cmd) => cmd.span.line(),
+                CompoundCommand::Until(cmd) => cmd.span.line(),
+                CompoundCommand::Case(cmd) => cmd.span.line(),
+                CompoundCommand::Time(cmd) => cmd.span.line(),
+                CompoundCommand::Subshell(_) | CompoundCommand::BraceGroup(_) => 1,
+                CompoundCommand::Arithmetic(_) => 1,
+            },
+            Command::Function(c) => c.span.line(),
+        }
+    }
+
     fn execute_command<'a>(
         &'a mut self,
         command: &'a Command,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
+            // Update current line for $LINENO
+            self.current_line = Self::command_line(command);
+
             // Fail point: inject failures during command execution
             #[cfg(feature = "failpoints")]
             fail_point!("interp::execute_command", |action| {
@@ -1059,6 +1087,7 @@ impl Interpreter {
             args: cmd_args.iter().map(|s| Word::literal(s.clone())).collect(),
             redirects: inner_redirects,
             assignments: Vec::new(),
+            span: Span::new(),
         });
 
         // Execute with timeout using execute_command (which handles recursion via Box::pin)
@@ -2641,9 +2670,8 @@ impl Interpreter {
                 return (random % 32768).to_string();
             }
             "LINENO" => {
-                // $LINENO - current line number (not tracked, return 1)
-                // TODO: Track line numbers in parser and interpreter
-                return "1".to_string();
+                // $LINENO - current line number from command span
+                return self.current_line.to_string();
             }
             _ => {}
         }

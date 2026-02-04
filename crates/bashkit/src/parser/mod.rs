@@ -15,10 +15,12 @@
 
 mod ast;
 mod lexer;
+mod span;
 mod tokens;
 
 pub use ast::*;
-pub use lexer::Lexer;
+pub use lexer::{Lexer, SpannedToken};
+pub use span::{Position, Span};
 
 use crate::error::{Error, Result};
 
@@ -32,8 +34,10 @@ const DEFAULT_MAX_PARSER_OPERATIONS: usize = 100_000;
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     current_token: Option<tokens::Token>,
+    /// Span of the current token
+    current_span: Span,
     /// Lookahead token for function parsing
-    peeked_token: Option<tokens::Token>,
+    peeked_token: Option<SpannedToken>,
     /// Maximum allowed AST nesting depth
     max_depth: usize,
     /// Current nesting depth
@@ -63,16 +67,35 @@ impl<'a> Parser<'a> {
     /// Create a new parser with custom depth and fuel limits.
     pub fn with_limits(input: &'a str, max_depth: usize, max_fuel: usize) -> Self {
         let mut lexer = Lexer::new(input);
-        let current_token = lexer.next_token();
+        let spanned = lexer.next_spanned_token();
+        let (current_token, current_span) = match spanned {
+            Some(st) => (Some(st.token), st.span),
+            None => (None, Span::new()),
+        };
         Self {
             lexer,
             current_token,
+            current_span,
             peeked_token: None,
             max_depth,
             current_depth: 0,
             fuel: max_fuel,
             max_fuel,
         }
+    }
+
+    /// Get the current token's span.
+    pub fn current_span(&self) -> Span {
+        self.current_span
+    }
+
+    /// Create a parse error with the current position.
+    fn error(&self, message: impl Into<String>) -> Error {
+        Error::parse_at(
+            message,
+            self.current_span.start.line,
+            self.current_span.start.column,
+        )
     }
 
     /// Consume one unit of fuel, returning an error if exhausted
@@ -109,6 +132,7 @@ impl<'a> Parser<'a> {
 
     /// Parse the input and return the AST.
     pub fn parse(mut self) -> Result<Script> {
+        let start_span = self.current_span;
         let mut commands = Vec::new();
 
         while self.current_token.is_some() {
@@ -122,23 +146,37 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(Script { commands })
+        let end_span = self.current_span;
+        Ok(Script {
+            commands,
+            span: start_span.merge(end_span),
+        })
     }
 
     fn advance(&mut self) {
         if let Some(peeked) = self.peeked_token.take() {
-            self.current_token = Some(peeked);
+            self.current_token = Some(peeked.token);
+            self.current_span = peeked.span;
         } else {
-            self.current_token = self.lexer.next_token();
+            match self.lexer.next_spanned_token() {
+                Some(st) => {
+                    self.current_token = Some(st.token);
+                    self.current_span = st.span;
+                }
+                None => {
+                    self.current_token = None;
+                    // Keep the last span for error reporting
+                }
+            }
         }
     }
 
     /// Peek at the next token without consuming the current one
     fn peek_next(&mut self) -> Option<&tokens::Token> {
         if self.peeked_token.is_none() {
-            self.peeked_token = self.lexer.next_token();
+            self.peeked_token = self.lexer.next_spanned_token();
         }
-        self.peeked_token.as_ref()
+        self.peeked_token.as_ref().map(|st| &st.token)
     }
 
     fn skip_newlines(&mut self) -> Result<()> {
@@ -152,6 +190,7 @@ impl<'a> Parser<'a> {
     /// Parse a command list (commands connected by && or ||)
     fn parse_command_list(&mut self) -> Result<Option<Command>> {
         self.tick()?;
+        let start_span = self.current_span;
         let first = match self.parse_pipeline()? {
             Some(cmd) => cmd,
             None => return Ok(None),
@@ -195,6 +234,7 @@ impl<'a> Parser<'a> {
                                 args: vec![],
                                 redirects: vec![],
                                 assignments: vec![],
+                                span: self.current_span,
                             }),
                         ));
                         break;
@@ -219,12 +259,14 @@ impl<'a> Parser<'a> {
             Ok(Some(Command::List(CommandList {
                 first: Box::new(first),
                 rest,
+                span: start_span.merge(self.current_span),
             })))
         }
     }
 
     /// Parse a pipeline (commands connected by |)
     fn parse_pipeline(&mut self) -> Result<Option<Command>> {
+        let start_span = self.current_span;
         let first = match self.parse_command()? {
             Some(cmd) => cmd,
             None => return Ok(None),
@@ -239,7 +281,7 @@ impl<'a> Parser<'a> {
             if let Some(cmd) = self.parse_command()? {
                 commands.push(cmd);
             } else {
-                return Err(Error::Parse("expected command after |".to_string()));
+                return Err(self.error("expected command after |"));
             }
         }
 
@@ -249,6 +291,7 @@ impl<'a> Parser<'a> {
             Ok(Some(Command::Pipeline(Pipeline {
                 negated: false,
                 commands,
+                span: start_span.merge(self.current_span),
             })))
         }
     }
@@ -306,6 +349,7 @@ impl<'a> Parser<'a> {
 
     /// Parse an if statement
     fn parse_if(&mut self) -> Result<CompoundCommand> {
+        let start_span = self.current_span;
         self.push_depth()?;
         self.advance(); // consume 'if'
         self.skip_newlines()?;
@@ -352,18 +396,20 @@ impl<'a> Parser<'a> {
             then_branch,
             elif_branches,
             else_branch,
+            span: start_span.merge(self.current_span),
         }))
     }
 
     /// Parse a for loop
     fn parse_for(&mut self) -> Result<CompoundCommand> {
+        let start_span = self.current_span;
         self.push_depth()?;
         self.advance(); // consume 'for'
         self.skip_newlines()?;
 
         // Check for C-style for loop: for ((init; cond; step))
         if matches!(self.current_token, Some(tokens::Token::DoubleLeftParen)) {
-            let result = self.parse_arithmetic_for_inner();
+            let result = self.parse_arithmetic_for_inner(start_span);
             self.pop_depth();
             return result;
         }
@@ -431,12 +477,13 @@ impl<'a> Parser<'a> {
             variable,
             words,
             body,
+            span: start_span.merge(self.current_span),
         }))
     }
 
     /// Parse C-style arithmetic for loop inner: for ((init; cond; step)); do body; done
     /// Note: depth tracking is done by parse_for which calls this
-    fn parse_arithmetic_for_inner(&mut self) -> Result<CompoundCommand> {
+    fn parse_arithmetic_for_inner(&mut self, start_span: Span) -> Result<CompoundCommand> {
         self.advance(); // consume '(('
 
         // Read the three expressions separated by semicolons
@@ -560,11 +607,13 @@ impl<'a> Parser<'a> {
             condition,
             step,
             body,
+            span: start_span.merge(self.current_span),
         }))
     }
 
     /// Parse a while loop
     fn parse_while(&mut self) -> Result<CompoundCommand> {
+        let start_span = self.current_span;
         self.push_depth()?;
         self.advance(); // consume 'while'
         self.skip_newlines()?;
@@ -583,11 +632,16 @@ impl<'a> Parser<'a> {
         self.expect_keyword("done")?;
 
         self.pop_depth();
-        Ok(CompoundCommand::While(WhileCommand { condition, body }))
+        Ok(CompoundCommand::While(WhileCommand {
+            condition,
+            body,
+            span: start_span.merge(self.current_span),
+        }))
     }
 
     /// Parse an until loop
     fn parse_until(&mut self) -> Result<CompoundCommand> {
+        let start_span = self.current_span;
         self.push_depth()?;
         self.advance(); // consume 'until'
         self.skip_newlines()?;
@@ -606,11 +660,16 @@ impl<'a> Parser<'a> {
         self.expect_keyword("done")?;
 
         self.pop_depth();
-        Ok(CompoundCommand::Until(UntilCommand { condition, body }))
+        Ok(CompoundCommand::Until(UntilCommand {
+            condition,
+            body,
+            span: start_span.merge(self.current_span),
+        }))
     }
 
     /// Parse a case statement: case WORD in pattern) commands ;; ... esac
     fn parse_case(&mut self) -> Result<CompoundCommand> {
+        let start_span = self.current_span;
         self.push_depth()?;
         self.advance(); // consume 'case'
         self.skip_newlines()?;
@@ -664,7 +723,7 @@ impl<'a> Parser<'a> {
             // Expect )
             if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
                 self.pop_depth();
-                return Err(Error::Parse("expected ')' after case pattern".to_string()));
+                return Err(self.error("expected ')' after case pattern"));
             }
             self.advance();
             self.skip_newlines()?;
@@ -694,7 +753,11 @@ impl<'a> Parser<'a> {
         self.expect_keyword("esac")?;
 
         self.pop_depth();
-        Ok(CompoundCommand::Case(CaseCommand { word, cases }))
+        Ok(CompoundCommand::Case(CaseCommand {
+            word,
+            cases,
+            span: start_span.merge(self.current_span),
+        }))
     }
 
     /// Parse a time command: time [-p] [command]
@@ -702,6 +765,7 @@ impl<'a> Parser<'a> {
     /// The time keyword measures execution time of the following command.
     /// Note: BashKit only tracks wall-clock time, not CPU user/sys time.
     fn parse_time(&mut self) -> Result<CompoundCommand> {
+        let start_span = self.current_span;
         self.advance(); // consume 'time'
         self.skip_newlines()?;
 
@@ -725,6 +789,7 @@ impl<'a> Parser<'a> {
         Ok(CompoundCommand::Time(TimeCommand {
             posix_format,
             command: command.map(Box::new),
+            span: start_span.merge(self.current_span),
         }))
     }
 
@@ -890,13 +955,14 @@ impl<'a> Parser<'a> {
 
     /// Parse function definition with 'function' keyword: function name { body }
     fn parse_function_keyword(&mut self) -> Result<Command> {
+        let start_span = self.current_span;
         self.advance(); // consume 'function'
         self.skip_newlines()?;
 
         // Get function name
         let name = match &self.current_token {
             Some(tokens::Token::Word(w)) => w.clone(),
-            _ => return Err(Error::Parse("expected function name".to_string())),
+            _ => return Err(self.error("expected function name")),
         };
         self.advance();
         self.skip_newlines()?;
@@ -924,37 +990,35 @@ impl<'a> Parser<'a> {
         Ok(Command::Function(FunctionDef {
             name,
             body: Box::new(Command::Compound(body)),
+            span: start_span.merge(self.current_span),
         }))
     }
 
     /// Parse POSIX-style function definition: name() { body }
     fn parse_function_posix(&mut self) -> Result<Command> {
+        let start_span = self.current_span;
         // Get function name
         let name = match &self.current_token {
             Some(tokens::Token::Word(w)) => w.clone(),
-            _ => return Err(Error::Parse("expected function name".to_string())),
+            _ => return Err(self.error("expected function name")),
         };
         self.advance();
 
         // Consume ()
         if !matches!(self.current_token, Some(tokens::Token::LeftParen)) {
-            return Err(Error::Parse(
-                "expected '(' in function definition".to_string(),
-            ));
+            return Err(self.error("expected '(' in function definition"));
         }
         self.advance(); // consume '('
 
         if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
-            return Err(Error::Parse(
-                "expected ')' in function definition".to_string(),
-            ));
+            return Err(self.error("expected ')' in function definition"));
         }
         self.advance(); // consume ')'
         self.skip_newlines()?;
 
         // Expect { for body
         if !matches!(self.current_token, Some(tokens::Token::LeftBrace)) {
-            return Err(Error::Parse("expected '{' for function body".to_string()));
+            return Err(self.error("expected '{' for function body"));
         }
 
         // Parse body as brace group
@@ -963,6 +1027,7 @@ impl<'a> Parser<'a> {
         Ok(Command::Function(FunctionDef {
             name,
             body: Box::new(Command::Compound(body)),
+            span: start_span.merge(self.current_span),
         }))
     }
 
@@ -1020,7 +1085,7 @@ impl<'a> Parser<'a> {
             self.advance();
             Ok(())
         } else {
-            Err(Error::Parse(format!("expected '{}'", keyword)))
+            Err(self.error(format!("expected '{}'", keyword)))
         }
     }
 
@@ -1096,6 +1161,7 @@ impl<'a> Parser<'a> {
     fn parse_simple_command(&mut self) -> Result<Option<SimpleCommand>> {
         self.tick()?;
         self.skip_newlines()?;
+        let start_span = self.current_span;
 
         let mut assignments = Vec::new();
         let mut words = Vec::new();
@@ -1376,6 +1442,7 @@ impl<'a> Parser<'a> {
                 args: Vec::new(),
                 redirects,
                 assignments,
+                span: start_span.merge(self.current_span),
             }));
         }
 
@@ -1391,6 +1458,7 @@ impl<'a> Parser<'a> {
             args,
             redirects,
             assignments,
+            span: start_span.merge(self.current_span),
         }))
     }
 
@@ -1488,7 +1556,7 @@ impl<'a> Parser<'a> {
                     quoted: false,
                 })
             }
-            _ => Err(Error::Parse("expected word".to_string())),
+            _ => Err(self.error("expected word")),
         }
     }
 

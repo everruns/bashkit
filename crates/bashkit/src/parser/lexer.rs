@@ -1,15 +1,23 @@
 //! Lexer for bash scripts
 //!
-//! Tokenizes input into a stream of tokens.
+//! Tokenizes input into a stream of tokens with source position tracking.
 
+use super::span::{Position, Span};
 use super::tokens::Token;
+
+/// A token with its source location span.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpannedToken {
+    pub token: Token,
+    pub span: Span,
+}
 
 /// Lexer for bash scripts.
 pub struct Lexer<'a> {
     #[allow(dead_code)] // Stored for error reporting in future
     input: &'a str,
-    #[allow(dead_code)] // Will be used for position tracking
-    pos: usize,
+    /// Current position in the input
+    position: Position,
     chars: std::iter::Peekable<std::str::Chars<'a>>,
 }
 
@@ -18,15 +26,48 @@ impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
             input,
-            pos: 0,
+            position: Position::new(),
             chars: input.chars().peekable(),
         }
     }
 
-    /// Get the next token from the input.
+    /// Get the current position in the input.
+    pub fn position(&self) -> Position {
+        self.position
+    }
+
+    /// Get the next token from the input (without span info).
     pub fn next_token(&mut self) -> Option<Token> {
         self.skip_whitespace();
+        self.next_token_inner()
+    }
 
+    fn peek_char(&mut self) -> Option<char> {
+        self.chars.peek().copied()
+    }
+
+    fn advance(&mut self) -> Option<char> {
+        let ch = self.chars.next();
+        if let Some(c) = ch {
+            self.position.advance(c);
+        }
+        ch
+    }
+
+    /// Get the next token with its source span.
+    pub fn next_spanned_token(&mut self) -> Option<SpannedToken> {
+        self.skip_whitespace();
+        let start = self.position;
+        let token = self.next_token_inner()?;
+        let end = self.position;
+        Some(SpannedToken {
+            token,
+            span: Span::from_positions(start, end),
+        })
+    }
+
+    /// Internal: get next token without recording position (called after whitespace skip)
+    fn next_token_inner(&mut self) -> Option<Token> {
         let ch = self.peek_char()?;
 
         match ch {
@@ -151,24 +192,12 @@ impl<'a> Lexer<'a> {
             '#' => {
                 // Comment - skip to end of line
                 self.skip_comment();
-                self.next_token()
+                self.next_token_inner()
             }
             // Handle file descriptor redirects like 2> or 2>&1
             '0'..='9' => self.read_word_or_fd_redirect(),
             _ => self.read_word(),
         }
-    }
-
-    fn peek_char(&mut self) -> Option<char> {
-        self.chars.peek().copied()
-    }
-
-    fn advance(&mut self) -> Option<char> {
-        let ch = self.chars.next();
-        if ch.is_some() {
-            self.pos += 1;
-        }
-        ch
     }
 
     fn skip_whitespace(&mut self) {
