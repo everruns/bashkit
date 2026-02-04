@@ -1,0 +1,19 @@
+# Build artifacts
+target/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+*.so
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Maturin
+Cargo.lock

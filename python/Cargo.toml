@@ -1,0 +1,31 @@
+# Python bindings for BashKit
+# Uses PyO3 to expose the Rust BashTool to Python
+# Standalone package - not part of main workspace
+
+[package]
+name = "bashkit-py"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Python bindings for BashKit sandboxed bash interpreter"
+
+[lib]
+name = "bashkit_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+# PyO3 for Python bindings
+pyo3 = { version = "0.24", features = ["extension-module"] }
+pyo3-async-runtimes = { version = "0.24", features = ["tokio-runtime"] }
+
+# BashKit core
+bashkit = { path = "../crates/bashkit" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde_json = "1"
+
+# Mark as standalone (not part of parent workspace)
+[workspace]
