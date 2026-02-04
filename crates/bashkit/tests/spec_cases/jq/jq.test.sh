@@ -797,3 +797,17 @@ echo '["a","b"]' | jq -j '.[]'
 ### expect
 ab
 ### end
+
+### jq_version
+# Version flag outputs version string
+jq --version
+### expect
+jq-1.7.1
+### end
+
+### jq_version_short
+# Short version flag outputs version string
+jq -V
+### expect
+jq-1.7.1
+### end

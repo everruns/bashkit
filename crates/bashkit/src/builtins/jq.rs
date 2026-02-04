@@ -55,6 +55,13 @@ fn format_with_tabs(value: &serde_json::Value) -> String {
 #[async_trait]
 impl Builtin for Jq {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        // Check for --version flag first
+        for arg in ctx.args {
+            if arg == "-V" || arg == "--version" {
+                return Ok(ExecResult::ok("jq-1.7.1\n".to_string()));
+            }
+        }
+
         // Parse arguments for flags
         let mut raw_output = false;
         let mut compact_output = false;
@@ -407,5 +414,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.trim(), "test");
+    }
+
+    #[tokio::test]
+    async fn test_jq_version() {
+        let result = run_jq_with_args(&["--version"], "").await.unwrap();
+        assert!(result.starts_with("jq-"));
+    }
+
+    #[tokio::test]
+    async fn test_jq_version_short() {
+        let result = run_jq_with_args(&["-V"], "").await.unwrap();
+        assert!(result.starts_with("jq-"));
     }
 }
