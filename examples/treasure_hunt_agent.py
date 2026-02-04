@@ -28,8 +28,10 @@ Run with:
 
 import os
 import sys
+from typing import Any
 
 from langchain.agents import create_agent
+from langchain_core.callbacks import BaseCallbackHandler
 
 # Try to import from installed package
 try:
@@ -37,6 +39,57 @@ try:
 except ImportError:
     print("bashkit not found. Install with: cd crates/bashkit-python && maturin develop")
     sys.exit(1)
+
+
+class ToolVisualizerCallback(BaseCallbackHandler):
+    """Callback handler to visualize tool invocations."""
+
+    def __init__(self):
+        self.tool_count = 0
+
+    def on_tool_start(
+        self, serialized: dict[str, Any], input_str: str, **kwargs: Any
+    ) -> None:
+        """Called when a tool starts running."""
+        self.tool_count += 1
+        tool_name = serialized.get("name", "unknown")
+        print(f"\n{'='*60}")
+        print(f"  TOOL CALL #{self.tool_count}: {tool_name}")
+        print(f"{'='*60}")
+        # Extract command from input
+        if isinstance(input_str, str):
+            # Try to parse as dict repr
+            if input_str.startswith("{"):
+                import ast
+                try:
+                    d = ast.literal_eval(input_str)
+                    cmd = d.get("commands", input_str)
+                except Exception:
+                    cmd = input_str
+            else:
+                cmd = input_str
+        else:
+            cmd = str(input_str)
+        print(f"  $ {cmd}")
+        print()
+
+    def on_tool_end(self, output: Any, **kwargs: Any) -> None:
+        """Called when a tool finishes."""
+        # Handle different output types
+        if hasattr(output, "content"):
+            text = output.content
+        elif isinstance(output, str):
+            text = output
+        else:
+            text = str(output)
+
+        print(f"  Output:")
+        lines = text.strip().split("\n")
+        for line in lines[:15]:
+            print(f"    {line}")
+        if len(lines) > 15:
+            print(f"    ... ({len(lines) - 15} more lines)")
+        print(f"{'='*60}")
 
 
 # The treasure hunt setup script - creates clues in the virtual filesystem
@@ -208,7 +261,10 @@ def main():
     print("-" * 60)
     print()
 
-    # Run the agent
+    # Create callback for tool visualization
+    callback = ToolVisualizerCallback()
+
+    # Run the agent with callbacks
     result = agent.invoke(
         {
             "messages": [
@@ -218,7 +274,8 @@ def main():
                     "and follow the clues to find the treasure. Narrate your journey!",
                 }
             ]
-        }
+        },
+        config={"callbacks": [callback]},
     )
 
     # Print the final response
