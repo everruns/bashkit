@@ -280,7 +280,7 @@ Tests not ported (requires `--features http_client` and URL allowlist):
 - wget: Connection timeout (`--connect-timeout`) - connection establishment timeout
 
 **Safety Limits:**
-- Timeout values are clamped to [1, 3600] seconds (1 second to 1 hour)
+- Timeout values are clamped to [1, 600] seconds (1 second to 10 minutes)
 - Prevents resource exhaustion from very long timeouts or instant timeouts
 
 ## Parser Limitations

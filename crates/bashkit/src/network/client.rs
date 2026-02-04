@@ -27,8 +27,8 @@ pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 /// Default request timeout (30 seconds)
 pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
-/// Maximum allowed timeout (1 hour) - prevents resource exhaustion from very long timeouts
-pub const MAX_TIMEOUT_SECS: u64 = 3600;
+/// Maximum allowed timeout (10 minutes) - prevents resource exhaustion from very long timeouts
+pub const MAX_TIMEOUT_SECS: u64 = 600;
 
 /// Minimum allowed timeout (1 second) - prevents instant timeouts that waste resources
 pub const MIN_TIMEOUT_SECS: u64 = 1;
