@@ -20,3 +20,11 @@ local*
 # Coverage reports
 coverage/
 .venv/
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.so
+*.egg-info/
+dist/
