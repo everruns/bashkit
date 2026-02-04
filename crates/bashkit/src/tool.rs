@@ -353,8 +353,9 @@ impl BashTool {
 
     /// Build dynamic description with supported tools
     fn build_description(&self) -> String {
-        let mut desc =
-            String::from("Sandboxed bash-like interpreter with virtual filesystem. Supported tools: ");
+        let mut desc = String::from(
+            "Sandboxed bash-like interpreter with virtual filesystem. Supported tools: ",
+        );
         desc.push_str(BUILTINS);
         if !self.builtin_names.is_empty() {
             desc.push(' ');
@@ -569,7 +570,9 @@ mod tests {
             tool.short_description(),
             "Sandboxed bash interpreter with virtual filesystem"
         );
-        assert!(tool.description().contains("Sandboxed bash-like interpreter"));
+        assert!(tool
+            .description()
+            .contains("Sandboxed bash-like interpreter"));
         assert!(tool.description().contains("Supported tools:"));
         assert!(tool.llmtext().contains("BASH(1)"));
         assert!(tool.llmtext().contains("SYNOPSIS"));

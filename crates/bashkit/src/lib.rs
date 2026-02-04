@@ -312,9 +312,7 @@ pub use fs::{
 pub use interpreter::{ControlFlow, ExecResult};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
-pub use tool::{
-    BashTool, BashToolBuilder, Tool, ToolRequest, ToolResponse, ToolStatus, VERSION,
-};
+pub use tool::{BashTool, BashToolBuilder, Tool, ToolRequest, ToolResponse, ToolStatus, VERSION};
 
 #[cfg(feature = "http_client")]
 pub use network::HttpClient;
