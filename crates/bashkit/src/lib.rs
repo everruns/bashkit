@@ -1850,8 +1850,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_for_followed_by_echo_done() {
-        // This specific case causes a parsing issue - "done" after for loop
-        // TODO: Fix the parser to handle "done" as a regular word after for loop ends
         let mut bash = Bash::new();
         let result = bash
             .exec("for i in 1; do echo $i; done; echo ok")
