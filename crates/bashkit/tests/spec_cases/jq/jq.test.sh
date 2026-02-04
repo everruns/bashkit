@@ -328,10 +328,27 @@ echo '[[1,2],[3,[4,5]]]' | jq 'flatten'
 ### end
 
 ### jq_group_by
-### skip: group_by not implemented
+# Group array elements by key
 echo '[{"k":"a","v":1},{"k":"b","v":2},{"k":"a","v":3}]' | jq 'group_by(.k)'
 ### expect
-[[{"k":"a","v":1},{"k":"a","v":3}],[{"k":"b","v":2}]]
+[
+  [
+    {
+      "k": "a",
+      "v": 1
+    },
+    {
+      "k": "a",
+      "v": 3
+    }
+  ],
+  [
+    {
+      "k": "b",
+      "v": 2
+    }
+  ]
+]
 ### end
 
 ### jq_contains
@@ -655,24 +672,33 @@ null
 ### end
 
 ### jq_reduce
-### skip: reduce not implemented
+# Reduce iterates over values with accumulator
 echo '[1,2,3]' | jq 'reduce .[] as $x (0; . + $x)'
 ### expect
 6
 ### end
 
 ### jq_foreach
-### skip: foreach not implemented
+# Foreach outputs intermediate accumulator values
 echo '[1,2,3]' | jq '[foreach .[] as $x (0; . + $x)]'
 ### expect
-[1,3,6]
+[
+  1,
+  3,
+  6
+]
 ### end
 
 ### jq_walk
-### skip: walk not implemented
+# Walk recursively transforms all values
 echo '{"a":[1,2]}' | jq 'walk(if type == "number" then . + 1 else . end)'
 ### expect
-{"a":[2,3]}
+{
+  "a": [
+    2,
+    3
+  ]
+}
 ### end
 
 ### jq_gsub
