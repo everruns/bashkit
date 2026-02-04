@@ -90,3 +90,7 @@ harness = false
 [[example]]
 name = "agent_tool"
 required-features = ["http_client"]
+
+[[example]]
+name = "git_workflow"
+required-features = ["git"]

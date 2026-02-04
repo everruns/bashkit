@@ -82,6 +82,7 @@ jobs:
           cargo run --example custom_fs
           cargo run --example resource_limits
           cargo run --example text_processing
+          cargo run --example git_workflow --features git
 
       - name: Run LLM agent example
         env:
