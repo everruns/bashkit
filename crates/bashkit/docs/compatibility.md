@@ -399,9 +399,6 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] String comparison operators (< >) in test
 - [x] Array indices `${!arr[@]}`
 
-### Planned
-- [ ] `trap` signal handling
-
 ### Not Planned
 - Interactive features (history, job control UI)
 - Process spawning (sandboxed environment)
@@ -411,5 +408,5 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 
 ## See Also
 
-- [KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md) - Detailed gap analysis
-- [specs/](../specs/) - Design specifications
+- [specs/009-implementation-status.md](../../../specs/009-implementation-status.md) - Detailed implementation status
+- [specs/](../../../specs/) - Design specifications

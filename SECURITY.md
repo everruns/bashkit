@@ -40,7 +40,7 @@ BashKit is designed as a sandboxed interpreter. Key security boundaries:
 
 ### Known Limitations
 
-See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for documented gaps and edge cases.
+See [specs/009-implementation-status.md](specs/009-implementation-status.md) for documented gaps and limitations.
 
 ## Supported Versions
 
