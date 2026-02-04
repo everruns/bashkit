@@ -520,7 +520,7 @@ impl FileSystem for InMemoryFs {
             Some(FsEntry::File { content, .. }) => Ok(content.clone()),
             Some(FsEntry::Directory { .. }) => Err(IoError::other("is a directory").into()),
             Some(FsEntry::Symlink { .. }) => {
-                // TODO: Follow symlinks
+                // Symlinks are intentionally not followed for security (TM-ESC-002, TM-DOS-011)
                 Err(IoError::new(ErrorKind::NotFound, "file not found").into())
             }
             None => Err(IoError::new(ErrorKind::NotFound, "file not found").into()),
