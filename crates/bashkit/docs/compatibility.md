@@ -243,7 +243,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `$-` | ✅ | Current option flags (POSIX) |
 | `$_` | ❌ | Last argument |
 | `$RANDOM` | ✅ | Random number (0-32767) |
-| `$LINENO` | ✅ | Current line number (placeholder) |
+| `$LINENO` | ✅ | Current line number |
 
 ---
 

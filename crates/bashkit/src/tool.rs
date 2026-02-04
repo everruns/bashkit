@@ -435,7 +435,7 @@ impl Tool {
 /// Extract error kind from Error for categorization
 fn error_kind(e: &Error) -> String {
     match e {
-        Error::Parse(_) => "parse_error".to_string(),
+        Error::Parse(_) | Error::ParseAt { .. } => "parse_error".to_string(),
         Error::Execution(_) => "execution_error".to_string(),
         Error::Io(_) => "io_error".to_string(),
         Error::CommandNotFound(_) => "command_not_found".to_string(),

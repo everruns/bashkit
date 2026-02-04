@@ -17,9 +17,17 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// exposing internal details or sensitive information.
 #[derive(Error, Debug)]
 pub enum Error {
-    /// Parse error occurred while parsing the script.
+    /// Parse error occurred while parsing the script (without location info).
     #[error("parse error: {0}")]
     Parse(String),
+
+    /// Parse error with source location information.
+    #[error("parse error at line {line}, column {column}: {message}")]
+    ParseAt {
+        message: String,
+        line: usize,
+        column: usize,
+    },
 
     /// Execution error occurred while running the script.
     #[error("execution error: {0}")]
@@ -56,4 +64,15 @@ pub enum Error {
     /// - Security-sensitive failures where details should not be exposed
     #[error("internal error: {0}")]
     Internal(String),
+}
+
+impl Error {
+    /// Create a parse error with source location.
+    pub fn parse_at(message: impl Into<String>, line: usize, column: usize) -> Self {
+        Self::ParseAt {
+            message: message.into(),
+            line,
+            column,
+        }
+    }
 }

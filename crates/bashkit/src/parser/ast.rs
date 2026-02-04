@@ -1,16 +1,19 @@
 //! AST types for parsed bash scripts
 //!
 //! These types define the abstract syntax tree for bash scripts.
-//! Many types are not yet used but are defined for future implementation phases.
+//! All command nodes include source location spans for error messages and $LINENO.
 
 #![allow(dead_code)]
 
+use super::span::Span;
 use std::fmt;
 
 /// A complete bash script.
 #[derive(Debug, Clone)]
 pub struct Script {
     pub commands: Vec<Command>,
+    /// Source span of the entire script
+    pub span: Span,
 }
 
 /// A single command in the script.
@@ -43,6 +46,8 @@ pub struct SimpleCommand {
     pub redirects: Vec<Redirect>,
     /// Variable assignments before the command
     pub assignments: Vec<Assignment>,
+    /// Source span of this command
+    pub span: Span,
 }
 
 /// A pipeline of commands.
@@ -52,6 +57,8 @@ pub struct Pipeline {
     pub negated: bool,
     /// Commands in the pipeline
     pub commands: Vec<Command>,
+    /// Source span of this pipeline
+    pub span: Span,
 }
 
 /// A list of commands with operators.
@@ -61,6 +68,8 @@ pub struct CommandList {
     pub first: Box<Command>,
     /// Remaining commands with their operators
     pub rest: Vec<(ListOperator, Command)>,
+    /// Source span of this command list
+    pub span: Span,
 }
 
 /// Operators for command lists.
@@ -112,6 +121,8 @@ pub struct TimeCommand {
     pub posix_format: bool,
     /// The command to time (optional - timing with no command is valid)
     pub command: Option<Box<Command>>,
+    /// Source span of this command
+    pub span: Span,
 }
 
 /// If statement.
@@ -121,6 +132,8 @@ pub struct IfCommand {
     pub then_branch: Vec<Command>,
     pub elif_branches: Vec<(Vec<Command>, Vec<Command>)>,
     pub else_branch: Option<Vec<Command>>,
+    /// Source span of this command
+    pub span: Span,
 }
 
 /// For loop.
@@ -129,6 +142,8 @@ pub struct ForCommand {
     pub variable: String,
     pub words: Option<Vec<Word>>,
     pub body: Vec<Command>,
+    /// Source span of this command
+    pub span: Span,
 }
 
 /// C-style arithmetic for loop: for ((init; cond; step)); do body; done
@@ -142,6 +157,8 @@ pub struct ArithmeticForCommand {
     pub step: String,
     /// Loop body
     pub body: Vec<Command>,
+    /// Source span of this command
+    pub span: Span,
 }
 
 /// While loop.
@@ -149,6 +166,8 @@ pub struct ArithmeticForCommand {
 pub struct WhileCommand {
     pub condition: Vec<Command>,
     pub body: Vec<Command>,
+    /// Source span of this command
+    pub span: Span,
 }
 
 /// Until loop.
@@ -156,6 +175,8 @@ pub struct WhileCommand {
 pub struct UntilCommand {
     pub condition: Vec<Command>,
     pub body: Vec<Command>,
+    /// Source span of this command
+    pub span: Span,
 }
 
 /// Case statement.
@@ -163,6 +184,8 @@ pub struct UntilCommand {
 pub struct CaseCommand {
     pub word: Word,
     pub cases: Vec<CaseItem>,
+    /// Source span of this command
+    pub span: Span,
 }
 
 /// A single case item.
@@ -177,6 +200,8 @@ pub struct CaseItem {
 pub struct FunctionDef {
     pub name: String,
     pub body: Box<Command>,
+    /// Source span of this function definition
+    pub span: Span,
 }
 
 /// A word (potentially with expansions).
