@@ -4,9 +4,9 @@
 # dependencies = [
 #     "langchain>=1.0",
 #     "langchain-anthropic>=0.3",
-#     "bashkit-py",
 # ]
 # ///
+# Note: Install bashkit first: cd crates/bashkit-python && maturin develop
 """
 Treasure Hunt Agent - A fun demonstration of LangChain + BashKit
 
@@ -35,7 +35,7 @@ from langchain.agents import create_agent
 try:
     from bashkit.langchain import create_bash_tool
 except ImportError:
-    print("bashkit-py not found. Install with: pip install bashkit-py[langchain]")
+    print("bashkit not found. Install with: cd crates/bashkit-python && maturin develop")
     sys.exit(1)
 
 
