@@ -934,6 +934,10 @@ criteria = "safe-to-deploy"
 version = "1.0.6"
 criteria = "safe-to-run"
 
+[[exemptions.scc]]
+version = "2.4.0"
+criteria = "safe-to-run"
+
 [[exemptions.schannel]]
 version = "0.1.28"
 criteria = "safe-to-deploy"
@@ -957,6 +961,10 @@ criteria = "safe-to-deploy"
 [[exemptions.scopeguard]]
 version = "1.2.0"
 criteria = "safe-to-deploy"
+
+[[exemptions.sdd]]
+version = "3.0.10"
+criteria = "safe-to-run"
 
 [[exemptions.security-framework]]
 version = "2.11.1"
@@ -993,6 +1001,14 @@ criteria = "safe-to-deploy"
 [[exemptions.serde_urlencoded]]
 version = "0.7.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.serial_test]]
+version = "3.3.1"
+criteria = "safe-to-run"
+
+[[exemptions.serial_test_derive]]
+version = "3.3.1"
+criteria = "safe-to-run"
 
 [[exemptions.shlex]]
 version = "1.3.0"
