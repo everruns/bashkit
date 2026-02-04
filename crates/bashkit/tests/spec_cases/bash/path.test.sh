@@ -69,7 +69,6 @@ foo/bar
 ### end
 
 ### basename_no_args
-### skip: missing argument error handling not implemented
 # Basename with no arguments should error
 basename 2>/dev/null
 echo $?
@@ -78,7 +77,6 @@ echo $?
 ### end
 
 ### dirname_no_args
-### skip: missing argument error handling not implemented
 # Dirname with no arguments should error
 dirname 2>/dev/null
 echo $?

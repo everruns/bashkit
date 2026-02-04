@@ -482,14 +482,14 @@ echo '5' | jq 'if . > 3 then "big" else "small" end'
 ### end
 
 ### jq_alternative
-### skip: alternative operator // not implemented
+### skip: alternative operator (//) not implemented
 echo 'null' | jq '.foo // "default"'
 ### expect
 "default"
 ### end
 
 ### jq_try
-### skip: try not implemented
+### skip: try operator not implemented
 echo 'null' | jq 'try .foo catch "error"'
 ### expect
 "error"

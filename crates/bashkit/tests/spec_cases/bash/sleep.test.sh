@@ -23,7 +23,6 @@ echo $?
 ### end
 
 ### sleep_missing_operand
-### skip: stderr redirect not implemented
 # Sleep without argument should error
 sleep
 echo exit: $?
@@ -32,7 +31,6 @@ exit: 1
 ### end
 
 ### sleep_invalid_argument
-### skip: stderr redirect not implemented
 # Sleep with invalid argument should error
 sleep abc
 echo exit: $?
@@ -41,7 +39,6 @@ exit: 1
 ### end
 
 ### sleep_negative
-### skip: stderr redirect not implemented
 # Sleep with negative value should error
 sleep -1
 echo exit: $?

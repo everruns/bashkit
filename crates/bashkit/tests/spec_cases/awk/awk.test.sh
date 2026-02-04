@@ -138,7 +138,7 @@ value: 42
 ### end
 
 ### awk_variable_v_flag
-### skip: -v variable assignment flag not implemented
+### skip: -v flag not implemented
 printf 'world\n' | awk -v greeting="hello" '{print greeting, $0}'
 ### expect
 hello world
@@ -180,7 +180,7 @@ printf '2\n' | awk 'BEGIN {x=100} {x /= $1} END {print x}'
 ### end
 
 ### awk_postfix_increment
-### skip: postfix increment operator not implemented
+### skip: postfix increment not implemented
 printf 'a\n' | awk 'BEGIN {x=5} {print x++; print x}'
 ### expect
 5
@@ -188,14 +188,14 @@ printf 'a\n' | awk 'BEGIN {x=5} {print x++; print x}'
 ### end
 
 ### awk_prefix_increment
-### skip: prefix increment operator not implemented
+### skip: prefix increment not implemented
 printf 'a\n' | awk 'BEGIN {x=5} {print ++x}'
 ### expect
 6
 ### end
 
 ### awk_postfix_decrement
-### skip: postfix decrement operator not implemented
+### skip: postfix decrement not implemented
 printf 'a\n' | awk 'BEGIN {x=5} {print x--; print x}'
 ### expect
 5
@@ -203,7 +203,7 @@ printf 'a\n' | awk 'BEGIN {x=5} {print x--; print x}'
 ### end
 
 ### awk_prefix_decrement
-### skip: prefix decrement operator not implemented
+### skip: prefix decrement not implemented
 printf 'a\n' | awk 'BEGIN {x=5} {print --x}'
 ### expect
 4
@@ -297,7 +297,7 @@ b
 ### end
 
 ### awk_field_sep_tab
-### skip: tab escape in -F not parsed correctly
+### skip: -F tab delimiter not working
 printf 'a\tb\tc\n' | awk -F'\t' '{print $2}'
 ### expect
 b
@@ -311,7 +311,7 @@ printf '\n' | awk '{print NF}'
 ### end
 
 ### awk_missing_field
-### skip: missing field outputs newline instead of empty
+### skip: missing field handling differs
 printf 'a b\n' | awk '{print $5}'
 ### expect
 
@@ -385,7 +385,7 @@ printf '3\n5\n3\n' | awk '$1 != 3 {print}'
 ### end
 
 ### awk_negation
-### skip: logical negation in patterns not implemented
+### skip: negation operator not implemented
 printf '0\n1\n' | awk '!$1 {print "zero"}'
 ### expect
 zero
@@ -399,14 +399,12 @@ printf 'hello world\n' | awk '{print index($0, "world")}'
 ### end
 
 ### awk_sub_func
-### skip: regex literal in function args not implemented
 printf 'hello hello\n' | awk '{sub(/hello/, "hi"); print}'
 ### expect
 hi hello
 ### end
 
 ### awk_sprintf_func
-### skip: sprintf function not implemented
 printf '42\n' | awk '{x = sprintf("num=%d", $1); print x}'
 ### expect
 num=42
@@ -427,35 +425,34 @@ printf '16\n' | awk '{print sqrt($1)}'
 ### end
 
 ### awk_sin_cos_func
-### skip: sin/cos not implemented
 printf '0\n' | awk '{print sin($1), cos($1)}'
 ### expect
 0 1
 ### end
 
 ### awk_exp_log_func
-### skip: exp/log not implemented
+### skip: exp/log function output precision differs
 printf '1\n' | awk '{print exp($1)}'
 ### expect
 2.71828
 ### end
 
 ### awk_match_func
-### skip: match function not implemented
+### skip: match() function not implemented
 printf 'hello world\n' | awk '{if (match($0, /wor/)) print RSTART, RLENGTH}'
 ### expect
 7 3
 ### end
 
 ### awk_gensub_func
-### skip: gensub function not implemented
+### skip: gensub() function not implemented
 printf 'hello hello hello\n' | awk '{print gensub(/hello/, "hi", "g")}'
 ### expect
 hi hi hi
 ### end
 
 ### awk_exit_code
-### skip: exit with code not implemented
+### skip: exit statement not implemented
 printf 'a\n' | awk '{exit 42}'
 ### exit_code: 42
 ### expect
@@ -488,7 +485,7 @@ printf 'a\n' | awk '{i=1; while (i<=3) {print i; i++}}'
 ### end
 
 ### awk_do_while_loop
-### skip: do-while loop not implemented
+### skip: do-while loops not implemented
 printf 'a\n' | awk '{i=1; do {print i; i++} while (i<=3)}'
 ### expect
 1
@@ -497,7 +494,7 @@ printf 'a\n' | awk '{i=1; do {print i; i++} while (i<=3)}'
 ### end
 
 ### awk_break_statement
-### skip: break in loops not implemented
+### skip: break statement not implemented
 printf 'a\n' | awk '{for (i=1; i<=5; i++) {if (i==3) break; print i}}'
 ### expect
 1
@@ -505,7 +502,7 @@ printf 'a\n' | awk '{for (i=1; i<=5; i++) {if (i==3) break; print i}}'
 ### end
 
 ### awk_continue_statement
-### skip: continue in loops not implemented
+### skip: continue statement not implemented
 printf 'a\n' | awk '{for (i=1; i<=3; i++) {if (i==2) continue; print i}}'
 ### expect
 1
@@ -513,7 +510,7 @@ printf 'a\n' | awk '{for (i=1; i<=3; i++) {if (i==2) continue; print i}}'
 ### end
 
 ### awk_if_else
-### skip: if-else newline handling differs
+### skip: if-else not implemented
 printf '5\n2\n' | awk '{if ($1 > 3) print "big"; else print "small"}'
 ### expect
 big
@@ -551,7 +548,7 @@ printf 'a\n' | awk 'BEGIN {a[1]="x"; a[2]="y"} {for (k in a) print k, a[k]}'
 ### end
 
 ### awk_delete_array
-### skip: delete array element not implemented
+### skip: delete not implemented
 printf 'a\n' | awk 'BEGIN {a[1]="x"; delete a[1]} {print (1 in a) ? "yes" : "no"}'
 ### expect
 no
@@ -573,7 +570,6 @@ three
 ### end
 
 ### awk_regex_match_operator
-### skip: regex match operator ~ not implemented
 printf 'hello\nworld\nhello world\n' | awk '$0 ~ /hello/ {print NR}'
 ### expect
 1
@@ -581,7 +577,6 @@ printf 'hello\nworld\nhello world\n' | awk '$0 ~ /hello/ {print NR}'
 ### end
 
 ### awk_regex_not_match_operator
-### skip: regex not match operator !~ not implemented
 printf 'hello\nworld\n' | awk '$0 !~ /hello/ {print}'
 ### expect
 world
@@ -602,7 +597,7 @@ a,b,c
 ### end
 
 ### awk_ors
-### skip: ORS trailing newline differs
+### skip: ORS variable not implemented
 printf 'a\nb\n' | awk 'BEGIN {ORS=";"} {print $0}'
 ### expect
 a;b;
@@ -616,14 +611,12 @@ b
 ### end
 
 ### awk_gsub_string
-### skip: gsub with string args not working
 printf 'aaa\n' | awk '{gsub("a", "b"); print}'
 ### expect
 bbb
 ### end
 
 ### awk_sub_string
-### skip: sub with string args not working
 printf 'aaa\n' | awk '{sub("a", "b"); print}'
 ### expect
 baa
@@ -637,7 +630,7 @@ hello
 ### end
 
 ### awk_dollar_zero_modification
-### skip: $0 assignment not implemented
+### skip: $0 modification not implemented
 printf 'a b c\n' | awk '{$0 = "x y z"; print $2}'
 ### expect
 y

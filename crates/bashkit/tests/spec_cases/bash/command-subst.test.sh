@@ -64,7 +64,7 @@ matched
 ### end
 
 ### subst_exit_code
-### skip: command substitution exit code propagation needs work
+### skip: exit code propagation from command substitution not implemented
 # Exit code from command substitution
 result=$(false); echo $?
 ### expect
@@ -72,7 +72,7 @@ result=$(false); echo $?
 ### end
 
 ### subst_backtick
-### skip: backtick substitution not implemented
+### skip: backtick command substitution not implemented
 echo `echo hello`
 ### expect
 hello

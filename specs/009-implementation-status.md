@@ -98,16 +98,16 @@ BashKit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 754
+**Total spec test cases:** 790
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 435 | Yes | 330 | 105 | `bash_spec_tests` in CI |
-| AWK | 89 | Yes | 48 | 41 | loops, arrays, functions |
-| Grep | 70 | Yes | 56 | 14 | now with -A/-B/-C, -m, -q, -x, -e |
-| Sed | 65 | Yes | 49 | 16 | now with -E, nth occurrence, ! negation |
-| JQ | 95 | Yes | 58 | 37 | reduce, walk, regex funcs |
-| **Total** | **754** | **Yes** | **541** | **213** | |
+| Bash (core) | 471 | Yes | 406 | 65 | `bash_spec_tests` in CI |
+| AWK | 89 | Yes | 55 | 34 | loops, arrays, functions |
+| Grep | 70 | Yes | 59 | 11 | now with -A/-B/-C, -m, -q, -x, -e |
+| Sed | 65 | Yes | 50 | 15 | now with -E, nth occurrence, ! negation |
+| JQ | 95 | Yes | 85 | 10 | reduce, walk, regex funcs |
+| **Total** | **790** | **Yes** | **655** | **135** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -194,72 +194,66 @@ Features that may be added in the future (not intentionally excluded):
 - Array assignment in split: `split($0, arr, ":")`
 - Complex regex patterns
 
-**Skipped Tests (41):**
+**Skipped Tests (34):**
 
 | Feature | Count | Notes |
 |---------|-------|-------|
-| Arrays | 8 | `arr[key]`, associative arrays, `in` operator |
-| For loops | 6 | `for (i=0; i<n; i++)`, `for (k in arr)` |
-| While loops | 2 | `while (condition)` |
-| Ternary operator | 2 | `condition ? true : false` |
-| User functions | 4 | `function name() {}` |
-| gsub/sub regex | 3 | Regex literals as first argument |
-| split() | 2 | Array assignment from split |
-| printf formatting | 4 | `%s`, `%-10s`, `%d` width/precision |
-| Multiple -v vars | 2 | `-v a=1 -v b=2` |
-| BEGIN/END blocks | 3 | Multiple or complex blocks |
-| Field assignment | 2 | `$1 = "new"` |
-| NR/NF in conditions | 3 | `NR > 1`, `NF == 3` |
+| Increment/decrement | 4 | `i++`, `++i`, `i--`, `--i` |
+| Power operators | 2 | `^`, `**` |
+| Printf formats | 4 | `%x`, `%o`, `%c`, width specifier |
+| Loops | 6 | `for`, `while`, `do-while`, `break`, `continue` |
+| Arrays | 4 | `arr[key]`, `in` operator, `for-in`, `delete` |
+| Control flow | 3 | `if-else`, ternary, `next` |
+| Functions | 3 | `match()`, `gensub()`, `exit` |
+| -v flag | 1 | Variable initialization |
+| Field handling | 3 | Field separator, missing fields, field assignment |
+| Negation | 1 | Logical negation operator |
+| ORS/getline | 3 | Output record separator, getline, $0 modification |
 
 ### Sed Limitations
 
 - In-place editing (`-i`) - not yet implemented
 
-**Skipped Tests (16):**
+**Skipped Tests (15):**
 
 | Feature | Count | Notes |
 |---------|-------|-------|
 | Hold space | 3 | `h`, `H`, `x` commands |
-| Pattern ranges | 3 | `/start/,/end/` address ranges |
+| Pattern ranges | 4 | `/start/,/end/` and `/pattern/,$` address ranges |
 | Branching | 1 | `b`, `t`, `:label` commands |
 | Grouped commands | 1 | `{cmd1;cmd2}` blocks |
 | Special addresses | 2 | `0~2` step, `0,/pattern/` first match |
 | Replacement escapes | 2 | `\n` newline, `&` with adjacent chars |
 | Change command | 1 | `c\` command |
 | Q command | 1 | `Q` quit without printing |
-| In-place edit | 1 | `-i` flag |
-| Backreferences | 1 | Some edge cases |
 
 ### Grep Limitations
 
-**Skipped Tests (8):**
+**Skipped Tests (11):**
 
 | Feature | Count | Notes |
 |---------|-------|-------|
-| Recursive `-r` | 2 | Recursive search in directories |
+| Recursive `-r` | 1 | Recursive search in directories |
 | Pattern file `-f` | 1 | Read patterns from file |
+| Null data `-z` | 1 | Null-terminated lines |
 | Byte offset `-b` | 1 | Show byte offset |
 | Show filename `-H` | 1 | Force filename display |
-| Word boundary `\b` in ERE | 1 | `\bword\b` with `-E` |
+| Color output | 1 | `--color` option |
+| Include/exclude | 2 | `--include`, `--exclude` patterns |
 | Binary files | 2 | `-a`, binary detection |
+| Line buffering | 1 | `--line-buffered` |
 
 ### JQ Limitations
 
-**Skipped Tests (37):**
+**Skipped Tests (10):**
 
 | Feature | Count | Notes |
 |---------|-------|-------|
-| CLI flags | 8 | `-c`, `-S`, `-s`, `-n`, `-e`, `-j`, `--tab` |
-| Regex functions | 4 | `test`, `match`, `scan`, `gsub`, `sub` |
-| Path functions | 4 | `getpath`, `setpath`, `paths`, `leaf_paths` |
-| Control flow | 4 | `reduce`, `foreach`, `until`, `while`, `limit` |
-| Math functions | 3 | `ceil`, `round`, `abs`, `range` |
-| Advanced filters | 3 | `walk`, `recurse`, `del` |
-| String functions | 2 | `rindex`, `indices` |
-| I/O functions | 3 | `input`, `inputs`, `debug`, `env` |
-| Alternative `//` | 2 | Null coalescing operator |
-| Try-catch | 2 | `try ... catch` |
-| Group by | 2 | `group_by(.key)` |
+| Alternative `//` | 1 | Null coalescing operator |
+| Try-catch | 1 | `try` expression |
+| Path functions | 2 | `setpath`, `leaf_paths` |
+| I/O functions | 4 | `input`, `inputs`, `debug`, `env` |
+| Regex functions | 2 | `match`, `scan` |
 
 ### Curl Limitations
 

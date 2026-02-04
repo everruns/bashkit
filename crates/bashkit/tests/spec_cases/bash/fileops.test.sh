@@ -1,5 +1,4 @@
 ### mkdir_simple
-### skip: test conditionals not seeing filesystem changes
 # Create a directory
 mkdir /tmp/testdir
 [ -d /tmp/testdir ] && echo ok
@@ -8,7 +7,6 @@ ok
 ### end
 
 ### mkdir_recursive
-### skip: test conditionals not seeing filesystem changes
 # Create nested directories with -p
 mkdir -p /tmp/a/b/c
 [ -d /tmp/a/b/c ] && echo ok
@@ -25,7 +23,6 @@ echo $?
 ### end
 
 ### touch_create
-### skip: test conditionals not seeing filesystem changes
 # Create empty file with touch
 touch /tmp/newfile
 [ -f /tmp/newfile ] && echo ok
@@ -60,7 +57,6 @@ original
 ### end
 
 ### mv_file
-### skip: test conditionals not seeing filesystem changes
 # Move a file
 echo content > /tmp/oldname
 mv /tmp/oldname /tmp/newname
@@ -113,7 +109,6 @@ echo $?
 ### end
 
 ### touch_multiple
-### skip: test conditionals not seeing filesystem changes
 # touch can create multiple files
 touch /tmp/file1 /tmp/file2 /tmp/file3
 [ -f /tmp/file1 ] && [ -f /tmp/file2 ] && [ -f /tmp/file3 ] && echo ok

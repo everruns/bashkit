@@ -1,5 +1,5 @@
 ### neg_array_indices_empty
-### skip: empty array indices expansion needs further testing
+### skip: empty array indices expansion outputs extra newline
 # Empty array has no indices
 arr=(); echo "${!arr[@]}"
 ### expect
@@ -29,7 +29,7 @@ echo {item}
 ### end
 
 ### neg_brace_no_expand_space
-### skip: brace group with spaces handling needs work
+### skip: brace with space parsing issue
 # Brace with space doesn't expand
 echo { a,b,c }
 ### expect
@@ -51,7 +51,7 @@ echo $((0 || 0))
 ### end
 
 ### neg_string_compare_equal
-### skip: backslash escaping for < in test not fully supported
+### skip: test string comparison with \< not fully implemented
 # Equal strings not less/greater
 [ "abc" \< "abc" ] && echo "less" || echo "not less"
 ### expect
@@ -80,7 +80,7 @@ nonempty
 ### end
 
 ### neg_errexit_stops
-### skip: errexit in spec tests may have timing issues
+### skip: errexit timing with set -e not working correctly
 # set -e stops execution on error
 ### exit_code:1
 set -e
