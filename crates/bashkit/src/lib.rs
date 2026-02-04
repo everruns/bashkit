@@ -2862,10 +2862,41 @@ mod tests {
 
     #[tokio::test]
     async fn test_special_var_lineno() {
-        // $LINENO - current line number (placeholder returns 1)
+        // $LINENO - current line number
         let mut bash = Bash::new();
         let result = bash.exec("echo $LINENO").await.unwrap();
         assert_eq!(result.stdout, "1\n");
+    }
+
+    #[tokio::test]
+    async fn test_lineno_multiline() {
+        // $LINENO tracks line numbers across multiple lines
+        let mut bash = Bash::new();
+        let result = bash
+            .exec(
+                r#"echo "line $LINENO"
+echo "line $LINENO"
+echo "line $LINENO""#,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "line 1\nline 2\nline 3\n");
+    }
+
+    #[tokio::test]
+    async fn test_lineno_in_loop() {
+        // $LINENO inside a for loop
+        let mut bash = Bash::new();
+        let result = bash
+            .exec(
+                r#"for i in 1 2; do
+  echo "loop $LINENO"
+done"#,
+            )
+            .await
+            .unwrap();
+        // Loop body is on line 2
+        assert_eq!(result.stdout, "loop 2\nloop 2\n");
     }
 
     // File test operator tests
@@ -3468,5 +3499,49 @@ mod tests {
 
         let result = bash.exec("cat /config.txt").await.unwrap();
         assert_eq!(result.stdout, "overwritten");
+    }
+
+    // ============================================================
+    // Parser Error Location Tests
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_parse_error_includes_line_number() {
+        // Parse errors should include line/column info
+        let mut bash = Bash::new();
+        let result = bash
+            .exec(
+                r#"echo ok
+if true; then
+echo missing fi"#,
+            )
+            .await;
+        // Should fail to parse due to missing 'fi'
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let err_msg = format!("{}", err);
+        // Error should mention line number
+        assert!(
+            err_msg.contains("line") || err_msg.contains("parse"),
+            "Error should be a parse error: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_parse_error_on_specific_line() {
+        // Syntax error on line 3 should report line 3
+        use crate::parser::Parser;
+        let script = "echo line1\necho line2\nif true; then\n";
+        let result = Parser::new(script).parse();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let err_msg = format!("{}", err);
+        // Error should mention the problem
+        assert!(
+            err_msg.contains("expected"),
+            "Error should mention what's expected: {}",
+            err_msg
+        );
     }
 }
