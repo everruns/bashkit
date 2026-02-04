@@ -29,5 +29,5 @@ instant = "0.1"
 statrs = "0.18"
 
 # Terminal output
-colored = "2"
-tabled = "0.17"
+colored = "3"
+tabled = "0.20"
