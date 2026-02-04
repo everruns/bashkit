@@ -14,13 +14,12 @@ Python bindings for [BashKit](https://github.com/everruns/bashkit) - a sandboxed
 
 ```bash
 # From PyPI (when published)
-pip install bashkit-py
+pip install bashkit
 
 # With LangChain support
-pip install 'bashkit-py[langchain]'
+pip install 'bashkit[langchain]'
 
 # From source
-cd python
 pip install maturin
 maturin develop
 ```
@@ -29,7 +28,7 @@ maturin develop
 
 ```python
 import asyncio
-from bashkit_py import BashTool
+from bashkit import BashTool
 
 async def main():
     tool = BashTool()
@@ -55,27 +54,23 @@ asyncio.run(main())
 ## LangChain Integration
 
 ```python
-from bashkit_py.langchain import create_bash_tool
-from langchain_anthropic import ChatAnthropic
-from langchain.agents import create_tool_calling_agent, AgentExecutor
-from langchain_core.prompts import ChatPromptTemplate
+from bashkit.langchain import create_bash_tool
+from langchain.agents import create_agent
 
 # Create tool
 bash_tool = create_bash_tool()
 
 # Create agent
-llm = ChatAnthropic(model="claude-sonnet-4-20250514")
-prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful assistant with bash skills."),
-    ("human", "{input}"),
-    ("placeholder", "{agent_scratchpad}"),
-])
-
-agent = create_tool_calling_agent(llm, [bash_tool], prompt)
-executor = AgentExecutor(agent=agent, tools=[bash_tool])
+agent = create_agent(
+    model="claude-sonnet-4-20250514",
+    tools=[bash_tool],
+    system_prompt="You are a helpful assistant with bash skills."
+)
 
 # Run
-result = executor.invoke({"input": "Create a file with today's date"})
+result = agent.invoke({
+    "messages": [{"role": "user", "content": "Create a file with today's date"}]
+})
 ```
 
 ## Configuration
@@ -92,7 +87,7 @@ tool = BashTool(
 ## Synchronous API
 
 ```python
-from bashkit_py import BashTool
+from bashkit import BashTool
 
 tool = BashTool()
 result = tool.execute_sync("echo 'Hello!'")

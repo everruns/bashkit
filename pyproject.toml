@@ -3,7 +3,7 @@ requires = ["maturin>=1.4,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "bashkit-py"
+name = "bashkit"
 version = "0.1.0"
 description = "Python bindings for BashKit - a sandboxed bash interpreter for AI agents"
 readme = "python/README.md"
@@ -32,7 +32,7 @@ dev = ["pytest>=7.0", "pytest-asyncio>=0.23"]
 manifest-path = "crates/bashkit-python/Cargo.toml"
 features = ["pyo3/extension-module"]
 python-source = "python"
-module-name = "bashkit_py._bashkit_py"
+module-name = "bashkit._bashkit"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -5,11 +5,11 @@ Provides a LangChain-compatible tool that wraps BashTool for use with
 LangChain agents and chains.
 
 Example:
-    >>> from bashkit_py.langchain import create_bash_tool
-    >>> from langchain.agents import create_tool_calling_agent
+    >>> from bashkit.langchain import create_bash_tool
+    >>> from langchain.agents import create_agent
     >>>
     >>> tool = create_bash_tool()
-    >>> agent = create_tool_calling_agent(llm, [tool], prompt)
+    >>> agent = create_agent(model="claude-sonnet-4-20250514", tools=[tool])
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ except ImportError:
         return None
 
 
-from bashkit_py import BashTool as NativeBashTool
+from bashkit import BashTool as NativeBashTool
 
 
 class BashToolInput(BaseModel):
@@ -155,14 +155,14 @@ def create_bash_tool(
         ImportError: If langchain-core is not installed
 
     Example:
-        >>> from bashkit_py.langchain import create_bash_tool
+        >>> from bashkit.langchain import create_bash_tool
         >>> tool = create_bash_tool()
         >>> result = tool.invoke({"commands": "ls -la"})
     """
     if not LANGCHAIN_AVAILABLE:
         raise ImportError(
             "langchain-core is required for LangChain integration. "
-            "Install with: pip install 'bashkit-py[langchain]'"
+            "Install with: pip install 'bashkit[langchain]'"
         )
 
     return BashKitTool(

@@ -33,7 +33,7 @@ from langchain.agents import create_agent
 
 # Try to import from installed package
 try:
-    from bashkit_py.langchain import create_bash_tool
+    from bashkit.langchain import create_bash_tool
 except ImportError:
     print("bashkit-py not found. Install with: pip install bashkit-py[langchain]")
     sys.exit(1)

@@ -12,7 +12,7 @@ description = "Python bindings for BashKit sandboxed bash interpreter"
 
 [lib]
 crate-type = ["cdylib"]
-name = "bashkit_py"
+name = "bashkit"
 
 [dependencies]
 # BashKit core

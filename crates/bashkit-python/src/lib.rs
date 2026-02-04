@@ -312,7 +312,7 @@ fn create_langchain_tool_spec() -> PyResult<pyo3::Py<pyo3::types::PyDict>> {
 
 /// Python module definition
 #[pymodule]
-fn _bashkit_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BashTool>()?;
     m.add_class::<ExecResult>()?;
     m.add_function(wrap_pyfunction!(create_langchain_tool_spec, m)?)?;
