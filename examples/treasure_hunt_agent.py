@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "langchain-core>=0.3",
+#     "langchain>=1.0",
 #     "langchain-anthropic>=0.3",
 #     "bashkit-py",
 # ]
@@ -19,30 +19,23 @@ Demonstrates multiple agentic loop iterations as the agent:
 - Reads clues with `cat`
 - Searches files with `grep`
 - Explores directories with `ls` and `find`
-- Decodes secrets with built-in tools
+- Solves a riddle
 
 Run with:
     export ANTHROPIC_API_KEY=your_key
     uv run examples/treasure_hunt_agent.py
-
-Or if bashkit-py is installed locally:
-    cd python && maturin develop
-    python examples/treasure_hunt_agent.py
 """
 
-import asyncio
 import os
 import sys
 
-from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.agents import create_agent
 
-# Try to import from installed package, fall back to local
+# Try to import from installed package
 try:
     from bashkit_py.langchain import create_bash_tool
 except ImportError:
-    print("bashkit-py not found. Install with: cd python && maturin develop")
+    print("bashkit-py not found. Install with: pip install bashkit-py[langchain]")
     sys.exit(1)
 
 
@@ -154,8 +147,30 @@ EOF
 echo "Treasure hunt created! Start at /home/agent/quest/START_HERE.txt"
 '''
 
+SYSTEM_PROMPT = """You are a brave adventurer on a treasure hunt!
 
-async def main():
+You have access to a bash tool that lets you explore a virtual filesystem.
+Your quest: Find the hidden treasure by following clues.
+
+Available commands you might need:
+- ls: List directory contents
+- cat: Read file contents
+- grep: Search for patterns in files (use: grep "pattern" file or grep -r "pattern" dir/*)
+- find: Locate files by name
+- echo: Output text (useful for writing answers)
+
+Strategy tips:
+- Start by reading the START_HERE.txt file
+- Follow each clue carefully
+- Use grep to search for keywords
+- Explore directories with ls
+- Read promising files with cat
+
+Be methodical and narrate your adventure as you go!
+When you find the treasure (CONGRATULATIONS message), summarize your journey and stop."""
+
+
+def main():
     # Check for API key
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("Please set ANTHROPIC_API_KEY environment variable")
@@ -181,122 +196,51 @@ async def main():
     print(f"Setup: {setup_result.strip()}")
     print()
 
-    # Create the LLM
-    llm = ChatAnthropic(
+    # Create the agent using LangChain v1's create_agent
+    agent = create_agent(
         model="claude-sonnet-4-20250514",
-        temperature=0.3,
+        tools=[bash_tool],
+        system_prompt=SYSTEM_PROMPT,
     )
-
-    # Bind the tool to the LLM
-    llm_with_tools = llm.bind_tools([bash_tool])
-
-    # System prompt for the treasure hunter
-    system_prompt = """You are a brave adventurer on a treasure hunt!
-
-You have access to a bash tool that lets you explore a virtual filesystem.
-Your quest: Find the hidden treasure by following clues.
-
-Available commands you might need:
-- ls: List directory contents
-- cat: Read file contents
-- grep: Search for patterns in files
-- find: Locate files by name
-- cd: Change directory (use full paths)
-- echo: Output text (useful for writing answers)
-
-Strategy tips:
-- Start by reading the START_HERE.txt file
-- Follow each clue carefully
-- Use grep to search for keywords
-- Explore directories with ls
-- Read promising files with cat
-
-Be methodical and narrate your adventure as you go!"""
-
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(
-            content="Begin your treasure hunt! Start at /home/agent/quest/START_HERE.txt and follow the clues to find the treasure. Narrate your journey!"
-        ),
-    ]
 
     print("-" * 60)
     print("THE QUEST BEGINS!")
     print("-" * 60)
     print()
 
-    # Agentic loop - let the agent explore
-    max_iterations = 15
-    iteration = 0
+    # Run the agent
+    result = agent.invoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Begin your treasure hunt! Start at /home/agent/quest/START_HERE.txt "
+                    "and follow the clues to find the treasure. Narrate your journey!",
+                }
+            ]
+        }
+    )
 
-    while iteration < max_iterations:
-        iteration += 1
-        print(f"[Turn {iteration}]")
+    # Print the final response
+    if "messages" in result:
+        for msg in result["messages"]:
+            if hasattr(msg, "content") and msg.content:
+                content = msg.content
+                if isinstance(content, str) and content.strip():
+                    print(content)
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            text = block.get("text", "")
+                            if text.strip():
+                                print(text)
 
-        # Get response from LLM
-        response = await llm_with_tools.ainvoke(messages)
-        messages.append(response)
-
-        # Print the agent's thoughts
-        if response.content:
-            if isinstance(response.content, str):
-                print(f"Agent: {response.content}")
-            elif isinstance(response.content, list):
-                for block in response.content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        print(f"Agent: {block.get('text', '')}")
-
-        # Check for tool calls
-        if not response.tool_calls:
-            print("\n[Agent finished - no more tool calls]")
-            break
-
-        # Execute each tool call
-        for tool_call in response.tool_calls:
-            tool_name = tool_call["name"]
-            tool_args = tool_call["args"]
-
-            print(f"\n  >> Executing: {tool_name}")
-            if "commands" in tool_args:
-                # Show abbreviated command
-                cmd = tool_args["commands"]
-                if len(cmd) > 80:
-                    print(f"     Commands: {cmd[:77]}...")
-                else:
-                    print(f"     Commands: {cmd}")
-
-            # Execute the tool
-            try:
-                result = bash_tool.invoke(tool_args)
-                print(f"     Output: {result[:200]}..." if len(result) > 200 else f"     Output: {result}")
-            except Exception as e:
-                result = f"Error: {e}"
-                print(f"     Error: {e}")
-
-            # Add tool result to messages
-            from langchain_core.messages import ToolMessage
-
-            messages.append(
-                ToolMessage(
-                    content=result,
-                    tool_call_id=tool_call["id"],
-                )
-            )
-
-        print()
-
-        # Check if treasure was found
-        if "CONGRATULATIONS" in str(messages[-1].content):
-            print("\n" + "=" * 60)
-            print("  QUEST COMPLETE!")
-            print("=" * 60)
-            break
-
-    if iteration >= max_iterations:
-        print("\n[Max iterations reached]")
-
-    print(f"\nTotal turns: {iteration}")
+    # Print final message
+    print()
+    print("=" * 60)
+    print("  QUEST COMPLETE!")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

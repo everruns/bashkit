@@ -1,0 +1,29 @@
+# Python bindings for BashKit
+# Exposes BashKit as a Python module via PyO3
+
+[package]
+name = "bashkit-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Python bindings for BashKit sandboxed bash interpreter"
+
+[lib]
+crate-type = ["cdylib"]
+name = "bashkit_py"
+
+[dependencies]
+# BashKit core
+bashkit = { path = "../bashkit" }
+
+# PyO3 for Python bindings
+pyo3 = { workspace = true }
+pyo3-async-runtimes = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Serialization
+serde_json = { workspace = true }
