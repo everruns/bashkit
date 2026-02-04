@@ -27,6 +27,12 @@ pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 /// Default request timeout (30 seconds)
 pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
+/// Maximum allowed timeout (10 minutes) - prevents resource exhaustion from very long timeouts
+pub const MAX_TIMEOUT_SECS: u64 = 600;
+
+/// Minimum allowed timeout (1 second) - prevents instant timeouts that waste resources
+pub const MIN_TIMEOUT_SECS: u64 = 1;
+
 /// HTTP client with allowlist-based access control.
 ///
 /// # Security Features
@@ -282,6 +288,151 @@ impl HttpClient {
     pub fn max_response_bytes(&self) -> usize {
         self.max_response_bytes
     }
+
+    /// Make an HTTP request with custom headers and per-request timeout.
+    ///
+    /// This creates a temporary client with the specified timeout for this request only.
+    /// If timeout_secs is None, uses the default client timeout.
+    ///
+    /// # Arguments
+    ///
+    /// * `method` - HTTP method
+    /// * `url` - Request URL
+    /// * `body` - Optional request body
+    /// * `headers` - Custom headers
+    /// * `timeout_secs` - Overall request timeout in seconds (curl --max-time)
+    ///
+    /// # Security
+    ///
+    /// - URL is validated against the allowlist before making the request
+    /// - Response body is limited to `max_response_bytes` to prevent memory exhaustion
+    /// - Redirects are not automatically followed (to prevent allowlist bypass)
+    pub async fn request_with_timeout(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<&[u8]>,
+        headers: &[(String, String)],
+        timeout_secs: Option<u64>,
+    ) -> Result<Response> {
+        self.request_with_timeouts(method, url, body, headers, timeout_secs, None)
+            .await
+    }
+
+    /// Make an HTTP request with custom headers and separate connect/request timeouts.
+    ///
+    /// This creates a temporary client with the specified timeouts for this request only.
+    ///
+    /// # Arguments
+    ///
+    /// * `method` - HTTP method
+    /// * `url` - Request URL
+    /// * `body` - Optional request body
+    /// * `headers` - Custom headers
+    /// * `timeout_secs` - Overall request timeout in seconds (curl --max-time)
+    /// * `connect_timeout_secs` - Connection timeout in seconds (curl --connect-timeout)
+    ///
+    /// # Security
+    ///
+    /// - URL is validated against the allowlist before making the request
+    /// - Response body is limited to `max_response_bytes` to prevent memory exhaustion
+    /// - Redirects are not automatically followed (to prevent allowlist bypass)
+    pub async fn request_with_timeouts(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<&[u8]>,
+        headers: &[(String, String)],
+        timeout_secs: Option<u64>,
+        connect_timeout_secs: Option<u64>,
+    ) -> Result<Response> {
+        // Check allowlist BEFORE making any network request
+        match self.allowlist.check(url) {
+            UrlMatch::Allowed => {}
+            UrlMatch::Blocked { reason } => {
+                return Err(Error::Network(format!("access denied: {}", reason)));
+            }
+            UrlMatch::Invalid { reason } => {
+                return Err(Error::Network(format!("invalid URL: {}", reason)));
+            }
+        }
+
+        // Use the custom timeout client if any timeout is specified, otherwise use default client
+        let client = if timeout_secs.is_some() || connect_timeout_secs.is_some() {
+            // Clamp timeout values to safe range [MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS]
+            let clamp_timeout = |secs: u64| secs.clamp(MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS);
+
+            let timeout = timeout_secs.map_or(Duration::from_secs(DEFAULT_TIMEOUT_SECS), |s| {
+                Duration::from_secs(clamp_timeout(s))
+            });
+            // Connect timeout: use explicit connect_timeout, or derive from overall timeout, or use default 10s
+            let connect_timeout = connect_timeout_secs.map_or_else(
+                || std::cmp::min(timeout, Duration::from_secs(10)),
+                |s| Duration::from_secs(clamp_timeout(s)),
+            );
+            Client::builder()
+                .timeout(timeout)
+                .connect_timeout(connect_timeout)
+                .user_agent("bashkit/0.1.0")
+                .redirect(reqwest::redirect::Policy::none())
+                .no_gzip()
+                .no_brotli()
+                .no_deflate()
+                .build()
+                .map_err(|e| Error::Network(format!("failed to create client: {}", e)))?
+        } else {
+            self.client.clone()
+        };
+
+        // Build request
+        let mut request = client.request(method.as_reqwest(), url);
+
+        // Add custom headers
+        for (name, value) in headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+
+        if let Some(body_data) = body {
+            request = request.body(body_data.to_vec());
+        }
+
+        // Send request
+        let response = request.send().await.map_err(|e| {
+            // Check if this was a timeout error
+            if e.is_timeout() {
+                Error::Network("operation timed out".to_string())
+            } else {
+                Error::Network(format!("request failed: {}", e))
+            }
+        })?;
+
+        // Extract response data
+        let status = response.status().as_u16();
+        let resp_headers: Vec<(String, String)> = response
+            .headers()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+            .collect();
+
+        // Check Content-Length header to fail fast on large responses
+        if let Some(content_length) = response.content_length() {
+            if content_length as usize > self.max_response_bytes {
+                return Err(Error::Network(format!(
+                    "response too large: {} bytes (max: {} bytes)",
+                    content_length, self.max_response_bytes
+                )));
+            }
+        }
+
+        // Read body with size limit enforcement
+        let body = self.read_body_with_limit(response).await?;
+
+        Ok(Response {
+            status,
+            headers: resp_headers,
+            body,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -304,6 +455,75 @@ mod tests {
         let client = HttpClient::new(allowlist);
 
         let result = client.get("https://blocked.com").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("access denied"));
+    }
+
+    #[tokio::test]
+    async fn test_request_with_timeout_blocked_by_allowlist() {
+        let client = HttpClient::new(NetworkAllowlist::new());
+
+        let result = client
+            .request_with_timeout(Method::Get, "https://example.com", None, &[], Some(5))
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("access denied"));
+    }
+
+    #[tokio::test]
+    async fn test_request_with_timeout_none_uses_default() {
+        let allowlist = NetworkAllowlist::new().allow("https://blocked.com");
+        let client = HttpClient::new(allowlist);
+
+        // Should use default client (not blocked by allowlist here, but blocked.com not actually accessible)
+        // This just verifies the code path with None timeout works
+        let result = client
+            .request_with_timeout(Method::Get, "https://blocked.example.com", None, &[], None)
+            .await;
+        // Should fail with access denied (not in allowlist)
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("access denied"));
+    }
+
+    #[tokio::test]
+    async fn test_request_with_timeout_validates_url() {
+        let allowlist = NetworkAllowlist::new().allow("https://allowed.com");
+        let client = HttpClient::new(allowlist);
+
+        // Test with invalid URL
+        let result = client
+            .request_with_timeout(Method::Get, "not-a-url", None, &[], Some(10))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_request_with_timeouts_both_params() {
+        let client = HttpClient::new(NetworkAllowlist::new());
+
+        // Both timeouts specified - should still check allowlist first
+        let result = client
+            .request_with_timeouts(
+                Method::Get,
+                "https://example.com",
+                None,
+                &[],
+                Some(30),
+                Some(10),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("access denied"));
+    }
+
+    #[tokio::test]
+    async fn test_request_with_timeouts_connect_only() {
+        let client = HttpClient::new(NetworkAllowlist::new());
+
+        // Only connect timeout specified
+        let result = client
+            .request_with_timeouts(Method::Get, "https://example.com", None, &[], None, Some(5))
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("access denied"));
     }
