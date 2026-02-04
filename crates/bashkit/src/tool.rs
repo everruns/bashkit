@@ -670,13 +670,16 @@ mod tests {
             .execute_with_status(
                 req,
                 Box::new(move |status| {
-                    phases_clone.lock().unwrap().push(status.phase.clone());
+                    phases_clone
+                        .lock()
+                        .expect("lock poisoned")
+                        .push(status.phase.clone());
                 }),
             )
             .await;
 
         assert_eq!(resp.stdout, "test\n");
-        let phases = phases.lock().unwrap();
+        let phases = phases.lock().expect("lock poisoned");
         assert!(phases.contains(&"validate".to_string()));
         assert!(phases.contains(&"complete".to_string()));
     }
