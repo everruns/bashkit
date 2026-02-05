@@ -3,13 +3,41 @@
 //! This module provides a virtual filesystem abstraction that allows BashKit to
 //! operate in a sandboxed environment without accessing the real filesystem.
 //!
-//! # Overview
+//! # Architecture
 //!
-//! BashKit provides three filesystem implementations:
+//! The filesystem abstraction has two layers:
+//!
+//! | Layer | Trait/Type | Responsibility |
+//! |-------|------------|----------------|
+//! | Backend | [`FsBackend`] | Raw storage operations (minimal contract) |
+//! | POSIX | [`FileSystem`] / [`PosixFs`] | POSIX-like semantics enforcement |
+//!
+//! ## Implementing Custom Filesystems
+//!
+//! **Option 1: Implement `FsBackend`** (recommended for simple storage)
+//!
+//! Implement raw storage operations, then wrap with [`PosixFs`] to get
+//! POSIX semantics automatically:
+//!
+//! ```rust,ignore
+//! use bashkit::{FsBackend, PosixFs, Bash};
+//!
+//! struct MyStorage { /* ... */ }
+//! impl FsBackend for MyStorage { /* ... */ }
+//!
+//! let fs = Arc::new(PosixFs::new(MyStorage::new()));
+//! let mut bash = Bash::builder().fs(fs).build();
+//! ```
+//!
+//! **Option 2: Implement `FileSystem`** (for full control)
+//!
+//! Implement the high-level trait directly with your own POSIX checks.
+//!
+//! # Built-in Implementations
 //!
 //! | Type | Description | Use Case |
 //! |------|-------------|----------|
-//! | [`InMemoryFs`] | Simple HashMap-based storage | Default, isolated execution |
+//! | [`InMemoryFs`] | HashMap-based storage with POSIX checks | Default, isolated execution |
 //! | [`OverlayFs`] | Copy-on-write layered filesystem | Templates, immutable bases |
 //! | [`MountableFs`] | Multiple filesystems at mount points | Complex multi-source setups |
 //!
@@ -271,16 +299,20 @@
 //! # }
 //! ```
 
+mod backend;
 mod limits;
 mod memory;
 mod mountable;
 mod overlay;
+mod posix;
 mod traits;
 
+pub use backend::FsBackend;
 pub use limits::{FsLimitExceeded, FsLimits, FsUsage};
 pub use memory::InMemoryFs;
 pub use mountable::MountableFs;
 pub use overlay::OverlayFs;
+pub use posix::PosixFs;
 #[allow(unused_imports)]
 pub use traits::{fs_errors, DirEntry, FileSystem, FileType, Metadata};
 

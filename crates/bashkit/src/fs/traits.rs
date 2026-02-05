@@ -1,5 +1,11 @@
 //! Filesystem trait definitions.
 //!
+//! # Overview
+//!
+//! This module defines [`FileSystem`], the high-level trait that enforces
+//! POSIX-like semantics. For implementing custom storage backends, see also
+//! [`FsBackend`](super::FsBackend) which provides a simpler contract.
+//!
 //! # POSIX Semantics Contract
 //!
 //! All [`FileSystem`] implementations MUST enforce these POSIX-like semantics:
@@ -20,7 +26,10 @@
 //!
 //! # Implementing Custom Filesystems
 //!
-//! Use the [`fs_errors`] module for standard error construction:
+//! **Recommended**: Implement [`FsBackend`](super::FsBackend) and wrap with
+//! [`PosixFs`](super::PosixFs) to get POSIX semantics automatically.
+//!
+//! **Alternative**: Implement `FileSystem` directly using [`fs_errors`] helpers:
 //!
 //! ```rust,ignore
 //! use bashkit::fs::fs_errors;
