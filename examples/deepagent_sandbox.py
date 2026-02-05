@@ -8,15 +8,14 @@
 # ///
 # Note: Install bashkit first: cd crates/bashkit-python && maturin develop
 """
-Deep Agent with BashKit Virtual Filesystem
+Deep Agent with BashKit Middleware + Backend
 
-Demonstrates BashKit as a sandboxed backend for Deep Agents.
-The agent gets access to:
-- `execute` tool: Run shell commands (via SandboxBackendProtocol)
-- `read_file`, `write_file`, `edit_file`: File operations
-- `ls`, `glob`, `grep`: File discovery
+Demonstrates BashKit integration with Deep Agents using:
+- BashKitBackend: SandboxBackendProtocol for file operations
+- BashKitMiddleware: Adds `bash` tool via AgentMiddleware.tools
 
-All operations use BashKit's virtual filesystem - completely isolated.
+Both share the same VFS - files created via `bash` are visible to
+`read_file` and vice versa. Completely sandboxed.
 
 Run with:
     export ANTHROPIC_API_KEY=your_key
@@ -32,20 +31,19 @@ from deepagents import create_deep_agent
 try:
     from bashkit.deepagents import BashKitBackend
 except ImportError:
-    print("Error: bashkit not installed")
-    print("Run: uv pip install maturin && cd crates/bashkit-python && maturin develop")
+    print("bashkit not found. Install: cd crates/bashkit-python && maturin develop")
     sys.exit(1)
 
 
-SYSTEM_PROMPT = """You are a coding assistant with a sandboxed bash environment.
+SYSTEM_PROMPT = """You are a coding assistant with a sandboxed environment.
 
 You have access to:
-- `execute`: Run shell commands (cat, grep, find, sed, awk, jq, echo, etc.)
+- `bash` tool: Execute shell commands (cat, grep, sed, awk, jq, find, etc.)
 - `read_file`, `write_file`, `edit_file`: File operations
-- `ls`, `glob`, `grep`: Find and search files
+- `ls`, `glob`, `grep`: File discovery
 
-Everything runs in a virtual filesystem - completely sandboxed, no real files affected.
-Use shell commands for data processing and file tools for precise edits."""
+All tools share the same virtual filesystem - completely isolated.
+Prefer `bash` for data processing pipelines, file tools for precise edits."""
 
 
 async def main():
@@ -54,57 +52,53 @@ async def main():
         sys.exit(1)
 
     print("=" * 60)
-    print("  Deep Agent + BashKit Virtual Filesystem")
+    print("  Deep Agent + BashKit")
+    print("  Backend (file ops) + Middleware (bash tool)")
     print("=" * 60)
 
-    # Create BashKit backend - provides execute + file tools
+    # Create backend for file operations
     backend = BashKitBackend(username="dev", hostname="sandbox")
 
-    # Setup: Create project files
-    print("\n[Setup] Creating virtual filesystem...")
+    # Create middleware from backend - shares the same VFS!
+    middleware = backend.create_middleware()
+
+    # Setup files using the shared VFS
+    print("\n[Setup] Creating files in VFS...")
     backend.setup('''
 mkdir -p /home/user/project
 echo '{"name": "myapp", "version": "1.0", "debug": true}' > /home/user/project/config.json
-cat > /home/user/project/app.py << 'PYEOF'
-"""Simple application module."""
+cat > /home/user/project/app.py << 'EOF'
+"""Simple app module."""
 
-def calculate(a, b, op="+"):
-    """Perform calculation."""
-    if op == "+":
-        return a + b
-    elif op == "-":
-        return a - b
-    elif op == "*":
-        return a * b
-    return None
+def greet(name):
+    return f"Hello, {name}!"
 
 def main():
-    result = calculate(10, 5, "+")
-    print(f"Result: {result}")
+    print(greet("World"))
 
 if __name__ == "__main__":
     main()
-PYEOF
+EOF
 ''')
     print("  Created /home/user/project/config.json")
     print("  Created /home/user/project/app.py")
 
-    # Create agent with BashKit backend
+    # Create agent with BOTH backend and middleware
     agent = create_deep_agent(
         model="anthropic:claude-sonnet-4-20250514",
         backend=backend,
+        middleware=[middleware],  # Adds `bash` tool
         system_prompt=SYSTEM_PROMPT,
     )
 
-    # Task that demonstrates both shell commands and file operations
-    task = """Please do these tasks:
+    # Task using BOTH bash tool (middleware) and file tools (backend)
+    task = """Do these tasks showing both bash and file tools:
 
-1. Use `execute` to run: ls -la /home/user/project
-2. Use `execute` to run: cat /home/user/project/config.json | jq '.name'
-3. Use `read_file` to read /home/user/project/app.py
-4. Use `execute` to run: grep -n "def" /home/user/project/app.py
-5. Use `execute` to create a README: echo "# My App" > /home/user/project/README.md
-6. Use `ls` to verify the README was created"""
+1. Use `bash` to run: cat /home/user/project/config.json | jq '.name'
+2. Use `read_file` to read /home/user/project/app.py
+3. Use `bash` to run: grep -n "def" /home/user/project/app.py
+4. Use `bash` to create: echo "# README" > /home/user/project/README.md
+5. Use `ls` to list /home/user/project (should show README.md from bash)"""
 
     print(f"\n[Task]\n{task}")
     print("-" * 60)
@@ -119,10 +113,12 @@ PYEOF
         if kind == "on_tool_start":
             name = event.get("name", "")
             data = event["data"].get("input", {})
-            if name == "execute":
-                print(f"\n$ {data.get('command', '')}")
+            if name == "bash":
+                print(f"\n[bash] $ {data.get('command', '')}")
+            elif name == "execute":
+                print(f"\n[execute] $ {data.get('command', '')}")
             elif name in ("read_file", "write_file", "edit_file", "ls", "glob", "grep"):
-                arg = data.get("file_path") or data.get("path") or data.get("pattern") or str(data)[:50]
+                arg = data.get("file_path") or data.get("path") or str(data)[:50]
                 print(f"\n[{name}] {arg}")
 
         elif kind == "on_tool_end":
@@ -131,10 +127,10 @@ PYEOF
                 output = output.content
             if output:
                 lines = str(output).strip().split("\n")
-                for line in lines[:12]:
+                for line in lines[:10]:
                     print(f"  {line}")
-                if len(lines) > 12:
-                    print(f"  ... ({len(lines) - 12} more)")
+                if len(lines) > 10:
+                    print(f"  ... ({len(lines) - 10} more)")
 
         elif kind == "on_chat_model_stream":
             chunk = event["data"].get("chunk")

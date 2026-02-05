@@ -11,10 +11,19 @@ uv run examples/treasure_hunt_agent.py
 
 ## deepagent_sandbox.py
 
-Deep Agents integration with BashKit virtual filesystem. Uses `BashKitBackend` which
-implements `SandboxBackendProtocol` providing both shell execution (`execute`) and
-file operations (`read_file`, `write_file`, `ls`, `grep`, etc.) through BashKit's VFS.
+Deep Agents integration with BashKit virtual filesystem using both:
+- **BashKitBackend**: `SandboxBackendProtocol` for `read_file`, `write_file`, `ls`, etc.
+- **BashKitMiddleware**: `AgentMiddleware` adding `bash` tool via `tools` property
 
+Both share the same VFS via `backend.create_middleware()`:
+
+```python
+backend = BashKitBackend()
+middleware = backend.create_middleware()  # shares VFS
+agent = create_deep_agent(backend=backend, middleware=[middleware])
+```
+
+Run:
 ```bash
 export ANTHROPIC_API_KEY=your_key
 uv run examples/deepagent_sandbox.py

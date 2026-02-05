@@ -1,32 +1,26 @@
 """
 Deep Agents integration for BashKit.
 
-Provides both middleware and backend for Deep Agents:
-- BashKitMiddleware: Adds `bash` tool for shell execution in VFS
-- BashKitBackend: Full SandboxBackendProtocol implementation
+Provides middleware and backend for Deep Agents using BashKit's VFS:
+- BashKitMiddleware: Adds `bash` tool via AgentMiddleware.tools
+- BashKitBackend: SandboxBackendProtocol for execute/read_file/write_file/etc.
 
-Example with middleware:
-    >>> from bashkit.deepagents import BashKitMiddleware
-    >>> from deepagents import create_deep_agent
-    >>>
-    >>> middleware = BashKitMiddleware()
-    >>> agent = create_deep_agent(middleware=[middleware])
-
-Example with backend:
-    >>> from bashkit.deepagents import BashKitBackend
-    >>> from deepagents import create_deep_agent
-    >>>
+Use together for shared VFS:
     >>> backend = BashKitBackend()
-    >>> agent = create_deep_agent(backend=backend)
+    >>> middleware = backend.create_middleware()  # shares VFS
+    >>> agent = create_deep_agent(backend=backend, middleware=[middleware])
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from bashkit import BashTool as NativeBashTool
+
+if TYPE_CHECKING:
+    pass
 
 # Check for deepagents availability
 try:
@@ -51,92 +45,81 @@ except ImportError:
 
 
 def _now_iso() -> str:
-    """Return current time in ISO format."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _make_bash_tool(bash_instance: NativeBashTool):
+    """Create a bash tool function from a BashTool instance."""
+    @langchain_tool
+    def bash(command: str) -> str:
+        """Execute bash commands in a sandboxed virtual filesystem.
+
+        Provides isolated execution with 66+ commands (cat, grep, sed, awk,
+        jq, find, curl, etc.) and full bash syntax (pipes, redirects, loops).
+        State persists between calls.
+
+        Args:
+            command: Bash command to execute
+
+        Returns:
+            Command output with exit code if non-zero
+        """
+        result = bash_instance.execute_sync(command)
+        output = result.stdout
+        if result.stderr:
+            output += f"\n{result.stderr}"
+        if result.exit_code != 0:
+            output += f"\n[Exit code: {result.exit_code}]"
+        return output.strip() if output else "[No output]"
+
+    return bash
 
 
 if DEEPAGENTS_AVAILABLE:
 
     class BashKitMiddleware(AgentMiddleware):
-        """Deep Agents middleware providing sandboxed bash execution.
+        """Middleware that adds `bash` tool for shell execution in VFS.
 
-        Adds a `bash` tool that executes commands in BashKit's virtual filesystem.
-        The VFS is isolated - no real filesystem access occurs.
-
-        Use this middleware alongside Deep Agents' built-in FilesystemMiddleware
-        to provide both file operations and shell execution in the same VFS.
-
-        Example:
-            >>> from bashkit.deepagents import BashKitMiddleware
-            >>> from deepagents import create_deep_agent
-            >>>
+        Example standalone:
             >>> middleware = BashKitMiddleware()
-            >>> agent = create_deep_agent(
-            ...     model="anthropic:claude-sonnet-4-20250514",
-            ...     middleware=[middleware]
-            ... )
+            >>> agent = create_deep_agent(middleware=[middleware])
 
-        Attributes:
-            tools: List containing the `bash` tool
+        Example with shared VFS (recommended):
+            >>> backend = BashKitBackend()
+            >>> middleware = backend.create_middleware()
+            >>> agent = create_deep_agent(backend=backend, middleware=[middleware])
         """
 
         def __init__(
             self,
+            bash_tool: Optional[NativeBashTool] = None,
             username: Optional[str] = None,
             hostname: Optional[str] = None,
             max_commands: Optional[int] = None,
             max_loop_iterations: Optional[int] = None,
         ):
-            """Initialize BashKitMiddleware.
+            """Initialize middleware.
 
             Args:
-                username: Custom username for sandbox (default: "user")
-                hostname: Custom hostname for sandbox (default: "sandbox")
-                max_commands: Maximum commands per session
-                max_loop_iterations: Maximum loop iterations
+                bash_tool: Existing BashTool to use (for shared VFS)
+                username: Username for new BashTool (ignored if bash_tool provided)
+                hostname: Hostname for new BashTool (ignored if bash_tool provided)
+                max_commands: Max commands (ignored if bash_tool provided)
+                max_loop_iterations: Max iterations (ignored if bash_tool provided)
             """
-            self._bash = NativeBashTool(
-                username=username,
-                hostname=hostname,
-                max_commands=max_commands,
-                max_loop_iterations=max_loop_iterations,
-            )
+            if bash_tool is not None:
+                self._bash = bash_tool
+                self._owns_bash = False
+            else:
+                self._bash = NativeBashTool(
+                    username=username,
+                    hostname=hostname,
+                    max_commands=max_commands,
+                    max_loop_iterations=max_loop_iterations,
+                )
+                self._owns_bash = True
 
-            # Create the bash tool
-            bash_instance = self._bash
-
-            @langchain_tool
-            def bash(command: str) -> str:
-                """Execute bash commands in a sandboxed virtual filesystem.
-
-                Provides a safe execution environment with:
-                - Virtual filesystem (no real filesystem access)
-                - 66+ commands: cat, grep, sed, awk, jq, find, curl, etc.
-                - Full bash syntax: variables, pipes, redirects, loops, functions
-                - Persistent state: files and variables retained between calls
-
-                Args:
-                    command: Bash command to execute (like `bash -c 'command'`)
-
-                Returns:
-                    Command output with exit code if non-zero
-
-                Examples:
-                    bash("echo 'hello' > /tmp/test.txt")
-                    bash("cat /tmp/test.txt | grep hello")
-                    bash("for i in 1 2 3; do echo $i; done")
-                """
-                result = bash_instance.execute_sync(command)
-
-                output = result.stdout
-                if result.stderr:
-                    output += f"\n{result.stderr}"
-                if result.exit_code != 0:
-                    output += f"\n[Exit code: {result.exit_code}]"
-
-                return output.strip() if output else "[No output]"
-
-            self._tools = [bash]
+            self._tools = [_make_bash_tool(self._bash)]
 
         @property
         def tools(self):
@@ -144,30 +127,30 @@ if DEEPAGENTS_AVAILABLE:
             return self._tools
 
         def execute_sync(self, command: str) -> str:
-            """Execute a command synchronously (for setup).
-
-            Args:
-                command: Bash command to execute
-
-            Returns:
-                Command output
-            """
+            """Execute command synchronously (for setup scripts)."""
             result = self._bash.execute_sync(command)
-            output = result.stdout
-            if result.stderr:
-                output += result.stderr
-            return output
+            return result.stdout + (result.stderr or "")
 
         def reset(self) -> None:
             """Reset VFS to initial state."""
-            self._bash.reset()
+            if self._owns_bash:
+                self._bash.reset()
 
 
     class BashKitBackend(SandboxBackendProtocol):
-        """Deep Agents backend using BashKit's virtual filesystem.
+        """Backend implementing SandboxBackendProtocol with BashKit VFS.
 
-        Implements SandboxBackendProtocol for full integration with
-        Deep Agents' built-in tools (read_file, write_file, execute, etc.).
+        Provides execute, read_file, write_file, edit_file, ls, glob, grep
+        all operating on the same virtual filesystem.
+
+        Example:
+            >>> backend = BashKitBackend()
+            >>> agent = create_deep_agent(backend=backend)
+
+        With middleware for additional `bash` tool:
+            >>> backend = BashKitBackend()
+            >>> middleware = backend.create_middleware()
+            >>> agent = create_deep_agent(backend=backend, middleware=[middleware])
         """
 
         def __init__(
@@ -189,28 +172,33 @@ if DEEPAGENTS_AVAILABLE:
         def id(self) -> str:
             return self._id
 
+        def create_middleware(self) -> BashKitMiddleware:
+            """Create middleware that shares this backend's VFS.
+
+            Returns:
+                BashKitMiddleware using same BashTool instance
+            """
+            return BashKitMiddleware(bash_tool=self._bash)
+
+        # === Shell Execution ===
+
         def execute(self, command: str) -> ExecuteResponse:
             result = self._bash.execute_sync(command)
-            output = result.stdout
-            if result.stderr:
-                output += result.stderr
-            return ExecuteResponse(
-                output=output,
-                exit_code=result.exit_code,
-                truncated=False,
-            )
+            output = result.stdout + (result.stderr or "")
+            return ExecuteResponse(output=output, exit_code=result.exit_code, truncated=False)
 
         async def aexecute(self, command: str) -> ExecuteResponse:
             return self.execute(command)
+
+        # === File Operations ===
 
         def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> str:
             result = self._bash.execute_sync(f"cat {file_path}")
             if result.exit_code != 0:
                 return f"Error: {result.stderr or 'File not found'}"
             lines = result.stdout.splitlines()
-            selected = lines[offset : offset + limit]
-            numbered = [f"{i:6d}\t{line}" for i, line in enumerate(selected, start=offset + 1)]
-            return "\n".join(numbered)
+            selected = lines[offset:offset + limit]
+            return "\n".join(f"{i:6d}\t{line}" for i, line in enumerate(selected, start=offset + 1))
 
         async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> str:
             return self.read(file_path, offset, limit)
@@ -218,9 +206,7 @@ if DEEPAGENTS_AVAILABLE:
         def write(self, file_path: str, content: str) -> WriteResult:
             cmd = f"cat > {file_path} << 'BASHKIT_EOF'\n{content}\nBASHKIT_EOF"
             result = self._bash.execute_sync(cmd)
-            if result.exit_code != 0:
-                return WriteResult(success=False, error=result.stderr)
-            return WriteResult(success=True, error=None)
+            return WriteResult(success=result.exit_code == 0, error=result.stderr if result.exit_code != 0 else None)
 
         async def awrite(self, file_path: str, content: str) -> WriteResult:
             return self.write(file_path, content)
@@ -236,11 +222,13 @@ if DEEPAGENTS_AVAILABLE:
             if count > 1 and not replace_all:
                 return EditResult(success=False, error=f"Found {count} times. Use replace_all=True")
             new_content = content.replace(old_string, new_string) if replace_all else content.replace(old_string, new_string, 1)
-            write_result = self.write(file_path, new_content)
-            return EditResult(success=write_result.success, error=write_result.error)
+            wr = self.write(file_path, new_content)
+            return EditResult(success=wr.success, error=wr.error)
 
         async def aedit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
             return self.edit(file_path, old_string, new_string, replace_all)
+
+        # === File Discovery ===
 
         def ls_info(self, path: str) -> list[FileInfo]:
             result = self._bash.execute_sync(f"ls -la {path}")
@@ -255,12 +243,10 @@ if DEEPAGENTS_AVAILABLE:
                 if name in (".", ".."):
                     continue
                 files.append(FileInfo(
-                    path=f"{path.rstrip('/')}/{name}",
-                    name=name,
+                    path=f"{path.rstrip('/')}/{name}", name=name,
                     is_dir=parts[0].startswith("d"),
                     size=int(parts[4]) if parts[4].isdigit() else 0,
-                    created_at=_now_iso(),
-                    modified_at=_now_iso(),
+                    created_at=_now_iso(), modified_at=_now_iso(),
                 ))
             return files
 
@@ -298,14 +284,16 @@ if DEEPAGENTS_AVAILABLE:
         async def agrep_raw(self, pattern: str, path: str | None = None, glob: str | None = None) -> list[GrepMatch] | str:
             return self.grep_raw(pattern, path, glob)
 
+        # === File Transfer ===
+
         def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
             responses = []
-            for path in paths:
-                result = self._bash.execute_sync(f"cat {path}")
+            for p in paths:
+                result = self._bash.execute_sync(f"cat {p}")
                 if result.exit_code == 0:
-                    responses.append(FileDownloadResponse(path=path, content=result.stdout.encode(), error=None))
+                    responses.append(FileDownloadResponse(path=p, content=result.stdout.encode(), error=None))
                 else:
-                    responses.append(FileDownloadResponse(path=path, content=None, error=result.stderr or "File not found"))
+                    responses.append(FileDownloadResponse(path=p, content=None, error=result.stderr or "File not found"))
             return responses
 
         async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
@@ -313,16 +301,18 @@ if DEEPAGENTS_AVAILABLE:
 
         def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
             responses = []
-            for path, content in files:
+            for p, content in files:
                 try:
-                    write_result = self.write(path, content.decode("utf-8"))
-                    responses.append(FileUploadResponse(path=path, error=None if write_result.success else write_result.error))
+                    wr = self.write(p, content.decode("utf-8"))
+                    responses.append(FileUploadResponse(path=p, error=None if wr.success else wr.error))
                 except UnicodeDecodeError:
-                    responses.append(FileUploadResponse(path=path, error="Binary files not supported"))
+                    responses.append(FileUploadResponse(path=p, error="Binary files not supported"))
             return responses
 
         async def aupload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
             return self.upload_files(files)
+
+        # === Utility ===
 
         def setup(self, script: str) -> str:
             """Execute setup script."""
@@ -335,26 +325,14 @@ if DEEPAGENTS_AVAILABLE:
 
 
 def create_bash_middleware(**kwargs) -> "BashKitMiddleware":
-    """Create BashKitMiddleware for Deep Agents.
-
-    Returns middleware with `bash` tool for shell execution in VFS.
-
-    Raises:
-        ImportError: If deepagents not installed
-    """
+    """Create BashKitMiddleware for Deep Agents."""
     if not DEEPAGENTS_AVAILABLE:
         raise ImportError("deepagents required. Install: pip install 'bashkit[deepagents]'")
     return BashKitMiddleware(**kwargs)
 
 
 def create_bashkit_backend(**kwargs) -> "BashKitBackend":
-    """Create BashKitBackend for Deep Agents.
-
-    Returns backend implementing SandboxBackendProtocol.
-
-    Raises:
-        ImportError: If deepagents not installed
-    """
+    """Create BashKitBackend for Deep Agents."""
     if not DEEPAGENTS_AVAILABLE:
         raise ImportError("deepagents required. Install: pip install 'bashkit[deepagents]'")
     return BashKitBackend(**kwargs)
