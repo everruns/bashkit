@@ -56,7 +56,7 @@ if LANGCHAIN_AVAILABLE:
             >>> print(result)  # Hello!
         """
 
-        name: str = "Bash"
+        name: str = ""  # Set in __init__ from bashkit
         description: str = ""  # Set in __init__ from bashkit
         args_schema: Type[BaseModel] = BashToolInput
         handle_tool_error: bool = True
@@ -86,7 +86,8 @@ if LANGCHAIN_AVAILABLE:
                 max_commands=max_commands,
                 max_loop_iterations=max_loop_iterations,
             )
-            # Use description from bashkit lib
+            # Use name and description from bashkit lib
+            kwargs["name"] = bash_tool.name
             kwargs["description"] = bash_tool.description()
             super().__init__(**kwargs)
             object.__setattr__(self, "_bash_tool", bash_tool)
