@@ -1,5 +1,5 @@
 """
-BashKit Python Bindings
+Bashkit Python Bindings
 
 A sandboxed bash interpreter for AI agents with virtual filesystem.
 

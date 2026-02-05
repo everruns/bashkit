@@ -8,7 +8,7 @@
 # ///
 # Note: Install bashkit first: cd crates/bashkit-python && maturin develop
 """
-Deep Agent with BashKit Virtual Filesystem
+Deep Agent with Bashkit Virtual Filesystem
 
 Run:
     export ANTHROPIC_API_KEY=your_key
@@ -22,7 +22,7 @@ import sys
 from deepagents import create_deep_agent
 
 try:
-    from bashkit.deepagents import BashKitBackend
+    from bashkit.deepagents import BashkitBackend
 except ImportError:
     print("bashkit not found. Install: cd crates/bashkit-python && maturin develop")
     sys.exit(1)
@@ -44,10 +44,10 @@ async def main():
         sys.exit(1)
 
     print("=" * 60)
-    print("  Deep Agent + BashKit")
+    print("  Deep Agent + Bashkit")
     print("=" * 60)
 
-    backend = BashKitBackend()
+    backend = BashkitBackend()
     bashkit_middleware = backend.create_middleware()
 
     agent = create_deep_agent(

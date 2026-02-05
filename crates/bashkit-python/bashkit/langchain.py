@@ -1,5 +1,5 @@
 """
-LangChain integration for BashKit.
+LangChain integration for Bashkit.
 
 Provides a LangChain-compatible tool that wraps BashTool for use with
 LangChain agents and chains.
@@ -47,8 +47,8 @@ class BashToolInput(BaseModel):
 
 if LANGCHAIN_AVAILABLE:
 
-    class BashKitTool(BaseTool):
-        """LangChain tool wrapper for BashKit sandboxed bash interpreter.
+    class BashkitTool(BaseTool):
+        """LangChain tool wrapper for Bashkit sandboxed bash interpreter.
 
         This tool provides a safe bash execution environment with:
         - Virtual filesystem (no real filesystem access)
@@ -56,7 +56,7 @@ if LANGCHAIN_AVAILABLE:
         - 66+ built-in commands (echo, cat, grep, sed, awk, jq, etc.)
 
         Example:
-            >>> tool = BashKitTool()
+            >>> tool = BashkitTool()
             >>> result = tool.invoke({"commands": "echo 'Hello!'"})
             >>> print(result)  # Hello!
         """
@@ -81,7 +81,7 @@ All file operations use a virtual filesystem - changes don't affect real files."
             max_loop_iterations: Optional[int] = None,
             **kwargs,
         ):
-            """Initialize BashKitTool.
+            """Initialize BashkitTool.
 
             Args:
                 username: Custom username for sandbox
@@ -139,8 +139,8 @@ def create_bash_tool(
     hostname: Optional[str] = None,
     max_commands: Optional[int] = None,
     max_loop_iterations: Optional[int] = None,
-) -> "BashKitTool":
-    """Create a LangChain-compatible BashKit tool.
+) -> "BashkitTool":
+    """Create a LangChain-compatible Bashkit tool.
 
     Args:
         username: Custom username for sandbox
@@ -149,7 +149,7 @@ def create_bash_tool(
         max_loop_iterations: Max loop iterations
 
     Returns:
-        BashKitTool instance for use with LangChain agents
+        BashkitTool instance for use with LangChain agents
 
     Raises:
         ImportError: If langchain-core is not installed
@@ -165,7 +165,7 @@ def create_bash_tool(
             "Install with: pip install 'bashkit[langchain]'"
         )
 
-    return BashKitTool(
+    return BashkitTool(
         username=username,
         hostname=hostname,
         max_commands=max_commands,
@@ -173,4 +173,4 @@ def create_bash_tool(
     )
 
 
-__all__ = ["BashKitTool", "BashToolInput", "create_bash_tool"]
+__all__ = ["BashkitTool", "BashToolInput", "create_bash_tool"]

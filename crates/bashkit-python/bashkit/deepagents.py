@@ -1,12 +1,12 @@
 """
-Deep Agents integration for BashKit.
+Deep Agents integration for Bashkit.
 
-Provides middleware and backend for Deep Agents using BashKit's VFS:
-- BashKitMiddleware: Adds `bash` tool via AgentMiddleware.tools
-- BashKitBackend: SandboxBackendProtocol for execute/read_file/write_file/etc.
+Provides middleware and backend for Deep Agents using Bashkit's VFS:
+- BashkitMiddleware: Adds `bash` tool via AgentMiddleware.tools
+- BashkitBackend: SandboxBackendProtocol for execute/read_file/write_file/etc.
 
 Use together for shared VFS:
-    >>> backend = BashKitBackend()
+    >>> backend = BashkitBackend()
     >>> middleware = backend.create_middleware()  # shares VFS
     >>> agent = create_deep_agent(backend=backend, middleware=[middleware])
 """
@@ -77,15 +77,15 @@ def _make_bash_tool(bash_instance: NativeBashTool):
 
 if DEEPAGENTS_AVAILABLE:
 
-    class BashKitMiddleware(AgentMiddleware):
+    class BashkitMiddleware(AgentMiddleware):
         """Middleware that adds `bash` tool for shell execution in VFS.
 
         Example standalone:
-            >>> middleware = BashKitMiddleware()
+            >>> middleware = BashkitMiddleware()
             >>> agent = create_deep_agent(middleware=[middleware])
 
         Example with shared VFS (recommended):
-            >>> backend = BashKitBackend()
+            >>> backend = BashkitBackend()
             >>> middleware = backend.create_middleware()
             >>> agent = create_deep_agent(backend=backend, middleware=[middleware])
         """
@@ -137,18 +137,18 @@ if DEEPAGENTS_AVAILABLE:
                 self._bash.reset()
 
 
-    class BashKitBackend(SandboxBackendProtocol):
-        """Backend implementing SandboxBackendProtocol with BashKit VFS.
+    class BashkitBackend(SandboxBackendProtocol):
+        """Backend implementing SandboxBackendProtocol with Bashkit VFS.
 
         Provides execute, read_file, write_file, edit_file, ls, glob, grep
         all operating on the same virtual filesystem.
 
         Example:
-            >>> backend = BashKitBackend()
+            >>> backend = BashkitBackend()
             >>> agent = create_deep_agent(backend=backend)
 
         With middleware for additional `bash` tool:
-            >>> backend = BashKitBackend()
+            >>> backend = BashkitBackend()
             >>> middleware = backend.create_middleware()
             >>> agent = create_deep_agent(backend=backend, middleware=[middleware])
         """
@@ -172,13 +172,13 @@ if DEEPAGENTS_AVAILABLE:
         def id(self) -> str:
             return self._id
 
-        def create_middleware(self) -> BashKitMiddleware:
+        def create_middleware(self) -> BashkitMiddleware:
             """Create middleware that shares this backend's VFS.
 
             Returns:
-                BashKitMiddleware using same BashTool instance
+                BashkitMiddleware using same BashTool instance
             """
-            return BashKitMiddleware(bash_tool=self._bash)
+            return BashkitMiddleware(bash_tool=self._bash)
 
         # === Shell Execution ===
 
@@ -324,23 +324,23 @@ if DEEPAGENTS_AVAILABLE:
             self._bash.reset()
 
 
-def create_bash_middleware(**kwargs) -> "BashKitMiddleware":
-    """Create BashKitMiddleware for Deep Agents."""
+def create_bash_middleware(**kwargs) -> "BashkitMiddleware":
+    """Create BashkitMiddleware for Deep Agents."""
     if not DEEPAGENTS_AVAILABLE:
         raise ImportError("deepagents required. Install: pip install 'bashkit[deepagents]'")
-    return BashKitMiddleware(**kwargs)
+    return BashkitMiddleware(**kwargs)
 
 
-def create_bashkit_backend(**kwargs) -> "BashKitBackend":
-    """Create BashKitBackend for Deep Agents."""
+def create_bashkit_backend(**kwargs) -> "BashkitBackend":
+    """Create BashkitBackend for Deep Agents."""
     if not DEEPAGENTS_AVAILABLE:
         raise ImportError("deepagents required. Install: pip install 'bashkit[deepagents]'")
-    return BashKitBackend(**kwargs)
+    return BashkitBackend(**kwargs)
 
 
 __all__ = [
-    "BashKitMiddleware",
-    "BashKitBackend",
+    "BashkitMiddleware",
+    "BashkitBackend",
     "create_bash_middleware",
     "create_bashkit_backend",
 ]
