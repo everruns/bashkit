@@ -50,11 +50,6 @@ if LANGCHAIN_AVAILABLE:
     class BashkitTool(BaseTool):
         """LangChain tool wrapper for Bashkit sandboxed bash interpreter.
 
-        This tool provides a safe bash execution environment with:
-        - Virtual filesystem (no real filesystem access)
-        - Resource limits (command count, loop iterations)
-        - 66+ built-in commands (echo, cat, grep, sed, awk, jq, etc.)
-
         Example:
             >>> tool = BashkitTool()
             >>> result = tool.invoke({"commands": "echo 'Hello!'"})
@@ -62,11 +57,7 @@ if LANGCHAIN_AVAILABLE:
         """
 
         name: str = "Bash"
-        description: str = """Sandboxed bash interpreter with virtual filesystem.
-Execute bash commands safely. Supports variables, pipelines, redirects, loops,
-conditionals, functions, and arrays. Built-in commands include: echo, cat, grep,
-sed, awk, jq, head, tail, sort, uniq, cut, tr, wc, find, xargs, and more.
-All file operations use a virtual filesystem - changes don't affect real files."""
+        description: str = ""  # Set in __init__ from bashkit
         args_schema: Type[BaseModel] = BashToolInput
         handle_tool_error: bool = True
 
@@ -89,17 +80,16 @@ All file operations use a virtual filesystem - changes don't affect real files."
                 max_commands: Max commands to execute
                 max_loop_iterations: Max loop iterations
             """
-            super().__init__(**kwargs)
-            object.__setattr__(
-                self,
-                "_bash_tool",
-                NativeBashTool(
-                    username=username,
-                    hostname=hostname,
-                    max_commands=max_commands,
-                    max_loop_iterations=max_loop_iterations,
-                ),
+            bash_tool = NativeBashTool(
+                username=username,
+                hostname=hostname,
+                max_commands=max_commands,
+                max_loop_iterations=max_loop_iterations,
             )
+            # Use description from bashkit lib
+            kwargs["description"] = bash_tool.description()
+            super().__init__(**kwargs)
+            object.__setattr__(self, "_bash_tool", bash_tool)
 
         def _run(self, commands: str) -> str:
             """Execute bash commands synchronously."""

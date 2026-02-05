@@ -50,20 +50,11 @@ def _now_iso() -> str:
 
 def _make_bash_tool(bash_instance: NativeBashTool):
     """Create a bash tool function from a BashTool instance."""
-    @langchain_tool
+    # Use description from bashkit lib
+    tool_description = bash_instance.description()
+
+    @langchain_tool(description=tool_description)
     def bash(command: str) -> str:
-        """Execute bash commands in a sandboxed virtual filesystem.
-
-        Provides isolated execution with 66+ commands (cat, grep, sed, awk,
-        jq, find, curl, etc.) and full bash syntax (pipes, redirects, loops).
-        State persists between calls.
-
-        Args:
-            command: Bash command to execute
-
-        Returns:
-            Command output with exit code if non-zero
-        """
         result = bash_instance.execute_sync(command)
         output = result.stdout
         if result.stderr:
