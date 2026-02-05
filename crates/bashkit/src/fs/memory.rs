@@ -569,6 +569,11 @@ impl FileSystem for InMemoryFs {
             }
         }
 
+        // Cannot write to a directory
+        if let Some(FsEntry::Directory { .. }) = entries.get(&path) {
+            return Err(IoError::other("is a directory").into());
+        }
+
         // Check limits before writing
         self.check_write_limits(&entries, &path, content.len())?;
 
@@ -674,19 +679,29 @@ impl FileSystem for InMemoryFs {
             let mut current = PathBuf::from("/");
             for component in path.components().skip(1) {
                 current.push(component);
-                if !entries.contains_key(&current) {
-                    entries.insert(
-                        current.clone(),
-                        FsEntry::Directory {
-                            metadata: Metadata {
-                                file_type: FileType::Directory,
-                                size: 0,
-                                mode: 0o755,
-                                modified: SystemTime::now(),
-                                created: SystemTime::now(),
+                match entries.get(&current) {
+                    Some(FsEntry::Directory { .. }) => {
+                        // Directory exists, continue to next component
+                    }
+                    Some(FsEntry::File { .. } | FsEntry::Symlink { .. }) => {
+                        // File or symlink exists at path - cannot create directory
+                        return Err(IoError::new(ErrorKind::AlreadyExists, "file exists").into());
+                    }
+                    None => {
+                        // Create the directory
+                        entries.insert(
+                            current.clone(),
+                            FsEntry::Directory {
+                                metadata: Metadata {
+                                    file_type: FileType::Directory,
+                                    size: 0,
+                                    mode: 0o755,
+                                    modified: SystemTime::now(),
+                                    created: SystemTime::now(),
+                                },
                             },
-                        },
-                    );
+                        );
+                    }
                 }
             }
         } else {
@@ -1169,5 +1184,109 @@ mod tests {
         fs.write_file(Path::new("/tmp/more.txt"), &[0u8; 80])
             .await
             .unwrap();
+    }
+
+    // ==================== Type conflict tests ====================
+
+    #[tokio::test]
+    async fn test_write_file_to_directory_fails() {
+        let fs = InMemoryFs::new();
+
+        // Create a directory
+        fs.mkdir(Path::new("/tmp/mydir"), false).await.unwrap();
+
+        // Attempt to write file at same path should fail
+        let result = fs.write_file(Path::new("/tmp/mydir"), b"content").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("directory"),
+            "Error should mention directory: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_append_file_to_directory_fails() {
+        let fs = InMemoryFs::new();
+
+        // Create a directory
+        fs.mkdir(Path::new("/tmp/appenddir"), false).await.unwrap();
+
+        // Attempt to append to directory should fail
+        let result = fs
+            .append_file(Path::new("/tmp/appenddir"), b"content")
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("directory"),
+            "Error should mention directory: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mkdir_on_existing_file_fails() {
+        let fs = InMemoryFs::new();
+
+        // Create a file
+        fs.write_file(Path::new("/tmp/myfile"), b"content")
+            .await
+            .unwrap();
+
+        // Attempt to mkdir at same path should fail
+        let result = fs.mkdir(Path::new("/tmp/myfile"), false).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mkdir_recursive_on_existing_file_fails() {
+        let fs = InMemoryFs::new();
+
+        // Create a file
+        fs.write_file(Path::new("/tmp/myfile"), b"content")
+            .await
+            .unwrap();
+
+        // Attempt to mkdir -p at same path should also fail
+        let result = fs.mkdir(Path::new("/tmp/myfile"), true).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mkdir_on_existing_directory_fails() {
+        let fs = InMemoryFs::new();
+
+        // /tmp already exists as directory
+        let result = fs.mkdir(Path::new("/tmp"), false).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mkdir_recursive_on_existing_directory_succeeds() {
+        let fs = InMemoryFs::new();
+
+        // mkdir -p on existing directory should succeed
+        let result = fs.mkdir(Path::new("/tmp"), true).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_write_file_overwrites_existing_file() {
+        let fs = InMemoryFs::new();
+
+        // Create a file
+        fs.write_file(Path::new("/tmp/file.txt"), b"original")
+            .await
+            .unwrap();
+
+        // Overwrite should succeed
+        fs.write_file(Path::new("/tmp/file.txt"), b"updated")
+            .await
+            .unwrap();
+
+        let content = fs.read_file(Path::new("/tmp/file.txt")).await.unwrap();
+        assert_eq!(content, b"updated");
     }
 }

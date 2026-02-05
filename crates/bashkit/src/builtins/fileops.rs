@@ -37,14 +37,24 @@ impl Builtin for Mkdir {
 
             // Check if already exists
             if ctx.fs.exists(&path).await.unwrap_or(false) {
-                if !recursive {
-                    return Ok(ExecResult::err(
-                        format!("mkdir: cannot create directory '{}': File exists\n", dir),
-                        1,
-                    ));
+                // Check if it's a directory or something else (file/symlink)
+                if let Ok(meta) = ctx.fs.stat(&path).await {
+                    if meta.file_type.is_dir() {
+                        if !recursive {
+                            return Ok(ExecResult::err(
+                                format!("mkdir: cannot create directory '{}': File exists\n", dir),
+                                1,
+                            ));
+                        }
+                        // With -p, existing directory is not an error
+                        continue;
+                    }
                 }
-                // With -p, existing directory is not an error
-                continue;
+                // File or symlink exists - always an error
+                return Ok(ExecResult::err(
+                    format!("mkdir: cannot create directory '{}': File exists\n", dir),
+                    1,
+                ));
             }
 
             if let Err(e) = ctx.fs.mkdir(&path, recursive).await {

@@ -123,3 +123,57 @@ echo $?
 ### expect
 1
 ### end
+
+### mkdir_on_existing_file
+# mkdir should fail when file exists at path
+echo test > /tmp/existingfile
+mkdir /tmp/existingfile 2>/dev/null
+echo $?
+### expect
+1
+### end
+
+### mkdir_p_on_existing_file
+# mkdir -p should also fail when file exists at path
+echo test > /tmp/existingfile2
+mkdir -p /tmp/existingfile2 2>/dev/null
+echo $?
+### expect
+1
+### end
+
+### redirect_to_directory
+# Writing to directory should fail
+mkdir -p /tmp/existingdir
+echo test > /tmp/existingdir 2>/dev/null
+echo $?
+### expect
+1
+### end
+
+### append_to_directory
+# Appending to directory should fail
+mkdir -p /tmp/appenddir
+echo test >> /tmp/appenddir 2>/dev/null
+echo $?
+### expect
+1
+### end
+
+### cat_redirect_to_directory
+# cat redirect to directory should fail
+mkdir -p /tmp/catdir
+cat <<< "test" > /tmp/catdir 2>/dev/null
+echo $?
+### expect
+1
+### end
+
+### touch_existing_directory
+# touch on existing directory should succeed (updates mtime)
+mkdir -p /tmp/touchdir
+touch /tmp/touchdir
+echo $?
+### expect
+0
+### end
