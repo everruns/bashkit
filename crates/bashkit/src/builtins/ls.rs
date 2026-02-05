@@ -2258,6 +2258,172 @@ mod tests {
 
     // ==================== glob_match tests ====================
 
+    // ==================== file size reporting tests ====================
+
+    #[tokio::test]
+    async fn test_ls_long_format_shows_correct_file_size() {
+        // Positive test: file with known content shows correct size
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        // Create file with exactly 13 bytes: "hello world\n" (11 chars + newline from echo)
+        let content = b"hello world\n";
+        fs.write_file(&cwd.join("test.txt"), content).await.unwrap();
+
+        let args = vec!["-l".to_string(), "test.txt".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        // File size should be 12 bytes (content.len())
+        assert!(
+            result.stdout.contains("12"),
+            "Expected size 12 in output, got: {}",
+            result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ls_long_format_empty_file_shows_zero_size() {
+        // Negative test: empty file shows size 0
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        fs.write_file(&cwd.join("empty.txt"), b"").await.unwrap();
+
+        let args = vec!["-l".to_string(), "empty.txt".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        // Empty file should show size 0
+        // Format is: -rw-r--r--        0 YYYY-MM-DD HH:MM empty.txt
+        assert!(
+            result.stdout.contains("       0"),
+            "Expected size 0 in output, got: {}",
+            result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ls_long_format_directory_shows_zero_size() {
+        // Negative test: directory shows size 0
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        fs.mkdir(&cwd.join("subdir"), false).await.unwrap();
+
+        let args = vec!["-l".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        // Directory line should contain size 0
+        // Format is: drwxr-xr-x        0 YYYY-MM-DD HH:MM subdir
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        let subdir_line = lines.iter().find(|l| l.contains("subdir")).unwrap();
+        assert!(
+            subdir_line.contains("       0"),
+            "Expected directory size 0, got: {}",
+            subdir_line
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ls_long_format_multiple_files_correct_sizes() {
+        // Positive test: multiple files show their respective sizes
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        // Create files with different sizes
+        fs.write_file(&cwd.join("small.txt"), b"hi").await.unwrap(); // 2 bytes
+        fs.write_file(&cwd.join("medium.txt"), b"hello world")
+            .await
+            .unwrap(); // 11 bytes
+        fs.write_file(
+            &cwd.join("large.txt"),
+            b"this is a longer content string for testing",
+        )
+        .await
+        .unwrap(); // 43 bytes
+
+        let args = vec!["-l".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+
+        let lines: Vec<&str> = result.stdout.lines().collect();
+
+        // Check small.txt has size 2
+        let small_line = lines.iter().find(|l| l.contains("small.txt")).unwrap();
+        assert!(
+            small_line.contains("       2"),
+            "Expected small.txt size 2, got: {}",
+            small_line
+        );
+
+        // Check medium.txt has size 11
+        let medium_line = lines.iter().find(|l| l.contains("medium.txt")).unwrap();
+        assert!(
+            medium_line.contains("      11"),
+            "Expected medium.txt size 11, got: {}",
+            medium_line
+        );
+
+        // Check large.txt has size 43
+        let large_line = lines.iter().find(|l| l.contains("large.txt")).unwrap();
+        assert!(
+            large_line.contains("      43"),
+            "Expected large.txt size 43, got: {}",
+            large_line
+        );
+    }
+
     #[test]
     fn test_glob_match_star() {
         assert!(glob_match("file.txt", "*.txt"));
