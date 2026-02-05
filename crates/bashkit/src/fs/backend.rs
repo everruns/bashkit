@@ -3,49 +3,94 @@
 //! This module provides the [`FsBackend`] trait for implementing raw storage
 //! operations without POSIX semantics enforcement.
 //!
-//! # Overview
+//! # When to Use `FsBackend`
 //!
-//! The filesystem abstraction is split into two layers:
+//! Use `FsBackend` when you want to implement a **simple storage backend**
+//! and let [`PosixFs`](super::PosixFs) handle all the POSIX semantics (type
+//! checking, parent directory validation, etc.).
 //!
-//! | Layer | Trait/Struct | Responsibility |
-//! |-------|--------------|----------------|
-//! | Backend | [`FsBackend`] | Raw storage operations |
-//! | POSIX | [`PosixFs`] | Enforces POSIX-like semantics |
+//! | You want to... | Use |
+//! |----------------|-----|
+//! | Simple storage with automatic POSIX checks | `FsBackend` + `PosixFs` |
+//! | Full control over all behavior | [`FileSystem`](super::FileSystem) directly |
 //!
-//! # Implementing a Custom Backend
+//! # Architecture
 //!
-//! Implement [`FsBackend`] for your storage system:
+//! ```text
+//! ┌─────────────────────────────────────────────────┐
+//! │                    Bash                          │
+//! │                 (interpreter)                    │
+//! └───────────────────────┬─────────────────────────┘
+//!                         │ uses
+//! ┌───────────────────────▼─────────────────────────┐
+//! │              FileSystem trait                    │
+//! │         (POSIX semantics enforced)               │
+//! └───────────────────────┬─────────────────────────┘
+//!                         │
+//!        ┌────────────────┼────────────────┐
+//!        │                │                │
+//! ┌──────▼──────┐  ┌──────▼──────┐  ┌──────▼──────┐
+//! │ InMemoryFs  │  │  PosixFs    │  │ OverlayFs   │
+//! │ (built-in)  │  │  (wrapper)  │  │ (built-in)  │
+//! └─────────────┘  └──────┬──────┘  └─────────────┘
+//!                         │ wraps
+//!                  ┌──────▼──────┐
+//!                  │ FsBackend   │
+//!                  │ (your impl) │
+//!                  └─────────────┘
+//! ```
+//!
+//! # Example: Simple Key-Value Storage
 //!
 //! ```rust,ignore
-//! use bashkit::{async_trait, FsBackend, Result, Metadata, DirEntry};
-//! use std::path::Path;
+//! use bashkit::{async_trait, FsBackend, Result, Metadata, DirEntry, FileType};
+//! use std::collections::HashMap;
+//! use std::path::{Path, PathBuf};
+//! use std::sync::RwLock;
 //!
-//! pub struct MyStorage { /* ... */ }
+//! /// Simple storage backed by a HashMap.
+//! pub struct KvStorage {
+//!     data: RwLock<HashMap<PathBuf, Vec<u8>>>,
+//! }
 //!
 //! #[async_trait]
-//! impl FsBackend for MyStorage {
+//! impl FsBackend for KvStorage {
 //!     async fn read(&self, path: &Path) -> Result<Vec<u8>> {
-//!         // Read bytes from storage
+//!         let data = self.data.read().unwrap();
+//!         data.get(path)
+//!             .cloned()
+//!             .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound).into())
 //!     }
 //!
 //!     async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
-//!         // Write bytes to storage (overwrite if exists)
+//!         let mut data = self.data.write().unwrap();
+//!         data.insert(path.to_path_buf(), content.to_vec());
+//!         Ok(())
 //!     }
 //!
 //!     // ... implement remaining methods
 //! }
 //! ```
 //!
-//! Then wrap with [`PosixFs`] to get POSIX semantics:
+//! # Using Your Backend
+//!
+//! Wrap with [`PosixFs`](super::PosixFs) to get POSIX semantics:
 //!
 //! ```rust,ignore
 //! use bashkit::{Bash, PosixFs};
 //! use std::sync::Arc;
 //!
-//! let backend = MyStorage::new();
+//! let backend = KvStorage::new();
 //! let fs = Arc::new(PosixFs::new(backend));
 //! let mut bash = Bash::builder().fs(fs).build();
+//!
+//! // POSIX checks are automatic:
+//! // - Writing to a directory fails
+//! // - mkdir on existing file fails
+//! // - Parent directory must exist
 //! ```
+//!
+//! See `examples/custom_backend.rs` for a complete working example.
 
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};

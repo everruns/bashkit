@@ -61,7 +61,7 @@ pub mod fs_errors {
     /// Use when `write_file` or `append_file` is called on a directory path.
     #[inline]
     pub fn is_a_directory() -> crate::Error {
-        IoError::new(ErrorKind::Other, "is a directory").into()
+        IoError::other("is a directory").into()
     }
 
     /// Error for path already existing (for mkdir without recursive).
@@ -91,13 +91,13 @@ pub mod fs_errors {
     /// Use when `read_dir` is called on a file path.
     #[inline]
     pub fn not_a_directory() -> crate::Error {
-        IoError::new(ErrorKind::Other, "not a directory").into()
+        IoError::other("not a directory").into()
     }
 
     /// Error for non-empty directory removal without recursive flag.
     #[inline]
     pub fn directory_not_empty() -> crate::Error {
-        IoError::new(ErrorKind::Other, "directory not empty").into()
+        IoError::other("directory not empty").into()
     }
 }
 

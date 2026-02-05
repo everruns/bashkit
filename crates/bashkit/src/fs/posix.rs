@@ -2,9 +2,52 @@
 //!
 //! This module provides [`PosixFs`], a wrapper that adds POSIX-like semantics
 //! on top of any [`FsBackend`] implementation.
+//!
+//! # Overview
+//!
+//! `PosixFs` takes a simple storage backend and adds:
+//!
+//! | Check | Description |
+//! |-------|-------------|
+//! | Type-safe writes | `write_file` fails with "is a directory" if path is a directory |
+//! | Type-safe mkdir | `mkdir` fails with "file exists" if path is a file |
+//! | Parent directory | Write operations require parent directory to exist |
+//! | read_dir validation | Fails if path is not a directory |
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use bashkit::{Bash, FsBackend, PosixFs};
+//! use std::sync::Arc;
+//!
+//! // 1. Implement FsBackend for your storage
+//! struct MyStorage { /* ... */ }
+//! impl FsBackend for MyStorage { /* ... */ }
+//!
+//! // 2. Wrap with PosixFs
+//! let backend = MyStorage::new();
+//! let fs = Arc::new(PosixFs::new(backend));
+//!
+//! // 3. Use with Bash
+//! let mut bash = Bash::builder().fs(fs).build();
+//!
+//! // POSIX semantics are automatically enforced:
+//! bash.exec("mkdir /tmp/dir").await?;
+//! let result = bash.exec("echo test > /tmp/dir 2>&1").await?;
+//! // ^ This fails with "is a directory"
+//! ```
+//!
+//! # When to Use
+//!
+//! Use `PosixFs` when:
+//! - You have a simple storage backend that doesn't enforce POSIX rules
+//! - You want automatic type checking without implementing it yourself
+//! - You're bridging to an external storage system (database, cloud, etc.)
+//!
+//! See [`FsBackend`](super::FsBackend) for how to implement a backend.
 
 use async_trait::async_trait;
-use std::io::{Error as IoError, ErrorKind};
+use std::io::Error as IoError;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -15,21 +58,31 @@ use crate::error::Result;
 
 /// POSIX-compatible filesystem wrapper.
 ///
-/// Wraps any [`FsBackend`] and enforces POSIX-like semantics:
+/// Wraps any [`FsBackend`] and enforces POSIX-like semantics.
 ///
-/// 1. **No duplicate names**: Cannot have file and directory at same path
-/// 2. **Type-safe writes**: `write_file` fails if path is a directory
-/// 3. **Type-safe mkdir**: `mkdir` fails if path is a file
-/// 4. **Parent directory requirement**: Write operations require parent exists
+/// # Semantics Enforced
+///
+/// | Operation | Check |
+/// |-----------|-------|
+/// | `write_file` | Fails if path is a directory |
+/// | `append_file` | Fails if path is a directory |
+/// | `mkdir` | Fails if path exists as file (always) or dir (unless recursive) |
+/// | `read_dir` | Fails if path is not a directory |
+/// | `copy` | Fails if source is a directory |
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// use bashkit::{Bash, PosixFs, InMemoryBackend};
+/// use bashkit::{FsBackend, PosixFs, Bash};
 /// use std::sync::Arc;
 ///
-/// let backend = InMemoryBackend::new();
+/// // Your simple storage backend
+/// let backend = MyStorage::new();
+///
+/// // Wrap with PosixFs for POSIX semantics
 /// let fs = Arc::new(PosixFs::new(backend));
+///
+/// // Use with Bash interpreter
 /// let mut bash = Bash::builder().fs(fs).build();
 /// ```
 pub struct PosixFs<B: FsBackend> {
@@ -50,10 +103,11 @@ impl<B: FsBackend> PosixFs<B> {
     /// Check if parent directory exists.
     async fn check_parent_exists(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
-            if parent != Path::new("/") && parent != Path::new("") {
-                if !self.backend.exists(parent).await? {
-                    return Err(fs_errors::parent_not_found());
-                }
+            if parent != Path::new("/")
+                && parent != Path::new("")
+                && !self.backend.exists(parent).await?
+            {
+                return Err(fs_errors::parent_not_found());
             }
         }
         Ok(())
@@ -164,7 +218,7 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
         // Check source is not a directory
         if let Ok(meta) = self.backend.stat(from).await {
             if meta.file_type.is_dir() {
-                return Err(IoError::new(ErrorKind::Other, "cannot copy directory").into());
+                return Err(IoError::other("cannot copy directory").into());
             }
         }
         self.backend.copy(from, to).await
@@ -211,12 +265,17 @@ mod tests {
         let fs = InMemoryFs::new();
 
         // Create a directory
-        fs.mkdir(Path::new("/tmp/testdir"), false).await.unwrap();
+        fs.mkdir(Path::new("/tmp/testdir"), false)
+            .await
+            .expect("mkdir should succeed");
 
         // Writing to it should fail
         let result = fs.write_file(Path::new("/tmp/testdir"), b"test").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("directory"));
+        assert!(result
+            .expect_err("write_file should fail")
+            .to_string()
+            .contains("directory"));
     }
 
     #[tokio::test]
@@ -226,7 +285,7 @@ mod tests {
         // Create a file
         fs.write_file(Path::new("/tmp/testfile"), b"test")
             .await
-            .unwrap();
+            .expect("write_file should succeed");
 
         // mkdir on it should fail
         let result = fs.mkdir(Path::new("/tmp/testfile"), false).await;

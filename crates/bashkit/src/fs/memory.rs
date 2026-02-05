@@ -571,7 +571,7 @@ impl FileSystem for InMemoryFs {
 
         // Cannot write to a directory
         if let Some(FsEntry::Directory { .. }) = entries.get(&path) {
-            return Err(IoError::new(ErrorKind::Other, "is a directory").into());
+            return Err(IoError::other("is a directory").into());
         }
 
         // Check limits before writing
