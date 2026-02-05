@@ -307,8 +307,8 @@ pub use async_trait::async_trait;
 pub use builtins::{Builtin, Context as BuiltinContext};
 pub use error::{Error, Result};
 pub use fs::{
-    DirEntry, FileSystem, FileType, FsLimitExceeded, FsLimits, FsUsage, InMemoryFs, Metadata,
-    MountableFs, OverlayFs,
+    verify_filesystem_requirements, DirEntry, FileSystem, FileType, FsLimitExceeded, FsLimits,
+    FsUsage, InMemoryFs, Metadata, MountableFs, OverlayFs,
 };
 pub use git::GitConfig;
 pub use interpreter::{ControlFlow, ExecResult};

@@ -245,6 +245,31 @@
 //! - `/home/user` - Default user home
 //! - `/dev` - Device files
 //! - `/dev/null` - Null device (discards writes, returns empty on read)
+//!
+//! # Requirements for Custom FileSystem Implementations
+//!
+//! When implementing [`FileSystem`] for custom storage backends, your implementation
+//! **must** ensure:
+//!
+//! 1. **Root directory exists**: `exists("/")` must return `true`
+//! 2. **Path normalization**: Paths like `/.`, `/tmp/..`, etc. must resolve correctly
+//! 3. **Root is listable**: `read_dir("/")` must return the root's contents
+//!
+//! Without these, commands like `cd /` and `ls /` will fail with "No such file or directory".
+//!
+//! Use [`verify_filesystem_requirements`] to test your implementation:
+//!
+//! ```rust
+//! use bashkit::fs::{verify_filesystem_requirements, InMemoryFs};
+//! use std::sync::Arc;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> bashkit::Result<()> {
+//! let fs = Arc::new(InMemoryFs::new());
+//! verify_filesystem_requirements(&*fs).await?;
+//! # Ok(())
+//! # }
+//! ```
 
 mod limits;
 mod memory;
@@ -258,3 +283,83 @@ pub use mountable::MountableFs;
 pub use overlay::OverlayFs;
 #[allow(unused_imports)]
 pub use traits::{DirEntry, FileSystem, FileType, Metadata};
+
+use crate::error::Result;
+use std::io::{Error as IoError, ErrorKind};
+use std::path::Path;
+
+/// Verify that a filesystem implementation meets minimum requirements for BashKit.
+///
+/// This function checks that your custom [`FileSystem`] implementation:
+/// - Has root directory `/` that exists
+/// - Can stat the root directory
+/// - Can list the root directory contents
+/// - Handles path normalization (e.g., `/.` resolves to `/`)
+///
+/// # Errors
+///
+/// Returns an error describing what requirement is not met.
+///
+/// # Example
+///
+/// ```rust
+/// use bashkit::fs::{verify_filesystem_requirements, InMemoryFs};
+/// use std::sync::Arc;
+///
+/// # #[tokio::main]
+/// # async fn main() -> bashkit::Result<()> {
+/// let fs = Arc::new(InMemoryFs::new());
+/// verify_filesystem_requirements(&*fs).await?;
+/// println!("Filesystem meets all requirements!");
+/// # Ok(())
+/// # }
+/// ```
+pub async fn verify_filesystem_requirements(fs: &dyn FileSystem) -> Result<()> {
+    // Check 1: Root directory must exist
+    if !fs.exists(Path::new("/")).await? {
+        return Err(IoError::new(
+            ErrorKind::NotFound,
+            "FileSystem requirement not met: root directory '/' does not exist. \
+             Custom FileSystem implementations must ensure '/' exists on creation.",
+        )
+        .into());
+    }
+
+    // Check 2: Root must be a directory
+    let stat = fs.stat(Path::new("/")).await.map_err(|_| {
+        IoError::new(
+            ErrorKind::NotFound,
+            "FileSystem requirement not met: cannot stat root directory '/'. \
+             Ensure stat() works for the root path.",
+        )
+    })?;
+
+    if !stat.file_type.is_dir() {
+        return Err(IoError::new(
+            ErrorKind::InvalidData,
+            "FileSystem requirement not met: root '/' is not a directory.",
+        )
+        .into());
+    }
+
+    // Check 3: Root must be listable
+    fs.read_dir(Path::new("/")).await.map_err(|_| {
+        IoError::new(
+            ErrorKind::NotFound,
+            "FileSystem requirement not met: cannot list root directory '/'. \
+             Ensure read_dir() works for the root path.",
+        )
+    })?;
+
+    // Check 4: Path normalization - "/." should resolve to "/"
+    if !fs.exists(Path::new("/.")).await? {
+        return Err(IoError::new(
+            ErrorKind::NotFound,
+            "FileSystem requirement not met: path '/.' does not resolve to root. \
+             Ensure your implementation normalizes paths (removes '.' components).",
+        )
+        .into());
+    }
+
+    Ok(())
+}
