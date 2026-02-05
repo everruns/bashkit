@@ -11,13 +11,21 @@ uv run examples/treasure_hunt_agent.py
 
 ## deepagent_sandbox.py
 
-Deep Agents middleware demo with BashKit virtual filesystem. Provides an interactive
-sandbox where the agent can execute bash commands, create files, and process data.
+Deep Agents backend demo with BashKit virtual filesystem. Implements `SandboxBackendProtocol`
+providing sandboxed shell execution and file operations through BashKit's VFS.
 
 ```bash
 export ANTHROPIC_API_KEY=your_key
-uv run examples/deepagent_sandbox.py
 
-# Or run non-interactive demo:
-uv run examples/deepagent_sandbox.py --demo
+# Using the runner script (recommended):
+./examples/run_deepagent.sh
+
+# Non-interactive demo:
+./examples/run_deepagent.sh --demo
+
+# Or manually with uv:
+uv venv && source .venv/bin/activate
+uv pip install maturin deepagents langchain-anthropic
+cd crates/bashkit-python && maturin develop && cd ../..
+python examples/deepagent_sandbox.py
 ```

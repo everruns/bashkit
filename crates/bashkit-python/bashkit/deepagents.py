@@ -122,7 +122,6 @@ if DEEPAGENTS_AVAILABLE:
             return ExecuteResponse(
                 output=output,
                 exit_code=result.exit_code,
-                signal=None,
                 truncated=False,
             )
 

@@ -1,12 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# dependencies = [
-#     "deepagents>=0.3.11",
-#     "langchain-anthropic>=0.3",
-# ]
-# ///
-# Note: Install bashkit first: cd crates/bashkit-python && maturin develop
+#!/usr/bin/env python3
 """
 Deep Agent Sandbox - BashKit Virtual Filesystem with Deep Agents
 
@@ -16,9 +8,15 @@ The backend implements SandboxBackendProtocol providing:
 2. File operations (read, write, edit, ls, glob, grep) in virtual filesystem
 3. Complete isolation - no real filesystem access
 
-Run with:
+Run with uv:
     export ANTHROPIC_API_KEY=your_key
-    uv run examples/deepagent_sandbox.py
+    ./examples/run_deepagent.sh [--demo]
+
+Or manually:
+    uv venv && source .venv/bin/activate
+    uv pip install maturin deepagents langchain-anthropic
+    cd crates/bashkit-python && maturin develop && cd ../..
+    python examples/deepagent_sandbox.py [--demo]
 """
 
 import asyncio
@@ -257,7 +255,7 @@ async def run_agent():
 
 
 async def run_demo():
-    """Run a non-interactive demo."""
+    """Run a non-interactive demo showcasing bash + filesystem."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("Please set ANTHROPIC_API_KEY environment variable")
         sys.exit(1)
@@ -284,10 +282,15 @@ async def run_demo():
         system_prompt=SYSTEM_PROMPT,
     )
 
-    # Run a demo task
-    demo_task = "Show the project structure and find the bug in test_calculator.py"
+    # Demo task that requires BOTH bash commands AND file operations
+    demo_task = """Do these tasks using bash commands:
+1. Use `find` to list all .py files in /home/user/project
+2. Use `grep` to search for "assert" in the test file
+3. Use `cat` to show the calculator.py file
+4. Use `echo` to create a new file /home/user/project/notes.txt with "Bug found: subtract test is wrong"
+5. Use `ls -la` to show the project directory contents"""
 
-    print(f"Demo task: {demo_task}")
+    print(f"Demo task:\n{demo_task}")
     print("-" * 60)
 
     async for event in agent.astream_events(
@@ -302,18 +305,20 @@ async def run_demo():
             tool_input = event["data"].get("input", {})
             if tool_name == "execute":
                 cmd = tool_input.get("command", "")
-                print(f"\n> {cmd}")
-            elif tool_name in ("read_file", "ls"):
-                path = tool_input.get("file_path") or tool_input.get("path", "")
-                print(f"\n[{tool_name}] {path}")
+                print(f"\n$ {cmd}")
+            elif tool_name in ("read_file", "write_file", "edit_file", "ls", "glob", "grep"):
+                print(f"\n[{tool_name}] {str(tool_input)[:70]}")
 
         elif kind == "on_tool_end":
             output = event["data"].get("output", "")
             if hasattr(output, "content"):
                 output = output.content
             if output:
-                for line in str(output).strip().split("\n")[:12]:
+                lines = str(output).strip().split("\n")
+                for line in lines[:15]:
                     print(f"  {line}")
+                if len(lines) > 15:
+                    print(f"  ... ({len(lines) - 15} more lines)")
 
         elif kind == "on_chat_model_stream":
             chunk = event["data"].get("chunk")
