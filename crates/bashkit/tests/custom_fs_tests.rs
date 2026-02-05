@@ -149,7 +149,18 @@ impl FileSystem for MinimalFs {
                     remainder
                 };
                 if !name.is_empty() && seen.insert(name.to_string()) {
-                    let is_dir = content.is_empty() || remainder.contains('/');
+                    // Determine if this is a direct child file or a nested directory
+                    let is_nested = remainder.contains('/');
+                    let is_dir = content.is_empty() || is_nested;
+
+                    // For direct children, use actual content size
+                    // For directories (including nested paths), size is 0
+                    let size = if is_nested {
+                        0 // Directory size is 0
+                    } else {
+                        content.len() as u64
+                    };
+
                     entries.push(DirEntry {
                         name: name.to_string(),
                         metadata: Metadata {
@@ -158,7 +169,7 @@ impl FileSystem for MinimalFs {
                             } else {
                                 FileType::File
                             },
-                            size: content.len() as u64,
+                            size,
                             mode: 0o644,
                             modified: SystemTime::now(),
                             created: SystemTime::now(),
@@ -418,4 +429,121 @@ async fn test_custom_fs_can_use_builtin_mountable() {
     // Access mounted custom filesystem
     let result = bash.exec("cat /mnt/custom/data.txt").await.unwrap();
     assert_eq!(result.stdout, "custom data");
+}
+
+// ==================== File size reporting tests ====================
+// These tests verify that custom FileSystem implementations correctly
+// report file sizes, which is critical for ls -l and other builtins.
+
+#[tokio::test]
+async fn test_custom_fs_read_dir_returns_correct_file_sizes() {
+    // This test ensures read_dir returns correct metadata.size for files
+    let fs = MinimalFs::new();
+
+    // Create files with known sizes
+    fs.write_file(Path::new("/tmp/small.txt"), b"hi") // 2 bytes
+        .await
+        .unwrap();
+    fs.write_file(Path::new("/tmp/medium.txt"), b"hello world") // 11 bytes
+        .await
+        .unwrap();
+
+    let entries = fs.read_dir(Path::new("/tmp")).await.unwrap();
+
+    let small = entries.iter().find(|e| e.name == "small.txt").unwrap();
+    assert_eq!(
+        small.metadata.size, 2,
+        "Expected small.txt size 2, got {}",
+        small.metadata.size
+    );
+
+    let medium = entries.iter().find(|e| e.name == "medium.txt").unwrap();
+    assert_eq!(
+        medium.metadata.size, 11,
+        "Expected medium.txt size 11, got {}",
+        medium.metadata.size
+    );
+}
+
+#[tokio::test]
+async fn test_custom_fs_read_dir_directory_size_zero() {
+    // Directories should report size 0
+    let fs = MinimalFs::new();
+
+    // Create a nested directory structure
+    fs.mkdir(Path::new("/tmp/subdir"), false).await.unwrap();
+    fs.write_file(Path::new("/tmp/subdir/file.txt"), b"content in subdir")
+        .await
+        .unwrap();
+
+    let entries = fs.read_dir(Path::new("/tmp")).await.unwrap();
+
+    let subdir = entries.iter().find(|e| e.name == "subdir").unwrap();
+    assert!(subdir.metadata.file_type.is_dir());
+    assert_eq!(
+        subdir.metadata.size, 0,
+        "Expected directory size 0, got {}",
+        subdir.metadata.size
+    );
+}
+
+#[tokio::test]
+async fn test_custom_fs_ls_shows_correct_sizes() {
+    // Integration test: verify ls -l shows correct file sizes from custom fs
+    let fs = Arc::new(MinimalFs::new());
+
+    // Pre-populate files with known sizes
+    fs.write_file(Path::new("/tmp/file5.txt"), b"12345") // 5 bytes
+        .await
+        .unwrap();
+    fs.write_file(Path::new("/tmp/file10.txt"), b"1234567890") // 10 bytes
+        .await
+        .unwrap();
+
+    let mut bash = Bash::builder().fs(fs).build();
+
+    let result = bash.exec("ls -l /tmp/file5.txt").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert!(
+        result.stdout.contains("       5") || result.stdout.contains(" 5 "),
+        "Expected size 5 in output: {}",
+        result.stdout
+    );
+
+    let result = bash.exec("ls -l /tmp/file10.txt").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert!(
+        result.stdout.contains("      10") || result.stdout.contains(" 10 "),
+        "Expected size 10 in output: {}",
+        result.stdout
+    );
+}
+
+#[tokio::test]
+async fn test_custom_fs_nested_dir_does_not_inherit_file_size() {
+    // Regression test: when listing a directory, nested subdirectories should
+    // not inherit file sizes from files within them.
+    let fs = MinimalFs::new();
+
+    // Create: /tmp/data/nested/large_file.txt (100 bytes)
+    fs.mkdir(Path::new("/tmp/data"), false).await.unwrap();
+    fs.mkdir(Path::new("/tmp/data/nested"), false)
+        .await
+        .unwrap();
+    let large_content = vec![b'x'; 100];
+    fs.write_file(Path::new("/tmp/data/nested/large_file.txt"), &large_content)
+        .await
+        .unwrap();
+
+    // When listing /tmp/data, the "nested" directory should have size 0,
+    // NOT 100 (the size of large_file.txt)
+    let entries = fs.read_dir(Path::new("/tmp/data")).await.unwrap();
+    let nested = entries.iter().find(|e| e.name == "nested").unwrap();
+
+    assert!(nested.metadata.file_type.is_dir());
+    assert_eq!(
+        nested.metadata.size, 0,
+        "Directory 'nested' should have size 0, not inherit child file size. Got: {}",
+        nested.metadata.size
+    );
 }
