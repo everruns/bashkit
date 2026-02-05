@@ -6,6 +6,7 @@
 allow = [
     "MIT",
     "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",  # LLVM exception (target-lexicon via pyo3)
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
