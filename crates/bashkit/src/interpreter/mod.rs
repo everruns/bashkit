@@ -1260,6 +1260,9 @@ impl Interpreter {
                     idx += 1;
                 }
                 // Accept but ignore these options (limited/no support in sandbox)
+                // TODO: These options are accepted but not enforced in sandbox
+                // -e (errexit), -x (xtrace), -v (verbose), -u (nounset)
+                // Would need interpreter changes to fully implement
                 "-e" | "-x" | "-v" | "-u" | "-o" | "-i" | "-s" => {
                     idx += 1;
                 }
@@ -3830,5 +3833,201 @@ mod tests {
         assert!(!result.stdout.contains("/usr"));
         assert!(!result.stdout.contains("GNU"));
         // Should only contain sandboxed version info
+    }
+
+    // Additional positive tests
+
+    #[tokio::test]
+    async fn test_bash_c_with_quotes() {
+        // Handles quoted strings correctly
+        let result = run_script(r#"bash -c 'echo "hello world"'"#).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "hello world");
+    }
+
+    #[tokio::test]
+    async fn test_bash_c_with_variables() {
+        // Variables expand correctly in bash -c
+        let result = run_script("X=test; bash -c 'echo $X'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "test");
+    }
+
+    #[tokio::test]
+    async fn test_bash_c_pipe_in_command() {
+        // Pipes work inside bash -c
+        let result = run_script("bash -c 'echo hello | cat'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_bash_c_subshell() {
+        // Command substitution works in bash -c
+        let result = run_script("bash -c 'echo $(echo inner)'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "inner");
+    }
+
+    #[tokio::test]
+    async fn test_bash_c_conditional() {
+        // Conditionals work in bash -c
+        let result = run_script("bash -c 'if true; then echo yes; fi'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "yes");
+    }
+
+    #[tokio::test]
+    async fn test_bash_script_with_shebang() {
+        // Script with shebang is handled (shebang line ignored)
+        let fs = Arc::new(InMemoryFs::new());
+        fs.write_file(
+            std::path::Path::new("/tmp/shebang.sh"),
+            b"#!/bin/bash\necho works",
+        )
+        .await
+        .unwrap();
+
+        let mut interpreter = Interpreter::new(fs.clone());
+        let parser = Parser::new("bash /tmp/shebang.sh");
+        let script = parser.parse().unwrap();
+        let result = interpreter.execute(&script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "works");
+    }
+
+    #[tokio::test]
+    async fn test_bash_n_with_valid_multiline() {
+        // -n validates multiline scripts
+        let result = run_script("bash -n -c 'echo one\necho two\necho three'").await;
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_sh_behaves_like_bash() {
+        // sh and bash produce same results
+        let bash_result = run_script("bash -c 'echo $((1+2))'").await;
+        let sh_result = run_script("sh -c 'echo $((1+2))'").await;
+        assert_eq!(bash_result.stdout, sh_result.stdout);
+        assert_eq!(bash_result.exit_code, sh_result.exit_code);
+    }
+
+    // Additional negative tests
+
+    #[tokio::test]
+    async fn test_bash_n_unclosed_if() {
+        // -n catches unclosed control structures
+        let result = run_script("bash -n -c 'if true; then echo x'").await;
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("syntax error"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_n_unclosed_while() {
+        // -n catches unclosed while
+        let result = run_script("bash -n -c 'while true; do echo x'").await;
+        assert_eq!(result.exit_code, 2);
+    }
+
+    #[tokio::test]
+    async fn test_bash_empty_c_string() {
+        // Empty -c string is valid (does nothing)
+        let result = run_script("bash -c ''").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_bash_whitespace_only_c_string() {
+        // Whitespace-only -c string is valid
+        let result = run_script("bash -c '   '").await;
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_bash_directory_not_file() {
+        // Trying to execute a directory fails
+        let result = run_script("bash /tmp").await;
+        // Should fail - /tmp is a directory
+        assert_ne!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_bash_c_exit_propagates() {
+        // Exit code from bash -c is captured in $?
+        let result = run_script("bash -c 'exit 42'; echo \"code: $?\"").await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("code: 42"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_multiple_scripts_sequential() {
+        // Multiple bash calls work sequentially
+        let result = run_script("bash -c 'echo 1'; bash -c 'echo 2'; bash -c 'echo 3'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "1\n2\n3\n");
+    }
+
+    // Security edge cases
+
+    #[tokio::test]
+    async fn test_bash_c_path_traversal_blocked() {
+        // Path traversal in bash -c doesn't escape sandbox
+        let result =
+            run_script("bash -c 'cat /../../etc/passwd 2>/dev/null || echo blocked'").await;
+        assert!(result.stdout.contains("blocked") || result.exit_code != 0);
+    }
+
+    #[tokio::test]
+    async fn test_bash_nested_deeply() {
+        // Deeply nested bash calls work within limits
+        let result = run_script("bash -c \"bash -c 'bash -c \\\"echo deep\\\"'\"").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "deep");
+    }
+
+    #[tokio::test]
+    async fn test_bash_c_special_chars() {
+        // Special characters in commands handled safely
+        let result = run_script("bash -c 'echo \"$HOME\"'").await;
+        // Should not leak real home directory
+        assert!(!result.stdout.contains("/root"));
+        assert!(!result.stdout.contains("/home/"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_c_dollar_substitution() {
+        // $() substitution works in bash -c
+        let result = run_script("bash -c 'echo $(echo subst)'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "subst");
+    }
+
+    #[tokio::test]
+    async fn test_bash_help_contains_expected_options() {
+        // Help output contains documented options
+        let result = run_script("bash --help").await;
+        assert!(result.stdout.contains("-c"));
+        assert!(result.stdout.contains("-n"));
+        assert!(result.stdout.contains("--version"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_c_array_operations() {
+        // Array operations work in bash -c
+        let result = run_script("bash -c 'arr=(a b c); echo ${arr[1]}'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "b");
+    }
+
+    #[tokio::test]
+    async fn test_bash_positional_special_vars() {
+        // Special positional vars work
+        let result = run_script("bash -c 'echo \"args: $#, first: $1, all: $*\"' prog a b c").await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("args: 3"));
+        assert!(result.stdout.contains("first: a"));
+        assert!(result.stdout.contains("all: a b c"));
     }
 }
