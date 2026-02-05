@@ -5,14 +5,8 @@
 #     "deepagents>=0.3.11",
 #     "langchain-anthropic>=0.3",
 # ]
-# [tool.uv]
-# exclude-newer = "2026-02-06"
 # ///
-#
-# Build bashkit first:
-#   uv venv && source .venv/bin/activate
-#   uv pip install maturin && cd crates/bashkit-python && maturin develop
-#
+# Note: Install bashkit first: cd crates/bashkit-python && maturin develop
 """
 Deep Agent with BashKit Virtual Filesystem
 
@@ -24,9 +18,9 @@ The agent gets access to:
 
 All operations use BashKit's virtual filesystem - completely isolated.
 
-Usage:
+Run with:
     export ANTHROPIC_API_KEY=your_key
-    python examples/deepagent_sandbox.py
+    uv run examples/deepagent_sandbox.py
 """
 
 import asyncio

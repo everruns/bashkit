@@ -16,12 +16,6 @@ implements `SandboxBackendProtocol` providing both shell execution (`execute`) a
 file operations (`read_file`, `write_file`, `ls`, `grep`, etc.) through BashKit's VFS.
 
 ```bash
-# Setup (once)
-uv venv && source .venv/bin/activate
-uv pip install maturin deepagents langchain-anthropic
-cd crates/bashkit-python && maturin develop && cd ../..
-
-# Run
 export ANTHROPIC_API_KEY=your_key
-python examples/deepagent_sandbox.py
+uv run examples/deepagent_sandbox.py
 ```
