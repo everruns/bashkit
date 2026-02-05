@@ -103,7 +103,7 @@ use crate::error::Result;
 ///
 /// This trait defines raw storage operations without enforcing POSIX semantics.
 /// Implementations handle storage only - type checking and semantic enforcement
-/// are provided by [`PosixFs`] wrapper.
+/// are provided by [`super::PosixFs`] wrapper.
 ///
 /// # Contract
 ///
