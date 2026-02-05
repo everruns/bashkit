@@ -11,7 +11,7 @@ criteria = "safe-to-deploy"
 criteria = "safe-to-deploy"
 
 [policy.bashkit-python]
-audit-as-crates-io = false  # Python extension, not published to crates.io
+audit-as-crates-io = false
 criteria = "safe-to-deploy"
 
 [[exemptions.adler2]]
@@ -494,12 +494,12 @@ criteria = "safe-to-deploy"
 version = "1.2.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.indoc]]
-version = "2.0.7"
-criteria = "safe-to-deploy"
-
 [[exemptions.indexmap]]
 version = "2.13.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.indoc]]
+version = "2.0.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.insta]]
