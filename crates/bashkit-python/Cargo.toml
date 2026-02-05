@@ -13,6 +13,7 @@ description = "Python bindings for BashKit sandboxed bash interpreter"
 [lib]
 crate-type = ["cdylib"]
 name = "bashkit"
+doc = false  # Python extension, no Rust docs needed
 
 [dependencies]
 # BashKit core
