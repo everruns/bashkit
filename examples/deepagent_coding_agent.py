@@ -48,12 +48,12 @@ async def main():
     print("=" * 60)
 
     backend = BashKitBackend()
-    middleware = backend.create_middleware()
+    bashkit_middleware = backend.create_middleware()
 
     agent = create_deep_agent(
         model="anthropic:claude-sonnet-4-20250514",
         backend=backend,
-        middleware=[middleware],
+        middleware=[bashkit_middleware],
         system_prompt=SYSTEM_PROMPT,
     )
 
