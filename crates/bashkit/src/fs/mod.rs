@@ -3,13 +3,87 @@
 //! This module provides a virtual filesystem abstraction that allows BashKit to
 //! operate in a sandboxed environment without accessing the real filesystem.
 //!
-//! # Overview
+//! # Which Trait/Type Should I Use?
 //!
-//! BashKit provides three filesystem implementations:
+//! ```text
+//! Do you need a custom filesystem?
+//!     │
+//!     ├─ NO → Use InMemoryFs (default with Bash::new())
+//!     │
+//!     └─ YES → Is your storage simple (key-value, database, cloud)?
+//!               │
+//!               ├─ YES → Implement FsBackend + wrap with PosixFs
+//!               │        (POSIX checks are automatic)
+//!               │
+//!               └─ NO → Implement FileSystem directly
+//!                       (full control, you handle all checks)
+//! ```
+//!
+//! # Architecture
+//!
+//! The filesystem abstraction has two layers:
+//!
+//! | Layer | Trait/Type | What You Implement |
+//! |-------|------------|-------------------|
+//! | Backend | [`FsBackend`] | Raw storage only (read/write/list) |
+//! | POSIX | [`FileSystem`] | Full POSIX semantics (type checks, parent dirs) |
+//!
+//! **[`PosixFs`]** bridges these: it wraps any `FsBackend` and provides `FileSystem`.
+//!
+//! # Implementing Custom Filesystems
+//!
+//! ## Option 1: `FsBackend` + `PosixFs` (Recommended)
+//!
+//! Best for: databases, cloud storage, simple key-value stores.
+//!
+//! ```rust,ignore
+//! use bashkit::{async_trait, FsBackend, PosixFs, Bash, Result, Metadata, DirEntry};
+//! use std::sync::Arc;
+//!
+//! // Implement raw storage operations
+//! struct MyStorage { /* ... */ }
+//!
+//! #[async_trait]
+//! impl FsBackend for MyStorage {
+//!     async fn read(&self, path: &Path) -> Result<Vec<u8>> { /* ... */ }
+//!     async fn write(&self, path: &Path, content: &[u8]) -> Result<()> { /* ... */ }
+//!     // ... other methods
+//! }
+//!
+//! // Wrap with PosixFs - POSIX semantics are automatic!
+//! let fs = Arc::new(PosixFs::new(MyStorage::new()));
+//! let mut bash = Bash::builder().fs(fs).build();
+//! ```
+//!
+//! ## Option 2: `FileSystem` Directly
+//!
+//! Best for: complex behavior, custom caching, specialized semantics.
+//!
+//! ```rust,ignore
+//! use bashkit::{async_trait, FileSystem, Bash};
+//!
+//! struct MyFs { /* ... */ }
+//!
+//! #[async_trait]
+//! impl FileSystem for MyFs {
+//!     async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+//!         // You MUST check: is path a directory?
+//!         if self.is_directory(path) {
+//!             return Err(fs_errors::is_a_directory());
+//!         }
+//!         // ... write logic
+//!     }
+//!     // ... other methods with POSIX checks
+//! }
+//! ```
+//!
+//! See `examples/custom_backend.rs` and `examples/custom_filesystem_impl.rs`.
+//!
+//! # Built-in Implementations
 //!
 //! | Type | Description | Use Case |
 //! |------|-------------|----------|
-//! | [`InMemoryFs`] | Simple HashMap-based storage | Default, isolated execution |
+//! | [`InMemoryFs`] | HashMap-based storage with POSIX checks | Default, isolated execution |
 //! | [`OverlayFs`] | Copy-on-write layered filesystem | Templates, immutable bases |
 //! | [`MountableFs`] | Multiple filesystems at mount points | Complex multi-source setups |
 //!
@@ -271,18 +345,22 @@
 //! # }
 //! ```
 
+mod backend;
 mod limits;
 mod memory;
 mod mountable;
 mod overlay;
+mod posix;
 mod traits;
 
+pub use backend::FsBackend;
 pub use limits::{FsLimitExceeded, FsLimits, FsUsage};
 pub use memory::InMemoryFs;
 pub use mountable::MountableFs;
 pub use overlay::OverlayFs;
+pub use posix::PosixFs;
 #[allow(unused_imports)]
-pub use traits::{DirEntry, FileSystem, FileType, Metadata};
+pub use traits::{fs_errors, DirEntry, FileSystem, FileType, Metadata};
 
 use crate::error::Result;
 use std::io::{Error as IoError, ErrorKind};

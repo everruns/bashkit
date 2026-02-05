@@ -1824,12 +1824,27 @@ impl Interpreter {
                         match redirect.fd {
                             Some(2) => {
                                 // 2> - redirect stderr to file
-                                self.fs.write_file(&path, result.stderr.as_bytes()).await?;
+                                if let Err(e) =
+                                    self.fs.write_file(&path, result.stderr.as_bytes()).await
+                                {
+                                    // Redirect failed - set exit code and report error
+                                    result.stderr = format!("bash: {}: {}\n", target_path, e);
+                                    result.exit_code = 1;
+                                    return Ok(result);
+                                }
                                 result.stderr = String::new();
                             }
                             _ => {
                                 // Default (stdout) - write stdout to file
-                                self.fs.write_file(&path, result.stdout.as_bytes()).await?;
+                                if let Err(e) =
+                                    self.fs.write_file(&path, result.stdout.as_bytes()).await
+                                {
+                                    // Redirect failed - output is lost, set exit code and report error
+                                    result.stdout = String::new();
+                                    result.stderr = format!("bash: {}: {}\n", target_path, e);
+                                    result.exit_code = 1;
+                                    return Ok(result);
+                                }
                                 result.stdout = String::new();
                             }
                         }
@@ -1850,12 +1865,26 @@ impl Interpreter {
                         match redirect.fd {
                             Some(2) => {
                                 // 2>> - append stderr to file
-                                self.fs.append_file(&path, result.stderr.as_bytes()).await?;
+                                if let Err(e) =
+                                    self.fs.append_file(&path, result.stderr.as_bytes()).await
+                                {
+                                    result.stderr = format!("bash: {}: {}\n", target_path, e);
+                                    result.exit_code = 1;
+                                    return Ok(result);
+                                }
                                 result.stderr = String::new();
                             }
                             _ => {
                                 // Default (stdout) - append stdout to file
-                                self.fs.append_file(&path, result.stdout.as_bytes()).await?;
+                                if let Err(e) =
+                                    self.fs.append_file(&path, result.stdout.as_bytes()).await
+                                {
+                                    // Redirect failed - output is lost
+                                    result.stdout = String::new();
+                                    result.stderr = format!("bash: {}: {}\n", target_path, e);
+                                    result.exit_code = 1;
+                                    return Ok(result);
+                                }
                                 result.stdout = String::new();
                             }
                         }
@@ -1873,7 +1902,11 @@ impl Interpreter {
                     } else {
                         // Write both stdout and stderr to file
                         let combined = format!("{}{}", result.stdout, result.stderr);
-                        self.fs.write_file(&path, combined.as_bytes()).await?;
+                        if let Err(e) = self.fs.write_file(&path, combined.as_bytes()).await {
+                            result.stderr = format!("bash: {}: {}\n", target_path, e);
+                            result.exit_code = 1;
+                            return Ok(result);
+                        }
                         result.stdout = String::new();
                         result.stderr = String::new();
                     }

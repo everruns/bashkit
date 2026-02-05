@@ -1,11 +1,105 @@
 //! Filesystem trait definitions.
+//!
+//! # Overview
+//!
+//! This module defines [`FileSystem`], the high-level trait that enforces
+//! POSIX-like semantics. For implementing custom storage backends, see also
+//! [`FsBackend`](super::FsBackend) which provides a simpler contract.
+//!
+//! # POSIX Semantics Contract
+//!
+//! All [`FileSystem`] implementations MUST enforce these POSIX-like semantics:
+//!
+//! 1. **No duplicate names**: A file and directory cannot share the same path.
+//!    The filesystem entry type (file/directory/symlink) is determined by
+//!    whichever was created first.
+//!
+//! 2. **Type-safe writes**: [`FileSystem::write_file`] and [`FileSystem::append_file`]
+//!    MUST fail with "is a directory" error when the path is a directory.
+//!
+//! 3. **Type-safe mkdir**: [`FileSystem::mkdir`] MUST fail with "already exists"
+//!    when the path exists (file, directory, or symlink), unless `recursive=true`
+//!    and the existing entry is a directory.
+//!
+//! 4. **Parent directory requirement**: Write operations require parent directory
+//!    to exist (except with `recursive=true` for mkdir).
+//!
+//! # Implementing Custom Filesystems
+//!
+//! **Recommended**: Implement [`FsBackend`](super::FsBackend) and wrap with
+//! [`PosixFs`](super::PosixFs) to get POSIX semantics automatically.
+//!
+//! **Alternative**: Implement `FileSystem` directly using [`fs_errors`] helpers:
+//!
+//! ```rust,ignore
+//! use bashkit::fs::fs_errors;
+//!
+//! // In your write_file implementation:
+//! if path_is_directory {
+//!     return Err(fs_errors::is_a_directory());
+//! }
+//! ```
 
 use async_trait::async_trait;
+use std::io::{Error as IoError, ErrorKind};
 use std::path::Path;
 use std::time::SystemTime;
 
 use super::limits::{FsLimits, FsUsage};
 use crate::error::Result;
+
+/// Standard filesystem errors for consistent error messages across implementations.
+///
+/// Use these helpers when implementing [`FileSystem`] to ensure consistent
+/// error messages that match POSIX conventions.
+#[allow(dead_code)]
+pub mod fs_errors {
+    use super::*;
+
+    /// Error for attempting to write to a directory.
+    ///
+    /// Use when `write_file` or `append_file` is called on a directory path.
+    #[inline]
+    pub fn is_a_directory() -> crate::Error {
+        IoError::other("is a directory").into()
+    }
+
+    /// Error for path already existing (for mkdir without recursive).
+    ///
+    /// Use when `mkdir` is called on a path that already exists.
+    #[inline]
+    pub fn already_exists(msg: &str) -> crate::Error {
+        IoError::new(ErrorKind::AlreadyExists, msg).into()
+    }
+
+    /// Error for missing parent directory.
+    ///
+    /// Use when write operation is attempted but parent directory doesn't exist.
+    #[inline]
+    pub fn parent_not_found() -> crate::Error {
+        IoError::new(ErrorKind::NotFound, "parent directory not found").into()
+    }
+
+    /// Error for file or directory not found.
+    #[inline]
+    pub fn not_found(msg: &str) -> crate::Error {
+        IoError::new(ErrorKind::NotFound, msg).into()
+    }
+
+    /// Error for attempting directory operation on a file.
+    ///
+    /// Use when `read_dir` is called on a file path.
+    #[inline]
+    pub fn not_a_directory() -> crate::Error {
+        IoError::other("not a directory").into()
+    }
+
+    /// Error for non-empty directory removal without recursive flag.
+    #[inline]
+    pub fn directory_not_empty() -> crate::Error {
+        IoError::other("directory not empty").into()
+    }
+}
 
 /// Async virtual filesystem trait.
 ///
@@ -101,7 +195,8 @@ pub trait FileSystem: Send + Sync {
     ///
     /// Returns an error if:
     /// - `recursive` is false and parent directory doesn't exist
-    /// - Directory already exists (when not recursive)
+    /// - Path already exists as a file or symlink (always fails)
+    /// - Path already exists as a directory (fails unless `recursive=true`)
     async fn mkdir(&self, path: &Path, recursive: bool) -> Result<()>;
 
     /// Remove a file or directory.
