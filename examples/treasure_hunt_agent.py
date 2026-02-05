@@ -8,7 +8,7 @@
 # ///
 # Note: Install bashkit first: cd crates/bashkit-python && maturin develop
 """
-Treasure Hunt Agent - A fun demonstration of LangChain + BashKit
+Treasure Hunt Agent - A fun demonstration of LangChain + Bashkit
 
 This agent plays a treasure hunt game where it must:
 1. Set up a virtual filesystem with hidden clues
@@ -181,7 +181,7 @@ async def run_agent():
 
     print("=" * 60)
     print("  TREASURE HUNT AGENT")
-    print("  A LangChain + BashKit Adventure")
+    print("  A LangChain + Bashkit Adventure")
     print("=" * 60)
     print()
 

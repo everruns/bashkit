@@ -1,5 +1,5 @@
 """
-LangChain integration for BashKit.
+LangChain integration for Bashkit.
 
 Provides a LangChain-compatible tool that wraps BashTool for use with
 LangChain agents and chains.
@@ -47,26 +47,17 @@ class BashToolInput(BaseModel):
 
 if LANGCHAIN_AVAILABLE:
 
-    class BashKitTool(BaseTool):
-        """LangChain tool wrapper for BashKit sandboxed bash interpreter.
-
-        This tool provides a safe bash execution environment with:
-        - Virtual filesystem (no real filesystem access)
-        - Resource limits (command count, loop iterations)
-        - 66+ built-in commands (echo, cat, grep, sed, awk, jq, etc.)
+    class BashkitTool(BaseTool):
+        """LangChain tool wrapper for Bashkit sandboxed bash interpreter.
 
         Example:
-            >>> tool = BashKitTool()
+            >>> tool = BashkitTool()
             >>> result = tool.invoke({"commands": "echo 'Hello!'"})
             >>> print(result)  # Hello!
         """
 
-        name: str = "Bash"
-        description: str = """Sandboxed bash interpreter with virtual filesystem.
-Execute bash commands safely. Supports variables, pipelines, redirects, loops,
-conditionals, functions, and arrays. Built-in commands include: echo, cat, grep,
-sed, awk, jq, head, tail, sort, uniq, cut, tr, wc, find, xargs, and more.
-All file operations use a virtual filesystem - changes don't affect real files."""
+        name: str = ""  # Set in __init__ from bashkit
+        description: str = ""  # Set in __init__ from bashkit
         args_schema: Type[BaseModel] = BashToolInput
         handle_tool_error: bool = True
 
@@ -81,7 +72,7 @@ All file operations use a virtual filesystem - changes don't affect real files."
             max_loop_iterations: Optional[int] = None,
             **kwargs,
         ):
-            """Initialize BashKitTool.
+            """Initialize BashkitTool.
 
             Args:
                 username: Custom username for sandbox
@@ -89,17 +80,17 @@ All file operations use a virtual filesystem - changes don't affect real files."
                 max_commands: Max commands to execute
                 max_loop_iterations: Max loop iterations
             """
-            super().__init__(**kwargs)
-            object.__setattr__(
-                self,
-                "_bash_tool",
-                NativeBashTool(
-                    username=username,
-                    hostname=hostname,
-                    max_commands=max_commands,
-                    max_loop_iterations=max_loop_iterations,
-                ),
+            bash_tool = NativeBashTool(
+                username=username,
+                hostname=hostname,
+                max_commands=max_commands,
+                max_loop_iterations=max_loop_iterations,
             )
+            # Use name and description from bashkit lib
+            kwargs["name"] = bash_tool.name
+            kwargs["description"] = bash_tool.description()
+            super().__init__(**kwargs)
+            object.__setattr__(self, "_bash_tool", bash_tool)
 
         def _run(self, commands: str) -> str:
             """Execute bash commands synchronously."""
@@ -139,8 +130,8 @@ def create_bash_tool(
     hostname: Optional[str] = None,
     max_commands: Optional[int] = None,
     max_loop_iterations: Optional[int] = None,
-) -> "BashKitTool":
-    """Create a LangChain-compatible BashKit tool.
+) -> "BashkitTool":
+    """Create a LangChain-compatible Bashkit tool.
 
     Args:
         username: Custom username for sandbox
@@ -149,7 +140,7 @@ def create_bash_tool(
         max_loop_iterations: Max loop iterations
 
     Returns:
-        BashKitTool instance for use with LangChain agents
+        BashkitTool instance for use with LangChain agents
 
     Raises:
         ImportError: If langchain-core is not installed
@@ -165,7 +156,7 @@ def create_bash_tool(
             "Install with: pip install 'bashkit[langchain]'"
         )
 
-    return BashKitTool(
+    return BashkitTool(
         username=username,
         hostname=hostname,
         max_commands=max_commands,
@@ -173,4 +164,4 @@ def create_bash_tool(
     )
 
 
-__all__ = ["BashKitTool", "BashToolInput", "create_bash_tool"]
+__all__ = ["BashkitTool", "BashToolInput", "create_bash_tool"]
