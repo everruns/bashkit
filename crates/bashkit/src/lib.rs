@@ -307,8 +307,8 @@ pub use async_trait::async_trait;
 pub use builtins::{Builtin, Context as BuiltinContext};
 pub use error::{Error, Result};
 pub use fs::{
-    DirEntry, FileSystem, FileType, FsLimitExceeded, FsLimits, FsUsage, InMemoryFs, Metadata,
-    MountableFs, OverlayFs,
+    verify_filesystem_requirements, DirEntry, FileSystem, FileType, FsLimitExceeded, FsLimits,
+    FsUsage, InMemoryFs, Metadata, MountableFs, OverlayFs,
 };
 pub use git::GitConfig;
 pub use interpreter::{ControlFlow, ExecResult};
@@ -3592,6 +3592,77 @@ echo missing fi"#,
             err_msg.contains("expected"),
             "Error should mention what's expected: {}",
             err_msg
+        );
+    }
+
+    // ==================== Root directory access tests ====================
+
+    #[tokio::test]
+    async fn test_cd_to_root_and_ls() {
+        // Test: cd / && ls should work
+        let mut bash = Bash::new();
+        let result = bash.exec("cd / && ls").await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "cd / && ls should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("tmp"), "Root should contain tmp");
+        assert!(result.stdout.contains("home"), "Root should contain home");
+    }
+
+    #[tokio::test]
+    async fn test_cd_to_root_and_pwd() {
+        // Test: cd / && pwd should show /
+        let mut bash = Bash::new();
+        let result = bash.exec("cd / && pwd").await.unwrap();
+        assert_eq!(result.exit_code, 0, "cd / && pwd should succeed");
+        assert_eq!(result.stdout.trim(), "/");
+    }
+
+    #[tokio::test]
+    async fn test_cd_to_root_and_ls_dot() {
+        // Test: cd / && ls . should list root contents
+        let mut bash = Bash::new();
+        let result = bash.exec("cd / && ls .").await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "cd / && ls . should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("tmp"), "Root should contain tmp");
+        assert!(result.stdout.contains("home"), "Root should contain home");
+    }
+
+    #[tokio::test]
+    async fn test_ls_root_directly() {
+        // Test: ls / should work
+        let mut bash = Bash::new();
+        let result = bash.exec("ls /").await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "ls / should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("tmp"), "Root should contain tmp");
+        assert!(result.stdout.contains("home"), "Root should contain home");
+        assert!(result.stdout.contains("dev"), "Root should contain dev");
+    }
+
+    #[tokio::test]
+    async fn test_ls_root_long_format() {
+        // Test: ls -la / should work
+        let mut bash = Bash::new();
+        let result = bash.exec("ls -la /").await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "ls -la / should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("tmp"), "Root should contain tmp");
+        assert!(
+            result.stdout.contains("drw"),
+            "Should show directory permissions"
         );
     }
 }
