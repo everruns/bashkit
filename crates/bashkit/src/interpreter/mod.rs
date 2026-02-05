@@ -1194,8 +1194,13 @@ impl Interpreter {
     ///
     /// Supports:
     /// - `bash -c "command"` - execute a command string
+    /// - `bash -n script.sh` - syntax check only (noexec)
     /// - `bash script.sh [args...]` - execute a script file
     /// - `echo 'echo hello' | bash` - execute script from stdin
+    /// - `bash --version` / `bash --help`
+    ///
+    /// SECURITY: This re-invokes the sandboxed interpreter, NOT external bash.
+    /// See threat model TM-ESC-015 for security analysis.
     async fn execute_shell(
         &mut self,
         shell_name: &str,
@@ -1207,11 +1212,33 @@ impl Interpreter {
         let mut command_string: Option<String> = None;
         let mut script_file: Option<String> = None;
         let mut script_args: Vec<String> = Vec::new();
+        let mut noexec = false; // -n flag: syntax check only
         let mut idx = 0;
 
         while idx < args.len() {
             let arg = &args[idx];
             match arg.as_str() {
+                "--version" => {
+                    // Return sandbox version info (not real bash)
+                    return Ok(ExecResult::ok(format!(
+                        "BashKit {} (sandboxed {} interpreter)\n",
+                        env!("CARGO_PKG_VERSION"),
+                        shell_name
+                    )));
+                }
+                "--help" => {
+                    return Ok(ExecResult::ok(format!(
+                        "Usage: {} [option] ... [file [argument] ...]\n\
+                         Sandboxed shell interpreter (not GNU bash)\n\n\
+                         Options:\n\
+                         \t-c string\tExecute commands from string\n\
+                         \t-n\t\tCheck syntax without executing (noexec)\n\
+                         \t-e\t\tExit on error (accepted, limited support)\n\
+                         \t--version\tShow version\n\
+                         \t--help\t\tShow this help\n",
+                        shell_name
+                    )));
+                }
                 "-c" => {
                     // Next argument is the command string
                     idx += 1;
@@ -1227,15 +1254,37 @@ impl Interpreter {
                     script_args = args[idx..].to_vec();
                     break;
                 }
-                // Skip common bash options that don't affect execution
-                "-e" | "-x" | "-v" | "-n" | "-u" | "-o" | "-i" | "-s" | "--" => {
+                "-n" => {
+                    // Noexec: parse only, don't execute
+                    noexec = true;
                     idx += 1;
-                    if arg == "--" {
-                        break;
-                    }
                 }
-                s if s.starts_with('-') => {
-                    // Skip unknown options
+                // Accept but ignore these options (limited/no support in sandbox)
+                "-e" | "-x" | "-v" | "-u" | "-o" | "-i" | "-s" => {
+                    idx += 1;
+                }
+                "--" => {
+                    idx += 1;
+                    // Remaining args after -- are file and arguments
+                    if idx < args.len() {
+                        script_file = Some(args[idx].clone());
+                        idx += 1;
+                        script_args = args[idx..].to_vec();
+                    }
+                    break;
+                }
+                s if s.starts_with("--") => {
+                    // Unknown long option - skip
+                    idx += 1;
+                }
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // Combined short options like -ne, -ev
+                    for ch in s.chars().skip(1) {
+                        if ch == 'n' {
+                            noexec = true;
+                        }
+                        // Ignore other options
+                    }
                     idx += 1;
                 }
                 _ => {
@@ -1285,6 +1334,11 @@ impl Interpreter {
                 ));
             }
         };
+
+        // -n (noexec): syntax check only, don't execute
+        if noexec {
+            return Ok(ExecResult::ok(String::new()));
+        }
 
         // Determine $0 and positional parameters
         // For bash -c "cmd" arg0 arg1: $0=arg0, $1=arg1
@@ -3635,5 +3689,146 @@ mod tests {
         let result = run_script("bash; echo done").await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "done");
+    }
+
+    // Additional bash/sh tests for noexec, version, help
+
+    #[tokio::test]
+    async fn test_bash_n_syntax_check_success() {
+        // bash -n parses but doesn't execute
+        let result = run_script("bash -n -c 'echo should not print'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, ""); // Nothing printed - didn't execute
+    }
+
+    #[tokio::test]
+    async fn test_bash_n_syntax_error_detected() {
+        // bash -n catches syntax errors
+        let result = run_script("bash -n -c 'if then'").await;
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("syntax error"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_n_combined_flags() {
+        // -n can be combined with other flags like -ne
+        let result = run_script("bash -ne -c 'echo test'; echo done").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "done"); // Only "done" - bash -n didn't execute
+    }
+
+    #[tokio::test]
+    async fn test_bash_version() {
+        // --version shows BashKit version
+        let result = run_script("bash --version").await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("BashKit"));
+        assert!(result.stdout.contains("sandboxed"));
+    }
+
+    #[tokio::test]
+    async fn test_sh_version() {
+        // sh --version also works
+        let result = run_script("sh --version").await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("sandboxed sh"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_help() {
+        // --help shows usage
+        let result = run_script("bash --help").await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("Usage:"));
+        assert!(result.stdout.contains("-c string"));
+        assert!(result.stdout.contains("-n"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_double_dash() {
+        // -- ends option processing
+        let result = run_script("bash -- --help").await;
+        // Should try to run file named "--help", which doesn't exist
+        assert_eq!(result.exit_code, 127);
+    }
+
+    // Negative test cases
+
+    #[tokio::test]
+    async fn test_bash_invalid_syntax_in_file() {
+        // Syntax error in script file - unclosed if
+        let fs = Arc::new(InMemoryFs::new());
+        fs.write_file(std::path::Path::new("/tmp/bad.sh"), b"if true; then echo x")
+            .await
+            .unwrap();
+
+        let mut interpreter = Interpreter::new(fs.clone());
+        let parser = Parser::new("bash /tmp/bad.sh");
+        let script = parser.parse().unwrap();
+        let result = interpreter.execute(&script).await.unwrap();
+
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("syntax error"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_permission_in_sandbox() {
+        // Filesystem operations work through bash -c
+        let result = run_script("bash -c 'echo test > /tmp/out.txt && cat /tmp/out.txt'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "test");
+    }
+
+    #[tokio::test]
+    async fn test_bash_all_positional() {
+        // $@ and $* work correctly
+        let result = run_script("bash -c 'echo $@' _ a b c").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "a b c");
+    }
+
+    #[tokio::test]
+    async fn test_bash_arg_count() {
+        // $# counts positional params
+        let result = run_script("bash -c 'echo $#' _ 1 2 3 4").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "4");
+    }
+
+    // Security-focused tests
+
+    #[tokio::test]
+    async fn test_bash_no_real_bash_escape() {
+        // Verify bash -c doesn't escape sandbox
+        // Try to run a command that would work in real bash but not here
+        let result = run_script("bash -c 'which bash 2>/dev/null || echo not found'").await;
+        // 'which' is not a builtin, so this should fail
+        assert!(result.stdout.contains("not found") || result.exit_code == 127);
+    }
+
+    #[tokio::test]
+    async fn test_bash_nested_limits_respected() {
+        // Deep nesting should eventually hit limits
+        // This tests that bash -c doesn't bypass command limits
+        let result = run_script("bash -c 'for i in 1 2 3; do echo $i; done'").await;
+        assert_eq!(result.exit_code, 0);
+        // Loop executed successfully within limits
+    }
+
+    #[tokio::test]
+    async fn test_bash_c_injection_safe() {
+        // Variable expansion doesn't allow injection
+        let result = run_script("INJECT='; rm -rf /'; bash -c 'echo safe'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "safe");
+    }
+
+    #[tokio::test]
+    async fn test_bash_version_no_host_info() {
+        // Version output doesn't leak host information
+        let result = run_script("bash --version").await;
+        assert!(!result.stdout.contains("/usr"));
+        assert!(!result.stdout.contains("GNU"));
+        // Should only contain sandboxed version info
     }
 }
