@@ -30,7 +30,7 @@ use crate::fs::FileSystem;
 use crate::limits::{ExecutionCounters, ExecutionLimits};
 use crate::parser::{
     ArithmeticForCommand, AssignmentValue, CaseCommand, Command, CommandList, CompoundCommand,
-    ForCommand, FunctionDef, IfCommand, ListOperator, ParameterOp, Pipeline, Redirect,
+    ForCommand, FunctionDef, IfCommand, ListOperator, ParameterOp, Parser, Pipeline, Redirect,
     RedirectKind, Script, SimpleCommand, Span, TimeCommand, UntilCommand, WhileCommand, Word,
     WordPart,
 };
@@ -1190,6 +1190,142 @@ impl Interpreter {
         Some(Duration::from_secs_f64(total_secs_f64))
     }
 
+    /// Execute `bash` or `sh` command - interpret scripts using this interpreter.
+    ///
+    /// Supports:
+    /// - `bash -c "command"` - execute a command string
+    /// - `bash script.sh [args...]` - execute a script file
+    /// - `echo 'echo hello' | bash` - execute script from stdin
+    async fn execute_shell(
+        &mut self,
+        shell_name: &str,
+        args: &[String],
+        stdin: Option<String>,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        // Parse options
+        let mut command_string: Option<String> = None;
+        let mut script_file: Option<String> = None;
+        let mut script_args: Vec<String> = Vec::new();
+        let mut idx = 0;
+
+        while idx < args.len() {
+            let arg = &args[idx];
+            match arg.as_str() {
+                "-c" => {
+                    // Next argument is the command string
+                    idx += 1;
+                    if idx >= args.len() {
+                        return Ok(ExecResult::err(
+                            format!("{}: -c: option requires an argument\n", shell_name),
+                            2,
+                        ));
+                    }
+                    command_string = Some(args[idx].clone());
+                    idx += 1;
+                    // Remaining args become positional parameters (starting at $0)
+                    script_args = args[idx..].to_vec();
+                    break;
+                }
+                // Skip common bash options that don't affect execution
+                "-e" | "-x" | "-v" | "-n" | "-u" | "-o" | "-i" | "-s" | "--" => {
+                    idx += 1;
+                    if arg == "--" {
+                        break;
+                    }
+                }
+                s if s.starts_with('-') => {
+                    // Skip unknown options
+                    idx += 1;
+                }
+                _ => {
+                    // First non-option is the script file
+                    script_file = Some(arg.clone());
+                    idx += 1;
+                    // Remaining args become positional parameters
+                    script_args = args[idx..].to_vec();
+                    break;
+                }
+            }
+        }
+
+        // Determine what to execute
+        let is_command_mode = command_string.is_some();
+        let script_content = if let Some(cmd) = command_string {
+            // bash -c "command"
+            cmd
+        } else if let Some(ref file) = script_file {
+            // bash script.sh
+            let path = self.resolve_path(file);
+            match self.fs.read_file(&path).await {
+                Ok(content) => String::from_utf8_lossy(&content).to_string(),
+                Err(_) => {
+                    return Ok(ExecResult::err(
+                        format!("{}: {}: No such file or directory\n", shell_name, file),
+                        127,
+                    ));
+                }
+            }
+        } else if let Some(ref stdin_content) = stdin {
+            // Read script from stdin (pipe)
+            stdin_content.clone()
+        } else {
+            // No command, file, or stdin - nothing to do
+            return Ok(ExecResult::ok(String::new()));
+        };
+
+        // Parse the script
+        let parser = Parser::new(&script_content);
+        let script = match parser.parse() {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(ExecResult::err(
+                    format!("{}: syntax error: {}\n", shell_name, e),
+                    2,
+                ));
+            }
+        };
+
+        // Determine $0 and positional parameters
+        // For bash -c "cmd" arg0 arg1: $0=arg0, $1=arg1
+        // For bash script.sh arg1: $0=script.sh, $1=arg1
+        let (name_arg, positional_args) = if is_command_mode {
+            // For -c, first arg is $0, rest are $1, $2, etc.
+            if script_args.is_empty() {
+                (shell_name.to_string(), Vec::new())
+            } else {
+                let name = script_args[0].clone();
+                let positional = script_args[1..].to_vec();
+                (name, positional)
+            }
+        } else if let Some(ref file) = script_file {
+            // For script file, filename is $0, args are $1, $2, etc.
+            (file.clone(), script_args)
+        } else {
+            // Stdin mode
+            (shell_name.to_string(), Vec::new())
+        };
+
+        // Push a call frame for this script
+        self.call_stack.push(CallFrame {
+            name: name_arg,
+            locals: HashMap::new(),
+            positional: positional_args,
+        });
+
+        // Execute the script
+        let result = self.execute(&script).await;
+
+        // Pop the call frame
+        self.call_stack.pop();
+
+        // Apply redirections and return
+        match result {
+            Ok(exec_result) => self.apply_redirections(exec_result, redirects).await,
+            Err(e) => Err(e),
+        }
+    }
+
     /// Check if a value matches a shell pattern
     fn pattern_matches(&self, value: &str, pattern: &str) -> bool {
         // Handle special case of * (match anything)
@@ -1712,6 +1848,13 @@ impl Interpreter {
         // Handle `timeout` specially - needs interpreter-level command execution
         if name == "timeout" {
             return self.execute_timeout(&args, stdin, &command.redirects).await;
+        }
+
+        // Handle `bash` and `sh` specially - execute scripts using the interpreter
+        if name == "bash" || name == "sh" {
+            return self
+                .execute_shell(&name, &args, stdin, &command.redirects)
+                .await;
         }
 
         // Check for builtins
@@ -3335,5 +3478,162 @@ mod tests {
         // readonly on existing var preserves value
         let result = run_script("VAR=existing; readonly VAR; echo $VAR").await;
         assert_eq!(result.stdout.trim(), "existing");
+    }
+
+    // bash/sh command tests
+
+    #[tokio::test]
+    async fn test_bash_c_simple_command() {
+        // bash -c "command" should execute the command
+        let result = run_script("bash -c 'echo hello'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_sh_c_simple_command() {
+        // sh -c "command" should also work
+        let result = run_script("sh -c 'echo world'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "world");
+    }
+
+    #[tokio::test]
+    async fn test_bash_c_multiple_commands() {
+        // bash -c with multiple commands separated by semicolon
+        let result = run_script("bash -c 'echo one; echo two'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "one\ntwo\n");
+    }
+
+    #[tokio::test]
+    async fn test_bash_c_with_positional_args() {
+        // bash -c "cmd" arg0 arg1 - positional parameters
+        let result = run_script("bash -c 'echo $0 $1' zero one").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "zero one");
+    }
+
+    #[tokio::test]
+    async fn test_bash_script_file() {
+        // bash script.sh - execute a script file
+        let fs = Arc::new(InMemoryFs::new());
+        fs.write_file(std::path::Path::new("/tmp/test.sh"), b"echo 'from script'")
+            .await
+            .unwrap();
+
+        let mut interpreter = Interpreter::new(fs.clone());
+        let parser = Parser::new("bash /tmp/test.sh");
+        let script = parser.parse().unwrap();
+        let result = interpreter.execute(&script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "from script");
+    }
+
+    #[tokio::test]
+    async fn test_bash_script_file_with_args() {
+        // bash script.sh arg1 arg2 - script with arguments
+        let fs = Arc::new(InMemoryFs::new());
+        fs.write_file(std::path::Path::new("/tmp/args.sh"), b"echo $1 $2")
+            .await
+            .unwrap();
+
+        let mut interpreter = Interpreter::new(fs.clone());
+        let parser = Parser::new("bash /tmp/args.sh first second");
+        let script = parser.parse().unwrap();
+        let result = interpreter.execute(&script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "first second");
+    }
+
+    #[tokio::test]
+    async fn test_bash_piped_script() {
+        // echo "script" | bash - execute from stdin
+        let result = run_script("echo 'echo piped' | bash").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "piped");
+    }
+
+    #[tokio::test]
+    async fn test_bash_nonexistent_file() {
+        // bash missing.sh - should error with exit code 127
+        let result = run_script("bash /nonexistent/missing.sh").await;
+        assert_eq!(result.exit_code, 127);
+        assert!(result.stderr.contains("No such file"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_c_missing_argument() {
+        // bash -c without command string - should error
+        let result = run_script("bash -c").await;
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("option requires an argument"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_c_syntax_error() {
+        // bash -c with invalid syntax
+        let result = run_script("bash -c 'if then'").await;
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("syntax error"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_preserves_variables() {
+        // Variables set in bash -c should affect the parent
+        // (since we share the interpreter state)
+        let result = run_script("bash -c 'X=inner'; echo $X").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "inner");
+    }
+
+    #[tokio::test]
+    async fn test_bash_c_exit_code_propagates() {
+        // Exit code from bash -c should propagate
+        let result = run_script("bash -c 'exit 42'; echo $?").await;
+        assert_eq!(result.stdout.trim(), "42");
+    }
+
+    #[tokio::test]
+    async fn test_bash_nested() {
+        // Nested bash -c calls
+        let result = run_script("bash -c \"bash -c 'echo nested'\"").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "nested");
+    }
+
+    #[tokio::test]
+    async fn test_sh_script_file() {
+        // sh script.sh - same as bash script.sh
+        let fs = Arc::new(InMemoryFs::new());
+        fs.write_file(std::path::Path::new("/tmp/sh_test.sh"), b"echo 'sh works'")
+            .await
+            .unwrap();
+
+        let mut interpreter = Interpreter::new(fs.clone());
+        let parser = Parser::new("sh /tmp/sh_test.sh");
+        let script = parser.parse().unwrap();
+        let result = interpreter.execute(&script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "sh works");
+    }
+
+    #[tokio::test]
+    async fn test_bash_with_option_e() {
+        // bash -e -c "command" - -e is accepted but doesn't change behavior in sandbox
+        let result = run_script("bash -e -c 'echo works'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "works");
+    }
+
+    #[tokio::test]
+    async fn test_bash_empty_input() {
+        // bash with no arguments or stdin does nothing
+        let result = run_script("bash; echo done").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "done");
     }
 }
