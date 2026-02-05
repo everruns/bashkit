@@ -44,7 +44,16 @@ handlers require persistent state (conflicts with stateless model) and there
 are no signal sources in the sandbox. Scripts should use exit-code-based error
 handling instead.
 
-See [006-threat-model.md](006-threat-model.md) for threat details.
+**bash/sh Commands**: The `bash` and `sh` commands are implemented as sandboxed
+re-invocations of the BashKit interpreter, NOT external process spawning. This
+enables common patterns like `bash script.sh` while maintaining security:
+- `bash --version` returns BashKit version (not host bash)
+- `bash -c "cmd"` executes within the same sandbox
+- `bash -n script.sh` performs syntax checking without execution
+- Variables set in `bash -c` affect the parent (shared interpreter state)
+- Resource limits are shared/inherited from parent execution
+
+See [006-threat-model.md](006-threat-model.md) threat TM-ESC-015 for security analysis.
 
 ## POSIX Compliance
 
@@ -168,6 +177,7 @@ Features that may be added in the future (not intentionally excluded):
 | `echo -n` | Flag parsed | Trailing newline handling |
 | `time` | Wall-clock timing | User/sys CPU time (always 0) |
 | `timeout` | Basic usage | `-k` kill timeout |
+| `bash`/`sh` | `-c`, `-n`, script files, stdin, `--version`, `--help` | `-e` (exit on error), `-x` (trace), `-o`, login shell |
 
 ## Builtins
 
@@ -179,7 +189,7 @@ Features that may be added in the future (not intentionally excluded):
 `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`,
 `sort`, `uniq`, `cut`, `tr`, `date`, `wait`, `curl`, `wget`, `timeout`,
 `time` (keyword), `whoami`, `hostname`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
-`:` (colon), `eval`, `readonly`, `times`
+`:` (colon), `eval`, `readonly`, `times`, `bash`, `sh`
 
 ### Not Yet Implemented
 

@@ -235,6 +235,7 @@ max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
 | TM-ESC-006 | Subprocess | `./malicious` | External exec disabled (returns exit 127) | **MITIGATED** |
 | TM-ESC-007 | Background proc | `malicious &` | Background not implemented | **MITIGATED** |
 | TM-ESC-008 | eval injection | `eval "$user_input"` | eval runs in sandbox (builtins only) | **MITIGATED** |
+| TM-ESC-015 | bash/sh escape | `bash -c "malicious"` | Sandboxed re-invocation (no external bash) | **MITIGATED** |
 
 **Current Risk**: LOW - No external process execution capability
 
@@ -242,6 +243,15 @@ max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
 - Exit code: 127
 - Stderr: `bash: <cmd>: command not found`
 - Script continues execution (unless `set -e`)
+
+**bash/sh Re-invocation** (TM-ESC-015): The `bash` and `sh` commands are handled
+specially to re-invoke the sandboxed interpreter rather than spawning external
+processes. This enables common patterns while maintaining security:
+- `bash -c "cmd"` executes within the same sandbox constraints
+- `bash script.sh` reads and interprets the script in-process
+- `bash --version` returns BashKit version (never real bash info)
+- Resource limits and virtual filesystem are shared with parent
+- No escape to host shell is possible
 
 #### 2.3 Privilege Escalation
 
@@ -792,7 +802,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Path normalization | TM-ESC-001, TM-INJ-005 | `fs/memory.rs` | Yes |
 | No symlink following | TM-ESC-002, TM-DOS-011 | `fs/memory.rs` | Yes |
 | Network allowlist | TM-INF-010, TM-NET-001 to TM-NET-007 | `network/allowlist.rs` | Yes |
-| Sandboxed eval, no exec | TM-ESC-005 to TM-ESC-008, TM-INJ-003 | `interpreter/mod.rs` | Yes |
+| Sandboxed eval/bash/sh, no exec | TM-ESC-005 to TM-ESC-008, TM-ESC-015, TM-INJ-003 | `interpreter/mod.rs` | Yes |
 | Fail-point testing | All controls | `security_failpoint_tests.rs` | Yes |
 | Builtin panic catching | TM-INT-001, TM-INT-002, TM-INT-006 | `interpreter/mod.rs` | Yes |
 | Date format validation | TM-INT-003 | `builtins/date.rs` | Yes |
