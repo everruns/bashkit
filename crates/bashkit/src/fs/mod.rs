@@ -282,7 +282,7 @@ pub use memory::InMemoryFs;
 pub use mountable::MountableFs;
 pub use overlay::OverlayFs;
 #[allow(unused_imports)]
-pub use traits::{DirEntry, FileSystem, FileType, Metadata};
+pub use traits::{fs_errors, DirEntry, FileSystem, FileType, Metadata};
 
 use crate::error::Result;
 use std::io::{Error as IoError, ErrorKind};
