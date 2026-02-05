@@ -1936,6 +1936,199 @@ mod tests {
 
     // ==================== glob_match tests ====================
 
+    // ==================== root directory tests ====================
+
+    #[tokio::test]
+    async fn test_ls_root_directory() {
+        // Test listing the root directory directly
+        let fs = Arc::new(InMemoryFs::new());
+        let mut cwd = PathBuf::from("/home/user");
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+
+        // ls / should work
+        let args = vec!["/".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "ls / should succeed: {}",
+            result.stderr
+        );
+        // Root should contain at least tmp, home, dev
+        assert!(result.stdout.contains("tmp"), "Root should contain tmp");
+        assert!(result.stdout.contains("home"), "Root should contain home");
+        assert!(result.stdout.contains("dev"), "Root should contain dev");
+    }
+
+    #[tokio::test]
+    async fn test_ls_dot_from_root() {
+        // Test: when cwd is /, ls . should list root contents
+        let fs = Arc::new(InMemoryFs::new());
+        let mut cwd = PathBuf::from("/");
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+
+        // ls . with cwd=/ should work
+        let args = vec![".".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "ls . from / should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("tmp"), "Root should contain tmp");
+        assert!(result.stdout.contains("home"), "Root should contain home");
+    }
+
+    #[tokio::test]
+    async fn test_ls_default_from_root() {
+        // Test: when cwd is /, ls (no args) should list root contents
+        let fs = Arc::new(InMemoryFs::new());
+        let mut cwd = PathBuf::from("/");
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+
+        // ls with no args and cwd=/ should work
+        let args: Vec<String> = vec![];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "ls from / should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("tmp"), "Root should contain tmp");
+        assert!(result.stdout.contains("home"), "Root should contain home");
+    }
+
+    #[tokio::test]
+    async fn test_ls_root_with_overlay_fs() {
+        // Test: ls / with OverlayFs should work
+        use crate::fs::OverlayFs;
+
+        let base = Arc::new(InMemoryFs::new());
+        let overlay: Arc<dyn FileSystem> = Arc::new(OverlayFs::new(base));
+
+        let mut cwd = PathBuf::from("/");
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+
+        // ls / should work with overlay
+        let args = vec!["/".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: overlay.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "ls / with overlay should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("tmp"), "Root should contain tmp");
+        assert!(result.stdout.contains("home"), "Root should contain home");
+    }
+
+    #[tokio::test]
+    async fn test_ls_dot_from_root_with_overlay_fs() {
+        // Test: cd / && ls . with OverlayFs should work
+        use crate::fs::OverlayFs;
+
+        let base = Arc::new(InMemoryFs::new());
+        let overlay: Arc<dyn FileSystem> = Arc::new(OverlayFs::new(base));
+
+        let mut cwd = PathBuf::from("/");
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+
+        // ls . from / with overlay
+        let args = vec![".".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: overlay.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "ls . from / with overlay should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("tmp"), "Root should contain tmp");
+        assert!(result.stdout.contains("home"), "Root should contain home");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_path_slash_dot_normalized() {
+        // Verify that "/." path (from /join(".")) resolves correctly to root
+        let fs = Arc::new(InMemoryFs::new());
+
+        // The path "/." should normalize to "/" and exist
+        assert!(fs.exists(Path::new("/.")).await.unwrap(), "/. should exist");
+        assert!(fs.exists(Path::new("/")).await.unwrap(), "/ should exist");
+
+        // Both should return the same stat info
+        let stat_root = fs.stat(Path::new("/")).await.unwrap();
+        let stat_dot = fs.stat(Path::new("/.")).await.unwrap();
+        assert!(stat_root.file_type.is_dir());
+        assert!(stat_dot.file_type.is_dir());
+    }
+
     #[test]
     fn test_glob_match_star() {
         assert!(glob_match("file.txt", "*.txt"));

@@ -301,4 +301,21 @@ mod tests {
         let result = resolve_path(&cwd, "downloads/file.txt");
         assert_eq!(result, PathBuf::from("/home/user/downloads/file.txt"));
     }
+
+    #[test]
+    fn test_resolve_path_dot_from_root() {
+        // When cwd is /, resolving "." should give a path that normalizes to /
+        let cwd = PathBuf::from("/");
+        let result = resolve_path(&cwd, ".");
+        // Path::new("/").join(".") gives "/." but this should still work
+        // when passed to normalize_path in InMemoryFs
+        assert!(result == Path::new("/.") || result == Path::new("/"));
+    }
+
+    #[test]
+    fn test_resolve_path_dot_from_normal_dir() {
+        let cwd = PathBuf::from("/home/user");
+        let result = resolve_path(&cwd, ".");
+        assert_eq!(result, PathBuf::from("/home/user/."));
+    }
 }
