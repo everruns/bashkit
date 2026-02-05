@@ -206,7 +206,7 @@ if DEEPAGENTS_AVAILABLE:
         def write(self, file_path: str, content: str) -> WriteResult:
             cmd = f"cat > {file_path} << 'BASHKIT_EOF'\n{content}\nBASHKIT_EOF"
             result = self._bash.execute_sync(cmd)
-            return WriteResult(success=result.exit_code == 0, error=result.stderr if result.exit_code != 0 else None)
+            return WriteResult(error=result.stderr if result.exit_code != 0 else None, path=file_path)
 
         async def awrite(self, file_path: str, content: str) -> WriteResult:
             return self.write(file_path, content)
@@ -214,16 +214,16 @@ if DEEPAGENTS_AVAILABLE:
         def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
             result = self._bash.execute_sync(f"cat {file_path}")
             if result.exit_code != 0:
-                return EditResult(success=False, error=f"File not found: {file_path}")
+                return EditResult(error=f"File not found: {file_path}")
             content = result.stdout
             count = content.count(old_string)
             if count == 0:
-                return EditResult(success=False, error="old_string not found")
+                return EditResult(error="old_string not found")
             if count > 1 and not replace_all:
-                return EditResult(success=False, error=f"Found {count} times. Use replace_all=True")
+                return EditResult(error=f"Found {count} times. Use replace_all=True")
             new_content = content.replace(old_string, new_string) if replace_all else content.replace(old_string, new_string, 1)
             wr = self.write(file_path, new_content)
-            return EditResult(success=wr.success, error=wr.error)
+            return EditResult(error=wr.error, path=file_path)
 
         async def aedit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
             return self.edit(file_path, old_string, new_string, replace_all)
