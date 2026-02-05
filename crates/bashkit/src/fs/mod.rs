@@ -260,7 +260,7 @@
 //! Use [`verify_filesystem_requirements`] to test your implementation:
 //!
 //! ```rust
-//! use bashkit::fs::{verify_filesystem_requirements, InMemoryFs};
+//! use bashkit::{verify_filesystem_requirements, InMemoryFs};
 //! use std::sync::Arc;
 //!
 //! # #[tokio::main]
@@ -303,7 +303,7 @@ use std::path::Path;
 /// # Example
 ///
 /// ```rust
-/// use bashkit::fs::{verify_filesystem_requirements, InMemoryFs};
+/// use bashkit::{verify_filesystem_requirements, InMemoryFs};
 /// use std::sync::Arc;
 ///
 /// # #[tokio::main]

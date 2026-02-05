@@ -1934,8 +1934,6 @@ mod tests {
         );
     }
 
-    // ==================== glob_match tests ====================
-
     // ==================== root directory tests ====================
 
     #[tokio::test]
@@ -2128,6 +2126,137 @@ mod tests {
         assert!(stat_root.file_type.is_dir());
         assert!(stat_dot.file_type.is_dir());
     }
+
+    // ==================== negative tests ====================
+
+    #[tokio::test]
+    async fn test_ls_nonexistent_path() {
+        // Negative test: ls on path that doesn't exist should fail
+        let fs = Arc::new(InMemoryFs::new());
+        let mut cwd = PathBuf::from("/home/user");
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+
+        let args = vec!["/nonexistent/path".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 2, "ls on nonexistent path should fail");
+        assert!(
+            result.stderr.contains("No such file or directory"),
+            "Should report file not found"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ls_path_traversal_normalized() {
+        // Positive test: path traversal with .. should be normalized and work
+        let fs = Arc::new(InMemoryFs::new());
+        let mut cwd = PathBuf::from("/home/user");
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+
+        // /home/user/../user should normalize to /home/user
+        let args = vec!["../user".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+        // /home/user is an empty directory by default, so it should succeed with empty output
+        assert_eq!(
+            result.exit_code, 0,
+            "ls with .. should succeed after normalization: {}",
+            result.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ls_excessive_dotdot_stays_at_root() {
+        // Positive test: excessive .. should stay at root
+        let fs = Arc::new(InMemoryFs::new());
+        let mut cwd = PathBuf::from("/home/user");
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+
+        // ../../../../.. from /home/user should normalize to /
+        let args = vec!["../../../../..".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "Excessive .. should normalize to root: {}",
+            result.stderr
+        );
+        // Should list root contents
+        assert!(result.stdout.contains("tmp"), "Should list root (tmp)");
+        assert!(result.stdout.contains("home"), "Should list root (home)");
+    }
+
+    #[tokio::test]
+    async fn test_ls_dot_in_middle_of_path() {
+        // Positive test: . in middle of path should be normalized
+        let fs = Arc::new(InMemoryFs::new());
+        let mut cwd = PathBuf::from("/");
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+
+        // /./home/./user/. should normalize to /home/user
+        let args = vec!["./home/./user/.".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "Path with . components should work: {}",
+            result.stderr
+        );
+    }
+
+    // ==================== glob_match tests ====================
 
     #[test]
     fn test_glob_match_star() {
