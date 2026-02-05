@@ -116,14 +116,57 @@ use crate::interpreter::ExecResult;
 ///
 /// let rel = resolve_path(Path::new("/home"), "file.txt");
 /// assert_eq!(rel, PathBuf::from("/home/file.txt"));
+///
+/// // Paths are normalized (. and .. resolved)
+/// let dot = resolve_path(Path::new("/"), ".");
+/// assert_eq!(dot, PathBuf::from("/"));
 /// ```
 pub fn resolve_path(cwd: &Path, path_str: &str) -> PathBuf {
     let path = Path::new(path_str);
-    if path.is_absolute() {
+    let joined = if path.is_absolute() {
         path.to_path_buf()
     } else {
         cwd.join(path)
+    };
+    // Normalize the path to handle . and .. components
+    normalize_path(&joined)
+}
+
+/// Normalize a path by resolving `.` and `..` components.
+///
+/// This ensures paths like `/.` become `/` and `/tmp/../home` becomes `/home`.
+/// Used internally to ensure filesystem implementations receive clean paths.
+fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut result = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::RootDir => {
+                result.push("/");
+            }
+            Component::Normal(name) => {
+                result.push(name);
+            }
+            Component::ParentDir => {
+                result.pop();
+            }
+            Component::CurDir => {
+                // Skip . components
+            }
+            Component::Prefix(_) => {
+                // Windows prefix, ignore
+            }
+        }
     }
+
+    // Ensure we return "/" for empty result (e.g., from "/..")
+    if result.as_os_str().is_empty() {
+        result.push("/");
+    }
+
+    result
 }
 
 /// Execution context for builtin commands.
@@ -300,5 +343,45 @@ mod tests {
         let cwd = PathBuf::from("/home/user");
         let result = resolve_path(&cwd, "downloads/file.txt");
         assert_eq!(result, PathBuf::from("/home/user/downloads/file.txt"));
+    }
+
+    #[test]
+    fn test_resolve_path_dot_from_root() {
+        // "." from root should normalize to "/"
+        let cwd = PathBuf::from("/");
+        let result = resolve_path(&cwd, ".");
+        assert_eq!(result, PathBuf::from("/"));
+    }
+
+    #[test]
+    fn test_resolve_path_dot_from_normal_dir() {
+        // "." should be stripped, returning the cwd itself
+        let cwd = PathBuf::from("/home/user");
+        let result = resolve_path(&cwd, ".");
+        assert_eq!(result, PathBuf::from("/home/user"));
+    }
+
+    #[test]
+    fn test_resolve_path_dotdot() {
+        // ".." should go up one directory
+        let cwd = PathBuf::from("/home/user");
+        let result = resolve_path(&cwd, "..");
+        assert_eq!(result, PathBuf::from("/home"));
+    }
+
+    #[test]
+    fn test_resolve_path_dotdot_from_root() {
+        // ".." from root stays at root
+        let cwd = PathBuf::from("/");
+        let result = resolve_path(&cwd, "..");
+        assert_eq!(result, PathBuf::from("/"));
+    }
+
+    #[test]
+    fn test_resolve_path_complex() {
+        // Complex path with . and ..
+        let cwd = PathBuf::from("/home/user");
+        let result = resolve_path(&cwd, "./downloads/../documents/./file.txt");
+        assert_eq!(result, PathBuf::from("/home/user/documents/file.txt"));
     }
 }
