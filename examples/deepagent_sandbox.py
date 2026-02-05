@@ -10,14 +10,11 @@
 """
 Deep Agent Sandbox - BashKit Virtual Filesystem with Deep Agents
 
-This example demonstrates using BashKit's virtual filesystem as a
-middleware for deep agents. The agent can:
-1. Execute bash commands in an isolated sandbox
-2. Create, read, and modify files
-3. Use pipelines, loops, and other bash features
-4. Process data with grep, sed, awk, jq
-
-The virtual filesystem is completely isolated - no real files are affected.
+This example demonstrates using BashKit as a sandboxed backend for deep agents.
+The backend implements SandboxBackendProtocol providing:
+1. Shell execution via BashKit interpreter
+2. File operations (read, write, edit, ls, glob, grep) in virtual filesystem
+3. Complete isolation - no real filesystem access
 
 Run with:
     export ANTHROPIC_API_KEY=your_key
@@ -32,7 +29,7 @@ from deepagents import create_deep_agent
 
 # Try to import from installed package
 try:
-    from bashkit.deepagents import create_bash_middleware
+    from bashkit.deepagents import create_bashkit_backend
 except ImportError:
     print("bashkit not found. Install with: cd crates/bashkit-python && maturin develop")
     sys.exit(1)
@@ -133,16 +130,10 @@ echo "Project structure created at /home/user/project"
 ls -la /home/user/project/
 '''
 
-SYSTEM_PROMPT = """You are a helpful coding assistant with access to a sandboxed bash environment.
+SYSTEM_PROMPT = """You are a helpful coding assistant with access to a sandboxed environment.
 
 You have a virtual filesystem where you can create, read, and modify files safely.
-All file operations are isolated - nothing affects real files on disk.
-
-Available bash commands include:
-- File navigation: ls, cd, pwd, find
-- File operations: cat, head, tail, touch, mkdir, rm, cp, mv
-- Text processing: grep, sed, awk, jq, sort, uniq, cut, tr, wc
-- Utilities: echo, printf, date, sleep
+All operations are isolated - nothing affects real files on disk.
 
 A sample project has been set up at /home/user/project with:
 - src/calculator.py - A simple calculator module
@@ -154,8 +145,7 @@ Help the user explore and work with this codebase. Be concise and practical."""
 
 
 async def run_agent():
-    """Run the deep agent with bash middleware."""
-    # Check for API key
+    """Run the deep agent with BashKit backend."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("Please set ANTHROPIC_API_KEY environment variable")
         print("  export ANTHROPIC_API_KEY=your_key_here")
@@ -163,12 +153,12 @@ async def run_agent():
 
     print("=" * 60)
     print("  DEEP AGENT SANDBOX")
-    print("  BashKit Virtual Filesystem Demo")
+    print("  BashKit Virtual Filesystem Backend")
     print("=" * 60)
     print()
 
-    # Create the bash middleware
-    bash_middleware = create_bash_middleware(
+    # Create the BashKit backend
+    backend = create_bashkit_backend(
         username="developer",
         hostname="sandbox",
         max_commands=500,
@@ -176,14 +166,14 @@ async def run_agent():
 
     # Set up the project structure
     print("Setting up virtual filesystem...")
-    setup_output = bash_middleware.execute_sync(PROJECT_SETUP)
+    setup_output = backend.setup(PROJECT_SETUP)
     print(setup_output)
     print()
 
-    # Create the deep agent with our middleware
+    # Create the deep agent with our backend
     agent = create_deep_agent(
         model="anthropic:claude-sonnet-4-20250514",
-        middleware=[bash_middleware],
+        backend=backend,
         system_prompt=SYSTEM_PROMPT,
     )
 
@@ -193,7 +183,6 @@ async def run_agent():
     print("-" * 60)
     print()
 
-    # Example tasks the user might try
     print("Try these example prompts:")
     print("  1. 'Show me the project structure'")
     print("  2. 'Find the bug in the test file'")
@@ -219,11 +208,9 @@ async def run_agent():
 
         # Stream the agent response
         async for event in agent.astream_events(
-            {
-                "messages": [{"role": "user", "content": user_input}]
-            },
+            {"messages": [{"role": "user", "content": user_input}]},
             version="v2",
-            config={"recursion_limit": 30},
+            config={"recursion_limit": 50},
         ):
             kind = event["event"]
 
@@ -232,10 +219,10 @@ async def run_agent():
                 tool_name = event.get("name", "")
                 tool_input = event["data"].get("input", {})
                 if tool_name == "execute":
-                    cmd = tool_input.get("commands", "")[:80]
-                    print(f"\n  [bash] {cmd}{'...' if len(tool_input.get('commands', '')) > 80 else ''}")
-                elif tool_name == "reset_filesystem":
-                    print("\n  [reset filesystem]")
+                    cmd = tool_input.get("command", "")[:80]
+                    print(f"\n  [execute] {cmd}{'...' if len(tool_input.get('command', '')) > 80 else ''}")
+                elif tool_name in ("read_file", "write_file", "edit_file", "ls", "glob", "grep"):
+                    print(f"\n  [{tool_name}] {str(tool_input)[:60]}")
 
             # Tool result (abbreviated)
             elif kind == "on_tool_end":
@@ -277,55 +264,55 @@ async def run_demo():
 
     print("=" * 60)
     print("  DEEP AGENT SANDBOX DEMO")
+    print("  BashKit Virtual Filesystem Backend")
     print("=" * 60)
     print()
 
-    bash_middleware = create_bash_middleware(
+    backend = create_bashkit_backend(
         username="developer",
         hostname="sandbox",
         max_commands=500,
     )
 
     print("Setting up virtual filesystem...")
-    bash_middleware.execute_sync(PROJECT_SETUP)
+    backend.setup(PROJECT_SETUP)
     print()
 
     agent = create_deep_agent(
         model="anthropic:claude-sonnet-4-20250514",
-        middleware=[bash_middleware],
+        backend=backend,
         system_prompt=SYSTEM_PROMPT,
     )
 
     # Run a demo task
-    demo_task = """
-    Please do the following:
-    1. Show the project structure
-    2. Find the bug in test_calculator.py
-    3. Fix the bug and show the corrected test
-    """
+    demo_task = "Show the project structure and find the bug in test_calculator.py"
 
-    print(f"Demo task: {demo_task.strip()}")
+    print(f"Demo task: {demo_task}")
     print("-" * 60)
 
     async for event in agent.astream_events(
         {"messages": [{"role": "user", "content": demo_task}]},
         version="v2",
-        config={"recursion_limit": 30},
+        config={"recursion_limit": 50},
     ):
         kind = event["event"]
 
         if kind == "on_tool_start":
             tool_name = event.get("name", "")
+            tool_input = event["data"].get("input", {})
             if tool_name == "execute":
-                cmd = event["data"].get("input", {}).get("commands", "")
+                cmd = tool_input.get("command", "")
                 print(f"\n> {cmd}")
+            elif tool_name in ("read_file", "ls"):
+                path = tool_input.get("file_path") or tool_input.get("path", "")
+                print(f"\n[{tool_name}] {path}")
 
         elif kind == "on_tool_end":
             output = event["data"].get("output", "")
             if hasattr(output, "content"):
                 output = output.content
             if output:
-                for line in str(output).strip().split("\n")[:15]:
+                for line in str(output).strip().split("\n")[:12]:
                     print(f"  {line}")
 
         elif kind == "on_chat_model_stream":
