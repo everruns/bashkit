@@ -66,8 +66,11 @@ pub async fn run_agent_loop(
     }
     let mut bash = builder.build();
 
-    // Get tool definition from BashTool introspection
-    let tool = BashTool::default();
+    // Get tool definition from BashTool with matching config
+    let tool = BashTool::builder()
+        .username("eval")
+        .hostname("bashkit-eval")
+        .build();
     let tool_def = ToolDefinition {
         name: "bash".to_string(),
         description: tool.description(),
