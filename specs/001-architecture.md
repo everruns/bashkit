@@ -5,7 +5,7 @@ Implemented
 
 ## Decision
 
-BashKit uses a Cargo workspace with multiple crates:
+Bashkit uses a Cargo workspace with multiple crates:
 
 ```
 bashkit/

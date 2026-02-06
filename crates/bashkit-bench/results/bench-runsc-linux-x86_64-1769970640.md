@@ -1,4 +1,4 @@
-# BashKit Benchmark Report
+# Bashkit Benchmark Report
 
 ## System Information
 
@@ -229,5 +229,5 @@ Benchmarked 75 cases across 2 runners.
 - Per-benchmark warmup iterations excluded from timing
 - Output match compares against bash output when available
 - Errors include execution failures and exit code mismatches
-- BashKit runs in-process (no fork), bash spawns subprocess
+- Bashkit runs in-process (no fork), bash spawns subprocess
 

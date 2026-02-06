@@ -1,8 +1,8 @@
-# BashKit Threat Model
+# Bashkit Threat Model
 
 ## Overview
 
-BashKit is a sandboxed bash interpreter for multi-tenant environments, primarily designed for AI agent script execution. This document analyzes security threats and mitigations.
+Bashkit is a sandboxed bash interpreter for multi-tenant environments, primarily designed for AI agent script execution. This document analyzes security threats and mitigations.
 
 **Threat Actors**: Malicious or buggy scripts from untrusted sources (AI agents, users)
 **Assets**: Host CPU, memory, filesystem, network, secrets, other tenants
@@ -249,7 +249,7 @@ specially to re-invoke the sandboxed interpreter rather than spawning external
 processes. This enables common patterns while maintaining security:
 - `bash -c "cmd"` executes within the same sandbox constraints
 - `bash script.sh` reads and interprets the script in-process
-- `bash --version` returns BashKit version (never real bash info)
+- `bash --version` returns Bashkit version (never real bash info)
 - Resource limits and virtual filesystem are shared with parent
 - No escape to host shell is possible
 
@@ -366,7 +366,7 @@ echo $user_input
 | TM-INJ-007 | HTML in output | Script outputs `<script>` | N/A - CLI tool | **NOT APPLICABLE** |
 | TM-INJ-008 | Terminal escape | ANSI escape sequences | Caller should sanitize | **CALLER RISK** |
 
-**Current Risk**: LOW - BashKit is not a web application
+**Current Risk**: LOW - Bashkit is not a web application
 
 **Caller Responsibility** (TM-INJ-008): Sanitize output if displayed in terminal/web UI:
 ```rust
@@ -609,7 +609,7 @@ fn validate_format(format: &str) -> Result<(), String> {
 
 ### 8. Git Security
 
-BashKit provides optional sandboxed git operations via the `git` feature. This section documents
+Bashkit provides optional sandboxed git operations via the `git` feature. This section documents
 security threats related to git operations and their mitigations.
 
 #### 8.1 Repository Access
@@ -660,7 +660,7 @@ let config = format!(
 
 ### 9. Logging Security
 
-BashKit provides optional structured logging via the `logging` feature. This section documents
+Bashkit provides optional structured logging via the `logging` feature. This section documents
 security threats related to logging and their mitigations.
 
 #### 9.1 Sensitive Data Leakage
@@ -874,7 +874,7 @@ ExecutionLimits::new()
 
 ## Security Tooling
 
-This section documents the security tools used to detect and prevent vulnerabilities in BashKit.
+This section documents the security tools used to detect and prevent vulnerabilities in Bashkit.
 
 ### Static Analysis Tools
 

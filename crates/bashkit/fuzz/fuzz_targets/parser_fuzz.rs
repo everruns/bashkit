@@ -1,4 +1,4 @@
-//! Fuzz target for the BashKit parser
+//! Fuzz target for the Bashkit parser
 //!
 //! This target attempts to parse arbitrary input to find:
 //! - Parser crashes/panics

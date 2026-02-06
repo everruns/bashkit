@@ -5,7 +5,7 @@ Implemented (substantial compliance)
 
 ## Summary
 
-BashKit aims for substantial compliance with IEEE Std 1003.1-2024 (POSIX.1-2024)
+Bashkit aims for substantial compliance with IEEE Std 1003.1-2024 (POSIX.1-2024)
 Shell Command Language specification. This document explains our compliance
 approach and security-motivated deviations.
 
@@ -13,7 +13,7 @@ For detailed implementation status, see [009-implementation-status.md](009-imple
 
 ## Design Philosophy
 
-BashKit prioritizes:
+Bashkit prioritizes:
 1. **Security over completeness** - exclude features that break sandbox containment
 2. **Stateless execution** - no persistent state between command invocations
 3. **Deterministic behavior** - predictable results for AI agent workflows
@@ -27,7 +27,7 @@ break sandbox containment. Scripts requiring `exec` should be refactored to
 use standard command execution.
 
 **`trap`**: Signal handlers require persistent state across commands, conflicting
-with BashKit's stateless execution model. Additionally, there are no signal
+with Bashkit's stateless execution model. Additionally, there are no signal
 sources in the sandbox (no external processes send SIGINT/SIGTERM). Scripts
 should handle errors through exit codes and conditional execution.
 

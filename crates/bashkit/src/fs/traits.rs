@@ -103,7 +103,7 @@ pub mod fs_errors {
 
 /// Async virtual filesystem trait.
 ///
-/// This trait defines the interface for all filesystem implementations in BashKit.
+/// This trait defines the interface for all filesystem implementations in Bashkit.
 /// Implement this trait to create custom storage backends.
 ///
 /// # Thread Safety
@@ -145,7 +145,7 @@ pub mod fs_errors {
 ///
 /// # Built-in Implementations
 ///
-/// BashKit provides three implementations:
+/// Bashkit provides three implementations:
 ///
 /// - [`InMemoryFs`](crate::InMemoryFs) - HashMap-based in-memory storage
 /// - [`OverlayFs`](crate::OverlayFs) - Copy-on-write layered filesystem

@@ -1,7 +1,7 @@
-//! LLM Agent example using BashKit as a Bash tool
+//! LLM Agent example using Bashkit as a Bash tool
 //!
 //! Demonstrates a real AI agent using Claude to execute bash commands
-//! in a sandboxed BashKit session.
+//! in a sandboxed Bashkit session.
 //!
 //! Run with: ANTHROPIC_API_KEY=your-key cargo run --example agent_tool --features http_client
 //!
@@ -253,7 +253,7 @@ impl Agent {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("=== BashKit LLM Agent Example ===\n");
+    println!("=== Bashkit LLM Agent Example ===\n");
 
     let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| {
         eprintln!("Error: ANTHROPIC_API_KEY environment variable not set");

@@ -5,7 +5,7 @@ Implemented (core features)
 
 ## Decision
 
-BashKit uses a recursive descent parser with a context-aware lexer.
+Bashkit uses a recursive descent parser with a context-aware lexer.
 
 ### Tokenization Flow
 

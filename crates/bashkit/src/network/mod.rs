@@ -1,4 +1,4 @@
-//! Network layer for BashKit
+//! Network layer for Bashkit
 //!
 //! Provides secure HTTP access with URL allowlists for `curl` and `wget` builtins.
 //!

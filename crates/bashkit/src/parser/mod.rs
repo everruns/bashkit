@@ -1,4 +1,4 @@
-//! Parser module for BashKit
+//! Parser module for Bashkit
 //!
 //! Implements a recursive descent parser for bash scripts.
 //!
@@ -768,7 +768,7 @@ impl<'a> Parser<'a> {
     /// Parse a time command: time [-p] [command]
     ///
     /// The time keyword measures execution time of the following command.
-    /// Note: BashKit only tracks wall-clock time, not CPU user/sys time.
+    /// Note: Bashkit only tracks wall-clock time, not CPU user/sys time.
     fn parse_time(&mut self) -> Result<CompoundCommand> {
         let start_span = self.current_span;
         self.advance(); // consume 'time'

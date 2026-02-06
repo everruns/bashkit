@@ -1,7 +1,7 @@
-//! Grammar-based differential fuzzing for BashKit
+//! Grammar-based differential fuzzing for Bashkit
 //!
 //! These tests generate random valid bash scripts using proptest strategies
-//! and compare BashKit output against real bash to find compatibility issues.
+//! and compare Bashkit output against real bash to find compatibility issues.
 //!
 //! Run with: cargo test --test proptest_differential -- --nocapture
 //! Run more iterations: PROPTEST_CASES=1000 cargo test --test proptest_differential
@@ -24,7 +24,7 @@ fn run_real_bash(script: &str) -> (String, i32) {
     (stdout, exit_code)
 }
 
-/// Run script in BashKit and capture output
+/// Run script in Bashkit and capture output
 async fn run_bashkit(script: &str) -> (String, i32) {
     let mut bash = Bash::new();
     match bash.exec(script).await {
@@ -257,12 +257,12 @@ proptest! {
 
         prop_assert_eq!(
             &bashkit_out, &bash_out,
-            "Output mismatch for script: {}\nBashKit: {:?}\nBash: {:?}",
+            "Output mismatch for script: {}\nBashkit: {:?}\nBash: {:?}",
             script, bashkit_out, bash_out
         );
         prop_assert_eq!(
             bashkit_exit, bash_exit,
-            "Exit code mismatch for script: {}\nBashKit: {}\nBash: {}",
+            "Exit code mismatch for script: {}\nBashkit: {}\nBash: {}",
             script, bashkit_exit, bash_exit
         );
     }
@@ -281,7 +281,7 @@ proptest! {
 
         prop_assert_eq!(
             &bashkit_out, &bash_out,
-            "Output mismatch for script: {}\nBashKit: {:?}\nBash: {:?}",
+            "Output mismatch for script: {}\nBashkit: {:?}\nBash: {:?}",
             script, bashkit_out, bash_out
         );
         prop_assert_eq!(
@@ -310,7 +310,7 @@ proptest! {
 
         prop_assert_eq!(
             &bashkit_out, &bash_out,
-            "Output mismatch for script: {}\nBashKit: {:?}\nBash: {:?}",
+            "Output mismatch for script: {}\nBashkit: {:?}\nBash: {:?}",
             script, bashkit_out, bash_out
         );
         prop_assert_eq!(
@@ -334,7 +334,7 @@ proptest! {
 
         prop_assert_eq!(
             &bashkit_out, &bash_out,
-            "Output mismatch for script: {}\nBashKit: {:?}\nBash: {:?}",
+            "Output mismatch for script: {}\nBashkit: {:?}\nBash: {:?}",
             script, bashkit_out, bash_out
         );
         prop_assert_eq!(
@@ -358,7 +358,7 @@ proptest! {
 
         prop_assert_eq!(
             &bashkit_out, &bash_out,
-            "Output mismatch for script: {}\nBashKit: {:?}\nBash: {:?}",
+            "Output mismatch for script: {}\nBashkit: {:?}\nBash: {:?}",
             script, bashkit_out, bash_out
         );
         prop_assert_eq!(
@@ -371,7 +371,7 @@ proptest! {
     /// Command substitutions should produce identical output
     #[test]
     fn command_subst_matches_bash(script in command_subst_strategy()) {
-        // Skip pwd-related tests as paths differ between BashKit VFS and real fs
+        // Skip pwd-related tests as paths differ between Bashkit VFS and real fs
         prop_assume!(!script.contains("pwd"));
 
         let (bash_out, bash_exit) = run_real_bash(&script);
@@ -385,7 +385,7 @@ proptest! {
 
         prop_assert_eq!(
             &bashkit_out, &bash_out,
-            "Output mismatch for script: {}\nBashKit: {:?}\nBash: {:?}",
+            "Output mismatch for script: {}\nBashkit: {:?}\nBash: {:?}",
             script, bashkit_out, bash_out
         );
         prop_assert_eq!(
@@ -409,7 +409,7 @@ proptest! {
 
         prop_assert_eq!(
             &bashkit_out, &bash_out,
-            "Output mismatch for script: {}\nBashKit: {:?}\nBash: {:?}",
+            "Output mismatch for script: {}\nBashkit: {:?}\nBash: {:?}",
             script, bashkit_out, bash_out
         );
         prop_assert_eq!(
@@ -436,7 +436,7 @@ proptest! {
 
         prop_assert_eq!(
             &bashkit_out, &bash_out,
-            "Output mismatch for script: {}\nBashKit: {:?}\nBash: {:?}",
+            "Output mismatch for script: {}\nBashkit: {:?}\nBash: {:?}",
             script, bashkit_out, bash_out
         );
         prop_assert_eq!(
@@ -463,7 +463,7 @@ proptest! {
 
         prop_assert_eq!(
             &bashkit_out, &bash_out,
-            "Output mismatch for script: {}\nBashKit: {:?}\nBash: {:?}",
+            "Output mismatch for script: {}\nBashkit: {:?}\nBash: {:?}",
             script, bashkit_out, bash_out
         );
         prop_assert_eq!(
@@ -533,7 +533,7 @@ async fn differential_edge_cases() {
 
         assert_eq!(
             bashkit_out, bash_out,
-            "Output mismatch for '{}'\nScript: {}\nBashKit: {:?}\nBash: {:?}",
+            "Output mismatch for '{}'\nScript: {}\nBashkit: {:?}\nBash: {:?}",
             name, script, bashkit_out, bash_out
         );
         assert_eq!(

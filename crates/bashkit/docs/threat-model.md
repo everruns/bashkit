@@ -1,17 +1,17 @@
 # Threat Model
 
-BashKit is designed to execute untrusted bash scripts safely in sandboxed environments.
+Bashkit is designed to execute untrusted bash scripts safely in sandboxed environments.
 This document describes the security threats we address and how they are mitigated.
 
 **See also:**
 - [API Documentation](https://docs.rs/bashkit) - Full API reference
-- [Custom Builtins](./custom_builtins.md) - Extending BashKit safely
+- [Custom Builtins](./custom_builtins.md) - Extending Bashkit safely
 - [Compatibility Reference](./compatibility.md) - Supported bash features
 - [Logging Guide](./logging.md) - Structured logging with security (TM-LOG-*)
 
 ## Overview
 
-BashKit assumes all script input is potentially malicious. The sandbox prevents:
+Bashkit assumes all script input is potentially malicious. The sandbox prevents:
 
 - **Resource exhaustion** (CPU, memory, disk)
 - **Sandbox escape** (filesystem, process, privilege)
@@ -22,7 +22,7 @@ BashKit assumes all script input is potentially malicious. The sandbox prevents:
 
 ### Denial of Service (TM-DOS-*)
 
-Scripts may attempt to exhaust system resources. BashKit mitigates these attacks
+Scripts may attempt to exhaust system resources. Bashkit mitigates these attacks
 through configurable limits.
 
 | Threat | Attack Example | Mitigation | Code Reference |
@@ -73,7 +73,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 
 **Virtual Filesystem:**
 
-BashKit uses an in-memory virtual filesystem by default. Scripts cannot access the
+Bashkit uses an in-memory virtual filesystem by default. Scripts cannot access the
 real filesystem unless explicitly mounted via [`MountableFs`].
 
 ```rust,ignore
@@ -200,7 +200,7 @@ let tenant_b = Bash::builder()
 
 ### Internal Error Handling (TM-INT-*)
 
-BashKit is designed to never crash, even when processing malicious or malformed input.
+Bashkit is designed to never crash, even when processing malicious or malformed input.
 All unexpected errors are caught and converted to safe, human-readable messages.
 
 | Threat | Attack Example | Mitigation | Code Reference |
@@ -229,7 +229,7 @@ Error messages never expose:
 
 ### Logging Security (TM-LOG-*)
 
-When the `logging` feature is enabled, BashKit emits structured logs. Security features
+When the `logging` feature is enabled, Bashkit emits structured logs. Security features
 prevent sensitive data leakage:
 
 | Threat | Attack Example | Mitigation |
@@ -262,7 +262,7 @@ let bash = Bash::builder()
 
 ## Security Testing
 
-BashKit includes comprehensive security tests:
+Bashkit includes comprehensive security tests:
 
 - **Threat Model Tests**: [`tests/threat_model_tests.rs`][threat_tests] - 51 tests
 - **Fail-Point Tests**: [`tests/security_failpoint_tests.rs`][failpoint_tests]

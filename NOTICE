@@ -1,4 +1,4 @@
-BashKit
+Bashkit
 Copyright (c) 2024-2026 Everruns
 
 This product is an independent implementation of a sandboxed bash interpreter.
@@ -7,7 +7,7 @@ This product is an independent implementation of a sandboxed bash interpreter.
 ACKNOWLEDGMENTS
 ================================================================================
 
-BashKit is an independent implementation that draws design inspiration from
+Bashkit is an independent implementation that draws design inspiration from
 several open source projects. We gratefully acknowledge:
 
 --------------------------------------------------------------------------------
@@ -18,7 +18,7 @@ Licensed under the Apache License, Version 2.0
 
 Repository: https://github.com/vercel/just-bash
 
-BashKit's sandboxing architecture and multi-tenant design was inspired by
+Bashkit's sandboxing architecture and multi-tenant design was inspired by
 just-bash's approach to safe bash execution. No code was copied; this is an
 independent Rust implementation.
 
@@ -62,7 +62,7 @@ source code directly.
 RUST DEPENDENCIES
 ================================================================================
 
-BashKit uses the following notable Rust crates. Full dependency information
+Bashkit uses the following notable Rust crates. Full dependency information
 is available via `cargo tree` or in the Cargo.lock file.
 
 jaq-core, jaq-std, jaq-json (MIT)
@@ -92,7 +92,7 @@ See THIRD_PARTY_LICENSES/ for full license texts of key dependencies.
 INDEPENDENT IMPLEMENTATION NOTICE
 ================================================================================
 
-BashKit is an independent implementation of a bash-like shell interpreter.
+Bashkit is an independent implementation of a bash-like shell interpreter.
 It is not affiliated with, endorsed by, or derived from:
 
 - GNU Bash (GPL licensed)
