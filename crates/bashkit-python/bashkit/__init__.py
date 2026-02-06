@@ -25,7 +25,7 @@ from bashkit._bashkit import (
     create_langchain_tool_spec,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.1.2"
 __all__ = [
     "BashTool",
     "ExecResult",

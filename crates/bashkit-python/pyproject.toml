@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "bashkit"
-version = "0.1.0"
+version = "0.1.2"
 description = "Python bindings for BashKit - a sandboxed bash interpreter for AI agents"
 readme = "README.md"
 license = { text = "MIT" }
