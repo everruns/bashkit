@@ -31,7 +31,7 @@ use crate::interpreter::ExecResult;
 ///   127 - Command not found
 ///   Otherwise, exit status of command
 ///
-/// Note: In BashKit's sandboxed environment, timeout works by wrapping
+/// Note: In Bashkit's sandboxed environment, timeout works by wrapping
 /// the command execution in a tokio timeout. Max timeout is 300 seconds
 /// for safety.
 pub struct Timeout;
@@ -138,7 +138,7 @@ impl Builtin for Timeout {
         let command = &ctx.args[cmd_idx];
         let command_args: Vec<String> = ctx.args[cmd_idx + 1..].to_vec();
 
-        // Note: In the current BashKit architecture, we can't easily execute
+        // Note: In the current Bashkit architecture, we can't easily execute
         // arbitrary commands from within a builtin. The timeout would need to
         // be implemented at the interpreter level to wrap command execution.
         //

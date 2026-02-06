@@ -2,7 +2,7 @@
 
 ## Overview
 
-BashKit uses [fail-rs](https://github.com/tikv/fail-rs) for fault injection security testing. This enables systematic testing of error handling paths and resource limit enforcement under failure conditions.
+Bashkit uses [fail-rs](https://github.com/tikv/fail-rs) for fault injection security testing. This enables systematic testing of error handling paths and resource limit enforcement under failure conditions.
 
 ## Enabling Fail Points
 

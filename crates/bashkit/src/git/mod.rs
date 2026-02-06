@@ -1,4 +1,4 @@
-//! Git support for BashKit
+//! Git support for Bashkit
 //!
 //! Provides sandboxed git operations on the virtual filesystem.
 //! Requires the `git` feature to be enabled.

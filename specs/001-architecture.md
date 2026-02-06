@@ -5,7 +5,9 @@ Implemented
 
 ## Decision
 
-BashKit uses a Cargo workspace with multiple crates:
+**Official name:** "Bashkit" (not "BashKit"). Crate/package identifiers use lowercase `bashkit`.
+
+Bashkit uses a Cargo workspace with multiple crates:
 
 ```
 bashkit/

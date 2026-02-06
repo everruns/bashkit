@@ -33,7 +33,7 @@ impl Runner {
     }
 }
 
-/// BashKit runner factory
+/// Bashkit runner factory
 pub struct BashkitRunner;
 
 impl BashkitRunner {
