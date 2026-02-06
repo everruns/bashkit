@@ -298,11 +298,13 @@ mod tests {
         AgentTrace {
             messages: vec![],
             tool_call_count: count,
+            turns: 1,
             tool_calls,
             last_tool_response: last,
             natural_stop: true,
             total_input_tokens: 0,
             total_output_tokens: 0,
+            duration_ms: 0,
         }
     }
 

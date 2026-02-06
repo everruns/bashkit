@@ -22,10 +22,14 @@ pub struct AgentTrace {
     pub messages: Vec<Message>,
     pub tool_calls: Vec<ToolCallResult>,
     pub tool_call_count: usize,
+    /// Number of LLM round-trips (each provider.chat call = 1 turn)
+    pub turns: usize,
     pub last_tool_response: Option<ToolCallResult>,
     pub natural_stop: bool,
     pub total_input_tokens: u32,
     pub total_output_tokens: u32,
+    /// Wall-clock duration in milliseconds
+    pub duration_ms: u64,
 }
 
 fn format_tool_output(stdout: &str, stderr: &str, exit_code: i32) -> String {
@@ -94,6 +98,8 @@ pub async fn run_agent_loop(
     let mut natural_stop = false;
     let mut total_input_tokens = 0u32;
     let mut total_output_tokens = 0u32;
+    let mut turns = 0usize;
+    let start = std::time::Instant::now();
 
     for _turn in 0..max_turns {
         let response = provider
@@ -101,6 +107,7 @@ pub async fn run_agent_loop(
             .await
             .context("provider chat failed")?;
 
+        turns += 1;
         total_input_tokens += response.input_tokens;
         total_output_tokens += response.output_tokens;
         messages.push(response.message.clone());
@@ -161,15 +168,19 @@ pub async fn run_agent_loop(
         });
     }
 
+    let duration_ms = start.elapsed().as_millis() as u64;
+
     Ok((
         AgentTrace {
             messages,
             tool_call_count: all_tool_calls.len(),
+            turns,
             tool_calls: all_tool_calls,
             last_tool_response,
             natural_stop,
             total_input_tokens,
             total_output_tokens,
+            duration_ms,
         },
         bash,
     ))

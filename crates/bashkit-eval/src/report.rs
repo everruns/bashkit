@@ -37,6 +37,12 @@ pub struct EvalSummary {
     pub overall_rate: f64,
     pub total_input_tokens: u32,
     pub total_output_tokens: u32,
+    pub total_turns: usize,
+    pub total_tool_calls: usize,
+    pub total_duration_ms: u64,
+    pub avg_turns_per_task: f64,
+    pub avg_tool_calls_per_task: f64,
+    pub avg_duration_ms: f64,
     pub by_category: HashMap<String, CategorySummary>,
 }
 
@@ -67,6 +73,13 @@ pub fn build_report(
 
     let total_input_tokens: u32 = results.iter().map(|r| r.trace.total_input_tokens).sum();
     let total_output_tokens: u32 = results.iter().map(|r| r.trace.total_output_tokens).sum();
+    let total_turns: usize = results.iter().map(|r| r.trace.turns).sum();
+    let total_tool_calls: usize = results.iter().map(|r| r.trace.tool_call_count).sum();
+    let total_duration_ms: u64 = results.iter().map(|r| r.trace.duration_ms).sum();
+    let n = total_tasks.max(1) as f64;
+    let avg_turns_per_task = total_turns as f64 / n;
+    let avg_tool_calls_per_task = total_tool_calls as f64 / n;
+    let avg_duration_ms = total_duration_ms as f64 / n;
 
     let mut by_category: HashMap<String, CategorySummary> = HashMap::new();
     for r in results {
@@ -108,6 +121,12 @@ pub fn build_report(
             overall_rate,
             total_input_tokens,
             total_output_tokens,
+            total_turns,
+            total_tool_calls,
+            total_duration_ms,
+            avg_turns_per_task,
+            avg_tool_calls_per_task,
+            avg_duration_ms,
             by_category,
         },
     }
@@ -141,8 +160,21 @@ pub fn print_terminal_report(report: &EvalReport) {
         report.summary.overall_rate * 100.0
     );
     println!(
+        "  Turns: {} total, {:.1} avg/task",
+        report.summary.total_turns, report.summary.avg_turns_per_task
+    );
+    println!(
+        "  Tool calls: {} total, {:.1} avg/task",
+        report.summary.total_tool_calls, report.summary.avg_tool_calls_per_task
+    );
+    println!(
         "  Tokens: {} input, {} output",
         report.summary.total_input_tokens, report.summary.total_output_tokens
+    );
+    println!(
+        "  Duration: {:.1}s total, {:.1}s avg/task",
+        report.summary.total_duration_ms as f64 / 1000.0,
+        report.summary.avg_duration_ms / 1000.0
     );
 
     println!();
@@ -199,8 +231,21 @@ fn generate_markdown(report: &EvalReport) -> String {
     md.push_str(&format!("- **Date**: {}\n", report.timestamp));
     md.push_str(&format!("- **Max turns**: {}\n", report.max_turns));
     md.push_str(&format!(
-        "- **Tokens**: {} input, {} output\n\n",
+        "- **Turns**: {} total ({:.1} avg/task)\n",
+        report.summary.total_turns, report.summary.avg_turns_per_task
+    ));
+    md.push_str(&format!(
+        "- **Tool calls**: {} total ({:.1} avg/task)\n",
+        report.summary.total_tool_calls, report.summary.avg_tool_calls_per_task
+    ));
+    md.push_str(&format!(
+        "- **Tokens**: {} input, {} output\n",
         report.summary.total_input_tokens, report.summary.total_output_tokens
+    ));
+    md.push_str(&format!(
+        "- **Duration**: {:.1}s total ({:.1}s avg/task)\n\n",
+        report.summary.total_duration_ms as f64 / 1000.0,
+        report.summary.avg_duration_ms / 1000.0
     ));
 
     // Summary
@@ -238,7 +283,16 @@ fn generate_markdown(report: &EvalReport) -> String {
             status, r.task.id, r.task.category
         ));
         md.push_str(&format!("{}\n\n", r.task.description));
-        md.push_str(&format!("- Tool calls: {}\n", r.trace.tool_call_count));
+        md.push_str(&format!(
+            "- Turns: {} | Tool calls: {} | Duration: {:.1}s\n",
+            r.trace.turns,
+            r.trace.tool_call_count,
+            r.trace.duration_ms as f64 / 1000.0
+        ));
+        md.push_str(&format!(
+            "- Tokens: {} input, {} output\n",
+            r.trace.total_input_tokens, r.trace.total_output_tokens
+        ));
         md.push_str(&format!(
             "- Score: {:.0}/{:.0}\n\n",
             r.score.score, r.score.max_score

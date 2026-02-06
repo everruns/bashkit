@@ -50,12 +50,14 @@ pub async fn run_eval(
                     println!("  [{}] {} - {}", icon, sr.check, sr.detail);
                 }
                 println!(
-                    "  Score: {:.0}/{:.0} | Tokens: {}in/{}out | Calls: {}",
+                    "  Score: {:.0}/{:.0} | Turns: {} | Calls: {} | Tokens: {}in/{}out | {:.1}s",
                     score.score,
                     score.max_score,
+                    trace.turns,
+                    trace.tool_call_count,
                     trace.total_input_tokens,
                     trace.total_output_tokens,
-                    trace.tool_call_count,
+                    trace.duration_ms as f64 / 1000.0,
                 );
                 println!();
 
