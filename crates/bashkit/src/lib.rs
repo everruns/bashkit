@@ -322,6 +322,9 @@ pub use network::HttpClient;
 #[cfg(feature = "git")]
 pub use git::GitClient;
 
+#[cfg(feature = "python")]
+pub use builtins::PythonLimits;
+
 /// Logging utilities module
 ///
 /// Provides structured logging with security features including sensitive data redaction.
@@ -766,7 +769,8 @@ impl BashBuilder {
         self
     }
 
-    /// Enable embedded Python (`python`/`python3` builtins) via Monty interpreter.
+    /// Enable embedded Python (`python`/`python3` builtins) via Monty interpreter
+    /// with default resource limits.
     ///
     /// Requires the `python` feature flag. Python `pathlib.Path` operations are
     /// bridged to the virtual filesystem.
@@ -778,8 +782,28 @@ impl BashBuilder {
     /// ```
     #[cfg(feature = "python")]
     pub fn python(self) -> Self {
-        self.builtin("python", Box::new(builtins::Python))
-            .builtin("python3", Box::new(builtins::Python))
+        self.python_with_limits(builtins::PythonLimits::default())
+    }
+
+    /// Enable embedded Python with custom resource limits.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use bashkit::PythonLimits;
+    /// use std::time::Duration;
+    ///
+    /// let bash = Bash::builder()
+    ///     .python_with_limits(PythonLimits::default().max_duration(Duration::from_secs(5)))
+    ///     .build();
+    /// ```
+    #[cfg(feature = "python")]
+    pub fn python_with_limits(self, limits: builtins::PythonLimits) -> Self {
+        self.builtin(
+            "python",
+            Box::new(builtins::Python::with_limits(limits.clone())),
+        )
+        .builtin("python3", Box::new(builtins::Python::with_limits(limits)))
     }
 
     /// Register a custom builtin command.

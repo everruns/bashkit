@@ -297,16 +297,23 @@ impl BashToolBuilder {
         self
     }
 
-    /// Enable embedded Python (`python`/`python3` builtins) via Monty interpreter.
+    /// Enable embedded Python (`python`/`python3` builtins) via Monty interpreter
+    /// with default resource limits.
     ///
     /// Requires the `python` feature flag. Python `pathlib.Path` operations are
     /// bridged to the virtual filesystem. Limitations (no `open()`, no HTTP) are
     /// automatically documented in `llmtext()` and `system_prompt()`.
     #[cfg(feature = "python")]
     pub fn python(self) -> Self {
+        self.python_with_limits(crate::builtins::PythonLimits::default())
+    }
+
+    /// Enable embedded Python with custom resource limits.
+    #[cfg(feature = "python")]
+    pub fn python_with_limits(self, limits: crate::builtins::PythonLimits) -> Self {
         use crate::builtins::Python;
-        self.builtin("python", Box::new(Python))
-            .builtin("python3", Box::new(Python))
+        self.builtin("python", Box::new(Python::with_limits(limits.clone())))
+            .builtin("python3", Box::new(Python::with_limits(limits)))
     }
 
     /// Build the BashTool

@@ -27,6 +27,78 @@ const DEFAULT_MAX_DURATION: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_MEMORY: usize = 64 * 1024 * 1024; // 64 MB
 const DEFAULT_MAX_RECURSION: usize = 200;
 
+/// Resource limits for the embedded Python (Monty) interpreter.
+///
+/// Use the builder pattern to customize, or `Default` for the standard sandbox limits:
+/// - 1,000,000 allocations
+/// - 30 second timeout
+/// - 64 MB memory
+/// - 200 recursion depth
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use bashkit::PythonLimits;
+///
+/// let limits = PythonLimits::default()
+///     .max_duration(Duration::from_secs(5))
+///     .max_memory(16 * 1024 * 1024);
+///
+/// let bash = Bash::builder().python_with_limits(limits).build();
+/// ```
+#[derive(Debug, Clone)]
+pub struct PythonLimits {
+    /// Maximum heap allocations (default: 1,000,000).
+    pub max_allocations: usize,
+    /// Maximum execution time (default: 30s).
+    pub max_duration: Duration,
+    /// Maximum memory in bytes (default: 64 MB).
+    pub max_memory: usize,
+    /// Maximum recursion depth (default: 200).
+    pub max_recursion: usize,
+}
+
+impl Default for PythonLimits {
+    fn default() -> Self {
+        Self {
+            max_allocations: DEFAULT_MAX_ALLOCATIONS,
+            max_duration: DEFAULT_MAX_DURATION,
+            max_memory: DEFAULT_MAX_MEMORY,
+            max_recursion: DEFAULT_MAX_RECURSION,
+        }
+    }
+}
+
+impl PythonLimits {
+    /// Set max heap allocations.
+    #[must_use]
+    pub fn max_allocations(mut self, n: usize) -> Self {
+        self.max_allocations = n;
+        self
+    }
+
+    /// Set max execution duration.
+    #[must_use]
+    pub fn max_duration(mut self, d: Duration) -> Self {
+        self.max_duration = d;
+        self
+    }
+
+    /// Set max memory in bytes.
+    #[must_use]
+    pub fn max_memory(mut self, bytes: usize) -> Self {
+        self.max_memory = bytes;
+        self
+    }
+
+    /// Set max recursion depth.
+    #[must_use]
+    pub fn max_recursion(mut self, depth: usize) -> Self {
+        self.max_recursion = depth;
+        self
+    }
+}
+
 /// The python/python3 builtin command.
 ///
 /// Executes Python code using the embedded Monty interpreter (pydantic/monty).
@@ -43,7 +115,30 @@ const DEFAULT_MAX_RECURSION: usize = 200;
 /// python3 --version
 /// python3 -c "from pathlib import Path; print(Path('/tmp/f.txt').read_text())"
 /// ```
-pub struct Python;
+pub struct Python {
+    /// Resource limits for the Monty interpreter.
+    pub limits: PythonLimits,
+}
+
+impl Python {
+    /// Create with default limits.
+    pub fn new() -> Self {
+        Self {
+            limits: PythonLimits::default(),
+        }
+    }
+
+    /// Create with custom limits.
+    pub fn with_limits(limits: PythonLimits) -> Self {
+        Self { limits }
+    }
+}
+
+impl Default for Python {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl Builtin for Python {
@@ -153,7 +248,15 @@ impl Builtin for Python {
             ));
         };
 
-        run_python(&code, &filename, ctx.fs.clone(), ctx.cwd, ctx.env).await
+        run_python(
+            &code,
+            &filename,
+            ctx.fs.clone(),
+            ctx.cwd,
+            ctx.env,
+            &self.limits,
+        )
+        .await
     }
 }
 
@@ -167,6 +270,7 @@ async fn run_python(
     fs: Arc<dyn FileSystem>,
     cwd: &Path,
     env: &HashMap<String, String>,
+    py_limits: &PythonLimits,
 ) -> Result<ExecResult> {
     // Strip shebang if present
     let code = if code.starts_with("#!") {
@@ -184,10 +288,10 @@ async fn run_python(
     };
 
     let limits = ResourceLimits::new()
-        .max_allocations(DEFAULT_MAX_ALLOCATIONS)
-        .max_duration(DEFAULT_MAX_DURATION)
-        .max_memory(DEFAULT_MAX_MEMORY)
-        .max_recursion_depth(Some(DEFAULT_MAX_RECURSION));
+        .max_allocations(py_limits.max_allocations)
+        .max_duration(py_limits.max_duration)
+        .max_memory(py_limits.max_memory)
+        .max_recursion_depth(Some(py_limits.max_recursion));
 
     let tracker = LimitedTracker::new(limits);
     let mut printer = CollectStringPrint::new();
@@ -563,7 +667,7 @@ mod tests {
         let mut cwd = PathBuf::from("/home/user");
         let fs = Arc::new(InMemoryFs::new());
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, stdin);
-        Python.execute(ctx).await.unwrap()
+        Python::new().execute(ctx).await.unwrap()
     }
 
     async fn run_with_file(args: &[&str], file_path: &str, content: &str) -> ExecResult {
@@ -576,7 +680,7 @@ mod tests {
             .await
             .unwrap();
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
-        Python.execute(ctx).await.unwrap()
+        Python::new().execute(ctx).await.unwrap()
     }
 
     /// Helper: run Python with pre-populated VFS files and env vars.
@@ -602,7 +706,7 @@ mod tests {
             fs.write_file(p, content.as_bytes()).await.unwrap();
         }
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
-        Python.execute(ctx).await.unwrap()
+        Python::new().execute(ctx).await.unwrap()
     }
 
     // --- Basic functionality tests (existing) ---
@@ -919,5 +1023,62 @@ mod tests {
         .await;
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.stdout, "5\n");
+    }
+
+    // --- PythonLimits tests ---
+
+    #[tokio::test]
+    async fn test_custom_limits_tight_memory() {
+        // Very tight memory limit should cause failure for large allocations
+        let limits = PythonLimits::default().max_memory(1024);
+        let py = Python::with_limits(limits);
+        let args = vec!["-c".to_string(), "x = list(range(100000))".to_string()];
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+        let mut cwd = PathBuf::from("/home/user");
+        let fs = Arc::new(InMemoryFs::new());
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
+        let r = py.execute(ctx).await.unwrap();
+        assert_ne!(r.exit_code, 0, "Tight memory limit should cause failure");
+    }
+
+    #[tokio::test]
+    async fn test_custom_limits_generous() {
+        // Generous limits should succeed
+        let limits = PythonLimits::default()
+            .max_allocations(10_000_000)
+            .max_memory(128 * 1024 * 1024);
+        let py = Python::with_limits(limits);
+        let args = vec!["-c".to_string(), "print(sum(range(100)))".to_string()];
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+        let mut cwd = PathBuf::from("/home/user");
+        let fs = Arc::new(InMemoryFs::new());
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
+        let r = py.execute(ctx).await.unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "4950\n");
+    }
+
+    #[test]
+    fn test_python_limits_builder() {
+        let limits = PythonLimits::default()
+            .max_allocations(500)
+            .max_duration(Duration::from_secs(10))
+            .max_memory(1024)
+            .max_recursion(50);
+        assert_eq!(limits.max_allocations, 500);
+        assert_eq!(limits.max_duration, Duration::from_secs(10));
+        assert_eq!(limits.max_memory, 1024);
+        assert_eq!(limits.max_recursion, 50);
+    }
+
+    #[test]
+    fn test_python_limits_default() {
+        let limits = PythonLimits::default();
+        assert_eq!(limits.max_allocations, 1_000_000);
+        assert_eq!(limits.max_duration, Duration::from_secs(30));
+        assert_eq!(limits.max_memory, 64 * 1024 * 1024);
+        assert_eq!(limits.max_recursion, 200);
     }
 }
