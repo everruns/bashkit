@@ -16,6 +16,7 @@ pub async fn run_eval(
     max_turns: usize,
     save: bool,
     output_dir: &str,
+    moniker: &str,
 ) -> Result<()> {
     let tasks = load_dataset(dataset_path)?;
     let provider = create_provider(provider_name, model)?;
@@ -78,7 +79,7 @@ pub async fn run_eval(
     report::print_terminal_report(&eval_report);
 
     if save {
-        report::save_report(&eval_report, output_dir)?;
+        report::save_report(&eval_report, output_dir, moniker)?;
     }
 
     Ok(())

@@ -39,6 +39,10 @@ enum Commands {
         /// Output directory for saved results
         #[arg(long, default_value = "eval-results")]
         output: String,
+
+        /// Custom moniker for identifying this run (default: auto from provider+model)
+        #[arg(long)]
+        moniker: Option<String>,
     },
 }
 
@@ -54,9 +58,16 @@ async fn main() -> Result<()> {
             max_turns,
             save,
             output,
+            moniker,
         } => {
-            bashkit_eval::runner::run_eval(&dataset, &provider, &model, max_turns, save, &output)
-                .await?;
+            let moniker = moniker.unwrap_or_else(|| {
+                let sanitized = model.replace(['/', ':'], "-");
+                format!("{}-{}", provider, sanitized)
+            });
+            bashkit_eval::runner::run_eval(
+                &dataset, &provider, &model, max_turns, save, &output, &moniker,
+            )
+            .await?;
         }
     }
 

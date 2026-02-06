@@ -194,17 +194,12 @@ pub fn print_terminal_report(report: &EvalReport) {
 }
 
 /// Save JSON + Markdown to disk
-pub fn save_report(report: &EvalReport, output_dir: &str) -> Result<()> {
+/// Filename: eval-{moniker}-{YYYY-MM-DD-HHmmss}.{json,md}
+pub fn save_report(report: &EvalReport, output_dir: &str, moniker: &str) -> Result<()> {
     std::fs::create_dir_all(output_dir)?;
 
-    let sanitized_model = report.model.replace(['/', ':'], "-");
-    let base = format!(
-        "{}/{}-{}-{}",
-        output_dir,
-        report.provider,
-        sanitized_model,
-        report.timestamp.replace(':', "-")
-    );
+    let date = chrono::Utc::now().format("%Y-%m-%d-%H%M%S");
+    let base = format!("{}/eval-{}-{}", output_dir, moniker, date);
 
     // JSON
     let json_path = format!("{}.json", base);
