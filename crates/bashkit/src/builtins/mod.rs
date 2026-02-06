@@ -58,6 +58,9 @@ mod wc;
 #[cfg(feature = "git")]
 mod git;
 
+#[cfg(feature = "python")]
+mod python;
+
 pub use archive::{Gunzip, Gzip, Tar};
 pub use awk::Awk;
 pub use cat::Cat;
@@ -93,6 +96,9 @@ pub use wc::Wc;
 
 #[cfg(feature = "git")]
 pub use git::Git;
+
+#[cfg(feature = "python")]
+pub use python::Python;
 
 use async_trait::async_trait;
 use std::collections::HashMap;

@@ -198,6 +198,12 @@ impl Interpreter {
         // Git builtin (requires git feature and configuration at runtime)
         #[cfg(feature = "git")]
         builtins.insert("git".to_string(), Box::new(builtins::Git));
+        // Python builtins (requires python feature, uses embedded Monty interpreter)
+        #[cfg(feature = "python")]
+        {
+            builtins.insert("python".to_string(), Box::new(builtins::Python));
+            builtins.insert("python3".to_string(), Box::new(builtins::Python));
+        }
         builtins.insert("timeout".to_string(), Box::new(builtins::Timeout));
         // System info builtins (configurable sandbox values)
         let hostname_val = hostname.unwrap_or_else(|| builtins::DEFAULT_HOSTNAME.to_string());

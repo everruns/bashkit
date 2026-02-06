@@ -221,6 +221,21 @@ async fn jq_spec_tests() {
     run_category_tests("jq", all_tests).await;
 }
 
+/// Run all python spec tests (requires python feature)
+#[cfg(feature = "python")]
+#[tokio::test]
+async fn python_spec_tests() {
+    let dir = spec_cases_dir().join("python");
+    let all_tests = load_spec_tests(&dir);
+
+    if all_tests.is_empty() {
+        println!("No python spec tests found in {:?}", dir);
+        return;
+    }
+
+    run_category_tests("python", all_tests).await;
+}
+
 async fn run_category_tests(
     name: &str,
     all_tests: std::collections::HashMap<String, Vec<spec_runner::SpecTest>>,

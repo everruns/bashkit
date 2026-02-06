@@ -189,7 +189,8 @@ Features that may be added in the future (not intentionally excluded):
 `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`,
 `sort`, `uniq`, `cut`, `tr`, `date`, `wait`, `curl`, `wget`, `timeout`,
 `time` (keyword), `whoami`, `hostname`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
-`:` (colon), `eval`, `readonly`, `times`, `bash`, `sh`
+`:` (colon), `eval`, `readonly`, `times`, `bash`, `sh`,
+`python`, `python3` (requires `python` feature, see [011-python-builtin.md](011-python-builtin.md))
 
 ### Not Yet Implemented
 
