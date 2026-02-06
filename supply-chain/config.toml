@@ -58,6 +58,10 @@ criteria = "safe-to-deploy"
 version = "1.0.100"
 criteria = "safe-to-deploy"
 
+[[exemptions.anyhow]]
+version = "1.0.101"
+criteria = "safe-to-deploy"
+
 [[exemptions.approx]]
 version = "0.5.1"
 criteria = "safe-to-deploy"
@@ -1566,12 +1570,20 @@ criteria = "safe-to-deploy"
 version = "0.8.38"
 criteria = "safe-to-deploy"
 
+[[exemptions.zerocopy]]
+version = "0.8.39"
+criteria = "safe-to-deploy"
+
 [[exemptions.zerocopy-derive]]
 version = "0.8.38"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy-derive]]
 version = "0.8.38"
+criteria = "safe-to-deploy"
+
+[[exemptions.zerocopy-derive]]
+version = "0.8.39"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerofrom]]
