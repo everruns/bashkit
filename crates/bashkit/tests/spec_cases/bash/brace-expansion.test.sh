@@ -55,7 +55,7 @@ a1 a2 b1 b2
 ### end
 
 ### brace_empty_item
-### bash_diff: BashKit preserves leading space from empty brace item, bash strips it
+### bash_diff: Bashkit preserves leading space from empty brace item, bash strips it
 # Brace with empty item
 echo {,a,b}
 ### expect

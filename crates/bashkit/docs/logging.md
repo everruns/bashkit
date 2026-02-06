@@ -1,6 +1,6 @@
 # Logging Guide
 
-BashKit provides optional structured logging via the `tracing` crate when the
+Bashkit provides optional structured logging via the `tracing` crate when the
 `logging` feature is enabled. This guide covers configuration, log levels,
 security considerations, and integration with your application.
 
@@ -20,7 +20,7 @@ tracing-subscriber = "0.3"  # or your preferred subscriber
 
 ## Log Levels
 
-BashKit emits logs at five levels:
+Bashkit emits logs at five levels:
 
 | Level | Target | When Used |
 |-------|--------|-----------|
@@ -55,7 +55,7 @@ fn main() {
         .with(EnvFilter::from_default_env())
         .init();
 
-    // BashKit will now emit logs
+    // Bashkit will now emit logs
     let mut bash = Bash::builder()
         .log_config(LogConfig::new())
         .build();
@@ -67,7 +67,7 @@ fn main() {
 Control log levels via `RUST_LOG`:
 
 ```bash
-# All BashKit logs at debug level
+# All Bashkit logs at debug level
 RUST_LOG=bashkit=debug cargo run
 
 # Only session lifecycle (info level)
@@ -94,7 +94,7 @@ let bash = Bash::builder()
 
 ## Security (TM-LOG-*)
 
-BashKit's logging is designed with security as a priority. Sensitive data is
+Bashkit's logging is designed with security as a priority. Sensitive data is
 redacted by default to prevent accidental exposure in logs.
 
 ### What Gets Redacted

@@ -1,4 +1,4 @@
-//! Git client implementation for BashKit.
+//! Git client implementation for Bashkit.
 //!
 //! Provides sandboxed git operations on the virtual filesystem.
 //!

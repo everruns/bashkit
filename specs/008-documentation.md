@@ -17,7 +17,7 @@ Use `include_str!` macro to embed external markdown files into rustdoc as docume
 crates/bashkit/
 ├── docs/
 │   ├── compatibility.md      # Bash compatibility scorecard
-│   ├── custom_builtins.md    # Guide for extending BashKit
+│   ├── custom_builtins.md    # Guide for extending Bashkit
 │   └── (future docs...)
 └── src/
     └── lib.rs

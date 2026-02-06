@@ -1,4 +1,4 @@
-# BashKit CLI - Command line interface for bashkit
+# Bashkit CLI - Command line interface for bashkit
 # Run bash scripts in a sandboxed environment
 
 [package]
@@ -10,7 +10,7 @@ authors.workspace = true
 repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Command line interface for BashKit sandboxed bash interpreter"
+description = "Command line interface for Bashkit sandboxed bash interpreter"
 readme = "../../README.md"
 
 [[bin]]

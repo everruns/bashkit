@@ -1,6 +1,6 @@
-# Contributing to BashKit
+# Contributing to Bashkit
 
-Thanks for your interest in contributing to BashKit!
+Thanks for your interest in contributing to Bashkit!
 
 ## Setup
 

@@ -1,4 +1,4 @@
-//! BashKit CLI - Command line interface for sandboxed bash execution
+//! Bashkit CLI - Command line interface for sandboxed bash execution
 //!
 //! Usage:
 //!   bashkit -c 'echo hello'        # Execute a command string
@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-/// BashKit - Sandboxed bash interpreter
+/// Bashkit - Sandboxed bash interpreter
 #[derive(Parser, Debug)]
 #[command(name = "bashkit")]
 #[command(author, version, about, long_about = None)]

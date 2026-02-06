@@ -90,7 +90,7 @@ echo $?
 ### end
 
 ### timeout_zero
-### bash_diff: BashKit timeout 0 times out immediately, real bash runs command with no timeout
+### bash_diff: Bashkit timeout 0 times out immediately, real bash runs command with no timeout
 # Timeout of 0 should timeout immediately
 # Note: Also tested in interpreter::tests::test_timeout_zero_deterministically with paused time
 timeout 0 sleep 1

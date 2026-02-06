@@ -2,11 +2,11 @@
 
 ## Abstract
 
-This document describes the release process for BashKit. Releases are initiated by asking a coding agent to prepare the release, with CI automation handling the rest.
+This document describes the release process for Bashkit. Releases are initiated by asking a coding agent to prepare the release, with CI automation handling the rest.
 
 ## Versioning
 
-BashKit follows [Semantic Versioning](https://semver.org/):
+Bashkit follows [Semantic Versioning](https://semver.org/):
 
 - **MAJOR** (X.0.0): Breaking API changes
 - **MINOR** (0.X.0): New features, new builtins

@@ -1,6 +1,6 @@
 //! Security tests using fail-rs for fault injection
 //!
-//! These tests verify that BashKit handles failure scenarios securely:
+//! These tests verify that Bashkit handles failure scenarios securely:
 //! - Resource limits are enforced even under failure conditions
 //! - Filesystem operations fail gracefully
 //! - Interpreter handles errors without exposing internal state

@@ -120,7 +120,7 @@ async fn mixed_permissions() -> anyhow::Result<()> {
     let bash = Bash::builder()
         // Readonly system files
         .mount_readonly_text("/etc/hostname", "sandbox-host")
-        .mount_readonly_text("/etc/os-release", "NAME=\"BashKit\"\nVERSION=\"1.0\"\n")
+        .mount_readonly_text("/etc/os-release", "NAME=\"Bashkit\"\nVERSION=\"1.0\"\n")
         // Writable workspace files
         .mount_text("/workspace/notes.txt", "Initial notes\n")
         .mount_text(

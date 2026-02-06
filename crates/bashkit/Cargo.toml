@@ -1,4 +1,4 @@
-# BashKit core library
+# Bashkit core library
 # Sandboxed bash interpreter for multi-tenant environments
 
 [package]

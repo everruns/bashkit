@@ -1,6 +1,6 @@
 //! Custom filesystem example
 //!
-//! Demonstrates using virtual filesystems with BashKit.
+//! Demonstrates using virtual filesystems with Bashkit.
 //! Run with: cargo run --example custom_fs
 
 use bashkit::{Bash, FileSystem, InMemoryFs, MountableFs, OverlayFs};

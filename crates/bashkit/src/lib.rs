@@ -1,4 +1,4 @@
-//! BashKit - Sandboxed bash interpreter for multi-tenant environments
+//! Bashkit - Sandboxed bash interpreter for multi-tenant environments
 //!
 //! Sandboxed bash interpreter for AI agents, CI/CD pipelines, and code sandboxes.
 //! Written in Rust.
@@ -157,7 +157,7 @@
 //!
 //! # Custom Builtins
 //!
-//! Register custom commands to extend BashKit with domain-specific functionality:
+//! Register custom commands to extend Bashkit with domain-specific functionality:
 //!
 //! ```rust
 //! use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, async_trait};
@@ -195,7 +195,7 @@
 //!
 //! # Virtual Filesystem
 //!
-//! BashKit provides three filesystem implementations:
+//! Bashkit provides three filesystem implementations:
 //!
 //! - [`InMemoryFs`]: Simple in-memory filesystem (default)
 //! - [`OverlayFs`]: Copy-on-write overlay for layered storage
@@ -266,7 +266,7 @@
 //!
 //! See the `examples/` directory for complete working examples:
 //!
-//! - `basic.rs` - Getting started with BashKit
+//! - `basic.rs` - Getting started with Bashkit
 //! - `custom_fs.rs` - Using different filesystem implementations
 //! - `custom_filesystem_impl.rs` - Implementing the [`FileSystem`] trait
 //! - `resource_limits.rs` - Setting execution limits
@@ -284,7 +284,7 @@
 //!
 //! # Ecosystem
 //!
-//! BashKit is part of the [Everruns](https://everruns.com) ecosystem.
+//! Bashkit is part of the [Everruns](https://everruns.com) ecosystem.
 
 // Stricter panic prevention - prefer proper error handling over unwrap()
 #![warn(clippy::unwrap_used)]
@@ -340,7 +340,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Main entry point for BashKit.
+/// Main entry point for Bashkit.
 ///
 /// Provides a sandboxed bash interpreter with an in-memory virtual filesystem.
 pub struct Bash {
@@ -692,7 +692,7 @@ impl BashBuilder {
 
     /// Configure logging behavior.
     ///
-    /// When the `logging` feature is enabled, BashKit can emit structured logs
+    /// When the `logging` feature is enabled, Bashkit can emit structured logs
     /// at various levels (error, warn, info, debug, trace) during execution.
     ///
     /// # Log Levels
@@ -1043,7 +1043,7 @@ impl BashBuilder {
 // Source files live in crates/bashkit/docs/ - edit there, not here.
 // See specs/008-documentation.md for the documentation approach.
 
-/// Guide for creating custom builtins to extend BashKit.
+/// Guide for creating custom builtins to extend Bashkit.
 ///
 /// This guide covers:
 /// - Implementing the [`Builtin`] trait
@@ -1069,7 +1069,7 @@ pub mod compatibility_scorecard {}
 
 /// Security threat model guide.
 ///
-/// This guide documents security threats addressed by BashKit and their mitigations.
+/// This guide documents security threats addressed by Bashkit and their mitigations.
 /// All threats use stable IDs for tracking and code references.
 ///
 /// **Topics covered:**
@@ -1083,7 +1083,7 @@ pub mod compatibility_scorecard {}
 #[doc = include_str!("../docs/threat-model.md")]
 pub mod threat_model {}
 
-/// Logging guide for BashKit.
+/// Logging guide for Bashkit.
 ///
 /// This guide covers configuring structured logging, log levels, security
 /// considerations, and integration with tracing subscribers.

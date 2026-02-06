@@ -978,7 +978,7 @@ impl Interpreter {
 
     /// Execute a time command - measure wall-clock execution time
     ///
-    /// Note: BashKit only measures wall-clock (real) time.
+    /// Note: Bashkit only measures wall-clock (real) time.
     /// User and system CPU time are always reported as 0.
     /// This is a documented incompatibility with bash.
     async fn execute_time(&mut self, time_cmd: &TimeCommand) -> Result<ExecResult> {
@@ -1221,7 +1221,7 @@ impl Interpreter {
                 "--version" => {
                     // Return sandbox version info (not real bash)
                     return Ok(ExecResult::ok(format!(
-                        "BashKit {} (sandboxed {} interpreter)\n",
+                        "Bashkit {} (sandboxed {} interpreter)\n",
                         env!("CARGO_PKG_VERSION"),
                         shell_name
                     )));
@@ -3755,10 +3755,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_bash_version() {
-        // --version shows BashKit version
+        // --version shows Bashkit version
         let result = run_script("bash --version").await;
         assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("BashKit"));
+        assert!(result.stdout.contains("Bashkit"));
         assert!(result.stdout.contains("sandboxed"));
     }
 

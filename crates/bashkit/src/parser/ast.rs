@@ -112,7 +112,7 @@ pub enum CompoundCommand {
 
 /// Time command - wraps a command and measures its execution time.
 ///
-/// Note: BashKit only supports wall-clock time measurement.
+/// Note: Bashkit only supports wall-clock time measurement.
 /// User/system CPU time is not tracked (always reported as 0).
 /// This is a known incompatibility with bash.
 #[derive(Debug, Clone)]

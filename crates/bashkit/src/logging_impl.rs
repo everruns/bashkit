@@ -1,4 +1,4 @@
-//! Logging infrastructure for BashKit
+//! Logging infrastructure for Bashkit
 //!
 //! This module provides structured logging with built-in security features
 //! to prevent sensitive data leakage (TM-LOG-001).

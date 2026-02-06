@@ -21,7 +21,7 @@ This license applies to:
 - One True AWK (Lucent Technologies / Brian Kernighan)
   Repository: https://github.com/onetrueawk/awk
 
-  BashKit's AWK builtin implementation is informed by the One True AWK
+  Bashkit's AWK builtin implementation is informed by the One True AWK
   language specification and behavior, but is an independent implementation
   written from scratch in Rust.
 --------------------------------------------------------------------------------

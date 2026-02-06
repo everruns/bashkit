@@ -7,7 +7,7 @@ Phase 3: Implemented (branch, checkout, diff, reset)
 
 ## Decision
 
-BashKit provides sandboxed git operations via the `git` feature flag.
+Bashkit provides sandboxed git operations via the `git` feature flag.
 All git operations work on the virtual filesystem only.
 
 ### Feature Flag
@@ -104,7 +104,7 @@ See `specs/006-threat-model.md` Section 8: Git Security (TM-GIT-*)
 #### GitConfig
 
 ```rust
-/// Git configuration for BashKit.
+/// Git configuration for Bashkit.
 pub struct GitConfig { ... }
 
 impl GitConfig {

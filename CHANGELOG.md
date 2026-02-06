@@ -80,7 +80,7 @@
 
 ### Highlights
 
-- Initial release of BashKit sandboxed bash interpreter
+- Initial release of Bashkit sandboxed bash interpreter
 - Core interpreter with bash-compatible syntax support
 - Virtual filesystem (VFS) abstraction for sandboxed file operations
 - Resource limits: memory, execution time, operation count
@@ -140,7 +140,7 @@
 * docs: update testing spec and known limitations with accurate counts ([#33](https://github.com/everruns/bashkit/pull/33)) by @chaliy
 * docs: add PR convention to never include Claude session links ([#32](https://github.com/everruns/bashkit/pull/32)) by @chaliy
 * feat(examples): add LLM agent example with real Claude integration ([#31](https://github.com/everruns/bashkit/pull/31)) by @chaliy
-* fix: resolve BashKit parsing and filesystem bugs ([#30](https://github.com/everruns/bashkit/pull/30)) by @chaliy
+* fix: resolve Bashkit parsing and filesystem bugs ([#30](https://github.com/everruns/bashkit/pull/30)) by @chaliy
 * feat(bench): add parallel execution benchmark ([#29](https://github.com/everruns/bashkit/pull/29)) by @chaliy
 * feat(fs): add direct filesystem access via Bash.fs() ([#28](https://github.com/everruns/bashkit/pull/28)) by @chaliy
 * feat(bench): add benchmark tool to compare bashkit, bash, and just-bash ([#27](https://github.com/everruns/bashkit/pull/27)) by @chaliy

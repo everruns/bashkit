@@ -1,4 +1,4 @@
-//! Spec test integration - runs all .test.sh files against BashKit
+//! Spec test integration - runs all .test.sh files against Bashkit
 //!
 //! Run with: cargo test --test spec_tests
 //!
@@ -284,15 +284,15 @@ async fn run_category_tests(
 }
 
 /// Comparison test - runs against real bash in CI
-/// This test compares BashKit output against real bash for all non-skipped tests.
-/// It fails if any mismatch is found, ensuring BashKit stays compatible with bash.
+/// This test compares Bashkit output against real bash for all non-skipped tests.
+/// It fails if any mismatch is found, ensuring Bashkit stays compatible with bash.
 #[tokio::test]
 async fn bash_comparison_tests() {
     let dir = spec_cases_dir().join("bash");
     let all_tests = load_spec_tests(&dir);
 
     println!("\n=== Bash Comparison Tests ===");
-    println!("Comparing BashKit output against real bash\n");
+    println!("Comparing Bashkit output against real bash\n");
 
     let mut total = 0;
     let mut matched = 0;
@@ -341,12 +341,12 @@ async fn bash_comparison_tests() {
         );
         for (file, name, result) in &mismatches {
             println!("[{}] {}", file, name);
-            println!("  BashKit stdout: {:?}", result.bashkit_stdout);
+            println!("  Bashkit stdout: {:?}", result.bashkit_stdout);
             println!(
                 "  Real bash stdout: {:?}",
                 result.real_bash_stdout.as_deref().unwrap_or("")
             );
-            println!("  BashKit exit: {}", result.bashkit_exit_code);
+            println!("  Bashkit exit: {}", result.bashkit_exit_code);
             println!(
                 "  Real bash exit: {}",
                 result.real_bash_exit_code.unwrap_or(-1)
@@ -357,7 +357,7 @@ async fn bash_comparison_tests() {
 
     assert!(
         mismatches.is_empty(),
-        "{} tests have mismatches with real bash. BashKit must produce identical output.",
+        "{} tests have mismatches with real bash. Bashkit must produce identical output.",
         mismatches.len()
     );
 }

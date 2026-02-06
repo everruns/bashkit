@@ -1,7 +1,7 @@
-//! Property-based security tests for BashKit
+//! Property-based security tests for Bashkit
 //!
 //! These tests use proptest to generate random inputs and verify
-//! that BashKit maintains security invariants under all conditions.
+//! that Bashkit maintains security invariants under all conditions.
 //!
 //! Run with: cargo test --test proptest_security
 

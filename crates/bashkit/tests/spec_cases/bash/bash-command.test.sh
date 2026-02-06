@@ -66,17 +66,17 @@ did not execute
 ### end
 
 ### bash_version
-### bash_diff: returns BashKit version, not GNU bash
+### bash_diff: returns Bashkit version, not GNU bash
 # --version shows sandbox version
-bash --version | grep -q "BashKit" && echo "has BashKit"
+bash --version | grep -q "Bashkit" && echo "has Bashkit"
 bash --version | grep -q "sandboxed" && echo "is sandboxed"
 ### expect
-has BashKit
+has Bashkit
 is sandboxed
 ### end
 
 ### bash_help
-### bash_diff: returns BashKit help, not GNU bash help
+### bash_diff: returns Bashkit help, not GNU bash help
 # --help shows usage
 bash --help | head -1
 ### expect
@@ -152,7 +152,7 @@ bash -c
 ### end
 
 ### sh_version
-### bash_diff: returns BashKit version, not real sh
+### bash_diff: returns Bashkit version, not real sh
 # sh --version also works
 sh --version | grep -q "sandboxed sh" && echo "is sh"
 ### expect

@@ -1,4 +1,4 @@
-//! Fuzz target for the BashKit lexer
+//! Fuzz target for the Bashkit lexer
 //!
 //! This target tokenizes arbitrary input to find:
 //! - Lexer crashes/panics

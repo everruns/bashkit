@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in BashKit, please report it responsibly.
+If you discover a security vulnerability in Bashkit, please report it responsibly.
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
@@ -29,7 +29,7 @@ This security policy applies to:
 
 ## Security Model
 
-BashKit is designed as a sandboxed interpreter. Key security boundaries:
+Bashkit is designed as a sandboxed interpreter. Key security boundaries:
 
 | Boundary | Protection |
 |----------|------------|

@@ -6,11 +6,11 @@ Living document (updated as features change)
 ## Summary
 
 Tracks what's implemented, what's not, and why. Single source of truth for
-feature status across BashKit.
+feature status across Bashkit.
 
 ## Intentionally Unimplemented Features
 
-These features are **by design** not implemented. They conflict with BashKit's
+These features are **by design** not implemented. They conflict with Bashkit's
 stateless, sandboxed execution model or pose security risks.
 
 | Feature | Rationale | Threat ID |
@@ -25,7 +25,7 @@ stateless, sandboxed execution model or pose security risks.
 
 ### Design Rationale
 
-**Stateless Execution Model**: BashKit runs scripts in isolated, stateless
+**Stateless Execution Model**: Bashkit runs scripts in isolated, stateless
 contexts. Each command executes to completion before the next begins. This
 design:
 - Prevents resource leaks from orphaned background processes
@@ -45,9 +45,9 @@ are no signal sources in the sandbox. Scripts should use exit-code-based error
 handling instead.
 
 **bash/sh Commands**: The `bash` and `sh` commands are implemented as sandboxed
-re-invocations of the BashKit interpreter, NOT external process spawning. This
+re-invocations of the Bashkit interpreter, NOT external process spawning. This
 enables common patterns like `bash script.sh` while maintaining security:
-- `bash --version` returns BashKit version (not host bash)
+- `bash --version` returns Bashkit version (not host bash)
 - `bash -c "cmd"` executes within the same sandbox
 - `bash -n script.sh` performs syntax checking without execution
 - Variables set in `bash -c` affect the parent (shared interpreter state)
@@ -57,7 +57,7 @@ See [006-threat-model.md](006-threat-model.md) threat TM-ESC-015 for security an
 
 ## POSIX Compliance
 
-BashKit implements IEEE 1003.1-2024 Shell Command Language. See
+Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 [008-posix-compliance.md](008-posix-compliance.md) for design rationale.
 
 ### Compliance Level
@@ -339,7 +339,7 @@ Default limits (configurable):
 cargo test --test spec_tests -- bash_comparison_tests --ignored
 ```
 
-Runs each spec test against both BashKit and real bash, reporting differences.
+Runs each spec test against both Bashkit and real bash, reporting differences.
 
 ### Contributing
 

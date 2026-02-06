@@ -95,7 +95,7 @@ SYNOPSIS
        {"commands": "<bash commands>"}
 
 DESCRIPTION
-       BashKit executes bash commands in an isolated sandbox with a virtual
+       Bashkit executes bash commands in an isolated sandbox with a virtual
        filesystem. All file operations are contained within the sandbox.
 
        Supports full bash syntax including variables, pipelines, redirects,

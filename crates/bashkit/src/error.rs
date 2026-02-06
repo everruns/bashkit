@@ -1,4 +1,4 @@
-//! Error types for BashKit
+//! Error types for Bashkit
 //!
 //! This module provides error types for the interpreter with the following design goals:
 //! - Human-readable error messages for users
@@ -8,10 +8,10 @@
 use crate::limits::LimitExceeded;
 use thiserror::Error;
 
-/// Result type alias using BashKit's Error.
+/// Result type alias using Bashkit's Error.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// BashKit error types.
+/// Bashkit error types.
 ///
 /// All error messages are designed to be safe for display to end users without
 /// exposing internal details or sensitive information.

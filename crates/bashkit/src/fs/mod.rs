@@ -1,6 +1,6 @@
-//! Virtual filesystem for BashKit.
+//! Virtual filesystem for Bashkit.
 //!
-//! This module provides a virtual filesystem abstraction that allows BashKit to
+//! This module provides a virtual filesystem abstraction that allows Bashkit to
 //! operate in a sandboxed environment without accessing the real filesystem.
 //!
 //! # Which Trait/Type Should I Use?
@@ -366,7 +366,7 @@ use crate::error::Result;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::Path;
 
-/// Verify that a filesystem implementation meets minimum requirements for BashKit.
+/// Verify that a filesystem implementation meets minimum requirements for Bashkit.
 ///
 /// This function checks that your custom [`FileSystem`] implementation:
 /// - Has root directory `/` that exists

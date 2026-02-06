@@ -1,6 +1,6 @@
 # Custom Builtins
 
-BashKit supports registering custom builtin commands to extend the shell with
+Bashkit supports registering custom builtin commands to extend the shell with
 domain-specific functionality. Custom builtins have full access to the execution
 context including arguments, environment variables, shell variables, and the
 virtual filesystem.

@@ -1,17 +1,17 @@
-# BashKit Compatibility Scorecard
+# Bashkit Compatibility Scorecard
 
 > Feature parity tracking for bash and common tools
 
 **See also:**
 - [API Documentation](https://docs.rs/bashkit) - Full API reference
-- [Custom Builtins Guide](./custom_builtins.md) - Extending BashKit with custom commands
+- [Custom Builtins Guide](./custom_builtins.md) - Extending Bashkit with custom commands
 - [Threat Model](./threat-model.md) - Security considerations
 
 **Legend:** ✅ Implemented | ⚠️ Partial | ❌ Not implemented | N/A Security exclusion
 
 ## POSIX Shell Compliance
 
-BashKit provides substantial compliance with IEEE Std 1003.1-2024 (POSIX.1-2024)
+Bashkit provides substantial compliance with IEEE Std 1003.1-2024 (POSIX.1-2024)
 Shell Command Language. See [specs/008-posix-compliance.md](../specs/008-posix-compliance.md)
 for detailed compliance status.
 

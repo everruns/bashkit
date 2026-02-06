@@ -1,4 +1,4 @@
-//! Python bindings for BashKit
+//! Python bindings for Bashkit
 //!
 //! Exposes the Bash interpreter as a Python class for use in AI agent frameworks.
 //! Uses stateful execution - filesystem and variables persist between calls.
