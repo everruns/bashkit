@@ -144,9 +144,7 @@ See [crates/bashkit-bench/README.md](crates/bashkit-bench/README.md) for methodo
 
 ## Security
 
-The security of Bashkit is our top priority. If you suspect you have uncovered a vulnerability,
-contact us privately, as outlined in our [security policy](SECURITY.md); we will immediately
-prioritize your disclosure.
+Bashkit is designed as a sandboxed interpreter for untrusted scripts. See the [security policy](SECURITY.md) for reporting vulnerabilities and the [threat model](specs/006-threat-model.md) for detailed analysis of 60+ identified threats.
 
 ## Acknowledgments
 
