@@ -1,16 +1,24 @@
 //! python/python3 builtin via embedded Monty interpreter (pydantic/monty)
 //!
-//! Sandboxed Python execution with resource limits. No filesystem or network access.
+//! Sandboxed Python execution with resource limits and VFS access.
+//! Python `pathlib.Path` operations are bridged to BashKit's virtual filesystem
+//! via Monty's OsCall pause/resume mechanism. No real filesystem or network access.
+//!
 //! Supports: `python -c "code"`, `python script.py`, stdin piping.
 
 use async_trait::async_trait;
 use monty::{
-    CollectStringPrint, LimitedTracker, MontyException, MontyObject, MontyRun, ResourceLimits,
+    dir_stat, file_stat, CollectStringPrint, ExcType, ExternalResult, LimitedTracker,
+    MontyException, MontyObject, MontyRun, OsFunction, ResourceLimits, RunProgress,
 };
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use super::{resolve_path, Builtin, Context};
 use crate::error::Result;
+use crate::fs::{FileSystem, FileType};
 use crate::interpreter::ExecResult;
 
 /// Default resource limits for sandboxed Python execution.
@@ -22,7 +30,8 @@ const DEFAULT_MAX_RECURSION: usize = 200;
 /// The python/python3 builtin command.
 ///
 /// Executes Python code using the embedded Monty interpreter (pydantic/monty).
-/// Operates entirely in-memory with no real filesystem or network access.
+/// Python `pathlib.Path` operations are bridged to BashKit's VFS — files
+/// created by bash (`cat > file`) are readable from Python, and vice versa.
 ///
 /// # Usage
 ///
@@ -32,6 +41,7 @@ const DEFAULT_MAX_RECURSION: usize = 200;
 /// echo "print('hello')" | python3
 /// python3 -c "2 + 2"              # expression result printed
 /// python3 --version
+/// python3 -c "from pathlib import Path; print(Path('/tmp/f.txt').read_text())"
 /// ```
 pub struct Python;
 
@@ -135,12 +145,21 @@ impl Builtin for Python {
             ));
         };
 
-        run_python(&code, &filename)
+        run_python(&code, &filename, ctx.fs.clone(), ctx.cwd, ctx.env).await
     }
 }
 
-/// Execute Python code via Monty with resource limits.
-fn run_python(code: &str, filename: &str) -> Result<ExecResult> {
+/// Execute Python code via Monty with resource limits and VFS bridging.
+///
+/// Uses Monty's start/resume API: execution pauses at filesystem operations
+/// (OsCall), we bridge them to BashKit's VFS, then resume.
+async fn run_python(
+    code: &str,
+    filename: &str,
+    fs: Arc<dyn FileSystem>,
+    cwd: &Path,
+    env: &HashMap<String, String>,
+) -> Result<ExecResult> {
     // Strip shebang if present
     let code = if code.starts_with("#!") {
         match code.find('\n') {
@@ -165,24 +184,344 @@ fn run_python(code: &str, filename: &str) -> Result<ExecResult> {
     let tracker = LimitedTracker::new(limits);
     let mut printer = CollectStringPrint::new();
 
-    match runner.run(vec![], tracker, &mut printer) {
-        Ok(result) => {
-            let mut output = printer.into_output();
-
-            // If the result is not None and there was no print output,
-            // display the result (like Python REPL behavior for expressions)
-            if !matches!(result, MontyObject::None) && output.is_empty() {
-                output = format!("{}\n", result.py_repr());
-            }
-
-            Ok(ExecResult::ok(output))
-        }
+    // Use start() instead of run() to handle OsCall pauses for VFS bridging
+    let mut progress = match runner.start(vec![], tracker, &mut printer) {
+        Ok(p) => p,
         Err(e) => {
             let printed = printer.into_output();
-            Ok(format_exception_with_output(e, &printed))
+            return Ok(format_exception_with_output(e, &printed));
+        }
+    };
+
+    loop {
+        match progress {
+            RunProgress::OsCall {
+                function,
+                args,
+                kwargs,
+                state,
+                ..
+            } => {
+                let result = handle_os_call(function, &args, &kwargs, &fs, cwd, env).await;
+                match state.run(result, &mut printer) {
+                    Ok(next) => progress = next,
+                    Err(e) => {
+                        let printed = printer.into_output();
+                        return Ok(format_exception_with_output(e, &printed));
+                    }
+                }
+            }
+            RunProgress::FunctionCall { state, .. } => {
+                // No external functions registered; return error
+                let err = MontyException::new(
+                    ExcType::RuntimeError,
+                    Some("external function not available in sandbox".into()),
+                );
+                match state.run(ExternalResult::Error(err), &mut printer) {
+                    Ok(next) => progress = next,
+                    Err(e) => {
+                        let printed = printer.into_output();
+                        return Ok(format_exception_with_output(e, &printed));
+                    }
+                }
+            }
+            RunProgress::ResolveFutures(_) => {
+                // Async futures not supported in sandbox
+                let printed = printer.into_output();
+                let err = MontyException::new(
+                    ExcType::RuntimeError,
+                    Some("async operations not supported in sandbox".into()),
+                );
+                return Ok(format_exception_with_output(err, &printed));
+            }
+            RunProgress::Complete(result) => {
+                let mut output = printer.into_output();
+
+                // If the result is not None and there was no print output,
+                // display the result (like Python REPL behavior for expressions)
+                if !matches!(result, MontyObject::None) && output.is_empty() {
+                    output = format!("{}\n", result.py_repr());
+                }
+
+                return Ok(ExecResult::ok(output));
+            }
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// VFS bridging: Monty OsCall → BashKit FileSystem
+// ---------------------------------------------------------------------------
+
+/// Dispatch a Monty OsCall to the appropriate VFS operation.
+async fn handle_os_call(
+    function: OsFunction,
+    args: &[MontyObject],
+    kwargs: &[(MontyObject, MontyObject)],
+    fs: &Arc<dyn FileSystem>,
+    cwd: &Path,
+    env: &HashMap<String, String>,
+) -> ExternalResult {
+    // Environment access doesn't need a path
+    match function {
+        OsFunction::Getenv => return handle_getenv(args, env),
+        OsFunction::GetEnviron => return handle_get_environ(env),
+        _ => {}
+    }
+
+    // All other ops need a path as first arg
+    let path = match extract_path(args, cwd) {
+        Some(p) => p,
+        None => {
+            return ExternalResult::Error(MontyException::new(
+                ExcType::TypeError,
+                Some("expected path argument".into()),
+            ))
+        }
+    };
+
+    match function {
+        OsFunction::Exists => {
+            let exists = fs.exists(&path).await.unwrap_or(false);
+            ExternalResult::Return(MontyObject::Bool(exists))
+        }
+        OsFunction::IsFile => match fs.stat(&path).await {
+            Ok(meta) => ExternalResult::Return(MontyObject::Bool(meta.file_type.is_file())),
+            Err(_) => ExternalResult::Return(MontyObject::Bool(false)),
+        },
+        OsFunction::IsDir => match fs.stat(&path).await {
+            Ok(meta) => ExternalResult::Return(MontyObject::Bool(meta.file_type.is_dir())),
+            Err(_) => ExternalResult::Return(MontyObject::Bool(false)),
+        },
+        OsFunction::IsSymlink => match fs.stat(&path).await {
+            Ok(meta) => ExternalResult::Return(MontyObject::Bool(meta.file_type.is_symlink())),
+            Err(_) => ExternalResult::Return(MontyObject::Bool(false)),
+        },
+        OsFunction::ReadText => match fs.read_file(&path).await {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(s) => ExternalResult::Return(MontyObject::String(s)),
+                Err(_) => ExternalResult::Error(MontyException::new(
+                    ExcType::OSError,
+                    Some(format!(
+                        "can't decode '{}': not valid UTF-8",
+                        path.display()
+                    )),
+                )),
+            },
+            Err(e) => map_vfs_error(e, &path),
+        },
+        OsFunction::ReadBytes => match fs.read_file(&path).await {
+            Ok(bytes) => ExternalResult::Return(MontyObject::Bytes(bytes)),
+            Err(e) => map_vfs_error(e, &path),
+        },
+        OsFunction::WriteText => {
+            let content = match args.get(1) {
+                Some(MontyObject::String(s)) => s.as_bytes().to_vec(),
+                _ => {
+                    return ExternalResult::Error(MontyException::new(
+                        ExcType::TypeError,
+                        Some("write_text() requires a string argument".into()),
+                    ))
+                }
+            };
+            let len = content.len();
+            match fs.write_file(&path, &content).await {
+                Ok(()) => ExternalResult::Return(MontyObject::Int(len as i64)),
+                Err(e) => map_vfs_error(e, &path),
+            }
+        }
+        OsFunction::WriteBytes => {
+            let content = match args.get(1) {
+                Some(MontyObject::Bytes(b)) => b.clone(),
+                _ => {
+                    return ExternalResult::Error(MontyException::new(
+                        ExcType::TypeError,
+                        Some("write_bytes() requires a bytes argument".into()),
+                    ))
+                }
+            };
+            let len = content.len();
+            match fs.write_file(&path, &content).await {
+                Ok(()) => ExternalResult::Return(MontyObject::Int(len as i64)),
+                Err(e) => map_vfs_error(e, &path),
+            }
+        }
+        OsFunction::Mkdir => {
+            let parents = get_bool_kwarg(kwargs, "parents").unwrap_or(false);
+            let exist_ok = get_bool_kwarg(kwargs, "exist_ok").unwrap_or(false);
+            match fs.mkdir(&path, parents).await {
+                Ok(()) => ExternalResult::Return(MontyObject::None),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if exist_ok && msg.contains("already exists") {
+                        ExternalResult::Return(MontyObject::None)
+                    } else {
+                        map_vfs_error(e, &path)
+                    }
+                }
+            }
+        }
+        OsFunction::Unlink => match fs.remove(&path, false).await {
+            Ok(()) => ExternalResult::Return(MontyObject::None),
+            Err(e) => map_vfs_error(e, &path),
+        },
+        OsFunction::Rmdir => match fs.remove(&path, false).await {
+            Ok(()) => ExternalResult::Return(MontyObject::None),
+            Err(e) => map_vfs_error(e, &path),
+        },
+        OsFunction::Iterdir => match fs.read_dir(&path).await {
+            Ok(entries) => {
+                let items: Vec<MontyObject> = entries
+                    .into_iter()
+                    .map(|e| {
+                        let child = path.join(&e.name);
+                        MontyObject::Path(child.to_string_lossy().to_string())
+                    })
+                    .collect();
+                ExternalResult::Return(MontyObject::List(items))
+            }
+            Err(e) => map_vfs_error(e, &path),
+        },
+        OsFunction::Stat => match fs.stat(&path).await {
+            Ok(meta) => {
+                let mtime = meta
+                    .modified
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0);
+                let stat_obj = match meta.file_type {
+                    FileType::Directory => dir_stat(meta.mode as i64, mtime),
+                    _ => file_stat(meta.mode as i64, meta.size as i64, mtime),
+                };
+                ExternalResult::Return(stat_obj)
+            }
+            Err(e) => map_vfs_error(e, &path),
+        },
+        OsFunction::Rename => {
+            let target = match args.get(1) {
+                Some(MontyObject::Path(p)) | Some(MontyObject::String(p)) => {
+                    resolve_python_path(p, cwd)
+                }
+                _ => {
+                    return ExternalResult::Error(MontyException::new(
+                        ExcType::TypeError,
+                        Some("rename() requires a target path".into()),
+                    ))
+                }
+            };
+            match fs.rename(&path, &target).await {
+                Ok(()) => {
+                    ExternalResult::Return(MontyObject::Path(target.to_string_lossy().to_string()))
+                }
+                Err(e) => map_vfs_error(e, &path),
+            }
+        }
+        OsFunction::Resolve | OsFunction::Absolute => {
+            // No symlink resolution in BashKit VFS; just return absolute path
+            ExternalResult::Return(MontyObject::Path(path.to_string_lossy().to_string()))
+        }
+        // Getenv/GetEnviron handled above
+        _ => ExternalResult::Error(MontyException::new(
+            ExcType::OSError,
+            Some(format!("{function} not supported in sandbox")),
+        )),
+    }
+}
+
+/// Extract a path from the first OsCall arg and resolve relative to cwd.
+fn extract_path(args: &[MontyObject], cwd: &Path) -> Option<PathBuf> {
+    match args.first()? {
+        MontyObject::Path(s) | MontyObject::String(s) => Some(resolve_python_path(s, cwd)),
+        _ => None,
+    }
+}
+
+/// Resolve a Python path string against cwd if relative.
+fn resolve_python_path(path_str: &str, cwd: &Path) -> PathBuf {
+    let p = Path::new(path_str);
+    if p.is_absolute() {
+        p.to_owned()
+    } else {
+        cwd.join(p)
+    }
+}
+
+/// Map a BashKit VFS error to a Python exception via ExternalResult.
+fn map_vfs_error(e: crate::Error, path: &Path) -> ExternalResult {
+    let msg = e.to_string();
+    let path_str = path.display().to_string();
+
+    let (exc_type, errno) = if msg.contains("not found") || msg.contains("No such file") {
+        (ExcType::FileNotFoundError, 2)
+    } else if msg.contains("is a directory") {
+        (ExcType::IsADirectoryError, 21)
+    } else if msg.contains("not a directory") {
+        (ExcType::NotADirectoryError, 20)
+    } else if msg.contains("already exists") {
+        (ExcType::FileExistsError, 17)
+    } else {
+        (ExcType::OSError, 0)
+    };
+
+    ExternalResult::Error(MontyException::new(
+        exc_type,
+        Some(format!("[Errno {errno}] {msg}: '{path_str}'")),
+    ))
+}
+
+/// Extract a bool kwarg by name from the kwargs list.
+fn get_bool_kwarg(kwargs: &[(MontyObject, MontyObject)], name: &str) -> Option<bool> {
+    for (key, val) in kwargs {
+        if let MontyObject::String(k) = key {
+            if k == name {
+                return match val {
+                    MontyObject::Bool(b) => Some(*b),
+                    _ => None,
+                };
+            }
+        }
+    }
+    None
+}
+
+/// Handle os.getenv(key, default=None).
+fn handle_getenv(args: &[MontyObject], env: &HashMap<String, String>) -> ExternalResult {
+    let key = match args.first() {
+        Some(MontyObject::String(s)) => s.as_str(),
+        _ => {
+            return ExternalResult::Error(MontyException::new(
+                ExcType::TypeError,
+                Some("getenv() requires a string argument".into()),
+            ))
+        }
+    };
+    let default = match args.get(1) {
+        Some(MontyObject::None) | None => MontyObject::None,
+        Some(other) => other.clone(),
+    };
+    match env.get(key) {
+        Some(val) => ExternalResult::Return(MontyObject::String(val.clone())),
+        None => ExternalResult::Return(default),
+    }
+}
+
+/// Handle os.environ → dict of all env vars.
+fn handle_get_environ(env: &HashMap<String, String>) -> ExternalResult {
+    let pairs: Vec<(MontyObject, MontyObject)> = env
+        .iter()
+        .map(|(k, v)| {
+            (
+                MontyObject::String(k.clone()),
+                MontyObject::String(v.clone()),
+            )
+        })
+        .collect();
+    ExternalResult::Return(MontyObject::dict(pairs))
+}
+
+// ---------------------------------------------------------------------------
+// Error formatting
+// ---------------------------------------------------------------------------
 
 /// Format a MontyException into an ExecResult with exit code 1.
 fn format_exception(e: MontyException) -> ExecResult {
@@ -191,12 +530,7 @@ fn format_exception(e: MontyException) -> ExecResult {
 
 /// Format exception, preserving any output produced before the error.
 fn format_exception_with_output(e: MontyException, printed: &str) -> ExecResult {
-    let mut stderr = String::new();
-    if !printed.is_empty() {
-        // Any stdout produced before the error goes to stdout via with_code
-        // but error traceback goes to stderr
-    }
-    stderr.push_str(&format!("{e}\n"));
+    let stderr = format!("{e}\n");
     let mut result = ExecResult::err(stderr, 1);
     if !printed.is_empty() {
         result.stdout = printed.to_string();
@@ -209,7 +543,7 @@ fn format_exception_with_output(e: MontyException, printed: &str) -> ExecResult 
 mod tests {
     use super::*;
     use crate::builtins::Context;
-    use crate::fs::{FileSystem, InMemoryFs};
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -236,6 +570,34 @@ mod tests {
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
         Python.execute(ctx).await.unwrap()
     }
+
+    /// Helper: run Python with pre-populated VFS files and env vars.
+    async fn run_with_vfs(
+        args: &[&str],
+        files: &[(&str, &str)],
+        env_vars: &[(&str, &str)],
+    ) -> ExecResult {
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let env: HashMap<String, String> = env_vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let mut variables = HashMap::new();
+        let mut cwd = PathBuf::from("/home/user");
+        let fs = Arc::new(InMemoryFs::new());
+        for (path, content) in files {
+            // Ensure parent dirs exist
+            let p = std::path::Path::new(path);
+            if let Some(parent) = p.parent() {
+                let _ = fs.mkdir(parent, true).await;
+            }
+            fs.write_file(p, content.as_bytes()).await.unwrap();
+        }
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
+        Python.execute(ctx).await.unwrap()
+    }
+
+    // --- Basic functionality tests (existing) ---
 
     #[tokio::test]
     async fn test_version() {
@@ -335,8 +697,6 @@ mod tests {
         assert!(r.stdout.contains("usage:"));
     }
 
-    // --- Positive tests for features that work ---
-
     #[tokio::test]
     async fn test_dict_access() {
         let r = run(&["-c", "d = dict()\nd['a'] = 1\nprint(d['a'])"], None).await;
@@ -360,7 +720,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_recursion_limit() {
-        // Should hit recursion limit, not stack overflow
         let r = run(&["-c", "def r(): r()\nr()"], None).await;
         assert_eq!(r.exit_code, 1);
         assert!(r.stderr.contains("RecursionError") || r.stderr.contains("recursion"));
@@ -411,5 +770,146 @@ mod tests {
         assert_eq!(r.exit_code, 1);
         assert_eq!(r.stdout, "before\n");
         assert!(r.stderr.contains("ZeroDivisionError"));
+    }
+
+    // --- VFS bridging tests ---
+
+    #[tokio::test]
+    async fn test_vfs_read_text() {
+        let r = run_with_vfs(
+            &[
+                "-c",
+                "from pathlib import Path\nprint(Path('/tmp/hello.txt').read_text())",
+            ],
+            &[("/tmp/hello.txt", "hello from vfs")],
+            &[],
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "hello from vfs\n");
+    }
+
+    #[tokio::test]
+    async fn test_vfs_write_text() {
+        // Write via Python, then read via Python to verify
+        let r = run_with_vfs(
+            &[
+                "-c",
+                "from pathlib import Path\nPath('/tmp/out.txt').write_text('written by python')\nprint(Path('/tmp/out.txt').read_text())",
+            ],
+            &[],
+            &[],
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "written by python\n");
+    }
+
+    #[tokio::test]
+    async fn test_vfs_exists() {
+        let r = run_with_vfs(
+            &[
+                "-c",
+                "from pathlib import Path\nprint(Path('/tmp/hello.txt').exists())\nprint(Path('/tmp/nope.txt').exists())",
+            ],
+            &[("/tmp/hello.txt", "content")],
+            &[],
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "True\nFalse\n");
+    }
+
+    #[tokio::test]
+    async fn test_vfs_is_file_is_dir() {
+        let r = run_with_vfs(
+            &[
+                "-c",
+                "from pathlib import Path\nprint(Path('/tmp/f.txt').is_file())\nprint(Path('/tmp').is_dir())",
+            ],
+            &[("/tmp/f.txt", "data")],
+            &[],
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "True\nTrue\n");
+    }
+
+    #[tokio::test]
+    async fn test_vfs_read_not_found() {
+        let r = run_with_vfs(
+            &[
+                "-c",
+                "from pathlib import Path\ntry:\n    Path('/no/such/file').read_text()\nexcept FileNotFoundError as e:\n    print('caught:', e)",
+            ],
+            &[],
+            &[],
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert!(r.stdout.contains("caught:"));
+        assert!(r.stdout.contains("not found") || r.stdout.contains("No such file"));
+    }
+
+    #[tokio::test]
+    async fn test_vfs_mkdir() {
+        let r = run_with_vfs(
+            &[
+                "-c",
+                "from pathlib import Path\nPath('/tmp/newdir').mkdir()\nprint(Path('/tmp/newdir').is_dir())",
+            ],
+            &[],
+            &[],
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "True\n");
+    }
+
+    #[tokio::test]
+    async fn test_vfs_iterdir() {
+        let r = run_with_vfs(
+            &[
+                "-c",
+                "from pathlib import Path\nfor p in Path('/data').iterdir():\n    print(p.name)",
+            ],
+            &[("/data/a.txt", "a"), ("/data/b.txt", "b")],
+            &[],
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        // Order from VFS may vary, check both entries present
+        assert!(r.stdout.contains("a.txt"));
+        assert!(r.stdout.contains("b.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_vfs_getenv() {
+        let r = run_with_vfs(
+            &[
+                "-c",
+                "import os\nprint(os.getenv('MY_VAR'))\nprint(os.getenv('MISSING', 'default'))",
+            ],
+            &[],
+            &[("MY_VAR", "hello")],
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "hello\ndefault\n");
+    }
+
+    #[tokio::test]
+    async fn test_vfs_stat() {
+        let r = run_with_vfs(
+            &[
+                "-c",
+                "from pathlib import Path\ninfo = Path('/tmp/f.txt').stat()\nprint(info.st_size)",
+            ],
+            &[("/tmp/f.txt", "12345")],
+            &[],
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "5\n");
     }
 }

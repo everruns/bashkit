@@ -77,10 +77,58 @@ Monty implements a subset of Python 3.12:
 - Classes (planned upstream)
 - Match statements
 - Import of third-party libraries
-- File I/O, network I/O
+- Network I/O (no socket, urllib, requests)
 - Most standard library modules
 
+### VFS Bridging
+
+Python `pathlib.Path` operations are bridged to BashKit's virtual filesystem
+via Monty's OsCall pause/resume mechanism. This enables Python code to read
+and write files that are shared with the bash environment.
+
+```bash
+# Write from bash, read from Python
+echo "data" > /tmp/shared.txt
+python3 -c "from pathlib import Path; print(Path('/tmp/shared.txt').read_text())"
+
+# Write from Python, read from bash
+python3 -c "from pathlib import Path; Path('/tmp/out.txt').write_text('hello\n')"
+cat /tmp/out.txt
+
+# Create directories, check existence
+python3 -c "from pathlib import Path
+Path('/tmp/new').mkdir()
+print(Path('/tmp/new').is_dir())"
+
+# Environment variables
+python3 -c "import os; print(os.getenv('HOME'))"
+```
+
+**Supported operations:**
+- `Path.read_text()`, `Path.read_bytes()` — read from VFS
+- `Path.write_text()`, `Path.write_bytes()` — write to VFS
+- `Path.exists()`, `Path.is_file()`, `Path.is_dir()`, `Path.is_symlink()`
+- `Path.mkdir()` (with `parents=True`, `exist_ok=True` kwargs)
+- `Path.unlink()`, `Path.rmdir()` — delete from VFS
+- `Path.iterdir()` — list directory contents
+- `Path.stat()` — file metadata (st_size, st_mode, st_mtime, etc.)
+- `Path.rename()` — move/rename
+- `Path.resolve()`, `Path.absolute()` — path resolution
+- `os.getenv()`, `os.environ` — environment variable access
+
+**Architecture:**
+```
+Python code → Monty VM → OsCall(ReadText, path) → BashKit VFS → resume
+```
+
+Monty pauses execution at filesystem operations, yields an `OsCall` event
+with the operation type and arguments, BashKit bridges it to the VFS, and
+resumes execution with the result (or a Python exception).
+
 ### Security
+
+See `specs/006-threat-model.md` section "Python / Monty Security (TM-PY)"
+for the full threat analysis.
 
 #### Threat: Code injection via bash variable expansion
 Bash variables are expanded before reaching the Python builtin. This is
@@ -91,13 +139,22 @@ expansion: `python3 -c 'print("hello")'`.
 Monty enforces independent resource limits. Even if BashKit's shell limits
 are generous, Python code cannot exceed Monty's allocation/time/memory caps.
 
-#### Threat: Sandbox escape
-Monty has no filesystem or network APIs. The Python code runs in a pure
-computational sandbox. No `os`, `subprocess`, `socket`, or `pathlib` access.
+#### Threat: Sandbox escape via filesystem
+All `pathlib.Path` operations go through BashKit's virtual filesystem.
+Python code cannot access the real host filesystem. `/etc/passwd` in Python
+reads from VFS (where it doesn't exist), not the host.
+
+#### Threat: Sandbox escape via os/subprocess
+Monty has no `os.system()`, `subprocess`, or `socket` implementations.
+These modules raise errors when used.
 
 #### Threat: Denial of service via large output
 Python print output is captured in memory. The 64 MB memory limit on
 Monty prevents unbounded output generation.
+
+#### Threat: Path traversal
+Relative paths are resolved against the shell's cwd. Path traversal via
+`../..` is constrained by the VFS's path normalization.
 
 ### Error Handling
 

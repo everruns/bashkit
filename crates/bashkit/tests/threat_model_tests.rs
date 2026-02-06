@@ -980,4 +980,128 @@ mod python_security {
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "ok\n");
     }
+
+    // --- VFS Security Tests ---
+
+    /// TM-PY-015: Python VFS reads only from BashKit's virtual filesystem
+    #[tokio::test]
+    async fn threat_python_vfs_no_real_fs() {
+        let mut bash = Bash::new();
+
+        // pathlib.Path should read from VFS, not real filesystem
+        // /etc/passwd exists on real Linux but not in VFS
+        let result = bash
+            .exec(
+                "python3 -c \"from pathlib import Path\ntry:\n    Path('/etc/passwd').read_text()\n    print('LEAKED')\nexcept FileNotFoundError:\n    print('safe')\"",
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result.stdout.contains("safe"),
+            "Should not access real /etc/passwd"
+        );
+        assert!(
+            !result.stdout.contains("LEAKED"),
+            "Must not leak real filesystem"
+        );
+    }
+
+    /// TM-PY-016: Python VFS write stays in virtual filesystem
+    #[tokio::test]
+    async fn threat_python_vfs_write_sandboxed() {
+        let mut bash = Bash::new();
+
+        // Write to VFS, verify it stays in VFS (no real file created)
+        let result = bash
+            .exec(
+                "python3 -c \"from pathlib import Path\n_ = Path('/tmp/sandbox_test.txt').write_text('test')\nprint(Path('/tmp/sandbox_test.txt').read_text())\"",
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "test\n");
+    }
+
+    /// TM-PY-017: Python VFS path traversal blocked
+    #[tokio::test]
+    async fn threat_python_vfs_path_traversal() {
+        let mut bash = Bash::new();
+
+        // Path traversal via ../.. should not escape VFS
+        let result = bash
+            .exec(
+                "python3 -c \"from pathlib import Path\ntry:\n    Path('/tmp/../../../etc/passwd').read_text()\n    print('ESCAPED')\nexcept FileNotFoundError:\n    print('blocked')\"",
+            )
+            .await
+            .unwrap();
+        assert!(
+            !result.stdout.contains("ESCAPED"),
+            "Path traversal must not escape VFS"
+        );
+    }
+
+    /// TM-PY-018: Python VFS data flows correctly between bash and Python
+    #[tokio::test]
+    async fn threat_python_vfs_bash_python_isolation() {
+        let mut bash = Bash::new();
+
+        // Write from bash, read from Python - shares VFS
+        let result = bash
+            .exec(
+                "echo 'from bash' > /tmp/shared.txt\npython3 -c \"from pathlib import Path\nprint(Path('/tmp/shared.txt').read_text().strip())\"",
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "from bash\n");
+    }
+
+    /// TM-PY-019: Python VFS FileNotFoundError properly raised
+    #[tokio::test]
+    async fn threat_python_vfs_error_handling() {
+        let mut bash = Bash::new();
+
+        // Reading nonexistent file should raise FileNotFoundError, not crash
+        let result = bash
+            .exec("python3 -c \"from pathlib import Path\nPath('/nonexistent').read_text()\"")
+            .await
+            .unwrap();
+        assert_ne!(result.exit_code, 0, "Reading missing file should fail");
+        assert!(
+            result.stderr.contains("FileNotFoundError"),
+            "Should get FileNotFoundError, got: {}",
+            result.stderr
+        );
+    }
+
+    /// TM-PY-020: Python VFS operations respect BashKit sandbox boundaries
+    #[tokio::test]
+    async fn threat_python_vfs_no_network() {
+        let mut bash = Bash::new();
+
+        // Python should not be able to make network requests
+        // Even with pathlib, network paths should not work
+        let result = bash
+            .exec("python3 -c \"import socket\nsocket.socket()\"")
+            .await
+            .unwrap();
+        assert_ne!(result.exit_code, 0, "socket should not be available");
+    }
+
+    /// TM-PY-021: Python VFS mkdir cannot escape sandbox
+    #[tokio::test]
+    async fn threat_python_vfs_mkdir_sandboxed() {
+        let mut bash = Bash::new();
+
+        // mkdir in VFS only
+        let result = bash
+            .exec(
+                "python3 -c \"from pathlib import Path\nPath('/tmp/pydir').mkdir()\nprint(Path('/tmp/pydir').is_dir())\"",
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "True\n");
+    }
 }

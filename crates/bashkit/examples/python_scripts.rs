@@ -2,7 +2,8 @@
 //!
 //! Demonstrates running Python code inside BashKit's sandbox using the
 //! embedded Monty interpreter. Python runs entirely in-memory with
-//! resource limits and no filesystem/network access.
+//! resource limits. Python pathlib.Path operations are bridged to
+//! BashKit's virtual filesystem.
 //!
 //! Run with: cargo run --features python --example python_scripts
 
@@ -112,7 +113,50 @@ print(f'Top scorer:     {best_name} ({best_score})')
         .await?;
     print!("{}", result.stdout);
 
-    // --- 9. Python version ---
+    // --- 9. VFS bridging: write from Python, read from bash ---
+    println!("\n--- VFS: Python writes, Bash reads ---");
+    let result = bash
+        .exec(
+            r#"python3 -c "from pathlib import Path
+_ = Path('/tmp/report.txt').write_text('Score: 95\nGrade: A\n')"
+echo "Reading Python's file from bash:"
+cat /tmp/report.txt"#,
+        )
+        .await?;
+    print!("{}", result.stdout);
+
+    // --- 10. VFS bridging: write from bash, read from Python ---
+    println!("\n--- VFS: Bash writes, Python reads ---");
+    let result = bash
+        .exec(
+            r#"echo "line1" > /tmp/data.txt
+echo "line2" >> /tmp/data.txt
+echo "line3" >> /tmp/data.txt
+python3 -c "from pathlib import Path
+content = Path('/tmp/data.txt').read_text()
+print(f'Lines: {len(content.strip().splitlines())}')"
+"#,
+        )
+        .await?;
+    print!("{}", result.stdout);
+
+    // --- 11. VFS: directory listing from Python ---
+    println!("\n--- VFS: Directory listing ---");
+    let result = bash
+        .exec(
+            r#"mkdir -p /data
+echo "a" > /data/one.txt
+echo "b" > /data/two.txt
+python3 -c "from pathlib import Path
+for p in Path('/data').iterdir():
+    info = p.stat()
+    print(f'{p.name}: {info.st_size} bytes')"
+"#,
+        )
+        .await?;
+    print!("{}", result.stdout);
+
+    // --- 12. Python version ---
     println!("\n--- Version ---");
     let result = bash.exec("python3 --version").await?;
     print!("{}", result.stdout);

@@ -107,7 +107,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 790
+**Total spec test cases:** 847
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
@@ -116,7 +116,8 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | Grep | 70 | Yes | 65 | 5 | now with -z, -r, -a, -b, -H, -h, -f, -P |
 | Sed | 65 | Yes | 50 | 15 | now with -E, nth occurrence, ! negation |
 | JQ | 95 | Yes | 85 | 10 | reduce, walk, regex funcs |
-| **Total** | **790** | **Yes** | **655** | **135** | |
+| Python | 57 | Yes | 49 | 8 | VFS bridging, pathlib, env vars |
+| **Total** | **847** | **Yes** | **710** | **137** | |
 
 ### Bash Spec Tests Breakdown
 

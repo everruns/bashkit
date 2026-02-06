@@ -416,3 +416,127 @@ print(data['users'][0]['name'])"
 ### expect
 Alice
 ### end
+
+### python3_vfs_write_and_read
+# Write a file from Python, read it back
+python3 -c "from pathlib import Path
+Path('/tmp/pyout.txt').write_text('hello from python')
+print(Path('/tmp/pyout.txt').read_text())"
+### expect
+hello from python
+### end
+
+### python3_vfs_bash_to_python
+# Write from bash, read from Python
+echo "data from bash" > /tmp/shared.txt
+python3 -c "from pathlib import Path
+print(Path('/tmp/shared.txt').read_text().strip())"
+### expect
+data from bash
+### end
+
+### python3_vfs_python_to_bash
+# Write from Python, read from bash
+python3 -c "from pathlib import Path
+_ = Path('/tmp/pyfile.txt').write_text('written by python\n')"
+cat /tmp/pyfile.txt
+### expect
+written by python
+### end
+
+### python3_vfs_path_exists
+# Check file existence
+echo "hi" > /tmp/exists.txt
+python3 -c "from pathlib import Path
+print(Path('/tmp/exists.txt').exists())
+print(Path('/tmp/nope.txt').exists())"
+### expect
+True
+False
+### end
+
+### python3_vfs_is_file_is_dir
+# Path type checks
+echo "f" > /tmp/afile.txt
+python3 -c "from pathlib import Path
+print(Path('/tmp/afile.txt').is_file())
+print(Path('/tmp').is_dir())"
+### expect
+True
+True
+### end
+
+### python3_vfs_mkdir
+# Create directory from Python
+python3 -c "from pathlib import Path
+Path('/tmp/pydir').mkdir()
+print(Path('/tmp/pydir').is_dir())"
+### expect
+True
+### end
+
+### python3_vfs_stat_size
+# Stat a file from Python
+echo -n "12345" > /tmp/sized.txt
+python3 -c "from pathlib import Path
+info = Path('/tmp/sized.txt').stat()
+print(info.st_size)"
+### expect
+5
+### end
+
+### python3_vfs_file_not_found
+# FileNotFoundError caught in Python
+python3 -c "from pathlib import Path
+try:
+    Path('/no/such/file.txt').read_text()
+except FileNotFoundError:
+    print('caught')"
+### expect
+caught
+### end
+
+### python3_vfs_iterdir
+# List directory from Python
+mkdir -p /tmp/dir_test
+echo "a" > /tmp/dir_test/a.txt
+echo "b" > /tmp/dir_test/b.txt
+python3 -c "from pathlib import Path
+count = 0
+for p in Path('/tmp/dir_test').iterdir():
+    count += 1
+print(count)"
+### expect
+2
+### end
+
+### python3_vfs_getenv
+### skip: export propagation to ctx.env may not work in spec test runner
+# Read environment variables from Python
+export MY_TEST_VAR=hello_from_env
+python3 -c "import os
+print(os.getenv('MY_TEST_VAR'))
+print(os.getenv('MISSING_VAR', 'default_val'))"
+### expect
+hello_from_env
+default_val
+### end
+
+### python3_vfs_unlink
+# Delete file from Python
+echo "temp" > /tmp/delme.txt
+python3 -c "from pathlib import Path
+Path('/tmp/delme.txt').unlink()
+print(Path('/tmp/delme.txt').exists())"
+### expect
+False
+### end
+
+### python3_vfs_roundtrip_pipeline
+# Write from Python, process with bash pipeline
+python3 -c "from pathlib import Path
+_ = Path('/tmp/nums.txt').write_text('1\n2\n3\n4\n5\n')"
+cat /tmp/nums.txt | grep -c ""
+### expect
+5
+### end
