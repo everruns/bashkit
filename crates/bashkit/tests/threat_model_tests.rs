@@ -778,10 +778,15 @@ mod edge_cases {
 mod python_security {
     use super::*;
 
+    /// Helper: create Bash with python builtins registered
+    fn bash_with_python() -> Bash {
+        Bash::builder().python().build()
+    }
+
     /// TM-PY-001: Python infinite loop blocked by Monty time limit
     #[tokio::test]
     async fn threat_python_infinite_loop() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
         let result = bash.exec("python3 -c \"while True: pass\"").await.unwrap();
         // Should fail with resource limit (timeout or allocation limit)
         assert_ne!(result.exit_code, 0, "Infinite loop should not succeed");
@@ -790,7 +795,7 @@ mod python_security {
     /// TM-PY-002: Python memory exhaustion blocked by allocation limits
     #[tokio::test]
     async fn threat_python_memory_exhaustion() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
         let result = bash
             .exec("python3 -c \"x = [0] * 100000000\"")
             .await
@@ -802,7 +807,7 @@ mod python_security {
     /// TM-PY-003: Python recursion depth limited
     #[tokio::test]
     async fn threat_python_recursion_bomb() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
         let result = bash.exec("python3 -c \"def r(): r()\nr()\"").await.unwrap();
         assert_ne!(result.exit_code, 0, "Recursion bomb should not succeed");
         assert!(
@@ -815,7 +820,7 @@ mod python_security {
     /// TM-PY-004: Python os module operations are not available
     #[tokio::test]
     async fn threat_python_no_os_operations() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         // os.system should not work
         let result = bash
@@ -843,7 +848,7 @@ mod python_security {
     /// TM-PY-005: Python cannot access real filesystem
     #[tokio::test]
     async fn threat_python_no_filesystem() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         // open() builtin should not be available (Monty doesn't expose it)
         let result = bash
@@ -860,7 +865,7 @@ mod python_security {
     /// TM-PY-006: Python error output goes to stderr, not stdout
     #[tokio::test]
     async fn threat_python_error_isolation() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         let result = bash.exec("python3 -c \"1/0\"").await.unwrap();
         assert_eq!(result.exit_code, 1);
@@ -874,7 +879,7 @@ mod python_security {
     /// TM-PY-007: Python syntax error returns non-zero exit code
     #[tokio::test]
     async fn threat_python_syntax_error_exit() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         let result = bash.exec("python3 -c \"if\"").await.unwrap();
         assert_ne!(result.exit_code, 0, "Syntax error should fail");
@@ -888,7 +893,7 @@ mod python_security {
     /// TM-PY-008: Python exit code propagates to bash correctly
     #[tokio::test]
     async fn threat_python_exit_code_propagation() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         // Success case
         let result = bash
@@ -908,7 +913,7 @@ mod python_security {
     /// TM-PY-009: Python -c with empty argument fails gracefully
     #[tokio::test]
     async fn threat_python_empty_code() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         let result = bash.exec("python3 -c \"\"").await.unwrap();
         // Empty string is valid -c "" argument but should fail (requires non-empty)
@@ -918,7 +923,7 @@ mod python_security {
     /// TM-PY-010: Python output in pipeline doesn't leak errors
     #[tokio::test]
     async fn threat_python_pipeline_error_handling() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         // Errors should not leak into pipeline stdout
         let result = bash
@@ -934,7 +939,7 @@ mod python_security {
     /// TM-PY-011: Python command substitution captures only stdout
     #[tokio::test]
     async fn threat_python_subst_captures_stdout() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         let result = bash
             .exec("result=$(python3 -c \"print(42)\")\necho $result")
@@ -946,7 +951,7 @@ mod python_security {
     /// TM-PY-012: Python cannot execute shell commands via eval/exec
     #[tokio::test]
     async fn threat_python_no_shell_exec() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         // __import__ should not be available
         let result = bash
@@ -963,7 +968,7 @@ mod python_security {
     /// TM-PY-013: Python unknown options rejected
     #[tokio::test]
     async fn threat_python_unknown_options() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         let result = bash.exec("python3 -X import_all").await.unwrap();
         assert_ne!(result.exit_code, 0);
@@ -973,7 +978,7 @@ mod python_security {
     #[tokio::test]
     async fn threat_python_respects_bash_limits() {
         let limits = ExecutionLimits::new().max_commands(5);
-        let mut bash = Bash::builder().limits(limits).build();
+        let mut bash = Bash::builder().python().limits(limits).build();
 
         // Each python3 invocation is 1 command; but with limit=5 we can still run some
         let result = bash.exec("python3 -c \"print('ok')\"").await.unwrap();
@@ -986,7 +991,7 @@ mod python_security {
     /// TM-PY-015: Python VFS reads only from BashKit's virtual filesystem
     #[tokio::test]
     async fn threat_python_vfs_no_real_fs() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         // pathlib.Path should read from VFS, not real filesystem
         // /etc/passwd exists on real Linux but not in VFS
@@ -1010,7 +1015,7 @@ mod python_security {
     /// TM-PY-016: Python VFS write stays in virtual filesystem
     #[tokio::test]
     async fn threat_python_vfs_write_sandboxed() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         // Write to VFS, verify it stays in VFS (no real file created)
         let result = bash
@@ -1026,7 +1031,7 @@ mod python_security {
     /// TM-PY-017: Python VFS path traversal blocked
     #[tokio::test]
     async fn threat_python_vfs_path_traversal() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         // Path traversal via ../.. should not escape VFS
         let result = bash
@@ -1044,7 +1049,7 @@ mod python_security {
     /// TM-PY-018: Python VFS data flows correctly between bash and Python
     #[tokio::test]
     async fn threat_python_vfs_bash_python_isolation() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         // Write from bash, read from Python - shares VFS
         let result = bash
@@ -1060,7 +1065,7 @@ mod python_security {
     /// TM-PY-019: Python VFS FileNotFoundError properly raised
     #[tokio::test]
     async fn threat_python_vfs_error_handling() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         // Reading nonexistent file should raise FileNotFoundError, not crash
         let result = bash
@@ -1078,7 +1083,7 @@ mod python_security {
     /// TM-PY-020: Python VFS operations respect BashKit sandbox boundaries
     #[tokio::test]
     async fn threat_python_vfs_no_network() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         // Python should not be able to make network requests
         // Even with pathlib, network paths should not work
@@ -1092,7 +1097,7 @@ mod python_security {
     /// TM-PY-021: Python VFS mkdir cannot escape sandbox
     #[tokio::test]
     async fn threat_python_vfs_mkdir_sandboxed() {
-        let mut bash = Bash::new();
+        let mut bash = bash_with_python();
 
         // mkdir in VFS only
         let result = bash

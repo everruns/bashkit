@@ -225,6 +225,9 @@ async fn jq_spec_tests() {
 #[cfg(feature = "python")]
 #[tokio::test]
 async fn python_spec_tests() {
+    use bashkit::Bash;
+    use spec_runner::run_spec_test_with;
+
     let dir = spec_cases_dir().join("python");
     let all_tests = load_spec_tests(&dir);
 
@@ -233,7 +236,64 @@ async fn python_spec_tests() {
         return;
     }
 
-    run_category_tests("python", all_tests).await;
+    // Python tests need the python builtin registered via builder
+    let make_bash = || Bash::builder().python().build();
+
+    let mut summary = TestSummary::default();
+    let mut failures = Vec::new();
+
+    for (file, tests) in &all_tests {
+        for test in tests {
+            if test.skip {
+                summary.add(
+                    &spec_runner::TestResult {
+                        name: test.name.clone(),
+                        passed: false,
+                        bashkit_stdout: String::new(),
+                        bashkit_exit_code: 0,
+                        expected_stdout: String::new(),
+                        expected_exit_code: None,
+                        real_bash_stdout: None,
+                        real_bash_exit_code: None,
+                        error: None,
+                    },
+                    true,
+                );
+                continue;
+            }
+
+            let result = run_spec_test_with(test, make_bash).await;
+            summary.add(&result, false);
+
+            if !result.passed {
+                failures.push((file.clone(), result));
+            }
+        }
+    }
+
+    println!("\n=== PYTHON Spec Tests ===");
+    println!(
+        "Total: {} | Passed: {} | Failed: {} | Skipped: {}",
+        summary.total, summary.passed, summary.failed, summary.skipped
+    );
+
+    if !failures.is_empty() {
+        println!("\n=== Failures ===");
+        for (file, result) in &failures {
+            println!("\n[{}] {}", file, result.name);
+            if let Some(ref err) = result.error {
+                println!("  Error: {}", err);
+            }
+            println!("  Expected: {:?}", result.expected_stdout);
+            println!("  Got:      {:?}", result.bashkit_stdout);
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} python tests failed",
+        failures.len()
+    );
 }
 
 async fn run_category_tests(

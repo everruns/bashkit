@@ -172,13 +172,21 @@ pub fn parse_spec_file(content: &str) -> Vec<SpecTest> {
 
 /// Run a single spec test against Bashkit
 pub async fn run_spec_test(test: &SpecTest) -> TestResult {
+    run_spec_test_with(test, Bash::new).await
+}
+
+/// Run a single spec test with a custom Bash constructor
+pub async fn run_spec_test_with(
+    test: &SpecTest,
+    make_bash: impl Fn() -> Bash + Send + 'static,
+) -> TestResult {
     // For timing tests, run in a separate runtime with paused time
     // This enables deterministic time-based testing with auto-advance
     if test.paused_time {
         return run_spec_test_paused_time(test).await;
     }
 
-    let mut bash = Bash::new();
+    let mut bash = make_bash();
 
     let (bashkit_stdout, bashkit_exit_code, error) = match bash.exec(&test.script).await {
         Ok(result) => (result.stdout, result.exit_code, None),

@@ -766,6 +766,22 @@ impl BashBuilder {
         self
     }
 
+    /// Enable embedded Python (`python`/`python3` builtins) via Monty interpreter.
+    ///
+    /// Requires the `python` feature flag. Python `pathlib.Path` operations are
+    /// bridged to the virtual filesystem.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let bash = Bash::builder().python().build();
+    /// ```
+    #[cfg(feature = "python")]
+    pub fn python(self) -> Self {
+        self.builtin("python", Box::new(builtins::Python))
+            .builtin("python3", Box::new(builtins::Python))
+    }
+
     /// Register a custom builtin command.
     ///
     /// Custom builtins extend bashkit with domain-specific commands that can be

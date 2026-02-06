@@ -290,14 +290,38 @@ impl BashToolBuilder {
     ///
     /// Custom builtins extend the shell with domain-specific commands.
     /// They will be documented in the tool's llmtxt output.
+    /// If the builtin implements [`Builtin::llm_hint`], its hint will be
+    /// included in `llmtext()` and `system_prompt()`.
     pub fn builtin(mut self, name: impl Into<String>, builtin: Box<dyn Builtin>) -> Self {
         self.builtins.push((name.into(), builtin));
         self
     }
 
+    /// Enable embedded Python (`python`/`python3` builtins) via Monty interpreter.
+    ///
+    /// Requires the `python` feature flag. Python `pathlib.Path` operations are
+    /// bridged to the virtual filesystem. Limitations (no `open()`, no HTTP) are
+    /// automatically documented in `llmtext()` and `system_prompt()`.
+    #[cfg(feature = "python")]
+    pub fn python(self) -> Self {
+        use crate::builtins::Python;
+        self.builtin("python", Box::new(Python))
+            .builtin("python3", Box::new(Python))
+    }
+
     /// Build the BashTool
     pub fn build(self) -> BashTool {
         let builtin_names: Vec<String> = self.builtins.iter().map(|(n, _)| n.clone()).collect();
+
+        // Collect LLM hints from builtins, deduplicated
+        let mut builtin_hints: Vec<String> = self
+            .builtins
+            .iter()
+            .filter_map(|(_, b)| b.llm_hint().map(String::from))
+            .collect();
+        builtin_hints.sort();
+        builtin_hints.dedup();
+
         BashTool {
             username: self.username,
             hostname: self.hostname,
@@ -305,6 +329,7 @@ impl BashToolBuilder {
             env_vars: self.env_vars,
             builtins: self.builtins,
             builtin_names,
+            builtin_hints,
         }
     }
 }
@@ -319,6 +344,8 @@ pub struct BashTool {
     builtins: Vec<(String, Box<dyn Builtin>)>,
     /// Names of custom builtins (for documentation)
     builtin_names: Vec<String>,
+    /// LLM hints from registered builtins
+    builtin_hints: Vec<String>,
 }
 
 impl BashTool {
@@ -406,6 +433,14 @@ impl BashTool {
             }
         }
 
+        // Append builtin hints (capabilities/limitations for LLMs)
+        if !self.builtin_hints.is_empty() {
+            doc.push_str("\nNOTES\n");
+            for hint in &self.builtin_hints {
+                doc.push_str(&format!("       {hint}\n"));
+            }
+        }
+
         doc
     }
 
@@ -426,6 +461,14 @@ impl BashTool {
         // Input/Output format
         prompt.push_str("Input: {\"commands\": \"<bash commands>\"}\n");
         prompt.push_str("Output: {stdout, stderr, exit_code}\n");
+
+        // Builtin hints (capabilities/limitations)
+        if !self.builtin_hints.is_empty() {
+            prompt.push('\n');
+            for hint in &self.builtin_hints {
+                prompt.push_str(&format!("Note: {hint}\n"));
+            }
+        }
 
         prompt
     }
@@ -652,6 +695,119 @@ mod tests {
         assert_eq!(resp.stdout, "hello\n");
         assert_eq!(resp.exit_code, 0);
         assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn test_builtin_hints_in_llmtext_and_system_prompt() {
+        use crate::builtins::Builtin;
+        use crate::error::Result;
+        use crate::interpreter::ExecResult;
+
+        struct HintedBuiltin;
+
+        #[async_trait]
+        impl Builtin for HintedBuiltin {
+            async fn execute(&self, _ctx: crate::builtins::Context<'_>) -> Result<ExecResult> {
+                Ok(ExecResult::ok(String::new()))
+            }
+            fn llm_hint(&self) -> Option<&'static str> {
+                Some("mycommand: Processes CSV. Max 10MB. No streaming.")
+            }
+        }
+
+        let tool = BashTool::builder()
+            .builtin("mycommand", Box::new(HintedBuiltin))
+            .build();
+
+        // Hint should appear in llmtext
+        let llmtxt = tool.llmtext();
+        assert!(
+            llmtxt.contains("NOTES"),
+            "llmtext should have NOTES section"
+        );
+        assert!(
+            llmtxt.contains("mycommand: Processes CSV"),
+            "llmtext should contain the hint"
+        );
+
+        // Hint should appear in system_prompt
+        let sysprompt = tool.system_prompt();
+        assert!(
+            sysprompt.contains("mycommand: Processes CSV"),
+            "system_prompt should contain the hint"
+        );
+    }
+
+    #[test]
+    fn test_no_hints_without_hinted_builtins() {
+        let tool = BashTool::default();
+
+        let llmtxt = tool.llmtext();
+        assert!(
+            !llmtxt.contains("NOTES"),
+            "llmtext should not have NOTES without hinted builtins"
+        );
+
+        let sysprompt = tool.system_prompt();
+        assert!(
+            !sysprompt.contains("Note:"),
+            "system_prompt should not have notes without hinted builtins"
+        );
+    }
+
+    #[test]
+    fn test_duplicate_hints_deduplicated() {
+        use crate::builtins::Builtin;
+        use crate::error::Result;
+        use crate::interpreter::ExecResult;
+
+        struct SameHint;
+
+        #[async_trait]
+        impl Builtin for SameHint {
+            async fn execute(&self, _ctx: crate::builtins::Context<'_>) -> Result<ExecResult> {
+                Ok(ExecResult::ok(String::new()))
+            }
+            fn llm_hint(&self) -> Option<&'static str> {
+                Some("same hint")
+            }
+        }
+
+        let tool = BashTool::builder()
+            .builtin("cmd1", Box::new(SameHint))
+            .builtin("cmd2", Box::new(SameHint))
+            .build();
+
+        let llmtxt = tool.llmtext();
+        // Should appear exactly once
+        assert_eq!(
+            llmtxt.matches("same hint").count(),
+            1,
+            "Duplicate hints should be deduplicated"
+        );
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn test_python_hint_via_builder() {
+        let tool = BashTool::builder().python().build();
+
+        let llmtxt = tool.llmtext();
+        assert!(llmtxt.contains("python"), "llmtext should mention python");
+        assert!(
+            llmtxt.contains("no open()"),
+            "llmtext should document open() limitation"
+        );
+        assert!(
+            llmtxt.contains("No HTTP"),
+            "llmtext should document HTTP limitation"
+        );
+
+        let sysprompt = tool.system_prompt();
+        assert!(
+            sysprompt.contains("python"),
+            "system_prompt should mention python"
+        );
     }
 
     #[tokio::test]
