@@ -94,8 +94,11 @@ bashkit-eval run \
   --model <model-name> \
   [--max-turns 10] \
   [--save] \
-  [--output eval-results]
+  [--output eval-results] \
+  [--moniker <custom-id>]
 ```
+
+- `--moniker` — optional custom identifier for the run. Default: auto-generated from `{provider}-{model}`.
 
 ## Output
 
@@ -103,8 +106,10 @@ bashkit-eval run \
 Per-task PASS/FAIL with check details. Summary table with overall score and per-category breakdown.
 
 ### Saved (--save flag)
-- `{output}/{provider}-{model}-{timestamp}.json` — full results
-- `{output}/{provider}-{model}-{timestamp}.md` — markdown report
+- `{output}/eval-{moniker}-{YYYY-MM-DD-HHmmss}.json` — full results with traces
+- `{output}/eval-{moniker}-{YYYY-MM-DD-HHmmss}.md` — markdown report
+
+Moniker defaults to `{provider}-{model}`, overridable via `--moniker`.
 
 ## Dataset Categories
 
@@ -120,6 +125,17 @@ Per-task PASS/FAIL with check details. Summary table with overall score and per-
 | archive_operations | tar, gzip workflows | Project files |
 | jq_mastery | Complex jq queries | Nested JSON |
 | complex_tasks | Multi-step real-world scenarios | Various |
+
+## Results & Analysis
+
+After running evals with `--save`, update `crates/bashkit-eval/README.md` with:
+
+1. **Summary table** — pass rate, score, token usage, duration per model
+2. **Per-category comparison** — highlights where models differ
+3. **Key observations** — notable failures, bashkit gaps surfaced, model behavioral differences
+4. **Date of analysis** — when the results were collected
+
+Keep README highlights concise. Full per-task details live in the saved markdown reports under `eval-results/`.
 
 ## Non-Goals
 
