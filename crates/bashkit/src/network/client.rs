@@ -130,7 +130,7 @@ impl HttpClient {
         let client = Client::builder()
             .timeout(timeout)
             .connect_timeout(Duration::from_secs(10)) // Separate connect timeout
-            .user_agent("bashkit/0.1.0")
+            .user_agent("bashkit/0.1.2")
             // Disable automatic redirects to prevent allowlist bypass via redirect
             // Scripts can follow redirects manually if needed
             .redirect(reqwest::redirect::Policy::none())
@@ -373,7 +373,7 @@ impl HttpClient {
             Client::builder()
                 .timeout(timeout)
                 .connect_timeout(connect_timeout)
-                .user_agent("bashkit/0.1.0")
+                .user_agent("bashkit/0.1.2")
                 .redirect(reqwest::redirect::Policy::none())
                 .no_gzip()
                 .no_brotli()
