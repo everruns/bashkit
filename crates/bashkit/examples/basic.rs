@@ -1,4 +1,4 @@
-//! Basic BashKit usage example
+//! Basic Bashkit usage example
 //!
 //! Run with: cargo run --example basic
 
@@ -10,7 +10,7 @@ async fn main() -> anyhow::Result<()> {
     let mut bash = Bash::new();
 
     // Execute a simple command
-    let result = bash.exec("echo 'Hello, BashKit!'").await?;
+    let result = bash.exec("echo 'Hello, Bashkit!'").await?;
     println!("Output: {}", result.stdout);
 
     // Variable assignment and expansion

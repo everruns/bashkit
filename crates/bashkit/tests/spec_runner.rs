@@ -1,4 +1,4 @@
-//! Spec test runner for BashKit compatibility testing
+//! Spec test runner for Bashkit compatibility testing
 //!
 //! Test file format (.test.sh):
 //! ```
@@ -10,7 +10,7 @@
 //! ### end
 //! ```
 //!
-//! Multiple tests per file supported. Tests are run against BashKit
+//! Multiple tests per file supported. Tests are run against Bashkit
 //! and optionally compared against real bash.
 
 use bashkit::Bash;
@@ -170,7 +170,7 @@ pub fn parse_spec_file(content: &str) -> Vec<SpecTest> {
     tests
 }
 
-/// Run a single spec test against BashKit
+/// Run a single spec test against Bashkit
 pub async fn run_spec_test(test: &SpecTest) -> TestResult {
     // For timing tests, run in a separate runtime with paused time
     // This enables deterministic time-based testing with auto-advance

@@ -5,7 +5,7 @@ Implemented
 
 ## Decision
 
-BashKit provides a comprehensive set of built-in commands for script execution
+Bashkit provides a comprehensive set of built-in commands for script execution
 in a sandboxed environment. All builtins operate on the virtual filesystem.
 
 ### Builtin Categories
@@ -164,7 +164,7 @@ pub struct Context<'a> {
 
 ### Custom Builtins
 
-BashKit supports registering custom builtins via `BashBuilder`:
+Bashkit supports registering custom builtins via `BashBuilder`:
 
 ```rust
 use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, async_trait};

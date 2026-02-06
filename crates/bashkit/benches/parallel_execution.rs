@@ -1,4 +1,4 @@
-//! Parallel execution benchmark for BashKit
+//! Parallel execution benchmark for Bashkit
 //!
 //! Tests: Can multiple Bash instances run in parallel?
 //! Answer: YES - each Bash instance is independent. The Arc<dyn FileSystem>

@@ -1,4 +1,4 @@
-# BashKit - Sandboxed bash interpreter for multi-tenant environments
+# Bashkit - Sandboxed bash interpreter for multi-tenant environments
 # Part of the Everruns ecosystem
 # See specs/ for design decisions
 

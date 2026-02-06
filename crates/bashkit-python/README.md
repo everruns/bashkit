@@ -1,6 +1,6 @@
-# BashKit Python Bindings
+# Bashkit Python Bindings
 
-Python bindings for [BashKit](https://github.com/everruns/bashkit) - a sandboxed bash interpreter for AI agents.
+Python bindings for [Bashkit](https://github.com/everruns/bashkit) - a sandboxed bash interpreter for AI agents.
 
 ## Features
 

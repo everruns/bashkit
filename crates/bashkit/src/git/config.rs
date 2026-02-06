@@ -1,4 +1,4 @@
-//! Git configuration for BashKit.
+//! Git configuration for Bashkit.
 //!
 //! # Security Mitigations
 //!
@@ -17,7 +17,7 @@ pub const DEFAULT_AUTHOR_NAME: &str = "sandbox";
 /// Default author email for commits in sandboxed environment.
 pub const DEFAULT_AUTHOR_EMAIL: &str = "sandbox@bashkit.local";
 
-/// Git configuration for BashKit.
+/// Git configuration for Bashkit.
 ///
 /// Controls git behavior including author identity and remote access.
 ///

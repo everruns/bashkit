@@ -1,4 +1,4 @@
-// BashKit Benchmark Tool
+// Bashkit Benchmark Tool
 // Compares bashkit, bash, and just-bash on:
 // - Performance (execution time)
 // - Start time (interpreter startup overhead)
@@ -572,7 +572,7 @@ fn generate_markdown_report(report: &BenchReport) -> String {
     let mut md = String::new();
 
     // Header
-    md.push_str("# BashKit Benchmark Report\n\n");
+    md.push_str("# Bashkit Benchmark Report\n\n");
 
     // System info
     md.push_str("## System Information\n\n");
@@ -629,7 +629,7 @@ fn generate_markdown_report(report: &BenchReport) -> String {
                 let speedup = b.avg_time_ms / bk.avg_time_ms;
                 if speedup > 1.0 {
                     md.push_str(&format!(
-                        "**BashKit is {:.1}x faster** than bash on average.\n\n",
+                        "**Bashkit is {:.1}x faster** than bash on average.\n\n",
                         speedup
                     ));
                 } else {
@@ -690,7 +690,7 @@ fn generate_markdown_report(report: &BenchReport) -> String {
     md.push_str("- Per-benchmark warmup iterations excluded from timing\n");
     md.push_str("- Output match compares against bash output when available\n");
     md.push_str("- Errors include execution failures and exit code mismatches\n");
-    md.push_str("- BashKit runs in-process (no fork), bash spawns subprocess\n");
+    md.push_str("- Bashkit runs in-process (no fork), bash spawns subprocess\n");
     md.push('\n');
 
     md

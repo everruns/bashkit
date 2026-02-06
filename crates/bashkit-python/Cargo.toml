@@ -1,5 +1,5 @@
-# Python bindings for BashKit
-# Exposes BashKit as a Python module via PyO3
+# Python bindings for Bashkit
+# Exposes Bashkit as a Python module via PyO3
 
 [package]
 name = "bashkit-python"
@@ -8,7 +8,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Python bindings for BashKit sandboxed bash interpreter"
+description = "Python bindings for Bashkit sandboxed bash interpreter"
 
 [lib]
 crate-type = ["cdylib"]
@@ -16,7 +16,7 @@ name = "bashkit"
 doc = false  # Python extension, no Rust docs needed
 
 [dependencies]
-# BashKit core
+# Bashkit core
 bashkit = { path = "../bashkit" }
 
 # PyO3 for Python bindings

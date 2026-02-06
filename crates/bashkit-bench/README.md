@@ -1,6 +1,6 @@
-# BashKit Benchmark
+# Bashkit Benchmark
 
-Benchmark tool for comparing BashKit against native bash and just-bash interpreters.
+Benchmark tool for comparing Bashkit against native bash and just-bash interpreters.
 
 ## Overview
 
@@ -90,7 +90,7 @@ The system moniker includes hostname, OS, and architecture (e.g., `myhost-linux-
 
 ### Output Matching
 - When bash is available, its output is used as the reference
-- BashKit output is compared after normalizing whitespace
+- Bashkit output is compared after normalizing whitespace
 - Mismatches are flagged but don't affect timing
 
 ### Error Handling
@@ -99,12 +99,12 @@ The system moniker includes hostname, OS, and architecture (e.g., `myhost-linux-
 - Up to 3 error messages are captured per benchmark
 
 ### Performance Context
-- **BashKit runs in-process**: No fork/exec overhead, shared memory
+- **Bashkit runs in-process**: No fork/exec overhead, shared memory
 - **Bash spawns subprocess**: ~8-10ms startup per invocation
-- This explains why BashKit appears 100-1000x faster for simple operations
+- This explains why Bashkit appears 100-1000x faster for simple operations
 
 ### What This Measures
-- BashKit: Pure interpreter performance (parsing + execution)
+- Bashkit: Pure interpreter performance (parsing + execution)
 - Bash: Full process lifecycle (fork + exec + parsing + execution + exit)
 
 ### What This Doesn't Measure
@@ -115,7 +115,7 @@ The system moniker includes hostname, OS, and architecture (e.g., `myhost-linux-
 
 ## Known Limitations
 
-Some bash features are not implemented in BashKit:
+Some bash features are not implemented in Bashkit:
 - `:` (null command) - use `true` instead
 - `set -e` (errexit)
 - `trap` signal handling
@@ -126,7 +126,7 @@ Benchmarks are designed to use compatible subset of features.
 
 ## Interpreters
 
-### BashKit
+### Bashkit
 The Rust-based sandboxed interpreter being benchmarked. Runs in-process without subprocess overhead.
 
 ### Bash

@@ -1,6 +1,6 @@
 //! Git workflow example
 //!
-//! Demonstrates sandboxed git operations in BashKit's virtual filesystem.
+//! Demonstrates sandboxed git operations in Bashkit's virtual filesystem.
 //!
 //! Run with: cargo run --example git_workflow --features git
 
@@ -8,7 +8,7 @@ use bashkit::{Bash, GitConfig};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("=== BashKit Git Workflow Example ===\n");
+    println!("=== Bashkit Git Workflow Example ===\n");
 
     // Create a Bash instance with git support
     let mut bash = Bash::builder()

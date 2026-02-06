@@ -5,7 +5,7 @@ Implemented
 
 ## Decision
 
-BashKit uses a multi-layer testing strategy:
+Bashkit uses a multi-layer testing strategy:
 
 1. **Unit tests** - Component-level tests in each module
 2. **Spec tests** - Compatibility tests against bash behavior
@@ -183,7 +183,7 @@ The following items need attention:
 2. Use the standard format with `### test_name`, `### expect`, `### end`
 3. Run `just check-bash-compat` to verify expected output matches real bash
 4. If test fails due to unimplemented feature, add `### skip: reason`
-5. If BashKit intentionally differs from bash, add `### bash_diff: reason`
+5. If Bashkit intentionally differs from bash, add `### bash_diff: reason`
 6. Update `specs/009-implementation-status.md` for skipped tests
 
 ### Checking Expected Outputs
@@ -204,7 +204,7 @@ If a test fails, either:
 
 ## Comparison Testing
 
-The `bash_comparison_tests` test runs in CI and compares BashKit output against real bash:
+The `bash_comparison_tests` test runs in CI and compares Bashkit output against real bash:
 
 ```rust
 pub fn run_real_bash(script: &str) -> (String, i32) {
@@ -224,7 +224,7 @@ A verbose version `bash_comparison_tests_verbose` is available (ignored by defau
 
 ## Compatibility Report
 
-The `compatibility_report` test generates a comprehensive summary of BashKit's
+The `compatibility_report` test generates a comprehensive summary of Bashkit's
 compatibility with real bash. Run with:
 
 ```bash
@@ -234,7 +234,7 @@ just compat-report
 Example output:
 ```
 ╔══════════════════════════════════════════════════════════════════╗
-║                 BashKit Compatibility Report                     ║
+║                 Bashkit Compatibility Report                     ║
 ╚══════════════════════════════════════════════════════════════════╝
 
 ┌─────────────┬───────┬────────┬─────────┬───────────┬─────────────────┐
@@ -260,7 +260,7 @@ The report shows:
 ## Differential Fuzzing
 
 Grammar-based property testing using proptest generates random valid bash scripts
-and compares BashKit output against real bash. This helps find edge cases that
+and compares Bashkit output against real bash. This helps find edge cases that
 aren't covered by hand-written spec tests.
 
 ### Running Differential Fuzzing
@@ -294,9 +294,9 @@ The fuzzer generates scripts in these categories:
 ### Known Limitations
 
 Some features are intentionally excluded from fuzzing:
-- `pwd` - Path differs between BashKit VFS and real filesystem
+- `pwd` - Path differs between Bashkit VFS and real filesystem
 - `wc` - Output formatting differs (column alignment)
-- Filesystem operations - BashKit uses virtual filesystem
+- Filesystem operations - Bashkit uses virtual filesystem
 
 ## Alternatives Considered
 
