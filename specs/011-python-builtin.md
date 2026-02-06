@@ -77,7 +77,10 @@ Monty implements a subset of Python 3.12:
 - Classes (planned upstream)
 - Match statements
 - Import of third-party libraries
-- Network I/O (no socket, urllib, requests)
+- `open()` builtin — Monty does not implement `open()`. Use `pathlib.Path` instead:
+  `Path('f.txt').read_text()` not `open('f.txt').read()`
+- HTTP/network I/O — no `socket`, `urllib`, `requests`, `http.client` modules.
+  Monty has no OsCall variants for network operations, so there is no way to bridge these.
 - Most standard library modules
 
 ### VFS Bridging
