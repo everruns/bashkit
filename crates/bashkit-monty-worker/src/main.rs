@@ -1,6 +1,9 @@
 // Monty worker: runs in a subprocess, communicates with parent via JSON lines.
 // If this process segfaults (e.g., monty parser stack overflow), the parent
 // catches the child exit and returns a shell error instead of crashing.
+//
+// EXPERIMENTAL: Monty is early-stage; this subprocess boundary is the primary
+// defense against its known and unknown crash/security bugs.
 
 use bashkit_monty_worker::{
     read_message, write_message, WireExternalResult, WireLimits, WorkerRequest, WorkerResponse,

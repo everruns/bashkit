@@ -1,7 +1,13 @@
 # 011: Python Builtin (Monty)
 
+> **Experimental.** Monty is an early-stage Python interpreter. Its parser is
+> known to segfault on certain inputs (see [monty#112](https://github.com/pydantic/monty/issues/112)).
+> Subprocess isolation mitigates host crashes, but the integration may have
+> undiscovered security gaps. Do not rely on it for untrusted-input safety
+> without additional hardening.
+
 ## Status
-Implemented
+Implemented (experimental)
 
 ## Decision
 

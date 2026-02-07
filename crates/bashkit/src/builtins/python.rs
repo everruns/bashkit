@@ -1,5 +1,15 @@
 //! python/python3 builtin via embedded Monty interpreter (pydantic/monty)
 //!
+//! # Experimental
+//!
+//! **This integration is experimental.** Monty is an early-stage Python interpreter
+//! with known crash-level bugs in its parser (e.g., [monty#112](https://github.com/pydantic/monty/issues/112) —
+//! deeply nested parentheses cause a segfault). Subprocess isolation mitigates host
+//! crashes, but there may be undiscovered security issues in Monty's parser or VM
+//! that bypass BashKit's sandboxing. Use with caution when processing untrusted input.
+//!
+//! # Overview
+//!
 //! Sandboxed Python execution with resource limits and VFS access.
 //! Python `pathlib.Path` operations are bridged to BashKit's virtual filesystem
 //! via Monty's OsCall pause/resume mechanism. No real filesystem or network access.
@@ -9,7 +19,6 @@
 //! - **Subprocess**: Monty runs in `bashkit-monty-worker` child process (crash-isolated)
 //!
 //! Default is `Auto`: use subprocess if the worker binary is found, else fall back to in-process.
-//! See pydantic/monty#112 for the motivating crash scenario (deeply nested parentheses segfault).
 //!
 //! Supports: `python -c "code"`, `python script.py`, stdin piping.
 
@@ -38,6 +47,9 @@ const DEFAULT_MAX_RECURSION: usize = 200;
 
 /// How to run the Monty interpreter.
 ///
+/// **Experimental:** Monty has known parser crash bugs. `Subprocess` mode is
+/// strongly recommended for untrusted input.
+///
 /// - `InProcess`: fast, but a parser segfault (e.g., monty#112) kills the host.
 /// - `Subprocess`: crash-isolated via `bashkit-monty-worker` child process.
 /// - `Auto` (default): subprocess if worker binary found, else in-process.
@@ -53,6 +65,9 @@ pub enum PythonIsolation {
 }
 
 /// Resource limits for the embedded Python (Monty) interpreter.
+///
+/// **Experimental:** The Monty integration is experimental and may have
+/// undiscovered security issues. See module-level docs for details.
 ///
 /// Use the builder pattern to customize, or `Default` for the standard sandbox limits:
 /// - 1,000,000 allocations
@@ -135,6 +150,9 @@ impl PythonLimits {
 }
 
 /// The python/python3 builtin command.
+///
+/// **Experimental:** Monty is an early-stage interpreter with known crash bugs.
+/// Subprocess isolation is recommended for untrusted input. See module docs.
 ///
 /// Executes Python code using the embedded Monty interpreter (pydantic/monty).
 /// Python `pathlib.Path` operations are bridged to BashKit's VFS — files

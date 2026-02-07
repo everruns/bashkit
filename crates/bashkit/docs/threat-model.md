@@ -288,6 +288,12 @@ attacks (similar to [pydantic/monty#112](https://github.com/pydantic/monty/issue
 
 ## Python Subprocess Isolation (TM-PY-022 to TM-PY-026)
 
+> **Experimental.** The Monty Python integration is experimental. Monty is an
+> early-stage interpreter with known crash-level bugs (e.g., parser segfaults).
+> Subprocess isolation mitigates host crashes, but undiscovered vulnerabilities
+> may exist. Treat the Python feature as less mature than the rest of BashKit's
+> security boundary.
+
 When using `PythonIsolation::Subprocess`, the Monty interpreter runs in a separate
 child process (`bashkit-monty-worker`). This provides crash isolation — if the
 interpreter segfaults (e.g., [pydantic/monty#112](https://github.com/pydantic/monty/issues/112)),

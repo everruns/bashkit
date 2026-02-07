@@ -1,6 +1,9 @@
 // IPC protocol for bashkit <-> monty-worker subprocess communication.
 // JSON lines over stdin/stdout. Worker stays synchronous (no tokio).
 //
+// EXPERIMENTAL: Monty is an early-stage interpreter with known crash bugs.
+// This worker exists specifically to isolate those crashes from the host.
+//
 // Flow:
 //   Parent -> Worker: Init { code, filename, limits }
 //   Worker -> Parent: OsCall { function, args, kwargs } | Complete | Error

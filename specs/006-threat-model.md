@@ -990,6 +990,12 @@ The following components are fuzz-tested for robustness:
 
 ## Python / Monty Security (TM-PY)
 
+> **Experimental.** Monty is an early-stage Python interpreter with known
+> parser-level crash bugs (e.g., [monty#112](https://github.com/pydantic/monty/issues/112)).
+> Subprocess isolation mitigates host crashes, but this integration should be
+> treated as experimental. Undiscovered vulnerabilities in Monty's parser or VM
+> may bypass BashKit's sandboxing layers.
+
 BashKit embeds the Monty Python interpreter (pydantic/monty) with VFS bridging.
 Python `pathlib.Path` operations are bridged to BashKit's virtual filesystem via
 Monty's OsCall pause/resume mechanism. This section covers threats specific to
