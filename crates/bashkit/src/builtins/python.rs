@@ -24,7 +24,7 @@
 use async_trait::async_trait;
 use bashkit_monty_worker::{WireExternalResult, WireLimits, WorkerRequest, WorkerResponse};
 use monty::{
-    dir_stat, file_stat, CollectStringPrint, ExcType, ExternalResult, LimitedTracker,
+    dir_stat, file_stat, symlink_stat, CollectStringPrint, ExcType, ExternalResult, LimitedTracker,
     MontyException, MontyObject, MontyRun, OsFunction, ResourceLimits, RunProgress,
 };
 use std::collections::HashMap;
@@ -831,6 +831,7 @@ async fn handle_os_call(
                     .unwrap_or(0.0);
                 let stat_obj = match meta.file_type {
                     FileType::Directory => dir_stat(meta.mode as i64, mtime),
+                    FileType::Symlink => symlink_stat(meta.mode as i64, mtime),
                     _ => file_stat(meta.mode as i64, meta.size as i64, mtime),
                 };
                 ExternalResult::Return(stat_obj)
