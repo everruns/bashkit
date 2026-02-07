@@ -111,6 +111,21 @@ Per-task PASS/FAIL with check details. Summary table with overall score and per-
 
 Moniker defaults to `{provider}-{model}`, overridable via `--moniker`.
 
+## Metrics
+
+### Task-level
+- **Score** — weighted sum of passed checks vs total weight
+- **Turns** — LLM round-trips (each `provider.chat()` call = 1 turn)
+- **Tool calls** — total bash invocations, split into ok (exit_code 0) and error (exit_code != 0)
+- **Tokens** — input/output token counts
+- **Duration** — wall-clock time
+
+### Summary-level
+- **Tasks passed** — count of tasks where all checks pass
+- **Overall score** — aggregate weighted score across all tasks
+- **Tool call success rate** — `tool_calls_ok / total_tool_calls`. Measures how many bash calls the interpreter processed without error. Low rates indicate bashkit compatibility gaps or model issuing invalid commands.
+- **Per-category breakdown** — pass rate per task category
+
 ## Dataset Categories
 
 | Category | Tests | Pre-populated files |
@@ -130,7 +145,7 @@ Moniker defaults to `{provider}-{model}`, overridable via `--moniker`.
 
 After running evals with `--save`, update `crates/bashkit-eval/README.md` with:
 
-1. **Summary table** — pass rate, score, token usage, duration per model
+1. **Summary table** — pass rate, score, tool call success rate, token usage, duration per model
 2. **Per-category comparison** — highlights where models differ
 3. **Key observations** — notable failures, bashkit gaps surfaced, model behavioral differences
 4. **Date of analysis** — when the results were collected
