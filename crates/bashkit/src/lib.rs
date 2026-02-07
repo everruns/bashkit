@@ -323,7 +323,7 @@ pub use network::HttpClient;
 pub use git::GitClient;
 
 #[cfg(feature = "python")]
-pub use builtins::PythonLimits;
+pub use builtins::{PythonIsolation, PythonLimits};
 
 /// Logging utilities module
 ///
@@ -772,6 +772,10 @@ impl BashBuilder {
     /// Enable embedded Python (`python`/`python3` builtins) via Monty interpreter
     /// with default resource limits.
     ///
+    /// **Experimental:** The Monty Python integration is experimental and has known
+    /// crash-level bugs in its parser. Subprocess isolation (the default `Auto` mode)
+    /// mitigates host crashes, but undiscovered security issues may exist.
+    ///
     /// Requires the `python` feature flag. Python `pathlib.Path` operations are
     /// bridged to the virtual filesystem.
     ///
@@ -786,6 +790,8 @@ impl BashBuilder {
     }
 
     /// Enable embedded Python with custom resource limits.
+    ///
+    /// **Experimental:** See [`BashBuilder::python`] for caveats.
     ///
     /// # Example
     ///
@@ -1124,6 +1130,9 @@ pub mod compatibility_scorecard {}
 pub mod threat_model {}
 
 /// Guide for embedded Python via the Monty interpreter.
+///
+/// **Experimental:** The Monty integration is experimental with known security
+/// issues. See the guide below and [`threat_model`] for details.
 ///
 /// This guide covers:
 /// - Enabling Python with [`BashBuilder::python`]

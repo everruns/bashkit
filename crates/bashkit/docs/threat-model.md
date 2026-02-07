@@ -266,7 +266,7 @@ let bash = Bash::builder()
 ## Parser Depth Protection
 
 The parser includes multiple layers of depth protection to prevent stack overflow
-attacks (similar to [pydantic/monty#112](https://github.com/pydantic/monty/issues/112)):
+attacks:
 
 1. **Configurable depth limit** (`max_ast_depth`, default 100): Controls maximum nesting
    of compound commands (if/for/while/case/subshell).
@@ -285,6 +285,31 @@ attacks (similar to [pydantic/monty#112](https://github.com/pydantic/monty/issue
 
 5. **Parser fuel** (`max_parser_operations`, default 100K): Independent of depth,
    limits total parser work to prevent CPU exhaustion.
+
+## Python Subprocess Isolation (TM-PY-022 to TM-PY-026)
+
+> **Experimental.** The Monty Python integration is experimental. Monty is an
+> early-stage interpreter with known crash-level bugs (e.g., parser segfaults).
+> Subprocess isolation mitigates host crashes, but undiscovered vulnerabilities
+> may exist. Treat the Python feature as less mature than the rest of BashKit's
+> security boundary.
+
+When using `PythonIsolation::Subprocess`, the Monty interpreter runs in a separate
+child process (`bashkit-monty-worker`). This provides crash isolation — if the
+interpreter segfaults, only the worker process dies. The host continues running
+normally.
+
+| Threat | Mitigation |
+|--------|------------|
+| Parser segfault kills host (TM-PY-022) | Worker runs in child process |
+| Worker binary spoofing (TM-PY-023) | Caller responsibility — secure env/PATH |
+| Worker hang blocks parent (TM-PY-024) | IPC timeout (max_duration + 5s) |
+| Worker leaks host env vars (TM-PY-025) | `env_clear()` on worker process |
+| Worker sends oversized response (TM-PY-026) | IPC line size capped at 16 MB |
+
+**Caller Responsibility (TM-PY-023):** The `BASHKIT_MONTY_WORKER` environment variable
+controls which binary is spawned as the worker process. Do not let untrusted input
+control this variable or the system PATH.
 
 ## Security Testing
 
