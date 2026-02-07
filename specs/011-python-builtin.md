@@ -17,6 +17,32 @@ Enable with:
 bashkit = { version = "0.1", features = ["python"] }
 ```
 
+### Registration (Opt-in)
+
+Python builtins are **not** auto-registered. Enable via builder:
+
+```rust
+use bashkit::Bash;
+
+// Default limits
+let bash = Bash::builder().python().build();
+
+// Custom limits
+use bashkit::PythonLimits;
+use std::time::Duration;
+
+let bash = Bash::builder()
+    .python_with_limits(
+        PythonLimits::default()
+            .max_duration(Duration::from_secs(5))
+            .max_memory(16 * 1024 * 1024)
+    )
+    .build();
+```
+
+The `python` feature flag enables compilation; `.python()` on the builder enables
+registration. This matches the `git` pattern (`Bash::builder().git(config).build()`).
+
 ### Why Monty
 
 - Pure Rust, no CPython dependency
@@ -48,14 +74,27 @@ python3 -V
 
 ### Resource Limits
 
-Monty enforces its own resource limits independent of BashKit's shell limits:
+Monty enforces its own resource limits independent of BashKit's shell limits.
+All limits are configurable via `PythonLimits`:
 
-| Limit | Default | Purpose |
-|-------|---------|---------|
-| Max allocations | 1,000,000 | Prevent memory exhaustion |
-| Max duration | 30 seconds | Prevent infinite loops |
-| Max memory | 64 MB | Prevent memory exhaustion |
-| Max recursion | 200 | Prevent stack overflow |
+| Limit | Default | Builder Method | Purpose |
+|-------|---------|----------------|---------|
+| Max allocations | 1,000,000 | `.max_allocations(n)` | Prevent memory exhaustion |
+| Max duration | 30 seconds | `.max_duration(d)` | Prevent infinite loops |
+| Max memory | 64 MB | `.max_memory(bytes)` | Prevent memory exhaustion |
+| Max recursion | 200 | `.max_recursion(depth)` | Prevent stack overflow |
+
+```rust
+use bashkit::PythonLimits;
+use std::time::Duration;
+
+// Tighter limits for untrusted code
+let limits = PythonLimits::default()
+    .max_duration(Duration::from_secs(5))
+    .max_memory(16 * 1024 * 1024)  // 16 MB
+    .max_allocations(100_000)
+    .max_recursion(50);
+```
 
 ### Python Feature Support
 
@@ -166,6 +205,16 @@ Relative paths are resolved against the shell's cwd. Path traversal via
 - File not found: Exit code 2, error on stderr
 - Missing `-c` argument: Exit code 2, error on stderr
 - Unknown option: Exit code 2, error on stderr
+
+### LLM Hints
+
+When Python is registered via `BashToolBuilder::python()`, the builtin contributes
+a hint to `llmtext()` and `system_prompt()` documenting its limitations:
+
+> python/python3: Embedded Python (Monty). File I/O via pathlib.Path only (no open()). No HTTP/network. No classes. No third-party imports.
+
+This uses the general `Builtin::llm_hint()` mechanism — any builtin can provide
+hints that are automatically deduplicated and included in LLM-facing documentation.
 
 ### Integration with BashKit
 

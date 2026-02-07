@@ -288,6 +288,7 @@ All threats use stable IDs in the format `TM-<CATEGORY>-<NUMBER>`:
 | TM-ISO | Multi-Tenant Isolation |
 | TM-INT | Internal Error Handling |
 | TM-LOG | Logging Security |
+| TM-PY | Python/Monty Security |
 
 Full threat analysis: [`specs/006-threat-model.md`][spec]
 

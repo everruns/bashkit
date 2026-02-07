@@ -1123,6 +1123,20 @@ pub mod compatibility_scorecard {}
 #[doc = include_str!("../docs/threat-model.md")]
 pub mod threat_model {}
 
+/// Guide for embedded Python via the Monty interpreter.
+///
+/// This guide covers:
+/// - Enabling Python with [`BashBuilder::python`]
+/// - VFS bridging (`pathlib.Path` → virtual filesystem)
+/// - Configuring resource limits with [`PythonLimits`]
+/// - LLM tool integration via [`BashToolBuilder::python`]
+/// - Known limitations (no `open()`, no HTTP, no classes)
+///
+/// **Related:** [`BashBuilder::python`], [`PythonLimits`], [`threat_model`]
+#[cfg(feature = "python")]
+#[doc = include_str!("../docs/python.md")]
+pub mod python_guide {}
+
 /// Logging guide for Bashkit.
 ///
 /// This guide covers configuring structured logging, log levels, security
