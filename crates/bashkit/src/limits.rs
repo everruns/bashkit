@@ -13,6 +13,7 @@
 //! - **TM-DOS-022**: Parser recursion → `max_ast_depth`
 //! - **TM-DOS-023**: CPU exhaustion → `timeout`
 //! - **TM-DOS-024**: Parser hang → `parser_timeout`, `max_parser_operations`
+//! - **TM-DOS-027**: Builtin parser recursion → `MAX_AWK_PARSER_DEPTH`, `MAX_JQ_JSON_DEPTH` (in builtins)
 //!
 //! # Fail Points (enabled with `failpoints` feature)
 //!

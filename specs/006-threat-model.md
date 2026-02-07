@@ -209,15 +209,18 @@ vulnerability in Python parsers.
 | TM-DOS-023 | Long computation | Complex awk/sed regex | Timeout (30s) | **MITIGATED** |
 | TM-DOS-024 | Parser hang | Malformed input | `parser_timeout` (5s) + `max_parser_operations` | **MITIGATED** |
 | TM-DOS-025 | Regex backtrack | `grep "a](*b)*c" file` | Regex crate limits | Partial |
-| TM-DOS-027 | Builtin parser recursion | Deeply nested awk/jq expressions | Bounded by `max_input_bytes` | Partial |
+| TM-DOS-027 | Builtin parser recursion | Deeply nested awk/jq expressions | `MAX_AWK_PARSER_DEPTH` (100) + `MAX_JQ_JSON_DEPTH` (100) | **MITIGATED** |
 
-**Current Risk**: LOW - Parser timeout and fuel model prevent hangs
+**Current Risk**: LOW - Parser timeout, fuel model, and depth limits prevent hangs and stack overflow
 
-**Implementation**: `limits.rs`
+**Implementation**: `limits.rs`, `builtins/awk.rs`, `builtins/jq.rs`
 ```rust
 timeout: Duration::from_secs(30),       // Execution timeout (TM-DOS-023)
 parser_timeout: Duration::from_secs(5), // Parser timeout (TM-DOS-024)
 max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
+// TM-DOS-027: Builtin parser depth limits (compile-time constants)
+// MAX_AWK_PARSER_DEPTH: 100  (builtins/awk.rs) - awk expression recursion
+// MAX_JQ_JSON_DEPTH: 100     (builtins/jq.rs)  - JSON input nesting depth
 ```
 
 ---
@@ -811,6 +814,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | AST depth limit (100) | TM-DOS-022 | `limits.rs` | Yes |
 | Child parser limit propagation | TM-DOS-021 | `parser/mod.rs` | Yes |
 | Arithmetic depth limit (200) | TM-DOS-026 | `interpreter/mod.rs` | Yes |
+| Builtin parser depth limit (100) | TM-DOS-027 | `builtins/awk.rs`, `builtins/jq.rs` | Yes |
 | Execution timeout (30s) | TM-DOS-023 | `limits.rs` | Yes |
 | Virtual filesystem | TM-ESC-001, TM-ESC-003 | `fs/memory.rs` | Yes |
 | Filesystem limits | TM-DOS-005 to TM-DOS-010, TM-DOS-014 | `fs/limits.rs` | Yes |
@@ -846,6 +850,8 @@ ExecutionLimits::new()
     .max_ast_depth(100)                // TM-DOS-022 (also inherited by child parsers: TM-DOS-021)
     .max_parser_operations(100_000)    // TM-DOS-024 (also inherited by child parsers: TM-DOS-021)
 // Note: MAX_ARITHMETIC_DEPTH (200) is a compile-time constant in interpreter (TM-DOS-026)
+// Note: MAX_AWK_PARSER_DEPTH (100) is a compile-time constant in builtins/awk.rs (TM-DOS-027)
+// Note: MAX_JQ_JSON_DEPTH (100) is a compile-time constant in builtins/jq.rs (TM-DOS-027)
 ```
 
 ---
@@ -879,7 +885,7 @@ ExecutionLimits::new()
 | Logging security | ✅ | ❌ | ✅ | - | ✅ |
 
 **Test Files**:
-- `tests/threat_model_tests.rs` - 51+ threat-based security tests
+- `tests/threat_model_tests.rs` - 57+ threat-based security tests
 - `tests/security_failpoint_tests.rs` - Fail-point injection tests
 - `tests/builtin_error_security_tests.rs` - Custom builtin error handling tests (34 tests)
 - `tests/network_security_tests.rs` - HTTP security tests (53 tests: allowlist, size limits, timeouts)
