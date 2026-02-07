@@ -112,12 +112,12 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
 | Bash (core) | 471 | Yes | 406 | 65 | `bash_spec_tests` in CI |
-| AWK | 89 | Yes | 55 | 34 | loops, arrays, functions |
+| AWK | 89 | Yes | 74 | 15 | loops, arrays, -v, ternary, field assign |
 | Grep | 70 | Yes | 65 | 5 | now with -z, -r, -a, -b, -H, -h, -f, -P |
-| Sed | 65 | Yes | 50 | 15 | now with -E, nth occurrence, ! negation |
+| Sed | 65 | Yes | 52 | 13 | hold space, change, regex ranges, -E |
 | JQ | 95 | Yes | 85 | 10 | reduce, walk, regex funcs |
 | Python | 57 | Yes | 49 | 8 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **847** | **Yes** | **710** | **137** | |
+| **Total** | **847** | **Yes** | **731** | **116** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -202,42 +202,69 @@ Features that may be added in the future (not intentionally excluded):
 
 ### AWK Limitations
 
-- Regex literals in function args: `gsub(/pattern/, replacement)`
-- Array assignment in split: `split($0, arr, ":")`
+- Regex literals in function args: `gsub(/pattern/, replacement)` ✅
+- Array assignment in split: `split($0, arr, ":")` ✅
 - Complex regex patterns
-
-**Skipped Tests (34):**
-
-| Feature | Count | Notes |
-|---------|-------|-------|
-| Increment/decrement | 4 | `i++`, `++i`, `i--`, `--i` |
-| Power operators | 2 | `^`, `**` |
-| Printf formats | 4 | `%x`, `%o`, `%c`, width specifier |
-| Loops | 6 | `for`, `while`, `do-while`, `break`, `continue` |
-| Arrays | 4 | `arr[key]`, `in` operator, `for-in`, `delete` |
-| Control flow | 3 | `if-else`, ternary, `next` |
-| Functions | 3 | `match()`, `gensub()`, `exit` |
-| -v flag | 1 | Variable initialization |
-| Field handling | 3 | Field separator, missing fields, field assignment |
-| Negation | 1 | Logical negation operator |
-| ORS/getline | 3 | Output record separator, getline, $0 modification |
-
-### Sed Limitations
-
-- In-place editing (`-i`) - not yet implemented
 
 **Skipped Tests (15):**
 
 | Feature | Count | Notes |
 |---------|-------|-------|
-| Hold space | 3 | `h`, `H`, `x` commands |
-| Pattern ranges | 4 | `/start/,/end/` and `/pattern/,$` address ranges |
-| Branching | 1 | `b`, `t`, `:label` commands |
+| Power operators | 2 | `^`, `**` |
+| Printf formats | 4 | `%x`, `%o`, `%c`, width specifier |
+| Functions | 3 | `match()`, `gensub()`, `exit` statement |
+| Field handling | 2 | `-F'\t'` tab delimiter, missing field returns empty |
+| Negation | 1 | `!$1` logical negation operator |
+| ORS/getline | 2 | Output record separator, getline |
+| $0 modification | 1 | `$0 = "x y z"` re-splits fields |
+
+**Recently Implemented:**
+- For/while/do-while loops with break/continue
+- Postfix/prefix increment/decrement (`i++`, `++i`, `i--`, `--i`)
+- Arrays: `arr[key]=val`, `"key" in arr`, `for (k in arr)`, `delete arr[k]`
+- `-v var=value` flag for variable initialization
+- Ternary operator `(cond ? a : b)`
+- Field assignment `$2 = "X"`
+- `next` statement
+
+<!-- TODO: AWK remaining gaps for LLM compatibility -->
+<!-- - Power operators (^ and **) - used in math scripts -->
+<!-- - printf %x/%o/%c formats - used in hex/octal output -->
+<!-- - match()/gensub() functions - used in text extraction -->
+<!-- - exit statement with code - used in error handling -->
+<!-- - !$1 negation - used in filtering empty fields -->
+<!-- - ORS variable - used in custom output formatting -->
+<!-- - getline - used in multi-file processing -->
+<!-- - $0 modification with field re-splitting -->
+
+### Sed Limitations
+
+**Skipped Tests (13):**
+
+| Feature | Count | Notes |
+|---------|-------|-------|
+| Hold space (h/H) | 2 | `h` copy, `H` append to hold (multi-cmd interaction) |
+| Pattern ranges | 3 | `/start/,/end/d`, `/pattern/,$d` address range delete |
+| Branching | 2 | `b`, `t`, `:label` commands, `Q` quiet quit |
 | Grouped commands | 1 | `{cmd1;cmd2}` blocks |
 | Special addresses | 2 | `0~2` step, `0,/pattern/` first match |
 | Replacement escapes | 2 | `\n` newline, `&` with adjacent chars |
-| Change command | 1 | `c\` command |
-| Q command | 1 | `Q` quit without printing |
+| Ampersand | 1 | `&` in replacement refers to matched text |
+
+**Recently Implemented:**
+- Hold space commands: `h` (copy), `H` (append), `g` (get), `G` (get-append), `x` (exchange)
+- Change command: `c\text` line replacement
+- Regex range addressing: `/start/,/end/` with stateful tracking
+- Numeric-regex range: `N,/pattern/`
+- Extended regex (`-E`), nth occurrence, address negation (`!`)
+
+<!-- TODO: SED remaining gaps for LLM compatibility -->
+<!-- - Ampersand (&) in replacement - very commonly used by LLMs -->
+<!-- - \n literal newline in replacement - used in line splitting -->
+<!-- - Grouped commands {cmd1;cmd2} - used in complex transforms -->
+<!-- - Branch/label (b/t/:label) - used in advanced scripts -->
+<!-- - 0~2 step addressing - used for even/odd line processing -->
+<!-- - Q (quiet quit) command -->
 
 ### Grep Limitations
 
