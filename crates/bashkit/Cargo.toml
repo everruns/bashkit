@@ -59,6 +59,8 @@ base64 = { workspace = true, optional = true }
 
 # Logging/tracing (optional)
 tracing = { workspace = true, optional = true }
+# Embedded Python interpreter (pydantic/monty) - optional
+monty = { git = "https://github.com/pydantic/monty", version = "0.0.3", optional = true }
 
 [features]
 default = []
@@ -74,6 +76,9 @@ logging = ["tracing"]
 # Phase 2 will add gix dependency for remote operations
 # Usage: cargo build --features git
 git = []
+# Enable python/python3 builtins via embedded Monty interpreter
+# Usage: cargo build --features python
+python = ["dep:monty"]
 
 [dev-dependencies]
 tokio-test = { workspace = true }
@@ -94,3 +99,7 @@ required-features = ["http_client"]
 [[example]]
 name = "git_workflow"
 required-features = ["git"]
+
+[[example]]
+name = "python_scripts"
+required-features = ["python"]
