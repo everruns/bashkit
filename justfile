@@ -104,6 +104,16 @@ bench-list:
 bench-all:
     cargo run -p bashkit-bench --release -- --runners bashkit,bash,just-bash
 
+# === Eval ===
+
+# Run LLM eval (requires ANTHROPIC_API_KEY or OPENAI_API_KEY)
+eval dataset="crates/bashkit-eval/data/eval-tasks.jsonl" provider="anthropic" model="claude-sonnet-4-20250514":
+    cargo run -p bashkit-eval --release -- run --dataset {{dataset}} --provider {{provider}} --model {{model}}
+
+# Run eval and save results
+eval-save dataset="crates/bashkit-eval/data/eval-tasks.jsonl" provider="anthropic" model="claude-sonnet-4-20250514":
+    cargo run -p bashkit-eval --release -- run --dataset {{dataset}} --provider {{provider}} --model {{model}} --save
+
 # === Security ===
 
 # Run supply chain audit (cargo-vet)

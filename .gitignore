@@ -17,6 +17,9 @@ local*
 # OS
 .DS_Store
 
+# Eval results
+eval-results/
+
 # Coverage reports
 coverage/
 .venv/
