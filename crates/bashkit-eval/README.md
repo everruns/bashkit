@@ -46,6 +46,43 @@ Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 
 ## Results
 
+### 2026-02-07 — Multi-Model Comparison
+
+| Metric | Opus 4.6 | Haiku 4.5 | GPT-5.2 |
+|--------|----------|-----------|---------|
+| Tasks passed | 21/25 | 20/25 | 16/25 |
+| Score | 92% | 92% | 77% |
+| Tokens | 347K in / 31K out | 271K in / 26K out | 149K in / 12K out |
+| Duration | ~10 min | ~3.4 min | ~3.6 min |
+
+#### Per-Category Comparison
+
+| Category | Opus 4.6 | Haiku 4.5 | GPT-5.2 |
+|----------|----------|-----------|---------|
+| file_operations | 3/3 (100%) | 3/3 (100%) | 3/3 (100%) |
+| text_processing | 2/3 (88%) | 1/3 (50%) | 2/3 (88%) |
+| pipelines | 2/2 (100%) | 2/2 (100%) | 1/2 (80%) |
+| scripting | 3/3 (100%) | 2/3 (87%) | 0/3 (20%) |
+| data_transformation | 3/3 (100%) | 2/3 (94%) | 2/3 (88%) |
+| error_recovery | 2/2 (100%) | 2/2 (100%) | 2/2 (100%) |
+| system_info | 1/2 (71%) | 2/2 (100%) | 2/2 (100%) |
+| archive_operations | 2/2 (100%) | 2/2 (100%) | 1/2 (50%) |
+| jq_mastery | 2/2 (100%) | 2/2 (100%) | 2/2 (100%) |
+| complex_tasks | 1/3 (69%) | 2/3 (88%) | 1/3 (69%) |
+
+#### Key Observations
+
+- All models ace file_operations, error_recovery, jq_mastery (100%)
+- All fail `text_awk_report` — bashkit awk field math limitation
+- Opus 4.6 is the only model to pass all scripting tasks (3/3)
+- Haiku 4.5 matches Opus 4.6 at 92% pass rate with ~25% fewer tokens and ~3x faster
+- GPT-5.2 struggles most with scripting (20%) — failed `script_array_stats` with 0 tool calls
+- Haiku 4.5 uniquely failed `text_sed_config` (sed-in-file replacement)
+- Opus 4.6 uniquely failed `sysinfo_date_calc` (date arithmetic)
+- Haiku 4.5 is the only model to pass `complex_markdown_toc`
+- `complex_todo_app` fails for all models — exact output format mismatch
+- `script_function_lib` fails for Haiku and GPT — bashkit `source` limitation; Opus worked around it
+
 ### 2026-02-06 — Initial Baseline
 
 | Metric | Sonnet 4 | GPT-5.2 |
@@ -54,30 +91,5 @@ Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 | Score | 91% | 80% |
 | Tokens | 232K in / 25K out | 110K in / 12K out |
 | Duration | ~5 min | ~10 min |
-
-#### Per-Category Comparison
-
-| Category | Sonnet 4 | GPT-5.2 |
-|----------|----------|---------|
-| file_operations | 3/3 (100%) | 3/3 (100%) |
-| text_processing | 2/3 (88%) | 2/3 (88%) |
-| pipelines | 1/2 (80%) | 2/2 (100%) |
-| scripting | 1/3 (67%) | 0/3 (53%) |
-| data_transformation | 3/3 (100%) | 2/3 (75%) |
-| error_recovery | 2/2 (100%) | 1/2 (86%) |
-| system_info | 2/2 (100%) | 2/2 (100%) |
-| archive_operations | 2/2 (100%) | 1/2 (50%) |
-| jq_mastery | 2/2 (100%) | 2/2 (100%) |
-| complex_tasks | 1/3 (81%) | 1/3 (69%) |
-
-#### Key Observations
-
-- Both models ace file_operations, jq_mastery, system_info (100%)
-- Both fail `text_awk_report` — bashkit awk field math limitation
-- Scripting is the weakest category for both models
-- GPT-5.2 failed `script_array_stats` with 0 tool calls (did not invoke the tool at all)
-- GPT-5.2 struggled with `data_csv_to_json` (1/5 score) where Sonnet got 5/5
-- Sonnet uses ~2x more tokens but achieves higher accuracy
-- `script_function_lib` fails for both — bashkit `source` command limitation
 
 Full per-task details in saved markdown reports under `eval-results/`.
