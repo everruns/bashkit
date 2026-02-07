@@ -362,6 +362,11 @@ impl FileSystem for OverlayFs {
     }
 
     async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+        // THREAT[TM-DOS-012, TM-DOS-013, TM-DOS-015]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
+
         let path = Self::normalize_path(path);
 
         // Check limits before writing
@@ -389,6 +394,11 @@ impl FileSystem for OverlayFs {
     }
 
     async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+        // THREAT[TM-DOS-012, TM-DOS-013, TM-DOS-015]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
+
         let path = Self::normalize_path(path);
 
         // Check for whiteout
@@ -429,6 +439,11 @@ impl FileSystem for OverlayFs {
     }
 
     async fn mkdir(&self, path: &Path, recursive: bool) -> Result<()> {
+        // THREAT[TM-DOS-012, TM-DOS-013, TM-DOS-015]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
+
         let path = Self::normalize_path(path);
 
         // Remove any whiteout for this path
