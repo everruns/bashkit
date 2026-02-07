@@ -1583,3 +1583,96 @@ mod nesting_depth_security {
         }
     }
 }
+
+// =============================================================================
+// TM-DOS-027: BUILTIN PARSER DEPTH LIMIT TESTS
+// =============================================================================
+
+mod builtin_parser_depth {
+    use super::*;
+
+    /// TM-DOS-027: Deeply nested awk expression via parentheses must not crash
+    #[tokio::test]
+    async fn threat_awk_deep_paren_nesting_safe() {
+        let mut bash = Bash::new();
+
+        // 200-level parenthesized expression in awk
+        let depth = 200;
+        let open = "(".repeat(depth);
+        let close = ")".repeat(depth);
+        let script = format!(r#"echo "1" | awk '{{print {open}1{close}}}'"#);
+
+        let result = bash.exec(&script).await;
+        // Must not crash. Either error (depth exceeded) or caught by panic handler.
+        if let Ok(r) = result {
+            // If builtin caught the error, exit code should be non-zero
+            assert!(
+                r.exit_code != 0 || r.stderr.contains("nesting"),
+                "deep awk nesting should fail gracefully"
+            );
+        }
+    }
+
+    /// TM-DOS-027: Deeply nested awk unary operators must not crash
+    #[tokio::test]
+    async fn threat_awk_deep_unary_nesting_safe() {
+        let mut bash = Bash::new();
+
+        // 200-level chained unary negation in awk
+        let depth = 200;
+        let prefix = "- ".repeat(depth);
+        let script = format!(r#"echo "1" | awk '{{print {prefix}1}}'"#);
+
+        let result = bash.exec(&script).await;
+        // Must not crash
+        if let Ok(r) = result {
+            assert!(
+                r.exit_code != 0 || r.stderr.contains("nesting"),
+                "deep awk unary nesting should fail gracefully"
+            );
+        }
+    }
+
+    /// TM-DOS-027: Deeply nested JSON input to jq must not crash
+    #[tokio::test]
+    async fn threat_jq_deep_json_nesting_safe() {
+        let mut bash = Bash::new();
+
+        // 200-level nested JSON arrays
+        let depth = 200;
+        let open = "[".repeat(depth);
+        let close = "]".repeat(depth);
+        let json = format!("{open}1{close}");
+        let script = format!(r#"echo '{json}' | jq '.'"#);
+
+        let result = bash.exec(&script).await;
+        // Must not crash
+        if let Ok(r) = result {
+            assert!(
+                r.exit_code != 0 || r.stderr.contains("nesting"),
+                "deep JSON nesting should fail gracefully"
+            );
+        }
+    }
+
+    /// TM-DOS-027: Moderate nesting in awk still works
+    #[tokio::test]
+    async fn threat_awk_moderate_nesting_works() {
+        let mut bash = Bash::new();
+
+        // 5-level nesting should be fine
+        let script = r#"echo "1" | awk '{print (((((1 + 2)))))}'"#;
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(result.stdout.trim(), "3");
+    }
+
+    /// TM-DOS-027: Moderate nesting in jq still works
+    #[tokio::test]
+    async fn threat_jq_moderate_nesting_works() {
+        let mut bash = Bash::new();
+
+        let script = r#"echo '[[[[1]]]]' | jq '.[0][0][0][0]'"#;
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(result.stdout.trim(), "1");
+    }
+}

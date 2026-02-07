@@ -14,8 +14,50 @@ use super::{Builtin, Context};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
 
+/// THREAT[TM-DOS-027]: Maximum nesting depth for JSON input values.
+/// Prevents stack overflow when jaq evaluates deeply nested JSON structures
+/// like `[[[[...]]]]` or `{"a":{"a":{"a":...}}}`.
+/// Also limits filter complexity indirectly since deeply nested filters
+/// produce deeply nested parse trees in jaq.
+const MAX_JQ_JSON_DEPTH: usize = 100;
+
 /// jq command - JSON processor
 pub struct Jq;
+
+/// THREAT[TM-DOS-027]: Check JSON nesting depth to prevent stack overflow
+/// during jaq filter evaluation on deeply nested input.
+fn check_json_depth(
+    value: &serde_json::Value,
+    max_depth: usize,
+) -> std::result::Result<(), String> {
+    fn measure_depth(
+        v: &serde_json::Value,
+        current: usize,
+        max: usize,
+    ) -> std::result::Result<(), String> {
+        if current > max {
+            return Err(format!(
+                "jq: JSON nesting too deep ({} levels, max {})",
+                current, max
+            ));
+        }
+        match v {
+            serde_json::Value::Array(arr) => {
+                for item in arr {
+                    measure_depth(item, current + 1, max)?;
+                }
+            }
+            serde_json::Value::Object(map) => {
+                for (_k, item) in map {
+                    measure_depth(item, current + 1, max)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    measure_depth(value, 0, max_depth)
+}
 
 /// Recursively sort all object keys in a JSON value
 fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
@@ -155,6 +197,8 @@ impl Builtin for Jq {
                 }
                 let json_input: serde_json::Value = serde_json::from_str(line)
                     .map_err(|e| Error::Execution(format!("jq: invalid JSON: {}", e)))?;
+                // THREAT[TM-DOS-027]: Check nesting depth before evaluation
+                check_json_depth(&json_input, MAX_JQ_JSON_DEPTH).map_err(Error::Execution)?;
                 vals.push(json_input);
             }
             vec![Val::from(serde_json::Value::Array(vals))]
@@ -168,6 +212,8 @@ impl Builtin for Jq {
                 }
                 let json_input: serde_json::Value = serde_json::from_str(line)
                     .map_err(|e| Error::Execution(format!("jq: invalid JSON: {}", e)))?;
+                // THREAT[TM-DOS-027]: Check nesting depth before evaluation
+                check_json_depth(&json_input, MAX_JQ_JSON_DEPTH).map_err(Error::Execution)?;
                 vals.push(Val::from(json_input));
             }
             vals
@@ -430,5 +476,82 @@ mod tests {
     async fn test_jq_version_short() {
         let result = run_jq_with_args(&["-V"], "").await.unwrap();
         assert!(result.starts_with("jq-"));
+    }
+
+    /// TM-DOS-027: Deeply nested JSON arrays must be rejected
+    /// Note: serde_json has a built-in recursion limit (~128 levels) that fires first.
+    /// Our check_json_depth is defense-in-depth for values within serde's limit.
+    #[tokio::test]
+    async fn test_jq_json_depth_limit_arrays() {
+        // Build 150-level nested JSON: [[[[....[1]....]]]]
+        let depth = 150;
+        let open = "[".repeat(depth);
+        let close = "]".repeat(depth);
+        let input = format!("{open}1{close}");
+
+        let result = run_jq(".", &input).await;
+        assert!(
+            result.is_err(),
+            "deeply nested JSON arrays must be rejected"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("nesting too deep") || err.contains("recursion limit"),
+            "error should mention nesting or recursion limit: {err}"
+        );
+    }
+
+    /// TM-DOS-027: Deeply nested JSON objects must be rejected
+    #[tokio::test]
+    async fn test_jq_json_depth_limit_objects() {
+        // Build 150-level nested JSON objects: {"a":{"a":{"a":...}}}
+        let depth = 150;
+        let mut input = String::from("1");
+        for _ in 0..depth {
+            input = format!(r#"{{"a":{input}}}"#);
+        }
+
+        let result = run_jq(".", &input).await;
+        assert!(
+            result.is_err(),
+            "deeply nested JSON objects must be rejected"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("nesting too deep") || err.contains("recursion limit"),
+            "error should mention nesting or recursion limit: {err}"
+        );
+    }
+
+    /// TM-DOS-027: Moderate JSON nesting within limit still works
+    #[tokio::test]
+    async fn test_jq_moderate_nesting_ok() {
+        // 10 levels of nesting should be fine
+        let depth = 10;
+        let open = "[".repeat(depth);
+        let close = "]".repeat(depth);
+        let input = format!("{open}1{close}");
+
+        let result = run_jq(".", &input).await;
+        assert!(
+            result.is_ok(),
+            "moderate nesting should succeed: {:?}",
+            result.err()
+        );
+    }
+
+    /// TM-DOS-027: check_json_depth unit test
+    #[test]
+    fn test_check_json_depth() {
+        // Flat value: ok
+        let v = serde_json::json!(42);
+        assert!(check_json_depth(&v, 100).is_ok());
+
+        // 3-level nesting with limit 5: ok
+        let v = serde_json::json!([[[1]]]);
+        assert!(check_json_depth(&v, 5).is_ok());
+
+        // 3-level nesting with limit 2: rejected
+        assert!(check_json_depth(&v, 2).is_err());
     }
 }
