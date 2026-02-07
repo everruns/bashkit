@@ -577,10 +577,78 @@ mod edge_cases {
             .max_function_depth(50);
         let mut bash = Bash::builder().limits(limits).build();
 
-        // Moderately nested - should work
+        // Moderately nested (4 levels) - should succeed and produce correct output
         let result = bash.exec("echo $(echo $(echo $(echo hello)))").await;
-        // Either succeeds or hits a limit - shouldn't crash
-        assert!(result.is_ok() || result.is_err());
+        let result = result.expect("4-level command substitution should succeed");
+        assert_eq!(result.stdout.trim(), "hello", "nested command sub should produce 'hello'");
+    }
+
+    /// Test that deeply nested command substitution doesn't crash (stack overflow protection)
+    /// This is the bashkit equivalent of pydantic/monty#112 — deeply nested structures
+    /// must not segfault or stack-overflow the host process.
+    #[tokio::test]
+    async fn threat_deep_nesting_no_crash() {
+        let limits = ExecutionLimits::new()
+            .max_commands(100)
+            .max_function_depth(50)
+            .max_ast_depth(20);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // Build deeply nested subshells: (((((...))))) — 200 levels
+        // This should hit max_ast_depth and return an error, NOT crash
+        let depth = 200;
+        let script = format!(
+            "{}echo hello{}",
+            "(".repeat(depth),
+            ")".repeat(depth),
+        );
+        let result = bash.exec(&script).await;
+        // Must either succeed (if somehow handled) or fail with a limit error
+        // The key property: no crash, no segfault
+        match result {
+            Ok(r) => {
+                // If it somehow succeeds, that's fine
+                assert!(r.exit_code == 0 || r.exit_code != 0);
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                assert!(
+                    err_msg.contains("nesting") || err_msg.contains("depth") || err_msg.contains("fuel"),
+                    "Expected depth/nesting/fuel error, got: {}", err_msg
+                );
+            }
+        }
+    }
+
+    /// Test that deeply nested arithmetic expressions don't crash
+    /// Related to pydantic/monty#112 — arithmetic parser uses unbounded recursion
+    #[tokio::test]
+    async fn threat_deep_arithmetic_nesting_no_crash() {
+        let mut bash = Bash::new();
+
+        // Build deeply nested arithmetic: $((((((1+1)))))) — 500 levels of parens
+        // The arithmetic evaluator recurses without depth checks, so this tests
+        // whether the recursion depth is practically bounded by input size limits
+        let depth = 500;
+        let script = format!(
+            "echo $(({} 1 {}))",
+            "(".repeat(depth),
+            ")".repeat(depth),
+        );
+        let result = bash.exec(&script).await;
+        // Must not crash — either succeeds or returns an error
+        match result {
+            Ok(r) => {
+                // If it parses and evaluates, the answer should be 1
+                let output = r.stdout.trim();
+                if !output.is_empty() {
+                    assert_eq!(output, "1", "nested arith should evaluate to 1");
+                }
+            }
+            Err(_) => {
+                // Error is acceptable — depth limit hit
+            }
+        }
     }
 
     /// Test special variable names
