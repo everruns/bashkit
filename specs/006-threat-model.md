@@ -181,16 +181,26 @@ max_commands: 10_000,         // Total command limit (TM-DOS-019)
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
 | TM-DOS-020 | Function recursion | `f() { f; }; f` | Depth limit (100) | **MITIGATED** |
-| TM-DOS-021 | Command sub nesting | `$($($($())))` | Depth limit | **MITIGATED** |
-| TM-DOS-022 | Parser recursion | Deeply nested `(((())))` | `max_ast_depth` limit (100) | **MITIGATED** |
+| TM-DOS-021 | Command sub nesting | `$($($($())))` | Child parsers inherit remaining depth budget + fuel from parent | **MITIGATED** |
+| TM-DOS-022 | Parser recursion | Deeply nested `(((())))` | `max_ast_depth` limit (100) + `HARD_MAX_AST_DEPTH` cap (100) | **MITIGATED** |
+| TM-DOS-026 | Arithmetic recursion | `$(((((((...)))))))` deeply nested parens | `MAX_ARITHMETIC_DEPTH` limit (200) | **MITIGATED** |
 
 **Current Risk**: LOW - Both execution and parser protected
 
-**Implementation**: `limits.rs`
+**Implementation**: `limits.rs`, `parser/mod.rs`, `interpreter/mod.rs`
 ```rust
 max_function_depth: 100,      // Runtime recursion (TM-DOS-020, TM-DOS-021)
 max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
+// TM-DOS-021: Child parsers in command/process substitution inherit remaining
+// depth budget and fuel from parent parser (parser/mod.rs lines 1553, 1670)
+// TM-DOS-026: Arithmetic evaluator tracks recursion depth, capped at 200
+// (interpreter/mod.rs MAX_ARITHMETIC_DEPTH)
 ```
+
+**History** (TM-DOS-021): Previously marked MITIGATED but child parsers created via
+`Parser::new()` used default limits, ignoring parent configuration. Fixed to propagate
+`remaining_depth` and `fuel` from parent parser. See pydantic/monty#112 for analogous
+vulnerability in Python parsers.
 
 #### 1.4 CPU Exhaustion
 
@@ -199,6 +209,7 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 | TM-DOS-023 | Long computation | Complex awk/sed regex | Timeout (30s) | **MITIGATED** |
 | TM-DOS-024 | Parser hang | Malformed input | `parser_timeout` (5s) + `max_parser_operations` | **MITIGATED** |
 | TM-DOS-025 | Regex backtrack | `grep "a](*b)*c" file` | Regex crate limits | Partial |
+| TM-DOS-027 | Builtin parser recursion | Deeply nested awk/jq expressions | Bounded by `max_input_bytes` | Partial |
 
 **Current Risk**: LOW - Parser timeout and fuel model prevent hangs
 
@@ -765,6 +776,8 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | V3 | TM-DOS-024 | Parser hang | **MITIGATED** via `parser_timeout` + `max_parser_operations` |
 | V4 | TM-DOS-022 | Parser recursion | **MITIGATED** via `max_ast_depth` |
 | V5 | TM-DOS-018 | Nested loop multiplication | **PARTIAL** - still gaps |
+| V6 | TM-DOS-021 | Command sub parser limit bypass | **MITIGATED** via inherited depth/fuel |
+| V7 | TM-DOS-026 | Arithmetic recursion overflow | **MITIGATED** via `MAX_ARITHMETIC_DEPTH` (200) |
 
 ### Open (Medium Priority)
 
@@ -796,6 +809,8 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Parser timeout (5s) | TM-DOS-024 | `limits.rs` | Yes |
 | Parser fuel (100K ops) | TM-DOS-024 | `limits.rs` | Yes |
 | AST depth limit (100) | TM-DOS-022 | `limits.rs` | Yes |
+| Child parser limit propagation | TM-DOS-021 | `parser/mod.rs` | Yes |
+| Arithmetic depth limit (200) | TM-DOS-026 | `interpreter/mod.rs` | Yes |
 | Execution timeout (30s) | TM-DOS-023 | `limits.rs` | Yes |
 | Virtual filesystem | TM-ESC-001, TM-ESC-003 | `fs/memory.rs` | Yes |
 | Filesystem limits | TM-DOS-005 to TM-DOS-010, TM-DOS-014 | `fs/limits.rs` | Yes |
@@ -828,8 +843,9 @@ ExecutionLimits::new()
     .timeout(Duration::from_secs(30))  // TM-DOS-023
     .parser_timeout(Duration::from_secs(5))  // TM-DOS-024
     .max_input_bytes(10_000_000)       // TM-DOS-001 (10MB)
-    .max_ast_depth(100)                // TM-DOS-022
-    .max_parser_operations(100_000)    // TM-DOS-024
+    .max_ast_depth(100)                // TM-DOS-022 (also inherited by child parsers: TM-DOS-021)
+    .max_parser_operations(100_000)    // TM-DOS-024 (also inherited by child parsers: TM-DOS-021)
+// Note: MAX_ARITHMETIC_DEPTH (200) is a compile-time constant in interpreter (TM-DOS-026)
 ```
 
 ---
