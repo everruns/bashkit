@@ -27,6 +27,17 @@ use crate::error::{Error, Result};
 /// Default maximum AST depth (matches ExecutionLimits default)
 const DEFAULT_MAX_AST_DEPTH: usize = 100;
 
+/// Hard cap on AST depth to prevent stack overflow even if caller misconfigures limits.
+/// THREAT[TM-DOS-022]: Protects against pydantic/monty#112-style attacks where
+/// a large max_depth setting allows recursion deep enough to overflow the native stack.
+/// This cap cannot be overridden by the caller.
+///
+/// Set conservatively to avoid stack overflow on tokio's blocking threads (default 2MB
+/// stack in debug builds). Each parser recursion level uses ~4-8KB of stack in debug
+/// mode. 100 levels × ~8KB = ~800KB, well within 2MB.
+/// In release builds this could safely be higher, but we use one value for consistency.
+const HARD_MAX_AST_DEPTH: usize = 100;
+
 /// Default maximum parser operations (matches ExecutionLimits default)
 const DEFAULT_MAX_PARSER_OPERATIONS: usize = 100_000;
 
@@ -65,6 +76,10 @@ impl<'a> Parser<'a> {
     }
 
     /// Create a new parser with custom depth and fuel limits.
+    ///
+    /// THREAT[TM-DOS-022]: `max_depth` is clamped to `HARD_MAX_AST_DEPTH` (500)
+    /// to prevent stack overflow from misconfiguration. Even if the caller passes
+    /// `max_depth = 1_000_000`, the parser will cap it at 500.
     pub fn with_limits(input: &'a str, max_depth: usize, max_fuel: usize) -> Self {
         let mut lexer = Lexer::new(input);
         let spanned = lexer.next_spanned_token();
@@ -77,7 +92,7 @@ impl<'a> Parser<'a> {
             current_token,
             current_span,
             peeked_token: None,
-            max_depth,
+            max_depth: max_depth.min(HARD_MAX_AST_DEPTH),
             current_depth: 0,
             fuel: max_fuel,
             max_fuel,
@@ -1549,8 +1564,11 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                // Parse the command inside
-                let inner_parser = Parser::new(&cmd_str);
+                // THREAT[TM-DOS-021]: Propagate parent parser limits to child parser
+                // to prevent depth limit bypass via nested process substitution.
+                // Child inherits remaining depth budget and fuel from parent.
+                let remaining_depth = self.max_depth.saturating_sub(self.current_depth);
+                let inner_parser = Parser::with_limits(&cmd_str, remaining_depth, self.fuel);
                 let commands = match inner_parser.parse() {
                     Ok(script) => script.commands,
                     Err(_) => Vec::new(),
@@ -1662,8 +1680,11 @@ impl<'a> Parser<'a> {
                                 cmd_str.push(c);
                             }
                         }
-                        // Parse the command inside
-                        let inner_parser = Parser::new(&cmd_str);
+                        // THREAT[TM-DOS-021]: Propagate parent parser limits to child parser
+                        // to prevent depth limit bypass via nested command substitution.
+                        let remaining_depth = self.max_depth.saturating_sub(self.current_depth);
+                        let inner_parser =
+                            Parser::with_limits(&cmd_str, remaining_depth, self.fuel);
                         if let Ok(script) = inner_parser.parse() {
                             parts.push(WordPart::CommandSubstitution(script.commands));
                         }

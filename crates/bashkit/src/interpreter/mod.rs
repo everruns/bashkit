@@ -1328,8 +1328,12 @@ impl Interpreter {
             return Ok(ExecResult::ok(String::new()));
         };
 
-        // Parse the script
-        let parser = Parser::new(&script_content);
+        // THREAT[TM-DOS-021]: Propagate interpreter's parser limits to child shell
+        let parser = Parser::with_limits(
+            &script_content,
+            self.limits.max_ast_depth,
+            self.limits.max_parser_operations,
+        );
         let script = match parser.parse() {
             Ok(s) => s,
             Err(e) => {
@@ -2671,6 +2675,11 @@ impl Interpreter {
         value.to_string()
     }
 
+    /// Maximum recursion depth for arithmetic expression evaluation.
+    /// THREAT[TM-DOS-025]: Prevents stack overflow via deeply nested arithmetic like
+    /// $(((((((...)))))))
+    const MAX_ARITHMETIC_DEPTH: usize = 200;
+
     /// Evaluate a simple arithmetic expression
     fn evaluate_arithmetic(&self, expr: &str) -> i64 {
         // Simple arithmetic evaluation - handles basic operations
@@ -2679,8 +2688,8 @@ impl Interpreter {
         // First expand any variables in the expression
         let expanded = self.expand_arithmetic_vars(expr);
 
-        // Parse and evaluate
-        self.parse_arithmetic(&expanded)
+        // Parse and evaluate with depth tracking (TM-DOS-025)
+        self.parse_arithmetic_impl(&expanded, 0)
     }
 
     /// Expand variables in arithmetic expression (no $ needed in $((...)))
@@ -2735,11 +2744,17 @@ impl Interpreter {
         result
     }
 
-    /// Parse and evaluate a simple arithmetic expression
-    fn parse_arithmetic(&self, expr: &str) -> i64 {
+    /// Parse and evaluate a simple arithmetic expression with depth tracking.
+    /// THREAT[TM-DOS-025]: `arith_depth` prevents stack overflow from deeply nested expressions.
+    fn parse_arithmetic_impl(&self, expr: &str, arith_depth: usize) -> i64 {
         let expr = expr.trim();
 
         if expr.is_empty() {
+            return 0;
+        }
+
+        // THREAT[TM-DOS-025]: Bail out if arithmetic nesting is too deep
+        if arith_depth >= Self::MAX_ARITHMETIC_DEPTH {
             return 0;
         }
 
@@ -2762,7 +2777,7 @@ impl Interpreter {
                 }
             }
             if balanced && depth == 0 {
-                return self.parse_arithmetic(&expr[1..expr.len() - 1]);
+                return self.parse_arithmetic_impl(&expr[1..expr.len() - 1], arith_depth + 1);
             }
         }
 
@@ -2783,9 +2798,11 @@ impl Interpreter {
                             ')' => colon_depth -= 1,
                             '?' => colon_depth += 1,
                             ':' if colon_depth == 0 => {
-                                let cond = self.parse_arithmetic(&expr[..i]);
-                                let then_val = self.parse_arithmetic(&expr[i + 1..j]);
-                                let else_val = self.parse_arithmetic(&expr[j + 1..]);
+                                let cond = self.parse_arithmetic_impl(&expr[..i], arith_depth + 1);
+                                let then_val =
+                                    self.parse_arithmetic_impl(&expr[i + 1..j], arith_depth + 1);
+                                let else_val =
+                                    self.parse_arithmetic_impl(&expr[j + 1..], arith_depth + 1);
                                 return if cond != 0 { then_val } else { else_val };
                             }
                             ':' => colon_depth -= 1,
@@ -2804,12 +2821,12 @@ impl Interpreter {
                 '(' => depth += 1,
                 ')' => depth -= 1,
                 '|' if depth == 0 && i > 0 && chars[i - 1] == '|' => {
-                    let left = self.parse_arithmetic(&expr[..i - 1]);
+                    let left = self.parse_arithmetic_impl(&expr[..i - 1], arith_depth + 1);
                     // Short-circuit: if left is true, don't evaluate right
                     if left != 0 {
                         return 1;
                     }
-                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
                     return if right != 0 { 1 } else { 0 };
                 }
                 _ => {}
@@ -2823,12 +2840,12 @@ impl Interpreter {
                 '(' => depth += 1,
                 ')' => depth -= 1,
                 '&' if depth == 0 && i > 0 && chars[i - 1] == '&' => {
-                    let left = self.parse_arithmetic(&expr[..i - 1]);
+                    let left = self.parse_arithmetic_impl(&expr[..i - 1], arith_depth + 1);
                     // Short-circuit: if left is false, don't evaluate right
                     if left == 0 {
                         return 0;
                     }
-                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
                     return if right != 0 { 1 } else { 0 };
                 }
                 _ => {}
@@ -2845,8 +2862,8 @@ impl Interpreter {
                     && (i == 0 || chars[i - 1] != '|')
                     && (i + 1 >= chars.len() || chars[i + 1] != '|') =>
                 {
-                    let left = self.parse_arithmetic(&expr[..i]);
-                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    let left = self.parse_arithmetic_impl(&expr[..i], arith_depth + 1);
+                    let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
                     return left | right;
                 }
                 _ => {}
@@ -2863,8 +2880,8 @@ impl Interpreter {
                     && (i == 0 || chars[i - 1] != '&')
                     && (i + 1 >= chars.len() || chars[i + 1] != '&') =>
                 {
-                    let left = self.parse_arithmetic(&expr[..i]);
-                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    let left = self.parse_arithmetic_impl(&expr[..i], arith_depth + 1);
+                    let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
                     return left & right;
                 }
                 _ => {}
@@ -2878,13 +2895,13 @@ impl Interpreter {
                 '(' => depth += 1,
                 ')' => depth -= 1,
                 '=' if depth == 0 && i > 0 && chars[i - 1] == '=' => {
-                    let left = self.parse_arithmetic(&expr[..i - 1]);
-                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    let left = self.parse_arithmetic_impl(&expr[..i - 1], arith_depth + 1);
+                    let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
                     return if left == right { 1 } else { 0 };
                 }
                 '=' if depth == 0 && i > 0 && chars[i - 1] == '!' => {
-                    let left = self.parse_arithmetic(&expr[..i - 1]);
-                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    let left = self.parse_arithmetic_impl(&expr[..i - 1], arith_depth + 1);
+                    let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
                     return if left != right { 1 } else { 0 };
                 }
                 _ => {}
@@ -2898,29 +2915,29 @@ impl Interpreter {
                 '(' => depth += 1,
                 ')' => depth -= 1,
                 '=' if depth == 0 && i > 0 && chars[i - 1] == '<' => {
-                    let left = self.parse_arithmetic(&expr[..i - 1]);
-                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    let left = self.parse_arithmetic_impl(&expr[..i - 1], arith_depth + 1);
+                    let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
                     return if left <= right { 1 } else { 0 };
                 }
                 '=' if depth == 0 && i > 0 && chars[i - 1] == '>' => {
-                    let left = self.parse_arithmetic(&expr[..i - 1]);
-                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    let left = self.parse_arithmetic_impl(&expr[..i - 1], arith_depth + 1);
+                    let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
                     return if left >= right { 1 } else { 0 };
                 }
                 '<' if depth == 0
                     && (i + 1 >= chars.len() || chars[i + 1] != '=')
                     && (i == 0 || chars[i - 1] != '<') =>
                 {
-                    let left = self.parse_arithmetic(&expr[..i]);
-                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    let left = self.parse_arithmetic_impl(&expr[..i], arith_depth + 1);
+                    let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
                     return if left < right { 1 } else { 0 };
                 }
                 '>' if depth == 0
                     && (i + 1 >= chars.len() || chars[i + 1] != '=')
                     && (i == 0 || chars[i - 1] != '>') =>
                 {
-                    let left = self.parse_arithmetic(&expr[..i]);
-                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    let left = self.parse_arithmetic_impl(&expr[..i], arith_depth + 1);
+                    let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
                     return if left > right { 1 } else { 0 };
                 }
                 _ => {}
@@ -2934,8 +2951,8 @@ impl Interpreter {
                 '(' => depth += 1,
                 ')' => depth -= 1,
                 '+' | '-' if depth == 0 && i > 0 => {
-                    let left = self.parse_arithmetic(&expr[..i]);
-                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    let left = self.parse_arithmetic_impl(&expr[..i], arith_depth + 1);
+                    let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
                     return if chars[i] == '+' {
                         left + right
                     } else {
@@ -2953,8 +2970,8 @@ impl Interpreter {
                 '(' => depth += 1,
                 ')' => depth -= 1,
                 '*' | '/' | '%' if depth == 0 => {
-                    let left = self.parse_arithmetic(&expr[..i]);
-                    let right = self.parse_arithmetic(&expr[i + 1..]);
+                    let left = self.parse_arithmetic_impl(&expr[..i], arith_depth + 1);
+                    let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
                     return match chars[i] {
                         '*' => left * right,
                         '/' => {

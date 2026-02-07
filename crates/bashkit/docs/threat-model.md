@@ -30,6 +30,9 @@ through configurable limits.
 | Large input (TM-DOS-001) | 1GB script | `max_input_bytes` limit | [`limits.rs`][limits] |
 | Infinite loops (TM-DOS-016) | `while true; do :; done` | `max_loop_iterations` | [`limits.rs`][limits] |
 | Recursion (TM-DOS-020) | `f() { f; }; f` | `max_function_depth` | [`limits.rs`][limits] |
+| Parser depth (TM-DOS-022) | `(((((...))))))` nesting | `max_ast_depth` + hard cap (100) | [`parser/mod.rs`][parser] |
+| Command sub depth (TM-DOS-021) | `$($($($())))` nesting | Inherited depth/fuel from parent | [`parser/mod.rs`][parser] |
+| Arithmetic depth (TM-DOS-026) | `$(((((...))))))` | `MAX_ARITHMETIC_DEPTH` (200) | [`interpreter/mod.rs`][interp] |
 | Parser attack (TM-DOS-024) | Malformed input | `parser_timeout` | [`limits.rs`][limits] |
 | Filesystem bomb (TM-DOS-007) | Zip bomb extraction | `FsLimits` | [`fs/limits.rs`][fslimits] |
 | Many files (TM-DOS-006) | Create 1M files | `max_file_count` | [`fs/limits.rs`][fslimits] |
@@ -260,11 +263,36 @@ let bash = Bash::builder()
 **Warning:** Do not use `LogConfig::unsafe_disable_redaction()` or
 `LogConfig::unsafe_log_scripts()` in production.
 
+## Parser Depth Protection
+
+The parser includes multiple layers of depth protection to prevent stack overflow
+attacks (similar to [pydantic/monty#112](https://github.com/pydantic/monty/issues/112)):
+
+1. **Configurable depth limit** (`max_ast_depth`, default 100): Controls maximum nesting
+   of compound commands (if/for/while/case/subshell).
+
+2. **Hard cap** (`HARD_MAX_AST_DEPTH = 100`): Even if the caller configures a higher
+   `max_ast_depth`, the parser clamps it to 100. This prevents misconfiguration from
+   causing stack overflow.
+
+3. **Child parser inheritance** (TM-DOS-021): When parsing `$(...)` or `<(...)`,
+   the child parser inherits the *remaining* depth budget and fuel from the parent.
+   This prevents attackers from bypassing depth limits through nested substitutions.
+
+4. **Arithmetic depth limit** (TM-DOS-026): The arithmetic evaluator (`$((expr))`)
+   has its own depth limit (`MAX_ARITHMETIC_DEPTH = 200`) to prevent stack overflow
+   from deeply nested parenthesized expressions.
+
+5. **Parser fuel** (`max_parser_operations`, default 100K): Independent of depth,
+   limits total parser work to prevent CPU exhaustion.
+
 ## Security Testing
 
 Bashkit includes comprehensive security tests:
 
-- **Threat Model Tests**: [`tests/threat_model_tests.rs`][threat_tests] - 51 tests
+- **Threat Model Tests**: [`tests/threat_model_tests.rs`][threat_tests] - 51+ tests
+- **Nesting Depth Tests**: 18 tests covering positive, negative, misconfiguration,
+  and regression scenarios for parser depth attacks
 - **Fail-Point Tests**: [`tests/security_failpoint_tests.rs`][failpoint_tests]
 - **Network Security**: [`tests/network_security_tests.rs`][network_tests] - 43 tests
 - **Fuzz Testing**: [`fuzz/`][fuzz] - Parser and lexer fuzzing
@@ -303,5 +331,6 @@ Full threat analysis: [`specs/006-threat-model.md`][spec]
 [network_tests]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/tests/network_security_tests.rs
 [fuzz]: https://github.com/anthropics/bashkit/tree/main/crates/bashkit/fuzz
 [spec]: https://github.com/anthropics/bashkit/blob/main/specs/006-threat-model.md
+[parser]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/src/parser/mod.rs
 [interp]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/src/interpreter/mod.rs
 [date]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/src/builtins/date.rs
