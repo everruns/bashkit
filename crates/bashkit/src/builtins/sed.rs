@@ -255,7 +255,10 @@ fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
                 let pattern = &after_slash[..end2];
                 let regex = Regex::new(pattern)
                     .map_err(|e| Error::Execution(format!("sed: invalid regex: {}", e)))?;
-                return Ok((Some(Address::LineRegexRange(num, regex)), &after_slash[end2 + 1..]));
+                return Ok((
+                    Some(Address::LineRegexRange(num, regex)),
+                    &after_slash[end2 + 1..],
+                ));
             }
             let end2 = rest
                 .find(|c: char| !c.is_ascii_digit())
