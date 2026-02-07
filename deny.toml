@@ -15,6 +15,7 @@ allow = [
     "Unicode-3.0",            # Unicode License v3 (icu_* crates)
     "OpenSSL",                # OpenSSL License (aws-lc-sys via reqwest)
     "CDLA-Permissive-2.0",    # Community Data License Agreement (webpki-root-certs)
+    "Unicode-DFS-2016",       # Unicode Data Files and Software License (unicode_names2 via monty/ruff)
 ]
 
 # Review unclear/dual licenses
@@ -39,3 +40,9 @@ deny = []
 # Ensure all dependencies come from crates.io or known Git repos
 unknown-registry = "deny"
 unknown-git = "deny"
+
+# Allow git sources for Monty (not yet on crates.io) and its ruff deps
+allow-git = [
+    "https://github.com/pydantic/monty",
+    "https://github.com/astral-sh/ruff",
+]
