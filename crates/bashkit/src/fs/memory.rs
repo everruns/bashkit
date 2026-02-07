@@ -492,6 +492,11 @@ impl InMemoryFs {
 #[async_trait]
 impl FileSystem for InMemoryFs {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        // THREAT[TM-DOS-012, TM-DOS-013, TM-DOS-015]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
+
         // Fail point: simulate read failures
         #[cfg(feature = "failpoints")]
         fail_point!("fs::read_file", |action| {
@@ -528,6 +533,11 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+        // THREAT[TM-DOS-012, TM-DOS-013, TM-DOS-015]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
+
         // Fail point: simulate write failures
         #[cfg(feature = "failpoints")]
         fail_point!("fs::write_file", |action| {
@@ -595,6 +605,11 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+        // THREAT[TM-DOS-012, TM-DOS-013, TM-DOS-015]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
+
         let path = Self::normalize_path(path);
 
         // Special handling for /dev/null - discard all writes
@@ -672,6 +687,11 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn mkdir(&self, path: &Path, recursive: bool) -> Result<()> {
+        // THREAT[TM-DOS-012, TM-DOS-013, TM-DOS-015]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
+
         let path = Self::normalize_path(path);
         let mut entries = self.entries.write().unwrap();
 

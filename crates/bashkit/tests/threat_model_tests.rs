@@ -1892,3 +1892,205 @@ mod builtin_parser_depth {
         assert_eq!(result.stdout.trim(), "1");
     }
 }
+
+// =============================================================================
+// NESTED LOOP MULTIPLICATION TESTS (TM-DOS-018)
+// =============================================================================
+
+mod nested_loop_security {
+    use bashkit::{Bash, ExecutionLimits};
+
+    /// TM-DOS-018: Nested loops hit total loop iteration cap
+    #[tokio::test]
+    async fn threat_nested_loop_multiplication_blocked() {
+        // Per-loop: 1000, total: 5000
+        // Two nested loops of 100 each = 10,000 total iterations would exceed 5000
+        let limits = ExecutionLimits::new()
+            .max_loop_iterations(1000)
+            .max_total_loop_iterations(5000)
+            .max_commands(100_000);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        let script = r#"
+            count=0
+            for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100; do
+                for j in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100; do
+                    count=$((count + 1))
+                done
+            done
+            echo $count
+        "#;
+        let result = bash.exec(script).await;
+        // Should hit total loop iteration limit
+        assert!(
+            result.is_err(),
+            "Nested 100x100 loops should hit total limit of 5000"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("loop iterations exceeded"),
+            "Expected loop limit error, got: {}",
+            err
+        );
+    }
+
+    /// TM-DOS-018: Sequential loops within total budget succeed
+    #[tokio::test]
+    async fn threat_sequential_loops_within_budget() {
+        let limits = ExecutionLimits::new()
+            .max_loop_iterations(100)
+            .max_total_loop_iterations(200)
+            .max_commands(100_000);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // Two sequential loops of 5 each = 10 total, well within budget
+        let result = bash
+            .exec("for i in 1 2 3 4 5; do echo $i; done; for j in 1 2 3 4 5; do echo $j; done")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+}
+
+// =============================================================================
+// PATH VALIDATION SECURITY TESTS (TM-DOS-012, TM-DOS-013, TM-DOS-015)
+// =============================================================================
+
+mod path_validation_security {
+    use bashkit::{Bash, FileSystem, FsLimits, InMemoryFs};
+    use std::path::Path;
+    use std::sync::Arc;
+
+    /// TM-DOS-012: Deep directory nesting blocked by max_path_depth
+    #[tokio::test]
+    async fn threat_deep_directory_nesting_blocked() {
+        let limits = FsLimits::new().max_path_depth(5);
+        let fs = Arc::new(InMemoryFs::with_limits(limits));
+        let mut bash = Bash::builder().fs(fs).build();
+
+        // Depth 5 should work
+        let result = bash.exec("mkdir -p /a/b/c/d/e").await.unwrap();
+        assert_eq!(result.exit_code, 0);
+
+        // Depth 6 should fail
+        let result = bash.exec("mkdir -p /a/b/c/d/e/f").await.unwrap();
+        assert_ne!(result.exit_code, 0);
+        assert!(result.stderr.contains("path too deep"));
+    }
+
+    /// TM-DOS-012: Writing to deeply nested path blocked
+    #[tokio::test]
+    async fn threat_deep_path_write_blocked() {
+        let limits = FsLimits::new().max_path_depth(3);
+        let fs = Arc::new(InMemoryFs::with_limits(limits));
+
+        // Depth 3 should work
+        fs.mkdir(Path::new("/a/b"), true).await.unwrap();
+        fs.write_file(Path::new("/a/b/c"), b"ok").await.unwrap();
+
+        // Depth 4 should fail
+        let result = fs.write_file(Path::new("/a/b/c/d"), b"fail").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("path too deep"));
+    }
+
+    /// TM-DOS-013: Long filenames blocked by max_filename_length
+    #[tokio::test]
+    async fn threat_long_filename_blocked() {
+        let limits = FsLimits::new().max_filename_length(20);
+        let fs = Arc::new(InMemoryFs::with_limits(limits));
+        let mut bash = Bash::builder().fs(fs).build();
+
+        // Short name works
+        let result = bash.exec("echo ok > /tmp/short.txt").await.unwrap();
+        assert_eq!(result.exit_code, 0);
+
+        // 21-char name fails
+        let long_name = "a".repeat(21);
+        let result = bash
+            .exec(&format!("echo fail > /tmp/{}", long_name))
+            .await
+            .unwrap();
+        assert_ne!(result.exit_code, 0);
+        assert!(result.stderr.contains("filename too long"));
+    }
+
+    /// TM-DOS-013: Long total path blocked by max_path_length
+    #[tokio::test]
+    async fn threat_long_path_blocked() {
+        let limits = FsLimits::new().max_path_length(30);
+        let fs = Arc::new(InMemoryFs::with_limits(limits));
+
+        // Short path works
+        fs.write_file(Path::new("/tmp/ok.txt"), b"ok")
+            .await
+            .unwrap();
+
+        // Long path fails
+        let long_path = format!("/tmp/{}", "x".repeat(30));
+        let result = fs.write_file(Path::new(&long_path), b"fail").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("path too long"));
+    }
+
+    /// TM-DOS-015: Control characters in filenames rejected
+    #[tokio::test]
+    async fn threat_control_char_filename_rejected() {
+        let fs = InMemoryFs::new();
+
+        // Newline in filename
+        let result = fs.write_file(Path::new("/tmp/file\nname"), b"bad").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unsafe character"));
+
+        // Tab in filename
+        let result = fs.write_file(Path::new("/tmp/file\tname"), b"bad").await;
+        assert!(result.is_err());
+    }
+
+    /// TM-DOS-015: Bidi override characters in filenames rejected
+    #[tokio::test]
+    async fn threat_bidi_override_filename_rejected() {
+        let fs = InMemoryFs::new();
+
+        // Right-to-left override (U+202E) — can make "exe.txt" display as "txt.exe"
+        let result = fs
+            .write_file(Path::new("/tmp/file\u{202E}name"), b"bad")
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("bidi override"), "Error: {}", err);
+    }
+
+    /// TM-DOS-015: Normal unicode filenames still work
+    #[tokio::test]
+    async fn threat_normal_unicode_filename_ok() {
+        let fs = InMemoryFs::new();
+
+        // Accented chars
+        fs.write_file(Path::new("/tmp/café.txt"), b"ok")
+            .await
+            .unwrap();
+
+        // CJK characters
+        fs.write_file(Path::new("/tmp/文件.txt"), b"ok")
+            .await
+            .unwrap();
+    }
+
+    /// TM-DOS-012: Deep nesting via script blocked end-to-end
+    #[tokio::test]
+    async fn threat_deep_nesting_script_blocked() {
+        let limits = FsLimits::new().max_path_depth(5);
+        let fs = Arc::new(InMemoryFs::with_limits(limits));
+        let mut bash = Bash::builder().fs(fs).build();
+
+        // 6-level deep path (exceeds max_path_depth=5)
+        let result = bash.exec("mkdir -p /a/b/c/d/e/f").await.unwrap();
+        assert_ne!(
+            result.exit_code, 0,
+            "mkdir -p for depth 6 should fail with max_path_depth=5, stderr: {}",
+            result.stderr
+        );
+    }
+}

@@ -9,6 +9,7 @@
 //! - **TM-DOS-001**: Large script input → `max_input_bytes`
 //! - **TM-DOS-002, TM-DOS-004, TM-DOS-019**: Command flooding → `max_commands`
 //! - **TM-DOS-016, TM-DOS-017**: Infinite loops → `max_loop_iterations`
+//! - **TM-DOS-018**: Nested loop multiplication → `max_total_loop_iterations`
 //! - **TM-DOS-020, TM-DOS-021**: Function recursion → `max_function_depth`
 //! - **TM-DOS-022**: Parser recursion → `max_ast_depth`
 //! - **TM-DOS-023**: CPU exhaustion → `timeout`
@@ -36,6 +37,13 @@ pub struct ExecutionLimits {
     /// Maximum iterations for a single loop
     /// Default: 10,000
     pub max_loop_iterations: usize,
+
+    // THREAT[TM-DOS-018]: Nested loops each reset their per-loop counter,
+    // allowing 10K^depth total iterations. This global cap prevents that.
+    /// Maximum total loop iterations across all loops (nested and sequential).
+    /// Prevents nested loop multiplication attack (TM-DOS-018).
+    /// Default: 1,000,000
+    pub max_total_loop_iterations: usize,
 
     /// Maximum function call depth (recursion limit)
     /// Default: 100
@@ -72,6 +80,7 @@ impl Default for ExecutionLimits {
         Self {
             max_commands: 10_000,
             max_loop_iterations: 10_000,
+            max_total_loop_iterations: 1_000_000,
             max_function_depth: 100,
             timeout: Duration::from_secs(30),
             parser_timeout: Duration::from_secs(5),
@@ -94,9 +103,16 @@ impl ExecutionLimits {
         self
     }
 
-    /// Set maximum loop iterations
+    /// Set maximum loop iterations (per-loop)
     pub fn max_loop_iterations(mut self, count: usize) -> Self {
         self.max_loop_iterations = count;
+        self
+    }
+
+    /// Set maximum total loop iterations (across all nested/sequential loops).
+    /// Prevents TM-DOS-018 nested loop multiplication.
+    pub fn max_total_loop_iterations(mut self, count: usize) -> Self {
+        self.max_total_loop_iterations = count;
         self
     }
 
@@ -146,8 +162,13 @@ pub struct ExecutionCounters {
     /// Current function call depth
     pub function_depth: usize,
 
-    /// Number of iterations in current loop
+    /// Number of iterations in current loop (reset per-loop)
     pub loop_iterations: usize,
+
+    // THREAT[TM-DOS-018]: Nested loop multiplication
+    // This counter never resets, tracking total iterations across all loops.
+    /// Total loop iterations across all loops (never reset)
+    pub total_loop_iterations: usize,
 }
 
 impl ExecutionCounters {
@@ -209,8 +230,15 @@ impl ExecutionCounters {
         });
 
         self.loop_iterations += 1;
+        self.total_loop_iterations += 1;
         if self.loop_iterations > limits.max_loop_iterations {
             return Err(LimitExceeded::MaxLoopIterations(limits.max_loop_iterations));
+        }
+        // THREAT[TM-DOS-018]: Check global cap to prevent nested loop multiplication
+        if self.total_loop_iterations > limits.max_total_loop_iterations {
+            return Err(LimitExceeded::MaxTotalLoopIterations(
+                limits.max_total_loop_iterations,
+            ));
         }
         Ok(())
     }
@@ -266,6 +294,9 @@ pub enum LimitExceeded {
     #[error("maximum loop iterations exceeded ({0})")]
     MaxLoopIterations(usize),
 
+    #[error("maximum total loop iterations exceeded ({0})")]
+    MaxTotalLoopIterations(usize),
+
     #[error("maximum function depth exceeded ({0})")]
     MaxFunctionDepth(usize),
 
@@ -295,6 +326,7 @@ mod tests {
         let limits = ExecutionLimits::default();
         assert_eq!(limits.max_commands, 10_000);
         assert_eq!(limits.max_loop_iterations, 10_000);
+        assert_eq!(limits.max_total_loop_iterations, 1_000_000);
         assert_eq!(limits.max_function_depth, 100);
         assert_eq!(limits.timeout, Duration::from_secs(30));
         assert_eq!(limits.parser_timeout, Duration::from_secs(5));
@@ -351,6 +383,37 @@ mod tests {
         // Reset and try again
         counters.reset_loop();
         assert!(counters.tick_loop(&limits).is_ok());
+    }
+
+    #[test]
+    fn test_total_loop_counter_accumulates() {
+        let limits = ExecutionLimits::new()
+            .max_loop_iterations(5)
+            .max_total_loop_iterations(8);
+        let mut counters = ExecutionCounters::new();
+
+        // First loop: 5 iterations (per-loop limit)
+        for _ in 0..5 {
+            assert!(counters.tick_loop(&limits).is_ok());
+        }
+        assert_eq!(counters.total_loop_iterations, 5);
+
+        // Reset per-loop counter (entering new loop)
+        counters.reset_loop();
+        assert_eq!(counters.loop_iterations, 0);
+        // total_loop_iterations should NOT reset
+        assert_eq!(counters.total_loop_iterations, 5);
+
+        // Second loop: should fail after 3 more (total = 8 cap)
+        assert!(counters.tick_loop(&limits).is_ok()); // total=6
+        assert!(counters.tick_loop(&limits).is_ok()); // total=7
+        assert!(counters.tick_loop(&limits).is_ok()); // total=8
+
+        // 9th total iteration should fail
+        assert!(matches!(
+            counters.tick_loop(&limits),
+            Err(LimitExceeded::MaxTotalLoopIterations(8))
+        ));
     }
 
     #[test]
