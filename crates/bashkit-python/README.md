@@ -5,7 +5,7 @@ Python bindings for [Bashkit](https://github.com/everruns/bashkit) - a sandboxed
 ## Features
 
 - **Sandboxed execution**: All commands run in isolation with a virtual filesystem
-- **66+ built-in commands**: echo, cat, grep, sed, awk, jq, curl, find, and more
+- **68+ built-in commands**: echo, cat, grep, sed, awk, jq, curl, find, and more
 - **Full bash syntax**: Variables, pipelines, redirects, loops, functions, arrays
 - **Resource limits**: Protect against infinite loops and runaway scripts
 - **LangChain integration**: Ready-to-use tool for LangChain agents

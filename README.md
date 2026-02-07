@@ -16,6 +16,8 @@ Sandboxed bash interpreter for multi-tenant environments. Written in Rust.
 - **Resource limits** - Command count, loop iterations, function depth
 - **Network allowlist** - Control HTTP access per-domain
 - **Async-first** - Built on tokio
+- **Experimental: Git support** - Sandboxed git operations on the virtual filesystem (`git` feature)
+- **Experimental: Python support** - Embedded Python interpreter via [Monty](https://github.com/pydantic/monty) (`python` feature)
 
 ## Quick Start
 
@@ -31,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-## Built-in Commands (66)
+## Built-in Commands (68+)
 
 | Category | Commands |
 |----------|----------|
@@ -45,8 +47,10 @@ async fn main() -> anyhow::Result<()> {
 | Archives | `tar`, `gzip`, `gunzip` |
 | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait` |
 | Pipeline | `xargs`, `tee` |
-| System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv` |
+| Shell | `bash`, `sh` (sandboxed re-invocation), `eval`, `:`  |
+| System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
 | Network | `curl`, `wget` (requires allowlist) |
+| Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature) |
 
 ## Shell Features
 
@@ -95,6 +99,64 @@ let mut bash = Bash::builder()
 // echo $USER → "deploy"
 ```
 
+## Experimental: Git Support
+
+Enable the `git` feature for sandboxed git operations on the virtual filesystem.
+All git data lives in the VFS — no host filesystem access.
+
+```toml
+[dependencies]
+bashkit = { version = "0.1", features = ["git"] }
+```
+
+```rust
+use bashkit::{Bash, GitConfig};
+
+let mut bash = Bash::builder()
+    .git(GitConfig::new()
+        .author("Deploy Bot", "deploy@example.com"))
+    .build();
+
+// Local operations: init, add, commit, status, log
+// Branch operations: branch, checkout, diff, reset
+// Remote operations: remote add/remove, clone/push/pull/fetch (sandbox mode)
+```
+
+See [specs/010-git-support.md](specs/010-git-support.md) for the full specification.
+
+## Experimental: Python Support
+
+Enable the `python` feature to embed the [Monty](https://github.com/pydantic/monty) Python interpreter (pure Rust, Python 3.12).
+Python code runs in-memory with configurable resource limits and VFS bridging — files created
+by bash are readable from Python and vice versa.
+
+```toml
+[dependencies]
+bashkit = { version = "0.1", features = ["python"] }
+```
+
+```rust
+use bashkit::Bash;
+
+let mut bash = Bash::builder().python().build();
+
+// Inline code
+bash.exec("python3 -c \"print(2 ** 10)\"").await?;
+
+// Script files from VFS
+bash.exec("python3 /tmp/script.py").await?;
+
+// VFS bridging: pathlib.Path operations work with the virtual filesystem
+bash.exec(r#"python3 -c "
+from pathlib import Path
+Path('/tmp/data.txt').write_text('hello from python')
+""#).await?;
+bash.exec("cat /tmp/data.txt").await?; // "hello from python"
+```
+
+Limitations: no `open()` (use `pathlib.Path`), no network, no classes, no third-party imports.
+See [crates/bashkit/docs/python.md](crates/bashkit/docs/python.md) for the full guide.
+
 ## Virtual Filesystem
 
 ```rust
@@ -141,6 +203,18 @@ just bench-list         # List all benchmarks
 ```
 
 See [crates/bashkit-bench/README.md](crates/bashkit-bench/README.md) for methodology and assumptions.
+
+## Python Bindings
+
+Python bindings with LangChain integration are available in [crates/bashkit-python](crates/bashkit-python/README.md).
+
+```python
+from bashkit import BashTool
+
+tool = BashTool()
+result = await tool.execute("echo 'Hello, World!'")
+print(result.stdout)
+```
 
 ## Security
 
