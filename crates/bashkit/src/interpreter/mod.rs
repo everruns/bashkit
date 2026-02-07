@@ -198,6 +198,8 @@ impl Interpreter {
         // Git builtin (requires git feature and configuration at runtime)
         #[cfg(feature = "git")]
         builtins.insert("git".to_string(), Box::new(builtins::Git));
+        // Python builtins: opt-in via BashBuilder::python() / BashToolBuilder::python()
+        // The `python` feature flag enables compilation; registration is explicit.
         builtins.insert("timeout".to_string(), Box::new(builtins::Timeout));
         // System info builtins (configurable sandbox values)
         let hostname_val = hostname.unwrap_or_else(|| builtins::DEFAULT_HOSTNAME.to_string());

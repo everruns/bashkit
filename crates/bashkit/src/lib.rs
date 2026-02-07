@@ -322,6 +322,9 @@ pub use network::HttpClient;
 #[cfg(feature = "git")]
 pub use git::GitClient;
 
+#[cfg(feature = "python")]
+pub use builtins::PythonLimits;
+
 /// Logging utilities module
 ///
 /// Provides structured logging with security features including sensitive data redaction.
@@ -766,6 +769,43 @@ impl BashBuilder {
         self
     }
 
+    /// Enable embedded Python (`python`/`python3` builtins) via Monty interpreter
+    /// with default resource limits.
+    ///
+    /// Requires the `python` feature flag. Python `pathlib.Path` operations are
+    /// bridged to the virtual filesystem.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let bash = Bash::builder().python().build();
+    /// ```
+    #[cfg(feature = "python")]
+    pub fn python(self) -> Self {
+        self.python_with_limits(builtins::PythonLimits::default())
+    }
+
+    /// Enable embedded Python with custom resource limits.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use bashkit::PythonLimits;
+    /// use std::time::Duration;
+    ///
+    /// let bash = Bash::builder()
+    ///     .python_with_limits(PythonLimits::default().max_duration(Duration::from_secs(5)))
+    ///     .build();
+    /// ```
+    #[cfg(feature = "python")]
+    pub fn python_with_limits(self, limits: builtins::PythonLimits) -> Self {
+        self.builtin(
+            "python",
+            Box::new(builtins::Python::with_limits(limits.clone())),
+        )
+        .builtin("python3", Box::new(builtins::Python::with_limits(limits)))
+    }
+
     /// Register a custom builtin command.
     ///
     /// Custom builtins extend bashkit with domain-specific commands that can be
@@ -1082,6 +1122,20 @@ pub mod compatibility_scorecard {}
 /// **Related:** [`ExecutionLimits`], [`FsLimits`], [`NetworkAllowlist`]
 #[doc = include_str!("../docs/threat-model.md")]
 pub mod threat_model {}
+
+/// Guide for embedded Python via the Monty interpreter.
+///
+/// This guide covers:
+/// - Enabling Python with [`BashBuilder::python`]
+/// - VFS bridging (`pathlib.Path` → virtual filesystem)
+/// - Configuring resource limits with [`PythonLimits`]
+/// - LLM tool integration via [`BashToolBuilder::python`]
+/// - Known limitations (no `open()`, no HTTP, no classes)
+///
+/// **Related:** [`BashBuilder::python`], [`PythonLimits`], [`threat_model`]
+#[cfg(feature = "python")]
+#[doc = include_str!("../docs/python.md")]
+pub mod python_guide {}
 
 /// Logging guide for Bashkit.
 ///

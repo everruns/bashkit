@@ -83,6 +83,7 @@ jobs:
           cargo run --example resource_limits
           cargo run --example text_processing
           cargo run --example git_workflow --features git
+          cargo run --example python_scripts --features python
 
       - name: Run LLM agent example
         env:

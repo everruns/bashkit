@@ -28,6 +28,7 @@ All threats use a stable ID format: `TM-<CATEGORY>-<NUMBER>`
 | TM-INT | Internal Errors | Panic recovery, error message safety, unexpected failures |
 | TM-GIT | Git Security | Repository access, identity leak, remote operations |
 | TM-LOG | Logging Security | Sensitive data in logs, log injection, log volume attacks |
+| TM-PY | Python Security | Embedded Python sandbox escape, VFS isolation, resource limits |
 
 ### Adding New Threats
 
@@ -966,11 +967,81 @@ The following components are fuzz-tested for robustness:
 
 ---
 
+## Python / Monty Security (TM-PY)
+
+BashKit embeds the Monty Python interpreter (pydantic/monty) with VFS bridging.
+Python `pathlib.Path` operations are bridged to BashKit's virtual filesystem via
+Monty's OsCall pause/resume mechanism. This section covers threats specific to
+the Python builtin.
+
+### Architecture
+
+```
+Python code → Monty VM → OsCall pause → BashKit VFS bridge → resume
+```
+
+Monty never touches the real filesystem. All `Path.*` operations yield `OsCall`
+events that BashKit intercepts and dispatches to the VFS.
+
+### Threats
+
+| ID | Threat | Severity | Mitigation | Test |
+|----|--------|----------|------------|------|
+| TM-PY-001 | Infinite loop via `while True` | High | Monty time limit (30s) + allocation cap | `threat_python_infinite_loop` |
+| TM-PY-002 | Memory exhaustion via large allocation | High | Monty max_memory (64MB) + max_allocations (1M) | `threat_python_memory_exhaustion` |
+| TM-PY-003 | Stack overflow via deep recursion | High | Monty max_recursion (200) | `threat_python_recursion_bomb` |
+| TM-PY-004 | Shell escape via os.system/subprocess | Critical | Monty has no os.system/subprocess implementation | `threat_python_no_os_operations` |
+| TM-PY-005 | Real filesystem access via open() | Critical | Monty has no open() builtin | `threat_python_no_filesystem` |
+| TM-PY-006 | Error info leakage via stdout | Medium | Errors go to stderr, not stdout | `threat_python_error_isolation` |
+| TM-PY-015 | Real filesystem read via pathlib | Critical | VFS bridge reads only from BashKit VFS, not host | `threat_python_vfs_no_real_fs` |
+| TM-PY-016 | Real filesystem write via pathlib | Critical | VFS bridge writes only to BashKit VFS | `threat_python_vfs_write_sandboxed` |
+| TM-PY-017 | Path traversal (../../etc/passwd) | High | VFS resolves paths within sandbox boundaries | `threat_python_vfs_path_traversal` |
+| TM-PY-018 | Bash/Python VFS isolation breach | Medium | Shared VFS by design; no cross-tenant access | `threat_python_vfs_bash_python_isolation` |
+| TM-PY-019 | Crash on missing file | Medium | FileNotFoundError raised, not panic | `threat_python_vfs_error_handling` |
+| TM-PY-020 | Network access from Python | Critical | Monty has no socket/network module | `threat_python_vfs_no_network` |
+| TM-PY-021 | VFS mkdir escape | Medium | mkdir operates only in VFS | `threat_python_vfs_mkdir_sandboxed` |
+
+### VFS Bridge Security Properties
+
+1. **No real filesystem access**: All Path operations go through BashKit's VFS.
+   `/etc/passwd` in Python reads from VFS, not the host.
+2. **Shared VFS with bash**: Files written by `echo > file` are readable by
+   Python's `Path(file).read_text()`, and vice versa. This is intentional.
+3. **Path resolution**: Relative paths are resolved against the shell's cwd.
+   Path traversal (`../..`) is constrained by VFS path normalization.
+4. **Error mapping**: VFS errors are mapped to standard Python exceptions
+   (FileNotFoundError, IsADirectoryError, etc.), not raw panics.
+5. **Resource isolation**: Monty's own limits (time, memory, allocations,
+   recursion) are enforced independently of BashKit's shell limits.
+
+### Supported OsCall Operations
+
+| Operation | VFS Method | Return Type |
+|-----------|-----------|-------------|
+| Path.exists() | fs.exists() | bool |
+| Path.is_file() | fs.stat() | bool |
+| Path.is_dir() | fs.stat() | bool |
+| Path.read_text() | fs.read_file() | str |
+| Path.read_bytes() | fs.read_file() | bytes |
+| Path.write_text() | fs.write_file() | int |
+| Path.write_bytes() | fs.write_file() | int |
+| Path.mkdir() | fs.mkdir() | None |
+| Path.unlink() | fs.remove() | None |
+| Path.rmdir() | fs.remove() | None |
+| Path.iterdir() | fs.read_dir() | list[Path] |
+| Path.stat() | fs.stat() | stat_result |
+| Path.rename() | fs.rename() | Path |
+| os.getenv() | ctx.env lookup | str/None |
+| os.environ | ctx.env dict | dict |
+
+---
+
 ## References
 
 - `specs/001-architecture.md` - System design
 - `specs/003-vfs.md` - Virtual filesystem design
 - `specs/005-security-testing.md` - Fail-point testing
+- `specs/011-python-builtin.md` - Python builtin specification
 - `src/builtins/system.rs` - Hardcoded system builtins
-- `tests/threat_model_tests.rs` - Threat model test suite (51 tests)
+- `tests/threat_model_tests.rs` - Threat model test suite (72 tests)
 - `tests/security_failpoint_tests.rs` - Fail-point security tests
