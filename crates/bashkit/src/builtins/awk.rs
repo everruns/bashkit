@@ -208,14 +208,46 @@ impl AwkState {
     }
 }
 
+/// THREAT[TM-DOS-027]: Maximum recursion depth for awk expression parser.
+/// Prevents stack overflow from deeply nested expressions like `(((((...)))))`
+/// or deeply chained unary operators like `- - - - - x`.
+/// Set conservatively: each recursion level uses ~1-2KB stack in debug mode.
+/// 100 levels × ~2KB = ~200KB, well within typical stack limits.
+const MAX_AWK_PARSER_DEPTH: usize = 100;
+
 struct AwkParser<'a> {
     input: &'a str,
     pos: usize,
+    /// Current recursion depth for expression parsing
+    depth: usize,
 }
 
 impl<'a> AwkParser<'a> {
     fn new(input: &'a str) -> Self {
-        Self { input, pos: 0 }
+        Self {
+            input,
+            pos: 0,
+            depth: 0,
+        }
+    }
+
+    /// THREAT[TM-DOS-027]: Increment depth, error if limit exceeded
+    fn push_depth(&mut self) -> Result<()> {
+        self.depth += 1;
+        if self.depth > MAX_AWK_PARSER_DEPTH {
+            return Err(Error::Execution(format!(
+                "awk: expression nesting too deep ({} levels, max {})",
+                self.depth, MAX_AWK_PARSER_DEPTH
+            )));
+        }
+        Ok(())
+    }
+
+    /// Decrement depth after leaving a recursive parse
+    fn pop_depth(&mut self) {
+        if self.depth > 0 {
+            self.depth -= 1;
+        }
     }
 
     fn parse(&mut self) -> Result<AwkProgram> {
@@ -490,10 +522,14 @@ impl<'a> AwkParser<'a> {
         Ok(AwkAction::Printf(format, args))
     }
 
+    /// THREAT[TM-DOS-027]: Track depth for nested if/action blocks
     fn parse_if(&mut self) -> Result<AwkAction> {
+        self.push_depth()?;
+
         self.skip_whitespace();
 
         if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != '(' {
+            self.pop_depth();
             return Err(Error::Execution("awk: expected '(' after if".to_string()));
         }
         self.pos += 1;
@@ -502,6 +538,7 @@ impl<'a> AwkParser<'a> {
 
         self.skip_whitespace();
         if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ')' {
+            self.pop_depth();
             return Err(Error::Execution(
                 "awk: expected ')' after condition".to_string(),
             ));
@@ -527,11 +564,16 @@ impl<'a> AwkParser<'a> {
             Vec::new()
         };
 
+        self.pop_depth();
         Ok(AwkAction::If(condition, then_actions, else_actions))
     }
 
+    /// THREAT[TM-DOS-027]: Track depth on every expression entry
     fn parse_expression(&mut self) -> Result<AwkExpr> {
-        self.parse_assignment()
+        self.push_depth()?;
+        let result = self.parse_assignment();
+        self.pop_depth();
+        result
     }
 
     fn parse_assignment(&mut self) -> Result<AwkExpr> {
@@ -737,6 +779,7 @@ impl<'a> AwkParser<'a> {
         Ok(left)
     }
 
+    /// THREAT[TM-DOS-027]: Track depth on unary self-recursion
     fn parse_unary(&mut self) -> Result<AwkExpr> {
         self.skip_whitespace();
 
@@ -750,19 +793,26 @@ impl<'a> AwkParser<'a> {
 
         if c == '-' {
             self.pos += 1;
-            let expr = self.parse_unary()?;
-            return Ok(AwkExpr::UnaryOp("-".to_string(), Box::new(expr)));
+            self.push_depth()?;
+            let expr = self.parse_unary();
+            self.pop_depth();
+            return Ok(AwkExpr::UnaryOp("-".to_string(), Box::new(expr?)));
         }
 
         if c == '!' {
             self.pos += 1;
-            let expr = self.parse_unary()?;
-            return Ok(AwkExpr::UnaryOp("!".to_string(), Box::new(expr)));
+            self.push_depth()?;
+            let expr = self.parse_unary();
+            self.pop_depth();
+            return Ok(AwkExpr::UnaryOp("!".to_string(), Box::new(expr?)));
         }
 
         if c == '+' {
             self.pos += 1;
-            return self.parse_unary();
+            self.push_depth()?;
+            let result = self.parse_unary();
+            self.pop_depth();
+            return result;
         }
 
         self.parse_primary()
@@ -1683,5 +1733,60 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result.stdout, "b\n");
+    }
+
+    /// TM-DOS-027: Deeply nested parenthesized expressions must be rejected
+    #[test]
+    fn test_awk_parser_depth_limit_parens() {
+        // Build expression with 150 nested parens: (((((...(1)...))))
+        let depth = 150;
+        let open = "(".repeat(depth);
+        let close = ")".repeat(depth);
+        let program = format!("{{print {open}1{close}}}");
+
+        let mut parser = AwkParser::new(&program);
+        let result = parser.parse();
+        assert!(result.is_err(), "deeply nested parens must be rejected");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("nesting too deep"),
+            "error should mention nesting: {err}"
+        );
+    }
+
+    /// TM-DOS-027: Deeply chained unary operators must be rejected
+    #[test]
+    fn test_awk_parser_depth_limit_unary() {
+        // Build expression with 200 chained negations: - - - ... - 1
+        let depth = 200;
+        let prefix = "- ".repeat(depth);
+        let program = format!("{{print {prefix}1}}");
+
+        let mut parser = AwkParser::new(&program);
+        let result = parser.parse();
+        assert!(result.is_err(), "deeply chained unary ops must be rejected");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("nesting too deep"),
+            "error should mention nesting: {err}"
+        );
+    }
+
+    /// TM-DOS-027: Moderate nesting within limit still works
+    #[test]
+    fn test_awk_parser_moderate_nesting_ok() {
+        // 10 levels of parens should be fine
+        let depth = 10;
+        let open = "(".repeat(depth);
+        let close = ")".repeat(depth);
+        let program = format!("{{print {open}1{close}}}");
+
+        let mut parser = AwkParser::new(&program);
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "moderate nesting should succeed: {:?}",
+            result.err()
+        );
     }
 }
