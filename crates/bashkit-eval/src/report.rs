@@ -305,7 +305,12 @@ fn generate_markdown(report: &EvalReport) -> String {
             status, r.task.id, r.task.category
         ));
         md.push_str(&format!("{}\n\n", r.task.description));
-        let task_ok = r.trace.tool_calls.iter().filter(|tc| tc.exit_code == 0).count();
+        let task_ok = r
+            .trace
+            .tool_calls
+            .iter()
+            .filter(|tc| tc.exit_code == 0)
+            .count();
         let task_err = r.trace.tool_call_count - task_ok;
         md.push_str(&format!(
             "- Turns: {} | Tool calls: {} ({} ok, {} error) | Duration: {:.1}s\n",

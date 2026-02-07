@@ -50,7 +50,11 @@ pub async fn run_eval(
                     let icon = if sr.passed { "PASS" } else { "FAIL" };
                     println!("  [{}] {} - {}", icon, sr.check, sr.detail);
                 }
-                let calls_ok = trace.tool_calls.iter().filter(|tc| tc.exit_code == 0).count();
+                let calls_ok = trace
+                    .tool_calls
+                    .iter()
+                    .filter(|tc| tc.exit_code == 0)
+                    .count();
                 let calls_err = trace.tool_call_count - calls_ok;
                 println!(
                     "  Score: {:.0}/{:.0} | Turns: {} | Calls: {} ({} ok, {} err) | Tokens: {}in/{}out | {:.1}s",
