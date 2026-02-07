@@ -139,19 +139,19 @@ FsLimits {
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
 | TM-DOS-011 | Symlink loops | `ln -s /a /b; ln -s /b /a` | No symlink following | **MITIGATED** |
-| TM-DOS-012 | Deep directory nesting | `mkdir -p a/b/c/.../z` (1000 levels) | None | **VULNERABLE** |
-| TM-DOS-013 | Long filenames | Create 10KB filename | None | **VULNERABLE** |
+| TM-DOS-012 | Deep directory nesting | `mkdir -p a/b/c/.../z` (1000 levels) | `max_path_depth` limit (100) | **MITIGATED** |
+| TM-DOS-013 | Long filenames | Create 10KB filename | `max_filename_length` (255) + `max_path_length` (4096) | **MITIGATED** |
 | TM-DOS-014 | Many directory entries | Create 1M files in one dir | `max_file_count` limit | **MITIGATED** |
-| TM-DOS-015 | Unicode path attacks | Homoglyph/RTL override chars | None | **VULNERABLE** |
+| TM-DOS-015 | Unicode path attacks | Homoglyph/RTL override chars | `validate_path()` rejects control chars and bidi overrides | **MITIGATED** |
 
-**Current Risk**: MEDIUM - Some vectors unprotected
+**Current Risk**: LOW - All vectors protected
 
-**Recommendations**:
+**Implementation**: `FsLimits` in `fs/limits.rs`:
 ```rust
-// Add to FsLimits or separate PathLimits
 max_path_depth: 100,           // Max directory nesting (TM-DOS-012)
 max_filename_length: 255,      // Max single component (TM-DOS-013)
-max_path_length: 4096,         // Max total path
+max_path_length: 4096,         // Max total path (TM-DOS-013)
+// validate_path() rejects control chars and bidi overrides (TM-DOS-015)
 ```
 
 **Note**: Symlink loops (TM-DOS-011) are mitigated because InMemoryFs stores symlinks but doesn't
@@ -163,18 +163,17 @@ follow them during path resolution - symlink targets are only returned by `read_
 |----|--------|--------------|------------|--------|
 | TM-DOS-016 | While true | `while true; do :; done` | Loop limit (10K) | **MITIGATED** |
 | TM-DOS-017 | For loop | `for i in $(seq 1 inf); do` | Loop limit | **MITIGATED** |
-| TM-DOS-018 | Nested loops | `for i in ...; do for j in ...; done; done` | Per-loop counter | Partial |
+| TM-DOS-018 | Nested loops | `for i in ...; do for j in ...; done; done` | Per-loop + `max_total_loop_iterations` (1M) | **MITIGATED** |
 | TM-DOS-019 | Command loop | `echo 1; echo 2; ...` x 100K | Command limit (10K) | **MITIGATED** |
 
 **Current Risk**: LOW - Loop and command limits prevent infinite execution
 
 **Implementation**: `limits.rs`
 ```rust
-max_loop_iterations: 10_000,  // Per-loop limit (TM-DOS-016, TM-DOS-017)
-max_commands: 10_000,         // Total command limit (TM-DOS-019)
+max_loop_iterations: 10_000,           // Per-loop limit (TM-DOS-016, TM-DOS-017)
+max_total_loop_iterations: 1_000_000,  // Global cap across all loops (TM-DOS-018)
+max_commands: 10_000,                  // Total command limit (TM-DOS-019)
 ```
-
-**Gap** (TM-DOS-018): Nested loops each get fresh 10K counter. Deep nesting could execute 10K^depth commands.
 
 #### 1.3 Stack Overflow (Recursion)
 
@@ -777,7 +776,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | V2 | TM-DOS-002 | Output flooding | **MITIGATED** via command limits |
 | V3 | TM-DOS-024 | Parser hang | **MITIGATED** via `parser_timeout` + `max_parser_operations` |
 | V4 | TM-DOS-022 | Parser recursion | **MITIGATED** via `max_ast_depth` |
-| V5 | TM-DOS-018 | Nested loop multiplication | **PARTIAL** - still gaps |
+| V5 | TM-DOS-018 | Nested loop multiplication | **MITIGATED** via `max_total_loop_iterations` (1M) |
 | V6 | TM-DOS-021 | Command sub parser limit bypass | **MITIGATED** via inherited depth/fuel |
 | V7 | TM-DOS-026 | Arithmetic recursion overflow | **MITIGATED** via `MAX_ARITHMETIC_DEPTH` (200) |
 
@@ -787,9 +786,6 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 |-----------|---------------|--------|----------------|
 | TM-INF-001 | Env vars may leak secrets | Information disclosure | Document caller responsibility |
 | TM-INJ-008 | Terminal escapes in output | UI manipulation | Document sanitization need |
-| TM-DOS-012 | Deep directory nesting | Memory/stack exhaustion | Add `max_path_depth` limit |
-| TM-DOS-013 | Long filenames | Memory exhaustion | Add `max_filename_length` limit |
-| TM-DOS-015 | Unicode path manipulation | Path confusion | Validate/normalize paths |
 
 ### Accepted (Low Priority)
 
@@ -807,6 +803,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Input size limit (10MB) | TM-DOS-001 | `limits.rs` | Yes |
 | Command limit (10K) | TM-DOS-002, TM-DOS-004, TM-DOS-019 | `limits.rs` | Yes |
 | Loop limit (10K) | TM-DOS-016, TM-DOS-017 | `limits.rs` | Yes |
+| Total loop limit (1M) | TM-DOS-018 | `limits.rs` | Yes |
 | Function depth (100) | TM-DOS-020, TM-DOS-021 | `limits.rs` | Yes |
 | Parser timeout (5s) | TM-DOS-024 | `limits.rs` | Yes |
 | Parser fuel (100K ops) | TM-DOS-024 | `limits.rs` | Yes |
@@ -817,6 +814,10 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Execution timeout (30s) | TM-DOS-023 | `limits.rs` | Yes |
 | Virtual filesystem | TM-ESC-001, TM-ESC-003 | `fs/memory.rs` | Yes |
 | Filesystem limits | TM-DOS-005 to TM-DOS-010, TM-DOS-014 | `fs/limits.rs` | Yes |
+| Path depth limit (100) | TM-DOS-012 | `fs/limits.rs` | Yes |
+| Filename length limit (255) | TM-DOS-013 | `fs/limits.rs` | Yes |
+| Path length limit (4096) | TM-DOS-013 | `fs/limits.rs` | Yes |
+| Path char validation | TM-DOS-015 | `fs/limits.rs` | Yes |
 | Zip bomb protection | TM-DOS-007, TM-NET-013 | `builtins/archive.rs` | Yes |
 | Path normalization | TM-ESC-001, TM-INJ-005 | `fs/memory.rs` | Yes |
 | No symlink following | TM-ESC-002, TM-DOS-011 | `fs/memory.rs` | Yes |
@@ -846,6 +847,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 ExecutionLimits::new()
     .max_commands(10_000)              // TM-DOS-002, TM-DOS-004, TM-DOS-019
     .max_loop_iterations(10_000)       // TM-DOS-016, TM-DOS-017
+    .max_total_loop_iterations(1_000_000) // TM-DOS-018 (nested loop cap)
     .max_function_depth(100)           // TM-DOS-020, TM-DOS-021
     .timeout(Duration::from_secs(30))  // TM-DOS-023
     .parser_timeout(Duration::from_secs(5))  // TM-DOS-024
@@ -855,6 +857,13 @@ ExecutionLimits::new()
 // Note: MAX_ARITHMETIC_DEPTH (200) is a compile-time constant in interpreter (TM-DOS-026)
 // Note: MAX_AWK_PARSER_DEPTH (100) is a compile-time constant in builtins/awk.rs (TM-DOS-027)
 // Note: MAX_JQ_JSON_DEPTH (100) is a compile-time constant in builtins/jq.rs (TM-DOS-027)
+
+// Path validation limits (applied via FsLimits):
+FsLimits::new()
+    .max_path_depth(100)           // TM-DOS-012
+    .max_filename_length(255)      // TM-DOS-013
+    .max_path_length(4096)         // TM-DOS-013
+// Note: validate_path() also rejects control chars and bidi overrides (TM-DOS-015)
 ```
 
 ---
