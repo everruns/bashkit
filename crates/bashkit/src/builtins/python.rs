@@ -4,9 +4,17 @@
 //! Python `pathlib.Path` operations are bridged to BashKit's virtual filesystem
 //! via Monty's OsCall pause/resume mechanism. No real filesystem or network access.
 //!
+//! Two execution modes:
+//! - **InProcess**: Monty runs in the host process (fast, but parser segfaults crash host)
+//! - **Subprocess**: Monty runs in `bashkit-monty-worker` child process (crash-isolated)
+//!
+//! Default is `Auto`: use subprocess if the worker binary is found, else fall back to in-process.
+//! See pydantic/monty#112 for the motivating crash scenario (deeply nested parentheses segfault).
+//!
 //! Supports: `python -c "code"`, `python script.py`, stdin piping.
 
 use async_trait::async_trait;
+use bashkit_monty_worker::{WireExternalResult, WireLimits, WorkerRequest, WorkerResponse};
 use monty::{
     dir_stat, file_stat, CollectStringPrint, ExcType, ExternalResult, LimitedTracker,
     MontyException, MontyObject, MontyRun, OsFunction, ResourceLimits, RunProgress,
@@ -15,6 +23,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use super::{resolve_path, Builtin, Context};
 use crate::error::Result;
@@ -26,6 +35,22 @@ const DEFAULT_MAX_ALLOCATIONS: usize = 1_000_000;
 const DEFAULT_MAX_DURATION: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_MEMORY: usize = 64 * 1024 * 1024; // 64 MB
 const DEFAULT_MAX_RECURSION: usize = 200;
+
+/// How to run the Monty interpreter.
+///
+/// - `InProcess`: fast, but a parser segfault (e.g., monty#112) kills the host.
+/// - `Subprocess`: crash-isolated via `bashkit-monty-worker` child process.
+/// - `Auto` (default): subprocess if worker binary found, else in-process.
+#[derive(Debug, Clone, Default)]
+pub enum PythonIsolation {
+    /// Run monty in the host process (no crash isolation).
+    InProcess,
+    /// Run monty in a subprocess (crash-isolated). Fails if worker binary not found.
+    Subprocess,
+    /// Try subprocess, fall back to in-process if worker binary is missing.
+    #[default]
+    Auto,
+}
 
 /// Resource limits for the embedded Python (Monty) interpreter.
 ///
@@ -56,6 +81,8 @@ pub struct PythonLimits {
     pub max_memory: usize,
     /// Maximum recursion depth (default: 200).
     pub max_recursion: usize,
+    /// Execution isolation mode (default: Auto).
+    pub isolation: PythonIsolation,
 }
 
 impl Default for PythonLimits {
@@ -65,6 +92,7 @@ impl Default for PythonLimits {
             max_duration: DEFAULT_MAX_DURATION,
             max_memory: DEFAULT_MAX_MEMORY,
             max_recursion: DEFAULT_MAX_RECURSION,
+            isolation: PythonIsolation::default(),
         }
     }
 }
@@ -95,6 +123,13 @@ impl PythonLimits {
     #[must_use]
     pub fn max_recursion(mut self, depth: usize) -> Self {
         self.max_recursion = depth;
+        self
+    }
+
+    /// Set isolation mode.
+    #[must_use]
+    pub fn isolation(mut self, mode: PythonIsolation) -> Self {
+        self.isolation = mode;
         self
     }
 }
@@ -260,11 +295,251 @@ impl Builtin for Python {
     }
 }
 
-/// Execute Python code via Monty with resource limits and VFS bridging.
+/// Execute Python code, dispatching to subprocess or in-process based on isolation mode.
+async fn run_python(
+    code: &str,
+    filename: &str,
+    fs: Arc<dyn FileSystem>,
+    cwd: &Path,
+    env: &HashMap<String, String>,
+    py_limits: &PythonLimits,
+) -> Result<ExecResult> {
+    match &py_limits.isolation {
+        PythonIsolation::Subprocess => match find_worker_binary() {
+            Some(bin) => run_python_subprocess(code, filename, fs, cwd, env, py_limits, &bin).await,
+            None => Ok(ExecResult::err(
+                "python3: subprocess mode requested but bashkit-monty-worker not found\n"
+                    .to_string(),
+                1,
+            )),
+        },
+        PythonIsolation::InProcess => {
+            run_python_in_process(code, filename, fs, cwd, env, py_limits).await
+        }
+        PythonIsolation::Auto => match find_worker_binary() {
+            Some(bin) if bin.exists() => {
+                run_python_subprocess(code, filename, fs, cwd, env, py_limits, &bin).await
+            }
+            _ => run_python_in_process(code, filename, fs, cwd, env, py_limits).await,
+        },
+    }
+}
+
+/// Execute Python code in a subprocess for crash isolation.
+///
+/// If the worker segfaults (e.g., monty parser stack overflow on deeply nested
+/// parentheses — monty#112), we get a child-exit-with-signal instead of crashing
+/// the host. OsCall VFS bridging works over JSON lines on stdin/stdout.
+async fn run_python_subprocess(
+    code: &str,
+    filename: &str,
+    fs: Arc<dyn FileSystem>,
+    cwd: &Path,
+    env: &HashMap<String, String>,
+    py_limits: &PythonLimits,
+    worker_bin: &Path,
+) -> Result<ExecResult> {
+    use tokio::process::Command;
+
+    let mut child = match Command::new(worker_bin)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return Ok(ExecResult::err(
+                format!("python3: failed to start worker: {e}\n"),
+                1,
+            ));
+        }
+    };
+
+    // Safe: we set Stdio::piped() above, so stdin/stdout are always Some
+    let mut child_stdin = child.stdin.take().expect("child stdin piped");
+    let child_stdout = child.stdout.take().expect("child stdout piped");
+    let mut reader = BufReader::new(child_stdout);
+
+    // Send init request
+    let init = WorkerRequest::Init {
+        code: code.to_string(),
+        filename: filename.to_string(),
+        limits: WireLimits {
+            max_allocations: py_limits.max_allocations,
+            max_duration_secs: py_limits.max_duration.as_secs_f64(),
+            max_memory: py_limits.max_memory,
+            max_recursion: py_limits.max_recursion,
+        },
+    };
+    write_ipc_message(&mut child_stdin, &init).await?;
+
+    // IPC loop: handle OsCall requests from the worker
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line).await {
+            Ok(0) => {
+                // EOF — worker exited (possibly crashed)
+                let status = child.wait().await?;
+                return Ok(worker_crash_result(status));
+            }
+            Ok(_) => {}
+            Err(e) => {
+                let _ = child.kill().await;
+                return Ok(ExecResult::err(
+                    format!("python3: worker communication error: {e}\n"),
+                    1,
+                ));
+            }
+        }
+
+        let response: WorkerResponse = match serde_json::from_str(&line) {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = child.kill().await;
+                return Ok(ExecResult::err(
+                    format!("python3: worker protocol error: {e}\n"),
+                    1,
+                ));
+            }
+        };
+
+        match response {
+            WorkerResponse::OsCall {
+                function,
+                args,
+                kwargs,
+            } => {
+                // Bridge VFS operation
+                let ext_result = handle_os_call(function, &args, &kwargs, &fs, cwd, env).await;
+
+                // Convert ExternalResult to wire format
+                let wire_result = external_to_wire(ext_result);
+                let resp = WorkerRequest::OsResponse {
+                    result: wire_result,
+                };
+                write_ipc_message(&mut child_stdin, &resp).await?;
+            }
+            WorkerResponse::Complete { result, output } => {
+                let _ = child.wait().await;
+                let mut out = output;
+                // REPL behavior: display non-None result if no print output
+                if !matches!(result, MontyObject::None) && out.is_empty() {
+                    out = format!("{}\n", result.py_repr());
+                }
+                return Ok(ExecResult::ok(out));
+            }
+            WorkerResponse::Error { exception, output } => {
+                let _ = child.wait().await;
+                let mut result = ExecResult::err(exception, 1);
+                if !output.is_empty() {
+                    result.stdout = output;
+                }
+                return Ok(result);
+            }
+        }
+    }
+}
+
+/// Convert monty ExternalResult (not serializable) to wire format.
+fn external_to_wire(ext: ExternalResult) -> WireExternalResult {
+    match ext {
+        ExternalResult::Return(obj) => WireExternalResult::Return { value: obj },
+        ExternalResult::Error(exc) => WireExternalResult::Error {
+            exc_type: exc.exc_type(),
+            message: exc.message().map(|s| s.to_string()),
+        },
+        ExternalResult::Future => WireExternalResult::Error {
+            exc_type: ExcType::RuntimeError,
+            message: Some("async not supported".into()),
+        },
+    }
+}
+
+/// Write a JSON line to the worker's stdin.
+async fn write_ipc_message<T: serde::Serialize>(
+    writer: &mut tokio::process::ChildStdin,
+    msg: &T,
+) -> Result<()> {
+    let mut buf = serde_json::to_vec(msg)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+    buf.push(b'\n');
+    writer.write_all(&buf).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+/// Build an ExecResult for a worker that crashed (segfault, abort, etc.).
+fn worker_crash_result(status: std::process::ExitStatus) -> ExecResult {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            let sig_name = match signal {
+                11 => "SIGSEGV",
+                6 => "SIGABRT",
+                9 => "SIGKILL",
+                _ => "signal",
+            };
+            return ExecResult::err(
+                format!("python3: interpreter crashed ({sig_name})\n"),
+                128 + signal,
+            );
+        }
+    }
+    let code = status.code().unwrap_or(1);
+    ExecResult::err(
+        format!("python3: interpreter exited unexpectedly (code {code})\n"),
+        code,
+    )
+}
+
+/// Find the `bashkit-monty-worker` binary.
+///
+/// Search order:
+/// 1. `BASHKIT_MONTY_WORKER` env var (explicit override — always trusted, even if missing)
+/// 2. Adjacent to current executable (cargo puts workspace bins together)
+/// 3. PATH lookup
+pub fn find_worker_binary() -> Option<PathBuf> {
+    // 1. Env override — always trust if set (caller chose this explicitly)
+    if let Ok(path) = std::env::var("BASHKIT_MONTY_WORKER") {
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
+        }
+    }
+
+    // 2. Adjacent to current executable (also check parent — test binaries
+    //    live in target/debug/deps/ while workspace bins are in target/debug/)
+    if let Ok(exe) = std::env::current_exe() {
+        for dir in exe.ancestors().skip(1).take(2) {
+            let worker = dir.join("bashkit-monty-worker");
+            if worker.exists() {
+                return Some(worker);
+            }
+        }
+    }
+
+    // 3. Check PATH via which
+    if let Ok(output) = std::process::Command::new("which")
+        .arg("bashkit-monty-worker")
+        .output()
+    {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(PathBuf::from(path));
+            }
+        }
+    }
+
+    None
+}
+
+/// Execute Python code via Monty with resource limits and VFS bridging (in-process).
 ///
 /// Uses Monty's start/resume API: execution pauses at filesystem operations
 /// (OsCall), we bridge them to BashKit's VFS, then resume.
-async fn run_python(
+async fn run_python_in_process(
     code: &str,
     filename: &str,
     fs: Arc<dyn FileSystem>,

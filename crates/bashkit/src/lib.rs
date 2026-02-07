@@ -323,7 +323,7 @@ pub use network::HttpClient;
 pub use git::GitClient;
 
 #[cfg(feature = "python")]
-pub use builtins::PythonLimits;
+pub use builtins::{PythonIsolation, PythonLimits};
 
 /// Logging utilities module
 ///

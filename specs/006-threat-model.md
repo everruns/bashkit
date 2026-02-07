@@ -1016,6 +1016,7 @@ events that BashKit intercepts and dispatches to the VFS.
 | TM-PY-019 | Crash on missing file | Medium | FileNotFoundError raised, not panic | `threat_python_vfs_error_handling` |
 | TM-PY-020 | Network access from Python | Critical | Monty has no socket/network module | `threat_python_vfs_no_network` |
 | TM-PY-021 | VFS mkdir escape | Medium | mkdir operates only in VFS | `threat_python_vfs_mkdir_sandboxed` |
+| TM-PY-022 | Parser crash kills host (monty#112) | Critical | Subprocess isolation: worker segfault → child exit, not host crash | `subprocess_worker_crash_via_false_binary` |
 
 ### VFS Bridge Security Properties
 

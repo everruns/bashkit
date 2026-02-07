@@ -167,6 +167,52 @@ Monty pauses execution at filesystem operations, yields an `OsCall` event
 with the operation type and arguments, BashKit bridges it to the VFS, and
 resumes execution with the result (or a Python exception).
 
+### Subprocess Isolation (Crash Protection)
+
+Monty runs in-process by default, but a parser bug (e.g., [monty#112](https://github.com/pydantic/monty/issues/112) —
+deeply nested parentheses causing a segfault) can crash the host process.
+`catch_unwind` does NOT help because a segfault is an OS signal, not a Rust panic.
+
+To mitigate this, BashKit can run Monty in a separate `bashkit-monty-worker`
+subprocess. If the worker segfaults, the parent catches the child exit and
+returns a shell error (exit code 139 for SIGSEGV) instead of crashing.
+
+**Configuration:**
+
+```rust
+use bashkit::{Bash, PythonIsolation, PythonLimits};
+
+// Auto (default): use subprocess if worker found, else in-process
+let bash = Bash::builder().python().build();
+
+// Force subprocess mode (fails if worker binary missing)
+let bash = Bash::builder()
+    .python_with_limits(
+        PythonLimits::default().isolation(PythonIsolation::Subprocess)
+    )
+    .build();
+
+// Force in-process mode (no crash isolation)
+let bash = Bash::builder()
+    .python_with_limits(
+        PythonLimits::default().isolation(PythonIsolation::InProcess)
+    )
+    .build();
+```
+
+**Worker binary discovery:** `BASHKIT_MONTY_WORKER` env var → adjacent to
+current executable → PATH lookup.
+
+**IPC protocol:** JSON lines over stdin/stdout. The worker pauses at each
+`OsCall` (VFS operation), sends it to the parent, the parent bridges it to
+the VFS and responds. The protocol is defined in `bashkit-monty-worker` crate.
+
+```
+Parent → Worker: Init { code, filename, limits }
+Worker → Parent: OsCall { function, args, kwargs } | Complete | Error
+Parent → Worker: OsResponse { result }
+```
+
 ### Security
 
 See `specs/006-threat-model.md` section "Python / Monty Security (TM-PY)"

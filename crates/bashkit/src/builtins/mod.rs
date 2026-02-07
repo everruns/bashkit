@@ -98,7 +98,7 @@ pub use wc::Wc;
 pub use git::Git;
 
 #[cfg(feature = "python")]
-pub use python::{Python, PythonLimits};
+pub use python::{Python, PythonIsolation, PythonLimits};
 
 use async_trait::async_trait;
 use std::collections::HashMap;
