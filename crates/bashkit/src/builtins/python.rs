@@ -327,9 +327,16 @@ async fn run_python(
 
 /// Execute Python code in a subprocess for crash isolation.
 ///
-/// If the worker segfaults (e.g., monty parser stack overflow on deeply nested
-/// parentheses — monty#112), we get a child-exit-with-signal instead of crashing
-/// the host. OsCall VFS bridging works over JSON lines on stdin/stdout.
+/// THREAT[TM-PY-022]: If the worker segfaults (e.g., monty parser stack overflow
+/// on deeply nested parentheses — monty#112), we get a child-exit-with-signal
+/// instead of crashing the host.
+///
+/// THREAT[TM-PY-025]: Worker environment is cleared to prevent host env var leakage.
+/// Only minimal vars needed for operation are passed through.
+///
+/// THREAT[TM-PY-024]: IPC reads are wrapped in a timeout derived from the Python
+/// execution limit (max_duration + 5s grace period) to prevent worker hangs from
+/// blocking the parent indefinitely.
 async fn run_python_subprocess(
     code: &str,
     filename: &str,
@@ -341,7 +348,10 @@ async fn run_python_subprocess(
 ) -> Result<ExecResult> {
     use tokio::process::Command;
 
+    // THREAT[TM-PY-025]: Clear worker environment to prevent host env var leakage.
+    // The worker communicates purely via IPC; it doesn't need host env vars.
     let mut child = match Command::new(worker_bin)
+        .env_clear()
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -374,20 +384,47 @@ async fn run_python_subprocess(
     };
     write_ipc_message(&mut child_stdin, &init).await?;
 
+    // THREAT[TM-PY-024]: IPC timeout = execution limit + 5s grace for init/cleanup.
+    // Prevents a hanging worker from blocking the parent forever.
+    let ipc_timeout = py_limits.max_duration + Duration::from_secs(5);
+
+    // THREAT[TM-PY-026]: Max IPC line size to prevent worker from OOM-ing the parent.
+    // 16 MB should be generous for any legitimate VFS response.
+    const MAX_IPC_LINE_BYTES: usize = 16 * 1024 * 1024;
+
     // IPC loop: handle OsCall requests from the worker
     loop {
         let mut line = String::new();
-        match reader.read_line(&mut line).await {
-            Ok(0) => {
+        let read_result = tokio::time::timeout(ipc_timeout, reader.read_line(&mut line)).await;
+
+        match read_result {
+            Ok(Ok(0)) => {
                 // EOF — worker exited (possibly crashed)
                 let status = child.wait().await?;
                 return Ok(worker_crash_result(status));
             }
-            Ok(_) => {}
-            Err(e) => {
+            Ok(Ok(_)) => {
+                // THREAT[TM-PY-026]: Reject oversized IPC lines
+                if line.len() > MAX_IPC_LINE_BYTES {
+                    let _ = child.kill().await;
+                    return Ok(ExecResult::err(
+                        "python3: worker response too large\n".to_string(),
+                        1,
+                    ));
+                }
+            }
+            Ok(Err(e)) => {
                 let _ = child.kill().await;
                 return Ok(ExecResult::err(
                     format!("python3: worker communication error: {e}\n"),
+                    1,
+                ));
+            }
+            Err(_) => {
+                // THREAT[TM-PY-024]: Timeout — kill the worker
+                let _ = child.kill().await;
+                return Ok(ExecResult::err(
+                    "python3: worker timed out\n".to_string(),
                     1,
                 ));
             }
