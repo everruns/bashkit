@@ -1019,7 +1019,7 @@ events that BashKit intercepts and dispatches to the VFS.
 |----|--------|----------|------------|------|
 | TM-PY-001 | Infinite loop via `while True` | High | Monty time limit (30s) + allocation cap | `threat_python_infinite_loop` |
 | TM-PY-002 | Memory exhaustion via large allocation | High | Monty max_memory (64MB) + max_allocations (1M) | `threat_python_memory_exhaustion` |
-| TM-PY-003 | Stack overflow via deep recursion | High | Monty max_recursion (200) | `threat_python_recursion_bomb` |
+| TM-PY-003 | Stack overflow via deep recursion | High | Monty max_recursion (200) + parser depth limit (200, since 0.0.4) | `threat_python_recursion_bomb` |
 | TM-PY-004 | Shell escape via os.system/subprocess | Critical | Monty has no os.system/subprocess implementation | `threat_python_no_os_operations` |
 | TM-PY-005 | Real filesystem access via open() | Critical | Monty has no open() builtin | `threat_python_no_filesystem` |
 | TM-PY-006 | Error info leakage via stdout | Medium | Errors go to stderr, not stdout | `threat_python_error_isolation` |
@@ -1030,7 +1030,7 @@ events that BashKit intercepts and dispatches to the VFS.
 | TM-PY-019 | Crash on missing file | Medium | FileNotFoundError raised, not panic | `threat_python_vfs_error_handling` |
 | TM-PY-020 | Network access from Python | Critical | Monty has no socket/network module | `threat_python_vfs_no_network` |
 | TM-PY-021 | VFS mkdir escape | Medium | mkdir operates only in VFS | `threat_python_vfs_mkdir_sandboxed` |
-| TM-PY-022 | Parser/VM crash kills host | Critical | Subprocess isolation: worker segfault → child exit, not host crash | `subprocess_worker_crash_via_false_binary` |
+| TM-PY-022 | Parser/VM crash kills host | Critical | Parser depth limit (since 0.0.4) prevents parser crashes; subprocess isolation catches remaining VM crashes | `subprocess_worker_crash_via_false_binary` |
 | TM-PY-023 | Worker binary spoofing via env var / PATH | Critical | Caller responsibility (like TM-INF-001); document risk | `threat_python_subprocess_worker_spoofing` |
 | TM-PY-024 | Worker hang blocks parent (no IPC timeout) | High | IPC reads wrapped in `tokio::time::timeout` (max_duration + 5s) | `threat_python_subprocess_ipc_timeout` |
 | TM-PY-025 | Worker inherits host environment | High | `env_clear()` on worker Command; env vars passed only via IPC | `threat_python_subprocess_env_isolation` |
@@ -1085,6 +1085,7 @@ not attacker-controlled. This is analogous to TM-INF-001 (env var sanitization).
 | Path.exists() | fs.exists() | bool |
 | Path.is_file() | fs.stat() | bool |
 | Path.is_dir() | fs.stat() | bool |
+| Path.is_symlink() | fs.stat() | bool |
 | Path.read_text() | fs.read_file() | str |
 | Path.read_bytes() | fs.read_file() | bytes |
 | Path.write_text() | fs.write_file() | int |
@@ -1095,6 +1096,8 @@ not attacker-controlled. This is analogous to TM-INF-001 (env var sanitization).
 | Path.iterdir() | fs.read_dir() | list[Path] |
 | Path.stat() | fs.stat() | stat_result |
 | Path.rename() | fs.rename() | Path |
+| Path.resolve() | identity (no symlink resolution) | Path |
+| Path.absolute() | identity (no symlink resolution) | Path |
 | os.getenv() | ctx.env lookup | str/None |
 | os.environ | ctx.env dict | dict |
 

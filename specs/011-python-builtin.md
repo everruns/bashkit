@@ -110,12 +110,15 @@ Monty implements a subset of Python 3.12:
 - Arithmetic, comparison, logical operators
 - Control flow: if/elif/else, for, while, break, continue
 - Functions: def, return, default args, *args, **kwargs
-- Data structures: list, dict, tuple, set, frozenset
+- Star unpacking in calls: `func(*args, **kwargs)` (since Monty 0.0.4)
+- Data structures: list, dict, tuple, set, frozenset, namedtuple
 - List/dict/set comprehensions, generator expressions
 - String operations, f-strings
 - Exception handling: try/except/finally/raise
+- Property descriptors (`@property`) (since Monty 0.0.4)
 - Built-in functions: print, len, range, enumerate, zip, map, filter, sorted, reversed, sum, min, max, abs, round, int, float, str, bool, list, dict, tuple, set, type, isinstance, hasattr, getattr, id, repr, ord, chr, hex, oct, bin, all, any, input
 - Standard modules: sys, typing
+- `TYPE_CHECKING` guard support (since Monty 0.0.4)
 
 **Not supported (Monty limitations):**
 - Classes (planned upstream)
@@ -174,9 +177,11 @@ resumes execution with the result (or a Python exception).
 
 ### Subprocess Isolation (Crash Protection)
 
-Monty runs in-process by default, but a parser or VM bug that causes a segfault
-will crash the host process. `catch_unwind` does NOT help because a segfault is
-an OS signal, not a Rust panic.
+Monty runs in-process by default. Since Monty 0.0.4, the parser enforces a
+nesting depth limit (200 in release, 35 in debug) to prevent stack overflow
+from deeply nested expressions. However, undiscovered VM bugs could still
+cause a segfault, which `catch_unwind` cannot catch (it's an OS signal, not
+a Rust panic).
 
 To mitigate this, BashKit can run Monty in a separate `bashkit-monty-worker`
 subprocess. If the worker segfaults, the parent catches the child exit and
