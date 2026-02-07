@@ -1,30 +1,31 @@
-# Eval Report: anthropic/claude-haiku-4-5
+# Eval Report: openai/gpt-5.2
 
-- **Date**: 2026-02-07T04:31:49Z
+- **Date**: 2026-02-07T05:20:37Z
 - **Max turns**: 10
-- **Turns**: 124 total (5.0 avg/task)
-- **Tool calls**: 109 total (4.4 avg/task)
-- **Tokens**: 270703 input, 25545 output
-- **Duration**: 206.6s total (8.3s avg/task)
+- **Turns**: 105 total (4.2 avg/task)
+- **Tool calls**: 84 total (3.4 avg/task)
+- **Tool call success**: 48 ok, 36 error (57% success rate)
+- **Tokens**: 147871 input, 15067 output
+- **Duration**: 251.5s total (10.1s avg/task)
 
 ## Summary
 
-**20/25 tasks passed (92%)**
+**19/25 tasks passed (87%)**
 
 ## By Category
 
 | Category | Passed | Total | Rate |
 |----------|--------|-------|------|
 | archive_operations | 2 | 2 | 100% |
-| complex_tasks | 2 | 3 | 88% |
+| complex_tasks | 1 | 3 | 56% |
 | data_transformation | 2 | 3 | 94% |
 | error_recovery | 2 | 2 | 100% |
 | file_operations | 3 | 3 | 100% |
 | jq_mastery | 2 | 2 | 100% |
 | pipelines | 2 | 2 | 100% |
-| scripting | 2 | 3 | 87% |
+| scripting | 1 | 3 | 67% |
 | system_info | 2 | 2 | 100% |
-| text_processing | 1 | 3 | 50% |
+| text_processing | 2 | 3 | 88% |
 
 ## Task Details
 
@@ -32,8 +33,8 @@
 
 Create a Python project directory structure
 
-- Turns: 3 | Tool calls: 2 | Duration: 6.2s
-- Tokens: 4528 input, 457 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 3.0s
+- Tokens: 1576 input, 140 output
 - Score: 7/7
 
 | Check | Result | Detail |
@@ -50,8 +51,8 @@ Create a Python project directory structure
 
 Backup a config file then modify the original
 
-- Turns: 2 | Tool calls: 1 | Duration: 2.0s
-- Tokens: 2567 input, 189 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 2.8s
+- Tokens: 1448 input, 88 output
 - Score: 5/5
 
 | Check | Result | Detail |
@@ -66,8 +67,8 @@ Backup a config file then modify the original
 
 Find and delete all .tmp files, report count
 
-- Turns: 3 | Tool calls: 2 | Duration: 2.9s
-- Tokens: 4085 input, 261 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 2.8s
+- Tokens: 1460 input, 84 output
 - Score: 4/4
 
 | Check | Result | Detail |
@@ -81,8 +82,8 @@ Find and delete all .tmp files, report count
 
 Extract ERROR lines from log and count them
 
-- Turns: 2 | Tool calls: 1 | Duration: 2.0s
-- Tokens: 2620 input, 231 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 2.5s
+- Tokens: 1431 input, 97 output
 - Score: 2/2
 
 | Check | Result | Detail |
@@ -90,27 +91,27 @@ Extract ERROR lines from log and count them
 | stdout_contains:3 | PASS | found |
 | exit_code:0 | PASS | expected 0, got 0 |
 
-### [FAIL] text_sed_config (text_processing)
+### [PASS] text_sed_config (text_processing)
 
 Replace hostname in config file using sed
 
-- Turns: 3 | Tool calls: 2 | Duration: 5.0s
-- Tokens: 4539 input, 630 output
-- Score: 1/4
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 3.6s
+- Tokens: 1488 input, 152 output
+- Score: 4/4
 
 | Check | Result | Detail |
 |-------|--------|--------|
-| file_contains:/etc/app.conf:db_host=db.prod.internal | FAIL | 'db_host=db.prod.internal' not found in /etc/app.conf |
-| file_contains:/etc/app.conf:cache_host=db.prod.internal | FAIL | 'cache_host=db.prod.internal' not found in /etc/app.conf |
-| file_contains:/etc/app.conf:db_port=5432 | FAIL | 'db_port=5432' not found in /etc/app.conf |
+| file_contains:/etc/app.conf:db_host=db.prod.internal | PASS | found in file |
+| file_contains:/etc/app.conf:cache_host=db.prod.internal | PASS | found in file |
+| file_contains:/etc/app.conf:db_port=5432 | PASS | found in file |
 | exit_code:0 | PASS | expected 0, got 0 |
 
 ### [FAIL] text_awk_report (text_processing)
 
 Compute total revenue from CSV using awk
 
-- Turns: 2 | Tool calls: 1 | Duration: 2.1s
-- Tokens: 2576 input, 183 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 1.6s
+- Tokens: 1462 input, 46 output
 - Score: 1/2
 
 | Check | Result | Detail |
@@ -122,8 +123,8 @@ Compute total revenue from CSV using awk
 
 Count word frequency and show top 3 words
 
-- Turns: 10 | Tool calls: 10 | Duration: 9.3s
-- Tokens: 19061 input, 1146 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 2.7s
+- Tokens: 1493 input, 95 output
 - Score: 2/2
 
 | Check | Result | Detail |
@@ -135,8 +136,8 @@ Count word frequency and show top 3 words
 
 Find top requested URLs from access log
 
-- Turns: 2 | Tool calls: 1 | Duration: 2.5s
-- Tokens: 2620 input, 328 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 2.0s
+- Tokens: 1488 input, 78 output
 - Score: 3/3
 
 | Check | Result | Detail |
@@ -149,8 +150,8 @@ Find top requested URLs from access log
 
 Write and run FizzBuzz for 1-20
 
-- Turns: 7 | Tool calls: 6 | Duration: 10.3s
-- Tokens: 12663 input, 1084 output
+- Turns: 5 | Tool calls: 4 (3 ok, 1 error) | Duration: 11.9s
+- Tokens: 5455 input, 766 output
 - Score: 6/6
 
 | Check | Result | Detail |
@@ -162,34 +163,34 @@ Write and run FizzBuzz for 1-20
 | stdout_contains:14 | PASS | found |
 | exit_code:0 | PASS | expected 0, got 0 |
 
-### [PASS] script_array_stats (scripting)
+### [FAIL] script_array_stats (scripting)
 
 Compute min, max, sum of a number array
 
-- Turns: 3 | Tool calls: 2 | Duration: 3.5s
-- Tokens: 4517 input, 428 output
-- Score: 4/4
+- Turns: 1 | Tool calls: 0 (0 ok, 0 error) | Duration: 2.2s
+- Tokens: 721 input, 118 output
+- Score: -0/4
 
 | Check | Result | Detail |
 |-------|--------|--------|
-| stdout_contains:min: 3 | PASS | found |
-| stdout_contains:max: 93 | PASS | found |
-| stdout_contains:sum: 470 | PASS | found |
-| exit_code:0 | PASS | expected 0, got 0 |
+| stdout_contains:min: 3 | FAIL | 'min: 3' not found in any tool output |
+| stdout_contains:max: 93 | FAIL | 'max: 93' not found in any tool output |
+| stdout_contains:sum: 470 | FAIL | 'sum: 470' not found in any tool output |
+| exit_code:0 | FAIL | expected 0, got -1 |
 
 ### [FAIL] script_function_lib (scripting)
 
 Create and use a bash function library
 
-- Turns: 10 | Tool calls: 10 | Duration: 22.7s
-- Tokens: 28619 input, 2186 output
-- Score: 3/5
+- Turns: 10 | Tool calls: 10 (4 ok, 6 error) | Duration: 19.0s
+- Tokens: 16306 input, 944 output
+- Score: 4/5
 
 | Check | Result | Detail |
 |-------|--------|--------|
 | file_exists:/lib/utils.sh | PASS | exists |
 | stdout_contains:HELLO WORLD | FAIL | 'HELLO WORLD' not found in any tool output |
-| stdout_contains:5 | FAIL | '5' not found in any tool output |
+| stdout_contains:5 | PASS | found |
 | exit_code:0 | PASS | expected 0, got 0 |
 | tool_calls_min:2 | PASS | expected >= 2, got 10 |
 
@@ -197,8 +198,8 @@ Create and use a bash function library
 
 Convert CSV to JSON array
 
-- Turns: 10 | Tool calls: 10 | Duration: 15.4s
-- Tokens: 23145 input, 2257 output
+- Turns: 10 | Tool calls: 10 (4 ok, 6 error) | Duration: 13.6s
+- Tokens: 11328 input, 526 output
 - Score: 4/5
 
 | Check | Result | Detail |
@@ -213,8 +214,8 @@ Convert CSV to JSON array
 
 Query JSON inventory for low-stock items
 
-- Turns: 2 | Tool calls: 1 | Duration: 1.4s
-- Tokens: 2549 input, 101 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 1.7s
+- Tokens: 1442 input, 52 output
 - Score: 4/4
 
 | Check | Result | Detail |
@@ -228,8 +229,8 @@ Query JSON inventory for low-stock items
 
 Summarize log entries by level
 
-- Turns: 2 | Tool calls: 1 | Duration: 2.0s
-- Tokens: 2613 input, 182 output
+- Turns: 5 | Tool calls: 4 (1 ok, 3 error) | Duration: 9.4s
+- Tokens: 5118 input, 512 output
 - Score: 7/7
 
 | Check | Result | Detail |
@@ -246,8 +247,8 @@ Summarize log entries by level
 
 Handle missing file gracefully
 
-- Turns: 2 | Tool calls: 1 | Duration: 2.2s
-- Tokens: 2586 input, 211 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 2.5s
+- Tokens: 1477 input, 62 output
 - Score: 4/4
 
 | Check | Result | Detail |
@@ -261,22 +262,22 @@ Handle missing file gracefully
 
 Detect and fix broken JSON
 
-- Turns: 10 | Tool calls: 10 | Duration: 11.4s
-- Tokens: 17624 input, 878 output
+- Turns: 9 | Tool calls: 8 (7 ok, 1 error) | Duration: 11.7s
+- Tokens: 8424 input, 460 output
 - Score: 3/3
 
 | Check | Result | Detail |
 |-------|--------|--------|
 | stdout_contains:test-app | PASS | found |
 | exit_code:0 | PASS | expected 0, got 0 |
-| tool_calls_min:2 | PASS | expected >= 2, got 10 |
+| tool_calls_min:2 | PASS | expected >= 2, got 8 |
 
 ### [PASS] sysinfo_env_report (system_info)
 
 Print system environment report
 
-- Turns: 3 | Tool calls: 4 | Duration: 2.8s
-- Tokens: 4280 input, 297 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 2.0s
+- Tokens: 1501 input, 81 output
 - Score: 4/4
 
 | Check | Result | Detail |
@@ -290,22 +291,22 @@ Print system environment report
 
 Print current date and compute a future date
 
-- Turns: 4 | Tool calls: 3 | Duration: 4.7s
-- Tokens: 5942 input, 514 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 1.7s
+- Tokens: 1439 input, 48 output
 - Score: 3/3
 
 | Check | Result | Detail |
 |-------|--------|--------|
 | exit_code:0 | PASS | expected 0, got 0 |
-| tool_calls_min:1 | PASS | expected >= 1, got 3 |
+| tool_calls_min:1 | PASS | expected >= 1, got 1 |
 | stdout_regex:\d{4}-\d{2}-\d{2} | PASS | matched |
 
 ### [PASS] archive_create_extract (archive_operations)
 
 Create tar.gz archive and extract to new location
 
-- Turns: 5 | Tool calls: 4 | Duration: 8.0s
-- Tokens: 9065 input, 996 output
+- Turns: 8 | Tool calls: 7 (7 ok, 0 error) | Duration: 11.1s
+- Tokens: 7866 input, 496 output
 - Score: 2/2
 
 | Check | Result | Detail |
@@ -317,8 +318,8 @@ Create tar.gz archive and extract to new location
 
 Create archive then list and selectively extract
 
-- Turns: 7 | Tool calls: 6 | Duration: 9.4s
-- Tokens: 13356 input, 1085 output
+- Turns: 3 | Tool calls: 2 (1 ok, 1 error) | Duration: 9.0s
+- Tokens: 2971 input, 535 output
 - Score: 4/4
 
 | Check | Result | Detail |
@@ -331,8 +332,8 @@ Create archive then list and selectively extract
 
 Extract and deduplicate names from nested JSON
 
-- Turns: 3 | Tool calls: 2 | Duration: 2.5s
-- Tokens: 4119 input, 268 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 1.7s
+- Tokens: 1461 input, 59 output
 - Score: 5/5
 
 | Check | Result | Detail |
@@ -347,8 +348,8 @@ Extract and deduplicate names from nested JSON
 
 Parse paginated API response and extract IDs
 
-- Turns: 3 | Tool calls: 4 | Duration: 3.2s
-- Tokens: 4426 input, 361 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 2.5s
+- Tokens: 1495 input, 114 output
 - Score: 5/5
 
 | Check | Result | Detail |
@@ -363,41 +364,41 @@ Parse paginated API response and extract IDs
 
 Build and demonstrate a CLI TODO app
 
-- Turns: 10 | Tool calls: 10 | Duration: 18.1s
-- Tokens: 35257 input, 3034 output
-- Score: 4/6
+- Turns: 10 | Tool calls: 10 (4 ok, 6 error) | Duration: 58.7s
+- Tokens: 35746 input, 4530 output
+- Score: 3/6
 
 | Check | Result | Detail |
 |-------|--------|--------|
 | file_exists:/app/todo.sh | PASS | exists |
-| file_exists:/app/tasks.txt | PASS | exists |
+| file_exists:/app/tasks.txt | FAIL | not found |
 | stdout_contains:Write tests | FAIL | 'Write tests' not found in any tool output |
 | stdout_contains:Deploy app | FAIL | 'Deploy app' not found in any tool output |
 | tool_calls_min:3 | PASS | expected >= 3, got 10 |
 | exit_code:0 | PASS | expected 0, got 0 |
 
-### [PASS] complex_markdown_toc (complex_tasks)
+### [FAIL] complex_markdown_toc (complex_tasks)
 
 Generate table of contents from markdown headings
 
-- Turns: 6 | Tool calls: 5 | Duration: 15.7s
-- Tokens: 11819 input, 1304 output
-- Score: 4/4
+- Turns: 10 | Tool calls: 10 (1 ok, 9 error) | Duration: 39.3s
+- Tokens: 22225 input, 2528 output
+- Score: -0/4
 
 | Check | Result | Detail |
 |-------|--------|--------|
-| file_contains:/doc/README.md:Installation | PASS | found in file |
-| file_contains:/doc/README.md:Contributing | PASS | found in file |
-| file_contains:/doc/README.md:installation | PASS | found in file |
-| file_contains:/doc/README.md:contributing | PASS | found in file |
-| exit_code:0 | PASS | expected 0, got 0 |
+| file_contains:/doc/README.md:Installation | FAIL | 'Installation' not found in /doc/README.md |
+| file_contains:/doc/README.md:Contributing | FAIL | 'Contributing' not found in /doc/README.md |
+| file_contains:/doc/README.md:installation | FAIL | 'installation' not found in /doc/README.md |
+| file_contains:/doc/README.md:contributing | FAIL | 'contributing' not found in /doc/README.md |
+| exit_code:0 | FAIL | expected 0, got 1 |
 
 ### [PASS] complex_diff_report (complex_tasks)
 
 Compare two config versions and summarize changes
 
-- Turns: 10 | Tool calls: 10 | Duration: 41.5s
-- Tokens: 45527 input, 6934 output
+- Turns: 6 | Tool calls: 5 (2 ok, 3 error) | Duration: 32.4s
+- Tokens: 11050 input, 2456 output
 - Score: 6/6
 
 | Check | Result | Detail |

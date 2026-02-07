@@ -39,6 +39,9 @@ pub struct EvalSummary {
     pub total_output_tokens: u32,
     pub total_turns: usize,
     pub total_tool_calls: usize,
+    pub tool_calls_ok: usize,
+    pub tool_calls_error: usize,
+    pub tool_call_success_rate: f64,
     pub total_duration_ms: u64,
     pub avg_turns_per_task: f64,
     pub avg_tool_calls_per_task: f64,
@@ -75,6 +78,17 @@ pub fn build_report(
     let total_output_tokens: u32 = results.iter().map(|r| r.trace.total_output_tokens).sum();
     let total_turns: usize = results.iter().map(|r| r.trace.turns).sum();
     let total_tool_calls: usize = results.iter().map(|r| r.trace.tool_call_count).sum();
+    let tool_calls_ok: usize = results
+        .iter()
+        .flat_map(|r| &r.trace.tool_calls)
+        .filter(|tc| tc.exit_code == 0)
+        .count();
+    let tool_calls_error = total_tool_calls - tool_calls_ok;
+    let tool_call_success_rate = if total_tool_calls > 0 {
+        tool_calls_ok as f64 / total_tool_calls as f64
+    } else {
+        1.0
+    };
     let total_duration_ms: u64 = results.iter().map(|r| r.trace.duration_ms).sum();
     let n = total_tasks.max(1) as f64;
     let avg_turns_per_task = total_turns as f64 / n;
@@ -123,6 +137,9 @@ pub fn build_report(
             total_output_tokens,
             total_turns,
             total_tool_calls,
+            tool_calls_ok,
+            tool_calls_error,
+            tool_call_success_rate,
             total_duration_ms,
             avg_turns_per_task,
             avg_tool_calls_per_task,
@@ -164,8 +181,12 @@ pub fn print_terminal_report(report: &EvalReport) {
         report.summary.total_turns, report.summary.avg_turns_per_task
     );
     println!(
-        "  Tool calls: {} total, {:.1} avg/task",
-        report.summary.total_tool_calls, report.summary.avg_tool_calls_per_task
+        "  Tool calls: {} total, {:.1} avg/task ({} ok, {} error, {:.0}% success)",
+        report.summary.total_tool_calls,
+        report.summary.avg_tool_calls_per_task,
+        report.summary.tool_calls_ok,
+        report.summary.tool_calls_error,
+        report.summary.tool_call_success_rate * 100.0
     );
     println!(
         "  Tokens: {} input, {} output",
@@ -234,6 +255,12 @@ fn generate_markdown(report: &EvalReport) -> String {
         report.summary.total_tool_calls, report.summary.avg_tool_calls_per_task
     ));
     md.push_str(&format!(
+        "- **Tool call success**: {} ok, {} error ({:.0}% success rate)\n",
+        report.summary.tool_calls_ok,
+        report.summary.tool_calls_error,
+        report.summary.tool_call_success_rate * 100.0
+    ));
+    md.push_str(&format!(
         "- **Tokens**: {} input, {} output\n",
         report.summary.total_input_tokens, report.summary.total_output_tokens
     ));
@@ -278,10 +305,14 @@ fn generate_markdown(report: &EvalReport) -> String {
             status, r.task.id, r.task.category
         ));
         md.push_str(&format!("{}\n\n", r.task.description));
+        let task_ok = r.trace.tool_calls.iter().filter(|tc| tc.exit_code == 0).count();
+        let task_err = r.trace.tool_call_count - task_ok;
         md.push_str(&format!(
-            "- Turns: {} | Tool calls: {} | Duration: {:.1}s\n",
+            "- Turns: {} | Tool calls: {} ({} ok, {} error) | Duration: {:.1}s\n",
             r.trace.turns,
             r.trace.tool_call_count,
+            task_ok,
+            task_err,
             r.trace.duration_ms as f64 / 1000.0
         ));
         md.push_str(&format!(

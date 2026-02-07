@@ -1,30 +1,31 @@
-# Eval Report: anthropic/claude-opus-4-6
+# Eval Report: anthropic/claude-haiku-4-5
 
-- **Date**: 2026-02-07T04:25:30Z
+- **Date**: 2026-02-07T05:20:23Z
 - **Max turns**: 10
-- **Turns**: 156 total (6.2 avg/task)
-- **Tool calls**: 147 total (5.9 avg/task)
-- **Tokens**: 346732 input, 30575 output
-- **Duration**: 598.5s total (23.9s avg/task)
+- **Turns**: 135 total (5.4 avg/task)
+- **Tool calls**: 116 total (4.6 avg/task)
+- **Tool call success**: 93 ok, 23 error (80% success rate)
+- **Tokens**: 312188 input, 29393 output
+- **Duration**: 247.0s total (9.9s avg/task)
 
 ## Summary
 
-**21/25 tasks passed (92%)**
+**19/25 tasks passed (92%)**
 
 ## By Category
 
 | Category | Passed | Total | Rate |
 |----------|--------|-------|------|
 | archive_operations | 2 | 2 | 100% |
-| complex_tasks | 1 | 3 | 69% |
-| data_transformation | 3 | 3 | 100% |
+| complex_tasks | 0 | 3 | 75% |
+| data_transformation | 2 | 3 | 94% |
 | error_recovery | 2 | 2 | 100% |
 | file_operations | 3 | 3 | 100% |
 | jq_mastery | 2 | 2 | 100% |
 | pipelines | 2 | 2 | 100% |
 | scripting | 3 | 3 | 100% |
-| system_info | 1 | 2 | 71% |
-| text_processing | 2 | 3 | 88% |
+| system_info | 2 | 2 | 100% |
+| text_processing | 1 | 3 | 50% |
 
 ## Task Details
 
@@ -32,8 +33,8 @@
 
 Create a Python project directory structure
 
-- Turns: 4 | Tool calls: 3 | Duration: 15.1s
-- Tokens: 5886 input, 494 output
+- Turns: 6 | Tool calls: 5 (5 ok, 0 error) | Duration: 5.6s
+- Tokens: 9274 input, 601 output
 - Score: 7/7
 
 | Check | Result | Detail |
@@ -50,8 +51,8 @@ Create a Python project directory structure
 
 Backup a config file then modify the original
 
-- Turns: 4 | Tool calls: 3 | Duration: 13.9s
-- Tokens: 5643 input, 366 output
+- Turns: 3 | Tool calls: 2 (2 ok, 0 error) | Duration: 3.0s
+- Tokens: 4127 input, 320 output
 - Score: 5/5
 
 | Check | Result | Detail |
@@ -66,8 +67,8 @@ Backup a config file then modify the original
 
 Find and delete all .tmp files, report count
 
-- Turns: 9 | Tool calls: 8 | Duration: 26.8s
-- Tokens: 16919 input, 1049 output
+- Turns: 5 | Tool calls: 4 (2 ok, 2 error) | Duration: 10.6s
+- Tokens: 7329 input, 439 output
 - Score: 4/4
 
 | Check | Result | Detail |
@@ -81,8 +82,8 @@ Find and delete all .tmp files, report count
 
 Extract ERROR lines from log and count them
 
-- Turns: 2 | Tool calls: 2 | Duration: 6.9s
-- Tokens: 2675 input, 313 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 2.4s
+- Tokens: 2612 input, 191 output
 - Score: 2/2
 
 | Check | Result | Detail |
@@ -90,27 +91,27 @@ Extract ERROR lines from log and count them
 | stdout_contains:3 | PASS | found |
 | exit_code:0 | PASS | expected 0, got 0 |
 
-### [PASS] text_sed_config (text_processing)
+### [FAIL] text_sed_config (text_processing)
 
 Replace hostname in config file using sed
 
-- Turns: 4 | Tool calls: 3 | Duration: 12.0s
-- Tokens: 5685 input, 466 output
-- Score: 4/4
+- Turns: 3 | Tool calls: 2 (2 ok, 0 error) | Duration: 9.0s
+- Tokens: 4389 input, 564 output
+- Score: 1/4
 
 | Check | Result | Detail |
 |-------|--------|--------|
-| file_contains:/etc/app.conf:db_host=db.prod.internal | PASS | found in file |
-| file_contains:/etc/app.conf:cache_host=db.prod.internal | PASS | found in file |
-| file_contains:/etc/app.conf:db_port=5432 | PASS | found in file |
+| file_contains:/etc/app.conf:db_host=db.prod.internal | FAIL | 'db_host=db.prod.internal' not found in /etc/app.conf |
+| file_contains:/etc/app.conf:cache_host=db.prod.internal | FAIL | 'cache_host=db.prod.internal' not found in /etc/app.conf |
+| file_contains:/etc/app.conf:db_port=5432 | FAIL | 'db_port=5432' not found in /etc/app.conf |
 | exit_code:0 | PASS | expected 0, got 0 |
 
 ### [FAIL] text_awk_report (text_processing)
 
 Compute total revenue from CSV using awk
 
-- Turns: 3 | Tool calls: 2 | Duration: 9.2s
-- Tokens: 4027 input, 404 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 1.9s
+- Tokens: 2575 input, 186 output
 - Score: 1/2
 
 | Check | Result | Detail |
@@ -122,8 +123,8 @@ Compute total revenue from CSV using awk
 
 Count word frequency and show top 3 words
 
-- Turns: 10 | Tool calls: 10 | Duration: 24.5s
-- Tokens: 18137 input, 969 output
+- Turns: 10 | Tool calls: 10 (7 ok, 3 error) | Duration: 11.8s
+- Tokens: 18960 input, 1079 output
 - Score: 2/2
 
 | Check | Result | Detail |
@@ -135,8 +136,8 @@ Count word frequency and show top 3 words
 
 Find top requested URLs from access log
 
-- Turns: 3 | Tool calls: 2 | Duration: 11.0s
-- Tokens: 4249 input, 468 output
+- Turns: 3 | Tool calls: 2 (2 ok, 0 error) | Duration: 13.9s
+- Tokens: 4244 input, 400 output
 - Score: 3/3
 
 | Check | Result | Detail |
@@ -149,8 +150,8 @@ Find top requested URLs from access log
 
 Write and run FizzBuzz for 1-20
 
-- Turns: 5 | Tool calls: 4 | Duration: 18.9s
-- Tokens: 9132 input, 1067 output
+- Turns: 6 | Tool calls: 5 (4 ok, 1 error) | Duration: 8.1s
+- Tokens: 10951 input, 1198 output
 - Score: 6/6
 
 | Check | Result | Detail |
@@ -166,8 +167,8 @@ Write and run FizzBuzz for 1-20
 
 Compute min, max, sum of a number array
 
-- Turns: 6 | Tool calls: 5 | Duration: 23.6s
-- Tokens: 11116 input, 1017 output
+- Turns: 7 | Tool calls: 6 (5 ok, 1 error) | Duration: 9.4s
+- Tokens: 13616 input, 1235 output
 - Score: 4/4
 
 | Check | Result | Detail |
@@ -181,8 +182,8 @@ Compute min, max, sum of a number array
 
 Create and use a bash function library
 
-- Turns: 10 | Tool calls: 10 | Duration: 48.3s
-- Tokens: 35656 input, 3152 output
+- Turns: 10 | Tool calls: 10 (10 ok, 0 error) | Duration: 25.7s
+- Tokens: 34859 input, 2644 output
 - Score: 5/5
 
 | Check | Result | Detail |
@@ -193,28 +194,28 @@ Create and use a bash function library
 | exit_code:0 | PASS | expected 0, got 0 |
 | tool_calls_min:2 | PASS | expected >= 2, got 10 |
 
-### [PASS] data_csv_to_json (data_transformation)
+### [FAIL] data_csv_to_json (data_transformation)
 
 Convert CSV to JSON array
 
-- Turns: 10 | Tool calls: 10 | Duration: 51.3s
-- Tokens: 25597 input, 3173 output
-- Score: 5/5
+- Turns: 10 | Tool calls: 10 (6 ok, 4 error) | Duration: 19.8s
+- Tokens: 22786 input, 2336 output
+- Score: 4/5
 
 | Check | Result | Detail |
 |-------|--------|--------|
 | stdout_contains:alice | PASS | found |
 | stdout_contains:seattle | PASS | found |
 | stdout_contains:bob | PASS | found |
-| stdout_regex:"age" | PASS | matched |
+| stdout_regex:"age" | FAIL | pattern '"age"' not matched |
 | exit_code:0 | PASS | expected 0, got 0 |
 
 ### [PASS] data_json_query (data_transformation)
 
 Query JSON inventory for low-stock items
 
-- Turns: 4 | Tool calls: 3 | Duration: 15.3s
-- Tokens: 5533 input, 347 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 1.5s
+- Tokens: 2568 input, 120 output
 - Score: 4/4
 
 | Check | Result | Detail |
@@ -228,8 +229,8 @@ Query JSON inventory for low-stock items
 
 Summarize log entries by level
 
-- Turns: 3 | Tool calls: 2 | Duration: 9.6s
-- Tokens: 4189 input, 394 output
+- Turns: 5 | Tool calls: 4 (3 ok, 1 error) | Duration: 4.7s
+- Tokens: 7807 input, 548 output
 - Score: 7/7
 
 | Check | Result | Detail |
@@ -246,8 +247,8 @@ Summarize log entries by level
 
 Handle missing file gracefully
 
-- Turns: 3 | Tool calls: 2 | Duration: 10.1s
-- Tokens: 4096 input, 295 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 2.6s
+- Tokens: 2635 input, 199 output
 - Score: 4/4
 
 | Check | Result | Detail |
@@ -261,22 +262,22 @@ Handle missing file gracefully
 
 Detect and fix broken JSON
 
-- Turns: 10 | Tool calls: 12 | Duration: 33.2s
-- Tokens: 21234 input, 1239 output
+- Turns: 6 | Tool calls: 5 (5 ok, 0 error) | Duration: 7.8s
+- Tokens: 9838 input, 704 output
 - Score: 3/3
 
 | Check | Result | Detail |
 |-------|--------|--------|
 | stdout_contains:test-app | PASS | found |
 | exit_code:0 | PASS | expected 0, got 0 |
-| tool_calls_min:2 | PASS | expected >= 2, got 12 |
+| tool_calls_min:2 | PASS | expected >= 2, got 5 |
 
 ### [PASS] sysinfo_env_report (system_info)
 
 Print system environment report
 
-- Turns: 2 | Tool calls: 1 | Duration: 5.1s
-- Tokens: 2606 input, 181 output
+- Turns: 3 | Tool calls: 2 (2 ok, 0 error) | Duration: 2.6s
+- Tokens: 4013 input, 234 output
 - Score: 4/4
 
 | Check | Result | Detail |
@@ -286,26 +287,26 @@ Print system environment report
 | stdout_contains:cwd: | PASS | found |
 | exit_code:0 | PASS | expected 0, got 0 |
 
-### [FAIL] sysinfo_date_calc (system_info)
+### [PASS] sysinfo_date_calc (system_info)
 
 Print current date and compute a future date
 
-- Turns: 8 | Tool calls: 7 | Duration: 31.5s
-- Tokens: 18593 input, 1639 output
-- Score: 1/3
+- Turns: 8 | Tool calls: 7 (7 ok, 0 error) | Duration: 14.7s
+- Tokens: 16595 input, 1819 output
+- Score: 3/3
 
 | Check | Result | Detail |
 |-------|--------|--------|
-| exit_code:0 | FAIL | expected 0, got 1 |
+| exit_code:0 | PASS | expected 0, got 0 |
 | tool_calls_min:1 | PASS | expected >= 1, got 7 |
-| stdout_regex:\d{4}-\d{2}-\d{2} | FAIL | pattern '\d{4}-\d{2}-\d{2}' not matched |
+| stdout_regex:\d{4}-\d{2}-\d{2} | PASS | matched |
 
 ### [PASS] archive_create_extract (archive_operations)
 
 Create tar.gz archive and extract to new location
 
-- Turns: 10 | Tool calls: 10 | Duration: 22.6s
-- Tokens: 18466 input, 822 output
+- Turns: 4 | Tool calls: 3 (2 ok, 1 error) | Duration: 6.5s
+- Tokens: 6905 input, 925 output
 - Score: 2/2
 
 | Check | Result | Detail |
@@ -317,8 +318,8 @@ Create tar.gz archive and extract to new location
 
 Create archive then list and selectively extract
 
-- Turns: 8 | Tool calls: 11 | Duration: 22.3s
-- Tokens: 16104 input, 1050 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 error) | Duration: 3.9s
+- Tokens: 3143 input, 575 output
 - Score: 4/4
 
 | Check | Result | Detail |
@@ -331,8 +332,8 @@ Create archive then list and selectively extract
 
 Extract and deduplicate names from nested JSON
 
-- Turns: 4 | Tool calls: 3 | Duration: 12.3s
-- Tokens: 5697 input, 422 output
+- Turns: 3 | Tool calls: 2 (2 ok, 0 error) | Duration: 3.3s
+- Tokens: 4143 input, 282 output
 - Score: 5/5
 
 | Check | Result | Detail |
@@ -347,8 +348,8 @@ Extract and deduplicate names from nested JSON
 
 Parse paginated API response and extract IDs
 
-- Turns: 4 | Tool calls: 3 | Duration: 12.9s
-- Tokens: 6013 input, 627 output
+- Turns: 3 | Tool calls: 2 (2 ok, 0 error) | Duration: 3.3s
+- Tokens: 4369 input, 342 output
 - Score: 5/5
 
 | Check | Result | Detail |
@@ -363,15 +364,15 @@ Parse paginated API response and extract IDs
 
 Build and demonstrate a CLI TODO app
 
-- Turns: 10 | Tool calls: 10 | Duration: 52.0s
-- Tokens: 33203 input, 3378 output
-- Score: 4/6
+- Turns: 10 | Tool calls: 10 (9 ok, 1 error) | Duration: 17.4s
+- Tokens: 33765 input, 2954 output
+- Score: 5/6
 
 | Check | Result | Detail |
 |-------|--------|--------|
 | file_exists:/app/todo.sh | PASS | exists |
 | file_exists:/app/tasks.txt | PASS | exists |
-| stdout_contains:Write tests | FAIL | 'Write tests' not found in any tool output |
+| stdout_contains:Write tests | PASS | found |
 | stdout_contains:Deploy app | FAIL | 'Deploy app' not found in any tool output |
 | tool_calls_min:3 | PASS | expected >= 3, got 10 |
 | exit_code:0 | PASS | expected 0, got 0 |
@@ -380,9 +381,9 @@ Build and demonstrate a CLI TODO app
 
 Generate table of contents from markdown headings
 
-- Turns: 10 | Tool calls: 10 | Duration: 38.1s
-- Tokens: 24112 input, 1943 output
-- Score: 1/4
+- Turns: 10 | Tool calls: 10 (6 ok, 4 error) | Duration: 24.5s
+- Tokens: 32020 input, 3286 output
+- Score: 2/4
 
 | Check | Result | Detail |
 |-------|--------|--------|
@@ -390,15 +391,15 @@ Generate table of contents from markdown headings
 | file_contains:/doc/README.md:Contributing | PASS | found in file |
 | file_contains:/doc/README.md:installation | FAIL | 'installation' not found in /doc/README.md |
 | file_contains:/doc/README.md:contributing | FAIL | 'contributing' not found in /doc/README.md |
-| exit_code:0 | FAIL | expected 0, got 1 |
+| exit_code:0 | PASS | expected 0, got 0 |
 
-### [PASS] complex_diff_report (complex_tasks)
+### [FAIL] complex_diff_report (complex_tasks)
 
 Compare two config versions and summarize changes
 
-- Turns: 10 | Tool calls: 11 | Duration: 72.0s
-- Tokens: 42164 input, 5300 output
-- Score: 6/6
+- Turns: 10 | Tool calls: 10 (5 ok, 5 error) | Duration: 32.9s
+- Tokens: 48665 input, 6212 output
+- Score: 5/6
 
 | Check | Result | Detail |
 |-------|--------|--------|
@@ -407,5 +408,5 @@ Compare two config versions and summarize changes
 | stdout_contains:log_level | PASS | found |
 | stdout_contains:timeout | PASS | found |
 | stdout_contains:max_connections | PASS | found |
-| exit_code:0 | PASS | expected 0, got 0 |
+| exit_code:0 | FAIL | expected 0, got 1 |
 

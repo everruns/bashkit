@@ -46,14 +46,16 @@ Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 
 ## Results
 
-### 2026-02-07 — Multi-Model Comparison
+### 2026-02-07 — Multi-Model Comparison (run 2)
 
 | Metric | Opus 4.6 | Haiku 4.5 | GPT-5.2 |
 |--------|----------|-----------|---------|
-| Tasks passed | 21/25 | 20/25 | 16/25 |
-| Score | 92% | 92% | 77% |
-| Tokens | 347K in / 31K out | 271K in / 26K out | 149K in / 12K out |
-| Duration | ~10 min | ~3.4 min | ~3.6 min |
+| Tasks passed | 17/25 | 19/25 | 19/25 |
+| Score | 87% | 92% | 87% |
+| Tool calls | 141 (106 ok, 35 err) | 116 (93 ok, 23 err) | 84 (48 ok, 36 err) |
+| Tool call success | 75% | 80% | 57% |
+| Tokens | 319K in / 27K out | 312K in / 29K out | 148K in / 15K out |
+| Duration | ~9.4 min | ~4.1 min | ~4.2 min |
 
 #### Per-Category Comparison
 
@@ -61,27 +63,25 @@ Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 |----------|----------|-----------|---------|
 | file_operations | 3/3 (100%) | 3/3 (100%) | 3/3 (100%) |
 | text_processing | 2/3 (88%) | 1/3 (50%) | 2/3 (88%) |
-| pipelines | 2/2 (100%) | 2/2 (100%) | 1/2 (80%) |
-| scripting | 3/3 (100%) | 2/3 (87%) | 0/3 (20%) |
-| data_transformation | 3/3 (100%) | 2/3 (94%) | 2/3 (88%) |
+| pipelines | 1/2 (80%) | 2/2 (100%) | 2/2 (100%) |
+| scripting | 2/3 (87%) | 3/3 (100%) | 1/3 (67%) |
+| data_transformation | 2/3 (94%) | 2/3 (94%) | 2/3 (94%) |
 | error_recovery | 2/2 (100%) | 2/2 (100%) | 2/2 (100%) |
 | system_info | 1/2 (71%) | 2/2 (100%) | 2/2 (100%) |
-| archive_operations | 2/2 (100%) | 2/2 (100%) | 1/2 (50%) |
+| archive_operations | 2/2 (100%) | 2/2 (100%) | 2/2 (100%) |
 | jq_mastery | 2/2 (100%) | 2/2 (100%) | 2/2 (100%) |
-| complex_tasks | 1/3 (69%) | 2/3 (88%) | 1/3 (69%) |
+| complex_tasks | 0/3 (56%) | 0/3 (75%) | 1/3 (56%) |
 
 #### Key Observations
 
-- All models ace file_operations, error_recovery, jq_mastery (100%)
+- All models ace file_operations, error_recovery, jq_mastery, archive_operations (100%)
 - All fail `text_awk_report` — bashkit awk field math limitation
-- Opus 4.6 is the only model to pass all scripting tasks (3/3)
-- Haiku 4.5 matches Opus 4.6 at 92% pass rate with ~25% fewer tokens and ~3x faster
-- GPT-5.2 struggles most with scripting (20%) — failed `script_array_stats` with 0 tool calls
-- Haiku 4.5 uniquely failed `text_sed_config` (sed-in-file replacement)
-- Opus 4.6 uniquely failed `sysinfo_date_calc` (date arithmetic)
-- Haiku 4.5 is the only model to pass `complex_markdown_toc`
-- `complex_todo_app` fails for all models — exact output format mismatch
-- `script_function_lib` fails for Haiku and GPT — bashkit `source` limitation; Opus worked around it
+- GPT-5.2 has lowest tool call success rate (57%) — many bash calls fail due to incompatibility
+- Haiku 4.5 achieves highest task pass rate (19/25) and tool call success (80%) with lowest cost
+- Opus 4.6 uses most tokens but doesn't lead on pass rate — complex_tasks drag it down
+- `sysinfo_date_calc` fails for Opus (0/7 calls succeeded) — bashkit `date -d` limitation
+- `complex_todo_app` fails for all — exact output format mismatch
+- `script_function_lib` fails for Opus and GPT — bashkit `source` limitation; Haiku worked around it
 
 ### 2026-02-06 — Initial Baseline
 
