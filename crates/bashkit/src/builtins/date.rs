@@ -9,7 +9,7 @@ use std::fmt::Write;
 
 use async_trait::async_trait;
 use chrono::format::{Item, StrftimeItems};
-use chrono::{Local, Utc};
+use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 
 use super::{Builtin, Context};
 use crate::error::Result;
@@ -59,15 +59,136 @@ fn validate_format(format: &str) -> std::result::Result<(), String> {
     Ok(())
 }
 
+/// Parse a date string like GNU date's -d flag.
+/// Supports: "now", "yesterday", "tomorrow", "N days ago", "+N days",
+/// "N weeks ago", "N months ago", "N years ago", "N hours ago",
+/// "@EPOCH", "YYYY-MM-DD", "YYYY-MM-DD HH:MM:SS"
+fn parse_date_string(s: &str) -> std::result::Result<DateTime<Utc>, String> {
+    let s = s.trim();
+    let lower = s.to_lowercase();
+    let now = Utc::now();
+
+    // Epoch timestamp: @1234567890
+    if let Some(epoch_str) = s.strip_prefix('@') {
+        let ts: i64 = epoch_str
+            .trim()
+            .parse()
+            .map_err(|_| format!("invalid date '{}'", s))?;
+        return DateTime::from_timestamp(ts, 0).ok_or_else(|| format!("invalid date '{}'", s));
+    }
+
+    // Special words
+    match lower.as_str() {
+        "now" => return Ok(now),
+        "yesterday" => return Ok(now - Duration::days(1)),
+        "tomorrow" => return Ok(now + Duration::days(1)),
+        _ => {}
+    }
+
+    // Relative: "N unit(s) ago" or "+N unit(s)" or "-N unit(s)"
+    if let Some(duration) = parse_relative_date(&lower) {
+        return Ok(now + duration);
+    }
+
+    // Try ISO-like formats: YYYY-MM-DD HH:MM:SS, YYYY-MM-DD
+    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return Ok(Utc.from_utc_datetime(&dt));
+    }
+    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        return Ok(Utc.from_utc_datetime(&dt));
+    }
+    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        let dt = d
+            .and_hms_opt(0, 0, 0)
+            .ok_or_else(|| format!("invalid date '{}'", s))?;
+        return Ok(Utc.from_utc_datetime(&dt));
+    }
+
+    // Try "Mon DD, YYYY" format
+    if let Ok(d) = NaiveDate::parse_from_str(s, "%b %d, %Y") {
+        let dt = d
+            .and_hms_opt(0, 0, 0)
+            .ok_or_else(|| format!("invalid date '{}'", s))?;
+        return Ok(Utc.from_utc_datetime(&dt));
+    }
+
+    Err(format!("date: invalid date '{}'", s))
+}
+
+/// Parse relative date expressions like "30 days ago", "+2 weeks", "-1 month"
+fn parse_relative_date(s: &str) -> Option<Duration> {
+    // "N unit(s) ago"
+    let re_ago =
+        regex::Regex::new(r"^(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago$").ok()?;
+    if let Some(caps) = re_ago.captures(s) {
+        let n: i64 = caps[1].parse().ok()?;
+        return Some(unit_duration(&caps[2], -n));
+    }
+
+    // "+N unit(s)" or "-N unit(s)" or "N unit(s)"
+    let re_rel =
+        regex::Regex::new(r"^([+-]?)(\d+)\s+(second|minute|hour|day|week|month|year)s?$").ok()?;
+    if let Some(caps) = re_rel.captures(s) {
+        let sign = if &caps[1] == "-" { -1i64 } else { 1i64 };
+        let n: i64 = caps[2].parse().ok()?;
+        return Some(unit_duration(&caps[3], sign * n));
+    }
+
+    // "next unit" / "last unit"
+    if let Some(unit) = s.strip_prefix("next ") {
+        let unit = unit.trim().trim_end_matches('s');
+        return Some(unit_duration(unit, 1));
+    }
+    if let Some(unit) = s.strip_prefix("last ") {
+        let unit = unit.trim().trim_end_matches('s');
+        return Some(unit_duration(unit, -1));
+    }
+
+    None
+}
+
+fn unit_duration(unit: &str, n: i64) -> Duration {
+    match unit {
+        "second" => Duration::seconds(n),
+        "minute" => Duration::minutes(n),
+        "hour" => Duration::hours(n),
+        "day" => Duration::days(n),
+        "week" => Duration::weeks(n),
+        "month" => Duration::days(n * 30), // Approximate
+        "year" => Duration::days(n * 365), // Approximate
+        _ => Duration::zero(),
+    }
+}
+
 #[async_trait]
 impl Builtin for Date {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let utc = ctx.args.iter().any(|a| a == "-u" || a == "--utc");
-        let format_arg = ctx.args.iter().find(|a| a.starts_with('+'));
+        let mut utc = false;
+        let mut format_arg: Option<String> = None;
+        let mut date_str: Option<String> = None;
 
-        let format = match format_arg {
-            Some(fmt) => &fmt[1..],            // Strip leading '+'
-            None => "%a %b %e %H:%M:%S %Z %Y", // Default format like: "Mon Jan  1 12:00:00 UTC 2024"
+        let mut i = 0;
+        while i < ctx.args.len() {
+            let arg = &ctx.args[i];
+            if arg == "-u" || arg == "--utc" {
+                utc = true;
+            } else if arg == "-d" || arg == "--date" {
+                i += 1;
+                if i < ctx.args.len() {
+                    date_str = Some(ctx.args[i].clone());
+                }
+            } else if let Some(val) = arg.strip_prefix("--date=") {
+                date_str = Some(val.to_string());
+            } else if arg.starts_with('+') {
+                format_arg = Some(arg.clone());
+            }
+            i += 1;
+        }
+
+        let default_format = "%a %b %e %H:%M:%S %Z %Y".to_string();
+        let format = match &format_arg {
+            Some(fmt) => &fmt[1..], // Strip leading '+'
+            None => &default_format,
         };
 
         // SECURITY: Validate format string before use to prevent panics
@@ -82,11 +203,23 @@ impl Builtin for Date {
         }
 
         // Format the date, handling potential errors gracefully.
-        // chrono's Display::fmt can return an error (e.g., when %Z timezone name
-        // cannot be determined), which would cause to_string() to panic.
-        // We use write! to a String instead, which returns a Result.
         let mut output = String::new();
-        let format_result = if utc {
+        let format_result = if let Some(ref ds) = date_str {
+            // Parse the date string
+            match parse_date_string(ds) {
+                Ok(dt) => {
+                    if utc {
+                        write!(output, "{}", dt.format(format))
+                    } else {
+                        let local_dt: DateTime<Local> = dt.into();
+                        write!(output, "{}", local_dt.format(format))
+                    }
+                }
+                Err(e) => {
+                    return Ok(ExecResult::err(format!("{}\n", e), 1));
+                }
+            }
+        } else if utc {
             let now = Utc::now();
             write!(output, "{}", now.format(format))
         } else {
@@ -289,5 +422,92 @@ mod tests {
         let result = run_date(&["+%Y-%Q-%d"]).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("invalid format string"));
+    }
+
+    // === Tests for -d / --date flag ===
+
+    #[tokio::test]
+    async fn test_date_d_now() {
+        let result = run_date(&["-d", "now", "+%Y"]).await;
+        assert_eq!(result.exit_code, 0);
+        let year = result.stdout.trim();
+        assert_eq!(year.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_date_d_yesterday() {
+        let result = run_date(&["-d", "yesterday", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        let date = result.stdout.trim();
+        assert_eq!(date.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_date_d_tomorrow() {
+        let result = run_date(&["-d", "tomorrow", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        let date = result.stdout.trim();
+        assert_eq!(date.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_date_d_days_ago() {
+        let result = run_date(&["-d", "30 days ago", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        let date = result.stdout.trim();
+        assert_eq!(date.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_date_d_epoch() {
+        let result = run_date(&["-d", "@0", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "1970-01-01");
+    }
+
+    #[tokio::test]
+    async fn test_date_d_iso_date() {
+        let result = run_date(&["-d", "2024-01-15", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "2024-01-15");
+    }
+
+    #[tokio::test]
+    async fn test_date_d_iso_datetime() {
+        let result = run_date(&["-d", "2024-06-15 14:30:00", "+%H:%M"]).await;
+        assert_eq!(result.exit_code, 0);
+        // In UTC mode this is exact; in local mode it depends on timezone
+        assert!(result.stdout.trim().contains(':'));
+    }
+
+    #[tokio::test]
+    async fn test_date_d_invalid() {
+        let result = run_date(&["-d", "not a date"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid date"));
+    }
+
+    #[tokio::test]
+    async fn test_date_d_relative_weeks() {
+        let result = run_date(&["-d", "2 weeks ago", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        let date = result.stdout.trim();
+        assert_eq!(date.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_date_d_plus_days() {
+        let result = run_date(&["-d", "+7 days", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        let date = result.stdout.trim();
+        assert_eq!(date.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_date_long_date_flag() {
+        let result = run_date(&["--date=yesterday", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        let date = result.stdout.trim();
+        assert_eq!(date.len(), 10);
     }
 }

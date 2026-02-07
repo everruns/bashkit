@@ -54,22 +54,35 @@ enum AwkExpr {
     BinOp(Box<AwkExpr>, String, Box<AwkExpr>),
     UnaryOp(String, Box<AwkExpr>),
     Assign(String, Box<AwkExpr>),
+    ArrayAssign(String, Box<AwkExpr>, Box<AwkExpr>), // arr[key] = val
+    CompoundArrayAssign(String, Box<AwkExpr>, String, Box<AwkExpr>), // arr[key] += val
     Concat(Vec<AwkExpr>),
     FuncCall(String, Vec<AwkExpr>),
     Regex(String),
-    Match(Box<AwkExpr>, String), // expr ~ /pattern/
+    Match(Box<AwkExpr>, String),             // expr ~ /pattern/
+    PostIncrement(String),                   // var++
+    PostDecrement(String),                   // var--
+    PreIncrement(String),                    // ++var
+    PreDecrement(String),                    // --var
+    InArray(Box<AwkExpr>, String),           // key in arr
+    FieldAssign(Box<AwkExpr>, Box<AwkExpr>), // $n = val
 }
 
-#[allow(dead_code)] // While and For for future expansion
 #[derive(Debug)]
 enum AwkAction {
     Print(Vec<AwkExpr>),
     Printf(String, Vec<AwkExpr>),
     Assign(String, AwkExpr),
+    ArrayAssign(String, AwkExpr, AwkExpr), // arr[key] = val
     If(AwkExpr, Vec<AwkAction>, Vec<AwkAction>),
     While(AwkExpr, Vec<AwkAction>),
+    DoWhile(AwkExpr, Vec<AwkAction>),
     For(Box<AwkAction>, AwkExpr, Box<AwkAction>, Vec<AwkAction>),
+    ForIn(String, String, Vec<AwkAction>), // for (key in arr) { body }
     Next,
+    Break,
+    Continue,
+    Delete(String, AwkExpr), // delete arr[key]
     #[allow(dead_code)] // Exit code support for future
     Exit(Option<AwkExpr>),
     Expression(AwkExpr),
@@ -439,6 +452,15 @@ impl<'a> AwkParser<'a> {
         if self.matches_keyword("next") {
             return Ok(AwkAction::Next);
         }
+        if self.matches_keyword("break") {
+            return Ok(AwkAction::Break);
+        }
+        if self.matches_keyword("continue") {
+            return Ok(AwkAction::Continue);
+        }
+        if self.matches_keyword("delete") {
+            return self.parse_delete();
+        }
         if self.matches_keyword("exit") {
             self.skip_whitespace();
             if self.pos < self.input.len() {
@@ -453,15 +475,24 @@ impl<'a> AwkParser<'a> {
         if self.matches_keyword("if") {
             return self.parse_if();
         }
+        if self.matches_keyword("for") {
+            return self.parse_for();
+        }
+        if self.matches_keyword("while") {
+            return self.parse_while();
+        }
+        if self.matches_keyword("do") {
+            return self.parse_do_while();
+        }
 
         // Otherwise it's an expression (including assignment)
         let expr = self.parse_expression()?;
 
         // Check if it's an assignment
-        if let AwkExpr::Assign(name, val) = expr {
-            Ok(AwkAction::Assign(name, *val))
-        } else {
-            Ok(AwkAction::Expression(expr))
+        match expr {
+            AwkExpr::Assign(name, val) => Ok(AwkAction::Assign(name, *val)),
+            AwkExpr::ArrayAssign(name, key, val) => Ok(AwkAction::ArrayAssign(name, *key, *val)),
+            _ => Ok(AwkAction::Expression(expr)),
         }
     }
 
@@ -553,6 +584,11 @@ impl<'a> AwkParser<'a> {
         };
 
         self.skip_whitespace();
+        // Consume optional ';' before else
+        if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == ';' {
+            self.pos += 1;
+            self.skip_whitespace();
+        }
         let else_actions = if self.matches_keyword("else") {
             self.skip_whitespace();
             if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '{' {
@@ -566,6 +602,220 @@ impl<'a> AwkParser<'a> {
 
         self.pop_depth();
         Ok(AwkAction::If(condition, then_actions, else_actions))
+    }
+
+    fn parse_for(&mut self) -> Result<AwkAction> {
+        self.skip_whitespace();
+
+        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != '(' {
+            return Err(Error::Execution("awk: expected '(' after for".to_string()));
+        }
+        self.pos += 1;
+        self.skip_whitespace();
+
+        // Check for `for (key in arr)` syntax
+        let saved_pos = self.pos;
+        if let Ok(AwkExpr::Variable(var_name)) = self.parse_primary() {
+            self.skip_whitespace();
+            if self.matches_keyword("in") {
+                self.skip_whitespace();
+                // Parse array name
+                let start = self.pos;
+                while self.pos < self.input.len() {
+                    let c = self.input.chars().nth(self.pos).unwrap();
+                    if c.is_alphanumeric() || c == '_' {
+                        self.pos += 1;
+                    } else {
+                        break;
+                    }
+                }
+                let arr_name = self.input[start..self.pos].to_string();
+
+                self.skip_whitespace();
+                if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ')'
+                {
+                    return Err(Error::Execution("awk: expected ')' in for-in".to_string()));
+                }
+                self.pos += 1;
+
+                self.skip_whitespace();
+                let body = if self.pos < self.input.len()
+                    && self.input.chars().nth(self.pos).unwrap() == '{'
+                {
+                    self.parse_action_block()?
+                } else {
+                    vec![self.parse_action()?]
+                };
+
+                return Ok(AwkAction::ForIn(var_name, arr_name, body));
+            }
+        }
+
+        // Not for-in, backtrack and parse C-style for
+        self.pos = saved_pos;
+
+        // Parse init
+        let init_expr = self.parse_expression()?;
+        let init = match init_expr {
+            AwkExpr::Assign(name, val) => AwkAction::Assign(name, *val),
+            AwkExpr::ArrayAssign(name, key, val) => AwkAction::ArrayAssign(name, *key, *val),
+            _ => AwkAction::Expression(init_expr),
+        };
+
+        self.skip_whitespace();
+        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ';' {
+            return Err(Error::Execution(
+                "awk: expected ';' in for statement".to_string(),
+            ));
+        }
+        self.pos += 1;
+
+        // Parse condition
+        self.skip_whitespace();
+        let condition = self.parse_expression()?;
+
+        self.skip_whitespace();
+        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ';' {
+            return Err(Error::Execution(
+                "awk: expected ';' in for statement".to_string(),
+            ));
+        }
+        self.pos += 1;
+
+        // Parse update
+        self.skip_whitespace();
+        let update_expr = self.parse_expression()?;
+        let update = match update_expr {
+            AwkExpr::Assign(name, val) => AwkAction::Assign(name, *val),
+            AwkExpr::ArrayAssign(name, key, val) => AwkAction::ArrayAssign(name, *key, *val),
+            _ => AwkAction::Expression(update_expr),
+        };
+
+        self.skip_whitespace();
+        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ')' {
+            return Err(Error::Execution(
+                "awk: expected ')' in for statement".to_string(),
+            ));
+        }
+        self.pos += 1;
+
+        self.skip_whitespace();
+        let body =
+            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '{' {
+                self.parse_action_block()?
+            } else {
+                vec![self.parse_action()?]
+            };
+
+        Ok(AwkAction::For(
+            Box::new(init),
+            condition,
+            Box::new(update),
+            body,
+        ))
+    }
+
+    fn parse_while(&mut self) -> Result<AwkAction> {
+        self.skip_whitespace();
+
+        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != '(' {
+            return Err(Error::Execution(
+                "awk: expected '(' after while".to_string(),
+            ));
+        }
+        self.pos += 1;
+
+        let condition = self.parse_expression()?;
+
+        self.skip_whitespace();
+        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ')' {
+            return Err(Error::Execution(
+                "awk: expected ')' after while condition".to_string(),
+            ));
+        }
+        self.pos += 1;
+
+        self.skip_whitespace();
+        let body =
+            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '{' {
+                self.parse_action_block()?
+            } else {
+                vec![self.parse_action()?]
+            };
+
+        Ok(AwkAction::While(condition, body))
+    }
+
+    fn parse_do_while(&mut self) -> Result<AwkAction> {
+        self.skip_whitespace();
+
+        let body =
+            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '{' {
+                self.parse_action_block()?
+            } else {
+                vec![self.parse_action()?]
+            };
+
+        self.skip_whitespace();
+        if !self.matches_keyword("while") {
+            return Err(Error::Execution(
+                "awk: expected 'while' after do body".to_string(),
+            ));
+        }
+
+        self.skip_whitespace();
+        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != '(' {
+            return Err(Error::Execution(
+                "awk: expected '(' after do-while".to_string(),
+            ));
+        }
+        self.pos += 1;
+
+        let condition = self.parse_expression()?;
+
+        self.skip_whitespace();
+        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ')' {
+            return Err(Error::Execution(
+                "awk: expected ')' in do-while".to_string(),
+            ));
+        }
+        self.pos += 1;
+
+        Ok(AwkAction::DoWhile(condition, body))
+    }
+
+    fn parse_delete(&mut self) -> Result<AwkAction> {
+        self.skip_whitespace();
+
+        // Parse array name
+        let start = self.pos;
+        while self.pos < self.input.len() {
+            let c = self.input.chars().nth(self.pos).unwrap();
+            if c.is_alphanumeric() || c == '_' {
+                self.pos += 1;
+            } else {
+                break;
+            }
+        }
+        let arr_name = self.input[start..self.pos].to_string();
+
+        self.skip_whitespace();
+        if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '[' {
+            self.pos += 1;
+            let index = self.parse_expression()?;
+            self.skip_whitespace();
+            if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ']' {
+                return Err(Error::Execution("awk: expected ']'".to_string()));
+            }
+            self.pos += 1;
+            Ok(AwkAction::Delete(arr_name, index))
+        } else {
+            // delete entire array
+            Ok(AwkAction::Delete(
+                arr_name,
+                AwkExpr::String("*".to_string()),
+            ))
+        }
     }
 
     /// THREAT[TM-DOS-027]: Track depth on every expression entry
@@ -592,17 +842,43 @@ impl<'a> AwkParser<'a> {
                 self.skip_whitespace();
                 let value = self.parse_assignment()?;
 
-                if let AwkExpr::Variable(name) = expr {
-                    // Transform `x += y` into `x = x + y`
-                    let bin_op = &op[..1]; // Get the operator without '='
-                    let current = AwkExpr::Variable(name.clone());
-                    let combined =
-                        AwkExpr::BinOp(Box::new(current), bin_op.to_string(), Box::new(value));
-                    return Ok(AwkExpr::Assign(name, Box::new(combined)));
+                match &expr {
+                    AwkExpr::Variable(name) => {
+                        let bin_op = &op[..1];
+                        let current = AwkExpr::Variable(name.clone());
+                        let combined =
+                            AwkExpr::BinOp(Box::new(current), bin_op.to_string(), Box::new(value));
+                        return Ok(AwkExpr::Assign(name.clone(), Box::new(combined)));
+                    }
+                    AwkExpr::FuncCall(fname, args)
+                        if fname == "__array_access" && args.len() == 2 =>
+                    {
+                        if let AwkExpr::Variable(arr_name) = &args[0] {
+                            let bin_op = &op[..1];
+                            return Ok(AwkExpr::CompoundArrayAssign(
+                                arr_name.clone(),
+                                Box::new(args[1].clone()),
+                                bin_op.to_string(),
+                                Box::new(value),
+                            ));
+                        }
+                        return Err(Error::Execution(
+                            "awk: invalid assignment target".to_string(),
+                        ));
+                    }
+                    AwkExpr::Field(index) => {
+                        let bin_op = &op[..1];
+                        let current = AwkExpr::Field(index.clone());
+                        let combined =
+                            AwkExpr::BinOp(Box::new(current), bin_op.to_string(), Box::new(value));
+                        return Ok(AwkExpr::FieldAssign(index.clone(), Box::new(combined)));
+                    }
+                    _ => {
+                        return Err(Error::Execution(
+                            "awk: invalid assignment target".to_string(),
+                        ));
+                    }
                 }
-                return Err(Error::Execution(
-                    "awk: invalid assignment target".to_string(),
-                ));
             }
         }
 
@@ -614,12 +890,33 @@ impl<'a> AwkParser<'a> {
                 self.skip_whitespace();
                 let value = self.parse_assignment()?;
 
-                if let AwkExpr::Variable(name) = expr {
-                    return Ok(AwkExpr::Assign(name, Box::new(value)));
+                match expr {
+                    AwkExpr::Variable(name) => {
+                        return Ok(AwkExpr::Assign(name, Box::new(value)));
+                    }
+                    AwkExpr::FuncCall(ref fname, ref args)
+                        if fname == "__array_access" && args.len() == 2 =>
+                    {
+                        if let AwkExpr::Variable(arr_name) = &args[0] {
+                            return Ok(AwkExpr::ArrayAssign(
+                                arr_name.clone(),
+                                Box::new(args[1].clone()),
+                                Box::new(value),
+                            ));
+                        }
+                        return Err(Error::Execution(
+                            "awk: invalid assignment target".to_string(),
+                        ));
+                    }
+                    AwkExpr::Field(index) => {
+                        return Ok(AwkExpr::FieldAssign(index, Box::new(value)));
+                    }
+                    _ => {
+                        return Err(Error::Execution(
+                            "awk: invalid assignment target".to_string(),
+                        ));
+                    }
                 }
-                return Err(Error::Execution(
-                    "awk: invalid assignment target".to_string(),
-                ));
             }
         }
 
@@ -627,7 +924,27 @@ impl<'a> AwkParser<'a> {
     }
 
     fn parse_ternary(&mut self) -> Result<AwkExpr> {
-        self.parse_or()
+        let expr = self.parse_or()?;
+
+        self.skip_whitespace();
+        if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '?' {
+            self.pos += 1;
+            self.skip_whitespace();
+            let then_expr = self.parse_expression()?;
+            self.skip_whitespace();
+            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == ':' {
+                self.pos += 1;
+                self.skip_whitespace();
+                let else_expr = self.parse_expression()?;
+                // Encode ternary as a function call for evaluation
+                return Ok(AwkExpr::FuncCall(
+                    "__ternary".to_string(),
+                    vec![expr, then_expr, else_expr],
+                ));
+            }
+        }
+
+        Ok(expr)
     }
 
     fn parse_or(&mut self) -> Result<AwkExpr> {
@@ -670,6 +987,23 @@ impl<'a> AwkParser<'a> {
         let left = self.parse_concat()?;
 
         self.skip_whitespace();
+
+        // Check for `in` operator: (key in arr)
+        if self.matches_keyword("in") {
+            self.skip_whitespace();
+            let start = self.pos;
+            while self.pos < self.input.len() {
+                let c = self.input.chars().nth(self.pos).unwrap();
+                if c.is_alphanumeric() || c == '_' {
+                    self.pos += 1;
+                } else {
+                    break;
+                }
+            }
+            let arr_name = self.input[start..self.pos].to_string();
+            return Ok(AwkExpr::InArray(Box::new(left), arr_name));
+        }
+
         let ops = ["==", "!=", "<=", ">=", "<", ">", "~", "!~"];
 
         for op in ops {
@@ -686,6 +1020,25 @@ impl<'a> AwkParser<'a> {
         }
 
         Ok(left)
+    }
+
+    fn is_keyword_at_pos(&self) -> bool {
+        let remaining = &self.input[self.pos..];
+        let keywords = [
+            "in", "if", "else", "while", "for", "do", "break", "continue", "next", "exit",
+            "delete", "print", "printf",
+        ];
+        for kw in keywords {
+            if remaining.starts_with(kw) {
+                let after = self.pos + kw.len();
+                if after >= self.input.len()
+                    || !self.input.chars().nth(after).unwrap().is_alphanumeric()
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     fn parse_concat(&mut self) -> Result<AwkExpr> {
@@ -706,6 +1059,7 @@ impl<'a> AwkParser<'a> {
                     && !remaining.starts_with("&&")
                     && !remaining.starts_with("==")
                     && !remaining.starts_with("!=")
+                    && !self.is_keyword_at_pos()
                 {
                     if let Ok(next) = self.parse_additive() {
                         parts.push(next);
@@ -789,6 +1143,30 @@ impl<'a> AwkParser<'a> {
             ));
         }
 
+        // Pre-increment: ++var
+        if self.input[self.pos..].starts_with("++") {
+            self.pos += 2;
+            self.skip_whitespace();
+            if let Ok(AwkExpr::Variable(name)) = self.parse_primary() {
+                return Ok(AwkExpr::PreIncrement(name));
+            }
+            return Err(Error::Execution(
+                "awk: expected variable after ++".to_string(),
+            ));
+        }
+
+        // Pre-decrement: --var
+        if self.input[self.pos..].starts_with("--") {
+            self.pos += 2;
+            self.skip_whitespace();
+            if let Ok(AwkExpr::Variable(name)) = self.parse_primary() {
+                return Ok(AwkExpr::PreDecrement(name));
+            }
+            return Err(Error::Execution(
+                "awk: expected variable after --".to_string(),
+            ));
+        }
+
         let c = self.input.chars().nth(self.pos).unwrap();
 
         if c == '-' {
@@ -815,7 +1193,62 @@ impl<'a> AwkParser<'a> {
             return result;
         }
 
-        self.parse_primary()
+        self.parse_postfix()
+    }
+
+    fn parse_postfix(&mut self) -> Result<AwkExpr> {
+        let expr = self.parse_primary()?;
+
+        // Check for postfix ++ / --
+        if self.pos + 1 < self.input.len() {
+            if self.input[self.pos..].starts_with("++") {
+                match &expr {
+                    AwkExpr::Variable(name) => {
+                        self.pos += 2;
+                        return Ok(AwkExpr::PostIncrement(name.clone()));
+                    }
+                    AwkExpr::FuncCall(fname, args)
+                        if fname == "__array_access" && args.len() == 2 =>
+                    {
+                        // arr[key]++ → compound array assign with +1
+                        if let AwkExpr::Variable(arr_name) = &args[0] {
+                            self.pos += 2;
+                            return Ok(AwkExpr::CompoundArrayAssign(
+                                arr_name.clone(),
+                                Box::new(args[1].clone()),
+                                "+".to_string(),
+                                Box::new(AwkExpr::Number(1.0)),
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if self.input[self.pos..].starts_with("--") {
+                match &expr {
+                    AwkExpr::Variable(name) => {
+                        self.pos += 2;
+                        return Ok(AwkExpr::PostDecrement(name.clone()));
+                    }
+                    AwkExpr::FuncCall(fname, args)
+                        if fname == "__array_access" && args.len() == 2 =>
+                    {
+                        if let AwkExpr::Variable(arr_name) = &args[0] {
+                            self.pos += 2;
+                            return Ok(AwkExpr::CompoundArrayAssign(
+                                arr_name.clone(),
+                                Box::new(args[1].clone()),
+                                "-".to_string(),
+                                Box::new(AwkExpr::Number(1.0)),
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(expr)
     }
 
     fn parse_primary(&mut self) -> Result<AwkExpr> {
@@ -832,7 +1265,9 @@ impl<'a> AwkParser<'a> {
         // Field reference $
         if c == '$' {
             self.pos += 1;
+            self.push_depth()?;
             let index = self.parse_primary()?;
+            self.pop_depth();
             return Ok(AwkExpr::Field(Box::new(index)));
         }
 
@@ -869,7 +1304,9 @@ impl<'a> AwkParser<'a> {
         // Parenthesized expression
         if c == '(' {
             self.pos += 1;
+            self.push_depth()?;
             let expr = self.parse_expression()?;
+            self.pop_depth();
             self.skip_whitespace();
             if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ')' {
                 return Err(Error::Execution("awk: expected ')'".to_string()));
@@ -1000,6 +1437,16 @@ impl<'a> AwkParser<'a> {
     }
 }
 
+/// Flow control signal from action execution
+#[derive(Debug, PartialEq)]
+enum AwkFlow {
+    Continue,     // Normal execution
+    Next,         // Skip to next record
+    Break,        // Break out of loop
+    LoopContinue, // Continue to next loop iteration
+    Exit,         // Exit program
+}
+
 struct AwkInterpreter {
     state: AwkState,
     output: String,
@@ -1108,6 +1555,78 @@ impl AwkInterpreter {
                     .map(|p| self.eval_expr(p).as_string())
                     .collect();
                 AwkValue::String(s)
+            }
+            AwkExpr::ArrayAssign(name, key, val) => {
+                let k = self.eval_expr(key).as_string();
+                let v = self.eval_expr(val);
+                let full_key = format!("{}[{}]", name, k);
+                self.state.set_variable(&full_key, v.clone());
+                v
+            }
+            AwkExpr::CompoundArrayAssign(name, key, op, val) => {
+                let k = self.eval_expr(key).as_string();
+                let full_key = format!("{}[{}]", name, k);
+                let current = self.state.get_variable(&full_key).as_number();
+                let rhs = self.eval_expr(val).as_number();
+                let result = match op.as_str() {
+                    "+" => current + rhs,
+                    "-" => current - rhs,
+                    "*" => current * rhs,
+                    "/" => current / rhs,
+                    "%" => current % rhs,
+                    _ => rhs,
+                };
+                let v = AwkValue::Number(result);
+                self.state.set_variable(&full_key, v.clone());
+                v
+            }
+            AwkExpr::FieldAssign(index, val) => {
+                let n = self.eval_expr(index).as_number() as usize;
+                let v = self.eval_expr(val);
+                if n == 0 {
+                    self.state.set_variable("$0", v.clone());
+                } else {
+                    // Extend fields if needed
+                    while self.state.fields.len() < n {
+                        self.state.fields.push(String::new());
+                    }
+                    self.state.fields[n - 1] = v.as_string();
+                    self.state.nf = self.state.fields.len();
+                    // Rebuild $0
+                    let new_line = self.state.fields.join(&self.state.ofs);
+                    self.state.set_variable("$0", AwkValue::String(new_line));
+                }
+                v
+            }
+            AwkExpr::PostIncrement(name) => {
+                let current = self.state.get_variable(name).as_number();
+                self.state
+                    .set_variable(name, AwkValue::Number(current + 1.0));
+                AwkValue::Number(current) // Return old value
+            }
+            AwkExpr::PostDecrement(name) => {
+                let current = self.state.get_variable(name).as_number();
+                self.state
+                    .set_variable(name, AwkValue::Number(current - 1.0));
+                AwkValue::Number(current) // Return old value
+            }
+            AwkExpr::PreIncrement(name) => {
+                let current = self.state.get_variable(name).as_number();
+                let new_val = current + 1.0;
+                self.state.set_variable(name, AwkValue::Number(new_val));
+                AwkValue::Number(new_val) // Return new value
+            }
+            AwkExpr::PreDecrement(name) => {
+                let current = self.state.get_variable(name).as_number();
+                let new_val = current - 1.0;
+                self.state.set_variable(name, AwkValue::Number(new_val));
+                AwkValue::Number(new_val) // Return new value
+            }
+            AwkExpr::InArray(key, arr_name) => {
+                let k = self.eval_expr(key).as_string();
+                let full_key = format!("{}[{}]", arr_name, k);
+                let exists = !matches!(self.state.get_variable(&full_key), AwkValue::Uninitialized);
+                AwkValue::Number(if exists { 1.0 } else { 0.0 })
             }
             AwkExpr::FuncCall(name, args) => self.call_function(name, args),
             AwkExpr::Regex(pattern) => AwkValue::String(pattern.clone()),
@@ -1304,6 +1823,18 @@ impl AwkInterpreter {
                 let key = format!("{}[{}]", arr_name, index.as_string());
                 self.state.get_variable(&key)
             }
+            "__ternary" => {
+                // Ternary operator: cond ? then : else
+                if args.len() < 3 {
+                    return AwkValue::Uninitialized;
+                }
+                let cond = self.eval_expr(&args[0]);
+                if cond.as_bool() {
+                    self.eval_expr(&args[1])
+                } else {
+                    self.eval_expr(&args[2])
+                }
+            }
             _ => AwkValue::Uninitialized,
         }
     }
@@ -1363,7 +1894,11 @@ impl AwkInterpreter {
         result
     }
 
-    fn exec_action(&mut self, action: &AwkAction) -> bool {
+    /// Execute action. Returns flow control signal.
+    fn exec_action(&mut self, action: &AwkAction) -> AwkFlow {
+        // Limit iterations to prevent infinite loops
+        const MAX_LOOP_ITERS: usize = 100_000;
+
         match action {
             AwkAction::Print(exprs) => {
                 let parts: Vec<String> = exprs
@@ -1372,61 +1907,175 @@ impl AwkInterpreter {
                     .collect();
                 self.output.push_str(&parts.join(&self.state.ofs));
                 self.output.push_str(&self.state.ors);
-                true
+                AwkFlow::Continue
             }
             AwkAction::Printf(format, args) => {
                 let values: Vec<AwkValue> = args.iter().map(|a| self.eval_expr(a)).collect();
                 self.output.push_str(&self.format_string(format, &values));
-                true
+                AwkFlow::Continue
             }
             AwkAction::Assign(name, expr) => {
                 let value = self.eval_expr(expr);
                 self.state.set_variable(name, value);
-                true
+                AwkFlow::Continue
+            }
+            AwkAction::ArrayAssign(name, key, val) => {
+                let k = self.eval_expr(key).as_string();
+                let v = self.eval_expr(val);
+                let full_key = format!("{}[{}]", name, k);
+                self.state.set_variable(&full_key, v);
+                AwkFlow::Continue
             }
             AwkAction::If(cond, then_actions, else_actions) => {
-                if self.eval_expr(cond).as_bool() {
-                    for action in then_actions {
-                        if !self.exec_action(action) {
-                            return false;
-                        }
-                    }
+                let actions = if self.eval_expr(cond).as_bool() {
+                    then_actions
                 } else {
-                    for action in else_actions {
-                        if !self.exec_action(action) {
-                            return false;
-                        }
+                    else_actions
+                };
+                for action in actions {
+                    match self.exec_action(action) {
+                        AwkFlow::Continue => {}
+                        flow => return flow,
                     }
                 }
-                true
+                AwkFlow::Continue
             }
             AwkAction::While(cond, actions) => {
+                let mut iters = 0;
                 while self.eval_expr(cond).as_bool() {
+                    iters += 1;
+                    if iters > MAX_LOOP_ITERS {
+                        break;
+                    }
+                    let mut do_break = false;
                     for action in actions {
-                        if !self.exec_action(action) {
-                            return false;
+                        match self.exec_action(action) {
+                            AwkFlow::Continue => {}
+                            AwkFlow::Break => {
+                                do_break = true;
+                                break;
+                            }
+                            AwkFlow::LoopContinue => break,
+                            flow => return flow,
                         }
                     }
+                    if do_break {
+                        break;
+                    }
                 }
-                true
+                AwkFlow::Continue
+            }
+            AwkAction::DoWhile(cond, actions) => {
+                let mut iters = 0;
+                loop {
+                    iters += 1;
+                    if iters > MAX_LOOP_ITERS {
+                        break;
+                    }
+                    let mut do_break = false;
+                    for action in actions {
+                        match self.exec_action(action) {
+                            AwkFlow::Continue => {}
+                            AwkFlow::Break => {
+                                do_break = true;
+                                break;
+                            }
+                            AwkFlow::LoopContinue => break,
+                            flow => return flow,
+                        }
+                    }
+                    if do_break || !self.eval_expr(cond).as_bool() {
+                        break;
+                    }
+                }
+                AwkFlow::Continue
             }
             AwkAction::For(init, cond, update, actions) => {
                 self.exec_action(init);
+                let mut iters = 0;
                 while self.eval_expr(cond).as_bool() {
+                    iters += 1;
+                    if iters > MAX_LOOP_ITERS {
+                        break;
+                    }
+                    let mut do_break = false;
                     for action in actions {
-                        if !self.exec_action(action) {
-                            return false;
+                        match self.exec_action(action) {
+                            AwkFlow::Continue => {}
+                            AwkFlow::Break => {
+                                do_break = true;
+                                break;
+                            }
+                            AwkFlow::LoopContinue => break,
+                            flow => return flow,
                         }
+                    }
+                    if do_break {
+                        break;
                     }
                     self.exec_action(update);
                 }
-                true
+                AwkFlow::Continue
             }
-            AwkAction::Next => false,
-            AwkAction::Exit(_) => false,
+            AwkAction::ForIn(var, arr_name, actions) => {
+                // Collect array keys matching the pattern arr_name[*]
+                let prefix = format!("{}[", arr_name);
+                let keys: Vec<String> = self
+                    .state
+                    .variables
+                    .keys()
+                    .filter(|k| k.starts_with(&prefix) && k.ends_with(']'))
+                    .map(|k| k[prefix.len()..k.len() - 1].to_string())
+                    .collect();
+
+                for key in keys {
+                    self.state.set_variable(var, AwkValue::String(key));
+                    let mut do_break = false;
+                    for action in actions {
+                        match self.exec_action(action) {
+                            AwkFlow::Continue => {}
+                            AwkFlow::Break => {
+                                do_break = true;
+                                break;
+                            }
+                            AwkFlow::LoopContinue => break,
+                            flow => return flow,
+                        }
+                    }
+                    if do_break {
+                        break;
+                    }
+                }
+                AwkFlow::Continue
+            }
+            AwkAction::Delete(arr_name, key) => {
+                let k = self.eval_expr(key).as_string();
+                if k == "*" {
+                    // Delete all entries in the array
+                    let prefix = format!("{}[", arr_name);
+                    let keys: Vec<String> = self
+                        .state
+                        .variables
+                        .keys()
+                        .filter(|k| k.starts_with(&prefix))
+                        .cloned()
+                        .collect();
+                    for key in keys {
+                        self.state.variables.remove(&key);
+                    }
+                } else {
+                    let full_key = format!("{}[{}]", arr_name, k);
+                    self.state.variables.remove(&full_key);
+                }
+                AwkFlow::Continue
+            }
+            AwkAction::Next => AwkFlow::Next,
+            AwkAction::Break => AwkFlow::Break,
+            AwkAction::Continue => AwkFlow::LoopContinue,
+            AwkAction::Exit(_) => AwkFlow::Exit,
             AwkAction::Expression(expr) => {
                 self.eval_expr(expr);
-                true
+                AwkFlow::Continue
             }
         }
     }
@@ -1448,6 +2097,7 @@ impl Builtin for Awk {
         let mut program_str = String::new();
         let mut files: Vec<String> = Vec::new();
         let mut field_sep = " ".to_string();
+        let mut pre_vars: Vec<(String, String)> = Vec::new();
         let mut i = 0;
 
         while i < ctx.args.len() {
@@ -1459,6 +2109,22 @@ impl Builtin for Awk {
                 }
             } else if let Some(sep) = arg.strip_prefix("-F") {
                 field_sep = sep.to_string();
+            } else if arg == "-v" {
+                // Variable assignment: -v var=value
+                i += 1;
+                if i < ctx.args.len() {
+                    if let Some(eq_pos) = ctx.args[i].find('=') {
+                        let name = ctx.args[i][..eq_pos].to_string();
+                        let mut value = ctx.args[i][eq_pos + 1..].to_string();
+                        // Strip surrounding quotes if present (shell may pass them)
+                        if (value.starts_with('"') && value.ends_with('"'))
+                            || (value.starts_with('\'') && value.ends_with('\''))
+                        {
+                            value = value[1..value.len() - 1].to_string();
+                        }
+                        pre_vars.push((name, value));
+                    }
+                }
             } else if arg == "-f" {
                 // Read program from file
                 i += 1;
@@ -1497,9 +2163,21 @@ impl Builtin for Awk {
         let mut interp = AwkInterpreter::new();
         interp.state.fs = field_sep;
 
+        // Set pre-assigned variables (-v)
+        for (name, value) in &pre_vars {
+            let awk_val = if let Ok(n) = value.parse::<f64>() {
+                AwkValue::Number(n)
+            } else {
+                AwkValue::String(value.clone())
+            };
+            interp.state.set_variable(name, awk_val);
+        }
+
         // Run BEGIN actions
         for action in &program.begin_actions {
-            interp.exec_action(action);
+            if interp.exec_action(action) == AwkFlow::Exit {
+                return Ok(ExecResult::ok(interp.output));
+            }
         }
 
         // Process input
@@ -1531,7 +2209,7 @@ impl Builtin for Awk {
             for line in input.lines() {
                 interp.state.set_line(line);
 
-                'rules: for rule in &program.main_rules {
+                for rule in &program.main_rules {
                     // Check pattern
                     let matches = match &rule.pattern {
                         Some(pattern) => interp.matches_pattern(pattern),
@@ -1539,24 +2217,33 @@ impl Builtin for Awk {
                     };
 
                     if matches {
+                        let mut next_record = false;
                         for action in &rule.actions {
-                            match action {
-                                AwkAction::Next => continue 'rules,
-                                AwkAction::Exit(_) => break 'files,
-                                _ => {
-                                    // exec_action returns false for Next, which we've already handled
-                                    interp.exec_action(action);
+                            match interp.exec_action(action) {
+                                AwkFlow::Continue => {}
+                                AwkFlow::Next => {
+                                    next_record = true;
+                                    break;
                                 }
+                                AwkFlow::Exit => {
+                                    break 'files;
+                                }
+                                _ => {}
                             }
+                        }
+                        if next_record {
+                            break;
                         }
                     }
                 }
             }
         }
 
-        // Run END actions
+        // Run END actions (awk runs END even after exit in main body)
         for action in &program.end_actions {
-            interp.exec_action(action);
+            if interp.exec_action(action) == AwkFlow::Exit {
+                break;
+            }
         }
 
         Ok(ExecResult::ok(interp.output))
@@ -1788,5 +2475,210 @@ mod tests {
             "moderate nesting should succeed: {:?}",
             result.err()
         );
+    }
+
+    // === New tests for added features ===
+
+    #[tokio::test]
+    async fn test_awk_for_c_style() {
+        let result = run_awk(&["BEGIN{for(i=1;i<=5;i++) print i}"], None)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "1\n2\n3\n4\n5\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_for_with_body_block() {
+        let result = run_awk(&["BEGIN{for(i=0;i<3;i++){print i}}"], None)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "0\n1\n2\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_while_loop() {
+        let result = run_awk(&["BEGIN{i=1; while(i<=3){print i; i++}}"], None)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "1\n2\n3\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_do_while() {
+        let result = run_awk(&["BEGIN{i=1; do{print i; i++}while(i<=3)}"], None)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "1\n2\n3\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_post_increment() {
+        let result = run_awk(&["{print i++}"], Some("a\nb\nc")).await.unwrap();
+        assert_eq!(result.stdout, "0\n1\n2\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_pre_increment() {
+        let result = run_awk(&["{print ++i}"], Some("a\nb\nc")).await.unwrap();
+        assert_eq!(result.stdout, "1\n2\n3\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_post_decrement() {
+        let result = run_awk(&["BEGIN{x=3; print x--; print x}"], None)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "3\n2\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_array_assign() {
+        let result = run_awk(&[r#"BEGIN{a[1]="x"; a[2]="y"; print a[1], a[2]}"#], None)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "x y\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_array_in_operator() {
+        let result = run_awk(
+            &[r#"BEGIN{a["foo"]=1; if("foo" in a) print "yes"; if("bar" in a) print "no"}"#],
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_for_in_loop() {
+        let result = run_awk(
+            &[r#"BEGIN{a[1]="x"; a[2]="y"; for(k in a) count++; print count}"#],
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "2\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_delete_array_element() {
+        let result = run_awk(
+            &[r#"BEGIN{a[1]=1; a[2]=2; delete a[1]; for(k in a) print k, a[k]}"#],
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "2 2\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_v_flag() {
+        let result = run_awk(&["-v", "x=hello", "BEGIN{print x}"], None)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_v_flag_numeric() {
+        let result = run_awk(&["-v", "n=42", "BEGIN{print n+1}"], None)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "43\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_break_in_for() {
+        let result = run_awk(&["BEGIN{for(i=1;i<=10;i++){if(i>3) break; print i}}"], None)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "1\n2\n3\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_continue_in_for() {
+        let result = run_awk(
+            &["BEGIN{for(i=1;i<=5;i++){if(i==3) continue; print i}}"],
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "1\n2\n4\n5\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_ternary() {
+        let result = run_awk(&[r#"{print ($1>2 ? "big" : "small")}"#], Some("1\n3\n2"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "small\nbig\nsmall\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_field_assignment() {
+        let result = run_awk(&[r#"{$2="new"; print}"#], Some("one two three"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "one new three\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_csv_to_json_pattern() {
+        // This is the pattern LLMs use for CSV→JSON conversion
+        let result = run_awk(
+            &[
+                "-F,",
+                r#"NR==1{for(i=1;i<=NF;i++) h[i]=$i; next} {for(i=1;i<=NF;i++) printf "%s=%s ", h[i], $i; print ""}"#,
+            ],
+            Some("name,age\nalice,30\nbob,25"),
+        )
+        .await
+        .unwrap();
+        assert!(result.stdout.contains("name=alice"));
+        assert!(result.stdout.contains("age=30"));
+        assert!(result.stdout.contains("name=bob"));
+    }
+
+    #[tokio::test]
+    async fn test_awk_compound_array_assign() {
+        let result = run_awk(
+            &[r#"{count[$1]++} END{for(k in count) print k, count[k]}"#],
+            Some("a\nb\na\nc\nb\na"),
+        )
+        .await
+        .unwrap();
+        // Order may vary, so check contents
+        assert!(result.stdout.contains("a 3"));
+        assert!(result.stdout.contains("b 2"));
+        assert!(result.stdout.contains("c 1"));
+    }
+
+    #[tokio::test]
+    async fn test_awk_next_statement() {
+        let result = run_awk(&["NR==2{next} {print}"], Some("line1\nline2\nline3"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "line1\nline3\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_exit_statement() {
+        let result = run_awk(&["NR==2{exit} {print}"], Some("line1\nline2\nline3"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "line1\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_revenue_calculation() {
+        // This is the exact eval task pattern
+        let result = run_awk(
+            &["-F,", "NR>1{total+=$2*$3} END{print total}"],
+            Some("product,price,quantity\nwidget,10,5\ngadget,25,3\ndoohickey,7,12\nsprocket,15,8"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "329\n");
     }
 }

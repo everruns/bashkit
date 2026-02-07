@@ -138,7 +138,6 @@ value: 42
 ### end
 
 ### awk_variable_v_flag
-### skip: -v flag not implemented
 printf 'world\n' | awk -v greeting="hello" '{print greeting, $0}'
 ### expect
 hello world
@@ -180,7 +179,6 @@ printf '2\n' | awk 'BEGIN {x=100} {x /= $1} END {print x}'
 ### end
 
 ### awk_postfix_increment
-### skip: postfix increment not implemented
 printf 'a\n' | awk 'BEGIN {x=5} {print x++; print x}'
 ### expect
 5
@@ -188,14 +186,12 @@ printf 'a\n' | awk 'BEGIN {x=5} {print x++; print x}'
 ### end
 
 ### awk_prefix_increment
-### skip: prefix increment not implemented
 printf 'a\n' | awk 'BEGIN {x=5} {print ++x}'
 ### expect
 6
 ### end
 
 ### awk_postfix_decrement
-### skip: postfix decrement not implemented
 printf 'a\n' | awk 'BEGIN {x=5} {print x--; print x}'
 ### expect
 5
@@ -203,7 +199,6 @@ printf 'a\n' | awk 'BEGIN {x=5} {print x--; print x}'
 ### end
 
 ### awk_prefix_decrement
-### skip: prefix decrement not implemented
 printf 'a\n' | awk 'BEGIN {x=5} {print --x}'
 ### expect
 4
@@ -459,7 +454,6 @@ printf 'a\n' | awk '{exit 42}'
 ### end
 
 ### awk_next_statement
-### skip: next statement not implemented
 printf '1\n2\n3\n' | awk '{if ($1 == 2) next; print}'
 ### expect
 1
@@ -467,7 +461,6 @@ printf '1\n2\n3\n' | awk '{if ($1 == 2) next; print}'
 ### end
 
 ### awk_for_loop
-### skip: for loops not implemented
 printf 'a\n' | awk '{for (i=1; i<=3; i++) print i}'
 ### expect
 1
@@ -476,7 +469,6 @@ printf 'a\n' | awk '{for (i=1; i<=3; i++) print i}'
 ### end
 
 ### awk_while_loop
-### skip: while loops not implemented
 printf 'a\n' | awk '{i=1; while (i<=3) {print i; i++}}'
 ### expect
 1
@@ -485,7 +477,6 @@ printf 'a\n' | awk '{i=1; while (i<=3) {print i; i++}}'
 ### end
 
 ### awk_do_while_loop
-### skip: do-while loops not implemented
 printf 'a\n' | awk '{i=1; do {print i; i++} while (i<=3)}'
 ### expect
 1
@@ -494,7 +485,6 @@ printf 'a\n' | awk '{i=1; do {print i; i++} while (i<=3)}'
 ### end
 
 ### awk_break_statement
-### skip: break statement not implemented
 printf 'a\n' | awk '{for (i=1; i<=5; i++) {if (i==3) break; print i}}'
 ### expect
 1
@@ -502,7 +492,6 @@ printf 'a\n' | awk '{for (i=1; i<=5; i++) {if (i==3) break; print i}}'
 ### end
 
 ### awk_continue_statement
-### skip: continue statement not implemented
 printf 'a\n' | awk '{for (i=1; i<=3; i++) {if (i==2) continue; print i}}'
 ### expect
 1
@@ -510,7 +499,6 @@ printf 'a\n' | awk '{for (i=1; i<=3; i++) {if (i==2) continue; print i}}'
 ### end
 
 ### awk_if_else
-### skip: if-else not implemented
 printf '5\n2\n' | awk '{if ($1 > 3) print "big"; else print "small"}'
 ### expect
 big
@@ -518,7 +506,6 @@ small
 ### end
 
 ### awk_ternary
-### skip: ternary operator not implemented
 printf '5\n2\n' | awk '{print ($1 > 3 ? "big" : "small")}'
 ### expect
 big
@@ -526,21 +513,19 @@ small
 ### end
 
 ### awk_array_basic
-### skip: arrays not implemented
 printf 'a\n' | awk 'BEGIN {arr[1]="x"; arr[2]="y"} {print arr[1], arr[2]}'
 ### expect
 x y
 ### end
 
 ### awk_array_in
-### skip: arrays not implemented
 printf 'a\n' | awk 'BEGIN {arr["key"]="val"} {if ("key" in arr) print "found"}'
 ### expect
 found
 ### end
 
 ### awk_for_in_array
-### skip: for-in array iteration not implemented
+### skip: for-in array iteration order not deterministic
 printf 'a\n' | awk 'BEGIN {a[1]="x"; a[2]="y"} {for (k in a) print k, a[k]}'
 ### expect
 1 x
@@ -548,7 +533,6 @@ printf 'a\n' | awk 'BEGIN {a[1]="x"; a[2]="y"} {for (k in a) print k, a[k]}'
 ### end
 
 ### awk_delete_array
-### skip: delete not implemented
 printf 'a\n' | awk 'BEGIN {a[1]="x"; delete a[1]} {print (1 in a) ? "yes" : "no"}'
 ### expect
 no
@@ -583,7 +567,6 @@ world
 ### end
 
 ### awk_field_assignment
-### skip: field assignment not implemented
 printf 'a b c\n' | awk '{$2 = "X"; print}'
 ### expect
 a X c

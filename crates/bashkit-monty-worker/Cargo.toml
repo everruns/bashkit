@@ -20,6 +20,6 @@ name = "bashkit-monty-worker"
 path = "src/main.rs"
 
 [dependencies]
-monty = { git = "https://github.com/pydantic/monty", version = "0.0.3" }
+monty = { git = "https://github.com/pydantic/monty", version = "0.0.4" }
 serde = { workspace = true }
 serde_json = { workspace = true }

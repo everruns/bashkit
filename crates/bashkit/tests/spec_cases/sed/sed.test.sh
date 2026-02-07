@@ -227,7 +227,6 @@ printf 'a\nb\nc\n' | sed 'H; $!d; x; s/\n/ /g'
 ### end
 
 ### sed_exchange_x
-### skip: exchange (x) command not implemented
 printf 'a\nb\n' | sed 'x'
 ### expect
 
@@ -235,7 +234,6 @@ a
 ### end
 
 ### sed_change
-### skip: change (c) command not implemented
 printf 'one\ntwo\nthree\n' | sed '2c\replaced'
 ### expect
 one

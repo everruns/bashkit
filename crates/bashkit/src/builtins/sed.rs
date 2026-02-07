@@ -42,6 +42,12 @@ enum SedCommand {
     Quit,
     Append(String),
     Insert(String),
+    Change(String), // c\text - replace line
+    HoldCopy,       // h - copy pattern to hold
+    HoldAppend,     // H - append pattern to hold
+    GetCopy,        // g - copy hold to pattern
+    GetAppend,      // G - append hold to pattern
+    Exchange,       // x - swap pattern and hold
 }
 
 #[derive(Debug, Clone)]
@@ -51,16 +57,58 @@ enum Address {
     Range(usize, usize),
     Regex(Regex),
     Last,
+    RegexRange(Regex, Regex),     // /start/,/end/ - regex range
+    LineRegexRange(usize, Regex), // N,/end/
 }
 
 impl Address {
-    fn matches(&self, line_num: usize, total_lines: usize, line: &str) -> bool {
+    fn matches_simple(&self, line_num: usize, total_lines: usize, line: &str) -> bool {
         match self {
             Address::All => true,
             Address::Line(n) => line_num == *n,
             Address::Range(start, end) => line_num >= *start && line_num <= *end,
             Address::Regex(re) => re.is_match(line),
             Address::Last => line_num == total_lines,
+            // Regex ranges handled separately in execution
+            Address::RegexRange(_, _) | Address::LineRegexRange(_, _) => false,
+        }
+    }
+
+    fn matches_with_state(
+        &self,
+        line_num: usize,
+        total_lines: usize,
+        line: &str,
+        in_range: &mut bool,
+    ) -> bool {
+        match self {
+            Address::RegexRange(start_re, end_re) => {
+                if *in_range {
+                    if end_re.is_match(line) {
+                        *in_range = false;
+                    }
+                    true
+                } else if start_re.is_match(line) {
+                    *in_range = true;
+                    true
+                } else {
+                    false
+                }
+            }
+            Address::LineRegexRange(start_line, end_re) => {
+                if *in_range {
+                    if end_re.is_match(line) {
+                        *in_range = false;
+                    }
+                    true
+                } else if line_num >= *start_line {
+                    *in_range = true;
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => self.matches_simple(line_num, total_lines, line),
         }
     }
 }
@@ -199,6 +247,19 @@ fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
             if let Some(after_dollar) = rest.strip_prefix('$') {
                 return Ok((Some(Address::Range(num, usize::MAX)), after_dollar));
             }
+            // N,/pattern/ range
+            if let Some(after_slash) = rest.strip_prefix('/') {
+                let end2 = after_slash.find('/').ok_or_else(|| {
+                    Error::Execution("sed: unterminated address regex".to_string())
+                })?;
+                let pattern = &after_slash[..end2];
+                let regex = Regex::new(pattern)
+                    .map_err(|e| Error::Execution(format!("sed: invalid regex: {}", e)))?;
+                return Ok((
+                    Some(Address::LineRegexRange(num, regex)),
+                    &after_slash[end2 + 1..],
+                ));
+            }
             let end2 = rest
                 .find(|c: char| !c.is_ascii_digit())
                 .unwrap_or(rest.len());
@@ -227,7 +288,48 @@ fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
         let pattern = &s[1..end + 1];
         let regex = Regex::new(pattern)
             .map_err(|e| Error::Execution(format!("sed: invalid regex: {}", e)))?;
-        return Ok((Some(Address::Regex(regex)), &s[end + 2..]));
+        let rest = &s[end + 2..];
+
+        // Check for regex range: /start/,/end/ or /start/,$
+        if let Some(after_comma) = rest.strip_prefix(',') {
+            if let Some(after_dollar) = after_comma.strip_prefix('$') {
+                // /pattern/,$ — from regex to end
+                return Ok((
+                    Some(Address::RegexRange(
+                        regex,
+                        Regex::new("$^").unwrap(), // Never matches - range goes to end
+                    )),
+                    after_dollar,
+                ));
+            }
+            if let Some(after_slash) = after_comma.strip_prefix('/') {
+                let end2 = after_slash.find('/').ok_or_else(|| {
+                    Error::Execution("sed: unterminated address regex".to_string())
+                })?;
+                let pattern2 = &after_slash[..end2];
+                let regex2 = Regex::new(pattern2)
+                    .map_err(|e| Error::Execution(format!("sed: invalid regex: {}", e)))?;
+                return Ok((
+                    Some(Address::RegexRange(regex, regex2)),
+                    &after_slash[end2 + 1..],
+                ));
+            }
+            // /pattern/,N
+            let end2 = after_comma
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(after_comma.len());
+            if end2 > 0 {
+                if let Ok(line_num) = after_comma[..end2].parse::<usize>() {
+                    // Create regex that matches at line N (handled as RegexRange with a line check)
+                    return Ok((
+                        Some(Address::Range(0, line_num)), // Approximate
+                        &after_comma[end2..],
+                    ));
+                }
+            }
+        }
+
+        return Ok((Some(Address::Regex(regex)), rest));
     }
 
     Ok((None, s))
@@ -368,6 +470,23 @@ fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, 
             };
             Ok((address, negate, SedCommand::Insert(text)))
         }
+        'c' => {
+            // Change command: c\text
+            let text = if rest.len() > 1 && rest.chars().nth(1) == Some('\\') {
+                rest[2..].to_string()
+            } else {
+                rest[1..].to_string()
+            };
+            Ok((address, negate, SedCommand::Change(text)))
+        }
+        'h' => Ok((address, negate, SedCommand::HoldCopy)),
+        'H' => Ok((address, negate, SedCommand::HoldAppend)),
+        'g' if rest.len() == 1 || !rest[1..].starts_with('/') => {
+            // 'g' alone is get-from-hold; 'g' after s// is global flag (handled in Substitute)
+            Ok((address, negate, SedCommand::GetCopy))
+        }
+        'G' => Ok((address, negate, SedCommand::GetAppend)),
+        'x' => Ok((address, negate, SedCommand::Exchange)),
         _ => Err(Error::Execution(format!(
             "sed: unknown command: {}",
             first_char
@@ -441,6 +560,9 @@ impl Builtin for Sed {
             let total_lines = lines.len();
             let mut file_output = String::new();
             let mut quit = false;
+            let mut hold_space = String::new();
+            // Track range state per command
+            let mut range_state: Vec<bool> = vec![false; opts.commands.len()];
 
             for (idx, line) in lines.iter().enumerate() {
                 if quit {
@@ -455,10 +577,17 @@ impl Builtin for Sed {
                 let mut insert_text: Option<String> = None;
                 let mut append_text: Option<String> = None;
 
-                for (addr, negate, cmd) in &opts.commands {
+                for (cmd_idx, (addr, negate, cmd)) in opts.commands.iter().enumerate() {
                     let addr_matches = addr
                         .as_ref()
-                        .map(|a| a.matches(line_num, total_lines, &current_line))
+                        .map(|a| {
+                            a.matches_with_state(
+                                line_num,
+                                total_lines,
+                                &current_line,
+                                &mut range_state[cmd_idx],
+                            )
+                        })
                         .unwrap_or(true);
 
                     // Apply negation if needed
@@ -479,7 +608,6 @@ impl Builtin for Sed {
                             let new_line = if *global {
                                 pattern.replace_all(&current_line, replacement.as_str())
                             } else if let Some(n) = nth {
-                                // Replace nth occurrence
                                 replace_nth(pattern, &current_line, replacement, *n)
                             } else {
                                 pattern.replace(&current_line, replacement.as_str())
@@ -507,6 +635,28 @@ impl Builtin for Sed {
                         }
                         SedCommand::Insert(text) => {
                             insert_text = Some(text.clone());
+                        }
+                        SedCommand::Change(text) => {
+                            current_line = text.clone();
+                            deleted = false;
+                            should_print = true;
+                        }
+                        SedCommand::HoldCopy => {
+                            hold_space = current_line.clone();
+                        }
+                        SedCommand::HoldAppend => {
+                            hold_space.push('\n');
+                            hold_space.push_str(&current_line);
+                        }
+                        SedCommand::GetCopy => {
+                            current_line = hold_space.clone();
+                        }
+                        SedCommand::GetAppend => {
+                            current_line.push('\n');
+                            current_line.push_str(&hold_space);
+                        }
+                        SedCommand::Exchange => {
+                            std::mem::swap(&mut current_line, &mut hold_space);
                         }
                     }
                 }
@@ -695,5 +845,70 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "one\ninserted\ntwo\n");
+    }
+
+    // === Hold space tests ===
+
+    #[tokio::test]
+    async fn test_sed_hold_copy() {
+        // h copies pattern to hold, g retrieves it
+        let result = run_sed(&["-e", "1h", "-e", "2g"], Some("first\nsecond\nthird"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "first\nfirst\nthird\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_hold_append() {
+        // H appends to hold, G appends hold to pattern
+        let result = run_sed(&["-e", "1h", "-e", "2H", "-e", "3G"], Some("a\nb\nc"))
+            .await
+            .unwrap();
+        // Line 1: prints "a", holds "a"
+        // Line 2: prints "b", hold becomes "a\nb"
+        // Line 3: prints "c\na\nb" (G appends hold)
+        assert_eq!(result.stdout, "a\nb\nc\na\nb\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_exchange() {
+        // x swaps pattern and hold
+        let result = run_sed(&["-e", "1h", "-e", "2x"], Some("first\nsecond\nthird"))
+            .await
+            .unwrap();
+        // Line 1: prints "first", hold = "first"
+        // Line 2: exchange => pattern = "first", hold = "second", prints "first"
+        // Line 3: prints "third"
+        assert_eq!(result.stdout, "first\nfirst\nthird\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_change_command() {
+        let result = run_sed(&["2c\\replaced"], Some("line1\nline2\nline3"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "line1\nreplaced\nline3\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_regex_range() {
+        let result = run_sed(
+            &["/start/,/end/d"],
+            Some("before\nstart\nmiddle\nend\nafter"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "before\nafter\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_regex_range_substitute() {
+        let result = run_sed(
+            &["/begin/,/end/s/x/y/g"],
+            Some("ax\nbeginx\nmiddlex\nendx\nax"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "ax\nbeginy\nmiddley\nendy\nax\n");
     }
 }

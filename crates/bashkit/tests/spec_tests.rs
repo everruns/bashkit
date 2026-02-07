@@ -8,7 +8,7 @@
 //! - `### skip: reason` - Skip test entirely (not run in any test)
 //! - `### bash_diff: reason` - Known difference from real bash (runs in spec tests, excluded from comparison)
 //!
-//! ## Skipped Tests TODO (108 total)
+//! ## Skipped Tests TODO (87 total)
 //!
 //! The following tests are skipped and need fixes:
 //!
