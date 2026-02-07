@@ -1,0 +1,27 @@
+# bashkit-eval: LLM evaluation harness for bashkit tool usage
+# Measures how well models use a sandboxed bash tool in agentic workloads
+# See specs/011-eval.md for design decisions
+
+[package]
+name = "bashkit-eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "LLM evaluation harness for bashkit tool usage"
+
+[[bin]]
+name = "bashkit-eval"
+path = "src/main.rs"
+
+[dependencies]
+bashkit = { path = "../bashkit" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+reqwest.workspace = true
+regex.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
