@@ -1,12 +1,9 @@
 # Embedded Python (Monty)
 
-> **Experimental.** Monty is an early-stage Python interpreter with known
-> crash-level bugs in its parser (see [monty#112][monty112]). BashKit mitigates
-> this via subprocess isolation, but the integration should be treated as
-> experimental. There may be undiscovered security issues. Use with caution
-> when processing untrusted input.
-
-[monty112]: https://github.com/pydantic/monty/issues/112
+> **Experimental.** Monty is an early-stage Python interpreter that may have
+> undiscovered crash or security bugs. BashKit mitigates crashes via subprocess
+> isolation, but the integration should be treated as experimental. Use with
+> caution when processing untrusted input.
 
 Bashkit embeds the [Monty](https://github.com/pydantic/monty) Python interpreter,
 a pure-Rust implementation of Python 3.12. Python runs entirely in-memory with

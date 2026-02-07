@@ -3,10 +3,9 @@
 //! # Experimental
 //!
 //! **This integration is experimental.** Monty is an early-stage Python interpreter
-//! with known crash-level bugs in its parser (e.g., [monty#112](https://github.com/pydantic/monty/issues/112) —
-//! deeply nested parentheses cause a segfault). Subprocess isolation mitigates host
-//! crashes, but there may be undiscovered security issues in Monty's parser or VM
-//! that bypass BashKit's sandboxing. Use with caution when processing untrusted input.
+//! that may have undiscovered crash or security bugs in its parser or VM.
+//! Subprocess isolation mitigates host crashes, but undiscovered issues may bypass
+//! BashKit's sandboxing. Use with caution when processing untrusted input.
 //!
 //! # Overview
 //!
@@ -50,7 +49,7 @@ const DEFAULT_MAX_RECURSION: usize = 200;
 /// **Experimental:** Monty has known parser crash bugs. `Subprocess` mode is
 /// strongly recommended for untrusted input.
 ///
-/// - `InProcess`: fast, but a parser segfault (e.g., monty#112) kills the host.
+/// - `InProcess`: fast, but a parser/VM segfault kills the host.
 /// - `Subprocess`: crash-isolated via `bashkit-monty-worker` child process.
 /// - `Auto` (default): subprocess if worker binary found, else in-process.
 #[derive(Debug, Clone, Default)]
@@ -345,9 +344,8 @@ async fn run_python(
 
 /// Execute Python code in a subprocess for crash isolation.
 ///
-/// THREAT[TM-PY-022]: If the worker segfaults (e.g., monty parser stack overflow
-/// on deeply nested parentheses — monty#112), we get a child-exit-with-signal
-/// instead of crashing the host.
+/// THREAT[TM-PY-022]: If the worker segfaults (e.g., monty parser or VM crash),
+/// we get a child-exit-with-signal instead of crashing the host.
 ///
 /// THREAT[TM-PY-025]: Worker environment is cleared to prevent host env var leakage.
 /// Only minimal vars needed for operation are passed through.

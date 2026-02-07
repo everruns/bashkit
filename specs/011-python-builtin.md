@@ -1,10 +1,9 @@
 # 011: Python Builtin (Monty)
 
-> **Experimental.** Monty is an early-stage Python interpreter. Its parser is
-> known to segfault on certain inputs (see [monty#112](https://github.com/pydantic/monty/issues/112)).
-> Subprocess isolation mitigates host crashes, but the integration may have
-> undiscovered security gaps. Do not rely on it for untrusted-input safety
-> without additional hardening.
+> **Experimental.** Monty is an early-stage Python interpreter that may have
+> undiscovered crash or security bugs. Subprocess isolation mitigates host
+> crashes, but do not rely on it for untrusted-input safety without
+> additional hardening.
 
 ## Status
 Implemented (experimental)
@@ -175,9 +174,9 @@ resumes execution with the result (or a Python exception).
 
 ### Subprocess Isolation (Crash Protection)
 
-Monty runs in-process by default, but a parser bug (e.g., [monty#112](https://github.com/pydantic/monty/issues/112) —
-deeply nested parentheses causing a segfault) can crash the host process.
-`catch_unwind` does NOT help because a segfault is an OS signal, not a Rust panic.
+Monty runs in-process by default, but a parser or VM bug that causes a segfault
+will crash the host process. `catch_unwind` does NOT help because a segfault is
+an OS signal, not a Rust panic.
 
 To mitigate this, BashKit can run Monty in a separate `bashkit-monty-worker`
 subprocess. If the worker segfaults, the parent catches the child exit and

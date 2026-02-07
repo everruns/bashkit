@@ -1380,7 +1380,7 @@ mod python_subprocess_security {
 }
 
 // =============================================================================
-// 8. NESTING DEPTH SECURITY TESTS (pydantic/monty#112 analogues)
+// 8. NESTING DEPTH SECURITY TESTS
 //
 // These tests verify that deeply nested structures cannot crash the host via
 // stack overflow. Covers parser, command substitution, arithmetic, and
@@ -1595,7 +1595,7 @@ mod nesting_depth_security {
     // ---- MISCONFIGURATION TESTS: absurd limits still safe ----
 
     /// Even with max_ast_depth=1_000_000, the parser hard-caps at 500 to prevent
-    /// stack overflow. This is the key pydantic/monty#112 defense: misconfiguration
+    /// stack overflow. This is a key defense: misconfiguration
     /// cannot crash the host process.
     #[tokio::test]
     async fn misconfig_huge_ast_depth_still_safe() {

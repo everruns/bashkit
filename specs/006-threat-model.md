@@ -199,8 +199,7 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 
 **History** (TM-DOS-021): Previously marked MITIGATED but child parsers created via
 `Parser::new()` used default limits, ignoring parent configuration. Fixed to propagate
-`remaining_depth` and `fuel` from parent parser. See pydantic/monty#112 for analogous
-vulnerability in Python parsers.
+`remaining_depth` and `fuel` from parent parser.
 
 #### 1.4 CPU Exhaustion
 
@@ -990,11 +989,9 @@ The following components are fuzz-tested for robustness:
 
 ## Python / Monty Security (TM-PY)
 
-> **Experimental.** Monty is an early-stage Python interpreter with known
-> parser-level crash bugs (e.g., [monty#112](https://github.com/pydantic/monty/issues/112)).
-> Subprocess isolation mitigates host crashes, but this integration should be
-> treated as experimental. Undiscovered vulnerabilities in Monty's parser or VM
-> may bypass BashKit's sandboxing layers.
+> **Experimental.** Monty is an early-stage Python interpreter that may have
+> undiscovered crash or security bugs. Subprocess isolation mitigates host
+> crashes, but this integration should be treated as experimental.
 
 BashKit embeds the Monty Python interpreter (pydantic/monty) with VFS bridging.
 Python `pathlib.Path` operations are bridged to BashKit's virtual filesystem via
@@ -1027,7 +1024,7 @@ events that BashKit intercepts and dispatches to the VFS.
 | TM-PY-019 | Crash on missing file | Medium | FileNotFoundError raised, not panic | `threat_python_vfs_error_handling` |
 | TM-PY-020 | Network access from Python | Critical | Monty has no socket/network module | `threat_python_vfs_no_network` |
 | TM-PY-021 | VFS mkdir escape | Medium | mkdir operates only in VFS | `threat_python_vfs_mkdir_sandboxed` |
-| TM-PY-022 | Parser crash kills host (monty#112) | Critical | Subprocess isolation: worker segfault → child exit, not host crash | `subprocess_worker_crash_via_false_binary` |
+| TM-PY-022 | Parser/VM crash kills host | Critical | Subprocess isolation: worker segfault → child exit, not host crash | `subprocess_worker_crash_via_false_binary` |
 | TM-PY-023 | Worker binary spoofing via env var / PATH | Critical | Caller responsibility (like TM-INF-001); document risk | `threat_python_subprocess_worker_spoofing` |
 | TM-PY-024 | Worker hang blocks parent (no IPC timeout) | High | IPC reads wrapped in `tokio::time::timeout` (max_duration + 5s) | `threat_python_subprocess_ipc_timeout` |
 | TM-PY-025 | Worker inherits host environment | High | `env_clear()` on worker Command; env vars passed only via IPC | `threat_python_subprocess_env_isolation` |
@@ -1050,7 +1047,7 @@ events that BashKit intercepts and dispatches to the VFS.
 
 When `PythonIsolation::Subprocess` (or `Auto` with worker available), Monty runs
 in a child process (`bashkit-monty-worker`). This isolates the host from parser
-segfaults (monty#112) and other fatal crashes.
+segfaults and other fatal crashes.
 
 **IPC Architecture:**
 ```

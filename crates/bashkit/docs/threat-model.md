@@ -266,7 +266,7 @@ let bash = Bash::builder()
 ## Parser Depth Protection
 
 The parser includes multiple layers of depth protection to prevent stack overflow
-attacks (similar to [pydantic/monty#112](https://github.com/pydantic/monty/issues/112)):
+attacks:
 
 1. **Configurable depth limit** (`max_ast_depth`, default 100): Controls maximum nesting
    of compound commands (if/for/while/case/subshell).
@@ -296,8 +296,8 @@ attacks (similar to [pydantic/monty#112](https://github.com/pydantic/monty/issue
 
 When using `PythonIsolation::Subprocess`, the Monty interpreter runs in a separate
 child process (`bashkit-monty-worker`). This provides crash isolation — if the
-interpreter segfaults (e.g., [pydantic/monty#112](https://github.com/pydantic/monty/issues/112)),
-only the worker process dies. The host continues running normally.
+interpreter segfaults, only the worker process dies. The host continues running
+normally.
 
 | Threat | Mitigation |
 |--------|------------|
