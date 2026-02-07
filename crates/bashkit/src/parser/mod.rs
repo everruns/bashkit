@@ -28,7 +28,7 @@ use crate::error::{Error, Result};
 const DEFAULT_MAX_AST_DEPTH: usize = 100;
 
 /// Hard cap on AST depth to prevent stack overflow even if caller misconfigures limits.
-/// THREAT[TM-DOS-022]: Protects against pydantic/monty#112-style attacks where
+/// THREAT[TM-DOS-022]: Protects against deeply nested input attacks where
 /// a large max_depth setting allows recursion deep enough to overflow the native stack.
 /// This cap cannot be overridden by the caller.
 ///

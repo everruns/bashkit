@@ -1,0 +1,25 @@
+# Isolated subprocess worker for running Monty (embedded Python) outside the host process.
+# If Monty segfaults (e.g., parser stack overflow), only this process dies.
+# The host bashkit process catches the child exit and returns a shell error.
+
+[package]
+name = "bashkit-monty-worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Subprocess worker for crash-isolated Monty (Python) execution in Bashkit"
+
+[lib]
+name = "bashkit_monty_worker"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bashkit-monty-worker"
+path = "src/main.rs"
+
+[dependencies]
+monty = { git = "https://github.com/pydantic/monty", version = "0.0.3" }
+serde = { workspace = true }
+serde_json = { workspace = true }
