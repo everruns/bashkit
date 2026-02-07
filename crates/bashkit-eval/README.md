@@ -46,7 +46,7 @@ Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 
 ## Results
 
-### 2026-02-07 — Multi-Model Comparison (run 2)
+### 2026-02-07 — Multi-Model Comparison
 
 | Metric | Opus 4.6 | Haiku 4.5 | GPT-5.2 |
 |--------|----------|-----------|---------|
@@ -82,14 +82,5 @@ Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 - `sysinfo_date_calc` fails for Opus (0/7 calls succeeded) — bashkit `date -d` limitation
 - `complex_todo_app` fails for all — exact output format mismatch
 - `script_function_lib` fails for Opus and GPT — bashkit `source` limitation; Haiku worked around it
-
-### 2026-02-06 — Initial Baseline
-
-| Metric | Sonnet 4 | GPT-5.2 |
-|--------|----------|---------|
-| Tasks passed | 19/25 | 16/25 |
-| Score | 91% | 80% |
-| Tokens | 232K in / 25K out | 110K in / 12K out |
-| Duration | ~5 min | ~10 min |
 
 Full per-task details in saved markdown reports under `eval-results/`.
