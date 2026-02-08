@@ -1,6 +1,6 @@
 // Agent loop: send messages → get response → execute tool calls → repeat
 // Uses Bash directly (not BashTool) for persistent VFS across tool calls
-// BashTool used only for input_schema/system_prompt/llmtext introspection
+// BashTool used only for input_schema/system_prompt introspection
 
 use anyhow::{Context, Result};
 use bashkit::{Bash, BashTool, Tool};
@@ -82,7 +82,7 @@ pub async fn run_agent_loop(
     };
 
     // Compose system message
-    let default_system = format!("{}\n\n{}", tool.system_prompt(), tool.llmtext());
+    let default_system = tool.system_prompt();
     let system = task.system.as_deref().unwrap_or(&default_system);
 
     // Initialize conversation
