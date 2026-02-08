@@ -220,18 +220,38 @@ Bashkit includes an eval harness ([bashkit-eval](crates/bashkit-eval/)) that mea
 | system_info | 100% | 100% | 100% |
 | text_processing | 100% | 100% | 100% |
 
-### Key Findings
+### Impact of Interpreter Fixes
 
-- **Tool call success is the critical metric** — it measures how often bashkit can execute what models generate. All three models improved significantly after recent interpreter fixes (Opus +8%, Haiku +10%, GPT +19%).
-- **Remaining bashkit gaps** that cause failures across all models:
-  - Compound commands in pipelines (`cmd | while read line; do ... done`)
-  - Awk associative array assignment (`arr[$key]=$val`)
-  - Heredoc-to-file redirection (`cat > file <<'EOF'`)
-  - `source`/`.` not loading function definitions into caller scope
-  - `chmod` symbolic modes (`+x`)
-- **Model differences**: Claude models adapt better when bashkit rejects a command — they retry with simpler constructs. GPT-5.2 tends to repeat failing patterns, leading to lower tool success rates.
+Tool call success (how often bashkit executes what models generate) improved significantly after recent fixes:
 
-Full results with per-task traces are in [eval-results/](eval-results/).
+| Model | Before | After | Delta |
+|-------|--------|-------|-------|
+| Claude Opus 4.6 | 79% | 87% | **+8%** |
+| Claude Haiku 4.5 | 77% | 87% | **+10%** |
+| GPT-5.2 | 59% | 78% | **+19%** |
+
+Key fixes: `date -d` compound expressions/quote stripping (eliminated 10k command limit exhaustion), awk field math.
+
+### Remaining Bashkit Gaps
+
+Failures that occur across all models (interpreter limitations, not model quality):
+
+| Gap | Impact | Example |
+|-----|--------|---------|
+| Compound commands in pipelines | ~6 errors | `cmd \| while read line; do ... done` |
+| Awk associative arrays | ~9 errors | `arr[$key]=$val` |
+| Heredoc-to-file redirect | ~10 errors | `cat > file <<'EOF'` writes to stdout instead |
+| `source`/`.` function loading | ~5 errors | Functions from sourced files not in caller scope |
+| `chmod` symbolic modes | ~6 errors | `chmod +x file` → "invalid mode" |
+| Parser fuel / `[[ ]]` | ~25 errors | Complex conditionals exhaust parser budget |
+
+### Model Behavior
+
+- **Claude models** adapt when bashkit rejects a command — retry with simpler constructs (e.g., `[[ ]]` → `[ ]`, pipelines → temp files)
+- **GPT-5.2** tends to repeat failing patterns, leading to lower tool success despite fewer total calls
+- **Haiku 4.5** best score/cost ratio — fewer tokens, faster, highest pass rate
+
+Full results with per-task traces in [eval-results/](eval-results/). See [bashkit-eval](crates/bashkit-eval/) for usage and options.
 
 ```bash
 just eval                    # Run eval with default model
