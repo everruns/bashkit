@@ -194,6 +194,6 @@ All Python execution is sandboxed:
 - **Resource limited** — allocation, time, memory, and recursion caps
 - **Path traversal safe** — `../..` is resolved by VFS path normalization
 
-See threat IDs TM-PY-001 through TM-PY-021 in the [threat model](./threat-model.md).
+See threat IDs TM-PY-001 through TM-PY-026 in the [threat model](./threat-model.md).
 
 [spec]: https://github.com/anthropics/bashkit/blob/main/specs/011-python-builtin.md

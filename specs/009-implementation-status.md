@@ -107,54 +107,58 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 885
+**Total spec test cases:** 962
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 509 | Yes | 438 | 71 | `bash_spec_tests` in CI |
-| AWK | 89 | Yes | 74 | 15 | loops, arrays, -v, ternary, field assign |
-| Grep | 70 | Yes | 65 | 5 | now with -z, -r, -a, -b, -H, -h, -f, -P |
-| Sed | 65 | Yes | 52 | 13 | hold space, change, regex ranges, -E |
-| JQ | 95 | Yes | 85 | 10 | reduce, walk, regex funcs |
-| Python | 57 | Yes | 49 | 8 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **885** | **Yes** | **763** | **122** | |
+| Bash (core) | 588 | Yes | 524 | 64 | `bash_spec_tests` in CI |
+| AWK | 89 | Yes | 72 | 17 | loops, arrays, -v, ternary, field assign |
+| Grep | 63 | Yes | 58 | 5 | now with -z, -r, -a, -b, -H, -h, -f, -P |
+| Sed | 68 | Yes | 56 | 12 | hold space, change, regex ranges, -E |
+| JQ | 97 | Yes | 87 | 10 | reduce, walk, regex funcs |
+| Python | 57 | Yes | 51 | 6 | **Experimental.** VFS bridging, pathlib, env vars |
+| **Total** | **962** | **Yes** | **848** | **114** | |
 
 ### Bash Spec Tests Breakdown
 
 | File | Cases | Notes |
 |------|-------|-------|
-| arithmetic.test.sh | 22 | includes logical operators |
-| arrays.test.sh | 14 | includes indices |
+| arithmetic.test.sh | 29 | includes logical operators |
+| arrays.test.sh | 16 | includes indices |
 | background.test.sh | 2 | |
-| brace-expansion.test.sh | 10 | {a,b,c}, {1..5} |
-| command-subst.test.sh | 14 | |
+| bash-command.test.sh | 25 | bash/sh re-invocation |
+| brace-expansion.test.sh | 11 | {a,b,c}, {1..5} |
+| column.test.sh | 5 | column alignment |
+| command-not-found.test.sh | 9 | unknown command handling |
+| command-subst.test.sh | 14 | 2 skipped |
 | control-flow.test.sh | 31 | if/elif/else, for, while, case |
-| cuttr.test.sh | 35 | cut and tr commands |
-| date.test.sh | 37 | format specifiers, `-d` relative/compound/epoch |
-| echo.test.sh | 26 | escape sequences |
-| errexit.test.sh | 10 | set -e tests |
-| fileops.test.sh | 15 | |
+| cuttr.test.sh | 32 | cut and tr commands (23 skipped) |
+| date.test.sh | 37 | format specifiers, `-d` relative/compound/epoch (6 skipped) |
+| diff.test.sh | 4 | line diffs |
+| echo.test.sh | 24 | escape sequences (1 skipped) |
+| errexit.test.sh | 8 | set -e tests |
+| fileops.test.sh | 21 | |
+| find.test.sh | 8 | file search |
 | functions.test.sh | 14 | |
-| source.test.sh | 21 | source/., function loading, PATH search, positional params |
-| globs.test.sh | 7 | |
+| globs.test.sh | 7 | 1 skipped |
 | headtail.test.sh | 14 | |
-| herestring.test.sh | 8 | |
-| negative-tests.test.sh | 8 | error conditions |
+| herestring.test.sh | 8 | 1 skipped |
+| hextools.test.sh | 4 | od/xxd/hexdump (3 skipped) |
+| negative-tests.test.sh | 13 | error conditions (4 skipped) |
 | nl.test.sh | 14 | line numbering |
 | paste.test.sh | 4 | line merging (2 skipped) |
-| column.test.sh | 5 | column alignment |
-| diff.test.sh | 4 | line diffs |
-| hextools.test.sh | 4 | od/xxd/hexdump (3 skipped) |
 | path.test.sh | 14 | |
-| pipes-redirects.test.sh | 13 | includes stderr redirects |
+| pipes-redirects.test.sh | 19 | includes stderr redirects |
+| printf.test.sh | 18 | format specifiers |
 | procsub.test.sh | 6 | |
 | sleep.test.sh | 6 | |
-| sortuniq.test.sh | 31 | sort and uniq |
-| test-operators.test.sh | 12 | file/string tests |
-| time.test.sh | 12 | Wall-clock only (user/sys always 0) |
-| timeout.test.sh | 17 | 2 skipped (timing-dependent) |
-| variables.test.sh | 20 | includes special vars |
-| wc.test.sh | 22 | word count |
+| sortuniq.test.sh | 28 | sort and uniq (13 skipped) |
+| source.test.sh | 19 | source/., function loading, PATH search, positional params |
+| test-operators.test.sh | 17 | file/string tests (2 skipped) |
+| time.test.sh | 11 | Wall-clock only (user/sys always 0) |
+| timeout.test.sh | 16 | |
+| variables.test.sh | 38 | includes special vars |
+| wc.test.sh | 20 | word count (5 skipped) |
 
 ## Shell Features
 
@@ -190,15 +194,20 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
+**79 core builtins + 2 feature-gated = 81 total**
+
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
-`export`, `set`, `unset`, `local`, `source`, `read`, `shift`, `break`,
+`export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,
 `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`,
 `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`,
 `sort`, `uniq`, `cut`, `tr`, `paste`, `column`, `diff`, `comm`, `date`,
 `wait`, `curl`, `wget`, `timeout`,
-`time` (keyword), `whoami`, `hostname`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
+`time` (keyword), `whoami`, `hostname`, `uname`, `id`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
 `:` (colon), `eval`, `readonly`, `times`, `bash`, `sh`,
 `od`, `xxd`, `hexdump`, `strings`,
+`tar`, `gzip`, `gunzip`, `file`, `less`, `stat`, `watch`,
+`env`, `printenv`, `history`, `df`, `du`,
+`git` (requires `git` feature, see [010-git-support.md](010-git-support.md)),
 `python`, `python3` (requires `python` feature, see [011-python-builtin.md](011-python-builtin.md))
 
 ### Not Yet Implemented

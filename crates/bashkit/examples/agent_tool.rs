@@ -167,6 +167,15 @@ impl Agent {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await?;
+            // Gracefully handle billing/auth errors in CI
+            if status.as_u16() == 400 && body.contains("credit balance") {
+                eprintln!("API key has no credits — skipping example (not a code error)");
+                std::process::exit(0);
+            }
+            if status.as_u16() == 401 {
+                eprintln!("Invalid API key — skipping example (not a code error)");
+                std::process::exit(0);
+            }
             anyhow::bail!("API error {}: {}", status, body);
         }
 

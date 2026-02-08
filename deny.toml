@@ -30,6 +30,20 @@ exceptions = []
 # expression = "MIT"
 # license-files = [{ path = "LICENSE", hash = 0x00000000 }]
 
+[advisories]
+# Ignore unmaintained transitive dependencies we can't control
+ignore = [
+    # atomic-polyfill: transitive via monty -> postcard -> heapless
+    # No security impact; upstream (monty) needs to update
+    "RUSTSEC-2023-0089",
+    # instant: transitive via bashkit-bench (dev/bench only)
+    # No security impact; bench-only dependency
+    "RUSTSEC-2024-0384",
+    # paste: transitive via bashkit-bench -> statrs -> nalgebra -> simba
+    # No security impact; bench-only dependency
+    "RUSTSEC-2024-0436",
+]
+
 [bans]
 # Warn on multiple versions of the same crate
 multiple-versions = "warn"

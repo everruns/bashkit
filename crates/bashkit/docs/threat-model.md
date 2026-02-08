@@ -316,11 +316,13 @@ control this variable or the system PATH.
 
 Bashkit includes comprehensive security tests:
 
-- **Threat Model Tests**: [`tests/threat_model_tests.rs`][threat_tests] - 51+ tests
+- **Threat Model Tests**: [`tests/threat_model_tests.rs`][threat_tests] - 117 tests
 - **Nesting Depth Tests**: 18 tests covering positive, negative, misconfiguration,
   and regression scenarios for parser depth attacks
-- **Fail-Point Tests**: [`tests/security_failpoint_tests.rs`][failpoint_tests]
-- **Network Security**: [`tests/network_security_tests.rs`][network_tests] - 43 tests
+- **Fail-Point Tests**: [`tests/security_failpoint_tests.rs`][failpoint_tests] - 14 tests
+- **Network Security**: [`tests/network_security_tests.rs`][network_tests] - 53 tests
+- **Builtin Error Security**: `tests/builtin_error_security_tests.rs` - 39 tests
+- **Logging Security**: `tests/logging_security_tests.rs` - 26 tests
 - **Fuzz Testing**: [`fuzz/`][fuzz] - Parser and lexer fuzzing
 
 ## Reporting Security Issues
@@ -352,12 +354,12 @@ Full threat analysis: [`specs/006-threat-model.md`][spec]
 [system]: https://docs.rs/bashkit/latest/bashkit/struct.BashBuilder.html#method.username
 [allowlist]: https://docs.rs/bashkit/latest/bashkit/struct.NetworkAllowlist.html
 [client]: https://docs.rs/bashkit/latest/bashkit/struct.HttpClient.html
-[threat_tests]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/tests/threat_model_tests.rs
-[failpoint_tests]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/tests/security_failpoint_tests.rs
-[network_tests]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/tests/network_security_tests.rs
-[fuzz]: https://github.com/anthropics/bashkit/tree/main/crates/bashkit/fuzz
-[spec]: https://github.com/anthropics/bashkit/blob/main/specs/006-threat-model.md
-[parser]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/src/parser/mod.rs
-[interp]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/src/interpreter/mod.rs
-[date]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/src/builtins/date.rs
-[diff]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/src/builtins/diff.rs
+[threat_tests]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/tests/threat_model_tests.rs
+[failpoint_tests]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/tests/security_failpoint_tests.rs
+[network_tests]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/tests/network_security_tests.rs
+[fuzz]: https://github.com/everruns/bashkit/tree/main/crates/bashkit/fuzz
+[spec]: https://github.com/everruns/bashkit/blob/main/specs/006-threat-model.md
+[parser]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/src/parser/mod.rs
+[interp]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/src/interpreter/mod.rs
+[date]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/src/builtins/date.rs
+[diff]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/src/builtins/diff.rs

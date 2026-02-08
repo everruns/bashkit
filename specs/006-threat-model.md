@@ -913,9 +913,9 @@ FsLimits::new()
 | Logging security | ✅ | ❌ | ✅ | - | ✅ |
 
 **Test Files**:
-- `tests/threat_model_tests.rs` - 57+ threat-based security tests
+- `tests/threat_model_tests.rs` - 117 threat-based security tests
 - `tests/security_failpoint_tests.rs` - Fail-point injection tests
-- `tests/builtin_error_security_tests.rs` - Custom builtin error handling tests (34 tests)
+- `tests/builtin_error_security_tests.rs` - Custom builtin error handling tests (39 tests)
 - `tests/network_security_tests.rs` - HTTP security tests (53 tests: allowlist, size limits, timeouts)
 - `tests/logging_security_tests.rs` - Logging security tests (redaction, injection)
 
@@ -1134,5 +1134,5 @@ not attacker-controlled. This is analogous to TM-INF-001 (env var sanitization).
 - `specs/005-security-testing.md` - Fail-point testing
 - `specs/011-python-builtin.md` - Python builtin specification
 - `src/builtins/system.rs` - Hardcoded system builtins
-- `tests/threat_model_tests.rs` - Threat model test suite (72 tests)
+- `tests/threat_model_tests.rs` - Threat model test suite (117 tests)
 - `tests/security_failpoint_tests.rs` - Fail-point security tests
