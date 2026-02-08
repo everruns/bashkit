@@ -60,8 +60,8 @@ for sandbox security reasons. See the compliance spec for details.
 | `unset` | `VAR` | Unset variable |
 | `shift` | `[N]` | Shift positional params |
 | `local` | `VAR=value` | Local variables |
-| `source` | `file` | Source script |
-| `.` | `file` | Alias for source |
+| `source` | `file [args]` | Source script; loads functions/variables, PATH search, positional params |
+| `.` | `file [args]` | Alias for source |
 | `break` | `[N]` | Break from loop |
 | `continue` | `[N]` | Continue loop |
 | `return` | `[N]` | Return from function |

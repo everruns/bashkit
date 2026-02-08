@@ -17,7 +17,7 @@ in a sandboxed environment. All builtins operate on the virtual filesystem.
 - `break`, `continue` - Loop control
 - `cd`, `pwd` - Navigation
 - `export`, `local`, `set`, `unset`, `shift` - Variable management
-- `source`, `.` - Script sourcing
+- `source`, `.` - Script sourcing (functions, variables, PATH search, positional params)
 - `test`, `[` - Conditionals (see Test Operators below)
 - `read` - Input
 

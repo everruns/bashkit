@@ -78,7 +78,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 | Utility | Status | Notes |
 |---------|--------|-------|
-| `.` (dot) | Implemented | Execute commands in current environment |
+| `.` (dot) | Implemented | Execute commands in current environment; PATH search, positional params |
 | `:` (colon) | Implemented | Null utility (no-op, returns success) |
 | `break` | Implemented | Exit from loop with optional level count |
 | `continue` | Implemented | Continue loop with optional level count |
@@ -135,6 +135,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | errexit.test.sh | 10 | set -e tests |
 | fileops.test.sh | 15 | |
 | functions.test.sh | 14 | |
+| source.test.sh | 21 | source/., function loading, PATH search, positional params |
 | globs.test.sh | 7 | |
 | headtail.test.sh | 14 | |
 | herestring.test.sh | 8 | |

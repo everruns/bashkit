@@ -25,7 +25,9 @@ use std::sync::Arc;
 use futures::FutureExt;
 
 use crate::builtins::{self, Builtin};
-use crate::error::{Error, Result};
+#[cfg(feature = "failpoints")]
+use crate::error::Error;
+use crate::error::Result;
 use crate::fs::FileSystem;
 use crate::limits::{ExecutionCounters, ExecutionLimits};
 use crate::parser::{
@@ -2011,7 +2013,13 @@ impl Interpreter {
         ))
     }
 
-    /// Execute `source` / `.` - read and execute commands from a file in current shell
+    /// Execute `source` / `.` - read and execute commands from a file in current shell.
+    ///
+    /// Bash behavior:
+    /// - If filename contains a slash, use it directly (absolute or relative to cwd)
+    /// - If filename has no slash, search $PATH directories
+    /// - Extra arguments become positional parameters ($1, $2, ...) during sourcing
+    /// - Original positional parameters are restored after sourcing completes
     async fn execute_source(
         &mut self,
         args: &[String],
@@ -2024,14 +2032,54 @@ impl Interpreter {
             }
         };
 
-        let path = self.resolve_path(filename);
-        let content = match self.fs.read_file(&path).await {
-            Ok(c) => String::from_utf8_lossy(&c).to_string(),
-            Err(_) => {
-                return Ok(ExecResult::err(
-                    format!("source: {}: No such file", filename),
-                    1,
-                ));
+        // Resolve the file path:
+        // - If filename contains '/', resolve relative to cwd
+        // - Otherwise, search $PATH directories (bash behavior)
+        let content = if filename.contains('/') {
+            let path = self.resolve_path(filename);
+            match self.fs.read_file(&path).await {
+                Ok(c) => String::from_utf8_lossy(&c).to_string(),
+                Err(_) => {
+                    return Ok(ExecResult::err(
+                        format!("source: {}: No such file or directory", filename),
+                        1,
+                    ));
+                }
+            }
+        } else {
+            // Search PATH for the file
+            let mut found = None;
+            let path_var = self
+                .variables
+                .get("PATH")
+                .or_else(|| self.env.get("PATH"))
+                .cloned()
+                .unwrap_or_default();
+            for dir in path_var.split(':') {
+                if dir.is_empty() {
+                    continue;
+                }
+                let candidate = PathBuf::from(dir).join(filename);
+                if let Ok(c) = self.fs.read_file(&candidate).await {
+                    found = Some(String::from_utf8_lossy(&c).to_string());
+                    break;
+                }
+            }
+            // Also try cwd as fallback (bash sources from cwd too)
+            if found.is_none() {
+                let path = self.resolve_path(filename);
+                if let Ok(c) = self.fs.read_file(&path).await {
+                    found = Some(String::from_utf8_lossy(&c).to_string());
+                }
+            }
+            match found {
+                Some(c) => c,
+                None => {
+                    return Ok(ExecResult::err(
+                        format!("source: {}: No such file or directory", filename),
+                        1,
+                    ));
+                }
             }
         };
 
@@ -2046,8 +2094,42 @@ impl Interpreter {
             }
         };
 
+        // Set positional parameters if extra arguments provided.
+        // Save and restore the caller's positional params.
+        let source_args: Vec<String> = args[1..].to_vec();
+        let has_source_args = !source_args.is_empty();
+
+        let saved_positional = if has_source_args {
+            let saved = self.call_stack.last().map(|frame| frame.positional.clone());
+            // Push a temporary call frame for positional params
+            if self.call_stack.is_empty() {
+                self.call_stack.push(CallFrame {
+                    name: filename.clone(),
+                    locals: HashMap::new(),
+                    positional: source_args,
+                });
+            } else if let Some(frame) = self.call_stack.last_mut() {
+                frame.positional = source_args;
+            }
+            saved
+        } else {
+            None
+        };
+
         // Execute the script commands in the current shell context
         let mut result = self.execute(&script).await?;
+
+        // Restore positional parameters
+        if has_source_args {
+            if let Some(saved) = saved_positional {
+                if let Some(frame) = self.call_stack.last_mut() {
+                    frame.positional = saved;
+                }
+            } else {
+                // We pushed a frame; pop it
+                self.call_stack.pop();
+            }
+        }
 
         // Apply redirections
         result = self.apply_redirections(result, redirects).await?;
