@@ -193,6 +193,23 @@ just check        # fmt + clippy + test
 just pre-pr       # Pre-PR checks
 ```
 
+## LLM Eval Results
+
+Bashkit includes an [eval harness](crates/bashkit-eval/) that measures how well LLMs use bashkit as a bash tool in agentic workloads — 25 tasks across 10 categories.
+
+| Model | Score | Tasks Passed | Tool Call Success | Duration |
+|-------|-------|-------------|-------------------|----------|
+| Claude Haiku 4.5 | **98%** | 23/25 | 87% | 2.9 min |
+| Claude Opus 4.6 | 93% | 21/25 | 87% | 8.7 min |
+| GPT-5.2 | 81% | 18/25 | 78% | 3.4 min |
+
+Tool call success improved +8–19% after recent interpreter fixes. See the [detailed analysis](crates/bashkit-eval/README.md#results) for category breakdown, remaining gaps, and model behavior differences.
+
+```bash
+just eval                    # Run eval with default model
+just eval-save               # Run and save results
+```
+
 ## Benchmarks
 
 Bashkit includes a benchmark tool to compare performance against bash and just-bash.

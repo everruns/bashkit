@@ -1,5 +1,5 @@
 // bashkit-eval: LLM evaluation harness for bashkit tool usage
-// See specs/011-eval.md for design decisions
+// See specs/012-eval.md for design decisions
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -37,7 +37,7 @@ enum Commands {
         save: bool,
 
         /// Output directory for saved results
-        #[arg(long, default_value = "eval-results")]
+        #[arg(long, default_value = "crates/bashkit-eval/results")]
         output: String,
 
         /// Custom moniker for identifying this run (default: auto from provider+model)
