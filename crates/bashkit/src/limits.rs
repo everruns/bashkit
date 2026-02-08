@@ -177,6 +177,18 @@ impl ExecutionCounters {
         Self::default()
     }
 
+    /// Reset counters for a new exec() invocation.
+    /// Each exec() is a separate script and gets its own budget.
+    /// This prevents a prior exec() from permanently poisoning the session.
+    pub fn reset_for_execution(&mut self) {
+        self.commands = 0;
+        self.loop_iterations = 0;
+        self.total_loop_iterations = 0;
+        // function_depth should already be 0 between exec() calls,
+        // but reset defensively to avoid stuck state
+        self.function_depth = 0;
+    }
+
     /// Increment command counter, returns error if limit exceeded
     pub fn tick_command(&mut self, limits: &ExecutionLimits) -> Result<(), LimitExceeded> {
         // Fail point: test behavior when counter increment is corrupted
@@ -433,5 +445,32 @@ mod tests {
         // Pop and try again
         counters.pop_function();
         assert!(counters.push_function(&limits).is_ok());
+    }
+
+    #[test]
+    fn test_reset_for_execution() {
+        let limits = ExecutionLimits::new().max_commands(5);
+        let mut counters = ExecutionCounters::new();
+
+        // Exhaust command budget
+        for _ in 0..5 {
+            counters.tick_command(&limits).unwrap();
+        }
+        assert!(counters.tick_command(&limits).is_err());
+
+        // Also accumulate some loop/function state
+        counters.loop_iterations = 42;
+        counters.total_loop_iterations = 999;
+        counters.function_depth = 3;
+
+        // Reset should restore all counters
+        counters.reset_for_execution();
+        assert_eq!(counters.commands, 0);
+        assert_eq!(counters.loop_iterations, 0);
+        assert_eq!(counters.total_loop_iterations, 0);
+        assert_eq!(counters.function_depth, 0);
+
+        // Should be able to tick commands again
+        assert!(counters.tick_command(&limits).is_ok());
     }
 }

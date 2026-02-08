@@ -332,6 +332,10 @@ impl Interpreter {
 
     /// Execute a script.
     pub async fn execute(&mut self, script: &Script) -> Result<ExecResult> {
+        // Reset per-execution counters so each exec() gets a fresh budget.
+        // Without this, hitting the limit in one exec() permanently poisons the session.
+        self.counters.reset_for_execution();
+
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
