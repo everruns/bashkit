@@ -1647,6 +1647,19 @@ impl AwkInterpreter {
                 if args.is_empty() {
                     AwkValue::Number(self.state.get_field(0).as_string().len() as f64)
                 } else {
+                    // Check if the argument is an array name - if so, return element count
+                    if let AwkExpr::Variable(ref arr_name) = args[0] {
+                        let prefix = format!("{}[", arr_name);
+                        let count = self
+                            .state
+                            .variables
+                            .keys()
+                            .filter(|k| k.starts_with(&prefix))
+                            .count();
+                        if count > 0 {
+                            return AwkValue::Number(count as f64);
+                        }
+                    }
                     AwkValue::Number(self.eval_expr(&args[0]).as_string().len() as f64)
                 }
             }

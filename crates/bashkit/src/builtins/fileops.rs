@@ -315,8 +315,112 @@ impl Builtin for Touch {
 ///
 /// Usage: chmod MODE FILE...
 ///
-/// MODE can be octal (e.g., 755) or symbolic (e.g., u+x) - only octal supported currently
+/// MODE can be octal (e.g., 755) or symbolic (e.g., u+x, a+r, go-w)
 pub struct Chmod;
+
+/// Parse a symbolic mode string and apply it to an existing mode.
+/// Handles: [ugoa]*[+-=][rwxXst]+ (comma-separated clauses).
+/// Examples: +x, u+x, a+r, go-w, u=rwx, ug+rw
+fn apply_symbolic_mode(mode_str: &str, current_mode: u32) -> Option<u32> {
+    let mut mode = current_mode;
+
+    for clause in mode_str.split(',') {
+        let clause = clause.trim();
+        if clause.is_empty() {
+            return None;
+        }
+
+        let mut chars = clause.chars().peekable();
+
+        // Parse who: u, g, o, a (default = a if none specified)
+        let mut who_u = false;
+        let mut who_g = false;
+        let mut who_o = false;
+        let mut has_who = false;
+        while let Some(&c) = chars.peek() {
+            match c {
+                'u' => {
+                    who_u = true;
+                    has_who = true;
+                    chars.next();
+                }
+                'g' => {
+                    who_g = true;
+                    has_who = true;
+                    chars.next();
+                }
+                'o' => {
+                    who_o = true;
+                    has_who = true;
+                    chars.next();
+                }
+                'a' => {
+                    who_u = true;
+                    who_g = true;
+                    who_o = true;
+                    has_who = true;
+                    chars.next();
+                }
+                _ => break,
+            }
+        }
+        // No who specified means all (a)
+        if !has_who {
+            who_u = true;
+            who_g = true;
+            who_o = true;
+        }
+
+        // Parse operator: +, -, =
+        let op = chars.next()?;
+        if op != '+' && op != '-' && op != '=' {
+            return None;
+        }
+
+        // Parse permissions: r, w, x, X, s, t
+        let mut perm_bits: u32 = 0;
+        for c in chars {
+            match c {
+                'r' => perm_bits |= 0o4,
+                'w' => perm_bits |= 0o2,
+                'x' => perm_bits |= 0o1,
+                'X' => {
+                    // +X: set execute only if it's a directory or already has execute
+                    if current_mode & 0o111 != 0 {
+                        perm_bits |= 0o1;
+                    }
+                }
+                's' | 't' => {} // setuid/setgid/sticky: accept but ignore for VFS
+                _ => return None,
+            }
+        }
+
+        // Build mask for affected bits
+        let mut mask: u32 = 0;
+        let mut bits: u32 = 0;
+        if who_u {
+            mask |= 0o700;
+            bits |= perm_bits << 6;
+        }
+        if who_g {
+            mask |= 0o070;
+            bits |= perm_bits << 3;
+        }
+        if who_o {
+            mask |= 0o007;
+            bits |= perm_bits;
+        }
+
+        match op {
+            '+' => mode |= bits,
+            '-' => mode &= !bits,
+            '=' => mode = (mode & !mask) | bits,
+            _ => unreachable!(),
+        }
+    }
+
+    Some(mode)
+}
 
 #[async_trait]
 impl Builtin for Chmod {
@@ -328,16 +432,8 @@ impl Builtin for Chmod {
         let mode_str = &ctx.args[0];
         let files = &ctx.args[1..];
 
-        // Parse octal mode
-        let mode = match u32::from_str_radix(mode_str, 8) {
-            Ok(m) => m,
-            Err(_) => {
-                return Ok(ExecResult::err(
-                    format!("chmod: invalid mode: '{}'\n", mode_str),
-                    1,
-                ));
-            }
-        };
+        // Try octal first, then symbolic
+        let is_octal = u32::from_str_radix(mode_str, 8).is_ok();
 
         for file in files.iter().filter(|a| !a.starts_with('-')) {
             let path = resolve_path(ctx.cwd, file);
@@ -351,6 +447,25 @@ impl Builtin for Chmod {
                     1,
                 ));
             }
+
+            let mode = if is_octal {
+                u32::from_str_radix(mode_str, 8).unwrap()
+            } else {
+                // Symbolic mode - need current permissions
+                let current_mode = match ctx.fs.stat(&path).await {
+                    Ok(meta) => meta.mode,
+                    Err(_) => 0o644, // fallback default
+                };
+                match apply_symbolic_mode(mode_str, current_mode) {
+                    Some(m) => m,
+                    None => {
+                        return Ok(ExecResult::err(
+                            format!("chmod: invalid mode: '{}'\n", mode_str),
+                            1,
+                        ));
+                    }
+                }
+            };
 
             if let Err(e) = ctx.fs.chmod(&path, mode).await {
                 return Ok(ExecResult::err(

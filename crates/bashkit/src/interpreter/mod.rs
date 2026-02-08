@@ -117,6 +117,9 @@ pub struct Interpreter {
     /// Git client for git builtins
     #[cfg(feature = "git")]
     git_client: Option<crate::git::GitClient>,
+    /// Stdin inherited from pipeline for compound commands (while read, etc.)
+    /// Each read operation consumes one line, advancing through the data.
+    pipeline_stdin: Option<String>,
 }
 
 impl Interpreter {
@@ -268,6 +271,7 @@ impl Interpreter {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            pipeline_stdin: None,
         }
     }
 
@@ -1583,24 +1587,26 @@ impl Interpreter {
         for (i, command) in pipeline.commands.iter().enumerate() {
             let is_last = i == pipeline.commands.len() - 1;
 
-            match command {
+            let result = match command {
                 Command::Simple(simple) => {
-                    let result = self
-                        .execute_simple_command(simple, stdin_data.take())
-                        .await?;
-
-                    if is_last {
-                        last_result = result;
-                    } else {
-                        // Pass stdout to next command's stdin
-                        stdin_data = Some(result.stdout);
-                    }
+                    self.execute_simple_command(simple, stdin_data.take())
+                        .await?
                 }
                 _ => {
-                    return Err(Error::Execution(
-                        "only simple commands supported in pipeline".to_string(),
-                    ))
+                    // Compound commands, lists, etc. in pipeline:
+                    // set pipeline_stdin so inner commands (read, cat, etc.) can consume it
+                    let prev_pipeline_stdin = self.pipeline_stdin.take();
+                    self.pipeline_stdin = stdin_data.take();
+                    let result = self.execute_command(command).await?;
+                    self.pipeline_stdin = prev_pipeline_stdin;
+                    result
                 }
+            };
+
+            if is_last {
+                last_result = result;
+            } else {
+                stdin_data = Some(result.stdout);
             }
         }
 
@@ -1849,6 +1855,34 @@ impl Interpreter {
             .process_input_redirections(stdin, &command.redirects)
             .await?;
 
+        // If no explicit stdin, inherit from pipeline_stdin (for compound cmds in pipes).
+        // For `read`, consume one line; for other commands, provide all remaining data.
+        let stdin = if stdin.is_some() {
+            stdin
+        } else if let Some(ref ps) = self.pipeline_stdin {
+            if !ps.is_empty() {
+                if name == "read" {
+                    // Consume one line from pipeline stdin
+                    let data = ps.clone();
+                    if let Some(newline_pos) = data.find('\n') {
+                        let line = data[..=newline_pos].to_string();
+                        self.pipeline_stdin = Some(data[newline_pos + 1..].to_string());
+                        Some(line)
+                    } else {
+                        // Last line without trailing newline
+                        self.pipeline_stdin = Some(String::new());
+                        Some(data)
+                    }
+                } else {
+                    Some(ps.clone())
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Check for functions first
         if let Some(func_def) = self.functions.get(&name).cloned() {
             // Check function depth limit
@@ -1920,6 +1954,16 @@ impl Interpreter {
                 .await;
         }
 
+        // Handle source/eval at interpreter level - they need to execute
+        // parsed scripts in the current shell context (functions, variables, etc.)
+        if name == "source" || name == "." {
+            return self.execute_source(&args, &command.redirects).await;
+        }
+
+        if name == "eval" {
+            return self.execute_eval(&args, stdin, &command.redirects).await;
+        }
+
         // Check for builtins
         if let Some(builtin) = self.builtins.get(name.as_str()) {
             let ctx = builtins::Context {
@@ -1965,6 +2009,83 @@ impl Interpreter {
             format!("bash: {}: command not found", name),
             127,
         ))
+    }
+
+    /// Execute `source` / `.` - read and execute commands from a file in current shell
+    async fn execute_source(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let filename = match args.first() {
+            Some(f) => f,
+            None => {
+                return Ok(ExecResult::err("source: filename argument required", 1));
+            }
+        };
+
+        let path = self.resolve_path(filename);
+        let content = match self.fs.read_file(&path).await {
+            Ok(c) => String::from_utf8_lossy(&c).to_string(),
+            Err(_) => {
+                return Ok(ExecResult::err(
+                    format!("source: {}: No such file", filename),
+                    1,
+                ));
+            }
+        };
+
+        let parser = Parser::new(&content);
+        let script = match parser.parse() {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(ExecResult::err(
+                    format!("source: {}: parse error: {}", filename, e),
+                    1,
+                ));
+            }
+        };
+
+        // Execute the script commands in the current shell context
+        let mut result = self.execute(&script).await?;
+
+        // Apply redirections
+        result = self.apply_redirections(result, redirects).await?;
+        Ok(result)
+    }
+
+    /// Execute `eval` - parse and execute concatenated arguments
+    async fn execute_eval(
+        &mut self,
+        args: &[String],
+        stdin: Option<String>,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        if args.is_empty() {
+            return Ok(ExecResult::ok(String::new()));
+        }
+
+        let cmd = args.join(" ");
+        let parser = Parser::new(&cmd);
+        let script = match parser.parse() {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(ExecResult::err(format!("eval: parse error: {}", e), 1));
+            }
+        };
+
+        // Set up pipeline stdin if provided
+        let prev_pipeline_stdin = self.pipeline_stdin.take();
+        if stdin.is_some() {
+            self.pipeline_stdin = stdin;
+        }
+
+        let mut result = self.execute(&script).await?;
+
+        self.pipeline_stdin = prev_pipeline_stdin;
+
+        result = self.apply_redirections(result, redirects).await?;
+        Ok(result)
     }
 
     /// Process input redirections (< file, <<< string)
