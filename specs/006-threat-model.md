@@ -102,8 +102,13 @@ embedded in rustdoc. It contains:
 **Implementation**: `ExecutionLimits` in `limits.rs`:
 ```rust
 max_input_bytes: 10_000_000,    // 10MB script limit (TM-DOS-001)
-max_commands: 10_000,           // Command limit (TM-DOS-002, TM-DOS-004)
+max_commands: 10_000,           // Command limit per exec() call (TM-DOS-002, TM-DOS-004)
 ```
+
+**Scope**: Limits are enforced **per `exec()` call**. Counters reset at the start of
+each invocation via `ExecutionCounters::reset_for_execution()`, so a prior script
+hitting the limit does not permanently poison the session. The timeout (30s) provides
+the session-level backstop.
 
 #### 1.5 Filesystem Exhaustion
 
@@ -172,8 +177,12 @@ follow them during path resolution - symlink targets are only returned by `read_
 ```rust
 max_loop_iterations: 10_000,           // Per-loop limit (TM-DOS-016, TM-DOS-017)
 max_total_loop_iterations: 1_000_000,  // Global cap across all loops (TM-DOS-018)
-max_commands: 10_000,                  // Total command limit (TM-DOS-019)
+max_commands: 10_000,                  // Per-exec() command limit (TM-DOS-019)
 ```
+
+All counters (commands, loop iterations, total loop iterations, function depth)
+reset at the start of each `exec()` call. This ensures limits protect against
+runaway scripts without permanently breaking the session.
 
 #### 1.3 Stack Overflow (Recursion)
 
@@ -843,9 +852,12 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 
 ## Recommended Limits for Production
 
+All execution counters reset per `exec()` call. Each script invocation gets a fresh
+budget; hitting a limit in one call does not affect subsequent calls on the same instance.
+
 ```rust
 ExecutionLimits::new()
-    .max_commands(10_000)              // TM-DOS-002, TM-DOS-004, TM-DOS-019
+    .max_commands(10_000)              // Per-exec() (TM-DOS-002, TM-DOS-004, TM-DOS-019)
     .max_loop_iterations(10_000)       // TM-DOS-016, TM-DOS-017
     .max_total_loop_iterations(1_000_000) // TM-DOS-018 (nested loop cap)
     .max_function_depth(100)           // TM-DOS-020, TM-DOS-021
