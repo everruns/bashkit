@@ -195,63 +195,15 @@ just pre-pr       # Pre-PR checks
 
 ## LLM Eval Results
 
-Bashkit includes an eval harness ([bashkit-eval](crates/bashkit-eval/)) that measures how well LLMs use bashkit as a bash tool in agentic workloads. 25 tasks across 10 categories test file operations, text processing, pipelines, scripting, data transformation, error recovery, and more.
+Bashkit includes an [eval harness](crates/bashkit-eval/) that measures how well LLMs use bashkit as a bash tool in agentic workloads — 25 tasks across 10 categories.
 
-### Latest Results (2026-02-08)
+| Model | Score | Tasks Passed | Tool Call Success | Duration |
+|-------|-------|-------------|-------------------|----------|
+| Claude Haiku 4.5 | **98%** | 23/25 | 87% | 2.9 min |
+| Claude Opus 4.6 | 93% | 21/25 | 87% | 8.7 min |
+| GPT-5.2 | 81% | 18/25 | 78% | 3.4 min |
 
-| Model | Score | Tasks Passed | Tool Call Success | Tokens (in/out) | Duration |
-|-------|-------|-------------|-------------------|-----------------|----------|
-| Claude Haiku 4.5 | **98%** | 23/25 | 87% (81/93) | 167K/19K | 2.9 min |
-| Claude Opus 4.6 | 93% | 21/25 | 87% (125/143) | 242K/26K | 8.7 min |
-| GPT-5.2 | 81% | 18/25 | 78% (80/103) | 84K/10K | 3.4 min |
-
-### Category Breakdown
-
-| Category | Opus 4.6 | Haiku 4.5 | GPT-5.2 |
-|----------|----------|-----------|---------|
-| archive_operations | 100% | 100% | 50% |
-| complex_tasks | 69% | 100% | 88% |
-| data_transformation | 94% | 100% | 62% |
-| error_recovery | 100% | 100% | 86% |
-| file_operations | 100% | 94% | 100% |
-| jq_mastery | 100% | 100% | 100% |
-| pipelines | 100% | 100% | 80% |
-| scripting | 93% | 93% | 53% |
-| system_info | 100% | 100% | 100% |
-| text_processing | 100% | 100% | 100% |
-
-### Impact of Interpreter Fixes
-
-Tool call success (how often bashkit executes what models generate) improved significantly after recent fixes:
-
-| Model | Before | After | Delta |
-|-------|--------|-------|-------|
-| Claude Opus 4.6 | 79% | 87% | **+8%** |
-| Claude Haiku 4.5 | 77% | 87% | **+10%** |
-| GPT-5.2 | 59% | 78% | **+19%** |
-
-Key fixes: `date -d` compound expressions/quote stripping (eliminated 10k command limit exhaustion), awk field math.
-
-### Remaining Bashkit Gaps
-
-Failures that occur across all models (interpreter limitations, not model quality):
-
-| Gap | Impact | Example |
-|-----|--------|---------|
-| Compound commands in pipelines | ~6 errors | `cmd \| while read line; do ... done` |
-| Awk associative arrays | ~9 errors | `arr[$key]=$val` |
-| Heredoc-to-file redirect | ~10 errors | `cat > file <<'EOF'` writes to stdout instead |
-| `source`/`.` function loading | ~5 errors | Functions from sourced files not in caller scope |
-| `chmod` symbolic modes | ~6 errors | `chmod +x file` → "invalid mode" |
-| Parser fuel / `[[ ]]` | ~25 errors | Complex conditionals exhaust parser budget |
-
-### Model Behavior
-
-- **Claude models** adapt when bashkit rejects a command — retry with simpler constructs (e.g., `[[ ]]` → `[ ]`, pipelines → temp files)
-- **GPT-5.2** tends to repeat failing patterns, leading to lower tool success despite fewer total calls
-- **Haiku 4.5** best score/cost ratio — fewer tokens, faster, highest pass rate
-
-Full results with per-task traces in [eval-results/](eval-results/). See [bashkit-eval](crates/bashkit-eval/) for usage and options.
+Tool call success improved +8–19% after recent interpreter fixes. See the [detailed analysis](crates/bashkit-eval/README.md#results) for category breakdown, remaining gaps, and model behavior differences.
 
 ```bash
 just eval                    # Run eval with default model
