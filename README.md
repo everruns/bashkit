@@ -193,6 +193,51 @@ just check        # fmt + clippy + test
 just pre-pr       # Pre-PR checks
 ```
 
+## LLM Eval Results
+
+Bashkit includes an eval harness ([bashkit-eval](crates/bashkit-eval/)) that measures how well LLMs use bashkit as a bash tool in agentic workloads. 25 tasks across 10 categories test file operations, text processing, pipelines, scripting, data transformation, error recovery, and more.
+
+### Latest Results (2026-02-08)
+
+| Model | Score | Tasks Passed | Tool Call Success | Tokens (in/out) | Duration |
+|-------|-------|-------------|-------------------|-----------------|----------|
+| Claude Haiku 4.5 | **98%** | 23/25 | 87% (81/93) | 167K/19K | 2.9 min |
+| Claude Opus 4.6 | 93% | 21/25 | 87% (125/143) | 242K/26K | 8.7 min |
+| GPT-5.2 | 81% | 18/25 | 78% (80/103) | 84K/10K | 3.4 min |
+
+### Category Breakdown
+
+| Category | Opus 4.6 | Haiku 4.5 | GPT-5.2 |
+|----------|----------|-----------|---------|
+| archive_operations | 100% | 100% | 50% |
+| complex_tasks | 69% | 100% | 88% |
+| data_transformation | 94% | 100% | 62% |
+| error_recovery | 100% | 100% | 86% |
+| file_operations | 100% | 94% | 100% |
+| jq_mastery | 100% | 100% | 100% |
+| pipelines | 100% | 100% | 80% |
+| scripting | 93% | 93% | 53% |
+| system_info | 100% | 100% | 100% |
+| text_processing | 100% | 100% | 100% |
+
+### Key Findings
+
+- **Tool call success is the critical metric** — it measures how often bashkit can execute what models generate. All three models improved significantly after recent interpreter fixes (Opus +8%, Haiku +10%, GPT +19%).
+- **Remaining bashkit gaps** that cause failures across all models:
+  - Compound commands in pipelines (`cmd | while read line; do ... done`)
+  - Awk associative array assignment (`arr[$key]=$val`)
+  - Heredoc-to-file redirection (`cat > file <<'EOF'`)
+  - `source`/`.` not loading function definitions into caller scope
+  - `chmod` symbolic modes (`+x`)
+- **Model differences**: Claude models adapt better when bashkit rejects a command — they retry with simpler constructs. GPT-5.2 tends to repeat failing patterns, leading to lower tool success rates.
+
+Full results with per-task traces are in [eval-results/](eval-results/).
+
+```bash
+just eval                    # Run eval with default model
+just eval-save               # Run and save results
+```
+
 ## Benchmarks
 
 Bashkit includes a benchmark tool to compare performance against bash and just-bash.
