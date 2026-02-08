@@ -33,21 +33,23 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-## Built-in Commands (68+)
+## Built-in Commands (81)
 
 | Category | Commands |
 |----------|----------|
-| Core | `echo`, `printf`, `cat`, `read` |
+| Core | `echo`, `printf`, `cat`, `nl`, `read` |
 | Navigation | `cd`, `pwd`, `ls`, `find` |
 | Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[` |
-| Variables | `export`, `set`, `unset`, `local`, `shift`, `source` |
-| Text processing | `grep`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc` |
+| Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times` |
+| Text processing | `grep`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings` |
 | File operations | `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `rmdir` |
 | File inspection | `file`, `stat`, `less` |
 | Archives | `tar`, `gzip`, `gunzip` |
-| Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait` |
+| Byte tools | `od`, `xxd`, `hexdump` |
+| Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch` |
+| Disk | `df`, `du` |
 | Pipeline | `xargs`, `tee` |
-| Shell | `bash`, `sh` (sandboxed re-invocation), `eval`, `:`  |
+| Shell | `bash`, `sh` (sandboxed re-invocation), `:` |
 | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
 | Network | `curl`, `wget` (requires allowlist) |
 | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature) |

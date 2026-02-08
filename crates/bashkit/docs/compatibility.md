@@ -31,7 +31,7 @@ for sandbox security reasons. See the compliance spec for details.
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 75 | 0 | 75 |
+| Shell Builtins | 81 | 0 | 81 |
 | Text Processing | 14 | 0 | 14 |
 | File Operations | 10 | 0 | 10 |
 | Network | 2 | 0 | 2 |
