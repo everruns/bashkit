@@ -36,8 +36,8 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | 009-implementation-status | Feature status, test coverage, limitations |
 | 009-tool-contract | Public LLM Tool trait contract |
 | 010-git-support | Sandboxed git operations on VFS |
-| 011-eval | LLM evaluation harness, multi-model comparison |
 | 011-python-builtin | Embedded Python via Monty, security, resource limits |
+| 012-eval | LLM evaluation harness, dataset format, scoring |
 | 012-maintenance | Pre-release maintenance checklist |
 
 ### Documentation

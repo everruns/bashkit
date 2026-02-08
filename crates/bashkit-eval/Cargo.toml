@@ -1,6 +1,6 @@
 # bashkit-eval: LLM evaluation harness for bashkit tool usage
 # Measures how well models use a sandboxed bash tool in agentic workloads
-# See specs/011-eval.md for design decisions
+# See specs/012-eval.md for design decisions
 
 [package]
 name = "bashkit-eval"

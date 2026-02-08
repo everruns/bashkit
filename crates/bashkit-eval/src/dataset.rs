@@ -1,6 +1,6 @@
 // Dataset types and JSONL loader
 // Each line in the JSONL file is one EvalTask
-// See specs/011-eval.md for format specification
+// See specs/012-eval.md for format specification
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
