@@ -170,9 +170,9 @@ fn number_lines(text: &str, opts: &NlOptions, line_num: &mut usize) -> String {
             output.push('\n');
             *line_num += opts.increment;
         } else {
-            // No number, just indent with spaces
-            output.push_str(&" ".repeat(opts.width));
-            output.push_str(&opts.separator);
+            // No number: real nl uses spaces only (no separator) for unnumbered lines.
+            // The indent is width chars + 1 space (replacing the tab separator).
+            output.push_str(&" ".repeat(opts.width + 1));
             output.push_str(line);
             output.push('\n');
         }
@@ -303,7 +303,7 @@ mod tests {
     async fn test_nl_default_skips_empty() {
         let result = run_nl(&[], Some("hello\n\nworld\n")).await;
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "     1\thello\n      \t\n     2\tworld\n");
+        assert_eq!(result.stdout, "     1\thello\n       \n     2\tworld\n");
     }
 
     #[tokio::test]
@@ -317,7 +317,7 @@ mod tests {
     async fn test_nl_no_numbering() {
         let result = run_nl(&["-b", "n"], Some("hello\nworld\n")).await;
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "      \thello\n      \tworld\n");
+        assert_eq!(result.stdout, "       hello\n       world\n");
     }
 
     #[tokio::test]

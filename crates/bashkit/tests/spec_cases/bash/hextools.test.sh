@@ -1,4 +1,5 @@
 ### xxd_plain
+### bash_diff: xxd not available in all CI environments
 # xxd -p outputs plain hex
 printf 'Hi' | xxd -p
 ### expect

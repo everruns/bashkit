@@ -108,13 +108,41 @@ fn format_table(text: &str, opts: &ColumnOptions) -> String {
 }
 
 fn format_columns(text: &str) -> String {
-    // Simple passthrough when -t is not specified
-    // Real `column` fills columns, but for sandbox, passthrough is reasonable
+    // Fill-column mode: collect all words and arrange into columns.
+    // Real `column` uses terminal width (default 80) and tab-based spacing.
+    let terminal_width = 80;
+
+    let entries: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
+    if entries.is_empty() {
+        return String::new();
+    }
+
+    let max_len = entries.iter().map(|e| e.len()).max().unwrap_or(0);
+    // Column width: next tab stop (multiple of 8), minimum max_len + 1
+    let col_width = if max_len == 0 {
+        8
+    } else {
+        ((max_len / 8) + 1) * 8
+    };
+
+    let num_cols = (terminal_width / col_width).max(1);
+    let num_rows = entries.len().div_ceil(num_cols);
+
     let mut output = String::new();
-    for line in text.lines() {
-        output.push_str(line);
+    for row in 0..num_rows {
+        for col in 0..num_cols {
+            let idx = col * num_rows + row;
+            if idx >= entries.len() {
+                break;
+            }
+            if col > 0 {
+                output.push('\t');
+            }
+            output.push_str(entries[idx]);
+        }
         output.push('\n');
     }
+
     output
 }
 
@@ -229,9 +257,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_column_passthrough() {
+        // Without -t, column fills entries into columns (tab-separated)
         let result = run_column(&[], Some("hello\nworld\n")).await;
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "hello\nworld\n");
+        assert_eq!(result.stdout, "hello\tworld\n");
     }
 
     #[tokio::test]

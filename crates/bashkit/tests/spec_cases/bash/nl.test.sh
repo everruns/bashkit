@@ -11,7 +11,7 @@ printf 'hello\nworld\n' | nl
 printf 'hello\n\nworld\n' | nl
 ### expect
      1	hello
-
+       
      2	world
 ### end
 
@@ -20,7 +20,7 @@ printf 'hello\n\nworld\n' | nl
 printf 'hello\n\nworld\n' | nl -b a
 ### expect
      1	hello
-     2
+     2	
      3	world
 ### end
 
@@ -28,8 +28,8 @@ printf 'hello\n\nworld\n' | nl -b a
 # No numbering
 printf 'hello\nworld\n' | nl -b n
 ### expect
-      	hello
-      	world
+       hello
+       world
 ### end
 
 ### nl_left_justified
