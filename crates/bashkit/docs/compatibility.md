@@ -89,7 +89,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `uniq` | `-c`, `-d`, `-u` | Filter duplicate lines |
 | `cut` | `-d DELIM`, `-f FIELDS` | Extract fields |
 | `tr` | `-d`, character ranges | Translate/delete chars |
-| `date` | `+FORMAT`, `-u`, `-d`/`--date` | Display/format date |
+| `date` | `+FORMAT`, `-u`, `-d`/`--date` (relative, compound, epoch) | Display/format date |
 | `wait` | `[JOB_ID...]` | Wait for background jobs |
 | `curl` | `-s`, `-o`, `-X`, `-d`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` | HTTP client (requires http_client feature) |
 | `wget` | `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` | Download files (requires http_client feature) |
