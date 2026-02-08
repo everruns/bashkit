@@ -1385,6 +1385,10 @@ impl<'a> Parser<'a> {
                         kind: RedirectKind::HereDoc,
                         target,
                     });
+
+                    // Heredoc body consumed subsequent lines from input.
+                    // Stop parsing this command - next tokens belong to new commands.
+                    break;
                 }
                 Some(tokens::Token::ProcessSubIn) | Some(tokens::Token::ProcessSubOut) => {
                     // Process substitution as argument
