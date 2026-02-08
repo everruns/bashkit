@@ -9,8 +9,9 @@
 use async_trait::async_trait;
 use jaq_core::{load, Compiler, Ctx, RcIter};
 use jaq_json::Val;
+use std::path::Path;
 
-use super::{Builtin, Context};
+use super::{resolve_path, Builtin, Context};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
 
@@ -114,9 +115,14 @@ impl Builtin for Jq {
         let mut tab_indent = false;
         let mut join_output = false;
         let mut filter = ".";
+        let mut file_args: Vec<&str> = Vec::new();
 
+        let mut found_filter = false;
         for arg in ctx.args {
-            if arg == "-r" || arg == "--raw-output" {
+            if found_filter {
+                // Everything after the filter is a file argument
+                file_args.push(arg);
+            } else if arg == "-r" || arg == "--raw-output" {
                 raw_output = true;
             } else if arg == "-c" || arg == "--compact-output" {
                 compact_output = true;
@@ -134,12 +140,37 @@ impl Builtin for Jq {
                 join_output = true;
             } else if !arg.starts_with('-') {
                 filter = arg;
-                break;
+                found_filter = true;
             }
         }
 
-        // Get input from stdin
-        let input = ctx.stdin.unwrap_or("");
+        // Build input: read from file arguments if provided, otherwise stdin
+        let file_content: String;
+        let input = if !file_args.is_empty() {
+            let mut combined = String::new();
+            for file_arg in &file_args {
+                let path = resolve_path(ctx.cwd, file_arg);
+                match ctx.fs.read_file(Path::new(&path)).await {
+                    Ok(content) => {
+                        let text = String::from_utf8_lossy(&content);
+                        if !combined.is_empty() && !combined.ends_with('\n') {
+                            combined.push('\n');
+                        }
+                        combined.push_str(&text);
+                    }
+                    Err(e) => {
+                        return Ok(ExecResult::err(
+                            format!("jq: Could not open file {}: {}\n", file_arg, e),
+                            2,
+                        ));
+                    }
+                }
+            }
+            file_content = combined;
+            file_content.as_str()
+        } else {
+            ctx.stdin.unwrap_or("")
+        };
 
         // If no input and not null_input mode, return empty
         if input.trim().is_empty() && !null_input {
@@ -357,7 +388,7 @@ impl Builtin for Jq {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
+    use crate::fs::{FileSystem, InMemoryFs};
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -553,5 +584,124 @@ mod tests {
 
         // 3-level nesting with limit 2: rejected
         assert!(check_json_depth(&v, 2).is_err());
+    }
+
+    /// Helper: run jq with file arguments on an in-memory filesystem
+    async fn run_jq_with_files(
+        args: &[&str],
+        files: &[(&str, &str)],
+    ) -> std::result::Result<ExecResult, Error> {
+        let jq = Jq;
+        let fs = Arc::new(InMemoryFs::new());
+        for (path, content) in files {
+            // Ensure parent directory exists
+            let p = std::path::Path::new(path);
+            if let Some(parent) = p.parent() {
+                if parent != std::path::Path::new("/") {
+                    fs.mkdir(parent, true).await.unwrap();
+                }
+            }
+            fs.write_file(p, content.as_bytes()).await.unwrap();
+        }
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        jq.execute(ctx).await
+    }
+
+    #[tokio::test]
+    async fn test_jq_read_single_file() {
+        let result = run_jq_with_files(&[".", "/data.json"], &[("/data.json", r#"{"a":1}"#)])
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "{\n  \"a\": 1\n}");
+    }
+
+    #[tokio::test]
+    async fn test_jq_read_multiple_files() {
+        let result = run_jq_with_files(
+            &[".", "/a.json", "/b.json"],
+            &[("/a.json", r#"{"x":1}"#), ("/b.json", r#"{"y":2}"#)],
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.exit_code, 0);
+        // Each file produces its own output
+        let lines: Vec<&str> = result.stdout.trim().split('\n').collect();
+        assert!(result.stdout.contains("\"x\": 1"), "should contain x:1");
+        assert!(result.stdout.contains("\"y\": 2"), "should contain y:2");
+        // Two separate JSON objects
+        assert!(
+            lines.len() > 3,
+            "should have multi-line output for two objects"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_jq_slurp_files() {
+        let result = run_jq_with_files(
+            &["-s", ".", "/a.json", "/b.json"],
+            &[("/a.json", r#"{"x":1}"#), ("/b.json", r#"{"y":2}"#)],
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.exit_code, 0);
+        // Slurp should wrap both objects in an array
+        assert!(result.stdout.contains("\"x\": 1"), "should contain x:1");
+        assert!(result.stdout.contains("\"y\": 2"), "should contain y:2");
+        // Verify it's an array
+        let parsed: serde_json::Value = serde_json::from_str(result.stdout.trim()).unwrap();
+        assert!(parsed.is_array(), "slurp output should be an array");
+        assert_eq!(parsed.as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_jq_file_not_found() {
+        let result = run_jq_with_files(&[".", "/missing.json"], &[])
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("Could not open file"));
+    }
+
+    #[tokio::test]
+    async fn test_jq_slurp_files_in_subdir() {
+        // Matches the reported scenario: jq -s '.' /workspace/json_data/*.json
+        let result = run_jq_with_files(
+            &[
+                "-s",
+                ".",
+                "/workspace/json_data/a.json",
+                "/workspace/json_data/b.json",
+            ],
+            &[
+                ("/workspace/json_data/a.json", r#"{"id":1}"#),
+                ("/workspace/json_data/b.json", r#"{"id":2}"#),
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.exit_code, 0);
+        let parsed: serde_json::Value = serde_json::from_str(result.stdout.trim()).unwrap();
+        assert!(parsed.is_array());
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["id"], 1);
+        assert_eq!(arr[1]["id"], 2);
     }
 }
