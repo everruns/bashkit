@@ -19,7 +19,9 @@ regressions, stale docs, dependency rot, and security gaps.
 ### 1. Dependencies
 
 - [ ] `cargo update` — pull latest compatible versions
-- [ ] Review `cargo outdated` for major version bumps; upgrade where safe
+- [ ] `cargo outdated --root-deps-only` — check for major version bumps
+- [ ] `cargo outdated --depth 1` — check all direct deps including major
+- [ ] Upgrade major versions where safe; test after each bump
 - [ ] `cargo audit` — no known CVEs
 - [ ] `cargo deny check` — licenses and advisories clean
 - [ ] `just vet` — supply chain audit passes
@@ -55,7 +57,9 @@ regressions, stale docs, dependency rot, and security gaps.
 ### 5. Examples
 
 - [ ] All Rust examples compile and run (`cargo run --example <name>`)
-- [ ] Python examples syntax-valid (`python3 -m py_compile examples/*.py`)
+- [ ] Feature-gated examples run: `cargo run --features python --example python_scripts`
+- [ ] Feature-gated examples run: `cargo run --features git --example git_workflow`
+- [ ] Python agent examples syntax-valid: `python3 -m py_compile examples/*.py`
 - [ ] Code examples in docs/rustdoc still accurate
 
 ### 6. Specs
