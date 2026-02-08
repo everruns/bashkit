@@ -35,6 +35,46 @@ mod resource_exhaustion {
         );
     }
 
+    /// Subsequent exec() calls recover after a prior call hits the command limit.
+    /// Each exec() is a separate script invocation and gets its own budget.
+    #[tokio::test]
+    async fn exec_recovers_after_command_limit() {
+        let limits = ExecutionLimits::new().max_commands(10);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // First exec: exceed the command limit
+        let result = bash
+            .exec("true; true; true; true; true; true; true; true; true; true; true; true")
+            .await;
+        assert!(result.is_err());
+
+        // Second exec: trivial command should succeed — budget resets per exec
+        let result = bash.exec("echo hello").await.unwrap();
+        assert_eq!(result.stdout.trim(), "hello");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// Loop counters also reset between exec() calls.
+    #[tokio::test]
+    async fn exec_recovers_after_loop_limit() {
+        let limits = ExecutionLimits::new()
+            .max_loop_iterations(5)
+            .max_total_loop_iterations(10)
+            .max_commands(10000);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // First exec: exceed the total loop iteration limit
+        let result = bash
+            .exec("for i in 1 2 3 4 5; do true; done; for i in 1 2 3 4 5 6; do true; done")
+            .await;
+        assert!(result.is_err());
+
+        // Second exec: loops should work again
+        let result = bash.exec("for i in 1 2 3; do echo $i; done").await.unwrap();
+        assert!(result.stdout.contains("1"));
+        assert_eq!(result.exit_code, 0);
+    }
+
     /// V2: Test that loop limit prevents infinite loops
     #[tokio::test]
     async fn threat_infinite_loop_blocked() {
