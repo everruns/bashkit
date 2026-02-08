@@ -3728,4 +3728,184 @@ echo missing fi"#,
             "Should show directory permissions"
         );
     }
+
+    // === Issue 1: Heredoc file writes ===
+
+    #[tokio::test]
+    async fn test_heredoc_redirect_to_file() {
+        // cat > file <<'EOF' is the #1 way LLMs create multi-line files
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("cat > /tmp/out.txt <<'EOF'\nhello\nworld\nEOF\ncat /tmp/out.txt")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "hello\nworld\n");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_heredoc_redirect_to_file_unquoted() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("cat > /tmp/out.txt <<EOF\nhello\nworld\nEOF\ncat /tmp/out.txt")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "hello\nworld\n");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    // === Issue 2: Compound pipelines ===
+
+    #[tokio::test]
+    async fn test_pipe_to_while_read() {
+        // cmd | while read ...; do ... done is extremely common
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("echo -e 'a\\nb\\nc' | while read line; do echo \"got: $line\"; done")
+            .await
+            .unwrap();
+        assert!(
+            result.stdout.contains("got: a"),
+            "stdout: {}",
+            result.stdout
+        );
+        assert!(
+            result.stdout.contains("got: b"),
+            "stdout: {}",
+            result.stdout
+        );
+        assert!(
+            result.stdout.contains("got: c"),
+            "stdout: {}",
+            result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pipe_to_while_read_count() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("printf 'x\\ny\\nz\\n' | while read line; do echo $line; done")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "x\ny\nz\n");
+    }
+
+    // === Issue 3: Source loading functions ===
+
+    #[tokio::test]
+    async fn test_source_loads_functions() {
+        let mut bash = Bash::new();
+        // Write a function library, then source it and call the function
+        bash.exec("cat > /tmp/lib.sh <<'EOF'\ngreet() { echo \"hello $1\"; }\nEOF")
+            .await
+            .unwrap();
+        let result = bash.exec("source /tmp/lib.sh; greet world").await.unwrap();
+        assert_eq!(result.stdout, "hello world\n");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_source_loads_variables() {
+        let mut bash = Bash::new();
+        bash.exec("echo 'MY_VAR=loaded' > /tmp/vars.sh")
+            .await
+            .unwrap();
+        let result = bash
+            .exec("source /tmp/vars.sh; echo $MY_VAR")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "loaded\n");
+    }
+
+    // === Issue 4: chmod +x symbolic mode ===
+
+    #[tokio::test]
+    async fn test_chmod_symbolic_plus_x() {
+        let mut bash = Bash::new();
+        bash.exec("echo '#!/bin/bash' > /tmp/script.sh")
+            .await
+            .unwrap();
+        let result = bash.exec("chmod +x /tmp/script.sh").await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "chmod +x should succeed: {}",
+            result.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_chmod_symbolic_u_plus_x() {
+        let mut bash = Bash::new();
+        bash.exec("echo 'test' > /tmp/file.txt").await.unwrap();
+        let result = bash.exec("chmod u+x /tmp/file.txt").await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "chmod u+x should succeed: {}",
+            result.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_chmod_symbolic_a_plus_r() {
+        let mut bash = Bash::new();
+        bash.exec("echo 'test' > /tmp/file.txt").await.unwrap();
+        let result = bash.exec("chmod a+r /tmp/file.txt").await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "chmod a+r should succeed: {}",
+            result.stderr
+        );
+    }
+
+    // === Issue 5: Awk arrays ===
+
+    #[tokio::test]
+    async fn test_awk_array_length() {
+        // length(arr) should return element count
+        let mut bash = Bash::new();
+        let result = bash
+            .exec(r#"echo "" | awk 'BEGIN{a[1]="x"; a[2]="y"; a[3]="z"} END{print length(a)}'"#)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "3\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_array_read_after_split() {
+        // split() + reading elements back
+        let mut bash = Bash::new();
+        let result = bash
+            .exec(r#"echo "a:b:c" | awk '{n=split($0,arr,":"); for(i=1;i<=n;i++) print arr[i]}'"#)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "a\nb\nc\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_array_word_count_pattern() {
+        // Classic word frequency count - the most common awk array pattern
+        let mut bash = Bash::new();
+        let result = bash
+            .exec(
+                r#"printf "apple\nbanana\napple\ncherry\nbanana\napple" | awk '{count[$1]++} END{for(w in count) print w, count[w]}'"#,
+            )
+            .await
+            .unwrap();
+        assert!(
+            result.stdout.contains("apple 3"),
+            "stdout: {}",
+            result.stdout
+        );
+        assert!(
+            result.stdout.contains("banana 2"),
+            "stdout: {}",
+            result.stdout
+        );
+        assert!(
+            result.stdout.contains("cherry 1"),
+            "stdout: {}",
+            result.stdout
+        );
+    }
 }
