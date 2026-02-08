@@ -76,7 +76,7 @@ class BashTool:
         """Get the full description."""
         ...
 
-    def llmtext(self) -> str:
+    def help(self) -> str:
         """Get LLM documentation."""
         ...
 

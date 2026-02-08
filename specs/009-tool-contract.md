@@ -17,7 +17,7 @@ pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
     fn short_description(&self) -> &str;
     fn description(&self) -> String;
-    fn llmtext(&self) -> String;
+    fn help(&self) -> String;
     fn system_prompt(&self) -> String;
     fn input_schema(&self) -> serde_json::Value;
     fn output_schema(&self) -> serde_json::Value;
@@ -38,7 +38,7 @@ pub trait Tool: Send + Sync {
 | `name()` | Tool identifier for registries | No |
 | `short_description()` | One-liner for tool listings | No |
 | `description()` | Full description with supported tools | Yes |
-| `llmtext()` | Man-page style docs for LLMs | Yes |
+| `help()` | Man-page style docs for LLMs | Yes |
 | `system_prompt()` | Structured prompt header | Yes |
 | `input_schema()` | JSON Schema for validation | No |
 | `output_schema()` | JSON Schema for output | No |
@@ -84,7 +84,7 @@ Input: {"commands": "<bash commands>"}
 Output: {stdout, stderr, exit_code}
 ```
 
-#### `llmtext()` (man-page format)
+#### `help()` (man-page format)
 ```
 BASH(1)                          User Commands                         BASH(1)
 
@@ -192,7 +192,7 @@ When configured, outputs automatically include:
 
 - `description()`: Appends custom builtin names to supported tools
 - `system_prompt()`: Adds `Home: /home/<username>` if username set
-- `llmtext()`: Adds CONFIGURATION section with user, host, limits, env vars
+- `help()`: Adds CONFIGURATION section with user, host, limits, env vars
 
 ## Design Rationale
 
@@ -208,15 +208,15 @@ Aligns with `bash -c "commands"` semantics. Clearer that it's inline commands, n
 
 Use `timeout` builtin in commands: `timeout 5 long_running_cmd`. Keeps the API simple.
 
-### Why man-page format for `llmtext()`?
+### Why man-page format for `help()`?
 
 - Universal format familiar to developers
 - Structured sections (NAME, SYNOPSIS, DESCRIPTION, EXAMPLES)
 - Works well with LLM context windows
 
-### Why `system_prompt()` separate from `llmtext()`?
+### Why `system_prompt()` separate from `help()`?
 
-- `llmtext()`: Full docs with examples, for tool discovery and help
+- `help()`: Full docs with examples, for tool discovery and help
 - `system_prompt()`: Minimal tokens, for embedding in system prompts
 
 ## Verification
