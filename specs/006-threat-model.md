@@ -217,10 +217,11 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 | TM-DOS-024 | Parser hang | Malformed input | `parser_timeout` (5s) + `max_parser_operations` | **MITIGATED** |
 | TM-DOS-025 | Regex backtrack | `grep "a](*b)*c" file` | Regex crate limits | Partial |
 | TM-DOS-027 | Builtin parser recursion | Deeply nested awk/jq expressions | `MAX_AWK_PARSER_DEPTH` (100) + `MAX_JQ_JSON_DEPTH` (100) | **MITIGATED** |
+| TM-DOS-028 | Diff algorithm DoS | `diff` on two large unrelated files | LCS matrix capped at 10M cells; falls back to simple line-by-line output | **MITIGATED** |
 
 **Current Risk**: LOW - Parser timeout, fuel model, and depth limits prevent hangs and stack overflow
 
-**Implementation**: `limits.rs`, `builtins/awk.rs`, `builtins/jq.rs`
+**Implementation**: `limits.rs`, `builtins/awk.rs`, `builtins/jq.rs`, `builtins/diff.rs`
 ```rust
 timeout: Duration::from_secs(30),       // Execution timeout (TM-DOS-023)
 parser_timeout: Duration::from_secs(5), // Parser timeout (TM-DOS-024)
@@ -228,6 +229,8 @@ max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
 // TM-DOS-027: Builtin parser depth limits (compile-time constants)
 // MAX_AWK_PARSER_DEPTH: 100  (builtins/awk.rs) - awk expression recursion
 // MAX_JQ_JSON_DEPTH: 100     (builtins/jq.rs)  - JSON input nesting depth
+// TM-DOS-028: Diff LCS matrix cap (builtins/diff.rs)
+// MAX_LCS_CELLS: 10_000_000 - prevents O(n*m) memory/CPU blow-up
 ```
 
 ---

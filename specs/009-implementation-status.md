@@ -107,17 +107,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 847
+**Total spec test cases:** 885
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 471 | Yes | 406 | 65 | `bash_spec_tests` in CI |
+| Bash (core) | 509 | Yes | 438 | 71 | `bash_spec_tests` in CI |
 | AWK | 89 | Yes | 74 | 15 | loops, arrays, -v, ternary, field assign |
 | Grep | 70 | Yes | 65 | 5 | now with -z, -r, -a, -b, -H, -h, -f, -P |
 | Sed | 65 | Yes | 52 | 13 | hold space, change, regex ranges, -E |
 | JQ | 95 | Yes | 85 | 10 | reduce, walk, regex funcs |
 | Python | 57 | Yes | 49 | 8 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **847** | **Yes** | **731** | **116** | |
+| **Total** | **885** | **Yes** | **763** | **122** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -140,6 +140,11 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | headtail.test.sh | 14 | |
 | herestring.test.sh | 8 | |
 | negative-tests.test.sh | 8 | error conditions |
+| nl.test.sh | 14 | line numbering |
+| paste.test.sh | 4 | line merging (2 skipped) |
+| column.test.sh | 5 | column alignment |
+| diff.test.sh | 4 | line diffs |
+| hextools.test.sh | 4 | od/xxd/hexdump (3 skipped) |
 | path.test.sh | 14 | |
 | pipes-redirects.test.sh | 13 | includes stderr redirects |
 | procsub.test.sh | 6 | |
@@ -185,18 +190,20 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-`echo`, `printf`, `cat`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
+`echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `read`, `shift`, `break`,
 `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`,
 `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`,
-`sort`, `uniq`, `cut`, `tr`, `date`, `wait`, `curl`, `wget`, `timeout`,
+`sort`, `uniq`, `cut`, `tr`, `paste`, `column`, `diff`, `comm`, `date`,
+`wait`, `curl`, `wget`, `timeout`,
 `time` (keyword), `whoami`, `hostname`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
 `:` (colon), `eval`, `readonly`, `times`, `bash`, `sh`,
+`od`, `xxd`, `hexdump`, `strings`,
 `python`, `python3` (requires `python` feature, see [011-python-builtin.md](011-python-builtin.md))
 
 ### Not Yet Implemented
 
-`ln`, `chown`, `diff`, `type`, `which`, `command`, `hash`, `declare`,
+`ln`, `chown`, `type`, `which`, `command`, `hash`, `declare`,
 `typeset`, `getopts`, `kill`
 
 ## Text Processing
