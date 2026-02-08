@@ -79,7 +79,7 @@ Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 - GPT-5.2 has lowest tool call success rate (57%) — many bash calls fail due to incompatibility
 - Haiku 4.5 achieves highest task pass rate (19/25) and tool call success (80%) with lowest cost
 - Opus 4.6 uses most tokens but doesn't lead on pass rate — complex_tasks drag it down
-- `sysinfo_date_calc` fails for Opus (0/7 calls succeeded) — bashkit `date -d` limitation
+- `sysinfo_date_calc` fails for Opus (0/7 calls succeeded) — bashkit `date -d` limitation (fixed: compound expressions + quote stripping)
 - `complex_todo_app` fails for all — exact output format mismatch
 - `script_function_lib` fails for Opus and GPT — bashkit `source` limitation; Haiku worked around it
 

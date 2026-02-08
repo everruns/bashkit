@@ -155,21 +155,18 @@ valid
 ### end
 
 ### date_date_string
-### skip: date -d string parsing not fully implemented
 date -d '2024-01-15T12:00:00' +%Y-%m-%d
 ### expect
 2024-01-15
 ### end
 
 ### date_relative_yesterday
-### skip: date -d relative dates not implemented
 date -d 'yesterday' +%Y-%m-%d | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' && echo "valid"
 ### expect
 valid
 ### end
 
 ### date_relative_tomorrow
-### skip: date -d relative dates not implemented
 date -d 'tomorrow' +%Y-%m-%d | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' && echo "valid"
 ### expect
 valid
@@ -214,6 +211,43 @@ valid
 ### date_weekday_number
 # Day of week (0-6, Sunday=0)
 date +%w | grep -qE '^[0-6]$' && echo "valid"
+### expect
+valid
+### end
+
+### date_relative_days_ago
+date -d '30 days ago' +%Y-%m-%d | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' && echo "valid"
+### expect
+valid
+### end
+
+### date_relative_epoch
+date -d '@0' +%Y-%m-%d
+### expect
+1970-01-01
+### end
+
+### date_compound_date_minus_days
+date -d '2024-06-15 - 30 days' +%Y-%m-%d
+### expect
+2024-05-16
+### end
+
+### date_compound_date_plus_days
+date -d '2024-01-15 + 30 days' +%Y-%m-%d
+### expect
+2024-02-14
+### end
+
+### date_compound_epoch_minus_day
+### bash_diff: GNU date doesn't support @epoch with compound modifiers
+date -d '@1700000000 - 1 day' +%s
+### expect
+1699913600
+### end
+
+### date_compound_yesterday_plus_hours
+date -d 'yesterday + 12 hours' +%Y-%m-%d | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' && echo "valid"
 ### expect
 valid
 ### end

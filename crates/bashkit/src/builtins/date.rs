@@ -59,14 +59,21 @@ fn validate_format(format: &str) -> std::result::Result<(), String> {
     Ok(())
 }
 
-/// Parse a date string like GNU date's -d flag.
-/// Supports: "now", "yesterday", "tomorrow", "N days ago", "+N days",
-/// "N weeks ago", "N months ago", "N years ago", "N hours ago",
-/// "@EPOCH", "YYYY-MM-DD", "YYYY-MM-DD HH:MM:SS"
-fn parse_date_string(s: &str) -> std::result::Result<DateTime<Utc>, String> {
+/// Strip surrounding quotes from a string (handles parser bug where
+/// `--date="value"` passes literal quotes to the builtin).
+fn strip_surrounding_quotes(s: &str) -> &str {
     let s = s.trim();
-    let lower = s.to_lowercase();
+    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    }
+}
+
+/// Parse a base date expression (no compound modifiers).
+fn parse_base_date(s: &str) -> std::result::Result<DateTime<Utc>, String> {
     let now = Utc::now();
+    let lower = s.to_lowercase();
 
     // Epoch timestamp: @1234567890
     if let Some(epoch_str) = s.strip_prefix('@') {
@@ -113,6 +120,48 @@ fn parse_date_string(s: &str) -> std::result::Result<DateTime<Utc>, String> {
     }
 
     Err(format!("date: invalid date '{}'", s))
+}
+
+/// Parse a date string like GNU date's -d flag.
+///
+/// Supports simple expressions:
+///   "now", "yesterday", "tomorrow", "N days ago", "+N days",
+///   "N weeks ago", "N months ago", "N years ago", "N hours ago",
+///   "@EPOCH", "YYYY-MM-DD", "YYYY-MM-DD HH:MM:SS"
+///
+/// Supports compound expressions (base ± modifier):
+///   "2024-01-15 + 30 days", "yesterday - 2 hours",
+///   "@1700000000 + 1 week", "2024-01-15 - 1 month"
+fn parse_date_string(s: &str) -> std::result::Result<DateTime<Utc>, String> {
+    let s = strip_surrounding_quotes(s.trim());
+
+    // Try compound expression: <base> [+-] <N unit(s)>
+    // Match patterns like "2024-01-15 + 30 days" or "yesterday - 2 hours"
+    // Use a regex that splits on ` + ` or ` - ` followed by a number and unit
+    let re_compound =
+        regex::Regex::new(r"^(.+?)\s+([+-])\s+(\d+)\s+(second|minute|hour|day|week|month|year)s?$")
+            .ok();
+
+    if let Some(ref re) = re_compound {
+        let lower = s.to_lowercase();
+        if let Some(caps) = re.captures(&lower) {
+            if let Some(base_match) = caps.get(1) {
+                let sign = if &caps[2] == "-" { -1i64 } else { 1i64 };
+                let n: i64 = caps[3].parse().unwrap_or(0);
+                let unit = &caps[4];
+
+                // Use original case for base string to handle epoch (@N)
+                // and ISO dates correctly.
+                let orig_base = s[..base_match.end()].trim();
+                if let Ok(base_dt) = parse_base_date(orig_base) {
+                    let offset = unit_duration(unit, sign * n);
+                    return Ok(base_dt + offset);
+                }
+            }
+        }
+    }
+
+    parse_base_date(s)
 }
 
 /// Parse relative date expressions like "30 days ago", "+2 weeks", "-1 month"
@@ -178,7 +227,7 @@ impl Builtin for Date {
                     date_str = Some(ctx.args[i].clone());
                 }
             } else if let Some(val) = arg.strip_prefix("--date=") {
-                date_str = Some(val.to_string());
+                date_str = Some(strip_surrounding_quotes(val).to_string());
             } else if arg.starts_with('+') {
                 format_arg = Some(arg.clone());
             }
@@ -506,6 +555,72 @@ mod tests {
     #[tokio::test]
     async fn test_date_long_date_flag() {
         let result = run_date(&["--date=yesterday", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        let date = result.stdout.trim();
+        assert_eq!(date.len(), 10);
+    }
+
+    // === Compound date expression tests ===
+
+    #[tokio::test]
+    async fn test_date_d_compound_date_minus_days() {
+        // GNU date supports: date -d "2024-06-15 - 30 days"
+        let result = run_date(&["-d", "2024-06-15 - 30 days", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "2024-05-16");
+    }
+
+    #[tokio::test]
+    async fn test_date_d_compound_date_plus_days() {
+        // GNU date supports: date -d "2024-01-15 + 30 days"
+        let result = run_date(&["-d", "2024-01-15 + 30 days", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "2024-02-14");
+    }
+
+    #[tokio::test]
+    async fn test_date_d_compound_date_minus_months() {
+        let result = run_date(&["-d", "2024-03-15 - 2 months", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        // 2 months ≈ 60 days, so 2024-03-15 - 60 days = 2024-01-15
+        let date = result.stdout.trim();
+        assert_eq!(date.len(), 10);
+        assert!(date.starts_with("2024-01"));
+    }
+
+    #[tokio::test]
+    async fn test_date_d_compound_epoch_minus_days() {
+        // date -d "@1700000000 - 1 day"
+        let result = run_date(&["-d", "@1700000000 - 1 day", "+%s"]).await;
+        assert_eq!(result.exit_code, 0);
+        let epoch: i64 = result.stdout.trim().parse().unwrap();
+        assert_eq!(epoch, 1700000000 - 86400);
+    }
+
+    #[tokio::test]
+    async fn test_date_d_compound_yesterday_plus_hours() {
+        // date -d "yesterday + 12 hours"
+        let result = run_date(&["-d", "yesterday + 12 hours", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        let date = result.stdout.trim();
+        assert_eq!(date.len(), 10);
+    }
+
+    // === --date= quote stripping tests ===
+
+    #[tokio::test]
+    async fn test_date_long_date_with_double_quotes() {
+        // Parser bug: --date="30 days ago" passes literal quotes
+        // The date builtin should strip them
+        let result = run_date(&["--date=\"30 days ago\"", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        let date = result.stdout.trim();
+        assert_eq!(date.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_date_long_date_with_single_quotes() {
+        let result = run_date(&["--date='yesterday'", "+%Y-%m-%d"]).await;
         assert_eq!(result.exit_code, 0);
         let date = result.stdout.trim();
         assert_eq!(date.len(), 10);
