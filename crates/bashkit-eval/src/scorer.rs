@@ -1,6 +1,6 @@
 // Scorer: deterministic checks against agent trace + VFS
 // Parses check strings like "exit_code:0", "stdout_contains:hello"
-// See specs/011-eval.md for check type reference
+// See specs/012-eval.md for check type reference
 
 use std::path::Path;
 

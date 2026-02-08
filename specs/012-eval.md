@@ -1,4 +1,4 @@
-# Spec 011: bashkit-eval — LLM Evaluation Harness
+# Spec 012: bashkit-eval — LLM Evaluation Harness
 
 ## Purpose
 

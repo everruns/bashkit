@@ -1,5 +1,5 @@
 // bashkit-eval: LLM evaluation harness for bashkit tool usage
-// See specs/011-eval.md for design decisions
+// See specs/012-eval.md for design decisions
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
