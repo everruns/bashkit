@@ -236,9 +236,9 @@ impl BashTool {
     }
 
     /// Get LLM documentation
-    fn llmtext(&self) -> PyResult<String> {
+    fn help(&self) -> PyResult<String> {
         let tool = RustBashTool::default();
-        Ok(tool.llmtext())
+        Ok(tool.help())
     }
 
     /// Get system prompt for LLMs

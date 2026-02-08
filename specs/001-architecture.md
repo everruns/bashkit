@@ -87,7 +87,7 @@ pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
     fn short_description(&self) -> &str;
     fn description(&self) -> String;          // Dynamic, includes custom builtins
-    fn llmtext(&self) -> String;              // Full docs for LLMs
+    fn help(&self) -> String;              // Full docs for LLMs
     fn system_prompt(&self) -> String;        // Token-efficient for sysprompt
     fn input_schema(&self) -> serde_json::Value;
     fn output_schema(&self) -> serde_json::Value;

@@ -15,8 +15,8 @@ fn main() {
     println!("\n=== system_prompt() ===");
     println!("{}", tool.system_prompt());
 
-    println!("\n=== llmtext() ===");
-    println!("{}", tool.llmtext());
+    println!("\n=== help() ===");
+    println!("{}", tool.help());
 
     println!("\n=== version() ===");
     println!("{}", tool.version());
