@@ -94,7 +94,7 @@ bashkit-eval run \
   --model <model-name> \
   [--max-turns 10] \
   [--save] \
-  [--output eval-results] \
+  [--output crates/bashkit-eval/results] \
   [--moniker <custom-id>]
 ```
 
@@ -150,7 +150,7 @@ After running evals with `--save`, update `crates/bashkit-eval/README.md` with:
 3. **Key observations** — notable failures, bashkit gaps surfaced, model behavioral differences
 4. **Date of analysis** — when the results were collected
 
-Keep README highlights concise. Full per-task details live in the saved markdown reports under `eval-results/`.
+Keep README highlights concise. Full per-task details live in the saved markdown reports under `crates/bashkit-eval/results/`.
 
 ## Non-Goals
 
