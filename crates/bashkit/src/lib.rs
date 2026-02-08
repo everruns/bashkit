@@ -12,8 +12,10 @@
 //! - **Network allowlist** - Control HTTP access per-domain
 //! - **Custom builtins** - Extend with domain-specific commands
 //! - **Async-first** - Built on tokio
+//! - **Experimental: Git** - Sandboxed git operations on the VFS (`git` feature)
+//! - **Experimental: Python** - Embedded Python via [Monty](https://github.com/pydantic/monty) (`python` feature)
 //!
-//! # Built-in Commands (66)
+//! # Built-in Commands (68+)
 //!
 //! | Category | Commands |
 //! |----------|----------|
@@ -26,8 +28,10 @@
 //! | File inspection | `file`, `stat`, `less` |
 //! | Archives | `tar`, `gzip`, `gunzip` |
 //! | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `xargs`, `tee` |
+//! | Shell | `bash`, `sh` (sandboxed re-invocation), `eval`, `:` |
 //! | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
 //! | Network | `curl`, `wget` (requires [`NetworkAllowlist`])
+//! | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature)
 //!
 //! # Shell Features
 //!
@@ -262,6 +266,70 @@
 //!
 //! See [`NetworkAllowlist`] for allowlist configuration options.
 //!
+//! # Experimental: Git Support
+//!
+//! Enable the `git` feature for sandboxed git operations. All git data lives in
+//! the virtual filesystem.
+//!
+//! ```toml
+//! [dependencies]
+//! bashkit = { version = "0.1", features = ["git"] }
+//! ```
+//!
+//! ```rust,ignore
+//! use bashkit::{Bash, GitConfig};
+//!
+//! let mut bash = Bash::builder()
+//!     .git(GitConfig::new()
+//!         .author("Deploy Bot", "deploy@example.com"))
+//!     .build();
+//!
+//! bash.exec("git init").await?;
+//! bash.exec("echo 'hello' > file.txt").await?;
+//! bash.exec("git add file.txt").await?;
+//! bash.exec("git commit -m 'initial'").await?;
+//! bash.exec("git log").await?;
+//! ```
+//!
+//! Supported: `init`, `config`, `add`, `commit`, `status`, `log`, `branch`,
+//! `checkout`, `diff`, `reset`, `remote`, `clone`/`push`/`pull`/`fetch` (sandbox mode).
+//!
+//! See [`GitConfig`] for configuration options.
+//!
+//! # Experimental: Python Support
+//!
+//! Enable the `python` feature to embed the [Monty](https://github.com/pydantic/monty)
+//! Python interpreter (pure Rust, Python 3.12). Python `pathlib.Path` operations are
+//! bridged to the virtual filesystem.
+//!
+//! ```toml
+//! [dependencies]
+//! bashkit = { version = "0.1", features = ["python"] }
+//! ```
+//!
+//! ```rust,ignore
+//! use bashkit::Bash;
+//!
+//! let mut bash = Bash::builder().python().build();
+//!
+//! // Inline code
+//! bash.exec("python3 -c \"print(2 ** 10)\"").await?;
+//!
+//! // VFS bridging — files shared between bash and Python
+//! bash.exec("echo 'data' > /tmp/shared.txt").await?;
+//! bash.exec(r#"python3 -c "
+//! from pathlib import Path
+//! print(Path('/tmp/shared.txt').read_text().strip())
+//! ""#).await?;
+//! ```
+//!
+//! Limitations: no `open()` (use `pathlib.Path`), no network, no classes,
+//! no third-party imports.
+//!
+//! See `PythonLimits` for resource limit configuration.
+//!
+//! See the `python_guide` module docs (requires `python` feature).
+//!
 //! # Examples
 //!
 //! See the `examples/` directory for complete working examples:
@@ -273,10 +341,14 @@
 //! - `sandbox_identity.rs` - Customizing username/hostname
 //! - `text_processing.rs` - Using grep, sed, awk, and jq
 //! - `agent_tool.rs` - LLM agent integration
+//! - `git_workflow.rs` - Git operations on the virtual filesystem
+//! - `python_scripts.rs` - Embedded Python with VFS bridging
 //!
 //! # Guides
 //!
 //! - [`custom_builtins_guide`] - Creating custom builtins
+//! - `python_guide` - Embedded Python (Monty) guide (requires `python` feature)
+//! - [`compatibility_scorecard`] - Feature parity tracking
 //!
 //! # Resources
 //!
