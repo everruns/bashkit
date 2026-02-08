@@ -63,6 +63,7 @@ in a sandboxed environment. All builtins operate on the virtual filesystem.
 
 #### Text Processing
 - `cat` - Concatenate files
+- `nl` - Number lines (`-b`, `-n`, `-s`, `-i`, `-v`, `-w`)
 - `head`, `tail` - First/last N lines
 - `grep` - Pattern matching (`-i`, `-v`, `-c`, `-n`, `-o`, `-l`, `-w`, `-E`, `-F`, `-P`, `-q`, `-m`, `-x`, `-A`, `-B`, `-C`, `-e`, `-f`, `-H`, `-h`, `-b`, `-a`, `-z`, `-r`)
 - `sed` - Stream editing (s/pat/repl/, d, p, a, i; `-E`, `-e`, `-i`, `-n`; nth occurrence, `!` negation)

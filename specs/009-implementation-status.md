@@ -107,17 +107,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 847
+**Total spec test cases:** 861
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 471 | Yes | 406 | 65 | `bash_spec_tests` in CI |
+| Bash (core) | 485 | Yes | 420 | 65 | `bash_spec_tests` in CI |
 | AWK | 89 | Yes | 74 | 15 | loops, arrays, -v, ternary, field assign |
 | Grep | 70 | Yes | 65 | 5 | now with -z, -r, -a, -b, -H, -h, -f, -P |
 | Sed | 65 | Yes | 52 | 13 | hold space, change, regex ranges, -E |
 | JQ | 95 | Yes | 85 | 10 | reduce, walk, regex funcs |
 | Python | 57 | Yes | 49 | 8 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **847** | **Yes** | **731** | **116** | |
+| **Total** | **861** | **Yes** | **745** | **116** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -139,6 +139,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | headtail.test.sh | 14 | |
 | herestring.test.sh | 8 | |
 | negative-tests.test.sh | 8 | error conditions |
+| nl.test.sh | 14 | line numbering |
 | path.test.sh | 14 | |
 | pipes-redirects.test.sh | 13 | includes stderr redirects |
 | procsub.test.sh | 6 | |
@@ -184,7 +185,7 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-`echo`, `printf`, `cat`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
+`echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `read`, `shift`, `break`,
 `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`,
 `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`,

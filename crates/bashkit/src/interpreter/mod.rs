@@ -190,6 +190,7 @@ impl Interpreter {
         builtins.insert("touch".to_string(), Box::new(builtins::Touch));
         builtins.insert("chmod".to_string(), Box::new(builtins::Chmod));
         builtins.insert("wc".to_string(), Box::new(builtins::Wc));
+        builtins.insert("nl".to_string(), Box::new(builtins::Nl));
         builtins.insert("sort".to_string(), Box::new(builtins::Sort));
         builtins.insert("uniq".to_string(), Box::new(builtins::Uniq));
         builtins.insert("cut".to_string(), Box::new(builtins::Cut));
