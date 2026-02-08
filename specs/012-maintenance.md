@@ -59,7 +59,12 @@ regressions, stale docs, dependency rot, and security gaps.
 - [ ] All Rust examples compile and run (`cargo run --example <name>`)
 - [ ] Feature-gated examples run: `cargo run --features python --example python_scripts`
 - [ ] Feature-gated examples run: `cargo run --features git --example git_workflow`
-- [ ] Python agent examples syntax-valid: `python3 -m py_compile examples/*.py`
+- [ ] Python agent examples run end-to-end (requires `ANTHROPIC_API_KEY`):
+  - `cd crates/bashkit-python && maturin develop`
+  - `pip install "langchain>=1.0" "langchain-anthropic>=0.3"`
+  - `python3 examples/treasure_hunt_agent.py`
+  - `pip install "deepagents>=0.3.11"`
+  - `python3 examples/deepagent_coding_agent.py`
 - [ ] Code examples in docs/rustdoc still accurate
 
 ### 6. Specs
