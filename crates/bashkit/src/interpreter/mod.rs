@@ -192,6 +192,15 @@ impl Interpreter {
         builtins.insert("touch".to_string(), Box::new(builtins::Touch));
         builtins.insert("chmod".to_string(), Box::new(builtins::Chmod));
         builtins.insert("wc".to_string(), Box::new(builtins::Wc));
+        builtins.insert("nl".to_string(), Box::new(builtins::Nl));
+        builtins.insert("paste".to_string(), Box::new(builtins::Paste));
+        builtins.insert("column".to_string(), Box::new(builtins::Column));
+        builtins.insert("comm".to_string(), Box::new(builtins::Comm));
+        builtins.insert("diff".to_string(), Box::new(builtins::Diff));
+        builtins.insert("strings".to_string(), Box::new(builtins::Strings));
+        builtins.insert("od".to_string(), Box::new(builtins::Od));
+        builtins.insert("xxd".to_string(), Box::new(builtins::Xxd));
+        builtins.insert("hexdump".to_string(), Box::new(builtins::Hexdump));
         builtins.insert("sort".to_string(), Box::new(builtins::Sort));
         builtins.insert("uniq".to_string(), Box::new(builtins::Uniq));
         builtins.insert("cut".to_string(), Box::new(builtins::Cut));

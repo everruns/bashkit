@@ -36,6 +36,7 @@ through configurable limits.
 | Parser attack (TM-DOS-024) | Malformed input | `parser_timeout` | [`limits.rs`][limits] |
 | Filesystem bomb (TM-DOS-007) | Zip bomb extraction | `FsLimits` | [`fs/limits.rs`][fslimits] |
 | Many files (TM-DOS-006) | Create 1M files | `max_file_count` | [`fs/limits.rs`][fslimits] |
+| Diff algorithm DoS (TM-DOS-028) | `diff` on large unrelated files | LCS matrix cap (10M cells) | [`builtins/diff.rs`][diff] |
 
 **Configuration:**
 ```rust,ignore
@@ -359,3 +360,4 @@ Full threat analysis: [`specs/006-threat-model.md`][spec]
 [parser]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/src/parser/mod.rs
 [interp]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/src/interpreter/mod.rs
 [date]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/src/builtins/date.rs
+[diff]: https://github.com/anthropics/bashkit/blob/main/crates/bashkit/src/builtins/diff.rs
