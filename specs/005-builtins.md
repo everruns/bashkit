@@ -74,6 +74,16 @@ in a sandboxed environment. All builtins operate on the virtual filesystem.
 - `cut` - Extract fields (`-d`, `-f`)
 - `tr` - Translate characters (`-d` for delete)
 - `wc` - Count lines/words/bytes (`-l`, `-w`, `-c`)
+- `paste` - Merge lines of files (`-d`, `-s`)
+- `column` - Columnate lists (`-t`, `-s`, `-o`)
+- `diff` - Compare files line by line (`-u`, `-q`)
+- `comm` - Compare two sorted files (`-1`, `-2`, `-3`)
+
+#### Byte Inspection
+- `od` - Octal dump (`-A`, `-t`, `-N`, `-j`)
+- `xxd` - Hex dump (`-l`, `-s`, `-c`, `-g`, `-p`)
+- `hexdump` - Hex display (`-C`, `-n`, `-s`)
+- `strings` - Extract printable strings (`-n`, `-t`)
 
 #### Utilities
 - `sleep` - Pause execution (max 60s for safety)

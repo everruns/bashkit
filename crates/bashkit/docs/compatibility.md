@@ -31,9 +31,9 @@ for sandbox security reasons. See the compliance spec for details.
 
 | Category | Implemented | Planned | Total |
 |----------|-------------|---------|-------|
-| Shell Builtins | 67 | 1 | 68 |
-| Text Processing | 12 | 1 | 13 |
-| File Operations | 10 | 1 | 11 |
+| Shell Builtins | 75 | 0 | 75 |
+| Text Processing | 14 | 0 | 14 |
+| File Operations | 10 | 0 | 10 |
 | Network | 2 | 0 | 2 |
 
 ---
@@ -113,6 +113,15 @@ for sandbox security reasons. See the compliance spec for details.
 | `uname` | `-a`, `-s`, `-n`, `-r`, `-v`, `-m`, `-o` | System info |
 | `whoami` | (none) | Display sandbox username |
 | `id` | `-u`, `-g`, `-n` | User/group IDs |
+| `nl` | `-b`, `-n`, `-s`, `-i`, `-v`, `-w` | Number lines of files |
+| `paste` | `-d`, `-s` | Merge lines of files |
+| `column` | `-t`, `-s`, `-o` | Columnate lists |
+| `comm` | `-1`, `-2`, `-3` | Compare two sorted files |
+| `diff` | `-u`, `-q`/`--brief` | Compare files line by line |
+| `strings` | `-n`, `-t`, `-a` | Find printable strings in binary data |
+| `od` | `-A`, `-t`, `-N`, `-j` | Octal/hex dump |
+| `xxd` | `-l`, `-s`, `-c`, `-g`, `-p` | Hex dump |
+| `hexdump` | `-C`, `-n`, `-s` | Display file in hex+ASCII |
 
 ### Not Implemented
 
@@ -130,7 +139,6 @@ for sandbox security reasons. See the compliance spec for details.
 | `declare` | Low | Bash extension |
 | `typeset` | Low | Bash extension |
 | `getopts` | Medium | POSIX utility |
-| `diff` | Low | Planned |
 
 ---
 
@@ -383,6 +391,9 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] File operation builtins (`mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`)
 - [x] `wc` builtin
 - [x] Text processing (`sort`, `uniq`, `cut`, `tr`)
+- [x] Text structure (`nl`, `paste`, `column`)
+- [x] File comparison (`diff`, `comm`)
+- [x] Byte inspection (`strings`, `od`, `xxd`, `hexdump`)
 - [x] `basename`/`dirname` builtins
 - [x] `date` builtin
 - [x] Background execution (`&`, `wait`) - parsed, runs synchronously
