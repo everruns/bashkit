@@ -265,7 +265,7 @@ Relative paths are resolved against the shell's cwd. Path traversal via
 ### LLM Hints
 
 When Python is registered via `BashToolBuilder::python()`, the builtin contributes
-a hint to `llmtext()` and `system_prompt()` documenting its limitations:
+a hint to `help()` and `system_prompt()` documenting its limitations:
 
 > python/python3: Embedded Python (Monty). File I/O via pathlib.Path only (no open()). No HTTP/network. No classes. No third-party imports.
 

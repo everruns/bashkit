@@ -101,7 +101,7 @@ print(result.stdout)
 - `execute(commands: str) -> ExecResult`: Execute commands asynchronously
 - `execute_sync(commands: str) -> ExecResult`: Execute commands synchronously
 - `description() -> str`: Get tool description
-- `llmtext() -> str`: Get LLM documentation
+- `help() -> str`: Get LLM documentation
 - `input_schema() -> str`: Get JSON input schema
 - `output_schema() -> str`: Get JSON output schema
 

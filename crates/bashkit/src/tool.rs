@@ -21,7 +21,7 @@
 //!
 //! // Introspection
 //! assert_eq!(tool.name(), "bashkit");
-//! assert!(!tool.llmtext().is_empty());
+//! assert!(!tool.help().is_empty());
 //!
 //! // Execution
 //! let resp = tool.execute(ToolRequest {
@@ -44,8 +44,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// List of built-in commands
 const BUILTINS: &str = "echo cat grep sed awk jq curl head tail sort uniq cut tr wc date sleep mkdir rm cp mv touch chmod printf test [ true false exit cd pwd ls find xargs basename dirname env export read";
 
-/// Base llmtext documentation template (generic help format)
-const BASE_LLMTEXT: &str = r#"BASH(1)                          User Commands                         BASH(1)
+/// Base help documentation template (generic help format)
+const BASE_HELP: &str = r#"BASH(1)                          User Commands                         BASH(1)
 
 NAME
        bashkit - sandboxed bash-like interpreter with virtual filesystem
@@ -212,7 +212,7 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> String;
 
     /// Full documentation for LLMs (human readable, with examples)
-    fn llmtext(&self) -> String;
+    fn help(&self) -> String;
 
     /// Condensed description for system prompts (token-efficient)
     fn system_prompt(&self) -> String;
@@ -289,9 +289,9 @@ impl BashToolBuilder {
     /// Register a custom builtin command
     ///
     /// Custom builtins extend the shell with domain-specific commands.
-    /// They will be documented in the tool's llmtxt output.
+    /// They will be documented in the tool's `help()` output.
     /// If the builtin implements [`Builtin::llm_hint`], its hint will be
-    /// included in `llmtext()` and `system_prompt()`.
+    /// included in `help()` and `system_prompt()`.
     pub fn builtin(mut self, name: impl Into<String>, builtin: Box<dyn Builtin>) -> Self {
         self.builtins.push((name.into(), builtin));
         self
@@ -302,7 +302,7 @@ impl BashToolBuilder {
     ///
     /// Requires the `python` feature flag. Python `pathlib.Path` operations are
     /// bridged to the virtual filesystem. Limitations (no `open()`, no HTTP) are
-    /// automatically documented in `llmtext()` and `system_prompt()`.
+    /// automatically documented in `help()` and `system_prompt()`.
     #[cfg(feature = "python")]
     pub fn python(self) -> Self {
         self.python_with_limits(crate::builtins::PythonLimits::default())
@@ -398,9 +398,9 @@ impl BashTool {
         desc
     }
 
-    /// Build dynamic llmtext with configuration
-    fn build_llmtext(&self) -> String {
-        let mut doc = BASE_LLMTEXT.to_string();
+    /// Build dynamic help with configuration
+    fn build_help(&self) -> String {
+        let mut doc = BASE_HELP.to_string();
 
         // Append configuration section if any dynamic config exists
         let has_config = !self.builtin_names.is_empty()
@@ -530,8 +530,8 @@ impl Tool for BashTool {
         self.build_description()
     }
 
-    fn llmtext(&self) -> String {
-        self.build_llmtext()
+    fn help(&self) -> String {
+        self.build_help()
     }
 
     fn system_prompt(&self) -> String {
@@ -659,8 +659,8 @@ mod tests {
             .description()
             .contains("Sandboxed bash-like interpreter"));
         assert!(tool.description().contains("Supported tools:"));
-        assert!(tool.llmtext().contains("BASH(1)"));
-        assert!(tool.llmtext().contains("SYNOPSIS"));
+        assert!(tool.help().contains("BASH(1)"));
+        assert!(tool.help().contains("SYNOPSIS"));
         assert!(tool.system_prompt().contains("# Bash Tool"));
         assert_eq!(tool.version(), VERSION);
     }
@@ -674,13 +674,13 @@ mod tests {
             .limits(ExecutionLimits::new().max_commands(50))
             .build();
 
-        // llmtxt should include configuration in man-page style
-        let llmtxt = tool.llmtext();
-        assert!(llmtxt.contains("CONFIGURATION"));
-        assert!(llmtxt.contains("User: agent"));
-        assert!(llmtxt.contains("Host: sandbox"));
-        assert!(llmtxt.contains("50 commands"));
-        assert!(llmtxt.contains("API_KEY"));
+        // helptext should include configuration in man-page style
+        let helptext = tool.help();
+        assert!(helptext.contains("CONFIGURATION"));
+        assert!(helptext.contains("User: agent"));
+        assert!(helptext.contains("Host: sandbox"));
+        assert!(helptext.contains("50 commands"));
+        assert!(helptext.contains("API_KEY"));
 
         // system_prompt should include home
         let sysprompt = tool.system_prompt();
@@ -740,7 +740,7 @@ mod tests {
     }
 
     #[test]
-    fn test_builtin_hints_in_llmtext_and_system_prompt() {
+    fn test_builtin_hints_in_help_and_system_prompt() {
         use crate::builtins::Builtin;
         use crate::error::Result;
         use crate::interpreter::ExecResult;
@@ -761,15 +761,12 @@ mod tests {
             .builtin("mycommand", Box::new(HintedBuiltin))
             .build();
 
-        // Hint should appear in llmtext
-        let llmtxt = tool.llmtext();
+        // Hint should appear in help
+        let helptext = tool.help();
+        assert!(helptext.contains("NOTES"), "help should have NOTES section");
         assert!(
-            llmtxt.contains("NOTES"),
-            "llmtext should have NOTES section"
-        );
-        assert!(
-            llmtxt.contains("mycommand: Processes CSV"),
-            "llmtext should contain the hint"
+            helptext.contains("mycommand: Processes CSV"),
+            "help should contain the hint"
         );
 
         // Hint should appear in system_prompt
@@ -784,10 +781,10 @@ mod tests {
     fn test_no_hints_without_hinted_builtins() {
         let tool = BashTool::default();
 
-        let llmtxt = tool.llmtext();
+        let helptext = tool.help();
         assert!(
-            !llmtxt.contains("NOTES"),
-            "llmtext should not have NOTES without hinted builtins"
+            !helptext.contains("NOTES"),
+            "help should not have NOTES without hinted builtins"
         );
 
         let sysprompt = tool.system_prompt();
@@ -807,14 +804,14 @@ mod tests {
             "system_prompt should have single combined warning"
         );
 
-        let llmtxt = tool.llmtext();
+        let helptext = tool.help();
         assert!(
-            llmtxt.contains("WARNINGS"),
-            "llmtext should have WARNINGS section"
+            helptext.contains("WARNINGS"),
+            "help should have WARNINGS section"
         );
         assert!(
-            llmtxt.contains("perl, python/python3 not available."),
-            "llmtext should have single combined warning"
+            helptext.contains("perl, python/python3 not available."),
+            "help should have single combined warning"
         );
     }
 
@@ -844,9 +841,9 @@ mod tests {
             "no warning when all languages registered"
         );
 
-        let llmtxt = tool.llmtext();
+        let helptext = tool.help();
         assert!(
-            !llmtxt.contains("WARNINGS"),
+            !helptext.contains("WARNINGS"),
             "no WARNINGS section when all languages registered"
         );
     }
@@ -905,10 +902,10 @@ mod tests {
             .builtin("cmd2", Box::new(SameHint))
             .build();
 
-        let llmtxt = tool.llmtext();
+        let helptext = tool.help();
         // Should appear exactly once
         assert_eq!(
-            llmtxt.matches("same hint").count(),
+            helptext.matches("same hint").count(),
             1,
             "Duplicate hints should be deduplicated"
         );
@@ -919,15 +916,15 @@ mod tests {
     fn test_python_hint_via_builder() {
         let tool = BashTool::builder().python().build();
 
-        let llmtxt = tool.llmtext();
-        assert!(llmtxt.contains("python"), "llmtext should mention python");
+        let helptext = tool.help();
+        assert!(helptext.contains("python"), "help should mention python");
         assert!(
-            llmtxt.contains("no open()"),
-            "llmtext should document open() limitation"
+            helptext.contains("no open()"),
+            "help should document open() limitation"
         );
         assert!(
-            llmtxt.contains("No HTTP"),
-            "llmtext should document HTTP limitation"
+            helptext.contains("No HTTP"),
+            "help should document HTTP limitation"
         );
 
         let sysprompt = tool.system_prompt();

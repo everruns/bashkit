@@ -16,7 +16,7 @@ JSONL Dataset → Runner → Agent Loop (per task) → Scorer → Report
 
 ### Key Design Decisions
 
-1. **`Bash` directly, not `BashTool`** — `BashTool::execute()` creates a fresh interpreter per call (no VFS persistence). Agent loop needs persistent VFS across turns. `BashTool::default()` used only for `input_schema()`, `system_prompt()`, `llmtext()` introspection.
+1. **`Bash` directly, not `BashTool`** — `BashTool::execute()` creates a fresh interpreter per call (no VFS persistence). Agent loop needs persistent VFS across turns. `BashTool::default()` used only for `input_schema()`, `system_prompt()`, `help()` introspection.
 
 2. **One `Bash` per task** — Each dataset task gets a fresh `Bash` instance. VFS persists across all tool calls within that task. Scorer inspects final VFS state. Instance dropped after scoring.
 

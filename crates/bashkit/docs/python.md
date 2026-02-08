@@ -154,8 +154,8 @@ let tool = BashTool::builder()
     .python()
     .build();
 
-// llmtext() and system_prompt() automatically document Python limitations
-let llmtext = tool.llmtext();  // Includes NOTES section with Python hints
+// help() and system_prompt() automatically document Python limitations
+let help = tool.help();  // Includes NOTES section with Python hints
 ```
 
 The builtin's `llm_hint()` is automatically included in the tool's documentation,

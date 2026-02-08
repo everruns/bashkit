@@ -317,7 +317,7 @@ impl<'a> Context<'a> {
 /// # LLM Hints
 ///
 /// Builtins can provide short hints for LLM system prompts via [`llm_hint`](Builtin::llm_hint).
-/// These appear in the tool's `llmtext()` and `system_prompt()` output so LLMs know
+/// These appear in the tool's `help()` and `system_prompt()` output so LLMs know
 /// about capabilities and limitations.
 ///
 /// # Return Values
@@ -341,7 +341,7 @@ pub trait Builtin: Send + Sync {
     /// Optional short hint for LLM system prompts.
     ///
     /// Return a concise one-line description of capabilities and limitations.
-    /// These hints are included in `llmtext()` and `system_prompt()` output
+    /// These hints are included in `help()` and `system_prompt()` output
     /// when the builtin is registered.
     ///
     /// # Example
