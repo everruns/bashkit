@@ -35,7 +35,7 @@ just eval-save
 | `--model <name>` | Model name (e.g., `claude-sonnet-4-20250514`, `gpt-5.2`) |
 | `--max-turns <n>` | Max agent turns per task (default: 10) |
 | `--save` | Save JSON + Markdown results to disk |
-| `--output <dir>` | Output directory (default: `eval-results`) |
+| `--output <dir>` | Output directory (default: `crates/bashkit-eval/results`) |
 | `--moniker <id>` | Custom run identifier (default: `{provider}-{model}`) |
 
 ## Dataset
@@ -119,4 +119,4 @@ Failures that occur across all models (interpreter limitations, not model qualit
 
 </details>
 
-Full per-task traces in saved markdown/JSON reports under [`eval-results/`](../../eval-results/).
+Full per-task traces in saved markdown/JSON reports under [`results/`](results/).

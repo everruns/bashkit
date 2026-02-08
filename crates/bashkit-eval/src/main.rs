@@ -37,7 +37,7 @@ enum Commands {
         save: bool,
 
         /// Output directory for saved results
-        #[arg(long, default_value = "eval-results")]
+        #[arg(long, default_value = "crates/bashkit-eval/results")]
         output: String,
 
         /// Custom moniker for identifying this run (default: auto from provider+model)
