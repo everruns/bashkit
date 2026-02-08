@@ -448,42 +448,37 @@ impl BashTool {
             }
         }
 
-        // Append language interpreter warnings
-        let warnings = self.language_warnings();
-        if !warnings.is_empty() {
-            doc.push_str("\nWARNINGS\n");
-            for warning in &warnings {
-                doc.push_str(&format!("       {warning}\n"));
-            }
+        // Append language interpreter warning
+        if let Some(warning) = self.language_warning() {
+            doc.push_str(&format!("\nWARNINGS\n       {warning}\n"));
         }
 
         doc
     }
 
-    /// Check which language interpreters are missing from registered builtins.
-    ///
-    /// Returns warnings for python/python3 (add via `.python()` or custom builtin)
-    /// and perl (add via custom builtin) when they are not available.
-    fn language_warnings(&self) -> Vec<String> {
-        let mut warnings = Vec::new();
+    /// Single-line warning listing language interpreters not registered as builtins.
+    /// Returns `None` when all tracked languages are available.
+    fn language_warning(&self) -> Option<String> {
+        let mut missing = Vec::new();
+
+        let has_perl = self.builtin_names.iter().any(|n| n == "perl");
+        if !has_perl {
+            missing.push("perl");
+        }
 
         let has_python = self
             .builtin_names
             .iter()
             .any(|n| n == "python" || n == "python3");
         if !has_python {
-            warnings.push(
-                "python/python3 not available. Not added via Monty (.python()) or custom builtin."
-                    .to_string(),
-            );
+            missing.push("python/python3");
         }
 
-        let has_perl = self.builtin_names.iter().any(|n| n == "perl");
-        if !has_perl {
-            warnings.push("perl not available. Not added via custom builtin.".to_string());
+        if missing.is_empty() {
+            None
+        } else {
+            Some(format!("{} not available.", missing.join(", ")))
         }
-
-        warnings
     }
 
     /// Build dynamic system prompt
@@ -512,13 +507,9 @@ impl BashTool {
             }
         }
 
-        // Language interpreter warnings
-        let warnings = self.language_warnings();
-        if !warnings.is_empty() {
-            prompt.push('\n');
-            for warning in &warnings {
-                prompt.push_str(&format!("Warning: {warning}\n"));
-            }
+        // Language interpreter warning
+        if let Some(warning) = self.language_warning() {
+            prompt.push_str(&format!("\nWarning: {warning}\n"));
         }
 
         prompt
@@ -807,17 +798,13 @@ mod tests {
     }
 
     #[test]
-    fn test_language_warnings_default() {
+    fn test_language_warning_default() {
         let tool = BashTool::default();
 
         let sysprompt = tool.system_prompt();
         assert!(
-            sysprompt.contains("Warning: python/python3 not available"),
-            "system_prompt should warn about missing python"
-        );
-        assert!(
-            sysprompt.contains("Warning: perl not available"),
-            "system_prompt should warn about missing perl"
+            sysprompt.contains("Warning: perl, python/python3 not available."),
+            "system_prompt should have single combined warning"
         );
 
         let llmtxt = tool.llmtext();
@@ -826,17 +813,13 @@ mod tests {
             "llmtext should have WARNINGS section"
         );
         assert!(
-            llmtxt.contains("python/python3 not available"),
-            "llmtext should warn about missing python"
-        );
-        assert!(
-            llmtxt.contains("perl not available"),
-            "llmtext should warn about missing perl"
+            llmtxt.contains("perl, python/python3 not available."),
+            "llmtext should have single combined warning"
         );
     }
 
     #[test]
-    fn test_language_warnings_suppressed_by_custom_builtins() {
+    fn test_language_warning_suppressed_by_custom_builtins() {
         use crate::builtins::Builtin;
         use crate::error::Result;
         use crate::interpreter::ExecResult;
@@ -857,23 +840,19 @@ mod tests {
 
         let sysprompt = tool.system_prompt();
         assert!(
-            !sysprompt.contains("python/python3 not available"),
-            "python warning should be suppressed when python registered"
-        );
-        assert!(
-            !sysprompt.contains("perl not available"),
-            "perl warning should be suppressed when perl registered"
+            !sysprompt.contains("Warning:"),
+            "no warning when all languages registered"
         );
 
         let llmtxt = tool.llmtext();
         assert!(
             !llmtxt.contains("WARNINGS"),
-            "llmtext should not have WARNINGS when all languages registered"
+            "no WARNINGS section when all languages registered"
         );
     }
 
     #[test]
-    fn test_language_warning_python3_suppresses() {
+    fn test_language_warning_partial() {
         use crate::builtins::Builtin;
         use crate::error::Result;
         use crate::interpreter::ExecResult;
@@ -887,20 +866,19 @@ mod tests {
             }
         }
 
-        // Registering python3 alone should suppress the python warning
+        // python3 registered -> only perl warned
         let tool = BashTool::builder()
             .builtin("python3", Box::new(NoopBuiltin))
             .build();
 
         let sysprompt = tool.system_prompt();
         assert!(
-            !sysprompt.contains("python/python3 not available"),
-            "python warning should be suppressed when python3 registered"
+            sysprompt.contains("Warning: perl not available."),
+            "should warn about perl only"
         );
-        // perl should still warn
         assert!(
-            sysprompt.contains("perl not available"),
-            "perl warning should still appear"
+            !sysprompt.contains("python/python3"),
+            "python warning suppressed when python3 registered"
         );
     }
 
