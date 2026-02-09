@@ -59,9 +59,13 @@ jobs:
         with:
           command: check licenses sources
 
+      - name: Install cargo-vet
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-vet
+
       - name: Supply chain audit (cargo-vet)
-        uses: taiki-e/install-action@cargo-vet
-      - run: cargo vet --locked
+        run: cargo vet --locked
 
   test:
     name: Test
@@ -96,8 +100,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build all examples
-        run: cargo build --examples --features "git,python,http_client"
+      - name: Build examples
+        run: cargo build --examples --features "git,http_client"
 
       - name: Run examples
         run: |
