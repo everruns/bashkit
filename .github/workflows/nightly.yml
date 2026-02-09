@@ -51,7 +51,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-geiger
-        uses: taiki-e/cache-cargo-install-action@v2
+        uses: taiki-e/cache-cargo-install-action@v3
         with:
           tool: cargo-geiger
           locked: true
