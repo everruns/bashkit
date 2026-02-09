@@ -50,56 +50,54 @@ Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 
 Added 12 new scenarios: 6 JSON processing (config merge, NDJSON aggregation, schema migration, JSON→CSV, package.json update, group-by aggregation) and 6 gap-fillers (dedup merge, multi-file replace, health check, column transform, release notes, CSV join). Removed tool-steering from all prompts. Renamed `jq_mastery` → `json_processing`.
 
-Opus 4.6 was rate-limited during this run; results below are Haiku 4.5 and GPT-5.2 only.
-
-| Metric | Haiku 4.5 | GPT-5.2 |
-|--------|-----------|---------|
-| Tasks passed | 32/37 | 23/37 |
-| Score | **95%** | 80% |
-| Tool calls | 150 (121 ok, 29 err) | 108 (77 ok, 31 err) |
-| Tool call success | **81%** | 71% |
-| Tokens | 286K in / 35K out | 119K in / 17K out |
-| Duration | 6.4 min | 4.8 min |
+| Metric | Haiku 4.5 | Opus 4.6 | GPT-5.2 |
+|--------|-----------|----------|---------|
+| Tasks passed | 32/37 | 29/37 | 23/37 |
+| Score | **95%** | 87% | 80% |
+| Tool calls | 150 (121 ok, 29 err) | 198 (163 ok, 35 err) | 108 (77 ok, 31 err) |
+| Tool call success | 81% | **82%** | 71% |
+| Tokens | 286K in / 35K out | 315K in / 31K out | 119K in / 17K out |
+| Duration | 6.4 min | 25.2 min | 4.8 min |
 
 #### Per-Category Comparison
 
-| Category | Haiku 4.5 | GPT-5.2 |
-|----------|-----------|---------|
-| archive_operations | 100% | 17% |
-| complex_tasks | 92% | 67% |
-| data_transformation | 93% | 90% |
-| error_recovery | 100% | 100% |
-| file_operations | 100% | 100% |
-| json_processing | 92% | 89% |
-| pipelines | 100% | 80% |
-| scripting | 95% | 53% |
-| system_info | 100% | 100% |
-| text_processing | 92% | 69% |
+| Category | Haiku 4.5 | Opus 4.6 | GPT-5.2 |
+|----------|-----------|----------|---------|
+| archive_operations | 100% | 100% | 17% |
+| complex_tasks | 92% | 54% | 67% |
+| data_transformation | 93% | 90% | 90% |
+| error_recovery | 100% | 100% | 100% |
+| file_operations | 100% | 100% | 100% |
+| json_processing | 92% | 91% | 89% |
+| pipelines | 100% | 100% | 80% |
+| scripting | 95% | 95% | 53% |
+| system_info | 100% | 100% | 100% |
+| text_processing | 92% | 69% | 69% |
 
 #### New Scenario Performance
 
-| Task | Haiku 4.5 | GPT-5.2 |
-|------|-----------|---------|
-| json_config_merge | PASS | PASS |
-| json_ndjson_error_aggregate | PASS | PASS |
-| json_api_schema_migration | PASS | PASS |
-| json_to_csv_export | FAIL | FAIL |
-| json_package_update | PASS | FAIL |
-| json_order_totals | PASS | PASS |
-| pipe_dedup_merge | PASS | FAIL |
-| text_multifile_replace | PASS | FAIL |
-| script_health_check | PASS | PASS |
-| data_column_transform | FAIL | PASS |
-| complex_release_notes | PASS | FAIL |
-| data_csv_join | PASS | PASS |
+| Task | Haiku 4.5 | Opus 4.6 | GPT-5.2 |
+|------|-----------|----------|---------|
+| json_config_merge | PASS | FAIL | PASS |
+| json_ndjson_error_aggregate | PASS | PASS | PASS |
+| json_api_schema_migration | PASS | PASS | PASS |
+| json_to_csv_export | FAIL | PASS | FAIL |
+| json_package_update | PASS | PASS | FAIL |
+| json_order_totals | PASS | PASS | PASS |
+| pipe_dedup_merge | PASS | PASS | FAIL |
+| text_multifile_replace | PASS | FAIL | FAIL |
+| script_health_check | PASS | PASS | PASS |
+| data_column_transform | FAIL | FAIL | PASS |
+| complex_release_notes | PASS | FAIL | FAIL |
+| data_csv_join | PASS | PASS | PASS |
 
-Both models fail `json_to_csv_export` — correct CSV printed to stdout but not saved to file. GPT struggles more with multi-step scenarios requiring file persistence.
+No single new scenario fails across all three models — failures are model-specific, not bashkit limitations. `data_column_transform` and `text_multifile_replace` trip up two of three models each.
 
 #### Model Behavior
 
 - **Haiku 4.5** remains the best score/cost ratio — adapts to bashkit quirks, retries with simpler constructs
-- **GPT-5.2** tends to repeat failing patterns and often omits writing output to files when the prompt asks for both stdout and file output
-- Tool call success dropped ~6pp vs 25-task run (81% vs 87% for Haiku) — new scenarios exercise more complex features
+- **Opus 4.6** struggles on multi-step complex_tasks (54%) but strong on JSON processing; slowest due to longer reasoning
+- **GPT-5.2** tends to repeat failing patterns and often omits writing output to files
 
 ### Previous Results (25 tasks)
 
