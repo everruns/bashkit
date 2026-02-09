@@ -158,4 +158,4 @@ Keep README highlights concise. Full per-task details live in the saved markdown
 - No cost guardrails
 - No comparison against real bash
 - No streaming
-- No retries on LLM errors
+- No retries on LLM content errors (retries only on 429/5xx with exponential backoff)
