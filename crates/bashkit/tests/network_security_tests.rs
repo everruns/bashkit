@@ -415,10 +415,10 @@ mod allowlist_unit {
 }
 
 // =============================================================================
-// 8. NEW FLAG TESTS
+// 8. EXTENDED FLAG TESTS
 // =============================================================================
 
-mod new_curl_flags {
+mod curl_flags {
     use super::*;
 
     /// Test curl --compressed flag parsing
@@ -674,7 +674,7 @@ mod new_curl_flags {
     }
 }
 
-mod new_wget_flags {
+mod wget_flags {
     use super::*;
 
     /// Test wget --header flag parsing
