@@ -49,6 +49,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Generate lockfile
+        run: cargo generate-lockfile
+
       - name: Security audit (cargo-audit)
         uses: rustsec/audit-check@v2.0.0
         with:
