@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.4] - 2026-02-09
+
+### Highlights
+
+- jq builtin now supports file arguments
+
+### What's Changed
+
+* fix(builtins): support file arguments in jq builtin ([#183](https://github.com/everruns/bashkit/pull/183)) by @chaliy
+* chore(ci): split monolithic check job and move heavy analysis to nightly ([#182](https://github.com/everruns/bashkit/pull/182)) by @chaliy
+* refactor(test): drop 'new_' prefix from curl/wget flag test modules ([#181](https://github.com/everruns/bashkit/pull/181)) by @chaliy
+* fix(publish): remove unpublished monty git dep for v0.1.3 ([#180](https://github.com/everruns/bashkit/pull/180)) by @chaliy
+* fix(publish): remove cargo dep on unpublished bashkit-monty-worker by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.3...v0.1.4
+
 ## [0.1.3] - 2026-02-08
 
 ### Highlights
