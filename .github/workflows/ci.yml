@@ -16,8 +16,8 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  check:
-    name: Check
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -27,16 +27,7 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Cache cargo
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+      - uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -49,6 +40,15 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
+  audit:
+    name: Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Security audit (cargo-audit)
         uses: rustsec/audit-check@v2.0.0
         with:
@@ -60,9 +60,19 @@ jobs:
           command: check licenses sources
 
       - name: Supply chain audit (cargo-vet)
-        run: |
-          cargo install cargo-vet --locked
-          cargo vet --locked
+        uses: taiki-e/install-action@cargo-vet
+      - run: cargo vet --locked
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run tests
         run: cargo test --features http_client
@@ -73,8 +83,21 @@ jobs:
       - name: Run property-based security tests (proptest)
         run: cargo test --test proptest_security -- --test-threads=1
         env:
-          # Reduce proptest cases in CI for speed (full run in nightly)
           PROPTEST_CASES: 50
+
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build all examples
+        run: cargo build --examples --features "git,python,http_client"
 
       - name: Run examples
         run: |
@@ -89,92 +112,3 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: cargo run --example agent_tool --features http_client
-
-  # Miri check for undefined behavior (nightly only)
-  miri:
-    name: Miri
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust nightly with Miri
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: miri
-
-      - name: Setup Miri
-        run: cargo +nightly miri setup
-
-      - name: Run Miri on library tests
-        run: |
-          # Run a subset of tests with Miri (full suite is too slow)
-          # Miri is primarily for catching UB in unsafe code
-          cargo +nightly miri test --lib -p bashkit -- \
-            --test-threads=1 \
-            test_parse_simple_command \
-            test_parse_variable \
-            test_parse_pipeline
-        env:
-          MIRIFLAGS: -Zmiri-disable-isolation
-
-  # Security analysis with cargo-geiger
-  security-analysis:
-    name: Security Analysis
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-geiger
-        run: cargo install cargo-geiger --locked
-
-      - name: Run cargo-geiger (unsafe code audit)
-        run: |
-          # Report unsafe code usage in bashkit and dependencies
-          cargo geiger --all-features 2>&1 | tee geiger-report.txt
-          echo "::notice::Unsafe code report generated. Review geiger-report.txt for details."
-        continue-on-error: true
-
-      - name: Upload geiger report
-        uses: actions/upload-artifact@v6
-        with:
-          name: geiger-report
-          path: geiger-report.txt
-          retention-days: 30
-
-  # AddressSanitizer for memory safety (catches stack overflow, buffer overflow, use-after-free)
-  asan:
-    name: AddressSanitizer
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rust-src
-
-      - name: Cache cargo
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-asan-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-asan-
-
-      - name: Run tests with AddressSanitizer
-        env:
-          RUSTFLAGS: "-Z sanitizer=address"
-          ASAN_OPTIONS: "detect_stack_use_after_return=1:detect_leaks=0"
-        run: |
-          # Build and test with ASAN
-          # Note: ASAN significantly increases memory usage and slows execution
-          # We run core tests to catch memory safety issues including stack overflow
-          cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu --lib --tests \
-            -- --test-threads=1
-        timeout-minutes: 30

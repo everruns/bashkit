@@ -1,0 +1,94 @@
+name: Nightly
+
+# Heavy analysis jobs — too slow for every PR, run nightly instead.
+on:
+  schedule:
+    # 4 AM UTC daily (after fuzz at 3 AM)
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust nightly with Miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Setup Miri
+        run: cargo +nightly miri setup
+
+      - name: Run Miri on library tests
+        run: |
+          cargo +nightly miri test --lib -p bashkit -- \
+            --test-threads=1 \
+            test_parse_simple_command \
+            test_parse_variable \
+            test_parse_pipeline
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+
+  security-analysis:
+    name: Security Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-geiger
+        uses: taiki-e/cache-cargo-install-action@v2
+        with:
+          tool: cargo-geiger
+          locked: true
+
+      - name: Run cargo-geiger (unsafe code audit)
+        run: |
+          cargo geiger --all-features 2>&1 | tee geiger-report.txt
+          echo "::notice::Unsafe code report generated. Review geiger-report.txt for details."
+        continue-on-error: true
+
+      - name: Upload geiger report
+        uses: actions/upload-artifact@v6
+        with:
+          name: geiger-report
+          path: geiger-report.txt
+          retention-days: 30
+
+  asan:
+    name: AddressSanitizer
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Run tests with AddressSanitizer
+        env:
+          RUSTFLAGS: "-Z sanitizer=address"
+          ASAN_OPTIONS: "detect_stack_use_after_return=1:detect_leaks=0"
+        run: |
+          cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu --lib --tests \
+            -- --test-threads=1
