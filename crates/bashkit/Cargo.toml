@@ -59,8 +59,6 @@ base64 = { workspace = true, optional = true }
 
 # Logging/tracing (optional)
 tracing = { workspace = true, optional = true }
-# Embedded Python interpreter (pydantic/monty) - optional
-monty = { git = "https://github.com/pydantic/monty", version = "0.0.4", optional = true }
 [features]
 default = []
 http_client = ["reqwest", "base64"]
@@ -76,8 +74,13 @@ logging = ["tracing"]
 # Usage: cargo build --features git
 git = []
 # Enable python/python3 builtins via embedded Monty interpreter
-# Usage: cargo build --features python
-python = ["dep:monty"]
+# Requires monty git dependency (not on crates.io) — feature unavailable from registry
+# To use locally: uncomment and add monty dep
+# python = ["dep:monty"]
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(feature, values("python"))']
 
 [dev-dependencies]
 tokio-test = { workspace = true }
