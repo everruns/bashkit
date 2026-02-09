@@ -75,8 +75,12 @@ logging = ["tracing"]
 git = []
 # Enable python/python3 builtins via embedded Monty interpreter
 # Requires monty git dependency (not on crates.io) — feature unavailable from registry
-# Usage: cargo build --features python
+# To use locally: uncomment and add monty dep
 # python = ["dep:monty"]
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(feature, values("python"))']
 
 [dev-dependencies]
 tokio-test = { workspace = true }
