@@ -811,3 +811,31 @@ jq -V
 ### expect
 jq-1.7.1
 ### end
+
+### jq_file_input
+# jq reads from file arguments when provided
+mkdir -p /tmp/jqtest
+echo '{"a":1}' > /tmp/jqtest/data.json
+jq '.' /tmp/jqtest/data.json
+### expect
+{
+  "a": 1
+}
+### end
+
+### jq_slurp_files
+# jq -s slurps multiple file arguments into array
+mkdir -p /tmp/jqtest2
+echo '{"x":1}' > /tmp/jqtest2/a.json
+echo '{"x":2}' > /tmp/jqtest2/b.json
+jq -s '.' /tmp/jqtest2/a.json /tmp/jqtest2/b.json
+### expect
+[
+  {
+    "x": 1
+  },
+  {
+    "x": 2
+  }
+]
+### end
