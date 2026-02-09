@@ -77,7 +77,7 @@ pub async fn run_eval(
                 });
             }
             Err(e) => {
-                println!("  ERROR: {}", e);
+                println!("  ERROR: {:#}", e);
                 println!();
             }
         }

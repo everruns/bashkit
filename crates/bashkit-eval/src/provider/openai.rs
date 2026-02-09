@@ -180,31 +180,53 @@ impl Provider for OpenAiProvider {
         system: &str,
     ) -> Result<ProviderResponse> {
         let body = self.build_request_body(messages, tools, system);
+        let delays = [2, 4, 8, 16];
 
-        let resp = self
-            .client
-            .post("https://api.openai.com/v1/chat/completions")
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .context("failed to send request to OpenAI API")?;
+        for attempt in 0..=delays.len() {
+            let resp = self
+                .client
+                .post("https://api.openai.com/v1/chat/completions")
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("content-type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .context("failed to send request to OpenAI API")?;
 
-        let status = resp.status();
-        let resp_body: serde_json::Value = resp
-            .json()
-            .await
-            .context("failed to parse OpenAI API response")?;
+            let status = resp.status();
+            let resp_body: serde_json::Value = resp
+                .json()
+                .await
+                .context("failed to parse OpenAI API response")?;
 
-        if !status.is_success() {
+            if status.is_success() {
+                return self.parse_response(resp_body);
+            }
+
             let error_msg = resp_body["error"]["message"]
                 .as_str()
                 .unwrap_or("unknown error");
+
+            // Retry on 429 (rate limit) and 5xx (server errors)
+            let retryable = status.as_u16() == 429 || status.is_server_error();
+            if retryable {
+                if let Some(&delay) = delays.get(attempt) {
+                    eprintln!(
+                        "  [retry] OpenAI {} — waiting {}s (attempt {}/{})",
+                        status,
+                        delay,
+                        attempt + 1,
+                        delays.len()
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                    continue;
+                }
+            }
+
             anyhow::bail!("OpenAI API error ({}): {}", status, error_msg);
         }
 
-        self.parse_response(resp_body)
+        unreachable!()
     }
 
     fn name(&self) -> &str {
