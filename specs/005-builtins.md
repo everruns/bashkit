@@ -68,7 +68,7 @@ in a sandboxed environment. All builtins operate on the virtual filesystem.
 - `grep` - Pattern matching (`-i`, `-v`, `-c`, `-n`, `-o`, `-l`, `-w`, `-E`, `-F`, `-P`, `-q`, `-m`, `-x`, `-A`, `-B`, `-C`, `-e`, `-f`, `-H`, `-h`, `-b`, `-a`, `-z`, `-r`)
 - `sed` - Stream editing (s/pat/repl/, d, p, a, i; `-E`, `-e`, `-i`, `-n`; nth occurrence, `!` negation)
 - `awk` - Text processing (print, -F, variables)
-- `jq` - JSON processing
+- `jq` - JSON processing (file arguments, `-s`, `-r`, `-c`, `-n`, `-S`, `-e`, `--tab`, `-j`)
 - `sort` - Sort lines (`-r`, `-n`, `-u`)
 - `uniq` - Filter duplicates (`-c`, `-d`, `-u`)
 - `cut` - Extract fields (`-d`, `-f`)
