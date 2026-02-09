@@ -40,13 +40,69 @@ just eval-save
 
 ## Dataset
 
-25 hand-curated tasks in JSONL format across 10 categories: file_operations, text_processing, pipelines, scripting, data_transformation, error_recovery, system_info, archive_operations, jq_mastery, complex_tasks.
+37 hand-curated tasks in JSONL format across 10 categories: file_operations, text_processing, pipelines, scripting, data_transformation, error_recovery, system_info, archive_operations, json_processing, complex_tasks.
 
 Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 
 ## Results
 
-### 2026-02-08 — Multi-Model Comparison (latest)
+### 2026-02-09 — Expanded Dataset (37 tasks, latest)
+
+Added 12 new scenarios: 6 JSON processing (config merge, NDJSON aggregation, schema migration, JSON→CSV, package.json update, group-by aggregation) and 6 gap-fillers (dedup merge, multi-file replace, health check, column transform, release notes, CSV join). Removed tool-steering from all prompts. Renamed `jq_mastery` → `json_processing`.
+
+| Metric | Haiku 4.5 | Opus 4.6 | GPT-5.2 |
+|--------|-----------|----------|---------|
+| Tasks passed | 32/37 | 29/37 | 23/37 |
+| Score | **95%** | 87% | 80% |
+| Tool calls | 150 (121 ok, 29 err) | 198 (163 ok, 35 err) | 108 (77 ok, 31 err) |
+| Tool call success | 81% | **82%** | 71% |
+| Tokens | 286K in / 35K out | 315K in / 31K out | 119K in / 17K out |
+| Duration | 6.4 min | 25.2 min | 4.8 min |
+
+#### Per-Category Comparison
+
+| Category | Haiku 4.5 | Opus 4.6 | GPT-5.2 |
+|----------|-----------|----------|---------|
+| archive_operations | 100% | 100% | 17% |
+| complex_tasks | 92% | 54% | 67% |
+| data_transformation | 93% | 90% | 90% |
+| error_recovery | 100% | 100% | 100% |
+| file_operations | 100% | 100% | 100% |
+| json_processing | 92% | 91% | 89% |
+| pipelines | 100% | 100% | 80% |
+| scripting | 95% | 95% | 53% |
+| system_info | 100% | 100% | 100% |
+| text_processing | 92% | 69% | 69% |
+
+#### New Scenario Performance
+
+| Task | Haiku 4.5 | Opus 4.6 | GPT-5.2 |
+|------|-----------|----------|---------|
+| json_config_merge | PASS | FAIL | PASS |
+| json_ndjson_error_aggregate | PASS | PASS | PASS |
+| json_api_schema_migration | PASS | PASS | PASS |
+| json_to_csv_export | FAIL | PASS | FAIL |
+| json_package_update | PASS | PASS | FAIL |
+| json_order_totals | PASS | PASS | PASS |
+| pipe_dedup_merge | PASS | PASS | FAIL |
+| text_multifile_replace | PASS | FAIL | FAIL |
+| script_health_check | PASS | PASS | PASS |
+| data_column_transform | FAIL | FAIL | PASS |
+| complex_release_notes | PASS | FAIL | FAIL |
+| data_csv_join | PASS | PASS | PASS |
+
+No single new scenario fails across all three models — failures are model-specific, not bashkit limitations. `data_column_transform` and `text_multifile_replace` trip up two of three models each.
+
+#### Model Behavior
+
+- **Haiku 4.5** remains the best score/cost ratio — adapts to bashkit quirks, retries with simpler constructs
+- **Opus 4.6** struggles on multi-step complex_tasks (54%) but strong on JSON processing; slowest due to longer reasoning
+- **GPT-5.2** tends to repeat failing patterns and often omits writing output to files
+
+### Previous Results (25 tasks)
+
+<details>
+<summary>2026-02-08 — Multi-Model Comparison</summary>
 
 | Metric | Haiku 4.5 | Opus 4.6 | GPT-5.2 |
 |--------|-----------|----------|---------|
@@ -57,56 +113,10 @@ Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 | Tokens | 167K in / 19K out | 242K in / 26K out | 84K in / 10K out |
 | Duration | 2.9 min | 8.7 min | 3.4 min |
 
-#### Per-Category Comparison
-
-| Category | Opus 4.6 | Haiku 4.5 | GPT-5.2 |
-|----------|----------|-----------|---------|
-| archive_operations | 100% | 100% | 50% |
-| complex_tasks | 69% | 100% | 88% |
-| data_transformation | 94% | 100% | 62% |
-| error_recovery | 100% | 100% | 86% |
-| file_operations | 100% | 94% | 100% |
-| jq_mastery | 100% | 100% | 100% |
-| pipelines | 100% | 100% | 80% |
-| scripting | 93% | 93% | 53% |
-| system_info | 100% | 100% | 100% |
-| text_processing | 100% | 100% | 100% |
-
-#### Impact of Interpreter Fixes
-
-Tool call success (how often bashkit executes what models generate) improved significantly after recent fixes:
-
-| Model | Before | After | Delta |
-|-------|--------|-------|-------|
-| Claude Opus 4.6 | 79% | 87% | **+8%** |
-| Claude Haiku 4.5 | 77% | 87% | **+10%** |
-| GPT-5.2 | 59% | 78% | **+19%** |
-
-Key fixes: `date -d` compound expressions/quote stripping (eliminated 10k command limit exhaustion), awk field math.
-
-#### Remaining Bashkit Gaps
-
-Failures that occur across all models (interpreter limitations, not model quality):
-
-| Gap | Impact | Example |
-|-----|--------|---------|
-| Compound commands in pipelines | ~6 errors | `cmd \| while read line; do ... done` |
-| Awk associative arrays | ~9 errors | `arr[$key]=$val` |
-| Heredoc-to-file redirect | ~10 errors | `cat > file <<'EOF'` writes to stdout instead |
-| `source`/`.` function loading | ~5 errors | Functions from sourced files not in caller scope |
-| `chmod` symbolic modes | ~6 errors | `chmod +x file` → "invalid mode" |
-| Parser fuel / `[[ ]]` | ~25 errors | Complex conditionals exhaust parser budget |
-
-#### Model Behavior
-
-- **Claude models** adapt when bashkit rejects a command — retry with simpler constructs (e.g., `[[ ]]` → `[ ]`, pipelines → temp files)
-- **GPT-5.2** tends to repeat failing patterns, leading to lower tool success despite fewer total calls
-- **Haiku 4.5** best score/cost ratio — fewer tokens, faster, highest pass rate
-
-#### Baseline (2026-02-07, pre-fixes)
+</details>
 
 <details>
-<summary>Previous results before interpreter improvements</summary>
+<summary>2026-02-07 — Baseline (pre-interpreter fixes)</summary>
 
 | Metric | Opus 4.6 | Haiku 4.5 | GPT-5.2 |
 |--------|----------|-----------|---------|

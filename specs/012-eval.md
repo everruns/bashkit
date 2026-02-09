@@ -138,7 +138,7 @@ Moniker defaults to `{provider}-{model}`, overridable via `--moniker`.
 | error_recovery | Handle missing files, bad input | Broken files |
 | system_info | whoami, date, env queries | None |
 | archive_operations | tar, gzip workflows | Project files |
-| jq_mastery | Complex jq queries | Nested JSON |
+| json_processing | JSON querying, transformation, merging | Nested JSON, NDJSON, config files |
 | complex_tasks | Multi-step real-world scenarios | Various |
 
 ## Results & Analysis
@@ -158,4 +158,4 @@ Keep README highlights concise. Full per-task details live in the saved markdown
 - No cost guardrails
 - No comparison against real bash
 - No streaming
-- No retries on LLM errors
+- No retries on LLM content errors (retries only on 429/5xx with exponential backoff)
