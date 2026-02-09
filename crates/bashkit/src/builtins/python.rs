@@ -22,11 +22,66 @@
 //! Supports: `python -c "code"`, `python script.py`, stdin piping.
 
 use async_trait::async_trait;
-use bashkit_monty_worker::{WireExternalResult, WireLimits, WorkerRequest, WorkerResponse};
 use monty::{
     dir_stat, file_stat, symlink_stat, CollectStringPrint, ExcType, ExternalResult, LimitedTracker,
     MontyException, MontyObject, MontyRun, OsFunction, ResourceLimits, RunProgress,
 };
+
+// IPC wire types for bashkit <-> monty-worker subprocess communication.
+// Duplicated from bashkit-monty-worker crate to avoid a cargo dependency on an
+// unpublished binary crate. Both sides must agree on the JSON wire format.
+
+/// Parent -> Worker messages (JSON lines on worker's stdin).
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type")]
+enum WorkerRequest {
+    #[serde(rename = "init")]
+    Init {
+        code: String,
+        filename: String,
+        limits: WireLimits,
+    },
+    #[serde(rename = "os_response")]
+    OsResponse { result: WireExternalResult },
+}
+
+/// Worker -> Parent messages (JSON lines on worker's stdout).
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type")]
+enum WorkerResponse {
+    #[serde(rename = "os_call")]
+    OsCall {
+        function: OsFunction,
+        args: Vec<MontyObject>,
+        kwargs: Vec<(MontyObject, MontyObject)>,
+    },
+    #[serde(rename = "complete")]
+    Complete { result: MontyObject, output: String },
+    #[serde(rename = "error")]
+    Error { exception: String, output: String },
+}
+
+/// Resource limits sent from parent to worker.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct WireLimits {
+    max_allocations: usize,
+    max_duration_secs: f64,
+    max_memory: usize,
+    max_recursion: usize,
+}
+
+/// Wire-safe version of monty's ExternalResult (which doesn't derive Serialize).
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "status")]
+enum WireExternalResult {
+    #[serde(rename = "ok")]
+    Return { value: MontyObject },
+    #[serde(rename = "error")]
+    Error {
+        exc_type: ExcType,
+        message: Option<String>,
+    },
+}
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
