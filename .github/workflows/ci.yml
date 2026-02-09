@@ -119,3 +119,20 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: cargo run --example agent_tool --features http_client
+
+  # Gate job for branch protection — name must stay "Check"
+  check:
+    name: Check
+    if: always()
+    needs: [lint, audit, test, examples]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all jobs passed
+        run: |
+          if [[ "${{ needs.lint.result }}" != "success" ]] || \
+             [[ "${{ needs.audit.result }}" != "success" ]] || \
+             [[ "${{ needs.test.result }}" != "success" ]] || \
+             [[ "${{ needs.examples.result }}" != "success" ]]; then
+            echo "One or more required jobs failed"
+            exit 1
+          fi
