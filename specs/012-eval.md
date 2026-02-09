@@ -138,7 +138,7 @@ Moniker defaults to `{provider}-{model}`, overridable via `--moniker`.
 | error_recovery | Handle missing files, bad input | Broken files |
 | system_info | whoami, date, env queries | None |
 | archive_operations | tar, gzip workflows | Project files |
-| jq_mastery | Complex jq queries | Nested JSON |
+| json_processing | JSON querying, transformation, merging | Nested JSON, NDJSON, config files |
 | complex_tasks | Multi-step real-world scenarios | Various |
 
 ## Results & Analysis
