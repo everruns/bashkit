@@ -1130,6 +1130,10 @@ criteria = "safe-to-run"
 version = "1.0.22"
 criteria = "safe-to-deploy"
 
+[[exemptions.ryu]]
+version = "1.0.23"
+criteria = "safe-to-deploy"
+
 [[exemptions.safe_arch]]
 version = "0.7.4"
 criteria = "safe-to-deploy"
@@ -1448,6 +1452,10 @@ criteria = "safe-to-run"
 
 [[exemptions.unicode-ident]]
 version = "1.0.22"
+criteria = "safe-to-deploy"
+
+[[exemptions.unicode-ident]]
+version = "1.0.23"
 criteria = "safe-to-deploy"
 
 [[exemptions.unicode-normalization]]
@@ -1808,4 +1816,8 @@ criteria = "safe-to-deploy"
 
 [[exemptions.zmij]]
 version = "1.0.19"
+criteria = "safe-to-deploy"
+
+[[exemptions.zmij]]
+version = "1.0.20"
 criteria = "safe-to-deploy"
