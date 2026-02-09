@@ -5,8 +5,6 @@
 ### Highlights
 
 - jq builtin now supports file arguments
-- Publishing fixes for crates.io compatibility
-- CI split into focused jobs with heavy analysis moved to nightly
 
 ### What's Changed
 
