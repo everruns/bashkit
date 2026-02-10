@@ -1,10 +1,10 @@
 # Bashkit Python Bindings
 
-Python bindings for [Bashkit](https://github.com/everruns/bashkit) - a sandboxed bash interpreter for AI agents.
+Python bindings for [Bashkit](https://github.com/everruns/bashkit) - a virtual bash interpreter for AI agents.
 
 ## Features
 
-- **Sandboxed execution**: All commands run in isolation with a virtual filesystem
+- **Sandboxed, in-process execution**: All commands run in isolation with a virtual filesystem
 - **68+ built-in commands**: echo, cat, grep, sed, awk, jq, curl, find, and more
 - **Full bash syntax**: Variables, pipelines, redirects, loops, functions, arrays
 - **Resource limits**: Protect against infinite loops and runaway scripts

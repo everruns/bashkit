@@ -1,7 +1,7 @@
 //! Virtual filesystem for Bashkit.
 //!
 //! This module provides a virtual filesystem abstraction that allows Bashkit to
-//! operate in a sandboxed environment without accessing the real filesystem.
+//! operate in a virtual environment without accessing the real filesystem.
 //!
 //! # Which Trait/Type Should I Use?
 //!

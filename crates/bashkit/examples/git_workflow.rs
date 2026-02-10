@@ -1,6 +1,6 @@
 //! Git workflow example
 //!
-//! Demonstrates sandboxed git operations in Bashkit's virtual filesystem.
+//! Demonstrates virtual git operations in Bashkit's virtual filesystem.
 //!
 //! Run with: cargo run --example git_workflow --features git
 
@@ -99,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     println!("Author: {}", result.stdout);
 
-    // Demonstrate remote operations (sandbox mode)
+    // Demonstrate remote operations (virtual mode)
     println!("14. Add remote (URL validation):");
     let result = bash
         .exec("cd /project && git remote add origin https://github.com/example/repo.git")
@@ -110,8 +110,8 @@ async fn main() -> anyhow::Result<()> {
     let result = bash.exec("cd /project && git remote -v").await?;
     println!("{}", result.stdout);
 
-    // Try push (will show sandbox message)
-    println!("15. Attempt push (sandbox mode):");
+    // Try push (will show virtual mode message)
+    println!("15. Attempt push (virtual mode):");
     let result = bash.exec("cd /project && git push origin master").await?;
     println!("{}", result.stderr);
 

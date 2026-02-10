@@ -13,7 +13,7 @@ use crate::interpreter::ExecResult;
 /// If no JOB_ID is specified, wait for all background jobs.
 /// Returns the exit status of the last job waited for.
 ///
-/// Note: In this sandboxed implementation, background jobs run
+/// Note: In this virtual implementation, background jobs run
 /// synchronously, so wait is effectively a no-op. However, it
 /// is provided for script compatibility.
 pub struct Wait;

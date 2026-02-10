@@ -1,6 +1,6 @@
 //! Python Scripts Example
 //!
-//! Demonstrates running Python code inside BashKit's sandbox using the
+//! Demonstrates running Python code inside BashKit's virtual environment using the
 //! embedded Monty interpreter. Python runs entirely in-memory with
 //! resource limits. Python pathlib.Path operations are bridged to
 //! BashKit's virtual filesystem.

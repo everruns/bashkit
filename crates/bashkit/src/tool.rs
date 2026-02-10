@@ -8,7 +8,7 @@
 //! # Architecture
 //!
 //! - [`Tool`] trait: Contract that all tools must implement
-//! - [`BashTool`]: Sandboxed bash interpreter implementing Tool
+//! - [`BashTool`]: Virtual bash interpreter implementing Tool
 //! - [`BashToolBuilder`]: Builder pattern for configuring BashTool
 //!
 //! # Example
@@ -48,14 +48,14 @@ const BUILTINS: &str = "echo cat grep sed awk jq curl head tail sort uniq cut tr
 const BASE_HELP: &str = r#"BASH(1)                          User Commands                         BASH(1)
 
 NAME
-       bashkit - sandboxed bash-like interpreter with virtual filesystem
+       bashkit - virtual bash interpreter with virtual filesystem
 
 SYNOPSIS
        {"commands": "<bash commands>"}
 
 DESCRIPTION
-       Bashkit executes bash commands in an isolated sandbox with a virtual
-       filesystem. All file operations are contained within the sandbox.
+       Bashkit executes bash commands in a virtual environment with a virtual
+       filesystem. All file operations are contained within the virtual environment.
 
        Supports full bash syntax including variables, pipelines, redirects,
        loops, conditionals, functions, and arrays.
@@ -199,7 +199,7 @@ impl ToolStatus {
 ///
 /// # Implementors
 ///
-/// - [`BashTool`]: Sandboxed bash interpreter
+/// - [`BashTool`]: Virtual bash interpreter
 #[async_trait]
 pub trait Tool: Send + Sync {
     /// Tool identifier (e.g., "bashkit", "calculator")
@@ -244,9 +244,9 @@ pub trait Tool: Send + Sync {
 /// Builder for configuring BashTool
 #[derive(Default)]
 pub struct BashToolBuilder {
-    /// Custom username for sandbox identity
+    /// Custom username for virtual identity
     username: Option<String>,
-    /// Custom hostname for sandbox identity
+    /// Custom hostname for virtual identity
     hostname: Option<String>,
     /// Execution limits
     limits: Option<ExecutionLimits>,
@@ -262,13 +262,13 @@ impl BashToolBuilder {
         Self::default()
     }
 
-    /// Set custom username for sandbox identity
+    /// Set custom username for virtual identity
     pub fn username(mut self, username: impl Into<String>) -> Self {
         self.username = Some(username.into());
         self
     }
 
-    /// Set custom hostname for sandbox identity
+    /// Set custom hostname for virtual identity
     pub fn hostname(mut self, hostname: impl Into<String>) -> Self {
         self.hostname = Some(hostname.into());
         self
@@ -341,7 +341,7 @@ impl BashToolBuilder {
     }
 }
 
-/// Sandboxed bash interpreter implementing the Tool trait
+/// Virtual bash interpreter implementing the Tool trait
 #[derive(Default)]
 pub struct BashTool {
     username: Option<String>,
@@ -387,9 +387,8 @@ impl BashTool {
 
     /// Build dynamic description with supported tools
     fn build_description(&self) -> String {
-        let mut desc = String::from(
-            "Sandboxed bash-like interpreter with virtual filesystem. Supported tools: ",
-        );
+        let mut desc =
+            String::from("Virtual bash interpreter with virtual filesystem. Supported tools: ");
         desc.push_str(BUILTINS);
         if !self.builtin_names.is_empty() {
             desc.push(' ');
@@ -486,7 +485,7 @@ impl BashTool {
         let mut prompt = String::from("# Bash Tool\n\n");
 
         // Description with workspace info
-        prompt.push_str("Sandboxed bash-like interpreter with virtual filesystem.\n");
+        prompt.push_str("Virtual bash interpreter with virtual filesystem.\n");
 
         // Home directory info if username is set
         if let Some(ref username) = self.username {
@@ -523,7 +522,7 @@ impl Tool for BashTool {
     }
 
     fn short_description(&self) -> &str {
-        "Sandboxed bash interpreter with virtual filesystem"
+        "Virtual bash interpreter with virtual filesystem"
     }
 
     fn description(&self) -> String {
@@ -653,11 +652,9 @@ mod tests {
         assert_eq!(tool.name(), "bashkit");
         assert_eq!(
             tool.short_description(),
-            "Sandboxed bash interpreter with virtual filesystem"
+            "Virtual bash interpreter with virtual filesystem"
         );
-        assert!(tool
-            .description()
-            .contains("Sandboxed bash-like interpreter"));
+        assert!(tool.description().contains("Virtual bash interpreter"));
         assert!(tool.description().contains("Supported tools:"));
         assert!(tool.help().contains("BASH(1)"));
         assert!(tool.help().contains("SYNOPSIS"));

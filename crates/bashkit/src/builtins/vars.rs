@@ -153,7 +153,7 @@ impl Builtin for Readonly {
 /// times builtin - POSIX special built-in to display process times.
 ///
 /// Prints accumulated user and system times for the shell and its children.
-/// In a sandboxed environment, returns zeros since we don't track real CPU time.
+/// In Bashkit's virtual environment, returns zeros since we don't track real CPU time.
 ///
 /// Output format:
 /// ```text
@@ -166,7 +166,7 @@ pub struct Times;
 #[async_trait]
 impl Builtin for Times {
     async fn execute(&self, _ctx: Context<'_>) -> Result<ExecResult> {
-        // In a sandboxed environment, we don't have real process times
+        // In Bashkit's virtual environment, we don't have real process times
         // Return zeros as per POSIX format
         let output = "0m0.000s 0m0.000s\n0m0.000s 0m0.000s\n".to_string();
         Ok(ExecResult::ok(output))

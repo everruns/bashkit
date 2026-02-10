@@ -5,11 +5,11 @@
 //! **This integration is experimental.** Monty is an early-stage Python interpreter
 //! that may have undiscovered crash or security bugs in its parser or VM.
 //! Subprocess isolation mitigates host crashes, but undiscovered issues may bypass
-//! BashKit's sandboxing. Use with caution when processing untrusted input.
+//! BashKit's security boundary. Use with caution when processing untrusted input.
 //!
 //! # Overview
 //!
-//! Sandboxed Python execution with resource limits and VFS access.
+//! Virtual Python execution with resource limits and VFS access.
 //! Python `pathlib.Path` operations are bridged to BashKit's virtual filesystem
 //! via Monty's OsCall pause/resume mechanism. No real filesystem or network access.
 //!
@@ -93,7 +93,7 @@ use crate::error::Result;
 use crate::fs::{FileSystem, FileType};
 use crate::interpreter::ExecResult;
 
-/// Default resource limits for sandboxed Python execution.
+/// Default resource limits for virtual Python execution.
 const DEFAULT_MAX_ALLOCATIONS: usize = 1_000_000;
 const DEFAULT_MAX_DURATION: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_MEMORY: usize = 64 * 1024 * 1024; // 64 MB
@@ -123,7 +123,7 @@ pub enum PythonIsolation {
 /// **Experimental:** The Monty integration is experimental and may have
 /// undiscovered security issues. See module-level docs for details.
 ///
-/// Use the builder pattern to customize, or `Default` for the standard sandbox limits:
+/// Use the builder pattern to customize, or `Default` for the standard virtual execution limits:
 /// - 1,000,000 allocations
 /// - 30 second timeout
 /// - 64 MB memory
@@ -350,7 +350,7 @@ impl Builtin for Python {
         } else {
             // No args, no stdin — interactive mode not supported
             return Ok(ExecResult::err(
-                "python3: interactive mode not supported in sandbox\n".to_string(),
+                "python3: interactive mode not supported in virtual mode\n".to_string(),
                 1,
             ));
         };
@@ -710,7 +710,7 @@ async fn run_python_in_process(
                 // No external functions registered; return error
                 let err = MontyException::new(
                     ExcType::RuntimeError,
-                    Some("external function not available in sandbox".into()),
+                    Some("external function not available in virtual mode".into()),
                 );
                 match state.run(ExternalResult::Error(err), &mut printer) {
                     Ok(next) => progress = next,
@@ -721,11 +721,11 @@ async fn run_python_in_process(
                 }
             }
             RunProgress::ResolveFutures(_) => {
-                // Async futures not supported in sandbox
+                // Async futures not supported in virtual mode
                 let printed = printer.into_output();
                 let err = MontyException::new(
                     ExcType::RuntimeError,
-                    Some("async operations not supported in sandbox".into()),
+                    Some("async operations not supported in virtual mode".into()),
                 );
                 return Ok(format_exception_with_output(err, &printed));
             }
@@ -919,7 +919,7 @@ async fn handle_os_call(
         // Getenv/GetEnviron handled above
         _ => ExternalResult::Error(MontyException::new(
             ExcType::OSError,
-            Some(format!("{function} not supported in sandbox")),
+            Some(format!("{function} not supported in virtual mode")),
         )),
     }
 }

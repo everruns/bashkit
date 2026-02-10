@@ -56,7 +56,7 @@ use fail::fail_point;
 ///
 /// `InMemoryFs` is the default filesystem used by [`Bash::new()`](crate::Bash::new).
 /// It stores all files and directories in memory using a `HashMap`, making it
-/// ideal for sandboxed execution where no real filesystem access is needed.
+/// ideal for virtual execution where no real filesystem access is needed.
 ///
 /// # Features
 ///

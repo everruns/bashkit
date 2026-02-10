@@ -1,6 +1,6 @@
 //! Git support for Bashkit
 //!
-//! Provides sandboxed git operations on the virtual filesystem.
+//! Provides virtual git operations on the virtual filesystem.
 //! Requires the `git` feature to be enabled.
 //!
 //! # Security Model
@@ -8,7 +8,7 @@
 //! - **Disabled by default**: Git access requires explicit configuration
 //! - **Virtual filesystem only**: All operations confined to VFS
 //! - **Remote URL allowlist**: Only allowed URLs can be accessed (Phase 2)
-//! - **Sandboxed identity**: Author name/email are configurable, never from host
+//! - **Virtual identity**: Author name/email are configurable, never from host
 //! - **No host access**: Cannot read host ~/.gitconfig or credentials
 //!
 //! # Usage

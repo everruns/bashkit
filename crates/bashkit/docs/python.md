@@ -186,7 +186,7 @@ are available. No `pip install`, no `import numpy`.
 
 ## Security
 
-All Python execution is sandboxed:
+All Python execution runs in a virtual environment:
 
 - **No host filesystem access** — all paths resolve through the VFS
 - **No network access** — no sockets, HTTP, or DNS

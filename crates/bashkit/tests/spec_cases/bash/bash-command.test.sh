@@ -67,12 +67,12 @@ did not execute
 
 ### bash_version
 ### bash_diff: returns Bashkit version, not GNU bash
-# --version shows sandbox version
+# --version shows virtual interpreter version
 bash --version | grep -q "Bashkit" && echo "has Bashkit"
-bash --version | grep -q "sandboxed" && echo "is sandboxed"
+bash --version | grep -q "virtual" && echo "is virtual"
 ### expect
 has Bashkit
-is sandboxed
+is virtual
 ### end
 
 ### bash_help
@@ -154,7 +154,7 @@ bash -c
 ### sh_version
 ### bash_diff: returns Bashkit version, not real sh
 # sh --version also works
-sh --version | grep -q "sandboxed sh" && echo "is sh"
+sh --version | grep -q "virtual sh" && echo "is sh"
 ### expect
 is sh
 ### end

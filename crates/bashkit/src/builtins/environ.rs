@@ -63,10 +63,10 @@ impl Builtin for Env {
             return Ok(ExecResult::ok(output));
         }
 
-        // We have a command - but since we're in a sandbox, we can't execute arbitrary commands
+        // We have a command - but since we're in a virtual environment, we can't execute arbitrary commands
         // Return an error indicating this
         Ok(ExecResult::err(
-            "env: executing commands not supported in sandbox\n".to_string(),
+            "env: executing commands not supported in virtual mode\n".to_string(),
             126,
         ))
     }
@@ -125,7 +125,7 @@ impl Builtin for Printenv {
 ///   -c   Clear the history
 ///   N    Show last N entries
 ///
-/// In a sandboxed environment, history is limited to the current session.
+/// In Bashkit's virtual environment, history is limited to the current session.
 /// Note: Full history tracking would require interpreter changes.
 pub struct History;
 
@@ -149,11 +149,11 @@ impl Builtin for History {
         }
 
         if clear {
-            // In a sandboxed environment, there's no persistent history to clear
+            // In Bashkit's virtual environment, there's no persistent history to clear
             return Ok(ExecResult::ok(String::new()));
         }
 
-        // In a sandboxed environment, we don't have access to shell history
+        // In Bashkit's virtual environment, we don't have access to shell history
         // Return an informational message
         let output = if let Some(_n) = count {
             // Would show last N entries

@@ -1,6 +1,6 @@
 //! Git client implementation for Bashkit.
 //!
-//! Provides sandboxed git operations on the virtual filesystem.
+//! Provides virtual git operations on the virtual filesystem.
 //!
 //! # Implementation Notes
 //!
@@ -19,7 +19,7 @@ use crate::fs::FileSystem;
 
 use super::config::GitConfig;
 
-/// Git client for sandboxed operations.
+/// Git client for virtual operations.
 ///
 /// All operations work on the virtual filesystem and never access
 /// the host's git installation or configuration.
@@ -837,7 +837,7 @@ impl GitClient {
     ///
     /// # Note
     ///
-    /// In sandbox mode, this validates the URL against the allowlist
+    /// In virtual mode, this validates the URL against the allowlist
     /// but actual network operations are not supported.
     pub async fn clone(
         &self,
@@ -848,9 +848,9 @@ impl GitClient {
         // Validate URL
         self.config.is_url_allowed(url).map_err(Error::Internal)?;
 
-        // Return sandbox mode message
+        // Return virtual mode message
         Err(Error::Internal(format!(
-            "git clone: network operations not supported in sandbox mode\n\
+            "git clone: network operations not supported in virtual mode\n\
              hint: URL '{}' passed allowlist validation\n\
              hint: to clone, use a pre-populated virtual filesystem instead",
             url
@@ -861,7 +861,7 @@ impl GitClient {
     ///
     /// # Note
     ///
-    /// In sandbox mode, this validates the URL against the allowlist
+    /// In virtual mode, this validates the URL against the allowlist
     /// but actual network operations are not supported.
     pub async fn fetch(
         &self,
@@ -881,9 +881,9 @@ impl GitClient {
             .is_url_allowed(&remote_entry.url)
             .map_err(Error::Internal)?;
 
-        // Return sandbox mode message
+        // Return virtual mode message
         Err(Error::Internal(format!(
-            "git fetch: network operations not supported in sandbox mode\n\
+            "git fetch: network operations not supported in virtual mode\n\
              hint: remote '{}' URL '{}' passed allowlist validation",
             remote, remote_entry.url
         )))
@@ -893,7 +893,7 @@ impl GitClient {
     ///
     /// # Note
     ///
-    /// In sandbox mode, this validates the URL against the allowlist
+    /// In virtual mode, this validates the URL against the allowlist
     /// but actual network operations are not supported.
     pub async fn push(
         &self,
@@ -913,9 +913,9 @@ impl GitClient {
             .is_url_allowed(&remote_entry.url)
             .map_err(Error::Internal)?;
 
-        // Return sandbox mode message
+        // Return virtual mode message
         Err(Error::Internal(format!(
-            "git push: network operations not supported in sandbox mode\n\
+            "git push: network operations not supported in virtual mode\n\
              hint: remote '{}' URL '{}' passed allowlist validation",
             remote, remote_entry.url
         )))
@@ -925,7 +925,7 @@ impl GitClient {
     ///
     /// # Note
     ///
-    /// In sandbox mode, this validates the URL against the allowlist
+    /// In virtual mode, this validates the URL against the allowlist
     /// but actual network operations are not supported.
     pub async fn pull(
         &self,
@@ -945,9 +945,9 @@ impl GitClient {
             .is_url_allowed(&remote_entry.url)
             .map_err(Error::Internal)?;
 
-        // Return sandbox mode message
+        // Return virtual mode message
         Err(Error::Internal(format!(
-            "git pull: network operations not supported in sandbox mode\n\
+            "git pull: network operations not supported in virtual mode\n\
              hint: remote '{}' URL '{}' passed allowlist validation",
             remote, remote_entry.url
         )))
@@ -1169,7 +1169,7 @@ impl GitClient {
 
         // Simplified diff: just show a placeholder
         // Full diff implementation would require tracking file content hashes
-        Ok("# Diff output (simplified in sandbox mode)\n".to_string())
+        Ok("# Diff output (simplified in virtual mode)\n".to_string())
     }
 
     /// Reset HEAD to a commit.

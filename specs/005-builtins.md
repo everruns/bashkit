@@ -6,7 +6,7 @@ Implemented
 ## Decision
 
 Bashkit provides a comprehensive set of built-in commands for script execution
-in a sandboxed environment. All builtins operate on the virtual filesystem.
+in a virtual environment. All builtins operate on the virtual filesystem.
 
 ### Builtin Categories
 
@@ -93,12 +93,12 @@ in a sandboxed environment. All builtins operate on the virtual filesystem.
 - `timeout` - Run command with time limit (stub, max 300s)
 
 #### System Information
-- `hostname` - Display sandbox hostname (configurable, default: "bashkit-sandbox")
+- `hostname` - Display virtual hostname (configurable, default: "bashkit-sandbox")
 - `uname` - System info (`-a`, `-s`, `-n`, `-r`, `-v`, `-m`, `-o`)
-- `whoami` - Display sandbox username (configurable, default: "sandbox")
+- `whoami` - Display virtual username (configurable, default: "sandbox")
 - `id` - User/group IDs (`-u`, `-g`, `-n`)
 
-These builtins return configurable sandbox values to prevent host information disclosure.
+These builtins return configurable virtual values to prevent host information disclosure.
 Configure via `BashBuilder`:
 
 ```rust
@@ -114,7 +114,7 @@ Bash::builder()
 - `rmdir` - Remove empty directories (`-p` for parents)
 
 #### File Inspection
-- `less` - View file contents (sandbox: behaves like `cat`, no interactive paging)
+- `less` - View file contents (virtual mode: behaves like `cat`, no interactive paging)
 - `file` - Detect file type via magic bytes (text, binary, PNG, JPEG, gzip, etc.)
 - `stat` - Display file metadata (`-c FORMAT` with %n, %s, %F, %a, %U, %G, %Y, %Z)
 
@@ -126,12 +126,12 @@ Bash::builder()
 #### Environment
 - `env` - Print environment or run command with modified environment
 - `printenv` - Print environment variable values
-- `history` - Command history (sandbox: limited, no persistent history)
+- `history` - Command history (virtual mode: limited, no persistent history)
 
 #### Pipeline Control
 - `xargs` - Build commands from stdin (`-I REPL`, `-n MAX`, `-d DELIM`)
 - `tee` - Write to files and stdout (`-a` append)
-- `watch` - Execute command periodically (sandbox: shows command info, no continuous execution)
+- `watch` - Execute command periodically (virtual mode: shows command info, no continuous execution)
 
 #### Network
 - `curl` - HTTP client (requires http_client feature + allowlist)

@@ -1,18 +1,18 @@
-//! Bashkit - Sandboxed bash interpreter for multi-tenant environments
+//! Bashkit - Virtual bash interpreter for multi-tenant environments
 //!
-//! Sandboxed bash interpreter for AI agents, CI/CD pipelines, and code sandboxes.
+//! Virtual bash interpreter for AI agents, CI/CD pipelines, and code sandboxes.
 //! Written in Rust.
 //!
 //! # Features
 //!
 //! - **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance
-//! - **Sandboxed execution** - No real filesystem access by default
+//! - **Sandboxed, in-process execution** - No real filesystem access by default
 //! - **Virtual filesystem** - [`InMemoryFs`], [`OverlayFs`], [`MountableFs`]
 //! - **Resource limits** - Command count, loop iterations, function depth
 //! - **Network allowlist** - Control HTTP access per-domain
 //! - **Custom builtins** - Extend with domain-specific commands
 //! - **Async-first** - Built on tokio
-//! - **Experimental: Git** - Sandboxed git operations on the VFS (`git` feature)
+//! - **Experimental: Git** - Virtual git operations on the VFS (`git` feature)
 //! - **Experimental: Python** - Embedded Python via [Monty](https://github.com/pydantic/monty) (`python` feature)
 //!
 //! # Built-in Commands (68+)
@@ -28,7 +28,7 @@
 //! | File inspection | `file`, `stat`, `less` |
 //! | Archives | `tar`, `gzip`, `gunzip` |
 //! | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `xargs`, `tee` |
-//! | Shell | `bash`, `sh` (sandboxed re-invocation), `eval`, `:` |
+//! | Shell | `bash`, `sh` (virtual re-invocation), `eval`, `:` |
 //! | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
 //! | Network | `curl`, `wget` (requires [`NetworkAllowlist`])
 //! | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature)
@@ -268,7 +268,7 @@
 //!
 //! # Experimental: Git Support
 //!
-//! Enable the `git` feature for sandboxed git operations. All git data lives in
+//! Enable the `git` feature for virtual git operations. All git data lives in
 //! the virtual filesystem.
 //!
 //! ```toml
@@ -292,7 +292,7 @@
 //! ```
 //!
 //! Supported: `init`, `config`, `add`, `commit`, `status`, `log`, `branch`,
-//! `checkout`, `diff`, `reset`, `remote`, `clone`/`push`/`pull`/`fetch` (sandbox mode).
+//! `checkout`, `diff`, `reset`, `remote`, `clone`/`push`/`pull`/`fetch` (virtual mode).
 //!
 //! See [`GitConfig`] for configuration options.
 //!
@@ -338,7 +338,7 @@
 //! - `custom_fs.rs` - Using different filesystem implementations
 //! - `custom_filesystem_impl.rs` - Implementing the [`FileSystem`] trait
 //! - `resource_limits.rs` - Setting execution limits
-//! - `sandbox_identity.rs` - Customizing username/hostname
+//! - `virtual_identity.rs` - Customizing username/hostname
 //! - `text_processing.rs` - Using grep, sed, awk, and jq
 //! - `agent_tool.rs` - LLM agent integration
 //! - `git_workflow.rs` - Git operations on the virtual filesystem
@@ -417,7 +417,7 @@ use std::sync::Arc;
 
 /// Main entry point for Bashkit.
 ///
-/// Provides a sandboxed bash interpreter with an in-memory virtual filesystem.
+/// Provides a virtual bash interpreter with an in-memory virtual filesystem.
 pub struct Bash {
     fs: Arc<dyn FileSystem>,
     interpreter: Interpreter,

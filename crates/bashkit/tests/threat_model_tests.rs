@@ -200,16 +200,16 @@ mod sandbox_escape {
         assert!(result.exit_code != 0);
     }
 
-    /// Test eval is implemented but safe in sandbox
+    /// Test eval is implemented but safe in virtual environment
     ///
-    /// eval is a POSIX special builtin that's now implemented. In the sandbox,
+    /// eval is a POSIX special builtin that's now implemented. In the virtual environment,
     /// eval can only execute other builtins (no external commands), so it's safe.
     /// The current implementation stores the command but doesn't re-execute it.
     #[tokio::test]
     async fn threat_eval_is_safe_in_sandbox() {
         let mut bash = Bash::new();
 
-        // eval is now implemented - it stores the command but in sandbox
+        // eval is now implemented - it stores the command but in virtual environment
         // it can only run builtins, so it's safe
         let result = bash.exec("eval echo test").await.unwrap();
         // eval returns 0 (success) as it's a valid builtin
@@ -300,7 +300,7 @@ mod injection_attacks {
 
     /// Test that eval is implemented but safe (can only run builtins)
     ///
-    /// eval is a POSIX special builtin. In sandbox mode, it can only execute
+    /// eval is a POSIX special builtin. In virtual mode, it can only execute
     /// builtins (no external commands), so it cannot be used for code injection.
     #[tokio::test]
     async fn threat_eval_is_sandboxed() {

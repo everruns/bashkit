@@ -1,6 +1,6 @@
 //! HTTP client for secure network access.
 //!
-//! Provides a sandboxed HTTP client that respects the allowlist with
+//! Provides a virtual HTTP client that respects the allowlist with
 //! security mitigations for common HTTP attacks.
 //!
 //! # Security Mitigations
