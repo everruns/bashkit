@@ -39,6 +39,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | 011-python-builtin | Embedded Python via Monty, security, resource limits |
 | 012-eval | LLM evaluation harness, dataset format, scoring |
 | 012-maintenance | Pre-release maintenance checklist |
+| 013-llm-bashkit-metrics | LLM evaluation metrics, scoring, interpretation |
 
 ### Documentation
 
