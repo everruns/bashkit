@@ -220,14 +220,12 @@ printf '1\n5\n10\n' | awk '$1 < 2 || $1 > 8 {print $1}'
 ### end
 
 ### awk_power_caret
-### skip: power operator ^ not implemented
 printf '2 3\n' | awk '{print $1 ^ $2}'
 ### expect
 8
 ### end
 
 ### awk_power_double_star
-### skip: power operator ** not implemented
 printf '2 4\n' | awk '{print $1 ** $2}'
 ### expect
 16
@@ -257,28 +255,24 @@ start
 ### end
 
 ### awk_printf_hex
-### skip: printf %x format not implemented
 printf '255\n' | awk '{printf "%x\n", $1}'
 ### expect
 ff
 ### end
 
 ### awk_printf_octal
-### skip: printf %o format not implemented
 printf '8\n' | awk '{printf "%o\n", $1}'
 ### expect
 10
 ### end
 
 ### awk_printf_char
-### skip: printf %c format not implemented
 printf '65\n' | awk '{printf "%c\n", $1}'
 ### expect
 A
 ### end
 
 ### awk_printf_string_width
-### skip: printf width specifier not implemented
 printf 'hi\n' | awk '{printf "%5s\n", $1}'
 ### expect
    hi
@@ -292,7 +286,6 @@ b
 ### end
 
 ### awk_field_sep_tab
-### skip: -F tab delimiter not working
 printf 'a\tb\tc\n' | awk -F'\t' '{print $2}'
 ### expect
 b
@@ -306,7 +299,7 @@ printf '\n' | awk '{print NF}'
 ### end
 
 ### awk_missing_field
-### skip: missing field handling differs
+### skip: spec runner expects empty but awk outputs newline for empty print
 printf 'a b\n' | awk '{print $5}'
 ### expect
 
@@ -380,7 +373,6 @@ printf '3\n5\n3\n' | awk '$1 != 3 {print}'
 ### end
 
 ### awk_negation
-### skip: negation operator not implemented
 printf '0\n1\n' | awk '!$1 {print "zero"}'
 ### expect
 zero
@@ -433,21 +425,18 @@ printf '1\n' | awk '{print exp($1)}'
 ### end
 
 ### awk_match_func
-### skip: match() function not implemented
 printf 'hello world\n' | awk '{if (match($0, /wor/)) print RSTART, RLENGTH}'
 ### expect
 7 3
 ### end
 
 ### awk_gensub_func
-### skip: gensub() function not implemented
 printf 'hello hello hello\n' | awk '{print gensub(/hello/, "hi", "g")}'
 ### expect
 hi hi hi
 ### end
 
 ### awk_exit_code
-### skip: exit statement not implemented
 printf 'a\n' | awk '{exit 42}'
 ### exit_code: 42
 ### expect
@@ -580,7 +569,7 @@ a,b,c
 ### end
 
 ### awk_ors
-### skip: ORS variable not implemented
+### skip: spec runner appends trailing newline but ORS=";" suppresses it
 printf 'a\nb\n' | awk 'BEGIN {ORS=";"} {print $0}'
 ### expect
 a;b;
@@ -613,7 +602,6 @@ hello
 ### end
 
 ### awk_dollar_zero_modification
-### skip: $0 modification not implemented
 printf 'a b c\n' | awk '{$0 = "x y z"; print $2}'
 ### expect
 y

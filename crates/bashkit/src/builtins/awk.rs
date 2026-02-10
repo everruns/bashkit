@@ -132,7 +132,17 @@ impl AwkValue {
     fn as_bool(&self) -> bool {
         match self {
             AwkValue::Number(n) => *n != 0.0,
-            AwkValue::String(s) => !s.is_empty(),
+            AwkValue::String(s) => {
+                if s.is_empty() {
+                    return false;
+                }
+                // In awk, numeric strings evaluate as numbers in boolean context
+                if let Ok(n) = s.parse::<f64>() {
+                    n != 0.0
+                } else {
+                    true
+                }
+            }
             AwkValue::Uninitialized => false,
         }
     }
@@ -214,6 +224,19 @@ impl AwkState {
             "FS" => self.fs = value.as_string(),
             "OFS" => self.ofs = value.as_string(),
             "ORS" => self.ors = value.as_string(),
+            "$0" => {
+                let s = value.as_string();
+                // Re-split fields when $0 is modified
+                if self.fs == " " {
+                    self.fields = s.split_whitespace().map(String::from).collect();
+                } else {
+                    self.fields = s.split(&self.fs).map(String::from).collect();
+                }
+                self.nf = self.fields.len();
+                self.variables
+                    .insert("NF".to_string(), AwkValue::Number(self.nf as f64));
+                self.variables.insert(name.to_string(), value);
+            }
             _ => {
                 self.variables.insert(name.to_string(), value);
             }
@@ -1106,7 +1129,7 @@ impl<'a> AwkParser<'a> {
     }
 
     fn parse_multiplicative(&mut self) -> Result<AwkExpr> {
-        let mut left = self.parse_unary()?;
+        let mut left = self.parse_power()?;
 
         loop {
             self.skip_whitespace();
@@ -1116,6 +1139,10 @@ impl<'a> AwkParser<'a> {
 
             let c = self.input.chars().nth(self.pos).unwrap();
             if c == '*' || c == '/' || c == '%' {
+                // Don't consume ** (power operator)
+                if c == '*' && self.input.chars().nth(self.pos + 1) == Some('*') {
+                    break;
+                }
                 // Don't consume if it's a compound assignment operator (*=, /=, %=)
                 let next = self.input.chars().nth(self.pos + 1);
                 if next == Some('=') {
@@ -1123,7 +1150,7 @@ impl<'a> AwkParser<'a> {
                 }
                 self.pos += 1;
                 self.skip_whitespace();
-                let right = self.parse_unary()?;
+                let right = self.parse_power()?;
                 left = AwkExpr::BinOp(Box::new(left), c.to_string(), Box::new(right));
             } else {
                 break;
@@ -1131,6 +1158,39 @@ impl<'a> AwkParser<'a> {
         }
 
         Ok(left)
+    }
+
+    fn parse_power(&mut self) -> Result<AwkExpr> {
+        let base = self.parse_unary()?;
+
+        self.skip_whitespace();
+        if self.pos >= self.input.len() {
+            return Ok(base);
+        }
+
+        // Check for ^ or **
+        if self.input.chars().nth(self.pos).unwrap() == '^' {
+            self.pos += 1;
+            self.skip_whitespace();
+            let exp = self.parse_unary()?;
+            return Ok(AwkExpr::BinOp(
+                Box::new(base),
+                "^".to_string(),
+                Box::new(exp),
+            ));
+        }
+        if self.input[self.pos..].starts_with("**") {
+            self.pos += 2;
+            self.skip_whitespace();
+            let exp = self.parse_unary()?;
+            return Ok(AwkExpr::BinOp(
+                Box::new(base),
+                "^".to_string(),
+                Box::new(exp),
+            ));
+        }
+
+        Ok(base)
     }
 
     /// THREAT[TM-DOS-027]: Track depth on unary self-recursion
@@ -1440,11 +1500,11 @@ impl<'a> AwkParser<'a> {
 /// Flow control signal from action execution
 #[derive(Debug, PartialEq)]
 enum AwkFlow {
-    Continue,     // Normal execution
-    Next,         // Skip to next record
-    Break,        // Break out of loop
-    LoopContinue, // Continue to next loop iteration
-    Exit,         // Exit program
+    Continue,          // Normal execution
+    Next,              // Skip to next record
+    Break,             // Break out of loop
+    LoopContinue,      // Continue to next loop iteration
+    Exit(Option<i32>), // Exit program with optional code
 }
 
 struct AwkInterpreter {
@@ -1484,6 +1544,7 @@ impl AwkInterpreter {
                     "*" => AwkValue::Number(l.as_number() * r.as_number()),
                     "/" => AwkValue::Number(l.as_number() / r.as_number()),
                     "%" => AwkValue::Number(l.as_number() % r.as_number()),
+                    "^" => AwkValue::Number(l.as_number().powf(r.as_number())),
                     "==" => AwkValue::Number(if l.as_string() == r.as_string() {
                         1.0
                     } else {
@@ -1822,6 +1883,64 @@ impl AwkInterpreter {
                 }
                 AwkValue::Number(self.eval_expr(&args[0]).as_number().exp())
             }
+            "match" => {
+                if args.len() < 2 {
+                    return AwkValue::Number(0.0);
+                }
+                let s = self.eval_expr(&args[0]).as_string();
+                let pattern = self.eval_expr(&args[1]).as_string();
+                if let Ok(re) = Regex::new(&pattern) {
+                    if let Some(m) = re.find(&s) {
+                        let rstart = m.start() + 1; // awk is 1-indexed
+                        let rlength = m.end() - m.start();
+                        self.state
+                            .set_variable("RSTART", AwkValue::Number(rstart as f64));
+                        self.state
+                            .set_variable("RLENGTH", AwkValue::Number(rlength as f64));
+                        AwkValue::Number(rstart as f64)
+                    } else {
+                        self.state.set_variable("RSTART", AwkValue::Number(0.0));
+                        self.state.set_variable("RLENGTH", AwkValue::Number(-1.0));
+                        AwkValue::Number(0.0)
+                    }
+                } else {
+                    AwkValue::Number(0.0)
+                }
+            }
+            "gensub" => {
+                // gensub(regexp, replacement, how [, target])
+                if args.len() < 3 {
+                    return AwkValue::Uninitialized;
+                }
+                let pattern = self.eval_expr(&args[0]).as_string();
+                let replacement = self.eval_expr(&args[1]).as_string();
+                let how = self.eval_expr(&args[2]).as_string();
+                let target = if args.len() > 3 {
+                    self.eval_expr(&args[3]).as_string()
+                } else {
+                    self.state.get_field(0).as_string()
+                };
+                if let Ok(re) = Regex::new(&pattern) {
+                    if how == "g" || how == "G" {
+                        AwkValue::String(re.replace_all(&target, replacement.as_str()).to_string())
+                    } else {
+                        // Replace nth occurrence (default 1st)
+                        let n = how.parse::<usize>().unwrap_or(1);
+                        let mut count = 0;
+                        let result = re.replace_all(&target, |caps: &regex::Captures| -> String {
+                            count += 1;
+                            if count == n {
+                                replacement.clone()
+                            } else {
+                                caps[0].to_string()
+                            }
+                        });
+                        AwkValue::String(result.to_string())
+                    }
+                } else {
+                    AwkValue::String(target)
+                }
+            }
             "__array_access" => {
                 // Internal function for array indexing: arr[index]
                 if args.len() < 2 {
@@ -1858,25 +1977,99 @@ impl AwkInterpreter {
         let mut value_idx = 0;
 
         while let Some(c) = chars.next() {
-            if c == '%' {
+            if c == '\\' {
+                // Handle escape sequences in format strings
+                match chars.peek() {
+                    Some('n') => {
+                        chars.next();
+                        result.push('\n');
+                    }
+                    Some('t') => {
+                        chars.next();
+                        result.push('\t');
+                    }
+                    Some('r') => {
+                        chars.next();
+                        result.push('\r');
+                    }
+                    Some('\\') => {
+                        chars.next();
+                        result.push('\\');
+                    }
+                    _ => result.push('\\'),
+                }
+            } else if c == '%' {
                 if chars.peek() == Some(&'%') {
                     chars.next();
                     result.push('%');
                     continue;
                 }
 
-                // Parse format specifier
-                let mut spec = String::from("%");
+                // Parse format specifier: %[flags][width][.precision]type
+                let mut left_align = false;
+                let mut zero_pad = false;
+                let mut plus_sign = false;
+                let mut width: Option<usize> = None;
+                let mut precision: Option<usize> = None;
+                let mut conversion = ' ';
+
+                // Parse flags
+                loop {
+                    match chars.peek() {
+                        Some(&'-') => {
+                            left_align = true;
+                            chars.next();
+                        }
+                        Some(&'0') if width.is_none() => {
+                            zero_pad = true;
+                            chars.next();
+                        }
+                        Some(&'+') => {
+                            plus_sign = true;
+                            chars.next();
+                        }
+                        _ => break,
+                    }
+                }
+
+                // Parse width
+                let mut w = String::new();
                 while let Some(&c) = chars.peek() {
-                    if c.is_ascii_alphabetic() {
-                        spec.push(c);
-                        chars.next();
-                        break;
-                    } else if c.is_ascii_digit() || c == '-' || c == '.' || c == '+' {
-                        spec.push(c);
+                    if c.is_ascii_digit() {
+                        w.push(c);
                         chars.next();
                     } else {
                         break;
+                    }
+                }
+                if !w.is_empty() {
+                    width = w.parse().ok();
+                }
+
+                // Parse precision
+                if chars.peek() == Some(&'.') {
+                    chars.next();
+                    let mut p = String::new();
+                    while let Some(&c) = chars.peek() {
+                        if c.is_ascii_digit() {
+                            p.push(c);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    precision = if p.is_empty() {
+                        Some(0)
+                    } else {
+                        p.parse().ok()
+                    };
+                }
+
+                // Parse conversion character
+                if let Some(&c) = chars.peek() {
+                    if c.is_ascii_alphabetic() {
+                        conversion = c;
+                        chars.next();
                     }
                 }
 
@@ -1884,19 +2077,96 @@ impl AwkInterpreter {
                     let val = &values[value_idx];
                     value_idx += 1;
 
-                    if spec.ends_with('d') || spec.ends_with('i') {
-                        result.push_str(&format!("{}", val.as_number() as i64));
-                    } else if spec.ends_with('f') || spec.ends_with('g') || spec.ends_with('e') {
-                        result.push_str(&format!("{}", val.as_number()));
-                    } else if spec.ends_with('s') {
-                        result.push_str(&val.as_string());
-                    } else if spec.ends_with('c') {
-                        let s = val.as_string();
-                        if let Some(c) = s.chars().next() {
-                            result.push(c);
+                    let formatted = match conversion {
+                        'd' | 'i' => {
+                            let n = val.as_number() as i64;
+                            if plus_sign && n >= 0 {
+                                format!("+{}", n)
+                            } else {
+                                format!("{}", n)
+                            }
+                        }
+                        'f' => {
+                            let n = val.as_number();
+                            let prec = precision.unwrap_or(6);
+                            format!("{:.prec$}", n)
+                        }
+                        'g' => {
+                            let n = val.as_number();
+                            let prec = precision.unwrap_or(6);
+                            // %g: use shorter of %e or %f, strip trailing zeros
+                            let s = format!("{:.prec$e}", n);
+                            let f = format!("{:.prec$}", n);
+                            if s.len() < f.len() {
+                                s
+                            } else {
+                                f
+                            }
+                        }
+                        'e' | 'E' => {
+                            let n = val.as_number();
+                            let prec = precision.unwrap_or(6);
+                            format!("{:.prec$e}", n)
+                        }
+                        's' => {
+                            let mut s = val.as_string();
+                            if let Some(p) = precision {
+                                s = s.chars().take(p).collect();
+                            }
+                            s
+                        }
+                        'c' => {
+                            // %c: print character from ASCII code or first char of string
+                            let n = val.as_number();
+                            if n > 0.0 && n < 128.0 {
+                                String::from(n as u8 as char)
+                            } else {
+                                let s = val.as_string();
+                                s.chars().next().map(String::from).unwrap_or_default()
+                            }
+                        }
+                        'x' | 'X' => {
+                            let n = val.as_number() as i64;
+                            if conversion == 'X' {
+                                format!("{:X}", n)
+                            } else {
+                                format!("{:x}", n)
+                            }
+                        }
+                        'o' => {
+                            let n = val.as_number() as i64;
+                            format!("{:o}", n)
+                        }
+                        _ => val.as_string(),
+                    };
+
+                    // Apply width and alignment
+                    if let Some(w) = width {
+                        if formatted.len() < w {
+                            let padding = w - formatted.len();
+                            if left_align {
+                                result.push_str(&formatted);
+                                for _ in 0..padding {
+                                    result.push(' ');
+                                }
+                            } else if zero_pad
+                                && matches!(conversion, 'd' | 'i' | 'f' | 'x' | 'X' | 'o')
+                            {
+                                for _ in 0..padding {
+                                    result.push('0');
+                                }
+                                result.push_str(&formatted);
+                            } else {
+                                for _ in 0..padding {
+                                    result.push(' ');
+                                }
+                                result.push_str(&formatted);
+                            }
+                        } else {
+                            result.push_str(&formatted);
                         }
                     } else {
-                        result.push_str(&val.as_string());
+                        result.push_str(&formatted);
                     }
                 }
             } else {
@@ -2085,7 +2355,10 @@ impl AwkInterpreter {
             AwkAction::Next => AwkFlow::Next,
             AwkAction::Break => AwkFlow::Break,
             AwkAction::Continue => AwkFlow::LoopContinue,
-            AwkAction::Exit(_) => AwkFlow::Exit,
+            AwkAction::Exit(expr) => {
+                let code = expr.as_ref().map(|e| self.eval_expr(e).as_number() as i32);
+                AwkFlow::Exit(code)
+            }
             AwkAction::Expression(expr) => {
                 self.eval_expr(expr);
                 AwkFlow::Continue
@@ -2101,6 +2374,35 @@ impl AwkInterpreter {
             }
             AwkPattern::Expression(expr) => self.eval_expr(expr).as_bool(),
         }
+    }
+}
+
+impl Awk {
+    /// Process C-style escape sequences in a string (e.g., \t → tab, \n → newline)
+    fn process_escape_sequences(s: &str) -> String {
+        let mut result = String::new();
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('t') => result.push('\t'),
+                    Some('n') => result.push('\n'),
+                    Some('r') => result.push('\r'),
+                    Some('\\') => result.push('\\'),
+                    Some('a') => result.push('\x07'),
+                    Some('b') => result.push('\x08'),
+                    Some('f') => result.push('\x0C'),
+                    Some(other) => {
+                        result.push('\\');
+                        result.push(other);
+                    }
+                    None => result.push('\\'),
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
     }
 }
 
@@ -2174,7 +2476,7 @@ impl Builtin for Awk {
         let program = parser.parse()?;
 
         let mut interp = AwkInterpreter::new();
-        interp.state.fs = field_sep;
+        interp.state.fs = Self::process_escape_sequences(&field_sep);
 
         // Set pre-assigned variables (-v)
         for (name, value) in &pre_vars {
@@ -2187,9 +2489,17 @@ impl Builtin for Awk {
         }
 
         // Run BEGIN actions
+        let mut exit_code: Option<i32> = None;
         for action in &program.begin_actions {
-            if interp.exec_action(action) == AwkFlow::Exit {
-                return Ok(ExecResult::ok(interp.output));
+            if let AwkFlow::Exit(code) = interp.exec_action(action) {
+                exit_code = code;
+                // Run END actions even after exit
+                for end_action in &program.end_actions {
+                    if let AwkFlow::Exit(_) = interp.exec_action(end_action) {
+                        break;
+                    }
+                }
+                return Ok(ExecResult::with_code(interp.output, exit_code.unwrap_or(0)));
             }
         }
 
@@ -2238,7 +2548,8 @@ impl Builtin for Awk {
                                     next_record = true;
                                     break;
                                 }
-                                AwkFlow::Exit => {
+                                AwkFlow::Exit(code) => {
+                                    exit_code = code;
                                     break 'files;
                                 }
                                 _ => {}
@@ -2254,12 +2565,15 @@ impl Builtin for Awk {
 
         // Run END actions (awk runs END even after exit in main body)
         for action in &program.end_actions {
-            if interp.exec_action(action) == AwkFlow::Exit {
+            if let AwkFlow::Exit(code) = interp.exec_action(action) {
+                if exit_code.is_none() {
+                    exit_code = code;
+                }
                 break;
             }
         }
 
-        Ok(ExecResult::ok(interp.output))
+        Ok(ExecResult::with_code(interp.output, exit_code.unwrap_or(0)))
     }
 }
 
