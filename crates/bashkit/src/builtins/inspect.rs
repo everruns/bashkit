@@ -11,7 +11,7 @@ use crate::interpreter::ExecResult;
 ///
 /// Usage: less [FILE...]
 ///
-/// In a sandboxed environment, this behaves like cat (no interactive paging).
+/// In Bashkit's virtual environment, this behaves like cat (no interactive paging).
 /// The command still succeeds to allow scripts that use less to work.
 pub struct Less;
 

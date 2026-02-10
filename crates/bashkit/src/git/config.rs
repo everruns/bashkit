@@ -5,16 +5,16 @@
 //! This module mitigates the following threats (see `specs/006-threat-model.md`):
 //!
 //! - **TM-GIT-001**: Unauthorized clone → remote URL allowlist (Phase 2)
-//! - **TM-GIT-002**: Host identity leak → configurable sandbox identity
+//! - **TM-GIT-002**: Host identity leak → configurable virtual identity
 //! - **TM-GIT-003**: Host git config access → no host filesystem access
 //! - **TM-GIT-010**: Push to unauthorized remote → remote URL allowlist (Phase 2)
 
 use std::collections::HashSet;
 
-/// Default author name for commits in sandboxed environment.
+/// Default author name for commits in the virtual environment.
 pub const DEFAULT_AUTHOR_NAME: &str = "sandbox";
 
-/// Default author email for commits in sandboxed environment.
+/// Default author email for commits in the virtual environment.
 pub const DEFAULT_AUTHOR_EMAIL: &str = "sandbox@bashkit.local";
 
 /// Git configuration for Bashkit.
@@ -32,7 +32,7 @@ pub const DEFAULT_AUTHOR_EMAIL: &str = "sandbox@bashkit.local";
 ///
 /// # Security
 ///
-/// - Author identity is sandboxed (never reads from host)
+/// - Author identity is virtual (never reads from host)
 /// - Remote URLs require explicit allowlist (Phase 2)
 /// - All operations confined to virtual filesystem
 #[derive(Debug, Clone)]
@@ -59,7 +59,7 @@ impl Default for GitConfig {
 }
 
 impl GitConfig {
-    /// Create a new git configuration with default sandbox identity.
+    /// Create a new git configuration with default virtual identity.
     ///
     /// # Example
     ///

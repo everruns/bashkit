@@ -247,7 +247,7 @@ mod remote_management {
 mod network_operations {
     use super::*;
 
-    /// git clone with valid URL returns sandbox message
+    /// git clone with valid URL returns virtual mode message
     #[tokio::test]
     async fn test_clone_sandbox_message() {
         let mut bash = create_git_bash_allow_all();
@@ -284,18 +284,18 @@ mod network_operations {
             .await
             .unwrap();
 
-        // Fetch should validate and return sandbox message
+        // Fetch should validate and return virtual mode message
         let result = bash.exec("cd /repo && git fetch origin").await.unwrap();
         assert_ne!(result.exit_code, 0);
         assert!(result.stderr.contains("network operations not supported"));
         assert!(result.stderr.contains("passed allowlist validation"));
 
-        // Push should validate and return sandbox message
+        // Push should validate and return virtual mode message
         let result = bash.exec("cd /repo && git push origin").await.unwrap();
         assert_ne!(result.exit_code, 0);
         assert!(result.stderr.contains("network operations not supported"));
 
-        // Pull should validate and return sandbox message
+        // Pull should validate and return virtual mode message
         let result = bash.exec("cd /repo && git pull origin").await.unwrap();
         assert_ne!(result.exit_code, 0);
         assert!(result.stderr.contains("network operations not supported"));

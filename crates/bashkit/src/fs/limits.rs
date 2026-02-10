@@ -1,4 +1,4 @@
-//! Filesystem resource limits for sandboxed execution.
+//! Filesystem resource limits for virtual execution.
 //!
 //! These limits prevent scripts from exhausting memory via filesystem operations.
 //!

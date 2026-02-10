@@ -135,8 +135,8 @@ impl Interpreter {
     /// # Arguments
     ///
     /// * `fs` - The virtual filesystem to use
-    /// * `username` - Optional custom username for sandbox identity
-    /// * `hostname` - Optional custom hostname for sandbox identity
+    /// * `username` - Optional custom username for virtual identity
+    /// * `hostname` - Optional custom hostname for virtual identity
     /// * `custom_builtins` - Custom builtins to register (override defaults if same name)
     pub fn with_config(
         fs: Arc<dyn FileSystem>,
@@ -215,7 +215,7 @@ impl Interpreter {
         // Python builtins: opt-in via BashBuilder::python() / BashToolBuilder::python()
         // The `python` feature flag enables compilation; registration is explicit.
         builtins.insert("timeout".to_string(), Box::new(builtins::Timeout));
-        // System info builtins (configurable sandbox values)
+        // System info builtins (configurable virtual values)
         let hostname_val = hostname.unwrap_or_else(|| builtins::DEFAULT_HOSTNAME.to_string());
         let username_val = username.unwrap_or_else(|| builtins::DEFAULT_USERNAME.to_string());
         builtins.insert(
@@ -1227,7 +1227,7 @@ impl Interpreter {
     /// - `echo 'echo hello' | bash` - execute script from stdin
     /// - `bash --version` / `bash --help`
     ///
-    /// SECURITY: This re-invokes the sandboxed interpreter, NOT external bash.
+    /// SECURITY: This re-invokes the virtual interpreter, NOT external bash.
     /// See threat model TM-ESC-015 for security analysis.
     async fn execute_shell(
         &mut self,
@@ -1247,9 +1247,9 @@ impl Interpreter {
             let arg = &args[idx];
             match arg.as_str() {
                 "--version" => {
-                    // Return sandbox version info (not real bash)
+                    // Return virtual interpreter version info (not real bash)
                     return Ok(ExecResult::ok(format!(
-                        "Bashkit {} (sandboxed {} interpreter)\n",
+                        "Bashkit {} (virtual {} interpreter)\n",
                         env!("CARGO_PKG_VERSION"),
                         shell_name
                     )));
@@ -1257,7 +1257,7 @@ impl Interpreter {
                 "--help" => {
                     return Ok(ExecResult::ok(format!(
                         "Usage: {} [option] ... [file [argument] ...]\n\
-                         Sandboxed shell interpreter (not GNU bash)\n\n\
+                         Virtual shell interpreter (not GNU bash)\n\n\
                          Options:\n\
                          \t-c string\tExecute commands from string\n\
                          \t-n\t\tCheck syntax without executing (noexec)\n\
@@ -1287,8 +1287,8 @@ impl Interpreter {
                     noexec = true;
                     idx += 1;
                 }
-                // Accept but ignore these options (limited/no support in sandbox)
-                // TODO: These options are accepted but not enforced in sandbox
+                // Accept but ignore these options (limited/no support in virtual mode)
+                // TODO: These options are accepted but not enforced in virtual mode
                 // -e (errexit), -x (xtrace), -v (verbose), -u (nounset)
                 // Would need interpreter changes to fully implement
                 "-e" | "-x" | "-v" | "-u" | "-o" | "-i" | "-s" => {
@@ -3247,7 +3247,7 @@ impl Interpreter {
             }
             "!" => {
                 // $! - PID of most recent background command
-                // In sandboxed environment, background jobs run synchronously
+                // In Bashkit's virtual environment, background jobs run synchronously
                 // Return empty string or last job ID placeholder
                 if let Some(last_bg_pid) = self.variables.get("_LAST_BG_PID") {
                     return last_bg_pid.clone();
@@ -3661,7 +3661,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_times_builtin() {
-        // POSIX times - returns process times (zeros in sandbox)
+        // POSIX times - returns process times (zeros in virtual mode)
         let result = run_script("times").await;
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("0m0.000s"));
@@ -3683,7 +3683,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_special_param_bang() {
-        // $! - last background PID (empty in sandbox with no bg jobs)
+        // $! - last background PID (empty in virtual mode with no bg jobs)
         let result = run_script("echo \"$!\"").await;
         // Should be empty or a placeholder
         assert_eq!(result.exit_code, 0);
@@ -3955,7 +3955,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bash_with_option_e() {
-        // bash -e -c "command" - -e is accepted but doesn't change behavior in sandbox
+        // bash -e -c "command" - -e is accepted but doesn't change behavior in virtual mode
         let result = run_script("bash -e -c 'echo works'").await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "works");
@@ -4001,7 +4001,7 @@ mod tests {
         let result = run_script("bash --version").await;
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("Bashkit"));
-        assert!(result.stdout.contains("sandboxed"));
+        assert!(result.stdout.contains("virtual"));
     }
 
     #[tokio::test]
@@ -4009,7 +4009,7 @@ mod tests {
         // sh --version also works
         let result = run_script("sh --version").await;
         assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("sandboxed sh"));
+        assert!(result.stdout.contains("virtual sh"));
     }
 
     #[tokio::test]
@@ -4107,7 +4107,7 @@ mod tests {
         let result = run_script("bash --version").await;
         assert!(!result.stdout.contains("/usr"));
         assert!(!result.stdout.contains("GNU"));
-        // Should only contain sandboxed version info
+        // Should only contain virtual version info
     }
 
     // Additional positive tests

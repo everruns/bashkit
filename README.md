@@ -6,17 +6,17 @@
 [![docs.rs](https://img.shields.io/docsrs/bashkit)](https://docs.rs/bashkit)
 [![Repo: Agent Friendly](https://img.shields.io/badge/Repo-Agent%20Friendly-blue)](AGENTS.md)
 
-Sandboxed bash interpreter for multi-tenant environments. Written in Rust.
+Virtual bash interpreter for multi-tenant environments. Written in Rust.
 
 ## Features
 
 - **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance
-- **Sandboxed execution** - No real filesystem access by default
+- **Sandboxed, in-process execution** - No real filesystem access by default
 - **Virtual filesystem** - InMemoryFs, OverlayFs, MountableFs
 - **Resource limits** - Command count, loop iterations, function depth
 - **Network allowlist** - Control HTTP access per-domain
 - **Async-first** - Built on tokio
-- **Experimental: Git support** - Sandboxed git operations on the virtual filesystem (`git` feature)
+- **Experimental: Git support** - Virtual git operations on the virtual filesystem (`git` feature)
 - **Experimental: Python support** - Embedded Python interpreter via [Monty](https://github.com/pydantic/monty) (`python` feature)
 
 ## Quick Start
@@ -49,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
 | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch` |
 | Disk | `df`, `du` |
 | Pipeline | `xargs`, `tee` |
-| Shell | `bash`, `sh` (sandboxed re-invocation), `:` |
+| Shell | `bash`, `sh` (virtual re-invocation), `:` |
 | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
 | Network | `curl`, `wget` (requires allowlist) |
 | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature) |
@@ -85,9 +85,9 @@ let mut bash = Bash::builder()
     .build();
 ```
 
-### Sandbox Identity
+### Virtual Identity
 
-Configure the sandbox username and hostname for `whoami`, `hostname`, `id`, and `uname`:
+Configure the virtual username and hostname for `whoami`, `hostname`, `id`, and `uname`:
 
 ```rust
 let mut bash = Bash::builder()
@@ -103,7 +103,7 @@ let mut bash = Bash::builder()
 
 ## Experimental: Git Support
 
-Enable the `git` feature for sandboxed git operations on the virtual filesystem.
+Enable the `git` feature for virtual git operations on the virtual filesystem.
 All git data lives in the VFS — no host filesystem access.
 
 ```toml
@@ -121,7 +121,7 @@ let mut bash = Bash::builder()
 
 // Local operations: init, add, commit, status, log
 // Branch operations: branch, checkout, diff, reset
-// Remote operations: remote add/remove, clone/push/pull/fetch (sandbox mode)
+// Remote operations: remote add/remove, clone/push/pull/fetch (virtual mode)
 ```
 
 See [specs/010-git-support.md](specs/010-git-support.md) for the full specification.
@@ -237,11 +237,11 @@ print(result.stdout)
 
 ## Security
 
-Bashkit is designed as a sandboxed interpreter for untrusted scripts. See the [security policy](SECURITY.md) for reporting vulnerabilities and the [threat model](specs/006-threat-model.md) for detailed analysis of 60+ identified threats.
+Bashkit is designed as a virtual interpreter with sandboxed execution for untrusted scripts. See the [security policy](SECURITY.md) for reporting vulnerabilities and the [threat model](specs/006-threat-model.md) for detailed analysis of 60+ identified threats.
 
 ## Acknowledgments
 
-This project was inspired by [just-bash](https://github.com/vercel-labs/just-bash) from Vercel Labs. Huge kudos to the Vercel team for pioneering the idea of a sandboxed bash interpreter for AI-powered environments. Their work laid the conceptual foundation that made Bashkit possible.
+This project was inspired by [just-bash](https://github.com/vercel-labs/just-bash) from Vercel Labs. Huge kudos to the Vercel team for pioneering the idea of a virtual bash interpreter for AI-powered environments. Their work laid the conceptual foundation that made Bashkit possible.
 
 ## Ecosystem
 

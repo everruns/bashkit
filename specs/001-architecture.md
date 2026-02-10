@@ -96,7 +96,7 @@ pub trait Tool: Send + Sync {
     async fn execute_with_status(...) -> ToolResponse;
 }
 
-pub struct BashTool { /* sandboxed bash implementing Tool */ }
+pub struct BashTool { /* virtual bash implementing Tool */ }
 pub struct BashToolBuilder { /* builder pattern */ }
 pub struct ToolRequest { commands: String }   // Like bash -c
 pub struct ToolResponse { stdout, stderr, exit_code, error }
@@ -109,7 +109,7 @@ impl BashTool {
 ### Design Principles
 
 1. **Async-first**: All filesystem and execution is async (tokio)
-2. **Sandboxed**: No real filesystem access by default
+2. **Virtual**: No real filesystem access by default
 3. **Multi-tenant safe**: Isolated state per Bash instance
 4. **Trait-based**: FileSystem and Builtin traits for extensibility
 
