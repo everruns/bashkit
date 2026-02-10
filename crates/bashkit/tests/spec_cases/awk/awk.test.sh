@@ -292,7 +292,6 @@ b
 ### end
 
 ### awk_field_sep_tab
-### skip: -F tab delimiter not working
 printf 'a\tb\tc\n' | awk -F'\t' '{print $2}'
 ### expect
 b
