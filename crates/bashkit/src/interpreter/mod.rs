@@ -378,7 +378,7 @@ impl Interpreter {
             Command::Simple(c) => c.span.line(),
             Command::Pipeline(c) => c.span.line(),
             Command::List(c) => c.span.line(),
-            Command::Compound(c) => match c {
+            Command::Compound(c, _) => match c {
                 CompoundCommand::If(cmd) => cmd.span.line(),
                 CompoundCommand::For(cmd) => cmd.span.line(),
                 CompoundCommand::ArithmeticFor(cmd) => cmd.span.line(),
@@ -433,7 +433,14 @@ impl Interpreter {
                 Command::Simple(simple) => self.execute_simple_command(simple, None).await,
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
                 Command::List(list) => self.execute_list(list).await,
-                Command::Compound(compound) => self.execute_compound(compound).await,
+                Command::Compound(compound, redirects) => {
+                    let result = self.execute_compound(compound).await?;
+                    if redirects.is_empty() {
+                        Ok(result)
+                    } else {
+                        self.apply_redirections(result, redirects).await
+                    }
+                }
                 Command::Function(func_def) => {
                     // Store the function definition
                     self.functions
