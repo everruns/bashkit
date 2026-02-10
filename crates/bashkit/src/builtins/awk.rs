@@ -2377,6 +2377,35 @@ impl AwkInterpreter {
     }
 }
 
+impl Awk {
+    /// Process C-style escape sequences in a string (e.g., \t → tab, \n → newline)
+    fn process_escape_sequences(s: &str) -> String {
+        let mut result = String::new();
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('t') => result.push('\t'),
+                    Some('n') => result.push('\n'),
+                    Some('r') => result.push('\r'),
+                    Some('\\') => result.push('\\'),
+                    Some('a') => result.push('\x07'),
+                    Some('b') => result.push('\x08'),
+                    Some('f') => result.push('\x0C'),
+                    Some(other) => {
+                        result.push('\\');
+                        result.push(other);
+                    }
+                    None => result.push('\\'),
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    }
+}
+
 #[async_trait]
 impl Builtin for Awk {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -2447,7 +2476,7 @@ impl Builtin for Awk {
         let program = parser.parse()?;
 
         let mut interp = AwkInterpreter::new();
-        interp.state.fs = field_sep;
+        interp.state.fs = Self::process_escape_sequences(&field_sep);
 
         // Set pre-assigned variables (-v)
         for (name, value) in &pre_vars {
