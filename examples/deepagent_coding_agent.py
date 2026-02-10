@@ -2,17 +2,18 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "deepagents>=0.3.11",
+#     "bashkit[deepagents]>=0.1.4",
 #     "langchain-anthropic>=0.3",
 # ]
 # ///
-# Note: Install bashkit first: cd crates/bashkit-python && maturin develop
 """
 Deep Agent with Bashkit Virtual Filesystem
 
 Run:
     export ANTHROPIC_API_KEY=your_key
     uv run examples/deepagent_coding_agent.py
+
+uv automatically installs bashkit from PyPI (pre-built wheels, no Rust needed).
 """
 
 import asyncio
@@ -21,11 +22,7 @@ import sys
 
 from deepagents import create_deep_agent
 
-try:
-    from bashkit.deepagents import BashkitBackend
-except ImportError:
-    print("bashkit not found. Install: cd crates/bashkit-python && maturin develop")
-    sys.exit(1)
+from bashkit.deepagents import BashkitBackend
 
 
 SYSTEM_PROMPT = """You are a coding assistant with a sandboxed bash environment.
