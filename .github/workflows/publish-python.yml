@@ -1,0 +1,188 @@
+# PyPI publishing workflow for bashkit Python bindings
+# Builds pre-compiled wheels for all major platforms and publishes to PyPI.
+# Triggered alongside publish.yml on GitHub Release or manual dispatch.
+# Adapted from https://github.com/pydantic/monty CI wheel-building pattern.
+#
+# Prerequisites:
+#   - PyPI trusted publisher configured for this repo + workflow
+#   - GitHub environment "release-python" created in repo settings
+
+name: Publish Python
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  PYTHON_VERSIONS: "3.9 3.10 3.11 3.12 3.13"
+
+jobs:
+  # Source distribution (platform-independent)
+  build-sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+          rust-toolchain: stable
+          working-directory: crates/bashkit-python
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: pypi_files-sdist
+          path: crates/bashkit-python/dist
+
+  # Pre-compiled binary wheels for each platform
+  build:
+    name: Build wheel - ${{ matrix.os }} (${{ matrix.target }}, ${{ matrix.manylinux || 'auto' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux glibc
+          - os: linux
+            target: x86_64
+            runs-on: ubuntu-latest
+          - os: linux
+            target: aarch64
+            runs-on: ubuntu-latest
+
+          # Linux musl
+          - os: linux
+            target: x86_64
+            manylinux: musllinux_1_1
+            runs-on: ubuntu-latest
+          - os: linux
+            target: aarch64
+            manylinux: musllinux_1_1
+            runs-on: ubuntu-latest
+
+          # macOS
+          - os: macos
+            target: x86_64
+            runs-on: macos-latest
+          - os: macos
+            target: aarch64
+            runs-on: macos-latest
+
+          # Windows
+          - os: windows
+            target: x86_64
+            runs-on: windows-latest
+
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          args: --release --out dist -i ${{ env.PYTHON_VERSIONS }}
+          rust-toolchain: stable
+          docker-options: -e CI
+          working-directory: crates/bashkit-python
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: pypi_files-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux || 'manylinux' }}
+          path: crates/bashkit-python/dist
+
+  # Verify built artifacts
+  inspect:
+    name: Inspect artifacts
+    needs: [build, build-sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: pypi_files-*
+          merge-multiple: true
+          path: dist
+
+      - name: List dist files
+        run: |
+          ls -lhR dist/
+          echo "---"
+          echo "Total files: $(ls -1 dist/ | wc -l)"
+
+      - uses: astral-sh/setup-uv@v7
+      - run: uvx twine check dist/*
+
+  # Smoke-test wheels on each OS
+  test-builds:
+    name: Test wheel on ${{ matrix.os }}
+    needs: [build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runs-on: ubuntu-latest
+          - os: macos
+            runs-on: macos-latest
+          - os: windows
+            runs-on: windows-latest
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: pypi_files-${{ matrix.os }}-*
+          merge-multiple: true
+          path: dist
+
+      - name: Install from wheel
+        run: pip install bashkit --no-index --find-links dist --force-reinstall
+
+      - name: Smoke test
+        run: python -c "from bashkit import BashTool; t = BashTool(); r = t.execute_sync('echo hello'); print(r); assert r.exit_code == 0"
+
+  # Publish to PyPI using trusted publishing (OIDC)
+  publish:
+    name: Publish to PyPI
+    needs: [inspect, test-builds]
+    if: success()
+    runs-on: ubuntu-latest
+
+    environment:
+      name: release-python
+
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: pypi_files-*
+          merge-multiple: true
+          path: dist
+
+      - name: List dist files
+        run: ls -lhR dist/
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Publish to PyPI
+        run: uv publish --trusted-publishing always dist/*

@@ -145,6 +145,7 @@ Example:
 
 - `bashkit` on crates.io (core library)
 - `bashkit-cli` on crates.io (CLI tool)
+- `bashkit` on PyPI (Python bindings, pre-built wheels)
 
 ## Publishing Order
 
@@ -153,7 +154,9 @@ Crates must be published in dependency order:
 1. `bashkit` (core library, no internal deps)
 2. `bashkit-cli` (depends on bashkit)
 
-The CI workflow handles this with a dependency chain and wait for index update.
+Python wheels are published independently (no crates.io dependency).
+
+The CI workflows handle this automatically on GitHub Release.
 
 ## Workflows
 
@@ -170,6 +173,33 @@ The CI workflow handles this with a dependency chain and wait for index update.
 - **File**: `.github/workflows/publish.yml`
 - **Secret required**: `CARGO_REGISTRY_TOKEN`
 
+### publish-python.yml
+
+- **Trigger**: GitHub Release published (runs in parallel with publish.yml)
+- **Actions**: Builds pre-compiled wheels for all platforms, smoke-tests, publishes to PyPI
+- **File**: `.github/workflows/publish-python.yml`
+- **Auth**: PyPI trusted publishing (OIDC, no secrets needed)
+- **Environment**: `release-python` (must exist in GitHub repo settings)
+
+#### Wheel matrix
+
+| OS | Architecture | Variant |
+|----|-------------|---------|
+| Linux | x86_64 | manylinux (glibc) |
+| Linux | aarch64 | manylinux (glibc) |
+| Linux | x86_64 | musllinux |
+| Linux | aarch64 | musllinux |
+| macOS | x86_64 | universal |
+| macOS | aarch64 (Apple Silicon) | universal |
+| Windows | x86_64 | MSVC |
+
+Python versions: 3.9, 3.10, 3.11, 3.12, 3.13
+
+#### Version sync
+
+Python package version is read dynamically from `Cargo.toml` via maturin
+(`dynamic = ["version"]` in pyproject.toml). No manual version sync needed.
+
 ## Authentication
 
 **Required Secrets** (GitHub Settings > Secrets > Actions):
@@ -177,6 +207,11 @@ The CI workflow handles this with a dependency chain and wait for index update.
 - `CARGO_REGISTRY_TOKEN`: crates.io API token
   - Generate at: https://crates.io/settings/tokens
   - Scope: Publish new crates, Publish updates
+
+**PyPI Trusted Publishing** (no secret needed):
+
+- Configure at: https://pypi.org/manage/project/bashkit/settings/publishing/
+- Add publisher: GitHub, repo `everruns/bashkit`, workflow `publish-python.yml`, environment `release-python`
 
 ## Example Conversation
 
@@ -220,3 +255,4 @@ Each release includes:
 
 - **GitHub Release**: Tag, release notes, source archives
 - **crates.io**: Published crates for `cargo add bashkit`
+- **PyPI**: Pre-built wheels for `pip install bashkit`
