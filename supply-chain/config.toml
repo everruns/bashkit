@@ -958,6 +958,10 @@ criteria = "safe-to-deploy"
 version = "0.24.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.python3-dll-a]]
+version = "0.2.14"
+criteria = "safe-to-deploy"
+
 [[exemptions.quick-error]]
 version = "1.2.3"
 criteria = "safe-to-run"
