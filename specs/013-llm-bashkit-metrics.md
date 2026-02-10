@@ -2,174 +2,295 @@
 
 ## Purpose
 
-Define the metrics that measure how effectively LLMs use Bashkit as a bash tool. These metrics serve three audiences: library consumers evaluating Bashkit for their agent stack, model developers benchmarking bash tool-use quality, and Bashkit maintainers identifying interpreter gaps.
+Define the metrics that `bashkit-eval` produces when measuring how LLMs use Bashkit. Three audiences: library consumers evaluating Bashkit for their agent stack, model developers benchmarking bash tool-use, Bashkit maintainers identifying interpreter gaps.
 
-## Metric Categories
+## Data Model
 
-### 1. Task Completion
+Metrics live at four granularity levels, each represented by a struct in `crates/bashkit-eval/src/`.
 
-**What it measures:** Whether the LLM achieves the intended goal through Bashkit.
+### Per-Call: `ToolCallResult` (agent.rs)
 
-| Metric | Definition | Granularity |
-|--------|-----------|-------------|
-| **Tasks passed** | Count of tasks where every expectation check passes | Per-run |
-| **Pass rate** | `tasks_passed / total_tasks` | Per-run |
-| **Score** | Weighted sum of passed checks / total weight across all tasks | Per-run |
-| **Task score** | Weighted sum of passed checks / total weight for one task | Per-task |
-| **Category pass rate** | Score aggregated per task category | Per-category |
+One record per bash invocation within a task.
 
-**Why it matters:** The primary signal of whether an LLM can accomplish real work through Bashkit. A model that passes 95% of tasks is production-viable; one at 80% needs guardrails.
+| Field | Type | Source |
+|-------|------|--------|
+| `commands` | String | Bash command text sent by LLM |
+| `stdout` | String | Standard output from execution |
+| `stderr` | String | Standard error from execution |
+| `exit_code` | i32 | 0 = success, >0 = error |
 
-**Scoring details:** Each task defines expectations with optional weights (default 1.0). A task "passes" only if all expectations pass. The overall score is a softer metric — a task that achieves 4/5 checks contributes 80% of its weight even though it counts as failed.
+### Per-Task: `AgentTrace` (agent.rs) + `TaskScore` (scorer.rs)
 
-### 2. Tool Call Efficiency
+One record per eval task. `AgentTrace` captures execution; `TaskScore` captures correctness.
 
-**What it measures:** How the LLM uses the bash tool across conversation turns.
+**AgentTrace:**
 
-| Metric | Definition | Granularity |
-|--------|-----------|-------------|
-| **Tool calls** | Total bash invocations across all tasks | Per-run |
-| **Tool calls (ok)** | Tool calls with exit_code 0 | Per-run |
-| **Tool calls (error)** | Tool calls with exit_code != 0 | Per-run |
-| **Tool call success rate** | `tool_calls_ok / total_tool_calls` | Per-run |
-| **Turns** | LLM round-trips (each provider.chat() call = 1 turn) | Per-run, per-task |
-| **Avg tool calls per task** | `total_tool_calls / total_tasks` | Per-run |
-| **Avg turns per task** | `total_turns / total_tasks` | Per-run |
+| Field | Type | Computation |
+|-------|------|-------------|
+| `messages` | Vec\<Message\> | Full LLM conversation history |
+| `tool_calls` | Vec\<ToolCallResult\> | All bash invocations |
+| `tool_call_count` | usize | `tool_calls.len()` |
+| `turns` | usize | Number of `provider.chat()` calls |
+| `last_tool_response` | Option\<ToolCallResult\> | Most recent call (used by `exit_code` check) |
+| `natural_stop` | bool | `true` if LLM sent stop token; `false` if hit turn limit |
+| `total_input_tokens` | u32 | Sum of input tokens across all turns |
+| `total_output_tokens` | u32 | Sum of output tokens across all turns |
+| `duration_ms` | u64 | Wall-clock milliseconds for entire task |
 
-**Why it matters:** Tool call success rate is the sharpest signal for Bashkit compatibility. When a model issues a valid bash command and gets a non-zero exit code, either:
-- The model wrote buggy bash (model problem)
-- Bashkit doesn't support the syntax or builtin (interpreter gap)
+**TaskScore:**
 
-A low success rate (< 75%) indicates significant friction. Comparing success rates across models at similar pass rates isolates interpreter gaps from model skill — if all models fail on the same commands, it's a Bashkit limitation.
+| Field | Type | Computation |
+|-------|------|-------------|
+| `task_id` | String | Task identifier from dataset |
+| `results` | Vec\<ScoreResult\> | One per expectation check |
+| `score` | f64 | Sum of weight for each passed check |
+| `max_score` | f64 | Sum of all check weights |
 
-**Turns vs. tool calls:** A single turn may contain multiple tool calls (batch execution). Turns measure LLM reasoning steps; tool calls measure interpreter utilization. A model that solves a task in 2 turns with 2 tool calls is more efficient than one using 8 turns with 8 tool calls for the same result.
+Derived methods: `all_passed()` = every check passed. `rate()` = `score / max_score`.
 
-### 3. Token Economics
+**ScoreResult** (one per expectation check):
 
-**What it measures:** Cost of achieving results through Bashkit.
+| Field | Type | Meaning |
+|-------|------|---------|
+| `check` | String | Check string (e.g., `exit_code:0`) |
+| `passed` | bool | Whether this expectation was met |
+| `detail` | String | Human-readable explanation |
+| `weight` | f64 | Weight in task score (default 1.0) |
 
-| Metric | Definition | Granularity |
-|--------|-----------|-------------|
-| **Input tokens** | Total tokens sent to the LLM (system prompt + conversation history) | Per-run, per-task |
-| **Output tokens** | Total tokens generated by the LLM | Per-run, per-task |
+### Per-Category: `CategorySummary` (report.rs)
 
-**Why it matters:** Token usage drives cost. Bashkit's system prompt and tool description contribute to input tokens on every turn. A model that completes tasks in fewer turns with shorter tool outputs costs less per task.
+Aggregated from all tasks sharing a `category` field.
 
-**What to watch:** Input tokens grow with conversation length (accumulated history). Models that fail and retry accumulate context rapidly — a task hitting the 10-turn limit can consume 5-10x the tokens of a clean 2-turn completion.
+| Field | Type | Computation |
+|-------|------|-------------|
+| `tasks` | usize | Count of tasks in category |
+| `passed` | usize | Count where `all_passed() == true` |
+| `score` | f64 | Sum of `task.score` |
+| `max_score` | f64 | Sum of `task.max_score` |
+| `rate` | f64 | `score / max_score` |
 
-### 4. Latency
+### Per-Run: `EvalSummary` (report.rs)
 
-**What it measures:** Wall-clock time for task completion.
+Aggregated from all tasks in one eval run. Built by `build_report()`.
 
-| Metric | Definition | Granularity |
-|--------|-----------|-------------|
-| **Duration** | Total wall-clock time for all tasks | Per-run |
-| **Avg duration per task** | `total_duration_ms / total_tasks` | Per-run |
-| **Task duration** | Wall-clock time for a single task (includes LLM latency + interpreter execution) | Per-task |
+**Task completion:**
 
-**Why it matters:** In agentic workflows, bash tool calls are on the critical path. Duration is dominated by LLM inference time, not interpreter execution (Bashkit is 100-1000x faster than subprocess bash for simple operations). Slow models that retry frequently compound both latency and cost.
+| Field | Type | Computation |
+|-------|------|-------------|
+| `total_tasks` | usize | `results.len()` |
+| `total_passed` | usize | Count where `all_passed()` |
+| `total_score` | f64 | Sum of all `task.score` |
+| `total_max_score` | f64 | Sum of all `task.max_score` |
+| `overall_rate` | f64 | `total_score / total_max_score` |
 
-### 5. Behavioral Signals (per-task trace)
+**Tool execution:**
 
-**What it measures:** Qualitative patterns in how models interact with Bashkit.
+| Field | Type | Computation |
+|-------|------|-------------|
+| `total_tool_calls` | usize | Sum of `trace.tool_call_count` |
+| `tool_calls_ok` | usize | Count of calls where `exit_code == 0` |
+| `tool_calls_error` | usize | `total_tool_calls - tool_calls_ok` |
+| `tool_call_success_rate` | f64 | `tool_calls_ok / total_tool_calls` |
 
-| Signal | Source | Interpretation |
-|--------|--------|---------------|
-| **Natural stop** | `trace.natural_stop` | LLM stopped on its own (vs. hitting turn limit). False = model got stuck in a retry loop. |
-| **Error-then-adapt** | Sequence of error→different command | Model adjusted to a Bashkit limitation. Positive signal. |
-| **Error-then-repeat** | Sequence of error→same command | Model retried the same failing approach. Negative signal. |
-| **Commands issued** | `trace.tool_calls[].commands` | Raw bash commands the LLM chose. Reveals which constructs models reach for. |
-| **Stderr patterns** | `trace.tool_calls[].stderr` | Common error messages identify missing builtins, unsupported syntax, or ambiguous behavior. |
+**Reasoning efficiency:**
 
-**Why it matters:** Summary metrics hide important nuance. A model may pass a task but waste 7 turns retrying `sed -i` (not supported) before switching to a redirect approach. The trace reveals whether success came from skill or brute force.
+| Field | Type | Computation |
+|-------|------|-------------|
+| `total_turns` | usize | Sum of `trace.turns` |
+| `avg_turns_per_task` | f64 | `total_turns / total_tasks` |
+| `avg_tool_calls_per_task` | f64 | `total_tool_calls / total_tasks` |
+
+**Token economics:**
+
+| Field | Type | Computation |
+|-------|------|-------------|
+| `total_input_tokens` | u32 | Sum of `trace.total_input_tokens` |
+| `total_output_tokens` | u32 | Sum of `trace.total_output_tokens` |
+
+**Latency:**
+
+| Field | Type | Computation |
+|-------|------|-------------|
+| `total_duration_ms` | u64 | Sum of `trace.duration_ms` |
+| `avg_duration_ms` | f64 | `total_duration_ms / total_tasks` |
+
+**Category breakdown:**
+
+| Field | Type | Computation |
+|-------|------|-------------|
+| `by_category` | HashMap\<String, CategorySummary\> | Group tasks by `task.category` |
+
+## Computation Flow
+
+```
+JSONL dataset
+  │
+  ▼  [per task]
+run_agent_loop(bash, provider, task)
+  │  ├─ Each provider.chat() call increments turns
+  │  ├─ Each tool_use block → bash.exec() → ToolCallResult
+  │  ├─ Token counts from provider response usage
+  │  └─ Wall-clock timer wraps entire loop
+  │
+  ▼
+AgentTrace { tool_calls, turns, tokens, duration, natural_stop }
+  │
+  ▼
+score_task(trace, vfs, expectations)
+  │  ├─ Each expectation → evaluate_check() → ScoreResult
+  │  ├─ Checks read from trace (stdout, stderr, exit_code, tool_call_count)
+  │  └─ Checks read from VFS (file_exists, dir_exists, file_contains)
+  │
+  ▼
+TaskScore { results, score, max_score }
+  │
+  ▼  [collect all tasks]
+build_report(results)
+  │  ├─ Sum/count across all tasks → EvalSummary
+  │  └─ Group by category → HashMap<String, CategorySummary>
+  │
+  ▼
+EvalReport { summary, results, metadata }
+  │
+  ├─ print_terminal_report()  [always]
+  └─ save_report()            [--save flag]
+       ├─ JSON (full struct with traces)
+       └─ Markdown (human-readable report)
+```
 
 ## Expectation Checks
 
-Expectations are the atomic unit of scoring. Each check type validates one aspect of the agent's work.
+Checks validate against two data sources: **agent trace** (runtime behavior) and **VFS** (persistent artifacts).
 
-| Check | Format | Validates |
-|-------|--------|-----------|
-| `exit_code` | `exit_code:N` | Last tool call returned expected exit code |
-| `stdout_contains` | `stdout_contains:text` | Any tool output contains text |
-| `stdout_regex` | `stdout_regex:pattern` | Any tool output matches regex |
-| `stderr_empty` | `stderr_empty` | No tool call produced stderr |
-| `file_exists` | `file_exists:/path` | VFS path exists after task completes |
-| `dir_exists` | `dir_exists:/path` | VFS directory exists after task completes |
-| `file_contains` | `file_contains:/path:text` | VFS file contains expected text |
-| `tool_calls_min` | `tool_calls_min:N` | Model used at least N tool calls |
-| `tool_calls_max` | `tool_calls_max:N` | Model used at most N tool calls |
+| Check | Format | Data Source | Validates |
+|-------|--------|------------|-----------|
+| `exit_code` | `exit_code:N` | `trace.last_tool_response.exit_code` | Last call exit code equals N |
+| `stdout_contains` | `stdout_contains:text` | `trace.tool_calls[].stdout` | Any call's stdout contains text |
+| `stdout_regex` | `stdout_regex:pattern` | `trace.tool_calls[].stdout` | Any call's stdout matches regex |
+| `stderr_empty` | `stderr_empty` | `trace.tool_calls[].stderr` | Every call has empty stderr |
+| `file_exists` | `file_exists:/path` | `vfs.stat(path)` | Path exists post-execution |
+| `dir_exists` | `dir_exists:/path` | `vfs.stat(path) + FileType::Directory` | Directory exists post-execution |
+| `file_contains` | `file_contains:/path:text` | `vfs.read_file(path)` | File content includes text |
+| `tool_calls_min` | `tool_calls_min:N` | `trace.tool_call_count` | At least N calls made |
+| `tool_calls_max` | `tool_calls_max:N` | `trace.tool_call_count` | At most N calls made |
+| `llm_judge` | `llm_judge:prompt` | — | Stub (weight=0, always passes) |
 
-Checks operate against two data sources:
-- **Agent trace** — stdout, stderr, exit codes from tool calls (runtime behavior)
-- **VFS state** — filesystem after all tool calls complete (persistent artifacts)
-
-This dual validation catches models that produce correct stdout but fail to write results to disk, or vice versa.
+Dual-source validation catches models that produce correct stdout but skip writing to disk (or vice versa).
 
 ## Task Categories
 
-Categories group tasks by bash skill domain. Category-level metrics reveal model strengths and Bashkit coverage gaps.
+37 tasks across 10 categories. Category-level metrics reveal model strengths and Bashkit coverage gaps.
 
 | Category | Tasks | What it tests |
 |----------|-------|--------------|
 | file_operations | 3 | mkdir, cp, mv, find, rm — basic VFS interaction |
-| text_processing | 4 | grep, sed, awk on structured data — text tool proficiency |
-| pipelines | 3 | Multi-stage pipes, command substitution — composition skill |
-| scripting | 4 | Variables, arrays, loops, functions — bash programming |
-| data_transformation | 5 | CSV↔JSON, log parsing, column reordering — real-world ETL |
-| error_recovery | 2 | Missing files, broken JSON — graceful failure handling |
+| text_processing | 4 | grep, sed, awk on structured data |
+| pipelines | 3 | Multi-stage pipes, command substitution |
+| scripting | 4 | Variables, arrays, loops, functions |
+| data_transformation | 5 | CSV↔JSON, log parsing, column reordering |
+| error_recovery | 2 | Missing files, broken JSON — graceful failure |
 | system_info | 2 | whoami, date, env — sandbox introspection |
-| archive_operations | 2 | tar, gzip workflows — binary-adjacent operations |
-| json_processing | 8 | jq queries, transforms, merges — structured data manipulation |
-| complex_tasks | 4 | Multi-step scenarios combining several categories |
+| archive_operations | 2 | tar, gzip workflows |
+| json_processing | 8 | jq queries, transforms, merges, NDJSON |
+| complex_tasks | 4 | Multi-step scenarios combining categories |
 
-## Cross-Model Comparison
+## Key Metrics Explained
 
-Comparing the same metrics across models on the same dataset reveals:
+### Overall Rate vs. Pass Rate
 
-| Comparison | What it shows |
-|------------|--------------|
-| Pass rate delta | Model skill gap for bash tool-use |
-| Tool call success delta | Whether failure is model-side or interpreter-side |
-| Category variance | Which bash domains differentiate models |
-| Token ratio at same pass rate | Cost efficiency per unit of capability |
-| Turn count at same pass rate | Reasoning efficiency — fewer turns = better planning |
+**Overall rate** (`overall_rate`): Weighted score across all checks. A task achieving 4/5 checks contributes 80% of its weight. Soft metric — measures partial progress.
 
-**Key diagnostic:** If all models fail on the same task with similar errors, the issue is likely a Bashkit limitation. If one model passes and others fail, it's a model capability difference.
+**Pass rate** (`total_passed / total_tasks`): Strict binary. A task passes only when every check passes. Measures complete task achievement.
 
-## Benchmark Metrics (Performance)
+Both matter. A model at 95% overall rate but 78% pass rate succeeds partially on many tasks but misses full completion. A model at 87% overall with 87% pass rate either fully succeeds or clearly fails.
 
-Separate from eval (which measures LLM+Bashkit end-to-end), `bashkit-bench` measures raw interpreter performance.
+### Tool Call Success Rate
 
-| Metric | Definition |
-|--------|-----------|
-| **Mean execution time** | Average time to execute a bash snippet (nanoseconds) |
-| **Stddev** | Execution time variance |
-| **Min / Max** | Execution time bounds |
-| **Output match** | Whether Bashkit output matches native bash reference |
-| **Error rate** | Fraction of benchmark cases that error |
+`tool_calls_ok / total_tool_calls`. The sharpest signal for Bashkit compatibility.
 
-75 benchmark cases across 9 categories (startup, variables, arithmetic, control, strings, arrays, pipes, tools, complex) compare Bashkit against native bash and just-bash.
+When a model issues bash and gets exit_code != 0, either:
+- Model wrote buggy bash (model problem)
+- Bashkit doesn't support the syntax/builtin (interpreter gap)
 
-**Relevance to LLM workflows:** Bashkit's in-process execution eliminates fork/exec overhead (100-1000x faster for simple commands). This matters for agentic loops where tool calls happen in tight sequences. Performance benchmarks verify this advantage holds across the command surface area that LLMs actually use.
+Comparing across models disambiguates: if all models fail on the same commands, it's Bashkit. If one model fails and others don't, it's the model.
+
+### Natural Stop
+
+`trace.natural_stop == true` means the LLM decided it was done. `false` means it hit the turn limit (default 10). A high rate of `natural_stop == false` signals models getting stuck in retry loops — burning tokens without converging.
+
+### Turns vs. Tool Calls
+
+A turn is one `provider.chat()` round-trip. A turn may produce multiple `tool_use` blocks (batch execution). Turns measure LLM reasoning steps; tool calls measure interpreter utilization. Fewer turns at the same pass rate = better planning.
+
+## Current Baseline (2026-02-09, 37 tasks)
+
+| Metric | Haiku 4.5 | Opus 4.6 | GPT-5.2 |
+|--------|-----------|----------|---------|
+| Tasks passed | 32/37 | 29/37 | 23/37 |
+| Overall rate | **95%** | 87% | 80% |
+| Tool calls (ok/err) | 150 (121/29) | 198 (163/35) | 108 (77/31) |
+| Tool call success | 81% | **82%** | 71% |
+| Avg turns/task | 4.8 | 5.6 | 3.8 |
+| Tokens (in/out) | 286K/35K | 315K/31K | 119K/17K |
+| Duration | 6.4 min | 25.2 min | 4.8 min |
+
+### Per-Category Rates
+
+| Category | Haiku 4.5 | Opus 4.6 | GPT-5.2 |
+|----------|-----------|----------|---------|
+| archive_operations | 100% | 100% | 17% |
+| complex_tasks | 92% | 54% | 67% |
+| data_transformation | 93% | 90% | 90% |
+| error_recovery | 100% | 100% | 100% |
+| file_operations | 100% | 100% | 100% |
+| json_processing | 92% | 91% | 89% |
+| pipelines | 100% | 100% | 80% |
+| scripting | 95% | 95% | 53% |
+| system_info | 100% | 100% | 100% |
+| text_processing | 92% | 69% | 69% |
+
+### Trend (25→37 tasks, interpreter fixes)
+
+| Metric | 2026-02-07 (baseline) | 2026-02-08 (fixes) | 2026-02-09 (expanded) |
+|--------|----------------------|--------------------|-----------------------|
+| Haiku pass rate | 92% | 98% | 95% |
+| Opus pass rate | 87% | 93% | 87% |
+| GPT-5.2 pass rate | 87% | 81% | 80% |
+| Haiku tool success | 80% | 87% | 81% |
+| GPT-5.2 tool success | 57% | 78% | 71% |
+
+Interpreter fixes between 02-07 and 02-08 lifted tool call success rates significantly (+7% Haiku, +21% GPT-5.2). Expanded dataset on 02-09 revealed new friction points, pulling rates back down slightly.
 
 ## Interpreting Results
 
 ### Healthy Profile
-- Pass rate > 90%
+- Overall rate > 90%
 - Tool call success rate > 80%
 - Avg turns per task < 5
 - No category below 70%
+- `natural_stop` on most tasks
 
 ### Friction Signals
 - Tool call success rate < 75% → Bashkit compatibility gaps
 - Single category below 50% → Missing builtins or syntax for that domain
 - Avg turns per task > 7 → Models retrying due to errors
-- High token usage with low pass rate → Models stuck in retry loops
+- High token usage with low pass rate → Stuck in retry loops
+- `natural_stop == false` frequently → Turn limit reached, model didn't converge
+
+### Cross-Model Diagnostics
+
+| Pattern | Diagnosis |
+|---------|-----------|
+| All models fail same task, similar stderr | Bashkit limitation |
+| One model passes, others fail | Model capability difference |
+| Same pass rate, different tool call counts | Reasoning efficiency gap |
+| Same pass rate, different token counts | Cost efficiency gap |
+| Category fails for all models | Bashkit missing builtins for domain |
 
 ### Improvement Levers
 - **Raise tool call success rate** → Fix interpreter gaps (benefits all models)
-- **Add expectations to underspecified tasks** → Better signal from eval
-- **Add tasks for uncovered builtins** → Broader coverage measurement
+- **Add expectations to underspecified tasks** → Better scoring signal
+- **Add tasks for uncovered builtins** → Broader coverage
 - **Compare across Bashkit versions** → Track regression/improvement
 
 ## See Also
