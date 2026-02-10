@@ -2,11 +2,11 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
+#     "bashkit[langchain]>=0.1.4",
 #     "langchain>=1.0",
 #     "langchain-anthropic>=0.3",
 # ]
 # ///
-# Note: Install bashkit first: cd crates/bashkit-python && maturin develop
 """
 Treasure Hunt Agent - A fun demonstration of LangChain + Bashkit
 
@@ -24,6 +24,8 @@ Demonstrates multiple agentic loop iterations as the agent:
 Run with:
     export ANTHROPIC_API_KEY=your_key
     uv run examples/treasure_hunt_agent.py
+
+uv automatically installs bashkit from PyPI (pre-built wheels, no Rust needed).
 """
 
 import asyncio
@@ -32,12 +34,7 @@ import sys
 
 from langchain.agents import create_agent
 
-# Try to import from installed package
-try:
-    from bashkit.langchain import create_bash_tool
-except ImportError:
-    print("bashkit not found. Install with: cd crates/bashkit-python && maturin develop")
-    sys.exit(1)
+from bashkit.langchain import create_bash_tool
 
 
 # The treasure hunt setup script - creates clues in the virtual filesystem

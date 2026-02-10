@@ -1,5 +1,8 @@
 # Bashkit Examples
 
+All examples use [PEP 723](https://peps.python.org/pep-0723/) inline script metadata.
+`uv run` resolves dependencies automatically — bashkit installs from PyPI as a pre-built wheel (no Rust toolchain needed).
+
 ## treasure_hunt_agent.py
 
 LangChain agent with Bashkit sandbox.
