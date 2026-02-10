@@ -99,19 +99,19 @@ for sandbox security reasons. See the compliance spec for details.
 | `rmdir` | `-p` | Remove empty directories |
 | `xargs` | `-I`, `-n`, `-d` | Build commands from stdin |
 | `tee` | `-a` | Write to files and stdout |
-| `watch` | `INTERVAL COMMAND` | Execute periodically (sandbox mode) |
+| `watch` | `INTERVAL COMMAND` | Execute periodically (virtual mode) |
 | `file` | (none) | Detect file type via magic bytes |
-| `less` | (none) | View file (behaves like cat in sandbox) |
+| `less` | (none) | View file (behaves like cat in virtual mode) |
 | `stat` | `-c FORMAT` | Display file metadata |
 | `tar` | `-c`, `-x`, `-t`, `-v`, `-f`, `-z` | Archive operations |
 | `gzip` | `-d`, `-k`, `-f` | Compress files |
 | `gunzip` | `-k`, `-f` | Decompress files |
 | `env` | `[VAR=val]` | Print/modify environment |
 | `printenv` | `[VAR]` | Print environment variables |
-| `history` | (none) | Command history (limited in sandbox) |
-| `hostname` | (none) | Display sandbox hostname |
+| `history` | (none) | Command history (limited in virtual mode) |
+| `hostname` | (none) | Display virtual hostname |
 | `uname` | `-a`, `-s`, `-n`, `-r`, `-v`, `-m`, `-o` | System info |
-| `whoami` | (none) | Display sandbox username |
+| `whoami` | (none) | Display virtual username |
 | `id` | `-u`, `-g`, `-n` | User/group IDs |
 | `nl` | `-b`, `-n`, `-s`, `-i`, `-v`, `-w` | Number lines of files |
 | `paste` | `-d`, `-s` | Merge lines of files |
@@ -332,7 +332,7 @@ Default limits (configurable):
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Virtual filesystem | ✅ | InMemoryFs, OverlayFs, MountableFs |
-| Real filesystem | ❌ | Sandboxed by default |
+| Real filesystem | ❌ | Virtual by default |
 | Symlinks | ✅ | Stored but not followed |
 | Permissions | ✅ | Metadata stored, not enforced |
 | `/dev/null` | ✅ | Interpreter-level handling (cannot be bypassed) |
@@ -440,7 +440,7 @@ Identified from eval analysis — features frequently used by LLM-generated scri
 
 ### Not Planned
 - Interactive features (history, job control UI)
-- Process spawning (sandboxed environment)
+- Process spawning (virtual environment)
 - Raw filesystem access
 
 ---

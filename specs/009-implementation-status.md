@@ -11,12 +11,12 @@ feature status across Bashkit.
 ## Intentionally Unimplemented Features
 
 These features are **by design** not implemented. They conflict with Bashkit's
-stateless, sandboxed execution model or pose security risks.
+stateless, virtual execution model or pose security risks.
 
 | Feature | Rationale | Threat ID |
 |---------|-----------|-----------|
 | `exec` builtin | Cannot replace shell process in sandbox; breaks containment | TM-ESC-005 |
-| `trap` builtin | Stateless model - no persistent handlers; no signal sources in sandbox | - |
+| `trap` builtin | Stateless model - no persistent handlers; no signal sources in virtual environment | - |
 | Background execution (`&`) | Stateless model - no persistent processes between commands | TM-ESC-007 |
 | Job control (`bg`, `fg`, `jobs`) | Requires process state; interactive feature | - |
 | Symlink following | Prevents symlink loop attacks and sandbox escape | TM-DOS-011 |
@@ -41,14 +41,14 @@ traversal is blocked. This prevents:
 **Security Exclusions**: `exec` is excluded because it would replace the shell
 process, breaking sandbox containment. `trap` is excluded because signal
 handlers require persistent state (conflicts with stateless model) and there
-are no signal sources in the sandbox. Scripts should use exit-code-based error
+are no signal sources in the virtual environment. Scripts should use exit-code-based error
 handling instead.
 
-**bash/sh Commands**: The `bash` and `sh` commands are implemented as sandboxed
+**bash/sh Commands**: The `bash` and `sh` commands are implemented as virtual
 re-invocations of the Bashkit interpreter, NOT external process spawning. This
 enables common patterns like `bash script.sh` while maintaining security:
 - `bash --version` returns Bashkit version (not host bash)
-- `bash -c "cmd"` executes within the same sandbox
+- `bash -c "cmd"` executes within the same virtual environment
 - `bash -n script.sh` performs syntax checking without execution
 - Variables set in `bash -c` affect the parent (shared interpreter state)
 - Resource limits are shared/inherited from parent execution
@@ -90,7 +90,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | `return` | Implemented | Return from function with status |
 | `set` | Implemented | Set options and positional parameters |
 | `shift` | Implemented | Shift positional parameters |
-| `times` | Implemented | Display process times (returns zeros in sandbox) |
+| `times` | Implemented | Display process times (returns zeros in virtual mode) |
 | `trap` | **Excluded** | See [Intentionally Unimplemented](#intentionally-unimplemented-features) |
 | `unset` | Implemented | Remove variables and functions |
 

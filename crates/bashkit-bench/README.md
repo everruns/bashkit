@@ -127,13 +127,13 @@ Benchmarks are designed to use compatible subset of features.
 ## Interpreters
 
 ### Bashkit
-The Rust-based sandboxed interpreter being benchmarked. Runs in-process without subprocess overhead.
+The Rust-based virtual interpreter being benchmarked. Runs in-process without subprocess overhead.
 
 ### Bash
 System bash (`/bin/bash` or similar). Spawns a new process for each benchmark, which includes fork/exec overhead.
 
 ### just-bash
-[Vercel's just-bash](https://github.com/vercel-labs/just-bash) sandboxed interpreter. Optional - will be skipped if not installed.
+[Vercel's just-bash](https://github.com/vercel-labs/just-bash) virtual interpreter. Optional - will be skipped if not installed.
 
 Install via: `npm install -g just-bash`
 

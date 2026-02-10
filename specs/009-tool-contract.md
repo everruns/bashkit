@@ -55,19 +55,19 @@ bashkit
 
 #### `short_description()`
 ```
-Sandboxed bash interpreter with virtual filesystem
+Virtual bash interpreter with virtual filesystem
 ```
 
 #### `description()`
 ```
-Sandboxed bash-like interpreter with virtual filesystem. Supported tools: echo cat grep sed awk jq curl head tail sort uniq cut tr wc date sleep mkdir rm cp mv touch chmod printf test [ true false exit cd pwd ls find xargs basename dirname env export read
+Virtual bash interpreter with virtual filesystem. Supported tools: echo cat grep sed awk jq curl head tail sort uniq cut tr wc date sleep mkdir rm cp mv touch chmod printf test [ true false exit cd pwd ls find xargs basename dirname env export read
 ```
 
 #### `system_prompt()`
 ```
 # Bash Tool
 
-Sandboxed bash-like interpreter with virtual filesystem.
+Virtual bash interpreter with virtual filesystem.
 
 Input: {"commands": "<bash commands>"}
 Output: {stdout, stderr, exit_code}
@@ -77,7 +77,7 @@ With username configured:
 ```
 # Bash Tool
 
-Sandboxed bash-like interpreter with virtual filesystem.
+Virtual bash interpreter with virtual filesystem.
 Home: /home/agent
 
 Input: {"commands": "<bash commands>"}
@@ -89,14 +89,14 @@ Output: {stdout, stderr, exit_code}
 BASH(1)                          User Commands                         BASH(1)
 
 NAME
-       bashkit - sandboxed bash-like interpreter with virtual filesystem
+       bashkit - virtual bash interpreter with virtual filesystem
 
 SYNOPSIS
        {"commands": "<bash commands>"}
 
 DESCRIPTION
-       Bashkit executes bash commands in an isolated sandbox with a virtual
-       filesystem. All file operations are contained within the sandbox.
+       Bashkit executes bash commands in a virtual environment with a virtual
+       filesystem. All file operations are contained within the virtual environment.
 
        Supports full bash syntax including variables, pipelines, redirects,
        loops, conditionals, functions, and arrays.
@@ -170,7 +170,7 @@ pub struct ToolResponse {
 
 ### BashTool Implementation
 
-`BashTool` is the sandboxed bash interpreter implementing the `Tool` trait.
+`BashTool` is the virtual bash interpreter implementing the `Tool` trait.
 
 ```rust
 let mut tool = BashTool::builder()

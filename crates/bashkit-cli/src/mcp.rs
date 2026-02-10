@@ -180,7 +180,7 @@ fn handle_initialize(id: serde_json::Value) -> JsonRpcResponse {
 fn handle_tools_list(id: serde_json::Value) -> JsonRpcResponse {
     let tools = vec![Tool {
         name: "bash".to_string(),
-        description: "Execute a bash script in a sandboxed environment".to_string(),
+        description: "Execute a bash script in a virtual environment".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {

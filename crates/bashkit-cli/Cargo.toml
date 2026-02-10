@@ -1,5 +1,5 @@
 # Bashkit CLI - Command line interface for bashkit
-# Run bash scripts in a sandboxed environment
+# Run bash scripts in a virtual environment
 
 [package]
 name = "bashkit-cli"
@@ -10,7 +10,7 @@ authors.workspace = true
 repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Command line interface for Bashkit sandboxed bash interpreter"
+description = "Command line interface for Bashkit virtual bash interpreter"
 readme = "../../README.md"
 
 [[bin]]

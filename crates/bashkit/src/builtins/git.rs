@@ -1,6 +1,6 @@
 //! Git builtin command.
 //!
-//! Provides sandboxed git operations on the virtual filesystem.
+//! Provides virtual git operations on the virtual filesystem.
 //!
 //! # Supported Subcommands (Phase 1)
 //!

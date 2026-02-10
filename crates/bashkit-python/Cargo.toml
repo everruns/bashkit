@@ -8,7 +8,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Python bindings for Bashkit sandboxed bash interpreter"
+description = "Python bindings for Bashkit virtual bash interpreter"
 
 [lib]
 crate-type = ["cdylib"]

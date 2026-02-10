@@ -8,7 +8,7 @@ use crate::interpreter::ExecResult;
 
 /// export builtin - mark variables for export to child processes
 ///
-/// In our sandboxed environment, this primarily just sets variables.
+/// In Bashkit's virtual environment, this primarily just sets variables.
 /// The distinction between exported and non-exported isn't significant
 /// since we don't spawn real child processes.
 pub struct Export;

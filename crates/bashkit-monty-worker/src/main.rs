@@ -136,10 +136,10 @@ fn run(
                 }
             }
             RunProgress::FunctionCall { state, .. } => {
-                // No external functions in sandbox
+                // No external functions in virtual mode
                 let err = MontyException::new(
                     ExcType::RuntimeError,
-                    Some("external function not available in sandbox".into()),
+                    Some("external function not available in virtual mode".into()),
                 );
                 match state.run(ExternalResult::Error(err), &mut printer) {
                     Ok(next) => progress = next,
@@ -154,7 +154,7 @@ fn run(
                 let output = printer.into_output();
                 send_error(
                     writer,
-                    "RuntimeError: async operations not supported in sandbox",
+                    "RuntimeError: async operations not supported in virtual mode",
                     &output,
                 );
                 return Ok(());

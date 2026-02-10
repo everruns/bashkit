@@ -1,6 +1,6 @@
 //! System information builtins (hostname, uname, whoami, id)
 //!
-//! These builtins return configurable sandbox values to prevent
+//! These builtins return configurable virtual values to prevent
 //! information disclosure about the host system.
 //!
 //! Security rationale: Real system information could be used for:
@@ -14,20 +14,20 @@ use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
-/// Default sandbox hostname.
+/// Default virtual hostname.
 /// Using a clearly fake name prevents confusion with real hosts.
 pub const DEFAULT_HOSTNAME: &str = "bashkit-sandbox";
 
-/// Default sandbox username.
+/// Default virtual username.
 pub const DEFAULT_USERNAME: &str = "sandbox";
 
-/// Hardcoded sandbox user ID.
+/// Hardcoded virtual user ID.
 pub const SANDBOX_UID: u32 = 1000;
 
-/// Hardcoded sandbox group ID.
+/// Hardcoded virtual group ID.
 pub const SANDBOX_GID: u32 = 1000;
 
-/// The hostname builtin - returns configurable sandbox hostname.
+/// The hostname builtin - returns configurable virtual hostname.
 ///
 /// Real hostname is never exposed to prevent host fingerprinting.
 pub struct Hostname {
@@ -64,14 +64,14 @@ impl Builtin for Hostname {
             || ctx.args.first().map(|s| s.as_str()) == Some("--help")
         {
             return Ok(ExecResult::ok(
-                "hostname: display sandbox hostname\nUsage: hostname\n",
+                "hostname: display virtual hostname\nUsage: hostname\n",
             ));
         }
 
         // Ignore any attempts to set hostname
         if !ctx.args.is_empty() {
             return Ok(ExecResult::err(
-                "hostname: cannot set hostname in sandbox\n",
+                "hostname: cannot set hostname in virtual mode\n",
                 1,
             ));
         }
@@ -134,7 +134,7 @@ impl Builtin for Uname {
                 "-o" | "--operating-system" => show_os = true,
                 "-h" | "--help" => {
                     return Ok(ExecResult::ok(
-                        "uname: print sandbox system information\n\
+                        "uname: print virtual system information\n\
                          Usage: uname [OPTION]...\n\
                          Options:\n\
                          \t-a  print all information\n\
@@ -187,7 +187,7 @@ impl Builtin for Uname {
     }
 }
 
-/// The whoami builtin - returns configurable sandbox username.
+/// The whoami builtin - returns configurable virtual username.
 pub struct Whoami {
     username: String,
 }
@@ -221,7 +221,7 @@ impl Builtin for Whoami {
     }
 }
 
-/// The id builtin - returns configurable sandbox user/group IDs.
+/// The id builtin - returns configurable virtual user/group IDs.
 pub struct Id {
     username: String,
 }
@@ -266,7 +266,7 @@ impl Builtin for Id {
                 }
                 "-h" | "--help" => {
                     return Ok(ExecResult::ok(
-                        "id: print sandbox user and group IDs\n\
+                        "id: print virtual user and group IDs\n\
                          Usage: id [OPTION]\n\
                          Options:\n\
                          \t-u  print only the effective user ID\n\

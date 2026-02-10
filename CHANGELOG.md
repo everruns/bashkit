@@ -58,7 +58,7 @@
 ### Highlights
 
 - Python bindings with LangChain and Deep Agents integrations
-- Sandboxed git support (branch, checkout, diff, reset)
+- Virtual git support (branch, checkout, diff, reset)
 - Bash/sh script execution commands
 - Virtual filesystem improvements: /dev/null support, duplicate name prevention, FsBackend trait
 
@@ -133,9 +133,9 @@
 
 ### Highlights
 
-- Initial release of Bashkit sandboxed bash interpreter
+- Initial release of Bashkit virtual bash interpreter
 - Core interpreter with bash-compatible syntax support
-- Virtual filesystem (VFS) abstraction for sandboxed file operations
+- Virtual filesystem (VFS) abstraction for virtual file operations
 - Resource limits: memory, execution time, operation count
 - Built-in commands: echo, printf, cat, head, tail, wc, grep, sed, awk, jq, sort, uniq, cut, tr, date, base64, md5sum, sha256sum, gzip, gunzip, etc
 - CLI tool for running scripts and interactive REPL

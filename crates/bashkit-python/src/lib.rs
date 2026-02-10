@@ -60,7 +60,7 @@ impl ExecResult {
     }
 }
 
-/// Sandboxed bash interpreter for AI agents
+/// Virtual bash interpreter for AI agents
 ///
 /// BashTool provides a safe execution environment for running bash commands
 /// with a virtual filesystem. State persists between calls - files created
@@ -90,8 +90,8 @@ impl BashTool {
     /// Create a new BashTool instance
     ///
     /// Args:
-    ///     username: Custom username for sandbox (default: "user")
-    ///     hostname: Custom hostname for sandbox (default: "sandbox")
+    ///     username: Custom username for virtual environment (default: "user")
+    ///     hostname: Custom hostname for virtual environment (default: "sandbox")
     ///     max_commands: Maximum commands to execute (default: 10000)
     ///     max_loop_iterations: Maximum loop iterations (default: 100000)
     #[new]
@@ -226,7 +226,7 @@ impl BashTool {
     /// Get short description
     #[getter]
     fn short_description(&self) -> &str {
-        "Sandboxed bash interpreter with virtual filesystem"
+        "Virtual bash interpreter with virtual filesystem"
     }
 
     /// Get the full description

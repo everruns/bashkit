@@ -1,4 +1,4 @@
-//! Resource limits for sandboxed execution.
+//! Resource limits for virtual execution.
 //!
 //! These limits prevent runaway scripts from consuming excessive resources.
 //!

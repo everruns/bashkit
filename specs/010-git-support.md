@@ -2,12 +2,12 @@
 
 ## Status
 Phase 1: Implemented
-Phase 2: Implemented (sandbox mode - URL validation only)
+Phase 2: Implemented (virtual mode - URL validation only)
 Phase 3: Implemented (branch, checkout, diff, reset)
 
 ## Decision
 
-Bashkit provides sandboxed git operations via the `git` feature flag.
+Bashkit provides virtual git operations via the `git` feature flag.
 All git operations work on the virtual filesystem only.
 
 ### Feature Flag
@@ -42,9 +42,9 @@ let bash = Bash::builder()
 | `git status` | Show working tree status |
 | `git log [-n N]` | Show commit history |
 
-#### Phase 2 (Remote) - Implemented (Sandbox Mode)
+#### Phase 2 (Remote) - Implemented (Virtual Mode)
 
-Remote operations validate URLs against the allowlist but return sandbox
+Remote operations validate URLs against the allowlist but return virtual
 mode messages (actual network operations not supported in VFS-only mode).
 
 | Command | Description |
@@ -53,10 +53,10 @@ mode messages (actual network operations not supported in VFS-only mode).
 | `git remote -v` | List remotes with URLs |
 | `git remote add <name> <url>` | Add remote (validates URL) |
 | `git remote remove <name>` | Remove remote |
-| `git clone <url> [path]` | Validates URL, returns sandbox message |
-| `git push [remote]` | Validates URL, returns sandbox message |
-| `git pull [remote]` | Validates URL, returns sandbox message |
-| `git fetch [remote]` | Validates URL, returns sandbox message |
+| `git clone <url> [path]` | Validates URL, returns virtual mode message |
+| `git push [remote]` | Validates URL, returns virtual mode message |
+| `git pull [remote]` | Validates URL, returns virtual mode message |
+| `git fetch [remote]` | Validates URL, returns virtual mode message |
 
 #### Phase 3 (Advanced) - Implemented
 
@@ -64,7 +64,7 @@ mode messages (actual network operations not supported in VFS-only mode).
 |---------|-------------|
 | `git branch [-d] [name]` | List, create, or delete branches |
 | `git checkout [-b] <branch\|commit>` | Switch branches or create and switch |
-| `git diff [from] [to]` | Show changes (simplified in sandbox mode) |
+| `git diff [from] [to]` | Show changes (simplified in virtual mode) |
 | `git reset [--soft\|--mixed\|--hard]` | Reset HEAD and clear staging |
 
 #### Future (Not Yet Implemented)
@@ -83,7 +83,7 @@ See `specs/006-threat-model.md` Section 8: Git Security (TM-GIT-*)
 
 | Threat | Mitigation |
 |--------|------------|
-| TM-GIT-002: Host identity leak | Configurable sandbox identity |
+| TM-GIT-002: Host identity leak | Configurable virtual identity |
 | TM-GIT-003: Host config access | No host filesystem access |
 | TM-GIT-004: Credential theft | No host filesystem access |
 | TM-GIT-005: Repository escape | All paths in VFS |
@@ -95,7 +95,7 @@ See `specs/006-threat-model.md` Section 8: Git Security (TM-GIT-*)
 
 - Remote URLs require explicit allowlist
 - HTTPS only (no SSH, no git:// protocol)
-- Sandbox mode: URL validation only, actual network operations not supported
+- Virtual mode: URL validation only, actual network operations not supported
 - `git remote add/remove` fully functional for managing remote references
 - `git clone/push/pull/fetch` validate URLs then return helpful messages
 
@@ -108,7 +108,7 @@ See `specs/006-threat-model.md` Section 8: Git Security (TM-GIT-*)
 pub struct GitConfig { ... }
 
 impl GitConfig {
-    /// Create new config with default sandbox identity.
+    /// Create new config with default virtual identity.
     pub fn new() -> Self;
 
     /// Set author name and email for commits.
@@ -143,7 +143,7 @@ format in the VFS:
 - `.git/refs/heads/<branch>` - Branch references
 
 This approach provides:
-- Full VFS sandboxing
+- Full VFS isolation
 - Security-focused implementation
 - Correct user-facing behavior
 - Foundation for Phase 2 gitoxide integration

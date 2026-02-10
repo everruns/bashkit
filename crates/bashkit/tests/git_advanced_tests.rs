@@ -208,7 +208,7 @@ mod diff_operations {
 
         let result = bash.exec("cd /repo && git diff").await.unwrap();
         assert_eq!(result.exit_code, 0);
-        // Simplified diff in sandbox mode
+        // Simplified diff in virtual mode
         assert!(result.stdout.contains("Diff output"));
     }
 

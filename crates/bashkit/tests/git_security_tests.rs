@@ -18,7 +18,7 @@ mod identity_security {
     use super::*;
 
     /// TM-GIT-002: Host identity leak
-    /// Commits should use the configured sandbox identity, not host identity.
+    /// Commits should use the configured virtual identity, not host identity.
     #[tokio::test]
     async fn test_commit_uses_sandbox_identity() {
         let mut bash = create_git_bash();
@@ -26,7 +26,7 @@ mod identity_security {
         // Create commit
         bash.exec("git init /repo && cd /repo && echo 'x' > x.txt && git add x.txt && git commit -m 'Test'").await.unwrap();
 
-        // Check log shows sandbox identity
+        // Check log shows virtual identity
         let log = bash.exec("cd /repo && git log").await.unwrap();
         assert!(log.stdout.contains("Sandbox User"));
         assert!(log.stdout.contains("sandbox@test.local"));

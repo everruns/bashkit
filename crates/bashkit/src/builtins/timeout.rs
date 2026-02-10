@@ -31,7 +31,7 @@ use crate::interpreter::ExecResult;
 ///   127 - Command not found
 ///   Otherwise, exit status of command
 ///
-/// Note: In Bashkit's sandboxed environment, timeout works by wrapping
+/// Note: In Bashkit's virtual environment, timeout works by wrapping
 /// the command execution in a tokio timeout. Max timeout is 300 seconds
 /// for safety.
 pub struct Timeout;

@@ -16,7 +16,7 @@ use crate::interpreter::ExecResult;
 ///   -d DELIM     Use DELIM as delimiter instead of whitespace
 ///   -0           Use NUL as delimiter (same as -d '\0')
 ///
-/// Note: In sandbox mode, xargs outputs the commands that would be run
+/// Note: In virtual mode, xargs outputs the commands that would be run
 /// instead of executing them, unless the command is a builtin.
 pub struct Xargs;
 
@@ -198,7 +198,7 @@ impl Builtin for Tee {
 /// Options:
 ///   -n SECONDS   Specify update interval (default: 2)
 ///
-/// Note: In a sandboxed environment, watch runs the command once
+/// Note: In Bashkit's virtual environment, watch runs the command once
 /// and returns, since continuous execution isn't supported.
 pub struct Watch;
 
@@ -249,11 +249,11 @@ impl Builtin for Watch {
             }
         };
 
-        // In sandbox mode, we just display what the command would be
+        // In virtual mode, we just display what the command would be
         // A real implementation would need interpreter support to execute commands
         let command: Vec<_> = ctx.args[start..].iter().collect();
         let output = format!(
-            "Every {:.1}s: {}\n\n(watch: continuous execution not supported in sandbox mode)\n",
+            "Every {:.1}s: {}\n\n(watch: continuous execution not supported in virtual mode)\n",
             _interval,
             command
                 .iter()

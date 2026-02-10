@@ -29,7 +29,7 @@ This security policy applies to:
 
 ## Security Model
 
-Bashkit is designed as a sandboxed interpreter. Key security boundaries:
+Bashkit is designed as a virtual interpreter. Key security boundaries:
 
 | Boundary | Protection |
 |----------|------------|

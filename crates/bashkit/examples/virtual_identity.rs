@@ -1,17 +1,17 @@
-//! Sandbox Identity Configuration Example
+//! Virtual Identity Configuration Example
 //!
-//! Demonstrates how to configure custom username and hostname for the sandbox.
+//! Demonstrates how to configure custom username and hostname for the virtual environment.
 //! This is useful for simulating specific environments or user contexts.
 //!
-//! Run with: cargo run --example sandbox_identity
+//! Run with: cargo run --example virtual_identity
 
 use bashkit::Bash;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("=== Default Sandbox Identity ===\n");
+    println!("=== Default Virtual Identity ===\n");
 
-    // Default sandbox identity
+    // Default virtual identity
     let mut bash = Bash::new();
 
     let result = bash.exec("whoami").await?;
@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
     let result = bash.exec("uname -n").await?;
     println!("uname -n: {}", result.stdout.trim());
 
-    println!("\n=== Custom Sandbox Identity ===\n");
+    println!("\n=== Custom Virtual Identity ===\n");
 
     // Custom username and hostname
     let mut bash = Bash::builder()

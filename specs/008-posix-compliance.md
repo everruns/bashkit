@@ -28,7 +28,7 @@ use standard command execution.
 
 **`trap`**: Signal handlers require persistent state across commands, conflicting
 with Bashkit's stateless execution model. Additionally, there are no signal
-sources in the sandbox (no external processes send SIGINT/SIGTERM). Scripts
+sources in the virtual environment (no external processes send SIGINT/SIGTERM). Scripts
 should handle errors through exit codes and conditional execution.
 
 ## Intentional Deviations

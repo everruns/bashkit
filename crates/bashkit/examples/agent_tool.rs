@@ -1,7 +1,7 @@
 //! LLM Agent example using Bashkit as a Bash tool
 //!
 //! Demonstrates a real AI agent using Claude to execute bash commands
-//! in a sandboxed Bashkit session.
+//! in a virtual Bashkit session.
 //!
 //! Run with: ANTHROPIC_API_KEY=your-key cargo run --example agent_tool --features http_client
 //!
@@ -93,7 +93,7 @@ impl Agent {
     fn bash_tool() -> Tool {
         Tool {
             name: "bash",
-            description: "Execute bash commands in a sandboxed session. \
+            description: "Execute bash commands in a virtual session. \
                          Variables and functions persist between calls. \
                          Available commands: echo, cat, printf, grep, sed, awk, jq, \
                          cd, pwd, test, for/while/if, functions, redirections (> >>).",
@@ -144,7 +144,7 @@ impl Agent {
         let request = MessagesRequest {
             model: "claude-sonnet-4-20250514",
             max_tokens: 1024,
-            system: "You are an agent with access to a sandboxed bash environment. \
+            system: "You are an agent with access to a virtual bash environment. \
                     Your task is to create a few text files with short poems about different topics. \
                     Use echo with redirection to create files (e.g., echo 'poem' > /topic.txt). \
                     After creating files, read them back with cat to verify. \
