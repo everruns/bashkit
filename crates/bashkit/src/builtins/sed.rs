@@ -416,10 +416,10 @@ fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, 
 
             // Convert sed replacement syntax to regex replacement syntax
             // sed uses \1, \2, etc. and & for full match
-            // regex crate uses $1, $2, etc. and $0 for full match
+            // regex crate uses ${N} format to avoid ambiguity
             let replacement = replacement
                 .replace("\\&", "\x00") // Temporarily escape literal &
-                .replace('&', "$0")
+                .replace('&', "${0}")
                 .replace("\x00", "&");
 
             // Use ${N} format instead of $N to avoid ambiguity with following chars
@@ -427,6 +427,9 @@ fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, 
                 .unwrap()
                 .replace_all(&replacement, r"$${$1}")
                 .to_string();
+
+            // Convert \n → newline, \t → tab in replacement
+            let replacement = replacement.replace("\\n", "\n").replace("\\t", "\t");
 
             // Parse nth occurrence from flags (e.g., "2" in s/a/b/2)
             let nth = flags
