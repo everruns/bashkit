@@ -311,6 +311,109 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse redirections that follow a compound command (>, >>, 2>, etc.)
+    fn parse_trailing_redirects(&mut self) -> Vec<Redirect> {
+        let mut redirects = Vec::new();
+        loop {
+            match &self.current_token {
+                Some(tokens::Token::RedirectOut) => {
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: None,
+                            kind: RedirectKind::Output,
+                            target,
+                        });
+                    }
+                }
+                Some(tokens::Token::RedirectAppend) => {
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: None,
+                            kind: RedirectKind::Append,
+                            target,
+                        });
+                    }
+                }
+                Some(tokens::Token::RedirectIn) => {
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: None,
+                            kind: RedirectKind::Input,
+                            target,
+                        });
+                    }
+                }
+                Some(tokens::Token::RedirectBoth) => {
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: None,
+                            kind: RedirectKind::OutputBoth,
+                            target,
+                        });
+                    }
+                }
+                Some(tokens::Token::DupOutput) => {
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: Some(1),
+                            kind: RedirectKind::DupOutput,
+                            target,
+                        });
+                    }
+                }
+                Some(tokens::Token::RedirectFd(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: Some(fd),
+                            kind: RedirectKind::Output,
+                            target,
+                        });
+                    }
+                }
+                Some(tokens::Token::RedirectFdAppend(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: Some(fd),
+                            kind: RedirectKind::Append,
+                            target,
+                        });
+                    }
+                }
+                Some(tokens::Token::DupFd(src_fd, dst_fd)) => {
+                    let src_fd = *src_fd;
+                    let dst_fd = *dst_fd;
+                    self.advance();
+                    redirects.push(Redirect {
+                        fd: Some(src_fd),
+                        kind: RedirectKind::DupOutput,
+                        target: Word::literal(dst_fd.to_string()),
+                    });
+                }
+                _ => break,
+            }
+        }
+        redirects
+    }
+
+    /// Parse a compound command and any trailing redirections
+    fn parse_compound_with_redirects(
+        &mut self,
+        parser: impl FnOnce(&mut Self) -> Result<CompoundCommand>,
+    ) -> Result<Option<Command>> {
+        let compound = parser(self)?;
+        let redirects = self.parse_trailing_redirects();
+        Ok(Some(Command::Compound(compound, redirects)))
+    }
+
     /// Parse a single command (simple or compound)
     fn parse_command(&mut self) -> Result<Option<Command>> {
         self.skip_newlines()?;
@@ -319,12 +422,12 @@ impl<'a> Parser<'a> {
         if let Some(tokens::Token::Word(w)) = &self.current_token {
             let word = w.clone();
             match word.as_str() {
-                "if" => return self.parse_if().map(|c| Some(Command::Compound(c))),
-                "for" => return self.parse_for().map(|c| Some(Command::Compound(c))),
-                "while" => return self.parse_while().map(|c| Some(Command::Compound(c))),
-                "until" => return self.parse_until().map(|c| Some(Command::Compound(c))),
-                "case" => return self.parse_case().map(|c| Some(Command::Compound(c))),
-                "time" => return self.parse_time().map(|c| Some(Command::Compound(c))),
+                "if" => return self.parse_compound_with_redirects(|s| s.parse_if()),
+                "for" => return self.parse_compound_with_redirects(|s| s.parse_for()),
+                "while" => return self.parse_compound_with_redirects(|s| s.parse_while()),
+                "until" => return self.parse_compound_with_redirects(|s| s.parse_until()),
+                "case" => return self.parse_compound_with_redirects(|s| s.parse_case()),
+                "time" => return self.parse_compound_with_redirects(|s| s.parse_time()),
                 "function" => return self.parse_function_keyword().map(Some),
                 _ => {
                     // Check for POSIX-style function: name() { body }
@@ -340,19 +443,17 @@ impl<'a> Parser<'a> {
 
         // Check for arithmetic command ((expression))
         if matches!(self.current_token, Some(tokens::Token::DoubleLeftParen)) {
-            return self
-                .parse_arithmetic_command()
-                .map(|c| Some(Command::Compound(c)));
+            return self.parse_compound_with_redirects(|s| s.parse_arithmetic_command());
         }
 
         // Check for subshell
         if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
-            return self.parse_subshell().map(|c| Some(Command::Compound(c)));
+            return self.parse_compound_with_redirects(|s| s.parse_subshell());
         }
 
         // Check for brace group
         if matches!(self.current_token, Some(tokens::Token::LeftBrace)) {
-            return self.parse_brace_group().map(|c| Some(Command::Compound(c)));
+            return self.parse_compound_with_redirects(|s| s.parse_brace_group());
         }
 
         // Default to simple command
@@ -1009,7 +1110,7 @@ impl<'a> Parser<'a> {
 
         Ok(Command::Function(FunctionDef {
             name,
-            body: Box::new(Command::Compound(body)),
+            body: Box::new(Command::Compound(body, Vec::new())),
             span: start_span.merge(self.current_span),
         }))
     }
@@ -1046,7 +1147,7 @@ impl<'a> Parser<'a> {
 
         Ok(Command::Function(FunctionDef {
             name,
-            body: Box::new(Command::Compound(body)),
+            body: Box::new(Command::Compound(body, Vec::new())),
             span: start_span.merge(self.current_span),
         }))
     }
