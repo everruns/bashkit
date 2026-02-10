@@ -25,6 +25,30 @@ const MAX_JQ_JSON_DEPTH: usize = 100;
 /// jq command - JSON processor
 pub struct Jq;
 
+impl Jq {
+    /// Parse multiple JSON values from input using streaming deserializer.
+    /// Handles multi-line JSON, NDJSON, and concatenated JSON values.
+    fn parse_json_values(input: &str) -> Result<Vec<serde_json::Value>> {
+        use serde_json::Deserializer;
+
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut vals = Vec::new();
+        let stream = Deserializer::from_str(trimmed).into_iter::<serde_json::Value>();
+        for result in stream {
+            let json_input =
+                result.map_err(|e| Error::Execution(format!("jq: invalid JSON: {}", e)))?;
+            // THREAT[TM-DOS-027]: Check nesting depth before evaluation
+            check_json_depth(&json_input, MAX_JQ_JSON_DEPTH).map_err(Error::Execution)?;
+            vals.push(json_input);
+        }
+        Ok(vals)
+    }
+}
+
 /// THREAT[TM-DOS-027]: Check JSON nesting depth to prevent stack overflow
 /// during jaq filter evaluation on deeply nested input.
 fn check_json_depth(
@@ -220,34 +244,12 @@ impl Builtin for Jq {
             vec![Val::from(serde_json::Value::Null)]
         } else if slurp {
             // -s flag: read all inputs into a single array
-            let mut vals = Vec::new();
-            for line in input.lines() {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-                let json_input: serde_json::Value = serde_json::from_str(line)
-                    .map_err(|e| Error::Execution(format!("jq: invalid JSON: {}", e)))?;
-                // THREAT[TM-DOS-027]: Check nesting depth before evaluation
-                check_json_depth(&json_input, MAX_JQ_JSON_DEPTH).map_err(Error::Execution)?;
-                vals.push(json_input);
-            }
+            let vals = Self::parse_json_values(input)?;
             vec![Val::from(serde_json::Value::Array(vals))]
         } else {
-            // Process each line of input as JSON
-            let mut vals = Vec::new();
-            for line in input.lines() {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-                let json_input: serde_json::Value = serde_json::from_str(line)
-                    .map_err(|e| Error::Execution(format!("jq: invalid JSON: {}", e)))?;
-                // THREAT[TM-DOS-027]: Check nesting depth before evaluation
-                check_json_depth(&json_input, MAX_JQ_JSON_DEPTH).map_err(Error::Execution)?;
-                vals.push(Val::from(json_input));
-            }
-            vals
+            // Parse all JSON values from input (handles multi-line and NDJSON)
+            let json_vals = Self::parse_json_values(input)?;
+            json_vals.into_iter().map(Val::from).collect()
         };
 
         // Track for -e exit status
