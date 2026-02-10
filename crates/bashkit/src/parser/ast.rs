@@ -28,8 +28,8 @@ pub enum Command {
     /// A command list (e.g., `a && b || c`)
     List(CommandList),
 
-    /// A compound command (if, for, while, case, etc.)
-    Compound(CompoundCommand),
+    /// A compound command (if, for, while, case, etc.) with optional redirections
+    Compound(CompoundCommand, Vec<Redirect>),
 
     /// A function definition
     Function(FunctionDef),

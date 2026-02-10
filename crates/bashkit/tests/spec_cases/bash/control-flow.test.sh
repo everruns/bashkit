@@ -216,6 +216,13 @@ three
 hello
 ### end
 
+### subshell_redirect
+# Subshell with output redirection
+(echo redirected) > /tmp/subshell_out.txt && cat /tmp/subshell_out.txt
+### expect
+redirected
+### end
+
 ### brace_group
 # Brace group
 { echo hello; }
