@@ -83,5 +83,5 @@ tracing = "0.1"
 serial_test = "3"
 
 # Python bindings
-pyo3 = { version = "0.24", features = ["extension-module", "generate-import-lib"] }
+pyo3 = { version = "0.24.2", features = ["extension-module", "generate-import-lib"] }
 pyo3-async-runtimes = { version = "0.24", features = ["tokio-runtime"] }
