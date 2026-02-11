@@ -106,6 +106,10 @@ criteria = "safe-to-deploy"
 version = "0.37.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.aws-lc-sys]]
+version = "0.37.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.base64]]
 version = "0.22.1"
 criteria = "safe-to-deploy"
@@ -195,7 +199,7 @@ version = "4.5.57"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap]]
-version = "4.5.57"
+version = "4.5.58"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_builder]]
@@ -203,7 +207,7 @@ version = "4.5.57"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_builder]]
-version = "4.5.57"
+version = "4.5.58"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_derive]]
@@ -212,6 +216,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.clap_lex]]
 version = "0.7.7"
+criteria = "safe-to-deploy"
+
+[[exemptions.clap_lex]]
+version = "1.0.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.cmake]]
