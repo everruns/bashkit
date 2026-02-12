@@ -1688,6 +1688,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_prefix_assignment_visible_in_env() {
+        let mut bash = Bash::new();
+        // VAR=value command should make VAR visible in the command's environment
+        let result = bash.exec("MYVAR=hello printenv MYVAR").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_prefix_assignment_temporary() {
+        let mut bash = Bash::new();
+        // Prefix assignment should NOT persist after the command
+        bash.exec("MYVAR=hello printenv MYVAR").await.unwrap();
+        let result = bash.exec("echo ${MYVAR:-unset}").await.unwrap();
+        assert_eq!(result.stdout, "unset\n");
+    }
+
+    #[tokio::test]
+    async fn test_prefix_assignment_does_not_clobber_existing_env() {
+        let mut bash = Bash::new();
+        // Set up existing env var
+        let result = bash
+            .exec("EXISTING=original; export EXISTING; EXISTING=temp printenv EXISTING")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "temp\n");
+    }
+
+    #[tokio::test]
+    async fn test_prefix_assignment_multiple_vars() {
+        let mut bash = Bash::new();
+        // Multiple prefix assignments on same command
+        let result = bash.exec("A=one B=two printenv A").await.unwrap();
+        assert_eq!(result.stdout, "one\n");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_prefix_assignment_empty_value() {
+        let mut bash = Bash::new();
+        // Empty value is still set in environment
+        let result = bash.exec("MYVAR= printenv MYVAR").await.unwrap();
+        assert_eq!(result.stdout, "\n");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_prefix_assignment_not_found_without_prefix() {
+        let mut bash = Bash::new();
+        // printenv for a var that was never set should fail
+        let result = bash.exec("printenv NONEXISTENT").await.unwrap();
+        assert_eq!(result.stdout, "");
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_prefix_assignment_does_not_persist_in_variables() {
+        let mut bash = Bash::new();
+        // After prefix assignment with command, var should not be in shell scope
+        bash.exec("TMPVAR=gone echo ok").await.unwrap();
+        let result = bash.exec("echo \"${TMPVAR:-unset}\"").await.unwrap();
+        assert_eq!(result.stdout, "unset\n");
+    }
+
+    #[tokio::test]
+    async fn test_assignment_only_persists() {
+        let mut bash = Bash::new();
+        // Assignment without a command should persist (not a prefix assignment)
+        bash.exec("PERSIST=yes").await.unwrap();
+        let result = bash.exec("echo $PERSIST").await.unwrap();
+        assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
     async fn test_printf_string() {
         let mut bash = Bash::new();
         let result = bash.exec("printf '%s' hello").await.unwrap();
