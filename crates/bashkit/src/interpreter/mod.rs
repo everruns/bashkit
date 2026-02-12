@@ -1766,6 +1766,15 @@ impl Interpreter {
         command: &SimpleCommand,
         stdin: Option<String>,
     ) -> Result<ExecResult> {
+        // Save old variable values before applying prefix assignments.
+        // If there's a command, these assignments are temporary (bash behavior:
+        // `VAR=value cmd` sets VAR only for cmd's duration).
+        let var_saves: Vec<(String, Option<String>)> = command
+            .assignments
+            .iter()
+            .map(|a| (a.name.clone(), self.variables.get(&a.name).cloned()))
+            .collect();
+
         // Process variable assignments first
         for assignment in &command.assignments {
             match &assignment.value {
@@ -1837,11 +1846,64 @@ impl Interpreter {
 
         let name = self.expand_word(&command.name).await?;
 
-        // If name is empty, this is an assignment-only command
+        // If name is empty, this is an assignment-only command - keep permanently
         if name.is_empty() {
             return Ok(ExecResult::ok(String::new()));
         }
 
+        // Has a command: prefix assignments are temporary (bash behavior).
+        // Inject scalar prefix assignments into self.env so builtins/functions
+        // can see them via ctx.env (e.g., `MYVAR=hello printenv MYVAR`).
+        let mut env_saves: Vec<(String, Option<String>)> = Vec::new();
+        for assignment in &command.assignments {
+            if assignment.index.is_none() {
+                if let Some(value) = self.variables.get(&assignment.name).cloned() {
+                    let old = self.env.insert(assignment.name.clone(), value);
+                    env_saves.push((assignment.name.clone(), old));
+                }
+            }
+        }
+
+        // Dispatch to the appropriate handler
+        let result = self.execute_dispatched_command(&name, command, stdin).await;
+
+        // Restore env (prefix assignments are command-scoped)
+        for (name, old) in env_saves {
+            match old {
+                Some(v) => {
+                    self.env.insert(name, v);
+                }
+                None => {
+                    self.env.remove(&name);
+                }
+            }
+        }
+
+        // Restore variables (prefix assignments don't persist when there's a command)
+        for (name, old) in var_saves {
+            match old {
+                Some(v) => {
+                    self.variables.insert(name, v);
+                }
+                None => {
+                    self.variables.remove(&name);
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Execute a command after name resolution and prefix assignment setup.
+    ///
+    /// Handles argument expansion, stdin processing, and dispatch to
+    /// functions, special builtins, regular builtins, or command-not-found.
+    async fn execute_dispatched_command(
+        &mut self,
+        name: &str,
+        command: &SimpleCommand,
+        stdin: Option<String>,
+    ) -> Result<ExecResult> {
         // Expand arguments with brace and glob expansion
         let mut args: Vec<String> = Vec::new();
         for word in &command.args {
@@ -1906,13 +1968,13 @@ impl Interpreter {
         };
 
         // Check for functions first
-        if let Some(func_def) = self.functions.get(&name).cloned() {
+        if let Some(func_def) = self.functions.get(name).cloned() {
             // Check function depth limit
             self.counters.push_function(&self.limits)?;
 
             // Push call frame with positional parameters
             self.call_stack.push(CallFrame {
-                name: name.clone(),
+                name: name.to_string(),
                 locals: HashMap::new(),
                 positional: args.clone(),
             });
@@ -1972,7 +2034,7 @@ impl Interpreter {
         // Handle `bash` and `sh` specially - execute scripts using the interpreter
         if name == "bash" || name == "sh" {
             return self
-                .execute_shell(&name, &args, stdin, &command.redirects)
+                .execute_shell(name, &args, stdin, &command.redirects)
                 .await;
         }
 
@@ -1987,7 +2049,7 @@ impl Interpreter {
         }
 
         // Check for builtins
-        if let Some(builtin) = self.builtins.get(name.as_str()) {
+        if let Some(builtin) = self.builtins.get(name) {
             let ctx = builtins::Context {
                 args: &args,
                 env: &self.env,

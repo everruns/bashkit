@@ -128,6 +128,14 @@ Bash::builder()
 - `printenv` - Print environment variable values
 - `history` - Command history (virtual mode: limited, no persistent history)
 
+#### Prefix Environment Assignments
+
+Bash supports `VAR=value command` syntax where the assignment is temporary and
+scoped to the command's environment. Bashkit implements this: prefix assignments
+are injected into `ctx.env` for the command's duration, then both `env` and
+`variables` are restored. Assignment-only commands (`VAR=value` with no command)
+persist in shell variables as usual.
+
 #### Pipeline Control
 - `xargs` - Build commands from stdin (`-I REPL`, `-n MAX`, `-d DELIM`)
 - `tee` - Write to files and stdout (`-a` append)
