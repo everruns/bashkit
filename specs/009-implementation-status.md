@@ -107,17 +107,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 962
+**Total spec test cases:** 968
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 588 | Yes | 524 | 64 | `bash_spec_tests` in CI |
+| Bash (core) | 594 | Yes | 530 | 64 | `bash_spec_tests` in CI |
 | AWK | 89 | Yes | 72 | 17 | loops, arrays, -v, ternary, field assign |
 | Grep | 63 | Yes | 58 | 5 | now with -z, -r, -a, -b, -H, -h, -f, -P |
 | Sed | 68 | Yes | 56 | 12 | hold space, change, regex ranges, -E |
 | JQ | 97 | Yes | 87 | 10 | reduce, walk, regex funcs |
 | Python | 57 | Yes | 51 | 6 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **962** | **Yes** | **848** | **114** | |
+| **Total** | **968** | **Yes** | **854** | **114** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -157,7 +157,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | test-operators.test.sh | 17 | file/string tests (2 skipped) |
 | time.test.sh | 11 | Wall-clock only (user/sys always 0) |
 | timeout.test.sh | 16 | |
-| variables.test.sh | 38 | includes special vars |
+| variables.test.sh | 44 | includes special vars, prefix env assignments |
 | wc.test.sh | 20 | word count (5 skipped) |
 
 ## Shell Features
@@ -181,6 +181,7 @@ Features that may be added in the future (not intentionally excluded):
 
 | Feature | What Works | What's Missing |
 |---------|------------|----------------|
+| Prefix env assignments | `VAR=val cmd` temporarily sets env for cmd | Array prefix assignments not in env |
 | `local` | Declaration | Proper scoping in nested functions |
 | `return` | Basic usage | Return value propagation |
 | Heredocs | Basic | Variable expansion inside |

@@ -215,6 +215,22 @@ fn function_strategy() -> impl Strategy<Value = String> {
     )
 }
 
+/// Generate a prefix assignment command (VAR=value command)
+fn prefix_assignment_strategy() -> impl Strategy<Value = String> {
+    prop_oneof![
+        // Single prefix assignment with printenv
+        (var_name_strategy(), safe_value_strategy())
+            .prop_map(|(name, value)| format!("{}={} printenv {}", name, value, name)),
+        // Single prefix assignment with echo (variable visible via $VAR)
+        (var_name_strategy(), safe_value_strategy())
+            .prop_map(|(name, value)| format!("{}={} echo done", name, value)),
+        // Prefix assignment then check it doesn't persist
+        (var_name_strategy(), safe_value_strategy()).prop_map(|(name, value)| {
+            format!("{}={} echo done; echo ${{{}:-unset}}", name, value, name)
+        }),
+    ]
+}
+
 /// Generate a complete valid bash script
 fn valid_script_strategy() -> impl Strategy<Value = String> {
     prop_oneof![
@@ -229,6 +245,7 @@ fn valid_script_strategy() -> impl Strategy<Value = String> {
         3 => command_subst_strategy(),
         3 => logical_ops_strategy(),
         2 => function_strategy(),
+        3 => prefix_assignment_strategy(),
     ]
 }
 
@@ -446,6 +463,30 @@ proptest! {
         );
     }
 
+    /// Prefix assignments should produce identical output
+    #[test]
+    fn prefix_assignments_match_bash(script in prefix_assignment_strategy()) {
+        let (bash_out, bash_exit) = run_real_bash(&script);
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let (bashkit_out, bashkit_exit) = rt.block_on(run_bashkit(&script));
+
+        prop_assert_eq!(
+            &bashkit_out, &bash_out,
+            "Output mismatch for script: {}\nBashkit: {:?}\nBash: {:?}",
+            script, bashkit_out, bash_out
+        );
+        prop_assert_eq!(
+            bashkit_exit, bash_exit,
+            "Exit code mismatch for script: {}",
+            script
+        );
+    }
+
     /// Multi-statement scripts should produce identical output
     #[test]
     fn multi_statement_matches_bash(script in multi_statement_strategy()) {
@@ -494,6 +535,19 @@ async fn differential_edge_cases() {
             "X=hello; Y=world; echo $X $Y",
             "X=hello; Y=world; echo $X $Y",
         ),
+        // Prefix environment assignments
+        ("prefix assign visible", "X=hello printenv X"),
+        (
+            "prefix assign temporary",
+            "X=hello printenv X; echo ${X:-unset}",
+        ),
+        (
+            "prefix assign no clobber",
+            "X=original; X=temp echo done; echo $X",
+        ),
+        ("prefix assign empty", "X= printenv X"),
+        ("multiple prefix assigns", "A=1 B=2 printenv A"),
+        ("assignment only persists", "X=persist; echo $X"),
         // Arithmetic
         ("echo $((1 + 2))", "echo $((1 + 2))"),
         ("echo $((10 - 3))", "echo $((10 - 3))"),

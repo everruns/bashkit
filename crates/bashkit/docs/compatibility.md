@@ -205,6 +205,15 @@ for sandbox security reasons. See the compliance spec for details.
 | `${var^}` | ❌ | - | Uppercase first |
 | `${var,}` | ❌ | - | Lowercase first |
 
+### Prefix Environment Assignments
+
+| Syntax | Status | Example | Description |
+|--------|--------|---------|-------------|
+| `VAR=val cmd` | ✅ | `TOKEN=abc printenv TOKEN` | Temporary env for command |
+| Multiple prefix | ✅ | `A=1 B=2 cmd` | Multiple vars in one command |
+| No persist | ✅ | `X=1 cmd; echo $X` | Var not set after command |
+| Assignment-only | ✅ | `X=1` (no cmd) | Persists in shell variables |
+
 ### Command Substitution
 
 | Syntax | Status | Example |

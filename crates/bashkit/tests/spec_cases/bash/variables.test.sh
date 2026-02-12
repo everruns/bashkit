@@ -264,3 +264,47 @@ X=value; ref=X; echo ${!ref}
 ### expect
 value
 ### end
+
+### prefix_assign_visible_in_env
+# Prefix assignment visible to command via printenv
+MYVAR=hello printenv MYVAR
+### expect
+hello
+### end
+
+### prefix_assign_multiple
+# Multiple prefix assignments visible to command
+A=one B=two printenv A
+### expect
+one
+### end
+
+### prefix_assign_temporary
+# Prefix assignment does not persist after command
+TMPVAR=gone printenv TMPVAR; echo ${TMPVAR:-unset}
+### expect
+gone
+unset
+### end
+
+### prefix_assign_no_clobber
+# Prefix assignment does not overwrite pre-existing var permanently
+X=original; X=temp echo done; echo $X
+### expect
+done
+original
+### end
+
+### prefix_assign_empty_value
+# Prefix assignment with empty value is still set (exit code 0)
+MYVAR= printenv MYVAR > /dev/null; echo $?
+### expect
+0
+### end
+
+### prefix_assign_only_no_command
+# Assignment without command persists (not a prefix assignment)
+PERSIST=yes; echo $PERSIST
+### expect
+yes
+### end
