@@ -1,9 +1,9 @@
 # 011: Python Builtin (Monty)
 
 > **Experimental.** Monty is an early-stage Python interpreter that may have
-> undiscovered crash or security bugs. Subprocess isolation mitigates host
-> crashes, but do not rely on it for untrusted-input safety without
-> additional hardening.
+> undiscovered crash or security bugs. Resource limits are enforced by Monty's
+> runtime. Do not rely on it for untrusted-input safety without additional
+> hardening.
 
 ## Status
 Implemented (experimental)
