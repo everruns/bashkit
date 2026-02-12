@@ -1,9 +1,9 @@
 # 011: Python Builtin (Monty)
 
 > **Experimental.** Monty is an early-stage Python interpreter that may have
-> undiscovered crash or security bugs. Subprocess isolation mitigates host
-> crashes, but do not rely on it for untrusted-input safety without
-> additional hardening.
+> undiscovered crash or security bugs. Resource limits are enforced by Monty's
+> runtime. Do not rely on it for untrusted-input safety without additional
+> hardening.
 
 ## Status
 Implemented (experimental)
@@ -175,52 +175,23 @@ Monty pauses execution at filesystem operations, yields an `OsCall` event
 with the operation type and arguments, BashKit bridges it to the VFS, and
 resumes execution with the result (or a Python exception).
 
-### Subprocess Isolation (Crash Protection)
+### Direct Integration
 
-Monty runs in-process by default. Since Monty 0.0.4, the parser enforces a
-nesting depth limit (200 in release, 35 in debug) to prevent stack overflow
-from deeply nested expressions. However, undiscovered VM bugs could still
-cause a segfault, which `catch_unwind` cannot catch (it's an OS signal, not
-a Rust panic).
-
-To mitigate this, BashKit can run Monty in a separate `bashkit-monty-worker`
-subprocess. If the worker segfaults, the parent catches the child exit and
-returns a shell error (exit code 139 for SIGSEGV) instead of crashing.
-
-**Configuration:**
+Monty runs directly in the host process. Resource limits (memory, allocations,
+time, recursion) are enforced by Monty's own runtime. Since Monty 0.0.4, the
+parser enforces a nesting depth limit (200 in release, 35 in debug) to prevent
+stack overflow from deeply nested expressions.
 
 ```rust
-use bashkit::{Bash, PythonIsolation, PythonLimits};
+use bashkit::{Bash, PythonLimits};
 
-// Auto (default): use subprocess if worker found, else in-process
+// Default limits
 let bash = Bash::builder().python().build();
 
-// Force subprocess mode (fails if worker binary missing)
+// Custom limits
 let bash = Bash::builder()
-    .python_with_limits(
-        PythonLimits::default().isolation(PythonIsolation::Subprocess)
-    )
+    .python_with_limits(PythonLimits::default().max_duration(Duration::from_secs(5)))
     .build();
-
-// Force in-process mode (no crash isolation)
-let bash = Bash::builder()
-    .python_with_limits(
-        PythonLimits::default().isolation(PythonIsolation::InProcess)
-    )
-    .build();
-```
-
-**Worker binary discovery:** `BASHKIT_MONTY_WORKER` env var → adjacent to
-current executable → PATH lookup.
-
-**IPC protocol:** JSON lines over stdin/stdout. The worker pauses at each
-`OsCall` (VFS operation), sends it to the parent, the parent bridges it to
-the VFS and responds. The protocol is defined in `bashkit-monty-worker` crate.
-
-```
-Parent → Worker: Init { code, filename, limits }
-Worker → Parent: OsCall { function, args, kwargs } | Complete | Error
-Parent → Worker: OsResponse { result }
 ```
 
 ### Security

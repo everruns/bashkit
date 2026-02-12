@@ -898,10 +898,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Log value redaction | TM-LOG-001 to TM-LOG-004 | `logging.rs` | Yes |
 | Log injection prevention | TM-LOG-005, TM-LOG-006 | `logging.rs` | Yes |
 | Log value truncation | TM-LOG-007, TM-LOG-008 | `logging.rs` | Yes |
-| Python subprocess isolation | TM-PY-022 | `builtins/python.rs` | Yes |
-| Worker env clearing | TM-PY-025 | `builtins/python.rs` | Yes |
-| IPC timeout | TM-PY-024 | `builtins/python.rs` | Yes |
-| IPC line size limit | TM-PY-026 | `builtins/python.rs` | Yes |
+| Python resource limits | TM-PY-001 to TM-PY-003 | `builtins/python.rs` | Yes |
 
 ---
 
@@ -943,9 +940,6 @@ FsLimits::new()
 | Use network allowlist | TM-INF-010, TM-NET-* | Default denies all network access |
 | Sanitize output | TM-INJ-008 | Filter terminal escapes if displaying output |
 | Set appropriate limits | TM-DOS-* | Tune limits for your use case |
-| Isolate tenants | TM-ISO-001 to TM-ISO-003 | Use separate Bash instances per tenant |
-| Keep log redaction enabled | TM-LOG-001 to TM-LOG-004 | Don't disable redaction in production |
-| Secure worker binary path | TM-PY-023 | Don't let untrusted input control BASHKIT_MONTY_WORKER or PATH |
 
 ---
 
@@ -1072,8 +1066,8 @@ The following components are fuzz-tested for robustness:
 ## Python / Monty Security (TM-PY)
 
 > **Experimental.** Monty is an early-stage Python interpreter that may have
-> undiscovered crash or security bugs. Subprocess isolation mitigates host
-> crashes, but this integration should be treated as experimental.
+> undiscovered crash or security bugs. Resource limits are enforced by Monty's
+> runtime. This integration should be treated as experimental.
 
 BashKit embeds the Monty Python interpreter (pydantic/monty) with VFS bridging.
 Python `pathlib.Path` operations are bridged to BashKit's virtual filesystem via
@@ -1106,11 +1100,7 @@ events that BashKit intercepts and dispatches to the VFS.
 | TM-PY-019 | Crash on missing file | Medium | FileNotFoundError raised, not panic | `threat_python_vfs_error_handling` |
 | TM-PY-020 | Network access from Python | Critical | Monty has no socket/network module | `threat_python_vfs_no_network` |
 | TM-PY-021 | VFS mkdir escape | Medium | mkdir operates only in VFS | `threat_python_vfs_mkdir_sandboxed` |
-| TM-PY-022 | Parser/VM crash kills host | Critical | Parser depth limit (since 0.0.4) prevents parser crashes; subprocess isolation catches remaining VM crashes | `subprocess_worker_crash_via_false_binary` |
-| TM-PY-023 | Worker binary spoofing via env var / PATH | Critical | Caller responsibility (like TM-INF-001); document risk | `threat_python_subprocess_worker_spoofing` |
-| TM-PY-024 | Worker hang blocks parent (no IPC timeout) | High | IPC reads wrapped in `tokio::time::timeout` (max_duration + 5s) | `threat_python_subprocess_ipc_timeout` |
-| TM-PY-025 | Worker inherits host environment | High | `env_clear()` on worker Command; env vars passed only via IPC | `threat_python_subprocess_env_isolation` |
-| TM-PY-026 | Unbounded IPC response causes parent OOM | High | IPC line size capped at 16 MB | `threat_python_subprocess_ipc_line_limit` |
+| TM-PY-022 | Parser/VM crash kills host | Critical | Parser depth limit (since 0.0.4) prevents parser crashes; Monty runs in-process with resource limits | — (removed: subprocess tests no longer applicable) |
 
 ### VFS Bridge Security Properties
 
@@ -1125,34 +1115,12 @@ events that BashKit intercepts and dispatches to the VFS.
 5. **Resource isolation**: Monty's own limits (time, memory, allocations,
    recursion) are enforced independently of BashKit's shell limits.
 
-### Subprocess Isolation (Crash Protection)
+### Direct Integration
 
-When `PythonIsolation::Subprocess` (or `Auto` with worker available), Monty runs
-in a child process (`bashkit-monty-worker`). This isolates the host from parser
-segfaults and other fatal crashes.
-
-**IPC Architecture:**
-```
-Parent (bashkit)                  Child (bashkit-monty-worker)
-     │                                      │
-     │── Init {code, limits} ──────────────>│
-     │                                      │── Parse + execute
-     │<── OsCall {function, args} ─────────│   (pauses at VFS op)
-     │── OsResponse {result} ──────────────>│
-     │                                      │── Resume execution
-     │<── Complete {result, output} ────────│
-```
-
-**Security properties:**
-1. Worker crashes (SIGSEGV, SIGABRT) → parent gets child exit status, not crash
-2. Worker env cleared (TM-PY-025): no host env var leakage
-3. IPC timeout (TM-PY-024): worker hang → parent kills after max_duration + 5s
-4. IPC line limit (TM-PY-026): max 16 MB per JSON line
-5. VFS operations bridged through parent — worker never touches real filesystem
-
-**Caller Responsibility (TM-PY-023):** The `BASHKIT_MONTY_WORKER` env var or
-PATH ordering controls which binary is spawned. Callers must ensure these are
-not attacker-controlled. This is analogous to TM-INF-001 (env var sanitization).
+Monty runs directly in the host process. Resource limits (memory, allocations,
+time, recursion) are enforced by Monty's own runtime, not by process isolation.
+All VFS operations are bridged in-process — Python code never touches the real
+filesystem.
 
 ### Supported OsCall Operations
 
