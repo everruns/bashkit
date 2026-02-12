@@ -554,7 +554,13 @@ impl<'a> Parser<'a> {
                 match &self.current_token {
                     Some(tokens::Token::Word(w)) if w == "do" => break,
                     Some(tokens::Token::Word(w)) | Some(tokens::Token::QuotedWord(w)) => {
-                        words.push(self.parse_word(w.clone()));
+                        let is_quoted =
+                            matches!(&self.current_token, Some(tokens::Token::QuotedWord(_)));
+                        let mut word = self.parse_word(w.clone());
+                        if is_quoted {
+                            word.quoted = true;
+                        }
+                        words.push(word);
                         self.advance();
                     }
                     Some(tokens::Token::LiteralWord(w)) => {
@@ -1295,6 +1301,8 @@ impl<'a> Parser<'a> {
                 | Some(tokens::Token::QuotedWord(w)) => {
                     let is_literal =
                         matches!(&self.current_token, Some(tokens::Token::LiteralWord(_)));
+                    let is_quoted =
+                        matches!(&self.current_token, Some(tokens::Token::QuotedWord(_)));
 
                     // Stop if this word cannot start a command (like 'then', 'fi', etc.)
                     // This check is only for command position - reserved words in argument
@@ -1414,7 +1422,11 @@ impl<'a> Parser<'a> {
                             quoted: true,
                         }
                     } else {
-                        self.parse_word(w.clone())
+                        let mut word = self.parse_word(w.clone());
+                        if is_quoted {
+                            word.quoted = true;
+                        }
+                        word
                     };
                     words.push(word);
                     self.advance();

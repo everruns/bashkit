@@ -1907,29 +1907,33 @@ impl Interpreter {
         // Expand arguments with brace and glob expansion
         let mut args: Vec<String> = Vec::new();
         for word in &command.args {
-            let expanded = self.expand_word(word).await?;
+            // Use field expansion so "${arr[@]}" produces multiple args
+            let fields = self.expand_word_to_fields(word).await?;
 
             // Skip brace and glob expansion for quoted words
             if word.quoted {
-                args.push(expanded);
+                args.extend(fields);
                 continue;
             }
 
-            // Step 1: Brace expansion (produces multiple strings)
-            let brace_expanded = self.expand_braces(&expanded);
+            // For each field, apply brace and glob expansion
+            for expanded in fields {
+                // Step 1: Brace expansion (produces multiple strings)
+                let brace_expanded = self.expand_braces(&expanded);
 
-            // Step 2: For each brace-expanded item, do glob expansion
-            for item in brace_expanded {
-                if self.contains_glob_chars(&item) {
-                    let glob_matches = self.expand_glob(&item).await?;
-                    if glob_matches.is_empty() {
-                        // No matches - keep original pattern (bash behavior)
-                        args.push(item);
+                // Step 2: For each brace-expanded item, do glob expansion
+                for item in brace_expanded {
+                    if self.contains_glob_chars(&item) {
+                        let glob_matches = self.expand_glob(&item).await?;
+                        if glob_matches.is_empty() {
+                            // No matches - keep original pattern (bash behavior)
+                            args.push(item);
+                        } else {
+                            args.extend(glob_matches);
+                        }
                     } else {
-                        args.extend(glob_matches);
+                        args.push(item);
                     }
-                } else {
-                    args.push(item);
                 }
             }
         }
@@ -2660,18 +2664,24 @@ impl Interpreter {
         Ok(result)
     }
 
-    /// Expand a word to multiple fields (for array iteration in for loops)
-    /// Returns Vec<String> where array expansions like "${arr[@]}" produce multiple fields
+    /// Expand a word to multiple fields (for array iteration and command args)
+    /// Returns Vec<String> where array expansions like "${arr[@]}" produce multiple fields.
+    /// "${arr[*]}" in quoted context joins elements into a single field (bash behavior).
     async fn expand_word_to_fields(&mut self, word: &Word) -> Result<Vec<String>> {
         // Check if the word contains only an array expansion
         if word.parts.len() == 1 {
             if let WordPart::ArrayAccess { name, index } = &word.parts[0] {
                 if index == "@" || index == "*" {
-                    // ${arr[@]} or ${arr[*]} - return each element as separate field
                     if let Some(arr) = self.arrays.get(name) {
                         let mut indices: Vec<_> = arr.keys().collect();
                         indices.sort();
-                        return Ok(indices.iter().filter_map(|i| arr.get(i).cloned()).collect());
+                        let values: Vec<String> =
+                            indices.iter().filter_map(|i| arr.get(i).cloned()).collect();
+                        // "${arr[*]}" joins into single field; "${arr[@]}" keeps separate
+                        if word.quoted && index == "*" {
+                            return Ok(vec![values.join(" ")]);
+                        }
+                        return Ok(values);
                     }
                     return Ok(Vec::new());
                 }
