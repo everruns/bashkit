@@ -869,14 +869,12 @@ mod edge_cases {
 #[cfg(feature = "python")]
 mod python_security {
     use super::*;
-    use bashkit::{PythonIsolation, PythonLimits};
+    use bashkit::PythonLimits;
 
-    /// Helper: create Bash with python builtins registered (in-process mode).
-    /// Uses InProcess explicitly to avoid interference from env-var-mutating
-    /// subprocess isolation tests that set BASHKIT_MONTY_WORKER.
+    /// Helper: create Bash with python builtins registered.
     fn bash_with_python() -> Bash {
         Bash::builder()
-            .python_with_limits(PythonLimits::default().isolation(PythonIsolation::InProcess))
+            .python_with_limits(PythonLimits::default())
             .build()
     }
 
@@ -1208,216 +1206,10 @@ mod python_security {
     }
 }
 
-// =============================================================================
-// 7b. PYTHON SUBPROCESS ISOLATION SECURITY TESTS (TM-PY-022 to TM-PY-026)
-//
-// These tests verify the security properties of the subprocess isolation mode
-// for the Monty interpreter, covering crash isolation, env var leakage,
-// IPC timeout, worker spoofing, and line size limits.
-// =============================================================================
-
-#[cfg(feature = "python")]
-mod python_subprocess_security {
-    use bashkit::{Bash, PythonIsolation, PythonLimits};
-    use serial_test::serial;
-
-    /// Helper: create Bash with subprocess isolation.
-    fn bash_subprocess() -> Bash {
-        std::env::remove_var("BASHKIT_MONTY_WORKER");
-        Bash::builder()
-            .python_with_limits(PythonLimits::default().isolation(PythonIsolation::Subprocess))
-            .build()
-    }
-
-    /// TM-PY-022: Worker crash does not crash the host process.
-    /// We use /bin/false as a fake worker that exits immediately.
-    #[tokio::test]
-    #[serial]
-    async fn threat_python_subprocess_crash_isolation() {
-        std::env::set_var("BASHKIT_MONTY_WORKER", "/bin/false");
-        let mut bash = Bash::builder()
-            .python_with_limits(PythonLimits::default().isolation(PythonIsolation::Subprocess))
-            .build();
-
-        let r = bash.exec("python3 -c \"print('hi')\"").await.unwrap();
-        // Host is still alive (this code is running!) but Python failed
-        assert_ne!(r.exit_code, 0);
-        assert!(
-            r.stderr.contains("crashed")
-                || r.stderr.contains("exited unexpectedly")
-                || r.stderr.contains("error"),
-            "Expected crash message, got: {}",
-            r.stderr
-        );
-
-        std::env::remove_var("BASHKIT_MONTY_WORKER");
-    }
-
-    /// TM-PY-023: Spoofed worker binary (pointing to echo) should not give
-    /// VFS access or produce valid Python output.
-    #[tokio::test]
-    #[serial]
-    async fn threat_python_subprocess_worker_spoofing() {
-        // Point at /bin/echo — it will print its args and exit 0,
-        // but it won't speak the IPC protocol
-        std::env::set_var("BASHKIT_MONTY_WORKER", "/bin/echo");
-        let mut bash = Bash::builder()
-            .python_with_limits(PythonLimits::default().isolation(PythonIsolation::Subprocess))
-            .build();
-
-        let r = bash.exec("python3 -c \"print('hacked')\"").await.unwrap();
-        // Should fail — /bin/echo doesn't speak IPC protocol
-        assert_ne!(r.exit_code, 0, "Spoofed worker should not succeed");
-        assert!(
-            !r.stdout.contains("hacked"),
-            "Spoofed worker must not produce valid Python output"
-        );
-
-        std::env::remove_var("BASHKIT_MONTY_WORKER");
-    }
-
-    /// TM-PY-024: IPC timeout kills a hanging worker.
-    /// We use a tiny timeout to verify the timeout path works.
-    #[tokio::test]
-    #[serial]
-    async fn threat_python_subprocess_ipc_timeout() {
-        // Use 'sleep' as the worker — it ignores stdin and hangs
-        std::env::set_var("BASHKIT_MONTY_WORKER", "/bin/sleep");
-        let mut bash = Bash::builder()
-            .python_with_limits(
-                PythonLimits::default()
-                    .isolation(PythonIsolation::Subprocess)
-                    // Very short timeout so the test runs fast
-                    .max_duration(std::time::Duration::from_millis(500)),
-            )
-            .build();
-
-        let start = std::time::Instant::now();
-        let r = bash.exec("python3 -c \"print('hi')\"").await.unwrap();
-        let elapsed = start.elapsed();
-
-        assert_ne!(r.exit_code, 0, "Hanging worker should fail");
-        // Verify timeout actually fired (should be ~0.5s + 5s grace = ~5.5s max)
-        assert!(
-            elapsed < std::time::Duration::from_secs(30),
-            "Should have timed out, not waited 30s (took {:?})",
-            elapsed
-        );
-
-        std::env::remove_var("BASHKIT_MONTY_WORKER");
-    }
-
-    /// TM-PY-025: Worker process does not have access to host env vars.
-    /// We set a secret env var and verify the worker Python cannot read it
-    /// via os.getenv (which goes through the IPC bridge, not the host env).
-    #[tokio::test]
-    #[serial]
-    async fn threat_python_subprocess_env_isolation() {
-        // Set a secret in the host process
-        std::env::set_var("SECRET_API_KEY", "sk-super-secret-12345");
-        let mut bash = bash_subprocess();
-
-        // Try to read the secret via Python os.getenv — should not find it
-        // because the Bash sandbox env doesn't include it
-        let r = bash
-            .exec("python3 -c \"import os\nresult = os.getenv('SECRET_API_KEY', 'not_found')\nprint(result)\"")
-            .await
-            .unwrap();
-
-        // The env var is not in the Bash sandbox's env (we didn't add it),
-        // so os.getenv should return the default
-        assert_eq!(r.exit_code, 0);
-        assert!(
-            r.stdout.contains("not_found"),
-            "Worker should not have access to host SECRET_API_KEY, got: {}",
-            r.stdout
-        );
-        assert!(
-            !r.stdout.contains("sk-super-secret"),
-            "Must not leak host secret"
-        );
-
-        std::env::remove_var("SECRET_API_KEY");
-    }
-
-    /// TM-PY-015 via subprocess: VFS reads only from virtual filesystem, not host.
-    #[tokio::test]
-    #[serial]
-    async fn threat_python_subprocess_vfs_no_real_fs() {
-        let mut bash = bash_subprocess();
-
-        let r = bash
-            .exec(
-                "python3 -c \"from pathlib import Path\ntry:\n    Path('/etc/passwd').read_text()\n    print('LEAKED')\nexcept FileNotFoundError:\n    print('safe')\"",
-            )
-            .await
-            .unwrap();
-        assert_eq!(r.exit_code, 0);
-        assert!(
-            r.stdout.contains("safe"),
-            "Should not access real filesystem"
-        );
-        assert!(
-            !r.stdout.contains("LEAKED"),
-            "Must not leak real filesystem via subprocess"
-        );
-    }
-
-    /// TM-PY-017 via subprocess: Path traversal blocked in subprocess mode.
-    #[tokio::test]
-    #[serial]
-    async fn threat_python_subprocess_path_traversal() {
-        let mut bash = bash_subprocess();
-
-        let r = bash
-            .exec(
-                "python3 -c \"from pathlib import Path\ntry:\n    Path('/tmp/../../../etc/passwd').read_text()\n    print('ESCAPED')\nexcept FileNotFoundError:\n    print('blocked')\"",
-            )
-            .await
-            .unwrap();
-        assert!(
-            !r.stdout.contains("ESCAPED"),
-            "Path traversal must not escape VFS in subprocess mode"
-        );
-    }
-
-    /// Subprocess mode should fail gracefully when worker binary doesn't exist.
-    #[tokio::test]
-    #[serial]
-    async fn threat_python_subprocess_missing_worker() {
-        std::env::set_var("BASHKIT_MONTY_WORKER", "/nonexistent/worker/binary");
-        let mut bash = Bash::builder()
-            .python_with_limits(PythonLimits::default().isolation(PythonIsolation::Subprocess))
-            .build();
-
-        let r = bash.exec("python3 -c \"print('hi')\"").await.unwrap();
-        assert_ne!(r.exit_code, 0);
-        assert!(
-            r.stderr.contains("not found") || r.stderr.contains("No such file"),
-            "Should report worker not found, got: {}",
-            r.stderr
-        );
-
-        std::env::remove_var("BASHKIT_MONTY_WORKER");
-    }
-
-    /// TM-PY-004 via subprocess: No shell escape from Python in subprocess mode.
-    #[tokio::test]
-    #[serial]
-    async fn threat_python_subprocess_no_shell_escape() {
-        let mut bash = bash_subprocess();
-
-        let r = bash
-            .exec("python3 -c \"import os\nos.system('echo hacked')\"")
-            .await
-            .unwrap();
-        assert_ne!(r.exit_code, 0, "os.system should not work in subprocess");
-        assert!(
-            !r.stdout.contains("hacked"),
-            "Must not execute shell commands"
-        );
-    }
-}
+// NOTE: Subprocess isolation tests (TM-PY-022 to TM-PY-026) were removed
+// when the worker subprocess architecture was replaced with direct Monty
+// integration. Resource limits and VFS isolation are now enforced directly
+// by Monty's runtime within the host process.
 
 // =============================================================================
 // 8. NESTING DEPTH SECURITY TESTS
