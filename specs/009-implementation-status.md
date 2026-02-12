@@ -127,7 +127,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | arrays.test.sh | 19 | includes indices, `${arr[@]}` / `${arr[*]}` expansion |
 | background.test.sh | 2 | |
 | bash-command.test.sh | 25 | bash/sh re-invocation |
-| brace-expansion.test.sh | 11 | {a,b,c}, {1..5} |
+| brace-expansion.test.sh | 14 | {a,b,c}, {1..5}, for-loop brace expansion |
 | column.test.sh | 5 | column alignment |
 | command-not-found.test.sh | 9 | unknown command handling |
 | command-subst.test.sh | 14 | 2 skipped |

@@ -75,3 +75,33 @@ echo {5..1}
 ### expect
 5 4 3 2 1
 ### end
+
+### brace_in_for_loop
+# Brace expansion in for-loop word list
+for i in {1..5}; do echo $i; done
+### expect
+1
+2
+3
+4
+5
+### end
+
+### brace_comma_in_for_loop
+# Comma brace expansion in for-loop
+for x in {a,b,c}; do echo $x; done
+### expect
+a
+b
+c
+### end
+
+### brace_range_for_loop_printf
+# Brace range with printf in for-loop
+for i in {1..4}; do printf "%d\n" "$i"; done
+### expect
+1
+2
+3
+4
+### end
