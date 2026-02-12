@@ -1338,6 +1338,10 @@ criteria = "safe-to-deploy"
 version = "2.0.114"
 criteria = "safe-to-deploy"
 
+[[exemptions.syn]]
+version = "2.0.115"
+criteria = "safe-to-deploy"
+
 [[exemptions.sync_wrapper]]
 version = "1.0.2"
 criteria = "safe-to-deploy"
@@ -1900,4 +1904,8 @@ criteria = "safe-to-deploy"
 
 [[exemptions.zmij]]
 version = "1.0.20"
+criteria = "safe-to-deploy"
+
+[[exemptions.zmij]]
+version = "1.0.21"
 criteria = "safe-to-deploy"
