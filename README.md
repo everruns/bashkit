@@ -33,6 +33,10 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
+## Overview
+
+[![Overview Video](https://img.youtube.com/vi/0rIGX7mSlMg/maxresdefault.jpg)](https://www.youtube.com/watch?v=0rIGX7mSlMg)
+
 ## Built-in Commands (81)
 
 | Category | Commands |
