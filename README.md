@@ -8,7 +8,7 @@
 
 Virtual bash interpreter for multi-tenant environments. Written in Rust.
 
-[![Overview Video](https://img.youtube.com/vi/T8sbXbj1gmM/maxresdefault.jpg)](https://www.youtube.com/watch?v=T8sbXbj1gmM)
+[![Overview Video](https://img.youtube.com/vi/0rIGX7mSlMg/maxresdefault.jpg)](https://www.youtube.com/watch?v=0rIGX7mSlMg)
 
 ## Features
 
