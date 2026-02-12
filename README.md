@@ -8,6 +8,8 @@
 
 Virtual bash interpreter for multi-tenant environments. Written in Rust.
 
+[![Overview Video](https://img.youtube.com/vi/T8sbXbj1gmM/maxresdefault.jpg)](https://www.youtube.com/watch?v=T8sbXbj1gmM)
+
 ## Features
 
 - **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance
