@@ -1688,6 +1688,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_prefix_assignment_visible_in_env() {
+        let mut bash = Bash::new();
+        // VAR=value command should make VAR visible in the command's environment
+        let result = bash.exec("MYVAR=hello printenv MYVAR").await.unwrap();
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_prefix_assignment_temporary() {
+        let mut bash = Bash::new();
+        // Prefix assignment should NOT persist after the command
+        bash.exec("MYVAR=hello printenv MYVAR").await.unwrap();
+        let result = bash.exec("echo ${MYVAR:-unset}").await.unwrap();
+        assert_eq!(result.stdout, "unset\n");
+    }
+
+    #[tokio::test]
+    async fn test_prefix_assignment_does_not_clobber_existing_env() {
+        let mut bash = Bash::new();
+        // Set up existing env var
+        let result = bash
+            .exec("EXISTING=original; export EXISTING; EXISTING=temp printenv EXISTING")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "temp\n");
+    }
+
+    #[tokio::test]
     async fn test_printf_string() {
         let mut bash = Bash::new();
         let result = bash.exec("printf '%s' hello").await.unwrap();
