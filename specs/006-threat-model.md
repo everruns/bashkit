@@ -1125,34 +1125,12 @@ events that BashKit intercepts and dispatches to the VFS.
 5. **Resource isolation**: Monty's own limits (time, memory, allocations,
    recursion) are enforced independently of BashKit's shell limits.
 
-### Subprocess Isolation (Crash Protection)
+### Direct Integration
 
-When `PythonIsolation::Subprocess` (or `Auto` with worker available), Monty runs
-in a child process (`bashkit-monty-worker`). This isolates the host from parser
-segfaults and other fatal crashes.
-
-**IPC Architecture:**
-```
-Parent (bashkit)                  Child (bashkit-monty-worker)
-     │                                      │
-     │── Init {code, limits} ──────────────>│
-     │                                      │── Parse + execute
-     │<── OsCall {function, args} ─────────│   (pauses at VFS op)
-     │── OsResponse {result} ──────────────>│
-     │                                      │── Resume execution
-     │<── Complete {result, output} ────────│
-```
-
-**Security properties:**
-1. Worker crashes (SIGSEGV, SIGABRT) → parent gets child exit status, not crash
-2. Worker env cleared (TM-PY-025): no host env var leakage
-3. IPC timeout (TM-PY-024): worker hang → parent kills after max_duration + 5s
-4. IPC line limit (TM-PY-026): max 16 MB per JSON line
-5. VFS operations bridged through parent — worker never touches real filesystem
-
-**Caller Responsibility (TM-PY-023):** The `BASHKIT_MONTY_WORKER` env var or
-PATH ordering controls which binary is spawned. Callers must ensure these are
-not attacker-controlled. This is analogous to TM-INF-001 (env var sanitization).
+Monty runs directly in the host process. Resource limits (memory, allocations,
+time, recursion) are enforced by Monty's own runtime, not by process isolation.
+All VFS operations are bridged in-process — Python code never touches the real
+filesystem.
 
 ### Supported OsCall Operations
 
