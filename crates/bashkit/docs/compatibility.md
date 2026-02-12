@@ -45,7 +45,7 @@ for sandbox security reasons. See the compliance spec for details.
 | Builtin | Flags/Features | Notes |
 |---------|----------------|-------|
 | `echo` | `-n`, `-e`, `-E` | Basic escape sequences |
-| `printf` | `%s`, `%d`, `%x`, `%o`, `%f` | Format specifiers |
+| `printf` | `%s`, `%d`, `%x`, `%o`, `%f` | Format specifiers, repeats format for multiple args |
 | `cat` | (none) | Concatenate files/stdin |
 | `true` | - | Exit 0 |
 | `false` | - | Exit 1 |
@@ -270,7 +270,8 @@ for sandbox security reasons. See the compliance spec for details.
 |---------|--------|---------|
 | Declaration | ✅ | `arr=(a b c)` |
 | Index access | ✅ | `${arr[0]}` |
-| All elements | ✅ | `${arr[@]}` |
+| All elements `@` | ✅ | `${arr[@]}` (separate args) |
+| All elements `*` | ✅ | `${arr[*]}` (single arg when quoted) |
 | Array length | ✅ | `${#arr[@]}` |
 | Element length | ✅ | `${#arr[0]}` |
 | Append | ✅ | `arr+=(d e)` |

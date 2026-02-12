@@ -124,7 +124,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | File | Cases | Notes |
 |------|-------|-------|
 | arithmetic.test.sh | 29 | includes logical operators |
-| arrays.test.sh | 16 | includes indices |
+| arrays.test.sh | 19 | includes indices, `${arr[@]}` / `${arr[*]}` expansion |
 | background.test.sh | 2 | |
 | bash-command.test.sh | 25 | bash/sh re-invocation |
 | brace-expansion.test.sh | 11 | {a,b,c}, {1..5} |
@@ -149,7 +149,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | paste.test.sh | 4 | line merging (2 skipped) |
 | path.test.sh | 14 | |
 | pipes-redirects.test.sh | 19 | includes stderr redirects |
-| printf.test.sh | 18 | format specifiers |
+| printf.test.sh | 24 | format specifiers, array expansion |
 | procsub.test.sh | 6 | |
 | sleep.test.sh | 6 | |
 | sortuniq.test.sh | 28 | sort and uniq (13 skipped) |
@@ -185,7 +185,7 @@ Features that may be added in the future (not intentionally excluded):
 | `local` | Declaration | Proper scoping in nested functions |
 | `return` | Basic usage | Return value propagation |
 | Heredocs | Basic | Variable expansion inside |
-| Arrays | Indexing, `[@]`, `${!arr[@]}`, `+=` | Slice `${arr[@]:1:2}` |
+| Arrays | Indexing, `[@]`/`[*]` as separate args, `${!arr[@]}`, `+=` | Slice `${arr[@]:1:2}` |
 | `echo -n` | Flag parsed | Trailing newline handling |
 | `time` | Wall-clock timing | User/sys CPU time (always 0) |
 | `timeout` | Basic usage | `-k` kill timeout |

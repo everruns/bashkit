@@ -124,3 +124,62 @@ printf "%06d\n" -42
 ### expect
 -00042
 ### end
+
+### printf_array_expansion
+# Printf with array expansion - format string repeats per element
+colors=(Black Red Green Yellow Blue Magenta Cyan White)
+printf "%s\n" "${colors[@]}"
+### expect
+Black
+Red
+Green
+Yellow
+Blue
+Magenta
+Cyan
+White
+### end
+
+### printf_array_at_format_reuse
+# Printf reuses format for each array element via ${arr[@]}
+nums=(1 2 3)
+printf "%d\n" "${nums[@]}"
+### expect
+1
+2
+3
+### end
+
+### printf_array_star_quoted
+# "${arr[*]}" joins elements into single arg
+arr=(a b c)
+printf "[%s]\n" "${arr[*]}"
+### expect
+[a b c]
+### end
+
+### printf_array_at_with_format
+# Printf with multi-specifier format and array args
+items=(Alice 30 Bob 25)
+printf "%s is %d\n" "${items[@]}"
+### expect
+Alice is 30
+Bob is 25
+### end
+
+### printf_empty_array
+# Printf with empty array - format runs once with empty %s
+arr=()
+result=$(printf "%s\n" "${arr[@]}")
+echo "[$result]"
+### expect
+[]
+### end
+
+### printf_single_element_array
+# Printf with single-element array
+arr=(only)
+printf "(%s)\n" "${arr[@]}"
+### expect
+(only)
+### end

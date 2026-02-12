@@ -114,3 +114,31 @@ arr=(a b c d e); echo ${arr[@]:0:2}
 ### expect
 a b
 ### end
+
+### array_at_expansion_as_args
+# "${arr[@]}" expands to separate arguments for commands
+arr=(one two three)
+printf "%s\n" "${arr[@]}"
+### expect
+one
+two
+three
+### end
+
+### array_star_expansion_quoted
+# "${arr[*]}" joins into single argument when quoted
+arr=(one two three)
+printf "[%s]\n" "${arr[*]}"
+### expect
+[one two three]
+### end
+
+### array_at_expansion_unquoted
+# ${arr[@]} unquoted also produces separate args
+arr=(x y z)
+printf "(%s)\n" ${arr[@]}
+### expect
+(x)
+(y)
+(z)
+### end
