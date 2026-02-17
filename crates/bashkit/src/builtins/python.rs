@@ -16,8 +16,8 @@
 
 use async_trait::async_trait;
 use monty::{
-    dir_stat, file_stat, symlink_stat, CollectStringPrint, ExcType, ExternalResult, LimitedTracker,
-    MontyException, MontyObject, MontyRun, OsFunction, ResourceLimits, RunProgress,
+    dir_stat, file_stat, symlink_stat, ExcType, ExternalResult, LimitedTracker, MontyException,
+    MontyObject, MontyRun, OsFunction, PrintWriter, ResourceLimits, RunProgress,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -302,14 +302,17 @@ async fn run_python(
         .max_recursion_depth(Some(py_limits.max_recursion));
 
     let tracker = LimitedTracker::new(limits);
-    let mut printer = CollectStringPrint::new();
 
-    // Use start() instead of run() to handle OsCall pauses for VFS bridging
-    let mut progress = match runner.start(vec![], tracker, &mut printer) {
-        Ok(p) => p,
-        Err(e) => {
-            let printed = printer.into_output();
-            return Ok(format_exception_with_output(e, &printed));
+    // Run the synchronous start() phase, then extract collected output.
+    // PrintWriter::Collect is not Send, so we scope it to avoid holding across .await.
+    let (mut progress, mut buf) = {
+        let mut printer = PrintWriter::Collect(String::new());
+        match runner.start(vec![], tracker, &mut printer) {
+            Ok(p) => (p, take_collected(&mut printer)),
+            Err(e) => {
+                let printed = take_collected(&mut printer);
+                return Ok(format_exception_with_output(e, &printed));
+            }
         }
     };
 
@@ -323,10 +326,14 @@ async fn run_python(
                 ..
             } => {
                 let result = handle_os_call(function, &args, &kwargs, &fs, cwd, env).await;
+                let mut printer = PrintWriter::Collect(buf);
                 match state.run(result, &mut printer) {
-                    Ok(next) => progress = next,
+                    Ok(next) => {
+                        buf = take_collected(&mut printer);
+                        progress = next;
+                    }
                     Err(e) => {
-                        let printed = printer.into_output();
+                        let printed = take_collected(&mut printer);
                         return Ok(format_exception_with_output(e, &printed));
                     }
                 }
@@ -337,35 +344,44 @@ async fn run_python(
                     ExcType::RuntimeError,
                     Some("external function not available in virtual mode".into()),
                 );
+                let mut printer = PrintWriter::Collect(buf);
                 match state.run(ExternalResult::Error(err), &mut printer) {
-                    Ok(next) => progress = next,
+                    Ok(next) => {
+                        buf = take_collected(&mut printer);
+                        progress = next;
+                    }
                     Err(e) => {
-                        let printed = printer.into_output();
+                        let printed = take_collected(&mut printer);
                         return Ok(format_exception_with_output(e, &printed));
                     }
                 }
             }
             RunProgress::ResolveFutures(_) => {
                 // Async futures not supported in virtual mode
-                let printed = printer.into_output();
                 let err = MontyException::new(
                     ExcType::RuntimeError,
                     Some("async operations not supported in virtual mode".into()),
                 );
-                return Ok(format_exception_with_output(err, &printed));
+                return Ok(format_exception_with_output(err, &buf));
             }
             RunProgress::Complete(result) => {
-                let mut output = printer.into_output();
-
                 // If the result is not None and there was no print output,
                 // display the result (like Python REPL behavior for expressions)
-                if !matches!(result, MontyObject::None) && output.is_empty() {
-                    output = format!("{}\n", result.py_repr());
+                if !matches!(result, MontyObject::None) && buf.is_empty() {
+                    buf = format!("{}\n", result.py_repr());
                 }
 
-                return Ok(ExecResult::ok(output));
+                return Ok(ExecResult::ok(buf));
             }
         }
+    }
+}
+
+/// Extract collected output from a `PrintWriter::Collect`, replacing it with an empty string.
+fn take_collected(printer: &mut PrintWriter<'_>) -> String {
+    match printer {
+        PrintWriter::Collect(buf) => std::mem::take(buf),
+        _ => String::new(),
     }
 }
 

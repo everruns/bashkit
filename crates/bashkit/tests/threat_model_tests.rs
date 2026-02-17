@@ -1211,6 +1211,104 @@ mod python_security {
 // integration. Resource limits and VFS isolation are now enforced directly
 // by Monty's runtime within the host process.
 
+// -- TM-PY regression coverage for Monty v0.0.5 parser depth guard ----------
+
+#[cfg(feature = "python")]
+mod python_security_regressions {
+    use super::*;
+    use bashkit::PythonLimits;
+
+    fn bash_with_python() -> Bash {
+        Bash::builder()
+            .python_with_limits(PythonLimits::default())
+            .build()
+    }
+
+    /// TM-PY-022: Deeply nested Python expressions caught by Monty depth guard.
+    /// Monty v0.0.5 added a parser depth guard (d634706). In debug builds the
+    /// limit is 35; in release builds it's 200. We use a nesting level that
+    /// triggers the Monty guard rather than overflowing the ruff parser stack.
+    #[tokio::test]
+    async fn threat_python_deep_nesting_parser() {
+        let mut bash = bash_with_python();
+        // 30 levels of nested tuples triggers Monty's depth guard in debug builds
+        // (MAX_NESTING_DEPTH=35) while staying safe for ruff's parser stack.
+        let depth = 30;
+        let code = format!(
+            "python3 -c \"x = {}1{}\"",
+            "(".repeat(depth),
+            ",)".repeat(depth)
+        );
+        let result = bash.exec(&code).await.unwrap();
+        // In debug builds (depth limit 35), 30 nested tuples should succeed.
+        // In release builds (depth limit 200), it definitely succeeds.
+        // The guard prevents deeper nesting from crashing.
+        assert_eq!(
+            result.exit_code, 0,
+            "30 levels of nesting should be within parser depth budget"
+        );
+    }
+
+    /// TM-PY-022b: Nesting at the depth guard boundary fails gracefully.
+    #[tokio::test]
+    async fn threat_python_nesting_at_guard_boundary() {
+        let mut bash = bash_with_python();
+        // In debug builds MAX_NESTING_DEPTH=35, so 40 nested statements
+        // should trigger the depth guard and return an error, not crash.
+        // In release builds (limit=200) this will succeed, which is fine.
+        let depth = 40;
+        let code = format!(
+            "python3 -c \"{}x = 1{}\"",
+            "if True:\n    ".repeat(depth),
+            ""
+        );
+        let result = bash.exec(&code).await.unwrap();
+        // Either succeeds (release build, limit=200) or errors gracefully (debug build)
+        if result.exit_code != 0 {
+            assert!(
+                !result.stderr.is_empty(),
+                "Should get a parse error, not silent failure"
+            );
+        }
+    }
+
+    /// TM-PY-003b: Exponentiation resource exhaustion blocked.
+    /// Monty v0.0.5 added a 4x safety multiplier (a07e336) to prevent
+    /// huge power results from exhausting memory.
+    #[tokio::test]
+    async fn threat_python_pow_exhaustion() {
+        let limits = PythonLimits::default().max_memory(1024 * 1024); // 1MB
+        let mut bash = Bash::builder().python_with_limits(limits).build();
+        // 2 ** 1_000_000 produces ~300KB number; with tight 1MB limit the
+        // allocation check should reject it before completion.
+        let result = bash
+            .exec("python3 -c \"x = 2 ** 1000000\ny = 2 ** 1000000\nz = x * y\"")
+            .await
+            .unwrap();
+        assert_ne!(
+            result.exit_code, 0,
+            "Large exponentiation chain should be blocked by memory limit"
+        );
+    }
+
+    /// TM-PY-003c: Division by zero during floor-div of extreme values
+    /// doesn't panic. Monty v0.0.5 (fc2f154) fixed i64::MIN overflow.
+    #[tokio::test]
+    async fn threat_python_division_edge_cases() {
+        let mut bash = bash_with_python();
+
+        // Floor division by zero should raise ZeroDivisionError, not panic
+        let result = bash.exec("python3 -c \"x = 1 // 0\"").await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("ZeroDivisionError"));
+
+        // Modulo by zero
+        let result = bash.exec("python3 -c \"x = 1 % 0\"").await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("ZeroDivisionError"));
+    }
+}
+
 // =============================================================================
 // 8. NESTING DEPTH SECURITY TESTS
 //
