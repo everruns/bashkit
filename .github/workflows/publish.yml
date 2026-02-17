@@ -52,7 +52,7 @@ jobs:
           cat "$TOML"
 
       - name: Publish bashkit to crates.io
-        run: cargo publish -p bashkit
+        run: cargo publish -p bashkit --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
