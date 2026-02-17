@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.1.5] - 2026-02-17
+
+### Highlights
+
+- Direct Monty Python integration (removed subprocess worker) for simpler embedding
+- Improved AWK parser: match, gensub, power operators, printf formats
+- PyPI publishing with pre-built wheels for all major platforms
+- Bug fixes for sed, parser redirections, array expansion, and env assignments
+
+### What's Changed
+
+* chore: pre-release maintenance — deps, docs, specs ([#206](https://github.com/everruns/bashkit/pull/206)) by @chaliy
+* test(python): regression tests for monty v0.0.5/v0.0.6 ([#205](https://github.com/everruns/bashkit/pull/205)) by @chaliy
+* refactor(python): direct Monty integration, remove worker subprocess ([#203](https://github.com/everruns/bashkit/pull/203)) by @chaliy
+* docs: add overview video to README ([#202](https://github.com/everruns/bashkit/pull/202)) by @chaliy
+* fix(interpreter): expand array args as separate fields ([#201](https://github.com/everruns/bashkit/pull/201)) by @chaliy
+* fix(interpreter): prefix env assignments visible to commands ([#200](https://github.com/everruns/bashkit/pull/200)) by @chaliy
+* chore(specs): add domain egress allowlist threat model ([#199](https://github.com/everruns/bashkit/pull/199)) by @chaliy
+* chore(deps): update pyo3 requirement from 0.24 to 0.24.2 ([#198](https://github.com/everruns/bashkit/pull/198)) by @chaliy
+* chore: reframe language from sandboxed bash to virtual bash ([#197](https://github.com/everruns/bashkit/pull/197)) by @chaliy
+* fix(builtins): fix sed ampersand replacement and escape handling ([#196](https://github.com/everruns/bashkit/pull/196)) by @chaliy
+* fix(parser): support output redirection on compound commands ([#195](https://github.com/everruns/bashkit/pull/195)) by @chaliy
+* fix(builtins): use streaming JSON deserializer in jq for multi-line input ([#194](https://github.com/everruns/bashkit/pull/194)) by @chaliy
+* fix(builtins): handle escape sequences in AWK -F field separator ([#193](https://github.com/everruns/bashkit/pull/193)) by @chaliy
+* fix(builtins): improve AWK parser with match, gensub, power, printf ([#192](https://github.com/everruns/bashkit/pull/192)) by @chaliy
+* docs(examples): use bashkit from PyPI instead of local build ([#190](https://github.com/everruns/bashkit/pull/190)) by @chaliy
+* fix(python): enable PyO3 generate-import-lib for Windows wheels ([#189](https://github.com/everruns/bashkit/pull/189)) by @chaliy
+* feat(python): add PyPI publishing with pre-built wheels ([#188](https://github.com/everruns/bashkit/pull/188)) by @chaliy
+* chore(ci): Bump taiki-e/cache-cargo-install-action from 2 to 3 ([#186](https://github.com/everruns/bashkit/pull/186)) by @chaliy
+* feat(eval): expand dataset to 37 tasks with JSON scenarios ([#185](https://github.com/everruns/bashkit/pull/185)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.4...v0.1.5
+
 ## [0.1.4] - 2026-02-09
 
 ### Highlights
