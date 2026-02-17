@@ -38,6 +38,19 @@ jobs:
             echo "Manual dispatch - skipping tag verification"
           fi
 
+      - name: Strip git-only dependencies for publishing
+        # monty is a git dep (not yet on crates.io) — remove before publish
+        run: |
+          TOML=crates/bashkit/Cargo.toml
+          # Remove monty dependency line
+          sed -i '/^monty = .*/d' "$TOML"
+          # Remove python feature that references monty
+          sed -i '/^python = \["dep:monty"\]/d' "$TOML"
+          # Remove python_scripts example block (requires python feature)
+          sed -i '/^\[\[example\]\]/{N;N;/python_scripts/d}' "$TOML"
+          echo "--- Cargo.toml after stripping ---"
+          cat "$TOML"
+
       - name: Publish bashkit to crates.io
         run: cargo publish -p bashkit
         env:
