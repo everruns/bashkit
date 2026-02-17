@@ -17,6 +17,10 @@ For LangChain integration:
 For Deep Agents integration:
     >>> from bashkit.deepagents import create_bash_middleware
     >>> middleware = create_bash_middleware()
+
+For PydanticAI integration:
+    >>> from bashkit.pydantic_ai import create_bash_tool
+    >>> tool = create_bash_tool()
 """
 
 from bashkit._bashkit import (

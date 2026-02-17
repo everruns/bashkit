@@ -17,7 +17,8 @@ crates/bashkit-python/
 │   ├── _bashkit.pyi         # Type stubs (PEP 561)
 │   ├── py.typed             # Marker for typed package
 │   ├── langchain.py         # LangChain integration
-│   └── deepagents.py        # Deep Agents integration
+│   ├── deepagents.py        # Deep Agents integration
+│   └── pydantic_ai.py       # PydanticAI integration
 ```
 
 ## Build System
@@ -146,6 +147,7 @@ Returns dict with `name`, `description`, `args_schema` for LangChain integration
 ```
 pip install bashkit[langchain]     # + langchain-core, langchain-anthropic
 pip install bashkit[deepagents]    # + deepagents, langchain-anthropic
+pip install bashkit[pydantic-ai]   # + pydantic-ai
 pip install bashkit[dev]           # + pytest, pytest-asyncio
 ```
 
