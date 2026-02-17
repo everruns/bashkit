@@ -393,7 +393,7 @@ pub use network::NetworkAllowlist;
 pub use tool::{BashTool, BashToolBuilder, Tool, ToolRequest, ToolResponse, ToolStatus, VERSION};
 
 #[cfg(feature = "scripted_tool")]
-pub use scripted_tool::{ScriptedTool, ScriptedToolBuilder, ToolCallback, ToolDef};
+pub use scripted_tool::{ScriptedTool, ScriptedToolBuilder, ToolArgs, ToolCallback, ToolDef};
 
 #[cfg(feature = "http_client")]
 pub use network::HttpClient;

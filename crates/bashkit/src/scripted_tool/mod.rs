@@ -1,4 +1,4 @@
-//! Tool orchestration
+//! Scripted tool
 //!
 //! Compose tool definitions + callbacks into a single [`Tool`] that accepts bash
 //! scripts. Each tool becomes a builtin command inside the interpreter, so an LLM
@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! ┌─────────────────────────────────────────┐
-//! │  ScriptedTool  (implements Tool)     │
+//! │  ScriptedTool  (implements Tool)        │
 //! │                                         │
 //! │  ┌─────────┐ ┌─────────┐ ┌──────────┐  │
 //! │  │get_user │ │get_order│ │inventory │  │
@@ -23,24 +23,28 @@
 //! # Example
 //!
 //! ```rust
-//! use bashkit::{ScriptedTool, ToolDef, Tool, ToolRequest};
+//! use bashkit::{ScriptedTool, ToolArgs, ToolDef, Tool, ToolRequest};
 //!
 //! # tokio_test::block_on(async {
 //! let mut tool = ScriptedTool::builder("api")
 //!     .tool(
-//!         ToolDef::new("get_user", "Fetch user by id. Usage: get_user <id>"),
-//!         |args, _stdin| {
-//!             let id = args.first().ok_or("missing id")?;
-//!             Ok(format!("{{\"id\":{},\"name\":\"Alice\"}}\n", id))
+//!         ToolDef::new("greet", "Greet a user")
+//!             .with_schema(serde_json::json!({
+//!                 "type": "object",
+//!                 "properties": { "name": {"type": "string"} }
+//!             })),
+//!         |args: &ToolArgs| {
+//!             let name = args.param_str("name").unwrap_or("world");
+//!             Ok(format!("hello {name}\n"))
 //!         },
 //!     )
 //!     .build();
 //!
 //! let resp = tool.execute(ToolRequest {
-//!     commands: "get_user 42 | jq '.name'".to_string(),
+//!     commands: "greet --name Alice".to_string(),
 //! }).await;
 //!
-//! assert_eq!(resp.stdout.trim(), "\"Alice\"");
+//! assert_eq!(resp.stdout.trim(), "hello Alice");
 //! # });
 //! ```
 
@@ -56,7 +60,8 @@ use std::sync::Arc;
 /// OpenAPI-style tool definition: name, description, input schema.
 ///
 /// Describes a sub-tool registered with [`ScriptedToolBuilder`].
-/// The `input_schema` is optional JSON Schema for documentation / LLM prompts.
+/// The `input_schema` is optional JSON Schema for documentation / LLM prompts
+/// and for type coercion of `--key value` flags.
 pub struct ToolDef {
     /// Command name used as bash builtin (e.g. `"get_user"`).
     pub name: String,
@@ -84,18 +89,52 @@ impl ToolDef {
 }
 
 // ============================================================================
+// ToolArgs — parsed arguments passed to callbacks
+// ============================================================================
+
+/// Parsed arguments passed to a tool callback.
+///
+/// `params` is a JSON object built from `--key value` flags, with values
+/// type-coerced per the `ToolDef`'s `input_schema`.
+/// `stdin` carries pipeline input from a prior command, if any.
+pub struct ToolArgs {
+    /// Parsed parameters as a JSON object. Keys from `--key value` flags.
+    pub params: serde_json::Value,
+    /// Pipeline input from a prior command (e.g. `echo data | tool`).
+    pub stdin: Option<String>,
+}
+
+impl ToolArgs {
+    /// Get a string parameter by name.
+    pub fn param_str(&self, key: &str) -> Option<&str> {
+        self.params.get(key).and_then(|v| v.as_str())
+    }
+
+    /// Get an integer parameter by name.
+    pub fn param_i64(&self, key: &str) -> Option<i64> {
+        self.params.get(key).and_then(|v| v.as_i64())
+    }
+
+    /// Get a float parameter by name.
+    pub fn param_f64(&self, key: &str) -> Option<f64> {
+        self.params.get(key).and_then(|v| v.as_f64())
+    }
+
+    /// Get a boolean parameter by name.
+    pub fn param_bool(&self, key: &str) -> Option<bool> {
+        self.params.get(key).and_then(|v| v.as_bool())
+    }
+}
+
+// ============================================================================
 // ToolCallback — execution callback type
 // ============================================================================
 
 /// Execution callback for a registered tool.
 ///
-/// - `args`: positional arguments after command name.
-///   For `get_user --id 5`, args is `["--id", "5"]`.
-/// - `stdin`: pipeline input from prior command, if any.
-///
+/// Receives parsed [`ToolArgs`] with typed parameters and optional stdin.
 /// Return `Ok(stdout)` on success or `Err(message)` on failure.
-pub type ToolCallback =
-    Arc<dyn Fn(&[String], Option<&str>) -> Result<String, String> + Send + Sync>;
+pub type ToolCallback = Arc<dyn Fn(&ToolArgs) -> Result<String, String> + Send + Sync>;
 
 // ============================================================================
 // RegisteredTool — internal definition + callback pair
@@ -114,14 +153,18 @@ pub(crate) struct RegisteredTool {
 /// Builder for [`ScriptedTool`].
 ///
 /// ```rust
-/// use bashkit::{ScriptedTool, ToolDef};
+/// use bashkit::{ScriptedTool, ToolArgs, ToolDef};
 ///
 /// let tool = ScriptedTool::builder("net")
 ///     .short_description("Network tools")
 ///     .tool(
-///         ToolDef::new("ping", "Ping a host"),
-///         |args, _stdin| {
-///             Ok(format!("pong {}\n", args.first().unwrap_or(&String::new())))
+///         ToolDef::new("ping", "Ping a host")
+///             .with_schema(serde_json::json!({
+///                 "type": "object",
+///                 "properties": { "host": {"type": "string"} }
+///             })),
+///         |args: &ToolArgs| {
+///             Ok(format!("pong {}\n", args.param_str("host").unwrap_or("?")))
 ///         },
 ///     )
 ///     .build();
@@ -152,10 +195,13 @@ impl ScriptedToolBuilder {
     }
 
     /// Register a tool with its definition and execution callback.
+    ///
+    /// The callback receives [`ToolArgs`] with `--key value` flags parsed into
+    /// a JSON object, type-coerced per the schema.
     pub fn tool(
         mut self,
         def: ToolDef,
-        callback: impl Fn(&[String], Option<&str>) -> Result<String, String> + Send + Sync + 'static,
+        callback: impl Fn(&ToolArgs) -> Result<String, String> + Send + Sync + 'static,
     ) -> Self {
         self.tools.push(RegisteredTool {
             def,
@@ -202,6 +248,9 @@ impl ScriptedToolBuilder {
 /// The LLM sends a bash script that can pipe, loop, branch, and compose these
 /// builtins together with standard utilities like `jq`, `grep`, `sed`, etc.
 ///
+/// Arguments are passed as `--key value` flags and parsed into typed JSON
+/// per the tool's `input_schema`.
+///
 /// Reusable — `execute()` can be called multiple times. Each call gets a fresh
 /// Bash interpreter with the same set of tool builtins.
 ///
@@ -232,23 +281,30 @@ mod tests {
 
     fn build_test_tool() -> ScriptedTool {
         ScriptedTool::builder("test_api")
-            .short_description("Test API orchestrator")
+            .short_description("Test API")
             .tool(
-                ToolDef::new("get_user", "Fetch user by id. Usage: get_user <id>"),
-                |args, _stdin| {
-                    let id = args.first().ok_or("missing user id")?;
+                ToolDef::new("get_user", "Fetch user by id").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"}
+                    }
+                })),
+                |args: &ToolArgs| {
+                    let id = args.param_i64("id").ok_or("missing --id")?;
                     Ok(format!(
                         "{{\"id\":{id},\"name\":\"Alice\",\"email\":\"alice@example.com\"}}\n"
                     ))
                 },
             )
             .tool(
-                ToolDef::new(
-                    "get_orders",
-                    "List orders for user. Usage: get_orders <user_id>",
-                ),
-                |args, _stdin| {
-                    let uid = args.first().ok_or("missing user id")?;
+                ToolDef::new("get_orders", "List orders for user").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "user_id": {"type": "integer"}
+                    }
+                })),
+                |args: &ToolArgs| {
+                    let uid = args.param_i64("user_id").ok_or("missing --user_id")?;
                     Ok(format!(
                         "[{{\"order_id\":1,\"user_id\":{uid},\"total\":29.99}},\
                          {{\"order_id\":2,\"user_id\":{uid},\"total\":49.50}}]\n"
@@ -256,12 +312,12 @@ mod tests {
                 },
             )
             .tool(
-                ToolDef::new("fail_tool", "Always fails (for testing error handling)"),
-                |_args, _stdin| Err("service unavailable".to_string()),
+                ToolDef::new("fail_tool", "Always fails"),
+                |_args: &ToolArgs| Err("service unavailable".to_string()),
             )
             .tool(
                 ToolDef::new("from_stdin", "Read from stdin, uppercase it"),
-                |_args, stdin| match stdin {
+                |args: &ToolArgs| match args.stdin.as_deref() {
                     Some(input) => Ok(input.to_uppercase()),
                     None => Err("no stdin".to_string()),
                 },
@@ -275,24 +331,15 @@ mod tests {
     fn test_builder_name_and_description() {
         let tool = build_test_tool();
         assert_eq!(tool.name(), "test_api");
-        assert_eq!(tool.short_description(), "Test API orchestrator");
+        assert_eq!(tool.short_description(), "Test API");
     }
 
     #[test]
     fn test_builder_default_short_description() {
         let tool = ScriptedTool::builder("mytools")
-            .tool(
-                ToolDef::new("api_echo", "Echo args back as JSON"),
-                |args, _stdin| {
-                    Ok(format!(
-                        "{{\"args\":[{}]}}\n",
-                        args.iter()
-                            .map(|a| format!("\"{}\"", a))
-                            .collect::<Vec<_>>()
-                            .join(",")
-                    ))
-                },
-            )
+            .tool(ToolDef::new("noop", "No-op"), |_args: &ToolArgs| {
+                Ok("ok\n".to_string())
+            })
             .build();
         assert_eq!(tool.short_description(), "ScriptedTool: mytools");
     }
@@ -323,7 +370,7 @@ mod tests {
         assert!(sp.contains("# test_api"));
         assert!(sp.contains("- `get_user`:"));
         assert!(sp.contains("- `get_orders`:"));
-        assert!(sp.contains("jq"));
+        assert!(sp.contains("--key value"));
     }
 
     #[test]
@@ -337,15 +384,12 @@ mod tests {
                     },
                     "required": ["id"]
                 })),
-                |_args, _stdin| Ok("ok\n".to_string()),
+                |_args: &ToolArgs| Ok("ok\n".to_string()),
             )
             .build();
         let sp = tool.system_prompt();
-        assert!(
-            sp.contains("Schema:"),
-            "system prompt should include schema"
-        );
-        assert!(sp.contains("\"type\":\"integer\""));
+        assert!(sp.contains("--id"), "system prompt should show flags");
+        assert!(sp.contains("integer"));
     }
 
     #[test]
@@ -382,7 +426,7 @@ mod tests {
         let mut tool = build_test_tool();
         let resp = tool
             .execute(ToolRequest {
-                commands: "get_user 42".to_string(),
+                commands: "get_user --id 42".to_string(),
             })
             .await;
         assert_eq!(resp.exit_code, 0);
@@ -391,11 +435,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_execute_key_equals_value() {
+        let mut tool = build_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "get_user --id=42".to_string(),
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("\"id\":42"));
+    }
+
+    #[tokio::test]
     async fn test_execute_pipeline_with_jq() {
         let mut tool = build_test_tool();
         let resp = tool
             .execute(ToolRequest {
-                commands: "get_user 42 | jq -r '.name'".to_string(),
+                commands: "get_user --id 42 | jq -r '.name'".to_string(),
             })
             .await;
         assert_eq!(resp.exit_code, 0);
@@ -406,9 +462,9 @@ mod tests {
     async fn test_execute_multi_step() {
         let mut tool = build_test_tool();
         let script = r#"
-            user=$(get_user 1)
+            user=$(get_user --id 1)
             name=$(echo "$user" | jq -r '.name')
-            orders=$(get_orders 1)
+            orders=$(get_orders --user_id 1)
             total=$(echo "$orders" | jq '[.[].total] | add')
             echo "User: $name, Total: $total"
         "#;
@@ -462,7 +518,7 @@ mod tests {
         let mut tool = build_test_tool();
         let script = r#"
             for uid in 1 2 3; do
-                get_user $uid | jq -r '.name'
+                get_user --id $uid | jq -r '.name'
             done
         "#;
         let resp = tool
@@ -478,7 +534,7 @@ mod tests {
     async fn test_execute_conditional() {
         let mut tool = build_test_tool();
         let script = r#"
-            user=$(get_user 5)
+            user=$(get_user --id 5)
             name=$(echo "$user" | jq -r '.name')
             if [ "$name" = "Alice" ]; then
                 echo "found alice"
@@ -499,18 +555,9 @@ mod tests {
     async fn test_execute_with_env() {
         let mut tool = ScriptedTool::builder("env_test")
             .env("API_BASE", "https://api.example.com")
-            .tool(
-                ToolDef::new("api_echo", "Echo args back as JSON"),
-                |args, _stdin| {
-                    Ok(format!(
-                        "{{\"args\":[{}]}}\n",
-                        args.iter()
-                            .map(|a| format!("\"{}\"", a))
-                            .collect::<Vec<_>>()
-                            .join(",")
-                    ))
-                },
-            )
+            .tool(ToolDef::new("noop", "No-op"), |_args: &ToolArgs| {
+                Ok("ok\n".to_string())
+            })
             .build();
 
         let resp = tool
@@ -533,7 +580,7 @@ mod tests {
         let resp = tool
             .execute_with_status(
                 ToolRequest {
-                    commands: "get_user 1".to_string(),
+                    commands: "get_user --id 1".to_string(),
                 },
                 Box::new(move |status| {
                     phases_clone
@@ -551,30 +598,70 @@ mod tests {
         assert!(phases.contains(&"complete".to_string()));
     }
 
-    /// Verify the tool can be called multiple times (Arc sharing works).
     #[tokio::test]
     async fn test_multiple_execute_calls() {
         let mut tool = build_test_tool();
 
         let resp1 = tool
             .execute(ToolRequest {
-                commands: "get_user 1 | jq -r '.name'".to_string(),
+                commands: "get_user --id 1 | jq -r '.name'".to_string(),
             })
             .await;
         assert_eq!(resp1.stdout.trim(), "Alice");
 
         let resp2 = tool
             .execute(ToolRequest {
-                commands: "get_orders 1 | jq 'length'".to_string(),
+                commands: "get_orders --user_id 1 | jq 'length'".to_string(),
             })
             .await;
         assert_eq!(resp2.stdout.trim(), "2");
+    }
 
-        let resp3 = tool
+    #[tokio::test]
+    async fn test_boolean_flag() {
+        let mut tool = ScriptedTool::builder("bool_test")
+            .tool(
+                ToolDef::new("search", "Search").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "verbose": {"type": "boolean"}
+                    }
+                })),
+                |args: &ToolArgs| {
+                    let q = args.param_str("query").unwrap_or("");
+                    let v = args.param_bool("verbose").unwrap_or(false);
+                    Ok(format!("q={q} verbose={v}\n"))
+                },
+            )
+            .build();
+
+        let resp = tool
             .execute(ToolRequest {
-                commands: "get_user 2 | jq -r '.email'".to_string(),
+                commands: "search --verbose --query hello".to_string(),
             })
             .await;
-        assert_eq!(resp3.stdout.trim(), "alice@example.com");
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout.trim(), "q=hello verbose=true");
+    }
+
+    #[tokio::test]
+    async fn test_no_schema_treats_as_strings() {
+        let mut tool = ScriptedTool::builder("str_test")
+            .tool(
+                ToolDef::new("echo_args", "Echo params as JSON"),
+                |args: &ToolArgs| Ok(format!("{}\n", args.params)),
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "echo_args --name Alice --count 3".to_string(),
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        let parsed: serde_json::Value = serde_json::from_str(resp.stdout.trim()).unwrap();
+        assert_eq!(parsed["name"], "Alice");
+        assert_eq!(parsed["count"], "3"); // string, not int — no schema
     }
 }

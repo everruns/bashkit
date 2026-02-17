@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
     let mut tool = ScriptedTool::builder("ecommerce_api")
         .short_description("E-commerce API orchestrator with user, order, and inventory tools")
         .tool(
-            ToolDef::new("get_user", "Fetch user by ID. Usage: get_user <id>")
+            ToolDef::new("get_user", "Fetch user by ID")
                 .with_schema(serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -26,11 +26,8 @@ async fn main() -> anyhow::Result<()> {
                     },
                     "required": ["id"]
                 })),
-            |args, _stdin| {
-                let id: u64 = args
-                    .first()
-                    .and_then(|s| s.parse().ok())
-                    .ok_or("usage: get_user <id>")?;
+            |args| {
+                let id = args.param_i64("id").ok_or("missing --id")?;
 
                 let users = [
                     (1, "Alice", "alice@example.com", "premium"),
@@ -47,22 +44,16 @@ async fn main() -> anyhow::Result<()> {
             },
         )
         .tool(
-            ToolDef::new(
-                "list_orders",
-                "List orders for a user. Usage: list_orders <user_id>",
-            )
-            .with_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "user_id": {"type": "integer", "description": "User ID"}
-                },
-                "required": ["user_id"]
-            })),
-            |args, _stdin| {
-                let uid: u64 = args
-                    .first()
-                    .and_then(|s| s.parse().ok())
-                    .ok_or("usage: list_orders <user_id>")?;
+            ToolDef::new("list_orders", "List orders for a user")
+                .with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "user_id": {"type": "integer", "description": "User ID"}
+                    },
+                    "required": ["user_id"]
+                })),
+            |args| {
+                let uid = args.param_i64("user_id").ok_or("missing --user_id")?;
 
                 let orders = match uid {
                     1 => r#"[{"order_id":101,"item":"Laptop","qty":1,"price":999.99},{"order_id":102,"item":"Mouse","qty":2,"price":29.99}]"#,
@@ -75,12 +66,16 @@ async fn main() -> anyhow::Result<()> {
             },
         )
         .tool(
-            ToolDef::new(
-                "get_inventory",
-                "Check inventory for an item. Usage: get_inventory <item_name>",
-            ),
-            |args, _stdin| {
-                let item = args.first().ok_or("usage: get_inventory <item_name>")?;
+            ToolDef::new("get_inventory", "Check inventory for an item")
+                .with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "item": {"type": "string", "description": "Item name"}
+                    },
+                    "required": ["item"]
+                })),
+            |args| {
+                let item = args.param_str("item").ok_or("missing --item")?;
 
                 let stock = match item.to_lowercase().as_str() {
                     "laptop" => 15,
@@ -96,17 +91,18 @@ async fn main() -> anyhow::Result<()> {
             },
         )
         .tool(
-            ToolDef::new(
-                "create_discount",
-                "Create a discount code. Usage: create_discount <user_id> <percent>",
-            ),
-            |args, _stdin| {
-                let uid = args
-                    .first()
-                    .ok_or("usage: create_discount <user_id> <percent>")?;
-                let pct = args
-                    .get(1)
-                    .ok_or("usage: create_discount <user_id> <percent>")?;
+            ToolDef::new("create_discount", "Create a discount code")
+                .with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "user_id": {"type": "integer", "description": "User ID"},
+                        "percent": {"type": "integer", "description": "Discount percentage"}
+                    },
+                    "required": ["user_id", "percent"]
+                })),
+            |args| {
+                let uid = args.param_i64("user_id").ok_or("missing --user_id")?;
+                let pct = args.param_i64("percent").ok_or("missing --percent")?;
                 Ok(format!(
                     "{{\"code\":\"SAVE{pct}-U{uid}\",\"percent\":{pct},\"user_id\":{uid}}}\n"
                 ))
@@ -126,29 +122,29 @@ async fn main() -> anyhow::Result<()> {
     println!("--- Demo 1: Single tool call ---");
     let resp = tool
         .execute(ToolRequest {
-            commands: "get_user 1".to_string(),
+            commands: "get_user --id 1".to_string(),
         })
         .await;
-    println!("$ get_user 1");
+    println!("$ get_user --id 1");
     println!("{}", resp.stdout);
 
     // ---- Demo 2: Pipeline with jq ----
     println!("--- Demo 2: Pipeline with jq ---");
     let resp = tool
         .execute(ToolRequest {
-            commands: "get_user 1 | jq -r '.name'".to_string(),
+            commands: "get_user --id 1 | jq -r '.name'".to_string(),
         })
         .await;
-    println!("$ get_user 1 | jq -r '.name'");
+    println!("$ get_user --id 1 | jq -r '.name'");
     println!("{}", resp.stdout);
 
     // ---- Demo 3: Multi-step orchestration ----
     println!("--- Demo 3: Multi-step orchestration ---");
     let script = r#"
-        user=$(get_user 1)
+        user=$(get_user --id 1)
         name=$(echo "$user" | jq -r '.name')
         tier=$(echo "$user" | jq -r '.tier')
-        orders=$(list_orders 1)
+        orders=$(list_orders --user_id 1)
         total=$(echo "$orders" | jq '[.[].price] | add')
         count=$(echo "$orders" | jq 'length')
         echo "Customer: $name (tier: $tier)"
@@ -167,12 +163,12 @@ async fn main() -> anyhow::Result<()> {
     println!("--- Demo 4: Loop with conditional ---");
     let script = r#"
         for uid in 1 2 3; do
-            user=$(get_user $uid)
+            user=$(get_user --id $uid)
             name=$(echo "$user" | jq -r '.name')
             tier=$(echo "$user" | jq -r '.tier')
             if [ "$tier" = "premium" ]; then
                 echo "$name is premium - creating discount"
-                create_discount $uid 20 | jq -r '.code'
+                create_discount --user_id $uid --percent 20 | jq -r '.code'
             else
                 echo "$name is $tier - no discount"
             fi
@@ -191,7 +187,7 @@ async fn main() -> anyhow::Result<()> {
     println!("--- Demo 5: Error handling ---");
     let script = r#"
         for item in Laptop Mouse Keyboard Widget; do
-            result=$(get_inventory "$item")
+            result=$(get_inventory --item "$item")
             stock=$(echo "$result" | jq '.in_stock')
             if [ "$stock" -eq 0 ]; then
                 echo "$item: OUT OF STOCK"
@@ -214,8 +210,8 @@ async fn main() -> anyhow::Result<()> {
     let script = r#"
         echo "=== $STORE_NAME Report ==="
         for uid in 1 2; do
-            name=$(get_user $uid | jq -r '.name')
-            orders=$(list_orders $uid)
+            name=$(get_user --id $uid | jq -r '.name')
+            orders=$(list_orders --user_id $uid)
             count=$(echo "$orders" | jq 'length')
             echo "$name: $count orders"
         done

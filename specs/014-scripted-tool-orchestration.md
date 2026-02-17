@@ -31,16 +31,49 @@ impl ToolDef {
 
 Standard OpenAPI fields: `name`, `description`, `input_schema`. Schema is optional — defaults to `{}`.
 
+### ToolArgs — parsed arguments passed to callbacks
+
+```rust
+pub struct ToolArgs {
+    pub params: serde_json::Value,  // JSON object from --key value flags
+    pub stdin: Option<String>,      // pipeline input from prior command
+}
+
+impl ToolArgs {
+    pub fn param_str(&self, key: &str) -> Option<&str>;
+    pub fn param_i64(&self, key: &str) -> Option<i64>;
+    pub fn param_f64(&self, key: &str) -> Option<f64>;
+    pub fn param_bool(&self, key: &str) -> Option<bool>;
+}
+```
+
+The adapter parses `--key value` and `--key=value` flags from the bash command line,
+coerces types according to the tool's `input_schema`, and passes the result as `ToolArgs`.
+
 ### ToolCallback
 
 ```rust
 pub type ToolCallback =
-    Arc<dyn Fn(&[String], Option<&str>) -> Result<String, String> + Send + Sync>;
+    Arc<dyn Fn(&ToolArgs) -> Result<String, String> + Send + Sync>;
 ```
 
-- `args`: positional args after the command name.
-- `stdin`: pipeline input from prior command.
+- `args.params`: JSON object with parsed `--key value` flags, typed per schema.
+- `args.stdin`: pipeline input from prior command.
 - Returns stdout string on success, error message on failure.
+
+### Flag parsing
+
+Bash command args are parsed into a JSON object:
+
+| Syntax | Result |
+|--------|--------|
+| `--id 42` | `{"id": 42}` (if schema says integer) |
+| `--id=42` | `{"id": 42}` |
+| `--verbose` | `{"verbose": true}` (if schema says boolean) |
+| `--name Alice` | `{"name": "Alice"}` |
+
+Type coercion follows the `input_schema` property types: `integer`, `number`, `boolean`, `string`.
+Unknown flags (not in schema) are kept as strings.
 
 ### ScriptedToolBuilder
 
@@ -52,8 +85,8 @@ ScriptedTool::builder("api_name")
     .tool(
         ToolDef::new("get_user", "Fetch user by ID")
             .with_schema(json!({"type": "object", "properties": {"id": {"type": "integer"}}})),
-        |args, _stdin| {
-            let id = args.first().ok_or("missing id")?;
+        |args| {
+            let id = args.param_i64("id").ok_or("missing --id")?;
             Ok(format!("{{\"id\":{id}}}\n"))
         },
     )
@@ -64,7 +97,8 @@ ScriptedTool::builder("api_name")
 
 ### ToolBuiltinAdapter (internal)
 
-Wraps `ToolCallback` (Arc) as a `Builtin` for the interpreter. Cheap Arc clone into each Bash instance.
+Wraps `ToolCallback` (Arc) as a `Builtin` for the interpreter. Parses `--key value` flags
+from `ctx.args` using the tool's schema for type coercion, then calls the callback with `ToolArgs`.
 
 ### ScriptedTool
 
@@ -90,11 +124,13 @@ Output: {stdout, stderr, exit_code}
 ## Available tool commands
 
 - `get_user`: Fetch user by ID
-  Schema: {"type":"object","properties":{"id":{"type":"integer"}}}
-- `list_orders`: List orders for user. Usage: list_orders <user_id>
+  Usage: `get_user --id <integer>`
+- `list_orders`: List orders for user
+  Usage: `list_orders --user_id <integer>`
 
 ## Tips
 
+- Pass arguments as `--key value` or `--key=value` flags
 - Pipe tool output through `jq` for JSON processing
 - Use variables to pass data between tool calls
 ```
@@ -110,7 +146,7 @@ scripted_tool/
 ```
 
 Public exports from `lib.rs` (gated by `scripted_tool` feature):
-`ToolDef`, `ToolCallback`, `ScriptedTool`, `ScriptedToolBuilder`.
+`ToolDef`, `ToolArgs`, `ToolCallback`, `ScriptedTool`, `ScriptedToolBuilder`.
 
 ## Example
 
@@ -120,9 +156,10 @@ Run: `cargo run --example scripted_tool --features scripted_tool`
 
 ## Test coverage
 
-20 unit tests covering:
+31 unit tests covering:
 - Builder configuration (name, description, defaults)
 - Introspection (help, system_prompt, schemas, schema rendering)
+- Flag parsing (`--key value`, `--key=value`, boolean flags, type coercion)
 - Single tool execution
 - Pipeline with jq
 - Multi-step orchestration (variables, command substitution)
