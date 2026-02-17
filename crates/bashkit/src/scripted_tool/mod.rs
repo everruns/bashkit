@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! ┌─────────────────────────────────────────┐
-//! │  OrchestratorTool  (implements Tool)     │
+//! │  ScriptedTool  (implements Tool)     │
 //! │                                         │
 //! │  ┌─────────┐ ┌─────────┐ ┌──────────┐  │
 //! │  │get_user │ │get_order│ │inventory │  │
@@ -23,10 +23,10 @@
 //! # Example
 //!
 //! ```rust
-//! use bashkit::{OrchestratorTool, ToolDef, Tool, ToolRequest};
+//! use bashkit::{ScriptedTool, ToolDef, Tool, ToolRequest};
 //!
 //! # tokio_test::block_on(async {
-//! let mut tool = OrchestratorTool::builder("api")
+//! let mut tool = ScriptedTool::builder("api")
 //!     .tool(
 //!         ToolDef::new("get_user", "Fetch user by id. Usage: get_user <id>"),
 //!         |args, _stdin| {
@@ -55,7 +55,7 @@ use std::sync::Arc;
 
 /// OpenAPI-style tool definition: name, description, input schema.
 ///
-/// Describes a sub-tool registered with [`OrchestratorToolBuilder`].
+/// Describes a sub-tool registered with [`ScriptedToolBuilder`].
 /// The `input_schema` is optional JSON Schema for documentation / LLM prompts.
 pub struct ToolDef {
     /// Command name used as bash builtin (e.g. `"get_user"`).
@@ -108,15 +108,15 @@ pub(crate) struct RegisteredTool {
 }
 
 // ============================================================================
-// OrchestratorToolBuilder
+// ScriptedToolBuilder
 // ============================================================================
 
-/// Builder for [`OrchestratorTool`].
+/// Builder for [`ScriptedTool`].
 ///
 /// ```rust
-/// use bashkit::{OrchestratorTool, ToolDef};
+/// use bashkit::{ScriptedTool, ToolDef};
 ///
-/// let tool = OrchestratorTool::builder("net")
+/// let tool = ScriptedTool::builder("net")
 ///     .short_description("Network tools")
 ///     .tool(
 ///         ToolDef::new("ping", "Ping a host"),
@@ -126,7 +126,7 @@ pub(crate) struct RegisteredTool {
 ///     )
 ///     .build();
 /// ```
-pub struct OrchestratorToolBuilder {
+pub struct ScriptedToolBuilder {
     name: String,
     short_desc: Option<String>,
     tools: Vec<RegisteredTool>,
@@ -134,7 +134,7 @@ pub struct OrchestratorToolBuilder {
     env_vars: Vec<(String, String)>,
 }
 
-impl OrchestratorToolBuilder {
+impl ScriptedToolBuilder {
     pub(crate) fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -176,13 +176,13 @@ impl OrchestratorToolBuilder {
         self
     }
 
-    /// Build the [`OrchestratorTool`].
-    pub fn build(self) -> OrchestratorTool {
+    /// Build the [`ScriptedTool`].
+    pub fn build(self) -> ScriptedTool {
         let short_desc = self
             .short_desc
-            .unwrap_or_else(|| format!("Orchestrator: {}", self.name));
+            .unwrap_or_else(|| format!("ScriptedTool: {}", self.name));
 
-        OrchestratorTool {
+        ScriptedTool {
             name: self.name,
             short_desc,
             tools: self.tools,
@@ -193,7 +193,7 @@ impl OrchestratorToolBuilder {
 }
 
 // ============================================================================
-// OrchestratorTool
+// ScriptedTool
 // ============================================================================
 
 /// A [`Tool`](crate::tool::Tool) that orchestrates multiple tools via bash scripts.
@@ -205,8 +205,8 @@ impl OrchestratorToolBuilder {
 /// Reusable — `execute()` can be called multiple times. Each call gets a fresh
 /// Bash interpreter with the same set of tool builtins.
 ///
-/// Create via [`OrchestratorTool::builder`].
-pub struct OrchestratorTool {
+/// Create via [`ScriptedTool::builder`].
+pub struct ScriptedTool {
     pub(crate) name: String,
     pub(crate) short_desc: String,
     pub(crate) tools: Vec<RegisteredTool>,
@@ -214,10 +214,10 @@ pub struct OrchestratorTool {
     pub(crate) env_vars: Vec<(String, String)>,
 }
 
-impl OrchestratorTool {
+impl ScriptedTool {
     /// Create a builder with the given tool name.
-    pub fn builder(name: impl Into<String>) -> OrchestratorToolBuilder {
-        OrchestratorToolBuilder::new(name)
+    pub fn builder(name: impl Into<String>) -> ScriptedToolBuilder {
+        ScriptedToolBuilder::new(name)
     }
 }
 
@@ -230,8 +230,8 @@ mod tests {
     use super::*;
     use crate::tool::{Tool, ToolRequest, VERSION};
 
-    fn build_test_tool() -> OrchestratorTool {
-        OrchestratorTool::builder("test_api")
+    fn build_test_tool() -> ScriptedTool {
+        ScriptedTool::builder("test_api")
             .short_description("Test API orchestrator")
             .tool(
                 ToolDef::new("get_user", "Fetch user by id. Usage: get_user <id>"),
@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn test_builder_default_short_description() {
-        let tool = OrchestratorTool::builder("mytools")
+        let tool = ScriptedTool::builder("mytools")
             .tool(
                 ToolDef::new("api_echo", "Echo args back as JSON"),
                 |args, _stdin| {
@@ -294,7 +294,7 @@ mod tests {
                 },
             )
             .build();
-        assert_eq!(tool.short_description(), "Orchestrator: mytools");
+        assert_eq!(tool.short_description(), "ScriptedTool: mytools");
     }
 
     #[test]
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn test_system_prompt_includes_schema() {
-        let tool = OrchestratorTool::builder("schema_test")
+        let tool = ScriptedTool::builder("schema_test")
             .tool(
                 ToolDef::new("get_user", "Fetch user by id").with_schema(serde_json::json!({
                     "type": "object",
@@ -497,7 +497,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_env() {
-        let mut tool = OrchestratorTool::builder("env_test")
+        let mut tool = ScriptedTool::builder("env_test")
             .env("API_BASE", "https://api.example.com")
             .tool(
                 ToolDef::new("api_echo", "Echo args back as JSON"),

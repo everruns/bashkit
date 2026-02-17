@@ -1,6 +1,6 @@
-//! OrchestratorTool execution: Tool impl, builtin adapter, documentation helpers.
+//! ScriptedTool execution: Tool impl, builtin adapter, documentation helpers.
 
-use super::{OrchestratorTool, ToolCallback};
+use super::{ScriptedTool, ToolCallback};
 use crate::builtins::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -30,10 +30,10 @@ impl Builtin for ToolBuiltinAdapter {
 }
 
 // ============================================================================
-// OrchestratorTool — internal helpers
+// ScriptedTool — internal helpers
 // ============================================================================
 
-impl OrchestratorTool {
+impl ScriptedTool {
     /// Create a fresh Bash instance with all tool builtins registered.
     fn create_bash(&self) -> Bash {
         let mut builder = Bash::builder();
@@ -147,7 +147,7 @@ impl OrchestratorTool {
 // ============================================================================
 
 #[async_trait]
-impl Tool for OrchestratorTool {
+impl Tool for ScriptedTool {
     fn name(&self) -> &str {
         &self.name
     }

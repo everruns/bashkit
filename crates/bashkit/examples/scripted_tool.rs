@@ -1,21 +1,21 @@
-//! Orchestrator Tool Example
+//! Scripted Tool Example
 //!
 //! Demonstrates composing multiple API-like tools (ToolDef + closures) into a
-//! single OrchestratorTool that an LLM agent can call with bash scripts.
+//! single ScriptedTool that an LLM agent can call with bash scripts.
 //!
-//! Run with: cargo run --example orchestrator --features orchestrator
+//! Run with: cargo run --example scripted_tool --features scripted_tool
 //!
 //! This example simulates an e-commerce API with tools for users, orders, and
-//! inventory. The OrchestratorTool lets an agent compose these in one call.
+//! inventory. The ScriptedTool lets an agent compose these in one call.
 
-use bashkit::{OrchestratorTool, Tool, ToolDef, ToolRequest};
+use bashkit::{ScriptedTool, Tool, ToolDef, ToolRequest};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("=== Orchestrator Tool Demo ===\n");
+    println!("=== Scripted Tool Demo ===\n");
 
     // Build the orchestrator with tool definitions + closures
-    let mut tool = OrchestratorTool::builder("ecommerce_api")
+    let mut tool = ScriptedTool::builder("ecommerce_api")
         .short_description("E-commerce API orchestrator with user, order, and inventory tools")
         .tool(
             ToolDef::new("get_user", "Fetch user by ID. Usage: get_user <id>")

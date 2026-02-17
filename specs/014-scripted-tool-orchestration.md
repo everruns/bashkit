@@ -1,16 +1,16 @@
-# Spec 014: Tool Orchestration
+# Spec 014: Scripted Tool Orchestration
 
 ## Summary
 
-Compose tool definitions (`ToolDef`) + execution callbacks into a single `OrchestratorTool` that accepts bash scripts. Each sub-tool becomes a builtin command, letting LLMs orchestrate N tools in one call using pipes, variables, loops, and conditionals.
+Compose tool definitions (`ToolDef`) + execution callbacks into a single `ScriptedTool` that accepts bash scripts. Each sub-tool becomes a builtin command, letting LLMs orchestrate N tools in one call using pipes, variables, loops, and conditionals.
 
 ## Feature flag
 
-`orchestrator` — the entire module is gated behind `#[cfg(feature = "orchestrator")]`.
+`scripted_tool` — the entire module is gated behind `#[cfg(feature = "scripted_tool")]`.
 
 ## Motivation
 
-When an LLM has access to many tools (get_user, list_orders, get_inventory, etc.), each tool call is a separate round-trip. A data-gathering task that needs 5 tools requires 5+ turns. With `OrchestratorTool`, the LLM writes a single bash script that calls all tools, pipes results through `jq`, and returns composed output — reducing latency and token cost.
+When an LLM has access to many tools (get_user, list_orders, get_inventory, etc.), each tool call is a separate round-trip. A data-gathering task that needs 5 tools requires 5+ turns. With `ScriptedTool`, the LLM writes a single bash script that calls all tools, pipes results through `jq`, and returns composed output — reducing latency and token cost.
 
 ## Design
 
@@ -42,12 +42,12 @@ pub type ToolCallback =
 - `stdin`: pipeline input from prior command.
 - Returns stdout string on success, error message on failure.
 
-### OrchestratorToolBuilder
+### ScriptedToolBuilder
 
 Two arguments per tool: definition + callback.
 
 ```rust
-OrchestratorTool::builder("api_name")
+ScriptedTool::builder("api_name")
     .short_description("...")
     .tool(
         ToolDef::new("get_user", "Fetch user by ID")
@@ -66,7 +66,7 @@ OrchestratorTool::builder("api_name")
 
 Wraps `ToolCallback` (Arc) as a `Builtin` for the interpreter. Cheap Arc clone into each Bash instance.
 
-### OrchestratorTool
+### ScriptedTool
 
 Implements the `Tool` trait. On each `execute()`:
 
@@ -101,22 +101,22 @@ Output: {stdout, stderr, exit_code}
 
 ## Module location
 
-`crates/bashkit/src/orchestrator/`
+`crates/bashkit/src/scripted_tool/`
 
 ```
-orchestrator/
-├── mod.rs       — ToolDef, ToolCallback, OrchestratorToolBuilder, OrchestratorTool struct, tests
+scripted_tool/
+├── mod.rs       — ToolDef, ToolCallback, ScriptedToolBuilder, ScriptedTool struct, tests
 └── execute.rs   — Tool impl, ToolBuiltinAdapter, documentation helpers
 ```
 
-Public exports from `lib.rs` (gated by `orchestrator` feature):
-`ToolDef`, `ToolCallback`, `OrchestratorTool`, `OrchestratorToolBuilder`.
+Public exports from `lib.rs` (gated by `scripted_tool` feature):
+`ToolDef`, `ToolCallback`, `ScriptedTool`, `ScriptedToolBuilder`.
 
 ## Example
 
-`crates/bashkit/examples/orchestrator.rs` — e-commerce API demo with get_user, list_orders, get_inventory, create_discount. Uses `ToolDef` + closures (no trait impls needed).
+`crates/bashkit/examples/scripted_tool.rs` — e-commerce API demo with get_user, list_orders, get_inventory, create_discount. Uses `ToolDef` + closures (no trait impls needed).
 
-Run: `cargo run --example orchestrator --features orchestrator`
+Run: `cargo run --example scripted_tool --features scripted_tool`
 
 ## Test coverage
 

@@ -77,9 +77,9 @@ logging = ["tracing"]
 # Phase 2 will add gix dependency for remote operations
 # Usage: cargo build --features git
 git = []
-# Enable OrchestratorTool: compose ToolDef+callback pairs into a single Tool
-# Usage: cargo build --features orchestrator
-orchestrator = []
+# Enable ScriptedTool: compose ToolDef+callback pairs into a single Tool
+# Usage: cargo build --features scripted_tool
+scripted_tool = []
 # Enable python/python3 builtins via embedded Monty interpreter
 # Monty is a git dep (not yet on crates.io) — feature unavailable from registry
 python = ["dep:monty"]
@@ -105,8 +105,8 @@ name = "git_workflow"
 required-features = ["git"]
 
 [[example]]
-name = "orchestrator"
-required-features = ["orchestrator"]
+name = "scripted_tool"
+required-features = ["scripted_tool"]
 
 [[example]]
 name = "python_scripts"

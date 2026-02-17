@@ -370,12 +370,12 @@ mod limits;
 #[cfg(feature = "logging")]
 mod logging_impl;
 mod network;
-/// Tool orchestration: compose ToolDef+callback pairs into a single Tool via bash scripts.
-/// Requires the `orchestrator` feature.
-#[cfg(feature = "orchestrator")]
-pub mod orchestrator;
 /// Parser module - exposed for fuzzing and testing
 pub mod parser;
+/// Scripted tool: compose ToolDef+callback pairs into a single Tool via bash scripts.
+/// Requires the `scripted_tool` feature.
+#[cfg(feature = "scripted_tool")]
+pub mod scripted_tool;
 /// Tool contract for LLM integration
 pub mod tool;
 
@@ -392,8 +392,8 @@ pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
 pub use tool::{BashTool, BashToolBuilder, Tool, ToolRequest, ToolResponse, ToolStatus, VERSION};
 
-#[cfg(feature = "orchestrator")]
-pub use orchestrator::{OrchestratorTool, OrchestratorToolBuilder, ToolCallback, ToolDef};
+#[cfg(feature = "scripted_tool")]
+pub use scripted_tool::{ScriptedTool, ScriptedToolBuilder, ToolCallback, ToolDef};
 
 #[cfg(feature = "http_client")]
 pub use network::HttpClient;
