@@ -15,7 +15,7 @@ allow = [
     "Unicode-3.0",            # Unicode License v3 (icu_* crates)
     "OpenSSL",                # OpenSSL License (aws-lc-sys via reqwest)
     "CDLA-Permissive-2.0",    # Community Data License Agreement (webpki-root-certs)
-    "Unicode-DFS-2016",       # Unicode Data Files and Software License (unicode_names2 via monty/ruff)
+    "Unicode-DFS-2016",       # Unicode Data Files and Software License (unicode_names2 via monty/ruff, --all-features only)
 ]
 
 # Review unclear/dual licenses
@@ -33,7 +33,7 @@ exceptions = []
 [advisories]
 # Ignore unmaintained transitive dependencies we can't control
 ignore = [
-    # atomic-polyfill: transitive via monty -> postcard -> heapless
+    # atomic-polyfill: transitive via monty -> postcard -> heapless (--all-features only)
     # No security impact; upstream (monty) needs to update
     "RUSTSEC-2023-0089",
     # instant: transitive via bashkit-bench (dev/bench only)
