@@ -40,7 +40,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | 012-eval | LLM evaluation harness, dataset format, scoring |
 | 012-maintenance | Pre-release maintenance checklist |
 | 013-python-package | Python bindings, PyPI wheels, platform matrix |
-| 014-scripted-tool-orchestration | Compose CallableTools into OrchestratorTool via bash scripts |
+| 014-scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |
 
 ### Documentation
 
