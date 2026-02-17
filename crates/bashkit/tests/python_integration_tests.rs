@@ -1428,3 +1428,174 @@ mod complex_scripts {
         assert_eq!(r.stdout, "1\n[2, 3, 4, 5]\n");
     }
 }
+
+// =============================================================================
+// 16. REGRESSION TESTS — Monty v0.0.5 / v0.0.6 fixes
+//
+// These tests exercise bug fixes introduced in Monty v0.0.5 and the
+// PrintWriter API changes in v0.0.6 to guard against regressions.
+// =============================================================================
+
+mod monty_regressions {
+    use super::*;
+
+    // -- v0.0.5: heap-allocated string comparison (pydantic/monty#159) --------
+
+    #[tokio::test]
+    async fn heap_string_equality() {
+        let mut bash = bash_python();
+        // Strings long enough to be heap-allocated (not interned)
+        let r = bash
+            .exec("python3 -c \"a = 'hello world ' * 10\nb = 'hello world ' * 10\nprint(a == b)\nprint(a != b)\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "True\nFalse\n");
+    }
+
+    #[tokio::test]
+    async fn heap_string_comparison_operators() {
+        let mut bash = bash_python();
+        let r = bash
+            .exec("python3 -c \"a = 'aaa' * 20\nb = 'bbb' * 20\nprint(a < b)\nprint(b > a)\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "True\nTrue\n");
+    }
+
+    #[tokio::test]
+    async fn heap_string_in_collection() {
+        let mut bash = bash_python();
+        // String used as dict key must compare correctly after heap allocation
+        let r = bash
+            .exec("python3 -c \"k = 'long_key_' * 5\nd = dict()\nd[k] = 42\nk2 = 'long_key_' * 5\nprint(d[k2])\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "42\n");
+    }
+
+    // -- v0.0.5: i64::MIN division overflow (pydantic/monty#147) --------------
+
+    #[tokio::test]
+    async fn floor_div_negative_boundary() {
+        let mut bash = bash_python();
+        // -9223372036854775808 // -1 would overflow i64; Monty should handle gracefully
+        let r = bash
+            .exec("python3 -c \"import sys\nprint(-7 // 2)\nprint(7 // -2)\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "-4\n-4\n");
+    }
+
+    #[tokio::test]
+    async fn modulo_negative_operands() {
+        let mut bash = bash_python();
+        let r = bash
+            .exec("python3 -c \"print(-7 % 3)\nprint(7 % -3)\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        // Python semantics: result has sign of divisor
+        assert_eq!(r.stdout, "2\n-2\n");
+    }
+
+    #[tokio::test]
+    async fn divmod_builtin() {
+        let mut bash = bash_python();
+        let r = bash
+            .exec("python3 -c \"print(divmod(17, 5))\nprint(divmod(-17, 5))\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "(3, 2)\n(-4, 3)\n");
+    }
+
+    // -- v0.0.5: exponentiation safety (pydantic/monty#158) -------------------
+
+    #[tokio::test]
+    async fn large_exponentiation_within_limits() {
+        let mut bash = bash_python();
+        let r = bash.exec("python3 -c \"print(2 ** 30)\"").await.unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "1073741824\n");
+    }
+
+    #[tokio::test]
+    async fn large_exponentiation_completes() {
+        let mut bash = bash_python();
+        // Moderately large power should complete without hanging (safety multiplier)
+        let r = bash
+            .exec("python3 -c \"x = 2 ** 10000\nprint(len(str(x)))\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "3011");
+    }
+
+    // -- v0.0.6: PrintWriter scoping across multiple VFS OsCalls --------------
+
+    #[tokio::test]
+    async fn print_interleaved_with_vfs_ops() {
+        let mut bash = bash_python();
+        // Print, then VFS write, then print, then VFS read, then print.
+        // Verifies PrintWriter::Collect output is preserved across OsCall suspend/resume.
+        let r = bash
+            .exec("python3 -c \"from pathlib import Path\nprint('before-write')\nPath('/tmp/inter.txt').write_text('data')\nprint('after-write')\ncontent = Path('/tmp/inter.txt').read_text()\nprint(f'read: {content}')\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "before-write\nafter-write\nread: data\n");
+    }
+
+    #[tokio::test]
+    async fn output_preserved_on_vfs_error() {
+        let mut bash = bash_python();
+        // Print output before a VFS operation that raises should be preserved
+        let r = bash
+            .exec("python3 -c \"from pathlib import Path\nprint('line1')\nprint('line2')\nPath('/nonexistent/dir/file.txt').read_text()\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 1);
+        assert_eq!(r.stdout, "line1\nline2\n");
+        assert!(r.stderr.contains("FileNotFoundError"));
+    }
+
+    #[tokio::test]
+    async fn many_vfs_ops_in_single_script() {
+        let mut bash = bash_python();
+        // Stress the scoped-printer pattern with many suspend/resume cycles.
+        let r = bash
+            .exec(concat!(
+                "python3 -c \"from pathlib import Path\n",
+                "Path('/tmp/vfs_stress').mkdir(parents=True, exist_ok=True)\n",
+                "for i in range(5):\n",
+                "    Path(f'/tmp/vfs_stress/{i}.txt').write_text(f'file {i}')\n",
+                "results = []\n",
+                "for i in range(5):\n",
+                "    results.append(Path(f'/tmp/vfs_stress/{i}.txt').read_text())\n",
+                "print(results)\"",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(
+            r.stdout,
+            "['file 0', 'file 1', 'file 2', 'file 3', 'file 4']\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn print_output_not_lost_across_mkdir() {
+        let mut bash = bash_python();
+        // mkdir triggers OsCall; print before and after must both appear
+        let r = bash
+            .exec("python3 -c \"from pathlib import Path\nprint('A')\nPath('/tmp/mk_test').mkdir()\nprint('B')\nprint(Path('/tmp/mk_test').is_dir())\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "A\nB\nTrue\n");
+    }
+}
