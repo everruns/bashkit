@@ -130,4 +130,7 @@ Squash and Merge. Use PR template if exists.
 
 **NEVER add links to Claude sessions in PR body.**
 
+- Prefer small, shippable PRs. Split large changes into independent, reviewable units.
+- When asked to create separate PRs, follow that instruction—do not bundle unrelated changes.
+
 See `CONTRIBUTING.md` for details.
