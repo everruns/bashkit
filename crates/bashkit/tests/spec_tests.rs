@@ -43,11 +43,11 @@
 //! ### fileops.test.sh (5 skipped) - filesystem visibility
 //! - [ ] mkdir_*, touch_*, mv_file - test conditionals not seeing fs changes
 //!
-//! ### wc.test.sh (5 skipped)
-//! - [ ] wc_chars_m_flag, wc_bytes_vs_chars - wc -m outputs full stats
-//! - [ ] wc_max_line_length - -L max line length not implemented
-//! - [ ] wc_long_bytes - wc --bytes outputs full stats
-//! - [ ] wc_unicode_chars - unicode character counting not implemented
+//! ### wc.test.sh (0 skipped)
+//! - [x] wc_chars_m_flag, wc_bytes_vs_chars - wc -m implemented
+//! - [x] wc_max_line_length - wc -L implemented
+//! - [x] wc_long_bytes - wc --bytes implemented
+//! - [x] wc_unicode_chars - unicode character counting implemented
 //!
 //! ### sleep.test.sh (3 skipped)
 //! - [ ] sleep_stderr_* - stderr redirect not implemented

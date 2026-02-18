@@ -1,4 +1,4 @@
-//! Word count builtin - count lines, words, and bytes
+//! Word count builtin - count lines, words, bytes, and characters
 
 use async_trait::async_trait;
 
@@ -8,44 +8,101 @@ use crate::interpreter::ExecResult;
 
 /// The wc builtin - print newline, word, and byte counts.
 ///
-/// Usage: wc [-lwc] [FILE...]
+/// Usage: wc [-lwcmL] [FILE...]
 ///
 /// Options:
-///   -l   Print the newline count
-///   -w   Print the word count
-///   -c   Print the byte count
+///   -l, --lines   Print the newline count
+///   -w, --words   Print the word count
+///   -c, --bytes   Print the byte count
+///   -m, --chars   Print the character count
+///   -L, --max-line-length  Print the maximum line length
 ///
-/// With no options, prints all three counts.
+/// With no options, prints lines, words, and bytes.
 pub struct Wc;
+
+/// Parsed wc flags
+struct WcFlags {
+    lines: bool,
+    words: bool,
+    bytes: bool,
+    chars: bool,
+    max_line_length: bool,
+}
+
+impl WcFlags {
+    fn parse(args: &[String]) -> Self {
+        let mut lines = false;
+        let mut words = false;
+        let mut bytes = false;
+        let mut chars = false;
+        let mut max_line_length = false;
+
+        for arg in args {
+            if !arg.starts_with('-') {
+                continue;
+            }
+            match arg.as_str() {
+                "--lines" => lines = true,
+                "--words" => words = true,
+                "--bytes" => bytes = true,
+                "--chars" => chars = true,
+                "--max-line-length" => max_line_length = true,
+                _ if arg.starts_with('-') && !arg.starts_with("--") => {
+                    for ch in arg[1..].chars() {
+                        match ch {
+                            'l' => lines = true,
+                            'w' => words = true,
+                            'c' => bytes = true,
+                            'm' => chars = true,
+                            'L' => max_line_length = true,
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Default: show lines, words, bytes if no flags
+        if !lines && !words && !bytes && !chars && !max_line_length {
+            lines = true;
+            words = true;
+            bytes = true;
+        }
+
+        Self {
+            lines,
+            words,
+            bytes,
+            chars,
+            max_line_length,
+        }
+    }
+}
 
 #[async_trait]
 impl Builtin for Wc {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let show_lines = ctx.args.iter().any(|a| a.contains('l'));
-        let show_words = ctx.args.iter().any(|a| a.contains('w'));
-        let show_bytes = ctx.args.iter().any(|a| a.contains('c'));
+        let flags = WcFlags::parse(ctx.args);
 
-        // If no flags specified, show all
-        let (show_lines, show_words, show_bytes) = if !show_lines && !show_words && !show_bytes {
-            (true, true, true)
-        } else {
-            (show_lines, show_words, show_bytes)
-        };
-
-        let files: Vec<_> = ctx.args.iter().filter(|a| !a.starts_with('-')).collect();
+        let files: Vec<_> = ctx
+            .args
+            .iter()
+            .filter(|a| !a.starts_with('-') || a.as_str() == "-")
+            .collect();
 
         let mut output = String::new();
         let mut total_lines = 0usize;
         let mut total_words = 0usize;
         let mut total_bytes = 0usize;
+        let mut total_chars = 0usize;
+        let mut total_max_line = 0usize;
 
         if files.is_empty() {
             // Read from stdin
             if let Some(stdin) = ctx.stdin {
-                let (lines, words, bytes) = count_text(stdin);
-                output.push_str(&format_counts(
-                    lines, words, bytes, show_lines, show_words, show_bytes, None,
-                ));
+                let counts = count_text(stdin);
+                output.push_str(&format_counts(&counts, &flags, None));
                 output.push('\n');
             }
         } else {
@@ -60,21 +117,17 @@ impl Builtin for Wc {
                 match ctx.fs.read_file(&path).await {
                     Ok(content) => {
                         let text = String::from_utf8_lossy(&content);
-                        let (lines, words, bytes) = count_text(&text);
+                        let counts = count_text(&text);
 
-                        total_lines += lines;
-                        total_words += words;
-                        total_bytes += bytes;
+                        total_lines += counts.lines;
+                        total_words += counts.words;
+                        total_bytes += counts.bytes;
+                        total_chars += counts.chars;
+                        if counts.max_line_length > total_max_line {
+                            total_max_line = counts.max_line_length;
+                        }
 
-                        output.push_str(&format_counts(
-                            lines,
-                            words,
-                            bytes,
-                            show_lines,
-                            show_words,
-                            show_bytes,
-                            Some(file),
-                        ));
+                        output.push_str(&format_counts(&counts, &flags, Some(file)));
                         output.push('\n');
                     }
                     Err(e) => {
@@ -85,15 +138,14 @@ impl Builtin for Wc {
 
             // Print total if multiple files
             if files.len() > 1 {
-                output.push_str(&format_counts(
-                    total_lines,
-                    total_words,
-                    total_bytes,
-                    show_lines,
-                    show_words,
-                    show_bytes,
-                    Some(&"total".to_string()),
-                ));
+                let totals = TextCounts {
+                    lines: total_lines,
+                    words: total_words,
+                    bytes: total_bytes,
+                    chars: total_chars,
+                    max_line_length: total_max_line,
+                };
+                output.push_str(&format_counts(&totals, &flags, Some(&"total".to_string())));
                 output.push('\n');
             }
         }
@@ -102,34 +154,48 @@ impl Builtin for Wc {
     }
 }
 
-/// Count lines, words, and bytes in text
-fn count_text(text: &str) -> (usize, usize, usize) {
-    let lines = text.lines().count();
-    let words = text.split_whitespace().count();
-    let bytes = text.len();
-    (lines, words, bytes)
-}
-
-/// Format counts for output
-fn format_counts(
+struct TextCounts {
     lines: usize,
     words: usize,
     bytes: usize,
-    show_lines: bool,
-    show_words: bool,
-    show_bytes: bool,
-    filename: Option<&String>,
-) -> String {
+    chars: usize,
+    max_line_length: usize,
+}
+
+/// Count lines, words, bytes, characters, and max line length in text
+fn count_text(text: &str) -> TextCounts {
+    let lines = text.lines().count();
+    let words = text.split_whitespace().count();
+    let bytes = text.len();
+    let chars = text.chars().count();
+    let max_line_length = text.lines().map(|l| l.chars().count()).max().unwrap_or(0);
+    TextCounts {
+        lines,
+        words,
+        bytes,
+        chars,
+        max_line_length,
+    }
+}
+
+/// Format counts for output
+fn format_counts(counts: &TextCounts, flags: &WcFlags, filename: Option<&String>) -> String {
     let mut parts = Vec::new();
 
-    if show_lines {
-        parts.push(format!("{:>8}", lines));
+    if flags.lines {
+        parts.push(format!("{:>8}", counts.lines));
     }
-    if show_words {
-        parts.push(format!("{:>8}", words));
+    if flags.words {
+        parts.push(format!("{:>8}", counts.words));
     }
-    if show_bytes {
-        parts.push(format!("{:>8}", bytes));
+    if flags.bytes {
+        parts.push(format!("{:>8}", counts.bytes));
+    }
+    if flags.chars {
+        parts.push(format!("{:>8}", counts.chars));
+    }
+    if flags.max_line_length {
+        parts.push(format!("{:>8}", counts.max_line_length));
     }
 
     let mut result = parts.join("");
@@ -208,5 +274,42 @@ mod tests {
         let result = run_wc(&[], Some("")).await;
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("0"));
+    }
+
+    #[tokio::test]
+    async fn test_wc_chars() {
+        let result = run_wc(&["-m"], Some("hello")).await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.trim().contains("5"));
+    }
+
+    #[tokio::test]
+    async fn test_wc_chars_unicode() {
+        // héllo: 5 chars but 6 bytes (é is 2 bytes in UTF-8)
+        let result = run_wc(&["-m"], Some("héllo")).await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.trim().contains("5"));
+    }
+
+    #[tokio::test]
+    async fn test_wc_max_line_length() {
+        let result = run_wc(&["-L"], Some("short\nlongerline\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.trim().contains("10"));
+    }
+
+    #[tokio::test]
+    async fn test_wc_long_flags() {
+        let result = run_wc(&["--bytes"], Some("hello")).await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.trim().contains("5"));
+
+        let result = run_wc(&["--lines"], Some("a\nb\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.trim().contains("2"));
+
+        let result = run_wc(&["--words"], Some("one two three")).await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.trim().contains("3"));
     }
 }
