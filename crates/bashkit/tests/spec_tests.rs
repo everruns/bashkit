@@ -81,8 +81,8 @@
 //! ### herestring.test.sh (0 skipped)
 //! - [x] herestring_empty - test rewritten to verify newline behavior
 //!
-//! ### arithmetic.test.sh (1 skipped)
-//! - [ ] arith_assign - assignment inside $(()) not implemented
+//! ### arithmetic.test.sh (0 skipped)
+//! - [x] arith_assign - assignment inside $(()) implemented
 //!
 //! ### control-flow.test.sh (enabled)
 //! - [x] Control flow tests enabled (31 tests passing)

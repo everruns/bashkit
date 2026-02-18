@@ -2516,8 +2516,9 @@ impl Interpreter {
                     result.push_str(trimmed);
                 }
                 WordPart::ArithmeticExpansion(expr) => {
-                    // Evaluate arithmetic expression
-                    let value = self.evaluate_arithmetic(expr);
+                    // Handle assignment: VAR = expr (must be checked before
+                    // variable expansion so the LHS name is preserved)
+                    let value = self.evaluate_arithmetic_with_assign(expr);
                     result.push_str(&value.to_string());
                 }
                 WordPart::Length(name) => {
@@ -2994,6 +2995,43 @@ impl Interpreter {
     /// THREAT[TM-DOS-025]: Prevents stack overflow via deeply nested arithmetic like
     /// $(((((((...)))))))
     const MAX_ARITHMETIC_DEPTH: usize = 200;
+
+    /// Evaluate arithmetic with assignment support (e.g. `X = X + 1`).
+    /// Assignment must be handled before variable expansion so the LHS
+    /// variable name is preserved.
+    fn evaluate_arithmetic_with_assign(&mut self, expr: &str) -> i64 {
+        let expr = expr.trim();
+
+        // Check for assignment: VAR = expr (but not == comparison)
+        // Pattern: identifier followed by = (not ==)
+        if let Some(eq_pos) = expr.find('=') {
+            // Make sure it's not == or !=
+            let before = &expr[..eq_pos];
+            let after_char = expr.as_bytes().get(eq_pos + 1);
+            if !before.ends_with('!')
+                && !before.ends_with('<')
+                && !before.ends_with('>')
+                && after_char != Some(&b'=')
+            {
+                let var_name = before.trim();
+                // Verify LHS is a valid variable name
+                if !var_name.is_empty()
+                    && var_name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && !var_name.chars().next().unwrap_or('0').is_ascii_digit()
+                {
+                    let rhs = &expr[eq_pos + 1..];
+                    let value = self.evaluate_arithmetic(rhs);
+                    self.variables
+                        .insert(var_name.to_string(), value.to_string());
+                    return value;
+                }
+            }
+        }
+
+        self.evaluate_arithmetic(expr)
+    }
 
     /// Evaluate a simple arithmetic expression
     fn evaluate_arithmetic(&self, expr: &str) -> i64 {
