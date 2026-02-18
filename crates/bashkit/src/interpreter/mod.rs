@@ -2127,6 +2127,48 @@ impl Interpreter {
             return self.apply_redirections(result, &command.redirects).await;
         }
 
+        // Check if command is a path to an executable script in the VFS
+        if name.contains('/') {
+            let path = self.resolve_path(name);
+            if let Ok(content) = self.fs.read_file(&path).await {
+                // Check execute permission
+                if let Ok(meta) = self.fs.stat(&path).await {
+                    if meta.mode & 0o111 != 0 {
+                        let script_text = String::from_utf8_lossy(&content).to_string();
+                        // Strip shebang line if present
+                        let script_text = if script_text.starts_with("#!") {
+                            script_text
+                                .find('\n')
+                                .map(|pos| &script_text[pos + 1..])
+                                .unwrap_or("")
+                                .to_string()
+                        } else {
+                            script_text
+                        };
+                        let parser = Parser::with_limits(
+                            &script_text,
+                            self.limits.max_ast_depth,
+                            self.limits.max_parser_operations,
+                        );
+                        match parser.parse() {
+                            Ok(script) => {
+                                let result = self.execute(&script).await?;
+                                return self.apply_redirections(result, &command.redirects).await;
+                            }
+                            Err(e) => {
+                                return Ok(ExecResult::err(format!("bash: {}: {}\n", name, e), 2));
+                            }
+                        }
+                    } else {
+                        return Ok(ExecResult::err(
+                            format!("bash: {}: Permission denied\n", name),
+                            126,
+                        ));
+                    }
+                }
+            }
+        }
+
         // Command not found - return error like bash does (exit code 127)
         Ok(ExecResult::err(
             format!("bash: {}: command not found", name),
