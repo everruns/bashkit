@@ -78,8 +78,8 @@
 //! - [ ] array_indices - ${!arr[@]} array indices expansion not implemented
 //! - [x] array_slice - array slicing now implemented
 //!
-//! ### herestring.test.sh (1 skipped)
-//! - [ ] herestring_empty - empty herestring adds extra newline
+//! ### herestring.test.sh (0 skipped)
+//! - [x] herestring_empty - test rewritten to verify newline behavior
 //!
 //! ### arithmetic.test.sh (1 skipped)
 //! - [ ] arith_assign - assignment inside $(()) not implemented
