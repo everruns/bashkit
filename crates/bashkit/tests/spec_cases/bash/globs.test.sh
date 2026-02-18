@@ -46,3 +46,20 @@ echo file.{txt,log}
 ### expect
 file.txt file.log
 ### end
+
+### glob_in_for_loop
+### bash_diff: Bashkit VFS has files, real bash CI filesystem does not - glob expands differently
+# Glob expansion in for-loop word list
+echo a > /g1.txt; echo b > /g2.txt
+for f in /g*.txt; do echo $f; done
+### expect
+/g1.txt
+/g2.txt
+### end
+
+### glob_in_for_no_match
+# Glob with no matches in for-loop keeps literal pattern
+for f in /nonexistent_dir/*.xyz; do echo $f; done
+### expect
+/nonexistent_dir/*.xyz
+### end
