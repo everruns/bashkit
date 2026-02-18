@@ -28,9 +28,10 @@
 //! - [ ] tr_truncate_set2 - tr truncation behavior differs
 //! - [ ] cut_only_delimited, cut_zero_terminated - not implemented
 //!
-//! ### sortuniq.test.sh (14 skipped) - sort/uniq flags
-//! - [ ] sort -f, -t, -k, -s, -c, -m, -h, -M, -o, -z - not implemented
-//! - [ ] uniq -d, -u, -i, -f - not implemented
+//! ### sortuniq.test.sh (13 skipped) - sort/uniq flags
+//! - [x] sort -f - case insensitive sort implemented
+//! - [ ] sort -t, -k, -s, -c, -m, -h, -M, -o, -z - not implemented
+//! - [ ] uniq -i, -f - not implemented (note: -d, -u already work)
 //!
 //! ### echo.test.sh (4 skipped)
 //! - [x] echo_combined_en, echo_combined_ne - combined flag handling fixed

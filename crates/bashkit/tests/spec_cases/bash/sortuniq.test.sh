@@ -112,7 +112,6 @@ printf '1\n10\n2\n5\n' | sort -rn
 ### end
 
 ### sort_case_insensitive
-### skip: sort -f (case insensitive) not implemented
 printf 'Banana\napple\nCherry\n' | sort -f
 ### expect
 apple
