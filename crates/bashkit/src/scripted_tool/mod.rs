@@ -660,7 +660,8 @@ mod tests {
             })
             .await;
         assert_eq!(resp.exit_code, 0);
-        let parsed: serde_json::Value = serde_json::from_str(resp.stdout.trim()).expect("stdout should be valid JSON");
+        let parsed: serde_json::Value =
+            serde_json::from_str(resp.stdout.trim()).expect("stdout should be valid JSON");
         assert_eq!(parsed["name"], "Alice");
         assert_eq!(parsed["count"], "3"); // string, not int — no schema
     }
