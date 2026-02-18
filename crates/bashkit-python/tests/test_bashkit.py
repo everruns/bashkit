@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from bashkit import BashTool, create_langchain_tool_spec
+from bashkit import BashTool, ScriptedTool, create_langchain_tool_spec
 
-# -- Construction -----------------------------------------------------------
+# -- BashTool: Construction -------------------------------------------------
 
 
 def test_default_construction():
@@ -21,7 +21,7 @@ def test_custom_construction():
     assert repr(tool) == 'BashTool(username="alice", hostname="box")'
 
 
-# -- Sync execution ---------------------------------------------------------
+# -- BashTool: Sync execution -----------------------------------------------
 
 
 def test_echo():
@@ -71,7 +71,7 @@ def test_file_persistence():
     assert r.stdout.strip() == "content"
 
 
-# -- Async execution --------------------------------------------------------
+# -- BashTool: Async execution ----------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -121,7 +121,7 @@ def test_exec_result_str_failure():
     assert "Error" in str(r)
 
 
-# -- Reset ------------------------------------------------------------------
+# -- BashTool: Reset --------------------------------------------------------
 
 
 def test_reset():
@@ -132,7 +132,7 @@ def test_reset():
     assert r.stdout.strip() == "empty"
 
 
-# -- LLM metadata ----------------------------------------------------------
+# -- BashTool: LLM metadata ------------------------------------------------
 
 
 def test_description():
@@ -179,3 +179,309 @@ def test_langchain_tool_spec():
     assert "description" in spec
     assert "args_schema" in spec
     assert spec["name"] == "bashkit"
+
+
+# ===========================================================================
+# ScriptedTool tests
+# ===========================================================================
+
+
+def _make_echo_tool():
+    """Helper: ScriptedTool with one 'greet' command."""
+    tool = ScriptedTool("test_api", short_description="Test API")
+    tool.add_tool(
+        "greet",
+        "Greet a user",
+        callback=lambda params, stdin=None: f"hello {params.get('name', 'world')}\n",
+        schema={"type": "object", "properties": {"name": {"type": "string"}}},
+    )
+    return tool
+
+
+# -- ScriptedTool: Construction ---------------------------------------------
+
+
+def test_scripted_tool_construction():
+    tool = ScriptedTool("my_api")
+    assert tool.name == "my_api"
+    assert tool.tool_count() == 0
+    assert "ScriptedTool" in tool.short_description
+
+
+def test_scripted_tool_custom_description():
+    tool = ScriptedTool("api", short_description="My custom API")
+    assert tool.short_description == "My custom API"
+
+
+def test_scripted_tool_repr():
+    tool = _make_echo_tool()
+    assert "test_api" in repr(tool)
+    assert "1" in repr(tool)  # tool count
+
+
+# -- ScriptedTool: add_tool -------------------------------------------------
+
+
+def test_add_tool_increments_count():
+    tool = ScriptedTool("api")
+    assert tool.tool_count() == 0
+    tool.add_tool("cmd1", "Command 1", callback=lambda p, s=None: "ok\n")
+    assert tool.tool_count() == 1
+    tool.add_tool("cmd2", "Command 2", callback=lambda p, s=None: "ok\n")
+    assert tool.tool_count() == 2
+
+
+def test_add_tool_with_schema():
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "get_user",
+        "Fetch user",
+        callback=lambda p, s=None: json.dumps({"id": p.get("id", 0)}) + "\n",
+        schema={"type": "object", "properties": {"id": {"type": "integer"}}},
+    )
+    assert tool.tool_count() == 1
+
+
+def test_add_tool_no_schema():
+    tool = ScriptedTool("api")
+    tool.add_tool("noop", "No-op", callback=lambda p, s=None: "ok\n")
+    assert tool.tool_count() == 1
+
+
+# -- ScriptedTool: execute_sync --------------------------------------------
+
+
+def test_scripted_tool_single_call():
+    tool = _make_echo_tool()
+    r = tool.execute_sync("greet --name Alice")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "hello Alice"
+
+
+def test_scripted_tool_pipeline_with_jq():
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "get_user",
+        "Fetch user",
+        callback=lambda p, s=None: '{"id": 1, "name": "Alice"}\n',
+    )
+    r = tool.execute_sync("get_user | jq -r '.name'")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "Alice"
+
+
+def test_scripted_tool_multi_step():
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "get_user",
+        "Fetch user",
+        callback=lambda p, s=None: f'{{"id": {p.get("id", 0)}, "name": "Bob"}}\n',
+        schema={"type": "object", "properties": {"id": {"type": "integer"}}},
+    )
+    tool.add_tool(
+        "get_orders",
+        "Fetch orders",
+        callback=lambda p, s=None: '[{"total": 10}, {"total": 20}]\n',
+        schema={"type": "object", "properties": {"user_id": {"type": "integer"}}},
+    )
+    r = tool.execute_sync("""
+        user=$(get_user --id 1)
+        name=$(echo "$user" | jq -r '.name')
+        total=$(get_orders --user_id 1 | jq '[.[].total] | add')
+        echo "$name: $total"
+    """)
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "Bob: 30"
+
+
+def test_scripted_tool_callback_error():
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "fail_cmd",
+        "Always fails",
+        callback=lambda p, s=None: (_ for _ in ()).throw(ValueError("service down")),
+    )
+    r = tool.execute_sync("fail_cmd")
+    assert r.exit_code != 0
+    assert "service down" in r.stderr
+
+
+def test_scripted_tool_error_fallback():
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "fail_cmd",
+        "Always fails",
+        callback=lambda p, s=None: (_ for _ in ()).throw(ValueError("boom")),
+    )
+    r = tool.execute_sync("fail_cmd || echo fallback")
+    assert r.exit_code == 0
+    assert "fallback" in r.stdout
+
+
+def test_scripted_tool_stdin_pipe():
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "upper",
+        "Uppercase stdin",
+        callback=lambda p, stdin=None: (stdin or "").upper(),
+    )
+    r = tool.execute_sync("echo hello | upper")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "HELLO"
+
+
+def test_scripted_tool_env_var():
+    tool = ScriptedTool("api")
+    tool.env("API_URL", "https://example.com")
+    tool.add_tool("noop", "No-op", callback=lambda p, s=None: "ok\n")
+    r = tool.execute_sync("echo $API_URL")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "https://example.com"
+
+
+def test_scripted_tool_loop():
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "get_user",
+        "Fetch user",
+        callback=lambda p, s=None: f'{{"name": "user{p.get("id", 0)}"}}\n',
+        schema={"type": "object", "properties": {"id": {"type": "integer"}}},
+    )
+    r = tool.execute_sync("""
+        for uid in 1 2 3; do
+            get_user --id $uid | jq -r '.name'
+        done
+    """)
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "user1\nuser2\nuser3"
+
+
+def test_scripted_tool_conditional():
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "check",
+        "Check status",
+        callback=lambda p, s=None: '{"ok": true}\n',
+    )
+    r = tool.execute_sync("""
+        status=$(check | jq -r '.ok')
+        if [ "$status" = "true" ]; then
+            echo "healthy"
+        else
+            echo "unhealthy"
+        fi
+    """)
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "healthy"
+
+
+def test_scripted_tool_multiple_execute():
+    """Multiple execute calls on the same tool work (stateless between calls)."""
+    tool = _make_echo_tool()
+    r1 = tool.execute_sync("greet --name Alice")
+    assert r1.stdout.strip() == "hello Alice"
+    r2 = tool.execute_sync("greet --name Bob")
+    assert r2.stdout.strip() == "hello Bob"
+
+
+def test_scripted_tool_empty_script():
+    tool = _make_echo_tool()
+    r = tool.execute_sync("")
+    assert r.exit_code == 0
+    assert r.stdout == ""
+
+
+def test_scripted_tool_boolean_flag():
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "search",
+        "Search",
+        callback=lambda p, s=None: f"verbose={p.get('verbose', False)}\n",
+        schema={"type": "object", "properties": {"verbose": {"type": "boolean"}}},
+    )
+    r = tool.execute_sync("search --verbose")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "verbose=True"
+
+
+def test_scripted_tool_integer_coercion():
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "get",
+        "Get by ID",
+        callback=lambda p, s=None: f"id={p.get('id')} type={type(p.get('id')).__name__}\n",
+        schema={"type": "object", "properties": {"id": {"type": "integer"}}},
+    )
+    r = tool.execute_sync("get --id 42")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "id=42 type=int"
+
+
+# -- ScriptedTool: Async execution -----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scripted_tool_async_execute():
+    tool = _make_echo_tool()
+    r = await tool.execute("greet --name Async")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "hello Async"
+
+
+# -- ScriptedTool: Introspection -------------------------------------------
+
+
+def test_scripted_tool_system_prompt():
+    tool = _make_echo_tool()
+    sp = tool.system_prompt()
+    assert "# test_api" in sp
+    assert "greet" in sp
+    assert "--name" in sp
+
+
+def test_scripted_tool_description():
+    tool = _make_echo_tool()
+    desc = tool.description()
+    assert "greet" in desc
+
+
+def test_scripted_tool_help():
+    tool = _make_echo_tool()
+    h = tool.help()
+    assert "TOOL COMMANDS" in h
+    assert "greet" in h
+
+
+def test_scripted_tool_schemas():
+    tool = _make_echo_tool()
+    inp = json.loads(tool.input_schema())
+    assert "properties" in inp
+    out = json.loads(tool.output_schema())
+    assert "properties" in out
+
+
+def test_scripted_tool_version():
+    tool = _make_echo_tool()
+    assert isinstance(tool.version, str)
+    assert len(tool.version) > 0
+
+
+# -- ScriptedTool: Many tools (12) -----------------------------------------
+
+
+def test_scripted_tool_dozen_tools():
+    """Register 12 tools and execute a multi-tool script."""
+    tool = ScriptedTool("big_api", short_description="API with 12 commands")
+    for i in range(12):
+        name = f"cmd{i}"
+        tool.add_tool(
+            name,
+            f"Command {i}",
+            callback=lambda p, s=None, idx=i: f"result-{idx}\n",
+        )
+    assert tool.tool_count() == 12
+    # Call all 12
+    r = tool.execute_sync("; ".join(f"cmd{i}" for i in range(12)))
+    assert r.exit_code == 0
+    lines = r.stdout.strip().splitlines()
+    assert lines == [f"result-{i}" for i in range(12)]

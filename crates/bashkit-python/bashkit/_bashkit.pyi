@@ -1,5 +1,7 @@
 """Type stubs for bashkit_py native module."""
 
+from typing import Any, Callable
+
 class ExecResult:
     """Result from executing bash commands."""
 
@@ -9,7 +11,7 @@ class ExecResult:
     error: str | None
     success: bool
 
-    def to_dict(self) -> dict[str, any]: ...
+    def to_dict(self) -> dict[str, Any]: ...
 
 class BashTool:
     """Sandboxed bash interpreter for AI agents.
@@ -35,62 +37,60 @@ class BashTool:
         hostname: str | None = None,
         max_commands: int | None = None,
         max_loop_iterations: int | None = None,
-    ) -> None:
-        """Create a new BashTool instance.
+    ) -> None: ...
+    async def execute(self, commands: str) -> ExecResult: ...
+    def execute_sync(self, commands: str) -> ExecResult: ...
+    def description(self) -> str: ...
+    def help(self) -> str: ...
+    def system_prompt(self) -> str: ...
+    def input_schema(self) -> str: ...
+    def output_schema(self) -> str: ...
 
-        Args:
-            username: Custom username for sandbox (default: "user")
-            hostname: Custom hostname for sandbox (default: "sandbox")
-            max_commands: Maximum commands to execute (default: 10000)
-            max_loop_iterations: Maximum loop iterations (default: 100000)
-        """
-        ...
+class ScriptedTool:
+    """Compose Python callbacks as bash builtins for multi-tool orchestration.
 
-    async def execute(self, commands: str) -> ExecResult:
-        """Execute bash commands asynchronously.
+    Each registered tool becomes a bash builtin command. An LLM (or user)
+    writes a single bash script that pipes, loops, and branches across tools.
 
-        Args:
-            commands: Bash commands to execute (like `bash -c "commands"`)
+    Example:
+        >>> tool = ScriptedTool("api")
+        >>> tool.add_tool("greet", "Greet user",
+        ...     callback=lambda p, s=None: f"hello {p.get('name', 'world')}\\n",
+        ...     schema={"type": "object", "properties": {"name": {"type": "string"}}})
+        >>> result = tool.execute_sync("greet --name Alice")
+        >>> print(result.stdout.strip())
+        hello Alice
+    """
 
-        Returns:
-            ExecResult with stdout, stderr, exit_code
-        """
-        ...
+    name: str
+    short_description: str
+    version: str
 
-    def execute_sync(self, commands: str) -> ExecResult:
-        """Execute bash commands synchronously (blocking).
+    def __init__(
+        self,
+        name: str,
+        short_description: str | None = None,
+        max_commands: int | None = None,
+        max_loop_iterations: int | None = None,
+    ) -> None: ...
+    def add_tool(
+        self,
+        name: str,
+        description: str,
+        callback: Callable[[dict[str, Any], str | None], str],
+        schema: dict[str, Any] | None = None,
+    ) -> None: ...
+    def env(self, key: str, value: str) -> None: ...
+    async def execute(self, commands: str) -> ExecResult: ...
+    def execute_sync(self, commands: str) -> ExecResult: ...
+    def tool_count(self) -> int: ...
+    def description(self) -> str: ...
+    def help(self) -> str: ...
+    def system_prompt(self) -> str: ...
+    def input_schema(self) -> str: ...
+    def output_schema(self) -> str: ...
 
-        Note: Prefer `execute()` for async contexts. This method blocks.
-
-        Args:
-            commands: Bash commands to execute
-
-        Returns:
-            ExecResult with stdout, stderr, exit_code
-        """
-        ...
-
-    def description(self) -> str:
-        """Get the full description."""
-        ...
-
-    def help(self) -> str:
-        """Get LLM documentation."""
-        ...
-
-    def system_prompt(self) -> str:
-        """Get system prompt for LLMs."""
-        ...
-
-    def input_schema(self) -> str:
-        """Get JSON schema for input validation."""
-        ...
-
-    def output_schema(self) -> str:
-        """Get JSON schema for output."""
-        ...
-
-def create_langchain_tool_spec() -> dict[str, any]:
+def create_langchain_tool_spec() -> dict[str, Any]:
     """Create a LangChain-compatible tool specification.
 
     Returns:
