@@ -426,7 +426,9 @@ mod tests {
         let schema = serde_json::json!({});
         let result = parse_flags(&["42".into()], &schema);
         assert!(result.is_err());
-        assert!(result.expect_err("should reject positional").contains("expected --flag"));
+        assert!(result
+            .expect_err("should reject positional")
+            .contains("expected --flag"));
     }
 
     #[test]
