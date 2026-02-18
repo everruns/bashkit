@@ -19,6 +19,8 @@ crates/bashkit-python/
 │   ├── langchain.py         # LangChain integration
 │   ├── deepagents.py        # Deep Agents integration
 │   └── pydantic_ai.py       # PydanticAI integration
+└── tests/
+    └── test_bashkit.py      # Pytest suite for bindings
 ```
 
 ## Build System
@@ -151,6 +153,33 @@ pip install bashkit[pydantic-ai]   # + pydantic-ai
 pip install bashkit[dev]           # + pytest, pytest-asyncio
 ```
 
+## CI
+
+File: `.github/workflows/python.yml`
+
+Runs on push to main and PRs (path-filtered to `crates/bashkit-python/`, `crates/bashkit/`,
+`Cargo.toml`, `Cargo.lock`).
+
+```
+PR / push to main
+    ├── lint          (ruff check + ruff format --check)
+    ├── test          (maturin develop + pytest, Python 3.9/3.12/3.13)
+    ├── build-wheel   (maturin build + twine check)
+    └── python-check  (gate job for branch protection)
+```
+
+## Linting
+
+- **Linter/formatter**: [ruff](https://docs.astral.sh/ruff/) (config in `pyproject.toml`)
+- **Rules**: E (pycodestyle), F (pyflakes), W (warnings), I (isort), UP (pyupgrade)
+- **Target**: Python 3.9, line-length 120
+
+```bash
+ruff check crates/bashkit-python        # lint
+ruff format --check crates/bashkit-python  # format check
+ruff format crates/bashkit-python        # auto-format
+```
+
 ## Local Development
 
 ```bash
@@ -158,7 +187,10 @@ cd crates/bashkit-python
 pip install maturin
 maturin develop          # debug build, installs into current venv
 maturin develop --release  # optimized build
-pytest                   # run tests (needs dev extras)
+pip install pytest pytest-asyncio
+pytest tests/ -v         # run tests
+ruff check .             # lint
+ruff format .            # format
 ```
 
 ## Design Decisions

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from bashkit import BashTool as NativeBashTool
 
@@ -25,14 +25,14 @@ if TYPE_CHECKING:
 # Check for deepagents availability
 try:
     from deepagents.backends.protocol import (
-        SandboxBackendProtocol,
-        ExecuteResponse,
-        FileInfo,
-        GrepMatch,
         EditResult,
-        WriteResult,
+        ExecuteResponse,
         FileDownloadResponse,
+        FileInfo,
         FileUploadResponse,
+        GrepMatch,
+        SandboxBackendProtocol,
+        WriteResult,
     )
     from langchain.agents.middleware.types import AgentMiddleware
     from langchain_core.tools import tool as langchain_tool
@@ -84,11 +84,11 @@ if DEEPAGENTS_AVAILABLE:
 
         def __init__(
             self,
-            bash_tool: Optional[NativeBashTool] = None,
-            username: Optional[str] = None,
-            hostname: Optional[str] = None,
-            max_commands: Optional[int] = None,
-            max_loop_iterations: Optional[int] = None,
+            bash_tool: NativeBashTool | None = None,
+            username: str | None = None,
+            hostname: str | None = None,
+            max_commands: int | None = None,
+            max_loop_iterations: int | None = None,
         ):
             """Initialize middleware.
 
@@ -128,7 +128,6 @@ if DEEPAGENTS_AVAILABLE:
             if self._owns_bash:
                 self._bash.reset()
 
-
     class BashkitBackend(SandboxBackendProtocol):
         """Backend implementing SandboxBackendProtocol with Bashkit VFS.
 
@@ -147,10 +146,10 @@ if DEEPAGENTS_AVAILABLE:
 
         def __init__(
             self,
-            username: Optional[str] = None,
-            hostname: Optional[str] = None,
-            max_commands: Optional[int] = None,
-            max_loop_iterations: Optional[int] = None,
+            username: str | None = None,
+            hostname: str | None = None,
+            max_commands: int | None = None,
+            max_loop_iterations: int | None = None,
         ):
             self._bash = NativeBashTool(
                 username=username,
@@ -189,7 +188,7 @@ if DEEPAGENTS_AVAILABLE:
             if result.exit_code != 0:
                 return f"Error: {result.stderr or 'File not found'}"
             lines = result.stdout.splitlines()
-            selected = lines[offset:offset + limit]
+            selected = lines[offset : offset + limit]
             return "\n".join(f"{i:6d}\t{line}" for i, line in enumerate(selected, start=offset + 1))
 
         async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> str:
@@ -213,11 +212,16 @@ if DEEPAGENTS_AVAILABLE:
                 return EditResult(error="old_string not found")
             if count > 1 and not replace_all:
                 return EditResult(error=f"Found {count} times. Use replace_all=True")
-            new_content = content.replace(old_string, new_string) if replace_all else content.replace(old_string, new_string, 1)
+            if replace_all:
+                new_content = content.replace(old_string, new_string)
+            else:
+                new_content = content.replace(old_string, new_string, 1)
             wr = self.write(file_path, new_content)
             return EditResult(error=wr.error, path=file_path)
 
-        async def aedit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
+        async def aedit(
+            self, file_path: str, old_string: str, new_string: str, replace_all: bool = False
+        ) -> EditResult:
             return self.edit(file_path, old_string, new_string, replace_all)
 
         # === File Discovery ===
@@ -234,12 +238,16 @@ if DEEPAGENTS_AVAILABLE:
                 name = " ".join(parts[8:])
                 if name in (".", ".."):
                     continue
-                files.append(FileInfo(
-                    path=f"{path.rstrip('/')}/{name}", name=name,
-                    is_dir=parts[0].startswith("d"),
-                    size=int(parts[4]) if parts[4].isdigit() else 0,
-                    created_at=_now_iso(), modified_at=_now_iso(),
-                ))
+                files.append(
+                    FileInfo(
+                        path=f"{path.rstrip('/')}/{name}",
+                        name=name,
+                        is_dir=parts[0].startswith("d"),
+                        size=int(parts[4]) if parts[4].isdigit() else 0,
+                        created_at=_now_iso(),
+                        modified_at=_now_iso(),
+                    )
+                )
             return files
 
         async def als_info(self, path: str) -> list[FileInfo]:
@@ -251,8 +259,16 @@ if DEEPAGENTS_AVAILABLE:
             if result.exit_code != 0:
                 return []
             return [
-                FileInfo(path=p.strip(), name=p.strip().split("/")[-1], is_dir=False, size=0, created_at=_now_iso(), modified_at=_now_iso())
-                for p in result.stdout.splitlines() if p.strip()
+                FileInfo(
+                    path=p.strip(),
+                    name=p.strip().split("/")[-1],
+                    is_dir=False,
+                    size=0,
+                    created_at=_now_iso(),
+                    modified_at=_now_iso(),
+                )
+                for p in result.stdout.splitlines()
+                if p.strip()
             ]
 
         async def aglob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
@@ -273,7 +289,9 @@ if DEEPAGENTS_AVAILABLE:
                         continue
             return matches
 
-        async def agrep_raw(self, pattern: str, path: str | None = None, glob: str | None = None) -> list[GrepMatch] | str:
+        async def agrep_raw(
+            self, pattern: str, path: str | None = None, glob: str | None = None
+        ) -> list[GrepMatch] | str:
             return self.grep_raw(pattern, path, glob)
 
         # === File Transfer ===
@@ -285,7 +303,9 @@ if DEEPAGENTS_AVAILABLE:
                 if result.exit_code == 0:
                     responses.append(FileDownloadResponse(path=p, content=result.stdout.encode(), error=None))
                 else:
-                    responses.append(FileDownloadResponse(path=p, content=None, error=result.stderr or "File not found"))
+                    responses.append(
+                        FileDownloadResponse(path=p, content=None, error=result.stderr or "File not found")
+                    )
             return responses
 
         async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
@@ -316,14 +336,14 @@ if DEEPAGENTS_AVAILABLE:
             self._bash.reset()
 
 
-def create_bash_middleware(**kwargs) -> "BashkitMiddleware":
+def create_bash_middleware(**kwargs) -> BashkitMiddleware:
     """Create BashkitMiddleware for Deep Agents."""
     if not DEEPAGENTS_AVAILABLE:
         raise ImportError("deepagents required. Install: pip install 'bashkit[deepagents]'")
     return BashkitMiddleware(**kwargs)
 
 
-def create_bashkit_backend(**kwargs) -> "BashkitBackend":
+def create_bashkit_backend(**kwargs) -> BashkitBackend:
     """Create BashkitBackend for Deep Agents."""
     if not DEEPAGENTS_AVAILABLE:
         raise ImportError("deepagents required. Install: pip install 'bashkit[deepagents]'")

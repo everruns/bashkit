@@ -37,5 +37,15 @@ features = ["pyo3/extension-module"]
 python-source = "."
 module-name = "bashkit._bashkit"
 
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["bashkit"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

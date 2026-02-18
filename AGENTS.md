@@ -85,6 +85,14 @@ just pre-pr       # Pre-PR checks
 - `cargo fmt` and `cargo clippy -- -D warnings`
 - License checks: `cargo deny check` (see `deny.toml`)
 
+### Python
+
+- Python bindings in `crates/bashkit-python/`
+- Linter/formatter: `ruff` (config in `pyproject.toml`)
+- `ruff check crates/bashkit-python` and `ruff format --check crates/bashkit-python`
+- Tests: `pytest crates/bashkit-python/tests/ -v` (requires `maturin develop` first)
+- CI: `.github/workflows/python.yml` (lint, test on 3.9/3.12/3.13, build wheel)
+
 ### Pre-PR Checklist
 
 1. `just pre-pr` (runs 2-4 automatically)
@@ -100,6 +108,7 @@ just pre-pr       # Pre-PR checks
 11. Resolve all PR comments
 12. `cargo bench --bench parallel_execution` if touching Arc/async/Interpreter/builtins (see `specs/007-parallel-execution.md`)
 13. `just bench` if changes might impact performance (interpreter, builtins, tools)
+14. `ruff check crates/bashkit-python && ruff format --check crates/bashkit-python` if touching Python code
 
 ### CI
 
