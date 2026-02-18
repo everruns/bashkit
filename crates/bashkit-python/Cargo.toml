@@ -17,7 +17,7 @@ doc = false  # Python extension, no Rust docs needed
 
 [dependencies]
 # Bashkit core
-bashkit = { path = "../bashkit" }
+bashkit = { path = "../bashkit", features = ["scripted_tool"] }
 
 # PyO3 for Python bindings
 pyo3 = { workspace = true }
