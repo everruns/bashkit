@@ -1,0 +1,418 @@
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-20250514",
+  "timestamp": "2026-02-17T23:03:12Z",
+  "max_turns": 10,
+  "results": [
+    {
+      "task": {
+        "id": "smoke_echo",
+        "category": "basic",
+        "description": "Simple echo test",
+        "system": null,
+        "prompt": "Print 'hello world' to stdout.",
+        "files": {},
+        "expectations": [
+          {
+            "check": "stdout_contains:hello world",
+            "weight": 1.0
+          },
+          {
+            "check": "exit_code:0",
+            "weight": 1.0
+          }
+        ]
+      },
+      "trace": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Print 'hello world' to stdout."
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "I'll use the bash tool to print \"hello world\" to stdout using the echo command."
+              },
+              {
+                "type": "tool_use",
+                "id": "toolu_01AN61F4fXW2cxTVYmNn8aoe",
+                "name": "bash",
+                "input": {
+                  "commands": "echo 'hello world'"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "toolu_01AN61F4fXW2cxTVYmNn8aoe",
+                "content": "hello world\n",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "The command successfully printed \"hello world\" to stdout."
+              }
+            ]
+          }
+        ],
+        "tool_calls": [
+          {
+            "commands": "echo 'hello world'",
+            "stdout": "hello world\n",
+            "stderr": "",
+            "exit_code": 0
+          }
+        ],
+        "tool_call_count": 1,
+        "turns": 2,
+        "last_tool_response": {
+          "commands": "echo 'hello world'",
+          "stdout": "hello world\n",
+          "stderr": "",
+          "exit_code": 0
+        },
+        "natural_stop": true,
+        "total_input_tokens": 1181,
+        "total_output_tokens": 90,
+        "duration_ms": 3143
+      },
+      "score": {
+        "task_id": "smoke_echo",
+        "results": [
+          {
+            "check": "stdout_contains:hello world",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "exit_code:0",
+            "passed": true,
+            "detail": "expected 0, got 0",
+            "weight": 1.0
+          }
+        ],
+        "score": 2.0,
+        "max_score": 2.0
+      }
+    },
+    {
+      "task": {
+        "id": "smoke_file_create",
+        "category": "basic",
+        "description": "Create a file and verify",
+        "system": null,
+        "prompt": "Create a file /tmp/greeting.txt with the content 'hi there' and then read it back.",
+        "files": {},
+        "expectations": [
+          {
+            "check": "file_exists:/tmp/greeting.txt",
+            "weight": 1.0
+          },
+          {
+            "check": "file_contains:/tmp/greeting.txt:hi there",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:hi there",
+            "weight": 1.0
+          },
+          {
+            "check": "exit_code:0",
+            "weight": 1.0
+          }
+        ]
+      },
+      "trace": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Create a file /tmp/greeting.txt with the content 'hi there' and then read it back."
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "I'll create the file with the specified content and then read it back for you."
+              },
+              {
+                "type": "tool_use",
+                "id": "toolu_0126BhLcszUUcmQMpYfV5iq3",
+                "name": "bash",
+                "input": {
+                  "commands": "echo 'hi there' > /tmp/greeting.txt && cat /tmp/greeting.txt"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "toolu_0126BhLcszUUcmQMpYfV5iq3",
+                "content": "hi there\n",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Perfect! I've successfully:\n1. Created the file `/tmp/greeting.txt` with the content 'hi there'\n2. Read the file back using `cat`, which shows the content is exactly as expected: 'hi there'"
+              }
+            ]
+          }
+        ],
+        "tool_calls": [
+          {
+            "commands": "echo 'hi there' > /tmp/greeting.txt && cat /tmp/greeting.txt",
+            "stdout": "hi there\n",
+            "stderr": "",
+            "exit_code": 0
+          }
+        ],
+        "tool_call_count": 1,
+        "turns": 2,
+        "last_tool_response": {
+          "commands": "echo 'hi there' > /tmp/greeting.txt && cat /tmp/greeting.txt",
+          "stdout": "hi there\n",
+          "stderr": "",
+          "exit_code": 0
+        },
+        "natural_stop": true,
+        "total_input_tokens": 1222,
+        "total_output_tokens": 144,
+        "duration_ms": 4006
+      },
+      "score": {
+        "task_id": "smoke_file_create",
+        "results": [
+          {
+            "check": "file_exists:/tmp/greeting.txt",
+            "passed": true,
+            "detail": "exists",
+            "weight": 1.0
+          },
+          {
+            "check": "file_contains:/tmp/greeting.txt:hi there",
+            "passed": true,
+            "detail": "found in file",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:hi there",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "exit_code:0",
+            "passed": true,
+            "detail": "expected 0, got 0",
+            "weight": 1.0
+          }
+        ],
+        "score": 4.0,
+        "max_score": 4.0
+      }
+    },
+    {
+      "task": {
+        "id": "smoke_grep",
+        "category": "basic",
+        "description": "Grep a pre-populated file",
+        "system": null,
+        "prompt": "Find all lines containing 'error' (case insensitive) in /var/log/test.log and count them.",
+        "files": {
+          "/var/log/test.log": "INFO: started\nERROR: failed\nWARN: slow\nerror: bad input\nINFO: done\n"
+        },
+        "expectations": [
+          {
+            "check": "stdout_contains:2",
+            "weight": 1.0
+          },
+          {
+            "check": "exit_code:0",
+            "weight": 1.0
+          }
+        ]
+      },
+      "trace": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Find all lines containing 'error' (case insensitive) in /var/log/test.log and count them."
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "I'll help you find all lines containing 'error' (case insensitive) in /var/log/test.log and count them."
+              },
+              {
+                "type": "tool_use",
+                "id": "toolu_01ETWPuDxhBPcpmMwKkCkPXP",
+                "name": "bash",
+                "input": {
+                  "commands": "grep -i 'error' /var/log/test.log | wc -l"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "toolu_01ETWPuDxhBPcpmMwKkCkPXP",
+                "content": "       2\n",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "The file `/var/log/test.log` contains **2 lines** with the word 'error' (case insensitive).\n\nIf you'd also like to see the actual lines that contain 'error', I can show you those as well:"
+              },
+              {
+                "type": "tool_use",
+                "id": "toolu_01SYgjVTCn7aeUajbHNKjj9n",
+                "name": "bash",
+                "input": {
+                  "commands": "grep -i 'error' /var/log/test.log"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "toolu_01SYgjVTCn7aeUajbHNKjj9n",
+                "content": "ERROR: failed\nerror: bad input\n",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "So there are 2 lines containing 'error':\n1. \"ERROR: failed\"\n2. \"error: bad input\""
+              }
+            ]
+          }
+        ],
+        "tool_calls": [
+          {
+            "commands": "grep -i 'error' /var/log/test.log | wc -l",
+            "stdout": "       2\n",
+            "stderr": "",
+            "exit_code": 0
+          },
+          {
+            "commands": "grep -i 'error' /var/log/test.log",
+            "stdout": "ERROR: failed\nerror: bad input\n",
+            "stderr": "",
+            "exit_code": 0
+          }
+        ],
+        "tool_call_count": 2,
+        "turns": 3,
+        "last_tool_response": {
+          "commands": "grep -i 'error' /var/log/test.log",
+          "stdout": "ERROR: failed\nerror: bad input\n",
+          "stderr": "",
+          "exit_code": 0
+        },
+        "natural_stop": true,
+        "total_input_tokens": 2065,
+        "total_output_tokens": 255,
+        "duration_ms": 6416
+      },
+      "score": {
+        "task_id": "smoke_grep",
+        "results": [
+          {
+            "check": "stdout_contains:2",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "exit_code:0",
+            "passed": true,
+            "detail": "expected 0, got 0",
+            "weight": 1.0
+          }
+        ],
+        "score": 2.0,
+        "max_score": 2.0
+      }
+    }
+  ],
+  "summary": {
+    "total_tasks": 3,
+    "total_passed": 3,
+    "total_score": 8.0,
+    "total_max_score": 8.0,
+    "overall_rate": 1.0,
+    "total_input_tokens": 4468,
+    "total_output_tokens": 489,
+    "total_turns": 7,
+    "total_tool_calls": 4,
+    "tool_calls_ok": 4,
+    "tool_calls_error": 0,
+    "tool_call_success_rate": 1.0,
+    "total_duration_ms": 13565,
+    "avg_turns_per_task": 2.3333333333333335,
+    "avg_tool_calls_per_task": 1.3333333333333333,
+    "avg_duration_ms": 4521.666666666667,
+    "by_category": {
+      "basic": {
+        "tasks": 3,
+        "passed": 3,
+        "score": 8.0,
+        "max_score": 8.0,
+        "rate": 1.0
+      }
+    }
+  }
+}
