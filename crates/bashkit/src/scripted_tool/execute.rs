@@ -375,7 +375,7 @@ mod tests {
             }
         });
         let args = vec!["--id".into(), "42".into(), "--name".into(), "Alice".into()];
-        let result = parse_flags(&args, &schema).unwrap();
+        let result = parse_flags(&args, &schema).expect("parse_flags should succeed");
         assert_eq!(result["id"], 42);
         assert_eq!(result["name"], "Alice");
     }
@@ -387,7 +387,7 @@ mod tests {
             "properties": { "id": {"type": "integer"} }
         });
         let args = vec!["--id=99".into()];
-        let result = parse_flags(&args, &schema).unwrap();
+        let result = parse_flags(&args, &schema).expect("parse_flags should succeed");
         assert_eq!(result["id"], 99);
     }
 
@@ -401,7 +401,7 @@ mod tests {
             }
         });
         let args = vec!["--verbose".into(), "--query".into(), "hello".into()];
-        let result = parse_flags(&args, &schema).unwrap();
+        let result = parse_flags(&args, &schema).expect("parse_flags should succeed");
         assert_eq!(result["verbose"], true);
         assert_eq!(result["query"], "hello");
     }
@@ -410,14 +410,14 @@ mod tests {
     fn test_parse_flags_no_schema() {
         let schema = serde_json::json!({});
         let args = vec!["--name".into(), "Bob".into()];
-        let result = parse_flags(&args, &schema).unwrap();
+        let result = parse_flags(&args, &schema).expect("parse_flags should succeed");
         assert_eq!(result["name"], "Bob");
     }
 
     #[test]
     fn test_parse_flags_empty() {
         let schema = serde_json::json!({});
-        let result = parse_flags(&[], &schema).unwrap();
+        let result = parse_flags(&[], &schema).expect("parse_flags should succeed");
         assert_eq!(result, serde_json::json!({}));
     }
 
@@ -426,7 +426,7 @@ mod tests {
         let schema = serde_json::json!({});
         let result = parse_flags(&["42".into()], &schema);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("expected --flag"));
+        assert!(result.expect_err("should reject positional").contains("expected --flag"));
     }
 
     #[test]
@@ -438,7 +438,7 @@ mod tests {
                 "name": {"type": "string"}
             }
         });
-        let usage = usage_from_schema(&schema).unwrap();
+        let usage = usage_from_schema(&schema).expect("should produce usage string");
         assert!(usage.contains("--id <integer>"));
         assert!(usage.contains("--name <string>"));
     }
