@@ -372,6 +372,10 @@ mod logging_impl;
 mod network;
 /// Parser module - exposed for fuzzing and testing
 pub mod parser;
+/// Scripted tool: compose ToolDef+callback pairs into a single Tool via bash scripts.
+/// Requires the `scripted_tool` feature.
+#[cfg(feature = "scripted_tool")]
+pub mod scripted_tool;
 /// Tool contract for LLM integration
 pub mod tool;
 
@@ -387,6 +391,9 @@ pub use interpreter::{ControlFlow, ExecResult};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
 pub use tool::{BashTool, BashToolBuilder, Tool, ToolRequest, ToolResponse, ToolStatus, VERSION};
+
+#[cfg(feature = "scripted_tool")]
+pub use scripted_tool::{ScriptedTool, ScriptedToolBuilder, ToolArgs, ToolCallback, ToolDef};
 
 #[cfg(feature = "http_client")]
 pub use network::HttpClient;
