@@ -387,7 +387,7 @@ pub use fs::{
     FsLimits, FsUsage, InMemoryFs, Metadata, MountableFs, OverlayFs, PosixFs,
 };
 pub use git::GitConfig;
-pub use interpreter::{ControlFlow, ExecResult};
+pub use interpreter::{ControlFlow, ExecResult, OutputCallback};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
 pub use tool::{BashTool, BashToolBuilder, Tool, ToolRequest, ToolResponse, ToolStatus, VERSION};
@@ -589,6 +589,47 @@ impl Bash {
             }
         }
 
+        result
+    }
+
+    /// Execute a bash script with streaming output.
+    ///
+    /// Like [`exec`](Self::exec), but calls `output_callback` with incremental
+    /// `(stdout_chunk, stderr_chunk)` pairs as output is produced. Callbacks fire
+    /// after each loop iteration, command list element, and top-level command.
+    ///
+    /// The full result is still returned in [`ExecResult`] for callers that need it.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::Bash;
+    /// use std::sync::{Arc, Mutex};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let chunks: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    /// let chunks_cb = chunks.clone();
+    /// let mut bash = Bash::new();
+    /// let result = bash.exec_streaming(
+    ///     "for i in 1 2 3; do echo $i; done",
+    ///     Box::new(move |stdout, _stderr| {
+    ///         chunks_cb.lock().unwrap().push(stdout.to_string());
+    ///     }),
+    /// ).await?;
+    /// assert_eq!(result.stdout, "1\n2\n3\n");
+    /// assert_eq!(*chunks.lock().unwrap(), vec!["1\n", "2\n", "3\n"]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn exec_streaming(
+        &mut self,
+        script: &str,
+        output_callback: OutputCallback,
+    ) -> Result<ExecResult> {
+        self.interpreter.set_output_callback(output_callback);
+        let result = self.exec(script).await;
+        self.interpreter.clear_output_callback();
         result
     }
 
@@ -1244,6 +1285,7 @@ pub mod logging_guide {}
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_echo_hello() {
@@ -4058,5 +4100,253 @@ echo missing fi"#,
             "stdout: {}",
             result.stdout
         );
+    }
+
+    // ---- Streaming output tests ----
+
+    #[tokio::test]
+    async fn test_exec_streaming_for_loop() {
+        let chunks = Arc::new(Mutex::new(Vec::new()));
+        let chunks_cb = chunks.clone();
+        let mut bash = Bash::new();
+
+        let result = bash
+            .exec_streaming(
+                "for i in 1 2 3; do echo $i; done",
+                Box::new(move |stdout, _stderr| {
+                    chunks_cb.lock().unwrap().push(stdout.to_string());
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.stdout, "1\n2\n3\n");
+        assert_eq!(
+            *chunks.lock().unwrap(),
+            vec!["1\n", "2\n", "3\n"],
+            "each loop iteration should stream separately"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_exec_streaming_while_loop() {
+        let chunks = Arc::new(Mutex::new(Vec::new()));
+        let chunks_cb = chunks.clone();
+        let mut bash = Bash::new();
+
+        let result = bash
+            .exec_streaming(
+                "i=0; while [ $i -lt 3 ]; do i=$((i+1)); echo $i; done",
+                Box::new(move |stdout, _stderr| {
+                    chunks_cb.lock().unwrap().push(stdout.to_string());
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.stdout, "1\n2\n3\n");
+        let chunks = chunks.lock().unwrap();
+        // The while loop emits each iteration; surrounding list may add events too
+        assert!(
+            chunks.contains(&"1\n".to_string()),
+            "should contain first iteration output"
+        );
+        assert!(
+            chunks.contains(&"2\n".to_string()),
+            "should contain second iteration output"
+        );
+        assert!(
+            chunks.contains(&"3\n".to_string()),
+            "should contain third iteration output"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_exec_streaming_no_callback_still_works() {
+        // exec (non-streaming) should still work fine
+        let mut bash = Bash::new();
+        let result = bash.exec("for i in a b c; do echo $i; done").await.unwrap();
+        assert_eq!(result.stdout, "a\nb\nc\n");
+    }
+
+    #[tokio::test]
+    async fn test_exec_streaming_nested_loops_no_duplicates() {
+        let chunks = Arc::new(Mutex::new(Vec::new()));
+        let chunks_cb = chunks.clone();
+        let mut bash = Bash::new();
+
+        let result = bash
+            .exec_streaming(
+                "for i in 1 2; do for j in a b; do echo \"$i$j\"; done; done",
+                Box::new(move |stdout, _stderr| {
+                    chunks_cb.lock().unwrap().push(stdout.to_string());
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.stdout, "1a\n1b\n2a\n2b\n");
+        let chunks = chunks.lock().unwrap();
+        // Inner loop should emit each iteration; outer should not duplicate
+        let total_chars: usize = chunks.iter().map(|c| c.len()).sum();
+        assert_eq!(
+            total_chars,
+            result.stdout.len(),
+            "total streamed bytes should match final output: chunks={:?}",
+            *chunks
+        );
+    }
+
+    #[tokio::test]
+    async fn test_exec_streaming_mixed_list_and_loop() {
+        let chunks = Arc::new(Mutex::new(Vec::new()));
+        let chunks_cb = chunks.clone();
+        let mut bash = Bash::new();
+
+        let result = bash
+            .exec_streaming(
+                "echo start; for i in 1 2; do echo $i; done; echo end",
+                Box::new(move |stdout, _stderr| {
+                    chunks_cb.lock().unwrap().push(stdout.to_string());
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.stdout, "start\n1\n2\nend\n");
+        let chunks = chunks.lock().unwrap();
+        assert_eq!(
+            *chunks,
+            vec!["start\n", "1\n", "2\n", "end\n"],
+            "mixed list+loop should produce exactly 4 events"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_exec_streaming_stderr() {
+        let stderr_chunks = Arc::new(Mutex::new(Vec::new()));
+        let stderr_cb = stderr_chunks.clone();
+        let mut bash = Bash::new();
+
+        let result = bash
+            .exec_streaming(
+                "echo ok; echo err >&2; echo ok2",
+                Box::new(move |_stdout, stderr| {
+                    if !stderr.is_empty() {
+                        stderr_cb.lock().unwrap().push(stderr.to_string());
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.stdout, "ok\nok2\n");
+        assert_eq!(result.stderr, "err\n");
+        let stderr_chunks = stderr_chunks.lock().unwrap();
+        assert!(
+            stderr_chunks.contains(&"err\n".to_string()),
+            "stderr should be streamed: {:?}",
+            *stderr_chunks
+        );
+    }
+
+    // ---- Streamed vs non-streamed equivalence tests ----
+    //
+    // These run the same script through exec() and exec_streaming() and assert
+    // that the final ExecResult is identical, plus concatenated chunks == stdout.
+
+    /// Helper: run script both ways, assert equivalence.
+    async fn assert_streaming_equivalence(script: &str) {
+        // Non-streaming
+        let mut bash_plain = Bash::new();
+        let plain = bash_plain.exec(script).await.unwrap();
+
+        // Streaming
+        let stdout_chunks: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let stderr_chunks: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let so = stdout_chunks.clone();
+        let se = stderr_chunks.clone();
+        let mut bash_stream = Bash::new();
+        let streamed = bash_stream
+            .exec_streaming(
+                script,
+                Box::new(move |stdout, stderr| {
+                    if !stdout.is_empty() {
+                        so.lock().unwrap().push(stdout.to_string());
+                    }
+                    if !stderr.is_empty() {
+                        se.lock().unwrap().push(stderr.to_string());
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Final results must match
+        assert_eq!(
+            plain.stdout, streamed.stdout,
+            "stdout mismatch for: {script}"
+        );
+        assert_eq!(
+            plain.stderr, streamed.stderr,
+            "stderr mismatch for: {script}"
+        );
+        assert_eq!(
+            plain.exit_code, streamed.exit_code,
+            "exit_code mismatch for: {script}"
+        );
+
+        // Concatenated chunks must equal full stdout/stderr
+        let reassembled_stdout: String = stdout_chunks.lock().unwrap().iter().cloned().collect();
+        assert_eq!(
+            reassembled_stdout, streamed.stdout,
+            "reassembled stdout chunks != final stdout for: {script}"
+        );
+        let reassembled_stderr: String = stderr_chunks.lock().unwrap().iter().cloned().collect();
+        assert_eq!(
+            reassembled_stderr, streamed.stderr,
+            "reassembled stderr chunks != final stderr for: {script}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_for_loop() {
+        assert_streaming_equivalence("for i in 1 2 3; do echo $i; done").await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_while_loop() {
+        assert_streaming_equivalence("i=0; while [ $i -lt 4 ]; do i=$((i+1)); echo $i; done").await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_nested_loops() {
+        assert_streaming_equivalence("for i in a b; do for j in 1 2; do echo \"$i$j\"; done; done")
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_mixed_list() {
+        assert_streaming_equivalence("echo start; for i in x y; do echo $i; done; echo end").await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_stderr() {
+        assert_streaming_equivalence("echo out; echo err >&2; echo out2").await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_pipeline() {
+        assert_streaming_equivalence("echo -e 'a\\nb\\nc' | grep b").await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_conditionals() {
+        assert_streaming_equivalence("if true; then echo yes; else echo no; fi; echo done").await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_subshell() {
+        assert_streaming_equivalence("x=$(echo hello); echo $x").await;
     }
 }
