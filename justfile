@@ -32,6 +32,11 @@ check:
     cargo clippy --all-targets -- -D warnings
     cargo test
 
+# Lint and format-check Python bindings
+python-lint:
+    ruff check crates/bashkit-python
+    ruff format --check crates/bashkit-python
+
 # Run all pre-PR checks
 pre-pr: check vet
     @echo "Pre-PR checks passed"
