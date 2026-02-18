@@ -1,0 +1,2202 @@
+{
+  "provider": "openai",
+  "model": "gpt-5.2",
+  "timestamp": "2026-02-18T03:46:50Z",
+  "max_turns": 10,
+  "baseline": false,
+  "results": [
+    {
+      "task": {
+        "id": "mt-ecommerce",
+        "category": "many_tools",
+        "description": "E-commerce API: look up user, last order, product details, shipping status, and summarize",
+        "system": null,
+        "prompt": "Using the available tools, look up user with ID 42, find their most recent order, get the product details for the item in that order, and check the shipping status. Then print a summary that includes the user's name, order ID, product name, product price, and shipping status.",
+        "tools": [
+          {
+            "name": "get_user",
+            "description": "Fetch user profile by ID",
+            "schema": {
+              "properties": {
+                "user_id": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "user_id",
+              "responses": {
+                "42": "{\"user_id\":42,\"name\":\"Jane Doe\",\"email\":\"jane@example.com\",\"tier\":\"gold\",\"created_at\":\"2023-01-15\"}"
+              },
+              "default": "{\"error\":\"user not found\"}"
+            }
+          },
+          {
+            "name": "list_orders",
+            "description": "List orders for a user, returns most recent first",
+            "schema": {
+              "properties": {
+                "limit": {
+                  "type": "integer"
+                },
+                "user_id": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "user_id",
+              "responses": {
+                "42": "[{\"order_id\":\"ORD-1001\",\"user_id\":42,\"product_id\":\"PROD-555\",\"quantity\":2,\"total\":\"79.98\",\"status\":\"shipped\",\"created_at\":\"2025-12-01\"},{\"order_id\":\"ORD-0987\",\"user_id\":42,\"product_id\":\"PROD-300\",\"quantity\":1,\"total\":\"24.99\",\"status\":\"delivered\",\"created_at\":\"2025-11-10\"}]"
+              },
+              "default": "[]"
+            }
+          },
+          {
+            "name": "get_order",
+            "description": "Get order details by order ID",
+            "schema": {
+              "properties": {
+                "order_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "order_id",
+              "responses": {
+                "ORD-1001": "{\"order_id\":\"ORD-1001\",\"user_id\":42,\"product_id\":\"PROD-555\",\"quantity\":2,\"unit_price\":\"39.99\",\"total\":\"79.98\",\"status\":\"shipped\",\"shipping_address\":\"123 Main St, Springfield\",\"created_at\":\"2025-12-01\"}"
+              },
+              "default": "{\"error\":\"order not found\"}"
+            }
+          },
+          {
+            "name": "get_product",
+            "description": "Fetch product details by product ID",
+            "schema": {
+              "properties": {
+                "product_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "product_id",
+              "responses": {
+                "PROD-300": "{\"product_id\":\"PROD-300\",\"name\":\"USB-C Cable\",\"price\":24.99,\"category\":\"Accessories\",\"in_stock\":true,\"rating\":4.2}",
+                "PROD-555": "{\"product_id\":\"PROD-555\",\"name\":\"Wireless Headphones\",\"price\":39.99,\"category\":\"Electronics\",\"in_stock\":true,\"rating\":4.5}"
+              },
+              "default": "{\"error\":\"product not found\"}"
+            }
+          },
+          {
+            "name": "get_shipping_status",
+            "description": "Get shipping tracking info for an order",
+            "schema": {
+              "properties": {
+                "order_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "order_id",
+              "responses": {
+                "ORD-1001": "{\"order_id\":\"ORD-1001\",\"carrier\":\"FedEx\",\"tracking_number\":\"FX123456789\",\"status\":\"In Transit\",\"estimated_delivery\":\"2025-12-05\",\"last_location\":\"Memphis, TN\"}"
+              },
+              "default": "{\"error\":\"no shipping info\"}"
+            }
+          },
+          {
+            "name": "list_products",
+            "description": "List all products with optional category filter",
+            "schema": {
+              "properties": {
+                "category": {
+                  "type": "string"
+                },
+                "page": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "[{\"product_id\":\"PROD-555\",\"name\":\"Wireless Headphones\",\"price\":39.99},{\"product_id\":\"PROD-300\",\"name\":\"USB-C Cable\",\"price\":24.99},{\"product_id\":\"PROD-100\",\"name\":\"Phone Case\",\"price\":12.99}]"
+          },
+          {
+            "name": "search_products",
+            "description": "Search products by keyword",
+            "schema": {
+              "properties": {
+                "limit": {
+                  "type": "integer"
+                },
+                "query": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "[{\"product_id\":\"PROD-555\",\"name\":\"Wireless Headphones\",\"price\":39.99}]"
+          },
+          {
+            "name": "get_inventory",
+            "description": "Check inventory levels for a product",
+            "schema": {
+              "properties": {
+                "product_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "product_id",
+              "responses": {
+                "PROD-555": "{\"product_id\":\"PROD-555\",\"warehouse\":\"US-East\",\"quantity\":342,\"reserved\":18}",
+                "PROD-300": "{\"product_id\":\"PROD-300\",\"warehouse\":\"US-East\",\"quantity\":1205,\"reserved\":45}"
+              },
+              "default": "{\"product_id\":\"unknown\",\"quantity\":0}"
+            }
+          },
+          {
+            "name": "get_reviews",
+            "description": "Get product reviews",
+            "schema": {
+              "properties": {
+                "limit": {
+                  "type": "integer"
+                },
+                "product_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "[{\"review_id\":\"R1\",\"rating\":5,\"text\":\"Great sound quality\"},{\"review_id\":\"R2\",\"rating\":4,\"text\":\"Good value\"}]"
+          },
+          {
+            "name": "create_return",
+            "description": "Initiate a product return",
+            "schema": {
+              "properties": {
+                "order_id": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"return_id\":\"RET-100\",\"status\":\"pending\",\"label_url\":\"https://example.com/label\"}"
+          },
+          {
+            "name": "apply_coupon",
+            "description": "Apply a coupon code to an order",
+            "schema": {
+              "properties": {
+                "coupon_code": {
+                  "type": "string"
+                },
+                "order_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"error\":\"coupon cannot be applied to shipped orders\"}"
+          },
+          {
+            "name": "get_payment",
+            "description": "Get payment details for an order",
+            "schema": {
+              "properties": {
+                "order_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "order_id",
+              "responses": {
+                "ORD-1001": "{\"payment_id\":\"PAY-200\",\"method\":\"credit_card\",\"last4\":\"4242\",\"amount\":79.98,\"status\":\"captured\"}"
+              },
+              "default": "{\"error\":\"payment not found\"}"
+            }
+          },
+          {
+            "name": "list_addresses",
+            "description": "List saved addresses for a user",
+            "schema": {
+              "properties": {
+                "user_id": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "[{\"address_id\":\"ADDR-1\",\"line1\":\"123 Main St\",\"city\":\"Springfield\",\"state\":\"IL\",\"zip\":\"62701\"},{\"address_id\":\"ADDR-2\",\"line1\":\"456 Oak Ave\",\"city\":\"Portland\",\"state\":\"OR\",\"zip\":\"97201\"}]"
+          },
+          {
+            "name": "get_wishlist",
+            "description": "Get user's wishlist",
+            "schema": {
+              "properties": {
+                "user_id": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "[{\"product_id\":\"PROD-700\",\"name\":\"Smart Watch\",\"price\":199.99}]"
+          },
+          {
+            "name": "get_cart",
+            "description": "Get user's current shopping cart",
+            "schema": {
+              "properties": {
+                "user_id": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"items\":[],\"total\":0}"
+          },
+          {
+            "name": "list_categories",
+            "description": "List all product categories",
+            "schema": {
+              "properties": {},
+              "type": "object"
+            },
+            "mock": "[\"Electronics\",\"Accessories\",\"Home\",\"Clothing\",\"Sports\"]"
+          },
+          {
+            "name": "get_promotions",
+            "description": "Get active promotions",
+            "schema": {
+              "properties": {},
+              "type": "object"
+            },
+            "mock": "[{\"promo_id\":\"PROMO-10\",\"discount\":\"10%\",\"expires\":\"2026-01-01\"}]"
+          },
+          {
+            "name": "get_loyalty_points",
+            "description": "Get loyalty points balance for a user",
+            "schema": {
+              "properties": {
+                "user_id": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "user_id",
+              "responses": {
+                "42": "{\"user_id\":42,\"points\":2450,\"tier\":\"gold\"}"
+              },
+              "default": "{\"points\":0}"
+            }
+          }
+        ],
+        "files": {},
+        "expectations": [
+          {
+            "check": "stdout_contains:Jane Doe",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:ORD-1001",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:Wireless Headphones",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:39.99",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:In Transit",
+            "weight": 1.0
+          },
+          {
+            "check": "tool_calls_min:3",
+            "weight": 1.0
+          },
+          {
+            "check": "tool_calls_max:10",
+            "weight": 1.0
+          }
+        ]
+      },
+      "trace": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Using the available tools, look up user with ID 42, find their most recent order, get the product details for the item in that order, and check the shipping status. Then print a summary that includes the user's name, order ID, product name, product price, and shipping status."
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_tONaSPxrIpQvWMwc1oacvEwT",
+                "name": "mt-ecommerce",
+                "input": {
+                  "commands": "set -e\nuser=$(get_user --user_id 42)\norder_id=$(list_orders --limit 1 --user_id 42 | jq -r '.[0].order_id')\norder=$(get_order --order_id \"$order_id\")\nproduct_id=$(echo \"$order\" | jq -r '.items[0].product_id')\nproduct=$(get_product --product_id \"$product_id\")\nship=$(get_shipping_status --order_id \"$order_id\")\nname=$(echo \"$user\" | jq -r '.name')\nprod_name=$(echo \"$product\" | jq -r '.name')\nprod_price=$(echo \"$product\" | jq -r '.price')\nship_status=$(echo \"$ship\" | jq -r '.status')\ncat <<EOF\nUser: $name\nOrder ID: $order_id\nProduct: $prod_name\nPrice: $prod_price\nShipping Status: $ship_status\nEOF"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_tONaSPxrIpQvWMwc1oacvEwT",
+                "content": "STDERR: execution error: jq: runtime error: Error(Str([Str(\"cannot use \"), Val(Null), Str(\" as \"), Str(\"iterable (array or object)\")]))\nExit code: 1",
+                "is_error": true
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_4O8hFhOB99EKtqdwe3HxD0E3",
+                "name": "mt-ecommerce",
+                "input": {
+                  "commands": "set -e\nuser=$(get_user --user_id 42)\norders=$(list_orders --limit 1 --user_id 42)\necho \"$orders\" | jq . >/dev/null\norder_id=$(echo \"$orders\" | jq -r '.[0].order_id')\norder=$(get_order --order_id \"$order_id\")\necho \"$order\" | jq . >/dev/null\nproduct_id=$(echo \"$order\" | jq -r '.items[0].product_id')\nproduct=$(get_product --product_id \"$product_id\")\nship=$(get_shipping_status --order_id \"$order_id\")\nname=$(echo \"$user\" | jq -r '.name')\nprod_name=$(echo \"$product\" | jq -r '.name')\nprod_price=$(echo \"$product\" | jq -r '.price')\nship_status=$(echo \"$ship\" | jq -r '.status')\ncat <<EOF\nUser: $name\nOrder ID: $order_id\nProduct: $prod_name\nPrice: $prod_price\nShipping Status: $ship_status\nEOF"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_4O8hFhOB99EKtqdwe3HxD0E3",
+                "content": "STDERR: execution error: jq: runtime error: Error(Str([Str(\"cannot use \"), Val(Null), Str(\" as \"), Str(\"iterable (array or object)\")]))\nExit code: 1",
+                "is_error": true
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_axSyMERr8238lAJZ4tTnMCNS",
+                "name": "mt-ecommerce",
+                "input": {
+                  "commands": "get_user --user_id 42; echo; list_orders --limit 1 --user_id 42"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_axSyMERr8238lAJZ4tTnMCNS",
+                "content": "{\"user_id\":42,\"name\":\"Jane Doe\",\"email\":\"jane@example.com\",\"tier\":\"gold\",\"created_at\":\"2023-01-15\"}\n[{\"order_id\":\"ORD-1001\",\"user_id\":42,\"product_id\":\"PROD-555\",\"quantity\":2,\"total\":\"79.98\",\"status\":\"shipped\",\"created_at\":\"2025-12-01\"},{\"order_id\":\"ORD-0987\",\"user_id\":42,\"product_id\":\"PROD-300\",\"quantity\":1,\"total\":\"24.99\",\"status\":\"delivered\",\"created_at\":\"2025-11-10\"}]",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_DVkA0JnESz0W4MaNE8uH85Zc",
+                "name": "mt-ecommerce",
+                "input": {
+                  "commands": "get_order --order_id ORD-1001"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_DVkA0JnESz0W4MaNE8uH85Zc",
+                "content": "{\"order_id\":\"ORD-1001\",\"user_id\":42,\"product_id\":\"PROD-555\",\"quantity\":2,\"unit_price\":\"39.99\",\"total\":\"79.98\",\"status\":\"shipped\",\"shipping_address\":\"123 Main St, Springfield\",\"created_at\":\"2025-12-01\"}",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_S8KQF28co9BbIvms1j5JIkxe",
+                "name": "mt-ecommerce",
+                "input": {
+                  "commands": "get_product --product_id PROD-555; echo; get_shipping_status --order_id ORD-1001"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_S8KQF28co9BbIvms1j5JIkxe",
+                "content": "{\"product_id\":\"PROD-555\",\"name\":\"Wireless Headphones\",\"price\":39.99,\"category\":\"Electronics\",\"in_stock\":true,\"rating\":4.5}\n{\"order_id\":\"ORD-1001\",\"carrier\":\"FedEx\",\"tracking_number\":\"FX123456789\",\"status\":\"In Transit\",\"estimated_delivery\":\"2025-12-05\",\"last_location\":\"Memphis, TN\"}",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "- **User:** Jane Doe  \n- **Order ID:** ORD-1001  \n- **Product:** Wireless Headphones  \n- **Product price:** $39.99  \n- **Shipping status:** In Transit (FedEx, tracking **FX123456789**, ETA **2025-12-05**)"
+              }
+            ]
+          }
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "mt-ecommerce",
+            "input": {
+              "commands": "set -e\nuser=$(get_user --user_id 42)\norder_id=$(list_orders --limit 1 --user_id 42 | jq -r '.[0].order_id')\norder=$(get_order --order_id \"$order_id\")\nproduct_id=$(echo \"$order\" | jq -r '.items[0].product_id')\nproduct=$(get_product --product_id \"$product_id\")\nship=$(get_shipping_status --order_id \"$order_id\")\nname=$(echo \"$user\" | jq -r '.name')\nprod_name=$(echo \"$product\" | jq -r '.name')\nprod_price=$(echo \"$product\" | jq -r '.price')\nship_status=$(echo \"$ship\" | jq -r '.status')\ncat <<EOF\nUser: $name\nOrder ID: $order_id\nProduct: $prod_name\nPrice: $prod_price\nShipping Status: $ship_status\nEOF"
+            },
+            "output": "",
+            "exit_code": 1
+          },
+          {
+            "tool_name": "mt-ecommerce",
+            "input": {
+              "commands": "set -e\nuser=$(get_user --user_id 42)\norders=$(list_orders --limit 1 --user_id 42)\necho \"$orders\" | jq . >/dev/null\norder_id=$(echo \"$orders\" | jq -r '.[0].order_id')\norder=$(get_order --order_id \"$order_id\")\necho \"$order\" | jq . >/dev/null\nproduct_id=$(echo \"$order\" | jq -r '.items[0].product_id')\nproduct=$(get_product --product_id \"$product_id\")\nship=$(get_shipping_status --order_id \"$order_id\")\nname=$(echo \"$user\" | jq -r '.name')\nprod_name=$(echo \"$product\" | jq -r '.name')\nprod_price=$(echo \"$product\" | jq -r '.price')\nship_status=$(echo \"$ship\" | jq -r '.status')\ncat <<EOF\nUser: $name\nOrder ID: $order_id\nProduct: $prod_name\nPrice: $prod_price\nShipping Status: $ship_status\nEOF"
+            },
+            "output": "",
+            "exit_code": 1
+          },
+          {
+            "tool_name": "mt-ecommerce",
+            "input": {
+              "commands": "get_user --user_id 42; echo; list_orders --limit 1 --user_id 42"
+            },
+            "output": "{\"user_id\":42,\"name\":\"Jane Doe\",\"email\":\"jane@example.com\",\"tier\":\"gold\",\"created_at\":\"2023-01-15\"}\n[{\"order_id\":\"ORD-1001\",\"user_id\":42,\"product_id\":\"PROD-555\",\"quantity\":2,\"total\":\"79.98\",\"status\":\"shipped\",\"created_at\":\"2025-12-01\"},{\"order_id\":\"ORD-0987\",\"user_id\":42,\"product_id\":\"PROD-300\",\"quantity\":1,\"total\":\"24.99\",\"status\":\"delivered\",\"created_at\":\"2025-11-10\"}]",
+            "exit_code": 0
+          },
+          {
+            "tool_name": "mt-ecommerce",
+            "input": {
+              "commands": "get_order --order_id ORD-1001"
+            },
+            "output": "{\"order_id\":\"ORD-1001\",\"user_id\":42,\"product_id\":\"PROD-555\",\"quantity\":2,\"unit_price\":\"39.99\",\"total\":\"79.98\",\"status\":\"shipped\",\"shipping_address\":\"123 Main St, Springfield\",\"created_at\":\"2025-12-01\"}",
+            "exit_code": 0
+          },
+          {
+            "tool_name": "mt-ecommerce",
+            "input": {
+              "commands": "get_product --product_id PROD-555; echo; get_shipping_status --order_id ORD-1001"
+            },
+            "output": "{\"product_id\":\"PROD-555\",\"name\":\"Wireless Headphones\",\"price\":39.99,\"category\":\"Electronics\",\"in_stock\":true,\"rating\":4.5}\n{\"order_id\":\"ORD-1001\",\"carrier\":\"FedEx\",\"tracking_number\":\"FX123456789\",\"status\":\"In Transit\",\"estimated_delivery\":\"2025-12-05\",\"last_location\":\"Memphis, TN\"}",
+            "exit_code": 0
+          }
+        ],
+        "tool_call_count": 5,
+        "turns": 6,
+        "natural_stop": true,
+        "total_input_tokens": 8506,
+        "total_output_tokens": 635,
+        "duration_ms": 11508,
+        "baseline": false,
+        "raw_tool_output_bytes": 1110,
+        "tool_output_sent_bytes": 1152
+      },
+      "score": {
+        "task_id": "mt-ecommerce",
+        "results": [
+          {
+            "check": "stdout_contains:Jane Doe",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:ORD-1001",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:Wireless Headphones",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:39.99",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:In Transit",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "tool_calls_min:3",
+            "passed": true,
+            "detail": "expected >= 3, got 5",
+            "weight": 1.0
+          },
+          {
+            "check": "tool_calls_max:10",
+            "passed": true,
+            "detail": "expected <= 10, got 5",
+            "weight": 1.0
+          }
+        ],
+        "score": 7.0,
+        "max_score": 7.0
+      }
+    },
+    {
+      "task": {
+        "id": "mt-crm-dashboard",
+        "category": "many_tools",
+        "description": "CRM system: look up customer, get support tickets, check subscription, generate summary report",
+        "system": null,
+        "prompt": "Using the available tools, look up customer 'Acme Corp' by name, retrieve their open support tickets, check their current subscription status, and get their account manager info. Print a summary report that includes: company name, account manager, subscription plan, subscription status, number of open tickets, and the subject of each open ticket.",
+        "tools": [
+          {
+            "name": "search_customers",
+            "description": "Search customers by name or domain",
+            "schema": {
+              "properties": {
+                "query": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "query",
+              "responses": {
+                "acme": "[{\"customer_id\":\"CUST-200\",\"name\":\"Acme Corp\",\"domain\":\"acme.com\",\"industry\":\"Manufacturing\",\"size\":\"enterprise\"}]",
+                "Acme Corp": "[{\"customer_id\":\"CUST-200\",\"name\":\"Acme Corp\",\"domain\":\"acme.com\",\"industry\":\"Manufacturing\",\"size\":\"enterprise\"}]",
+                "Acme": "[{\"customer_id\":\"CUST-200\",\"name\":\"Acme Corp\",\"domain\":\"acme.com\",\"industry\":\"Manufacturing\",\"size\":\"enterprise\"}]"
+              },
+              "default": "[]"
+            }
+          },
+          {
+            "name": "get_customer",
+            "description": "Get customer details by ID",
+            "schema": {
+              "properties": {
+                "customer_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "customer_id",
+              "responses": {
+                "CUST-200": "{\"customer_id\":\"CUST-200\",\"name\":\"Acme Corp\",\"domain\":\"acme.com\",\"industry\":\"Manufacturing\",\"size\":\"enterprise\",\"account_manager_id\":\"EMP-50\",\"created_at\":\"2022-03-10\",\"health_score\":72}"
+              },
+              "default": "{\"error\":\"customer not found\"}"
+            }
+          },
+          {
+            "name": "list_tickets",
+            "description": "List support tickets for a customer",
+            "schema": {
+              "properties": {
+                "customer_id": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "customer_id",
+              "responses": {
+                "CUST-200": "[{\"ticket_id\":\"TK-3001\",\"subject\":\"API rate limiting issues\",\"status\":\"open\",\"priority\":\"high\",\"created_at\":\"2025-11-28\"},{\"ticket_id\":\"TK-3002\",\"subject\":\"Billing discrepancy Q4\",\"status\":\"open\",\"priority\":\"medium\",\"created_at\":\"2025-12-01\"},{\"ticket_id\":\"TK-2990\",\"subject\":\"SSO configuration help\",\"status\":\"closed\",\"priority\":\"low\",\"created_at\":\"2025-11-15\"}]"
+              },
+              "default": "[]"
+            }
+          },
+          {
+            "name": "get_ticket",
+            "description": "Get a single support ticket by ID",
+            "schema": {
+              "properties": {
+                "ticket_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "ticket_id",
+              "responses": {
+                "TK-3001": "{\"ticket_id\":\"TK-3001\",\"subject\":\"API rate limiting issues\",\"status\":\"open\",\"priority\":\"high\",\"assignee\":\"EMP-55\",\"description\":\"Customer hitting 429 errors on /v2/orders endpoint\"}",
+                "TK-3002": "{\"ticket_id\":\"TK-3002\",\"subject\":\"Billing discrepancy Q4\",\"status\":\"open\",\"priority\":\"medium\",\"assignee\":\"EMP-60\",\"description\":\"Invoice does not match agreed pricing\"}"
+              },
+              "default": "{\"error\":\"ticket not found\"}"
+            }
+          },
+          {
+            "name": "get_subscription",
+            "description": "Get subscription details for a customer",
+            "schema": {
+              "properties": {
+                "customer_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "customer_id",
+              "responses": {
+                "CUST-200": "{\"subscription_id\":\"SUB-400\",\"customer_id\":\"CUST-200\",\"plan\":\"Enterprise Plus\",\"status\":\"active\",\"mrr\":4500,\"seats\":50,\"renewal_date\":\"2026-03-10\"}"
+              },
+              "default": "{\"error\":\"no subscription found\"}"
+            }
+          },
+          {
+            "name": "get_employee",
+            "description": "Get employee / account manager info",
+            "schema": {
+              "properties": {
+                "employee_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "employee_id",
+              "responses": {
+                "EMP-55": "{\"employee_id\":\"EMP-55\",\"name\":\"Tom Chen\",\"role\":\"Support Engineer\",\"email\":\"tom.chen@company.com\"}",
+                "EMP-50": "{\"employee_id\":\"EMP-50\",\"name\":\"Sarah Miller\",\"role\":\"Account Manager\",\"email\":\"sarah.miller@company.com\",\"team\":\"Enterprise Sales\"}"
+              },
+              "default": "{\"error\":\"employee not found\"}"
+            }
+          },
+          {
+            "name": "get_interactions",
+            "description": "Get recent interactions/notes for a customer",
+            "schema": {
+              "properties": {
+                "customer_id": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "[{\"interaction_id\":\"INT-1\",\"type\":\"call\",\"summary\":\"Quarterly business review\",\"date\":\"2025-11-20\"},{\"interaction_id\":\"INT-2\",\"type\":\"email\",\"summary\":\"Renewal discussion\",\"date\":\"2025-12-02\"}]"
+          },
+          {
+            "name": "get_invoices",
+            "description": "List invoices for a customer",
+            "schema": {
+              "properties": {
+                "customer_id": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "[{\"invoice_id\":\"INV-800\",\"amount\":4500,\"status\":\"paid\",\"date\":\"2025-11-01\"},{\"invoice_id\":\"INV-801\",\"amount\":4500,\"status\":\"pending\",\"date\":\"2025-12-01\"}]"
+          },
+          {
+            "name": "get_usage_metrics",
+            "description": "Get product usage metrics for a customer",
+            "schema": {
+              "properties": {
+                "customer_id": {
+                  "type": "string"
+                },
+                "period": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"api_calls\":125000,\"active_users\":38,\"storage_gb\":45.2,\"period\":\"2025-12\"}"
+          },
+          {
+            "name": "get_health_score",
+            "description": "Get computed health score for a customer",
+            "schema": {
+              "properties": {
+                "customer_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "customer_id",
+              "responses": {
+                "CUST-200": "{\"customer_id\":\"CUST-200\",\"score\":72,\"trend\":\"declining\",\"risk_factors\":[\"open high-priority tickets\",\"usage drop\"]}"
+              },
+              "default": "{\"score\":0}"
+            }
+          },
+          {
+            "name": "list_contacts",
+            "description": "List contacts at a customer organization",
+            "schema": {
+              "properties": {
+                "customer_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "[{\"contact_id\":\"CON-1\",\"name\":\"John Smith\",\"title\":\"CTO\",\"email\":\"john@acme.com\"},{\"contact_id\":\"CON-2\",\"name\":\"Lisa Wang\",\"title\":\"VP Engineering\",\"email\":\"lisa@acme.com\"}]"
+          },
+          {
+            "name": "create_note",
+            "description": "Add a note to a customer record",
+            "schema": {
+              "properties": {
+                "customer_id": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"note_id\":\"NOTE-50\",\"status\":\"created\"}"
+          },
+          {
+            "name": "get_contract",
+            "description": "Get contract details for a customer",
+            "schema": {
+              "properties": {
+                "customer_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"contract_id\":\"CTR-100\",\"start_date\":\"2023-03-10\",\"end_date\":\"2026-03-10\",\"value\":162000,\"auto_renew\":true}"
+          },
+          {
+            "name": "list_products_used",
+            "description": "List products/features the customer uses",
+            "schema": {
+              "properties": {
+                "customer_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "[{\"product\":\"API Platform\",\"enabled\":true},{\"product\":\"Analytics Dashboard\",\"enabled\":true},{\"product\":\"Data Export\",\"enabled\":false}]"
+          },
+          {
+            "name": "get_nps_score",
+            "description": "Get latest NPS score from customer",
+            "schema": {
+              "properties": {
+                "customer_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"score\":7,\"submitted_at\":\"2025-10-15\",\"comment\":\"Good product, support could be faster\"}"
+          },
+          {
+            "name": "create_task",
+            "description": "Create a follow-up task for the account team",
+            "schema": {
+              "properties": {
+                "assignee_id": {
+                  "type": "string"
+                },
+                "customer_id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"task_id\":\"TASK-200\",\"status\":\"created\"}"
+          }
+        ],
+        "files": {},
+        "expectations": [
+          {
+            "check": "stdout_contains:Acme Corp",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:Sarah Miller",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:Enterprise Plus",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:active",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:API rate limiting",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:Billing discrepancy",
+            "weight": 1.0
+          },
+          {
+            "check": "tool_calls_min:4",
+            "weight": 1.0
+          },
+          {
+            "check": "tool_calls_max:12",
+            "weight": 1.0
+          }
+        ]
+      },
+      "trace": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Using the available tools, look up customer 'Acme Corp' by name, retrieve their open support tickets, check their current subscription status, and get their account manager info. Print a summary report that includes: company name, account manager, subscription plan, subscription status, number of open tickets, and the subject of each open ticket."
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_qdvSBXL0Cj4Xo1Pi5WWVgzly",
+                "name": "mt-crm-dashboard",
+                "input": {
+                  "commands": "set -e\nCUSTOMER_JSON=$(search_customers --query \"Acme Corp\")\nCUSTOMER_ID=$(echo \"$CUSTOMER_JSON\" | jq -r '.customers[0].id')\nCUSTOMER=$(get_customer --customer_id \"$CUSTOMER_ID\")\nTICKETS=$(list_tickets --customer_id \"$CUSTOMER_ID\" --status open)\nSUB=$(get_subscription --customer_id \"$CUSTOMER_ID\")\nAM_ID=$(echo \"$CUSTOMER\" | jq -r '.account_manager_id')\nAM=$(get_employee --employee_id \"$AM_ID\")\n\nNAME=$(echo \"$CUSTOMER\" | jq -r '.name')\nAM_NAME=$(echo \"$AM\" | jq -r '.name')\nPLAN=$(echo \"$SUB\" | jq -r '.plan')\nSUB_STATUS=$(echo \"$SUB\" | jq -r '.status')\nOPEN_COUNT=$(echo \"$TICKETS\" | jq -r '.tickets | length')\n\necho \"Company: $NAME\"\necho \"Account manager: $AM_NAME\"\necho \"Subscription plan: $PLAN\"\necho \"Subscription status: $SUB_STATUS\"\necho \"Open tickets: $OPEN_COUNT\"\necho \"\"\necho \"Open ticket subjects:\"\necho \"$TICKETS\" | jq -r '.tickets[] | \"- [\" + .id + \"] \" + .subject'"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_qdvSBXL0Cj4Xo1Pi5WWVgzly",
+                "content": "STDERR: execution error: jq: runtime error: Error(Str([Str(\"cannot index \"), Val(Arr([Obj({\"customer_id\": Str(\"CUST-200\"), \"domain\": Str(\"acme.com\"), \"industry\": Str(\"Manufacturing\"), \"name\": Str(\"Acme Corp\"), \"size\": Str(\"enterprise\")})])), Str(\" with \"), Val(Str(\"customers\"))]))\nExit code: 1",
+                "is_error": true
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_KMGOkaZ8KD3kuEMyw8g9dX6G",
+                "name": "mt-crm-dashboard",
+                "input": {
+                  "commands": "set -e\nCUSTOMER_JSON=$(search_customers --query \"Acme Corp\")\nCUSTOMER_ID=$(echo \"$CUSTOMER_JSON\" | jq -r '.[0].customer_id // .customers[0].id')\nCUSTOMER=$(get_customer --customer_id \"$CUSTOMER_ID\")\nTICKETS=$(list_tickets --customer_id \"$CUSTOMER_ID\" --status open)\nSUB=$(get_subscription --customer_id \"$CUSTOMER_ID\")\nAM_ID=$(echo \"$CUSTOMER\" | jq -r '.account_manager_id')\nAM=$(get_employee --employee_id \"$AM_ID\")\n\nNAME=$(echo \"$CUSTOMER\" | jq -r '.name')\nAM_NAME=$(echo \"$AM\" | jq -r '.name')\nPLAN=$(echo \"$SUB\" | jq -r '.plan')\nSUB_STATUS=$(echo \"$SUB\" | jq -r '.status')\nOPEN_COUNT=$(echo \"$TICKETS\" | jq -r '.tickets | length')\n\necho \"Company: $NAME\"\necho \"Account manager: $AM_NAME\"\necho \"Subscription plan: $PLAN\"\necho \"Subscription status: $SUB_STATUS\"\necho \"Open tickets: $OPEN_COUNT\"\necho \"\"\necho \"Open ticket subjects:\"\necho \"$TICKETS\" | jq -r '.tickets[] | \"- [\" + .id + \"] \" + .subject'"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_KMGOkaZ8KD3kuEMyw8g9dX6G",
+                "content": "STDERR: execution error: jq: runtime error: Error(Str([Str(\"cannot index \"), Val(Arr([Obj({\"created_at\": Str(\"2025-11-28\"), \"priority\": Str(\"high\"), \"status\": Str(\"open\"), \"subject\": Str(\"API rate limiting issues\"), \"ticket_id\": Str(\"TK-3001\")}), Obj({\"created_at\": Str(\"2025-12-01\"), \"priority\": Str(\"medium\"), \"status\": Str(\"open\"), \"subject\": Str(\"Billing discrepancy Q4\"), \"ticket_id\": Str(\"TK-3002\")}), Obj({\"created_at\": Str(\"2025-11-15\"), \"priority\": Str(\"low\"), \"status\": Str(\"closed\"), \"subject\": Str(\"SSO configuration help\"), \"ticket_id\": Str(\"TK-2990\")})])), Str(\" with \"), Val(Str(\"tickets\"))]))\nExit code: 1",
+                "is_error": true
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_bC6r0Mz8NK5C1STtHr2ZZJiL",
+                "name": "mt-crm-dashboard",
+                "input": {
+                  "commands": "set -e\nCUSTOMER_JSON=$(search_customers --query \"Acme Corp\")\nCUSTOMER_ID=$(echo \"$CUSTOMER_JSON\" | jq -r '.[0].customer_id // .customers[0].id')\nCUSTOMER=$(get_customer --customer_id \"$CUSTOMER_ID\")\n\nTICKETS_JSON=$(list_tickets --customer_id \"$CUSTOMER_ID\" --status open)\n# tool may return either {tickets:[...]} or just an array\nif echo \"$TICKETS_JSON\" | jq -e 'type==\"array\"' >/dev/null; then\n  TICKETS_ARRAY=\"$TICKETS_JSON\"\nelse\n  TICKETS_ARRAY=$(echo \"$TICKETS_JSON\" | jq -c '.tickets')\nfi\n\nSUB=$(get_subscription --customer_id \"$CUSTOMER_ID\")\nAM_ID=$(echo \"$CUSTOMER\" | jq -r '.account_manager_id')\nAM=$(get_employee --employee_id \"$AM_ID\")\n\nNAME=$(echo \"$CUSTOMER\" | jq -r '.name')\nAM_NAME=$(echo \"$AM\" | jq -r '.name')\nPLAN=$(echo \"$SUB\" | jq -r '.plan')\nSUB_STATUS=$(echo \"$SUB\" | jq -r '.status')\nOPEN_COUNT=$(echo \"$TICKETS_ARRAY\" | jq -r 'length')\n\necho \"Company: $NAME\"\necho \"Account manager: $AM_NAME\"\necho \"Subscription plan: $PLAN\"\necho \"Subscription status: $SUB_STATUS\"\necho \"Open tickets: $OPEN_COUNT\"\necho \"\"\necho \"Open ticket subjects:\"\necho \"$TICKETS_ARRAY\" | jq -r '.[] | \"- [\" + (.ticket_id // .id) + \"] \" + .subject'"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_bC6r0Mz8NK5C1STtHr2ZZJiL",
+                "content": "Company: Acme Corp\nAccount manager: Sarah Miller\nSubscription plan: Enterprise Plus\nSubscription status: active\nOpen tickets: 3\n\nOpen ticket subjects:\n- [TK-3001] API rate limiting issues\n- [TK-3002] Billing discrepancy Q4\n- [TK-2990] SSO configuration help\n",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Company: **Acme Corp**  \nAccount manager: **Sarah Miller**  \nSubscription plan: **Enterprise Plus**  \nSubscription status: **active**  \nNumber of open tickets: **3**\n\nOpen ticket subjects:\n- **[TK-3001]** API rate limiting issues  \n- **[TK-3002]** Billing discrepancy Q4  \n- **[TK-2990]** SSO configuration help"
+              }
+            ]
+          }
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "mt-crm-dashboard",
+            "input": {
+              "commands": "set -e\nCUSTOMER_JSON=$(search_customers --query \"Acme Corp\")\nCUSTOMER_ID=$(echo \"$CUSTOMER_JSON\" | jq -r '.customers[0].id')\nCUSTOMER=$(get_customer --customer_id \"$CUSTOMER_ID\")\nTICKETS=$(list_tickets --customer_id \"$CUSTOMER_ID\" --status open)\nSUB=$(get_subscription --customer_id \"$CUSTOMER_ID\")\nAM_ID=$(echo \"$CUSTOMER\" | jq -r '.account_manager_id')\nAM=$(get_employee --employee_id \"$AM_ID\")\n\nNAME=$(echo \"$CUSTOMER\" | jq -r '.name')\nAM_NAME=$(echo \"$AM\" | jq -r '.name')\nPLAN=$(echo \"$SUB\" | jq -r '.plan')\nSUB_STATUS=$(echo \"$SUB\" | jq -r '.status')\nOPEN_COUNT=$(echo \"$TICKETS\" | jq -r '.tickets | length')\n\necho \"Company: $NAME\"\necho \"Account manager: $AM_NAME\"\necho \"Subscription plan: $PLAN\"\necho \"Subscription status: $SUB_STATUS\"\necho \"Open tickets: $OPEN_COUNT\"\necho \"\"\necho \"Open ticket subjects:\"\necho \"$TICKETS\" | jq -r '.tickets[] | \"- [\" + .id + \"] \" + .subject'"
+            },
+            "output": "",
+            "exit_code": 1
+          },
+          {
+            "tool_name": "mt-crm-dashboard",
+            "input": {
+              "commands": "set -e\nCUSTOMER_JSON=$(search_customers --query \"Acme Corp\")\nCUSTOMER_ID=$(echo \"$CUSTOMER_JSON\" | jq -r '.[0].customer_id // .customers[0].id')\nCUSTOMER=$(get_customer --customer_id \"$CUSTOMER_ID\")\nTICKETS=$(list_tickets --customer_id \"$CUSTOMER_ID\" --status open)\nSUB=$(get_subscription --customer_id \"$CUSTOMER_ID\")\nAM_ID=$(echo \"$CUSTOMER\" | jq -r '.account_manager_id')\nAM=$(get_employee --employee_id \"$AM_ID\")\n\nNAME=$(echo \"$CUSTOMER\" | jq -r '.name')\nAM_NAME=$(echo \"$AM\" | jq -r '.name')\nPLAN=$(echo \"$SUB\" | jq -r '.plan')\nSUB_STATUS=$(echo \"$SUB\" | jq -r '.status')\nOPEN_COUNT=$(echo \"$TICKETS\" | jq -r '.tickets | length')\n\necho \"Company: $NAME\"\necho \"Account manager: $AM_NAME\"\necho \"Subscription plan: $PLAN\"\necho \"Subscription status: $SUB_STATUS\"\necho \"Open tickets: $OPEN_COUNT\"\necho \"\"\necho \"Open ticket subjects:\"\necho \"$TICKETS\" | jq -r '.tickets[] | \"- [\" + .id + \"] \" + .subject'"
+            },
+            "output": "",
+            "exit_code": 1
+          },
+          {
+            "tool_name": "mt-crm-dashboard",
+            "input": {
+              "commands": "set -e\nCUSTOMER_JSON=$(search_customers --query \"Acme Corp\")\nCUSTOMER_ID=$(echo \"$CUSTOMER_JSON\" | jq -r '.[0].customer_id // .customers[0].id')\nCUSTOMER=$(get_customer --customer_id \"$CUSTOMER_ID\")\n\nTICKETS_JSON=$(list_tickets --customer_id \"$CUSTOMER_ID\" --status open)\n# tool may return either {tickets:[...]} or just an array\nif echo \"$TICKETS_JSON\" | jq -e 'type==\"array\"' >/dev/null; then\n  TICKETS_ARRAY=\"$TICKETS_JSON\"\nelse\n  TICKETS_ARRAY=$(echo \"$TICKETS_JSON\" | jq -c '.tickets')\nfi\n\nSUB=$(get_subscription --customer_id \"$CUSTOMER_ID\")\nAM_ID=$(echo \"$CUSTOMER\" | jq -r '.account_manager_id')\nAM=$(get_employee --employee_id \"$AM_ID\")\n\nNAME=$(echo \"$CUSTOMER\" | jq -r '.name')\nAM_NAME=$(echo \"$AM\" | jq -r '.name')\nPLAN=$(echo \"$SUB\" | jq -r '.plan')\nSUB_STATUS=$(echo \"$SUB\" | jq -r '.status')\nOPEN_COUNT=$(echo \"$TICKETS_ARRAY\" | jq -r 'length')\n\necho \"Company: $NAME\"\necho \"Account manager: $AM_NAME\"\necho \"Subscription plan: $PLAN\"\necho \"Subscription status: $SUB_STATUS\"\necho \"Open tickets: $OPEN_COUNT\"\necho \"\"\necho \"Open ticket subjects:\"\necho \"$TICKETS_ARRAY\" | jq -r '.[] | \"- [\" + (.ticket_id // .id) + \"] \" + .subject'"
+            },
+            "output": "Company: Acme Corp\nAccount manager: Sarah Miller\nSubscription plan: Enterprise Plus\nSubscription status: active\nOpen tickets: 3\n\nOpen ticket subjects:\n- [TK-3001] API rate limiting issues\n- [TK-3002] Billing discrepancy Q4\n- [TK-2990] SSO configuration help\n",
+            "exit_code": 0
+          }
+        ],
+        "tool_call_count": 3,
+        "turns": 4,
+        "natural_stop": true,
+        "total_input_tokens": 6210,
+        "total_output_tokens": 1133,
+        "duration_ms": 15259,
+        "baseline": false,
+        "raw_tool_output_bytes": 1131,
+        "tool_output_sent_bytes": 1173
+      },
+      "score": {
+        "task_id": "mt-crm-dashboard",
+        "results": [
+          {
+            "check": "stdout_contains:Acme Corp",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:Sarah Miller",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:Enterprise Plus",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:active",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:API rate limiting",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:Billing discrepancy",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "tool_calls_min:4",
+            "passed": false,
+            "detail": "expected >= 4, got 3",
+            "weight": 1.0
+          },
+          {
+            "check": "tool_calls_max:12",
+            "passed": true,
+            "detail": "expected <= 12, got 3",
+            "weight": 1.0
+          }
+        ],
+        "score": 7.0,
+        "max_score": 8.0
+      }
+    },
+    {
+      "task": {
+        "id": "mt-analytics",
+        "category": "many_tools",
+        "description": "Analytics platform: get daily metrics, compare with previous day, identify anomalies",
+        "system": null,
+        "prompt": "Using the available tools, retrieve the analytics metrics for 2025-12-15 and compare them with the previous day 2025-12-14. Identify any anomalies (metrics that changed by more than 20%). Print a report showing: each metric name, its value on both days, the percentage change, and flag any anomalies. Focus on page_views, unique_visitors, bounce_rate, avg_session_duration, and conversion_rate.",
+        "tools": [
+          {
+            "name": "get_daily_metrics",
+            "description": "Get aggregated daily metrics for a date",
+            "schema": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "date",
+              "responses": {
+                "2025-12-13": "{\"date\":\"2025-12-13\",\"page_views\":50800,\"unique_visitors\":13900,\"bounce_rate\":0.32,\"avg_session_duration\":255,\"conversion_rate\":0.039,\"revenue\":19800.00,\"transactions\":535}",
+                "2025-12-15": "{\"date\":\"2025-12-15\",\"page_views\":45200,\"unique_visitors\":12800,\"bounce_rate\":0.34,\"avg_session_duration\":245,\"conversion_rate\":0.042,\"revenue\":18500.00,\"transactions\":538}",
+                "2025-12-14": "{\"date\":\"2025-12-14\",\"page_views\":52100,\"unique_visitors\":14200,\"bounce_rate\":0.31,\"avg_session_duration\":260,\"conversion_rate\":0.038,\"revenue\":20100.00,\"transactions\":540}"
+              },
+              "default": "{\"error\":\"no data for this date\"}"
+            }
+          },
+          {
+            "name": "get_hourly_breakdown",
+            "description": "Get hourly metric breakdown for a date",
+            "schema": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "metric": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"date\":\"2025-12-15\",\"metric\":\"page_views\",\"hours\":{\"00\":800,\"06\":1200,\"12\":5500,\"18\":4800,\"23\":900}}"
+          },
+          {
+            "name": "get_top_pages",
+            "description": "Get top pages by views for a date",
+            "schema": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "[{\"path\":\"/\",\"views\":8500},{\"path\":\"/products\",\"views\":6200},{\"path\":\"/pricing\",\"views\":4100},{\"path\":\"/blog\",\"views\":3800},{\"path\":\"/signup\",\"views\":2900}]"
+          },
+          {
+            "name": "get_traffic_sources",
+            "description": "Get traffic source breakdown",
+            "schema": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"organic\":45,\"direct\":25,\"referral\":15,\"social\":10,\"paid\":5}"
+          },
+          {
+            "name": "get_geo_breakdown",
+            "description": "Get geographic breakdown of visitors",
+            "schema": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "[{\"country\":\"US\",\"visitors\":7500},{\"country\":\"UK\",\"visitors\":1800},{\"country\":\"DE\",\"visitors\":1200},{\"country\":\"CA\",\"visitors\":900},{\"country\":\"AU\",\"visitors\":600}]"
+          },
+          {
+            "name": "get_device_breakdown",
+            "description": "Get device type breakdown",
+            "schema": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"desktop\":55,\"mobile\":38,\"tablet\":7}"
+          },
+          {
+            "name": "get_funnel_metrics",
+            "description": "Get conversion funnel metrics",
+            "schema": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "funnel_name": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"steps\":[{\"name\":\"landing\",\"count\":12800},{\"name\":\"product_view\",\"count\":6200},{\"name\":\"add_to_cart\",\"count\":1800},{\"name\":\"checkout\",\"count\":900},{\"name\":\"purchase\",\"count\":538}]}"
+          },
+          {
+            "name": "get_realtime_visitors",
+            "description": "Get current realtime visitor count",
+            "schema": {
+              "properties": {},
+              "type": "object"
+            },
+            "mock": "{\"active_visitors\":342,\"top_page\":\"/products\",\"avg_time_on_site\":180}"
+          },
+          {
+            "name": "get_segment_metrics",
+            "description": "Get metrics broken down by user segment",
+            "schema": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "segment": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"segment\":\"returning\",\"visitors\":4200,\"conversion_rate\":0.065,\"avg_order_value\":85.50}"
+          },
+          {
+            "name": "get_ab_test_results",
+            "description": "Get A/B test results",
+            "schema": {
+              "properties": {
+                "test_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"test_id\":\"TEST-1\",\"variant_a\":{\"conversion\":0.038},\"variant_b\":{\"conversion\":0.045},\"significance\":0.92}"
+          },
+          {
+            "name": "get_error_rate",
+            "description": "Get client-side error rate",
+            "schema": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"date\":\"2025-12-15\",\"error_rate\":0.012,\"top_errors\":[{\"message\":\"ChunkLoadError\",\"count\":45},{\"message\":\"TypeError\",\"count\":22}]}"
+          },
+          {
+            "name": "get_page_performance",
+            "description": "Get page load performance metrics",
+            "schema": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"avg_load_time_ms\":1250,\"p95_load_time_ms\":3200,\"first_contentful_paint_ms\":800,\"largest_contentful_paint_ms\":1800}"
+          },
+          {
+            "name": "get_search_queries",
+            "description": "Get top internal search queries",
+            "schema": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "[{\"query\":\"pricing\",\"count\":320},{\"query\":\"api docs\",\"count\":210},{\"query\":\"enterprise\",\"count\":150}]"
+          },
+          {
+            "name": "get_campaign_metrics",
+            "description": "Get marketing campaign performance",
+            "schema": {
+              "properties": {
+                "campaign_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"campaign_id\":\"CAMP-1\",\"impressions\":50000,\"clicks\":2500,\"ctr\":0.05,\"conversions\":125,\"cost\":1500}"
+          },
+          {
+            "name": "get_cohort_retention",
+            "description": "Get cohort retention data",
+            "schema": {
+              "properties": {
+                "cohort_date": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"cohort\":\"2025-11\",\"week_1\":0.85,\"week_2\":0.72,\"week_3\":0.65,\"week_4\":0.58}"
+          },
+          {
+            "name": "get_revenue_by_product",
+            "description": "Get revenue breakdown by product category",
+            "schema": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "[{\"category\":\"SaaS\",\"revenue\":12000},{\"category\":\"Services\",\"revenue\":4500},{\"category\":\"Add-ons\",\"revenue\":2000}]"
+          },
+          {
+            "name": "create_alert",
+            "description": "Create a metric alert rule",
+            "schema": {
+              "properties": {
+                "direction": {
+                  "type": "string"
+                },
+                "metric": {
+                  "type": "string"
+                },
+                "threshold": {
+                  "type": "number"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"alert_id\":\"ALERT-10\",\"status\":\"created\"}"
+          },
+          {
+            "name": "get_anomalies",
+            "description": "Get auto-detected anomalies for a date",
+            "schema": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "date",
+              "responses": {
+                "2025-12-15": "{\"anomalies\":[{\"metric\":\"page_views\",\"expected\":51500,\"actual\":45200,\"deviation\":-12.2},{\"metric\":\"unique_visitors\",\"expected\":14000,\"actual\":12800,\"deviation\":-8.6}]}"
+              },
+              "default": "{\"anomalies\":[]}"
+            }
+          },
+          {
+            "name": "export_report",
+            "description": "Export a report in various formats",
+            "schema": {
+              "properties": {
+                "date_range": {
+                  "type": "string"
+                },
+                "format": {
+                  "type": "string"
+                },
+                "report_type": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"download_url\":\"https://analytics.example.com/reports/RPT-500.pdf\",\"status\":\"generated\"}"
+          },
+          {
+            "name": "get_event_counts",
+            "description": "Get custom event counts",
+            "schema": {
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "event_name": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"event\":\"button_click\",\"count\":8500,\"unique_users\":3200}"
+          }
+        ],
+        "files": {},
+        "expectations": [
+          {
+            "check": "stdout_contains:page_views",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:45200",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:52100",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:unique_visitors",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:12800",
+            "weight": 0.5
+          },
+          {
+            "check": "stdout_contains:14200",
+            "weight": 0.5
+          },
+          {
+            "check": "stdout_regex:bounce_rate|conversion_rate",
+            "weight": 1.0
+          },
+          {
+            "check": "tool_calls_min:3",
+            "weight": 1.0
+          },
+          {
+            "check": "tool_calls_max:10",
+            "weight": 1.0
+          }
+        ]
+      },
+      "trace": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Using the available tools, retrieve the analytics metrics for 2025-12-15 and compare them with the previous day 2025-12-14. Identify any anomalies (metrics that changed by more than 20%). Print a report showing: each metric name, its value on both days, the percentage change, and flag any anomalies. Focus on page_views, unique_visitors, bounce_rate, avg_session_duration, and conversion_rate."
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_oYtoHdXFfyPYO0HCmEpllrXL",
+                "name": "mt-analytics",
+                "input": {
+                  "commands": "set -e\nget_daily_metrics --date 2025-12-15 > /tmp/m_1215.json\nget_daily_metrics --date 2025-12-14 > /tmp/m_1214.json\njq -n --slurpfile d15 /tmp/m_1215.json --slurpfile d14 /tmp/m_1214.json '{d15:$d15[0], d14:$d14[0]}'"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_oYtoHdXFfyPYO0HCmEpllrXL",
+                "content": "STDERR: jq: Could not open file --slurpfile: io error: file not found\n\nExit code: 2",
+                "is_error": true
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_2Mpxawe550sxhYRktKtztkH0",
+                "name": "mt-analytics",
+                "input": {
+                  "commands": "set -e\nget_daily_metrics --date 2025-12-15 > /tmp/m_1215.json\nget_daily_metrics --date 2025-12-14 > /tmp/m_1214.json\njq -n --slurpfile d15 /tmp/m_1215.json --slurpfile d14 /tmp/m_1214.json '{d15:$d15[0], d14:$d14[0]}'"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_2Mpxawe550sxhYRktKtztkH0",
+                "content": "STDERR: jq: Could not open file --slurpfile: io error: file not found\n\nExit code: 2",
+                "is_error": true
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_oiSrzs4P5qM45CBxfakaGkYP",
+                "name": "mt-analytics",
+                "input": {
+                  "commands": "set -e\nget_daily_metrics --date 2025-12-15"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_oiSrzs4P5qM45CBxfakaGkYP",
+                "content": "{\"date\":\"2025-12-15\",\"page_views\":45200,\"unique_visitors\":12800,\"bounce_rate\":0.34,\"avg_session_duration\":245,\"conversion_rate\":0.042,\"revenue\":18500.00,\"transactions\":538}",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_liojkOMxkBwhXs89QBFvNKOF",
+                "name": "mt-analytics",
+                "input": {
+                  "commands": "set -e\nget_daily_metrics --date 2025-12-14"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_liojkOMxkBwhXs89QBFvNKOF",
+                "content": "{\"date\":\"2025-12-14\",\"page_views\":52100,\"unique_visitors\":14200,\"bounce_rate\":0.31,\"avg_session_duration\":260,\"conversion_rate\":0.038,\"revenue\":20100.00,\"transactions\":540}",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_qEutS7kmkJ9ucMRVBAylTX4Z",
+                "name": "mt-analytics",
+                "input": {
+                  "commands": "python3 - <<'PY'\nimport json\nfrom math import isfinite\n\nd15=json.loads('''{\"date\":\"2025-12-15\",\"page_views\":45200,\"unique_visitors\":12800,\"bounce_rate\":0.34,\"avg_session_duration\":245,\"conversion_rate\":0.042,\"revenue\":18500.00,\"transactions\":538}''')\nd14=json.loads('''{\"date\":\"2025-12-14\",\"page_views\":52100,\"unique_visitors\":14200,\"bounce_rate\":0.31,\"avg_session_duration\":260,\"conversion_rate\":0.038,\"revenue\":20100.00,\"transactions\":540}''')\n\nmetrics=[\n ('page_views','Page Views'),\n ('unique_visitors','Unique Visitors'),\n ('bounce_rate','Bounce Rate'),\n ('avg_session_duration','Avg Session Duration (s)'),\n ('conversion_rate','Conversion Rate'),\n]\n\nrows=[]\nfor k,label in metrics:\n    v14=d14[k]; v15=d15[k]\n    if v14==0:\n        pct=None\n    else:\n        pct=(v15-v14)/v14*100.0\n    anomaly = pct is not None and abs(pct)>20\n    rows.append((label,v14,v15,pct,anomaly))\n\ndef fmt_val(label,v):\n    if 'Rate' in label or 'Bounce' in label or 'Conversion' in label:\n        return f\"{v*100:.2f}%\"\n    if 'Duration' in label:\n        return f\"{v:.0f}\"\n    return f\"{v:,}\"\n\ndef fmt_pct(p):\n    return 'N/A' if p is None else f\"{p:+.2f}%\"\n\n# print markdown table\nprint('| Metric | 2025-12-14 | 2025-12-15 | % Change | Anomaly (>20%) |')\nprint('|---|---:|---:|---:|:---:|')\nfor label,v14,v15,p,an in rows:\n    print(f\"| {label} | {fmt_val(label,v14)} | {fmt_val(label,v15)} | {fmt_pct(p)} | {'YES' if an else ''} |\")\nPY"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_qEutS7kmkJ9ucMRVBAylTX4Z",
+                "content": "STDERR: bash: python3: command not found\nExit code: 127",
+                "is_error": true
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_Bbn4raBd32CrPeO1usnOyrAf",
+                "name": "mt-analytics",
+                "input": {
+                  "commands": "set -e\ncat > /tmp/report.awk <<'AWK'\nfunction abs(x){return x<0?-x:x}\nBEGIN{\n  d14_pv=52100; d15_pv=45200;\n  d14_uv=14200; d15_uv=12800;\n  d14_br=0.31;  d15_br=0.34;\n  d14_asd=260;  d15_asd=245;\n  d14_cr=0.038; d15_cr=0.042;\n\n  print \"| Metric | 2025-12-14 | 2025-12-15 | % Change | Anomaly (>20%) |\"\n  print \"|---|---:|---:|---:|:---:|\"\n\n  pr(\"Page Views\", d14_pv, d15_pv, \"count\")\n  pr(\"Unique Visitors\", d14_uv, d15_uv, \"count\")\n  pr(\"Bounce Rate\", d14_br, d15_br, \"rate\")\n  pr(\"Avg Session Duration (s)\", d14_asd, d15_asd, \"duration\")\n  pr(\"Conversion Rate\", d14_cr, d15_cr, \"rate\")\n}\nfunction fmt(v,type, out){\n  if(type==\"rate\") return sprintf(\"%.2f%%\", v*100)\n  if(type==\"duration\") return sprintf(\"%.0f\", v)\n  # counts with thousands separators not native; simple\n  return sprintf(\"%.0f\", v)\n}\nfunction pr(name,v14,v15,type, pct, anom){\n  pct = (v15-v14)/v14*100\n  anom = (abs(pct)>20)?\"YES\":\"\"\n  printf(\"| %s | %s | %s | %+0.2f%% | %s |\\n\", name, fmt(v14,type), fmt(v15,type), pct, anom)\n}\nAWK\nawk -f /tmp/report.awk"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_Bbn4raBd32CrPeO1usnOyrAf",
+                "content": "STDERR: execution error: awk: invalid assignment target\nExit code: 1",
+                "is_error": true
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_Ew5JEXuGUwV4P315fzPAS3nA",
+                "name": "mt-analytics",
+                "input": {
+                  "commands": "set -e\ncat > /tmp/report.awk <<'AWK'\nfunction abs(x){return x<0?-x:x}\nBEGIN{\n  d14_pv=52100; d15_pv=45200;\n  d14_uv=14200; d15_uv=12800;\n  d14_br=0.31;  d15_br=0.34;\n  d14_asd=260;  d15_asd=245;\n  d14_cr=0.038; d15_cr=0.042;\n\n  print \"| Metric | 2025-12-14 | 2025-12-15 | % Change | Anomaly (>20%) |\"\n  print \"|---|---:|---:|---:|:---:|\"\n\n  pr(\"Page Views\", d14_pv, d15_pv, \"count\")\n  pr(\"Unique Visitors\", d14_uv, d15_uv, \"count\")\n  pr(\"Bounce Rate\", d14_br, d15_br, \"rate\")\n  pr(\"Avg Session Duration (s)\", d14_asd, d15_asd, \"duration\")\n  pr(\"Conversion Rate\", d14_cr, d15_cr, \"rate\")\n}\nfunction fmt(v,t){\n  if(t==\"rate\") return sprintf(\"%.2f%%\", v*100)\n  if(t==\"duration\") return sprintf(\"%.0f\", v)\n  return sprintf(\"%.0f\", v)\n}\nfunction pr(name,v14,v15,t, pct, anom){\n  pct = (v15-v14)/v14*100\n  anom = (abs(pct)>20)?\"YES\":\"\"\n  printf(\"| %s | %s | %s | %+0.2f%% | %s |\\n\", name, fmt(v14,t), fmt(v15,t), pct, anom)\n}\nAWK\nawk -f /tmp/report.awk"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_Ew5JEXuGUwV4P315fzPAS3nA",
+                "content": "STDERR: execution error: awk: invalid assignment target\nExit code: 1",
+                "is_error": true
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "| Metric | 2025-12-14 | 2025-12-15 | % Change | Anomaly (>20%) |\n|---|---:|---:|---:|:---:|\n| page_views | 52,100 | 45,200 | -13.24% |  |\n| unique_visitors | 14,200 | 12,800 | -9.86% |  |\n| bounce_rate | 31.00% | 34.00% | +9.68% |  |\n| avg_session_duration | 260 | 245 | -5.77% |  |\n| conversion_rate | 3.80% | 4.20% | +10.53% |  |\n\nAnomalies (>20% change): **none** among the requested metrics."
+              }
+            ]
+          }
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "mt-analytics",
+            "input": {
+              "commands": "set -e\nget_daily_metrics --date 2025-12-15 > /tmp/m_1215.json\nget_daily_metrics --date 2025-12-14 > /tmp/m_1214.json\njq -n --slurpfile d15 /tmp/m_1215.json --slurpfile d14 /tmp/m_1214.json '{d15:$d15[0], d14:$d14[0]}'"
+            },
+            "output": "",
+            "exit_code": 2
+          },
+          {
+            "tool_name": "mt-analytics",
+            "input": {
+              "commands": "set -e\nget_daily_metrics --date 2025-12-15 > /tmp/m_1215.json\nget_daily_metrics --date 2025-12-14 > /tmp/m_1214.json\njq -n --slurpfile d15 /tmp/m_1215.json --slurpfile d14 /tmp/m_1214.json '{d15:$d15[0], d14:$d14[0]}'"
+            },
+            "output": "",
+            "exit_code": 2
+          },
+          {
+            "tool_name": "mt-analytics",
+            "input": {
+              "commands": "set -e\nget_daily_metrics --date 2025-12-15"
+            },
+            "output": "{\"date\":\"2025-12-15\",\"page_views\":45200,\"unique_visitors\":12800,\"bounce_rate\":0.34,\"avg_session_duration\":245,\"conversion_rate\":0.042,\"revenue\":18500.00,\"transactions\":538}",
+            "exit_code": 0
+          },
+          {
+            "tool_name": "mt-analytics",
+            "input": {
+              "commands": "set -e\nget_daily_metrics --date 2025-12-14"
+            },
+            "output": "{\"date\":\"2025-12-14\",\"page_views\":52100,\"unique_visitors\":14200,\"bounce_rate\":0.31,\"avg_session_duration\":260,\"conversion_rate\":0.038,\"revenue\":20100.00,\"transactions\":540}",
+            "exit_code": 0
+          },
+          {
+            "tool_name": "mt-analytics",
+            "input": {
+              "commands": "python3 - <<'PY'\nimport json\nfrom math import isfinite\n\nd15=json.loads('''{\"date\":\"2025-12-15\",\"page_views\":45200,\"unique_visitors\":12800,\"bounce_rate\":0.34,\"avg_session_duration\":245,\"conversion_rate\":0.042,\"revenue\":18500.00,\"transactions\":538}''')\nd14=json.loads('''{\"date\":\"2025-12-14\",\"page_views\":52100,\"unique_visitors\":14200,\"bounce_rate\":0.31,\"avg_session_duration\":260,\"conversion_rate\":0.038,\"revenue\":20100.00,\"transactions\":540}''')\n\nmetrics=[\n ('page_views','Page Views'),\n ('unique_visitors','Unique Visitors'),\n ('bounce_rate','Bounce Rate'),\n ('avg_session_duration','Avg Session Duration (s)'),\n ('conversion_rate','Conversion Rate'),\n]\n\nrows=[]\nfor k,label in metrics:\n    v14=d14[k]; v15=d15[k]\n    if v14==0:\n        pct=None\n    else:\n        pct=(v15-v14)/v14*100.0\n    anomaly = pct is not None and abs(pct)>20\n    rows.append((label,v14,v15,pct,anomaly))\n\ndef fmt_val(label,v):\n    if 'Rate' in label or 'Bounce' in label or 'Conversion' in label:\n        return f\"{v*100:.2f}%\"\n    if 'Duration' in label:\n        return f\"{v:.0f}\"\n    return f\"{v:,}\"\n\ndef fmt_pct(p):\n    return 'N/A' if p is None else f\"{p:+.2f}%\"\n\n# print markdown table\nprint('| Metric | 2025-12-14 | 2025-12-15 | % Change | Anomaly (>20%) |')\nprint('|---|---:|---:|---:|:---:|')\nfor label,v14,v15,p,an in rows:\n    print(f\"| {label} | {fmt_val(label,v14)} | {fmt_val(label,v15)} | {fmt_pct(p)} | {'YES' if an else ''} |\")\nPY"
+            },
+            "output": "",
+            "exit_code": 127
+          },
+          {
+            "tool_name": "mt-analytics",
+            "input": {
+              "commands": "set -e\ncat > /tmp/report.awk <<'AWK'\nfunction abs(x){return x<0?-x:x}\nBEGIN{\n  d14_pv=52100; d15_pv=45200;\n  d14_uv=14200; d15_uv=12800;\n  d14_br=0.31;  d15_br=0.34;\n  d14_asd=260;  d15_asd=245;\n  d14_cr=0.038; d15_cr=0.042;\n\n  print \"| Metric | 2025-12-14 | 2025-12-15 | % Change | Anomaly (>20%) |\"\n  print \"|---|---:|---:|---:|:---:|\"\n\n  pr(\"Page Views\", d14_pv, d15_pv, \"count\")\n  pr(\"Unique Visitors\", d14_uv, d15_uv, \"count\")\n  pr(\"Bounce Rate\", d14_br, d15_br, \"rate\")\n  pr(\"Avg Session Duration (s)\", d14_asd, d15_asd, \"duration\")\n  pr(\"Conversion Rate\", d14_cr, d15_cr, \"rate\")\n}\nfunction fmt(v,type, out){\n  if(type==\"rate\") return sprintf(\"%.2f%%\", v*100)\n  if(type==\"duration\") return sprintf(\"%.0f\", v)\n  # counts with thousands separators not native; simple\n  return sprintf(\"%.0f\", v)\n}\nfunction pr(name,v14,v15,type, pct, anom){\n  pct = (v15-v14)/v14*100\n  anom = (abs(pct)>20)?\"YES\":\"\"\n  printf(\"| %s | %s | %s | %+0.2f%% | %s |\\n\", name, fmt(v14,type), fmt(v15,type), pct, anom)\n}\nAWK\nawk -f /tmp/report.awk"
+            },
+            "output": "",
+            "exit_code": 1
+          },
+          {
+            "tool_name": "mt-analytics",
+            "input": {
+              "commands": "set -e\ncat > /tmp/report.awk <<'AWK'\nfunction abs(x){return x<0?-x:x}\nBEGIN{\n  d14_pv=52100; d15_pv=45200;\n  d14_uv=14200; d15_uv=12800;\n  d14_br=0.31;  d15_br=0.34;\n  d14_asd=260;  d15_asd=245;\n  d14_cr=0.038; d15_cr=0.042;\n\n  print \"| Metric | 2025-12-14 | 2025-12-15 | % Change | Anomaly (>20%) |\"\n  print \"|---|---:|---:|---:|:---:|\"\n\n  pr(\"Page Views\", d14_pv, d15_pv, \"count\")\n  pr(\"Unique Visitors\", d14_uv, d15_uv, \"count\")\n  pr(\"Bounce Rate\", d14_br, d15_br, \"rate\")\n  pr(\"Avg Session Duration (s)\", d14_asd, d15_asd, \"duration\")\n  pr(\"Conversion Rate\", d14_cr, d15_cr, \"rate\")\n}\nfunction fmt(v,t){\n  if(t==\"rate\") return sprintf(\"%.2f%%\", v*100)\n  if(t==\"duration\") return sprintf(\"%.0f\", v)\n  return sprintf(\"%.0f\", v)\n}\nfunction pr(name,v14,v15,t, pct, anom){\n  pct = (v15-v14)/v14*100\n  anom = (abs(pct)>20)?\"YES\":\"\"\n  printf(\"| %s | %s | %s | %+0.2f%% | %s |\\n\", name, fmt(v14,t), fmt(v15,t), pct, anom)\n}\nAWK\nawk -f /tmp/report.awk"
+            },
+            "output": "",
+            "exit_code": 1
+          }
+        ],
+        "tool_call_count": 7,
+        "turns": 8,
+        "natural_stop": true,
+        "total_input_tokens": 14196,
+        "total_output_tokens": 1937,
+        "duration_ms": 25513,
+        "baseline": false,
+        "raw_tool_output_bytes": 594,
+        "tool_output_sent_bytes": 701
+      },
+      "score": {
+        "task_id": "mt-analytics",
+        "results": [
+          {
+            "check": "stdout_contains:page_views",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:45200",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:52100",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:unique_visitors",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:12800",
+            "passed": true,
+            "detail": "found",
+            "weight": 0.5
+          },
+          {
+            "check": "stdout_contains:14200",
+            "passed": true,
+            "detail": "found",
+            "weight": 0.5
+          },
+          {
+            "check": "stdout_regex:bounce_rate|conversion_rate",
+            "passed": true,
+            "detail": "matched",
+            "weight": 1.0
+          },
+          {
+            "check": "tool_calls_min:3",
+            "passed": true,
+            "detail": "expected >= 3, got 7",
+            "weight": 1.0
+          },
+          {
+            "check": "tool_calls_max:10",
+            "passed": true,
+            "detail": "expected <= 10, got 7",
+            "weight": 1.0
+          }
+        ],
+        "score": 8.0,
+        "max_score": 8.0
+      }
+    },
+    {
+      "task": {
+        "id": "mt-devops",
+        "category": "many_tools",
+        "description": "DevOps monitoring: check service health, recent deployments, error rates, determine rollback need",
+        "system": null,
+        "prompt": "Using the available tools, check the current health of the 'payment-service', look at its recent deployments, check its error rate, and review recent alerts. Determine whether the latest deployment should be rolled back. Print a status report including: service health status, latest deployment version and timestamp, current error rate, whether the error rate is above the 1% threshold, and your rollback recommendation with reasoning.",
+        "tools": [
+          {
+            "name": "get_service_health",
+            "description": "Get current health status of a service",
+            "schema": {
+              "properties": {
+                "service_name": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "service_name",
+              "responses": {
+                "payment-service": "{\"service\":\"payment-service\",\"status\":\"degraded\",\"uptime_pct\":97.2,\"healthy_instances\":3,\"total_instances\":5,\"last_check\":\"2025-12-15T14:30:00Z\"}",
+                "api-gateway": "{\"service\":\"api-gateway\",\"status\":\"healthy\",\"uptime_pct\":99.99,\"healthy_instances\":8,\"total_instances\":8}",
+                "user-service": "{\"service\":\"user-service\",\"status\":\"healthy\",\"uptime_pct\":99.95,\"healthy_instances\":4,\"total_instances\":4}"
+              },
+              "default": "{\"error\":\"service not found\"}"
+            }
+          },
+          {
+            "name": "list_deployments",
+            "description": "List recent deployments for a service",
+            "schema": {
+              "properties": {
+                "limit": {
+                  "type": "integer"
+                },
+                "service_name": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "service_name",
+              "responses": {
+                "payment-service": "[{\"deploy_id\":\"DEP-450\",\"service\":\"payment-service\",\"version\":\"v2.4.1\",\"status\":\"completed\",\"deployed_by\":\"ci-bot\",\"timestamp\":\"2025-12-15T12:00:00Z\",\"commit\":\"abc123f\"},{\"deploy_id\":\"DEP-448\",\"service\":\"payment-service\",\"version\":\"v2.4.0\",\"status\":\"completed\",\"deployed_by\":\"ci-bot\",\"timestamp\":\"2025-12-14T10:00:00Z\",\"commit\":\"def456a\"}]"
+              },
+              "default": "[]"
+            }
+          },
+          {
+            "name": "get_error_rate",
+            "description": "Get current error rate for a service",
+            "schema": {
+              "properties": {
+                "service_name": {
+                  "type": "string"
+                },
+                "window": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "service_name",
+              "responses": {
+                "payment-service": "{\"service\":\"payment-service\",\"error_rate\":0.032,\"error_count\":156,\"request_count\":4875,\"window\":\"1h\",\"top_errors\":[{\"code\":500,\"message\":\"internal server error\",\"count\":98},{\"code\":503,\"message\":\"service unavailable\",\"count\":58}]}",
+                "api-gateway": "{\"service\":\"api-gateway\",\"error_rate\":0.001,\"error_count\":5,\"request_count\":5000,\"window\":\"1h\"}"
+              },
+              "default": "{\"error\":\"service not found\"}"
+            }
+          },
+          {
+            "name": "get_alerts",
+            "description": "Get recent alerts for a service",
+            "schema": {
+              "properties": {
+                "service_name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": {
+              "param": "service_name",
+              "responses": {
+                "payment-service": "[{\"alert_id\":\"ALT-700\",\"service\":\"payment-service\",\"severity\":\"critical\",\"message\":\"Error rate exceeded 3% threshold\",\"triggered_at\":\"2025-12-15T12:45:00Z\",\"status\":\"firing\"},{\"alert_id\":\"ALT-701\",\"service\":\"payment-service\",\"severity\":\"warning\",\"message\":\"2 instances unhealthy\",\"triggered_at\":\"2025-12-15T12:50:00Z\",\"status\":\"firing\"}]"
+              },
+              "default": "[]"
+            }
+          },
+          {
+            "name": "get_logs",
+            "description": "Get recent log entries for a service",
+            "schema": {
+              "properties": {
+                "level": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer"
+                },
+                "service_name": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "[{\"timestamp\":\"2025-12-15T14:29:55Z\",\"level\":\"ERROR\",\"message\":\"Connection pool exhausted\"},{\"timestamp\":\"2025-12-15T14:29:50Z\",\"level\":\"ERROR\",\"message\":\"Database timeout after 30s\"},{\"timestamp\":\"2025-12-15T14:29:45Z\",\"level\":\"WARN\",\"message\":\"Retry attempt 3 of 5\"}]"
+          },
+          {
+            "name": "get_metrics_timeseries",
+            "description": "Get time-series metrics for a service",
+            "schema": {
+              "properties": {
+                "duration": {
+                  "type": "string"
+                },
+                "metric": {
+                  "type": "string"
+                },
+                "service_name": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"metric\":\"latency_p99\",\"unit\":\"ms\",\"data\":[{\"time\":\"12:00\",\"value\":120},{\"time\":\"12:30\",\"value\":450},{\"time\":\"13:00\",\"value\":890},{\"time\":\"13:30\",\"value\":1200},{\"time\":\"14:00\",\"value\":980}]}"
+          },
+          {
+            "name": "rollback_deployment",
+            "description": "Rollback a service to a previous deployment",
+            "schema": {
+              "properties": {
+                "service_name": {
+                  "type": "string"
+                },
+                "target_deploy_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"rollback_id\":\"RB-50\",\"status\":\"initiated\",\"target_version\":\"v2.4.0\"}"
+          },
+          {
+            "name": "get_deployment_diff",
+            "description": "Get changes between two deployments",
+            "schema": {
+              "properties": {
+                "from_deploy_id": {
+                  "type": "string"
+                },
+                "to_deploy_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"files_changed\":12,\"additions\":340,\"deletions\":120,\"summary\":\"Updated payment processor integration, added retry logic\"}"
+          },
+          {
+            "name": "list_services",
+            "description": "List all registered services",
+            "schema": {
+              "properties": {},
+              "type": "object"
+            },
+            "mock": "[{\"name\":\"api-gateway\",\"status\":\"healthy\"},{\"name\":\"user-service\",\"status\":\"healthy\"},{\"name\":\"payment-service\",\"status\":\"degraded\"},{\"name\":\"notification-service\",\"status\":\"healthy\"},{\"name\":\"search-service\",\"status\":\"healthy\"}]"
+          },
+          {
+            "name": "get_resource_usage",
+            "description": "Get CPU/memory usage for a service",
+            "schema": {
+              "properties": {
+                "service_name": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"service\":\"payment-service\",\"cpu_pct\":78.5,\"memory_pct\":82.1,\"disk_pct\":45.0,\"network_in_mbps\":120,\"network_out_mbps\":85}"
+          },
+          {
+            "name": "get_dependencies",
+            "description": "Get service dependency map",
+            "schema": {
+              "properties": {
+                "service_name": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"service\":\"payment-service\",\"depends_on\":[\"user-service\",\"database-primary\",\"redis-cache\",\"stripe-api\"],\"depended_by\":[\"api-gateway\",\"order-service\"]}"
+          },
+          {
+            "name": "get_sla_status",
+            "description": "Get SLA compliance status",
+            "schema": {
+              "properties": {
+                "period": {
+                  "type": "string"
+                },
+                "service_name": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"service\":\"payment-service\",\"sla_target\":99.9,\"current\":97.2,\"status\":\"breached\",\"downtime_minutes\":42}"
+          },
+          {
+            "name": "create_incident",
+            "description": "Create an incident ticket",
+            "schema": {
+              "properties": {
+                "service_name": {
+                  "type": "string"
+                },
+                "severity": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"incident_id\":\"INC-300\",\"status\":\"created\",\"page_sent\":true}"
+          },
+          {
+            "name": "get_config",
+            "description": "Get current runtime configuration for a service",
+            "schema": {
+              "properties": {
+                "service_name": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"service\":\"payment-service\",\"config\":{\"max_retries\":3,\"timeout_ms\":30000,\"pool_size\":10,\"feature_flags\":{\"new_processor\":true,\"async_webhooks\":false}}}"
+          },
+          {
+            "name": "run_health_check",
+            "description": "Trigger an active health check probe",
+            "schema": {
+              "properties": {
+                "service_name": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "mock": "{\"service\":\"payment-service\",\"checks\":[{\"name\":\"database\",\"status\":\"timeout\",\"latency_ms\":30500},{\"name\":\"redis\",\"status\":\"ok\",\"latency_ms\":2},{\"name\":\"stripe_api\",\"status\":\"ok\",\"latency_ms\":150}]}"
+          }
+        ],
+        "files": {},
+        "expectations": [
+          {
+            "check": "stdout_contains:degraded",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:v2.4.1",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:3.2",
+            "weight": 0.5
+          },
+          {
+            "check": "stdout_regex:rollback|Rollback|ROLLBACK",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_regex:error.rate|Error.rate|ERROR.RATE",
+            "weight": 0.5
+          },
+          {
+            "check": "tool_calls_min:3",
+            "weight": 1.0
+          },
+          {
+            "check": "tool_calls_max:10",
+            "weight": 1.0
+          }
+        ]
+      },
+      "trace": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Using the available tools, check the current health of the 'payment-service', look at its recent deployments, check its error rate, and review recent alerts. Determine whether the latest deployment should be rolled back. Print a status report including: service health status, latest deployment version and timestamp, current error rate, whether the error rate is above the 1% threshold, and your rollback recommendation with reasoning."
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_zRssu2PXFaMrooInnSbQjJAu",
+                "name": "mt-devops",
+                "input": {
+                  "commands": "set -e\nget_service_health --service_name payment-service\nlist_deployments --limit 5 --service_name payment-service\nget_error_rate --service_name payment-service --window 15m\nget_alerts --service_name payment-service --status open\n"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_zRssu2PXFaMrooInnSbQjJAu",
+                "content": "{\"service\":\"payment-service\",\"status\":\"degraded\",\"uptime_pct\":97.2,\"healthy_instances\":3,\"total_instances\":5,\"last_check\":\"2025-12-15T14:30:00Z\"}[{\"deploy_id\":\"DEP-450\",\"service\":\"payment-service\",\"version\":\"v2.4.1\",\"status\":\"completed\",\"deployed_by\":\"ci-bot\",\"timestamp\":\"2025-12-15T12:00:00Z\",\"commit\":\"abc123f\"},{\"deploy_id\":\"DEP-448\",\"service\":\"payment-service\",\"version\":\"v2.4.0\",\"status\":\"completed\",\"deployed_by\":\"ci-bot\",\"timestamp\":\"2025-12-14T10:00:00Z\",\"commit\":\"def456a\"}]{\"service\":\"payment-service\",\"error_rate\":0.032,\"error_count\":156,\"request_count\":4875,\"window\":\"1h\",\"top_errors\":[{\"code\":500,\"message\":\"internal server error\",\"count\":98},{\"code\":503,\"message\":\"service unavailable\",\"count\":58}]}[{\"alert_id\":\"ALT-700\",\"service\":\"payment-service\",\"severity\":\"critical\",\"message\":\"Error rate exceeded 3% threshold\",\"triggered_at\":\"2025-12-15T12:45:00Z\",\"status\":\"firing\"},{\"alert_id\":\"ALT-701\",\"service\":\"payment-service\",\"severity\":\"warning\",\"message\":\"2 instances unhealthy\",\"triggered_at\":\"2025-12-15T12:50:00Z\",\"status\":\"firing\"}]",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "## payment-service status report\n\n- **Service health:** `degraded`  \n  - Instances: **3 healthy / 5 total**  \n  - Last check: **2025-12-15T14:30:00Z**  \n  - Uptime (reported): **97.2%**\n\n- **Latest deployment:**  \n  - Deploy ID: **DEP-450**  \n  - Version: **v2.4.1**  \n  - Timestamp: **2025-12-15T12:00:00Z**  \n  - Previous: **DEP-448 (v2.4.0)** at **2025-12-14T10:00:00Z**\n\n- **Current error rate:** **3.2%** (156 / 4875 requests, reported window: **1h**)  \n  - **Above 1% threshold?** **Yes** (3.2% > 1.0%)  \n  - Top errors: **500 (98)**, **503 (58)**\n\n- **Open alerts:**  \n  - **CRITICAL:** “Error rate exceeded 3% threshold” (triggered **2025-12-15T12:45:00Z**)  \n  - **WARNING:** “2 instances unhealthy” (triggered **2025-12-15T12:50:00Z**)\n\n## Rollback recommendation\n**Recommend rollback of the latest deployment (v2.4.1 / DEP-450) to v2.4.0 (DEP-448).**\n\n**Reasoning:** The service is currently **degraded** with **2 unhealthy instances**, and the **error rate is 3.2%**, well above the **1%** threshold, with a **critical alert** firing. These symptoms began after the most recent deployment window (deployment at **12:00Z**, alerts firing starting **12:45Z**), suggesting a strong correlation with **v2.4.1**."
+              }
+            ]
+          }
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "mt-devops",
+            "input": {
+              "commands": "set -e\nget_service_health --service_name payment-service\nlist_deployments --limit 5 --service_name payment-service\nget_error_rate --service_name payment-service --window 15m\nget_alerts --service_name payment-service --status open\n"
+            },
+            "output": "{\"service\":\"payment-service\",\"status\":\"degraded\",\"uptime_pct\":97.2,\"healthy_instances\":3,\"total_instances\":5,\"last_check\":\"2025-12-15T14:30:00Z\"}[{\"deploy_id\":\"DEP-450\",\"service\":\"payment-service\",\"version\":\"v2.4.1\",\"status\":\"completed\",\"deployed_by\":\"ci-bot\",\"timestamp\":\"2025-12-15T12:00:00Z\",\"commit\":\"abc123f\"},{\"deploy_id\":\"DEP-448\",\"service\":\"payment-service\",\"version\":\"v2.4.0\",\"status\":\"completed\",\"deployed_by\":\"ci-bot\",\"timestamp\":\"2025-12-14T10:00:00Z\",\"commit\":\"def456a\"}]{\"service\":\"payment-service\",\"error_rate\":0.032,\"error_count\":156,\"request_count\":4875,\"window\":\"1h\",\"top_errors\":[{\"code\":500,\"message\":\"internal server error\",\"count\":98},{\"code\":503,\"message\":\"service unavailable\",\"count\":58}]}[{\"alert_id\":\"ALT-700\",\"service\":\"payment-service\",\"severity\":\"critical\",\"message\":\"Error rate exceeded 3% threshold\",\"triggered_at\":\"2025-12-15T12:45:00Z\",\"status\":\"firing\"},{\"alert_id\":\"ALT-701\",\"service\":\"payment-service\",\"severity\":\"warning\",\"message\":\"2 instances unhealthy\",\"triggered_at\":\"2025-12-15T12:50:00Z\",\"status\":\"firing\"}]",
+            "exit_code": 0
+          }
+        ],
+        "tool_call_count": 1,
+        "turns": 2,
+        "natural_stop": true,
+        "total_input_tokens": 2141,
+        "total_output_tokens": 499,
+        "duration_ms": 7420,
+        "baseline": false,
+        "raw_tool_output_bytes": 1051,
+        "tool_output_sent_bytes": 1051
+      },
+      "score": {
+        "task_id": "mt-devops",
+        "results": [
+          {
+            "check": "stdout_contains:degraded",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:v2.4.1",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:3.2",
+            "passed": false,
+            "detail": "'3.2' not found in any tool output",
+            "weight": 0.5
+          },
+          {
+            "check": "stdout_regex:rollback|Rollback|ROLLBACK",
+            "passed": false,
+            "detail": "pattern 'rollback|Rollback|ROLLBACK' not matched",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_regex:error.rate|Error.rate|ERROR.RATE",
+            "passed": true,
+            "detail": "matched",
+            "weight": 0.5
+          },
+          {
+            "check": "tool_calls_min:3",
+            "passed": false,
+            "detail": "expected >= 3, got 1",
+            "weight": 1.0
+          },
+          {
+            "check": "tool_calls_max:10",
+            "passed": true,
+            "detail": "expected <= 10, got 1",
+            "weight": 1.0
+          }
+        ],
+        "score": 3.5,
+        "max_score": 6.0
+      }
+    }
+  ],
+  "summary": {
+    "total_tasks": 4,
+    "total_passed": 2,
+    "total_score": 25.5,
+    "total_max_score": 29.0,
+    "overall_rate": 0.8793103448275862,
+    "total_input_tokens": 31053,
+    "total_output_tokens": 4204,
+    "total_turns": 20,
+    "total_tool_calls": 16,
+    "tool_calls_ok": 7,
+    "tool_calls_error": 9,
+    "tool_call_success_rate": 0.4375,
+    "total_duration_ms": 59700,
+    "avg_turns_per_task": 5.0,
+    "avg_tool_calls_per_task": 4.0,
+    "avg_duration_ms": 14925.0,
+    "total_raw_tool_output_bytes": 3886,
+    "total_tool_output_sent_bytes": 4077,
+    "by_category": {
+      "many_tools": {
+        "tasks": 4,
+        "passed": 2,
+        "score": 25.5,
+        "max_score": 29.0,
+        "rate": 0.8793103448275862,
+        "avg_turns": 5.0,
+        "avg_tool_calls": 4.0,
+        "total_raw_output_bytes": 3886
+      }
+    }
+  }
+}
