@@ -1,5 +1,6 @@
 // bashkit-eval: LLM evaluation harness for bashkit tool usage
 // See specs/012-eval.md for design decisions
+// Supports multiple eval types: "bash" (original) and "scripting-tool"
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -24,9 +25,18 @@ enum Commands {
         #[arg(long)]
         provider: String,
 
-        /// Model name (e.g., "claude-sonnet-4-20250514", "gpt-4o")
+        /// Model name (e.g., "claude-sonnet-4-20250514", "gpt-5.2")
         #[arg(long)]
         model: String,
+
+        /// Eval type: "bash" (default) or "scripting-tool"
+        #[arg(long, default_value = "bash")]
+        eval_type: String,
+
+        /// Run in baseline mode (scripting-tool only): expose each tool
+        /// individually instead of composing them into a ScriptedTool
+        #[arg(long)]
+        baseline: bool,
 
         /// Max agent turns per task
         #[arg(long, default_value = "10")]
@@ -55,6 +65,8 @@ async fn main() -> Result<()> {
             dataset,
             provider,
             model,
+            eval_type,
+            baseline,
             max_turns,
             save,
             output,
@@ -64,10 +76,30 @@ async fn main() -> Result<()> {
                 let sanitized = model.replace(['/', ':'], "-");
                 format!("{}-{}", provider, sanitized)
             });
-            bashkit_eval::runner::run_eval(
-                &dataset, &provider, &model, max_turns, save, &output, &moniker,
-            )
-            .await?;
+
+            match eval_type.as_str() {
+                "bash" => {
+                    if baseline {
+                        anyhow::bail!("--baseline is only valid with --eval-type scripting-tool");
+                    }
+                    bashkit_eval::runner::run_eval(
+                        &dataset, &provider, &model, max_turns, save, &output, &moniker,
+                    )
+                    .await?;
+                }
+                "scripting-tool" => {
+                    bashkit_eval::scripting_runner::run_scripting_eval(
+                        &dataset, &provider, &model, max_turns, baseline, save, &output, &moniker,
+                    )
+                    .await?;
+                }
+                other => {
+                    anyhow::bail!(
+                        "unknown eval type: '{}'. Use 'bash' or 'scripting-tool'",
+                        other
+                    );
+                }
+            }
         }
     }
 

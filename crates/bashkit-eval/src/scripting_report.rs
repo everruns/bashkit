@@ -1,0 +1,421 @@
+// Report generation for scripting tool evals.
+// Extends base report with scripting-specific metrics:
+// - raw_tool_output_bytes vs tool_output_sent_bytes (data efficiency)
+// - baseline vs scripted comparison columns
+// - per-tool-count breakdown
+
+use std::collections::HashMap;
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+
+use crate::scorer::TaskScore;
+use crate::scripting_agent::ScriptingTrace;
+use crate::scripting_dataset::ScriptingEvalTask;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScriptingEvalResult {
+    pub task: ScriptingEvalTask,
+    pub trace: ScriptingTrace,
+    pub score: TaskScore,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScriptingEvalReport {
+    pub provider: String,
+    pub model: String,
+    pub timestamp: String,
+    pub max_turns: usize,
+    pub baseline: bool,
+    pub results: Vec<ScriptingEvalResult>,
+    pub summary: ScriptingSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScriptingSummary {
+    pub total_tasks: usize,
+    pub total_passed: usize,
+    pub total_score: f64,
+    pub total_max_score: f64,
+    pub overall_rate: f64,
+    pub total_input_tokens: u32,
+    pub total_output_tokens: u32,
+    pub total_turns: usize,
+    pub total_tool_calls: usize,
+    pub tool_calls_ok: usize,
+    pub tool_calls_error: usize,
+    pub tool_call_success_rate: f64,
+    pub total_duration_ms: u64,
+    pub avg_turns_per_task: f64,
+    pub avg_tool_calls_per_task: f64,
+    pub avg_duration_ms: f64,
+    /// Total raw bytes of tool output data.
+    pub total_raw_tool_output_bytes: usize,
+    /// Total bytes actually sent to LLM as tool results.
+    pub total_tool_output_sent_bytes: usize,
+    pub by_category: HashMap<String, ScriptingCategorySummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScriptingCategorySummary {
+    pub tasks: usize,
+    pub passed: usize,
+    pub score: f64,
+    pub max_score: f64,
+    pub rate: f64,
+    pub avg_turns: f64,
+    pub avg_tool_calls: f64,
+    pub total_raw_output_bytes: usize,
+}
+
+pub fn build_scripting_report(
+    provider: &str,
+    model: &str,
+    max_turns: usize,
+    baseline: bool,
+    results: &[ScriptingEvalResult],
+) -> ScriptingEvalReport {
+    let total_tasks = results.len();
+    let total_passed = results.iter().filter(|r| r.score.all_passed()).count();
+    let total_score: f64 = results.iter().map(|r| r.score.score).sum();
+    let total_max_score: f64 = results.iter().map(|r| r.score.max_score).sum();
+    let overall_rate = if total_max_score > 0.0 {
+        total_score / total_max_score
+    } else {
+        1.0
+    };
+
+    let total_input_tokens: u32 = results.iter().map(|r| r.trace.total_input_tokens).sum();
+    let total_output_tokens: u32 = results.iter().map(|r| r.trace.total_output_tokens).sum();
+    let total_turns: usize = results.iter().map(|r| r.trace.turns).sum();
+    let total_tool_calls: usize = results.iter().map(|r| r.trace.tool_call_count).sum();
+    let tool_calls_ok: usize = results
+        .iter()
+        .flat_map(|r| &r.trace.tool_calls)
+        .filter(|tc| tc.exit_code == 0)
+        .count();
+    let tool_calls_error = total_tool_calls - tool_calls_ok;
+    let tool_call_success_rate = if total_tool_calls > 0 {
+        tool_calls_ok as f64 / total_tool_calls as f64
+    } else {
+        1.0
+    };
+    let total_duration_ms: u64 = results.iter().map(|r| r.trace.duration_ms).sum();
+    let total_raw_tool_output_bytes: usize =
+        results.iter().map(|r| r.trace.raw_tool_output_bytes).sum();
+    let total_tool_output_sent_bytes: usize =
+        results.iter().map(|r| r.trace.tool_output_sent_bytes).sum();
+
+    let n = total_tasks.max(1) as f64;
+    let avg_turns_per_task = total_turns as f64 / n;
+    let avg_tool_calls_per_task = total_tool_calls as f64 / n;
+    let avg_duration_ms = total_duration_ms as f64 / n;
+
+    let mut by_category: HashMap<String, ScriptingCategorySummary> = HashMap::new();
+    for r in results {
+        let entry =
+            by_category
+                .entry(r.task.category.clone())
+                .or_insert(ScriptingCategorySummary {
+                    tasks: 0,
+                    passed: 0,
+                    score: 0.0,
+                    max_score: 0.0,
+                    rate: 0.0,
+                    avg_turns: 0.0,
+                    avg_tool_calls: 0.0,
+                    total_raw_output_bytes: 0,
+                });
+        entry.tasks += 1;
+        if r.score.all_passed() {
+            entry.passed += 1;
+        }
+        entry.score += r.score.score;
+        entry.max_score += r.score.max_score;
+        entry.avg_turns += r.trace.turns as f64;
+        entry.avg_tool_calls += r.trace.tool_call_count as f64;
+        entry.total_raw_output_bytes += r.trace.raw_tool_output_bytes;
+    }
+    for cat in by_category.values_mut() {
+        let cn = cat.tasks.max(1) as f64;
+        cat.rate = if cat.max_score > 0.0 {
+            cat.score / cat.max_score
+        } else {
+            1.0
+        };
+        cat.avg_turns /= cn;
+        cat.avg_tool_calls /= cn;
+    }
+
+    ScriptingEvalReport {
+        provider: provider.to_string(),
+        model: model.to_string(),
+        timestamp: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        max_turns,
+        baseline,
+        results: results.to_vec(),
+        summary: ScriptingSummary {
+            total_tasks,
+            total_passed,
+            total_score,
+            total_max_score,
+            overall_rate,
+            total_input_tokens,
+            total_output_tokens,
+            total_turns,
+            total_tool_calls,
+            tool_calls_ok,
+            tool_calls_error,
+            tool_call_success_rate,
+            total_duration_ms,
+            avg_turns_per_task,
+            avg_tool_calls_per_task,
+            avg_duration_ms,
+            total_raw_tool_output_bytes,
+            total_tool_output_sent_bytes,
+            by_category,
+        },
+    }
+}
+
+pub fn print_scripting_terminal_report(report: &ScriptingEvalReport) {
+    let mode = if report.baseline {
+        "baseline"
+    } else {
+        "scripted"
+    };
+    println!();
+    println!(
+        "=== Scripting Tool Eval: {}/{} ({}) ===",
+        report.provider, report.model, mode
+    );
+    println!();
+
+    for r in &report.results {
+        let status = if r.score.all_passed() { "PASS" } else { "FAIL" };
+        println!(
+            "  [{}] {} ({}) - {:.0}/{:.0}",
+            status, r.task.id, r.task.category, r.score.score, r.score.max_score
+        );
+    }
+
+    println!();
+    println!("--- Summary ---");
+    println!(
+        "  Mode: {}",
+        if report.baseline {
+            "baseline (individual tools)"
+        } else {
+            "scripted (ScriptedTool)"
+        }
+    );
+    println!(
+        "  Tasks: {}/{} passed",
+        report.summary.total_passed, report.summary.total_tasks
+    );
+    println!(
+        "  Score: {:.1}/{:.1} ({:.0}%)",
+        report.summary.total_score,
+        report.summary.total_max_score,
+        report.summary.overall_rate * 100.0
+    );
+    println!(
+        "  Turns: {} total, {:.1} avg/task",
+        report.summary.total_turns, report.summary.avg_turns_per_task
+    );
+    println!(
+        "  Tool calls: {} total, {:.1} avg/task ({} ok, {} error, {:.0}% success)",
+        report.summary.total_tool_calls,
+        report.summary.avg_tool_calls_per_task,
+        report.summary.tool_calls_ok,
+        report.summary.tool_calls_error,
+        report.summary.tool_call_success_rate * 100.0
+    );
+    println!(
+        "  Tokens: {} input, {} output",
+        report.summary.total_input_tokens, report.summary.total_output_tokens
+    );
+    println!(
+        "  Tool output: {} bytes raw, {} bytes sent to LLM",
+        report.summary.total_raw_tool_output_bytes, report.summary.total_tool_output_sent_bytes,
+    );
+    println!(
+        "  Duration: {:.1}s total, {:.1}s avg/task",
+        report.summary.total_duration_ms as f64 / 1000.0,
+        report.summary.avg_duration_ms / 1000.0
+    );
+
+    println!();
+    println!("--- By Category ---");
+    let mut cats: Vec<_> = report.summary.by_category.iter().collect();
+    cats.sort_by_key(|(k, _)| (*k).clone());
+    for (cat, summary) in &cats {
+        println!(
+            "  {:<25} {}/{} tasks  {:.0}%  ({:.1} turns, {:.1} calls avg)",
+            cat,
+            summary.passed,
+            summary.tasks,
+            summary.rate * 100.0,
+            summary.avg_turns,
+            summary.avg_tool_calls,
+        );
+    }
+    println!();
+}
+
+pub fn save_scripting_report(
+    report: &ScriptingEvalReport,
+    output_dir: &str,
+    moniker: &str,
+) -> Result<()> {
+    std::fs::create_dir_all(output_dir)?;
+
+    let mode = if report.baseline {
+        "baseline"
+    } else {
+        "scripted"
+    };
+    let date = chrono::Utc::now().format("%Y-%m-%d-%H%M%S");
+    let base = format!(
+        "{}/scripting-eval-{}-{}-{}",
+        output_dir, mode, moniker, date
+    );
+
+    let json_path = format!("{}.json", base);
+    let json = serde_json::to_string_pretty(report)?;
+    std::fs::write(&json_path, json)?;
+    println!("Saved JSON: {}", json_path);
+
+    let md_path = format!("{}.md", base);
+    let md = generate_markdown(report);
+    std::fs::write(&md_path, md)?;
+    println!("Saved Markdown: {}", md_path);
+
+    Ok(())
+}
+
+fn generate_markdown(report: &ScriptingEvalReport) -> String {
+    let mode = if report.baseline {
+        "baseline"
+    } else {
+        "scripted"
+    };
+    let mut md = String::new();
+
+    md.push_str(&format!(
+        "# Scripting Tool Eval: {}/{} ({})\n\n",
+        report.provider, report.model, mode
+    ));
+    md.push_str(&format!("- **Date**: {}\n", report.timestamp));
+    md.push_str(&format!(
+        "- **Mode**: {}\n",
+        if report.baseline {
+            "baseline (individual tools)"
+        } else {
+            "scripted (ScriptedTool)"
+        }
+    ));
+    md.push_str(&format!("- **Max turns**: {}\n", report.max_turns));
+    md.push_str(&format!(
+        "- **Turns**: {} total ({:.1} avg/task)\n",
+        report.summary.total_turns, report.summary.avg_turns_per_task
+    ));
+    md.push_str(&format!(
+        "- **Tool calls**: {} total ({:.1} avg/task)\n",
+        report.summary.total_tool_calls, report.summary.avg_tool_calls_per_task
+    ));
+    md.push_str(&format!(
+        "- **Tool call success**: {} ok, {} error ({:.0}% success rate)\n",
+        report.summary.tool_calls_ok,
+        report.summary.tool_calls_error,
+        report.summary.tool_call_success_rate * 100.0
+    ));
+    md.push_str(&format!(
+        "- **Tokens**: {} input, {} output\n",
+        report.summary.total_input_tokens, report.summary.total_output_tokens
+    ));
+    md.push_str(&format!(
+        "- **Tool output**: {} bytes raw, {} bytes sent\n",
+        report.summary.total_raw_tool_output_bytes, report.summary.total_tool_output_sent_bytes
+    ));
+    md.push_str(&format!(
+        "- **Duration**: {:.1}s total ({:.1}s avg/task)\n\n",
+        report.summary.total_duration_ms as f64 / 1000.0,
+        report.summary.avg_duration_ms / 1000.0
+    ));
+
+    md.push_str("## Summary\n\n");
+    md.push_str(&format!(
+        "**{}/{} tasks passed ({:.0}%)**\n\n",
+        report.summary.total_passed,
+        report.summary.total_tasks,
+        report.summary.overall_rate * 100.0
+    ));
+
+    md.push_str("## By Category\n\n");
+    md.push_str("| Category | Passed | Total | Rate | Avg Turns | Avg Calls | Raw Output |\n");
+    md.push_str("|----------|--------|-------|------|-----------|-----------|------------|\n");
+    let mut cats: Vec<_> = report.summary.by_category.iter().collect();
+    cats.sort_by_key(|(k, _)| (*k).clone());
+    for (cat, summary) in &cats {
+        md.push_str(&format!(
+            "| {} | {} | {} | {:.0}% | {:.1} | {:.1} | {} bytes |\n",
+            cat,
+            summary.passed,
+            summary.tasks,
+            summary.rate * 100.0,
+            summary.avg_turns,
+            summary.avg_tool_calls,
+            summary.total_raw_output_bytes,
+        ));
+    }
+    md.push('\n');
+
+    md.push_str("## Task Details\n\n");
+    for r in &report.results {
+        let status = if r.score.all_passed() { "PASS" } else { "FAIL" };
+        md.push_str(&format!(
+            "### [{}] {} ({})\n\n",
+            status, r.task.id, r.task.category
+        ));
+        md.push_str(&format!("{}\n\n", r.task.description));
+        md.push_str(&format!("- Tools: {}\n", r.task.tools.len()));
+        let calls_ok = r
+            .trace
+            .tool_calls
+            .iter()
+            .filter(|tc| tc.exit_code == 0)
+            .count();
+        let calls_err = r.trace.tool_call_count - calls_ok;
+        md.push_str(&format!(
+            "- Turns: {} | Tool calls: {} ({} ok, {} err) | Duration: {:.1}s\n",
+            r.trace.turns,
+            r.trace.tool_call_count,
+            calls_ok,
+            calls_err,
+            r.trace.duration_ms as f64 / 1000.0
+        ));
+        md.push_str(&format!(
+            "- Tokens: {} input, {} output\n",
+            r.trace.total_input_tokens, r.trace.total_output_tokens
+        ));
+        md.push_str(&format!(
+            "- Tool output: {} bytes raw, {} bytes sent\n",
+            r.trace.raw_tool_output_bytes, r.trace.tool_output_sent_bytes
+        ));
+        md.push_str(&format!(
+            "- Score: {:.0}/{:.0}\n\n",
+            r.score.score, r.score.max_score
+        ));
+
+        md.push_str("| Check | Result | Detail |\n");
+        md.push_str("|-------|--------|--------|\n");
+        for sr in &r.score.results {
+            let icon = if sr.passed { "PASS" } else { "FAIL" };
+            md.push_str(&format!("| {} | {} | {} |\n", sr.check, icon, sr.detail));
+        }
+        md.push('\n');
+    }
+
+    md
+}
