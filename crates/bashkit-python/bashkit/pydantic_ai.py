@@ -13,8 +13,6 @@ Example:
 
 from __future__ import annotations
 
-from typing import Optional
-
 try:
     from pydantic_ai import Tool
 
@@ -26,11 +24,11 @@ from bashkit import BashTool as NativeBashTool
 
 
 def create_bash_tool(
-    username: Optional[str] = None,
-    hostname: Optional[str] = None,
-    max_commands: Optional[int] = None,
-    max_loop_iterations: Optional[int] = None,
-) -> "Tool":
+    username: str | None = None,
+    hostname: str | None = None,
+    max_commands: int | None = None,
+    max_loop_iterations: int | None = None,
+) -> Tool:
     """Create a PydanticAI Tool wrapping Bashkit.
 
     Args:
@@ -53,8 +51,7 @@ def create_bash_tool(
     """
     if not PYDANTIC_AI_AVAILABLE:
         raise ImportError(
-            "pydantic-ai is required for PydanticAI integration. "
-            "Install with: pip install 'bashkit[pydantic-ai]'"
+            "pydantic-ai is required for PydanticAI integration. Install with: pip install 'bashkit[pydantic-ai]'"
         )
 
     native = NativeBashTool(

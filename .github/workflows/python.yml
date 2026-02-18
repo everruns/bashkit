@@ -1,0 +1,128 @@
+# CI for bashkit Python bindings
+# Builds the native extension via maturin and runs pytest on each PR.
+# Complements publish-python.yml (release-only) with per-PR validation.
+
+name: Python
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/bashkit-python/**"
+      - "crates/bashkit/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/python.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/bashkit-python/**"
+      - "crates/bashkit/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/python.yml"
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Ruff check
+        run: uvx ruff check crates/bashkit-python
+
+      - name: Ruff format
+        run: uvx ruff format --check crates/bashkit-python
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --out dist -i python${{ matrix.python-version }}
+          rust-toolchain: stable
+          working-directory: crates/bashkit-python
+
+      - name: Install wheel and test dependencies
+        run: |
+          pip install bashkit --no-index --find-links crates/bashkit-python/dist --force-reinstall
+          pip install pytest pytest-asyncio
+
+      - name: Run tests
+        working-directory: crates/bashkit-python
+        run: pytest tests/ -v
+
+  # Verify wheel builds and passes twine check
+  build-wheel:
+    name: Build wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --out dist
+          rust-toolchain: stable
+          working-directory: crates/bashkit-python
+
+      - name: Verify wheel metadata
+        run: |
+          pip install twine
+          twine check crates/bashkit-python/dist/*
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: python-wheel
+          path: crates/bashkit-python/dist
+          retention-days: 5
+
+  # Gate job for branch protection
+  python-check:
+    name: Python Check
+    if: always()
+    needs: [lint, test, build-wheel]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all jobs passed
+        run: |
+          if [[ "${{ needs.lint.result }}" != "success" ]] || \
+             [[ "${{ needs.test.result }}" != "success" ]] || \
+             [[ "${{ needs.build-wheel.result }}" != "success" ]]; then
+            echo "One or more Python CI jobs failed"
+            exit 1
+          fi
