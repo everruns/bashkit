@@ -1889,14 +1889,41 @@ impl AwkInterpreter {
                 }
                 let s = self.eval_expr(&args[0]).as_string();
                 let pattern = self.eval_expr(&args[1]).as_string();
+                // Extract capture array name from 3rd arg (gawk extension)
+                let arr_name = if args.len() >= 3 {
+                    if let AwkExpr::Variable(name) = &args[2] {
+                        Some(name.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 if let Ok(re) = Regex::new(&pattern) {
-                    if let Some(m) = re.find(&s) {
+                    if let Some(caps) = re.captures(&s) {
+                        let m = caps.get(0).unwrap();
                         let rstart = m.start() + 1; // awk is 1-indexed
                         let rlength = m.end() - m.start();
                         self.state
                             .set_variable("RSTART", AwkValue::Number(rstart as f64));
                         self.state
                             .set_variable("RLENGTH", AwkValue::Number(rlength as f64));
+                        // Populate capture array if 3rd arg provided
+                        if let Some(ref arr) = arr_name {
+                            // arr[0] = entire match
+                            let full_key = format!("{}[0]", arr);
+                            self.state
+                                .set_variable(&full_key, AwkValue::String(m.as_str().to_string()));
+                            // arr[1..N] = capture groups
+                            for i in 1..caps.len() {
+                                let key = format!("{}[{}]", arr, i);
+                                let val = caps
+                                    .get(i)
+                                    .map(|c| c.as_str().to_string())
+                                    .unwrap_or_default();
+                                self.state.set_variable(&key, AwkValue::String(val));
+                            }
+                        }
                         AwkValue::Number(rstart as f64)
                     } else {
                         self.state.set_variable("RSTART", AwkValue::Number(0.0));

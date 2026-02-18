@@ -202,31 +202,91 @@ impl Builtin for Tr {
     }
 }
 
-/// Expand a character set specification like "a-z" into a list of characters
+/// Expand a character set specification like "a-z" into a list of characters.
+/// Supports POSIX character classes: [:lower:], [:upper:], [:digit:], [:alpha:], [:alnum:], [:space:]
 fn expand_char_set(spec: &str) -> Vec<char> {
     let mut chars = Vec::new();
-    let mut iter = spec.chars().peekable();
+    let mut i = 0;
+    let bytes = spec.as_bytes();
 
-    while let Some(c) = iter.next() {
-        if iter.peek() == Some(&'-') {
-            iter.next(); // consume '-'
-            if let Some(&end) = iter.peek() {
-                iter.next(); // consume end char
-                             // Expand range
-                let start = c as u32;
-                let end = end as u32;
-                for code in start..=end {
-                    if let Some(ch) = char::from_u32(code) {
-                        chars.push(ch);
+    while i < bytes.len() {
+        // Check for POSIX character class [:class:]
+        if bytes[i] == b'[' && i + 1 < bytes.len() && bytes[i + 1] == b':' {
+            if let Some(end) = spec[i + 2..].find(":]") {
+                let class_name = &spec[i + 2..i + 2 + end];
+                match class_name {
+                    "lower" => chars.extend('a'..='z'),
+                    "upper" => chars.extend('A'..='Z'),
+                    "digit" => chars.extend('0'..='9'),
+                    "alpha" => {
+                        chars.extend('a'..='z');
+                        chars.extend('A'..='Z');
+                    }
+                    "alnum" => {
+                        chars.extend('a'..='z');
+                        chars.extend('A'..='Z');
+                        chars.extend('0'..='9');
+                    }
+                    "space" => chars.extend([' ', '\t', '\n', '\r', '\x0b', '\x0c']),
+                    "blank" => chars.extend([' ', '\t']),
+                    "print" | "graph" => {
+                        for code in 0x20u8..=0x7e {
+                            chars.push(code as char);
+                        }
+                    }
+                    _ => {
+                        // Unknown class, treat literally
+                        chars.push('[');
+                        i += 1;
+                        continue;
                     }
                 }
-            } else {
-                // Trailing dash, treat literally
-                chars.push(c);
-                chars.push('-');
+                i += 2 + end + 2; // skip past [: + class + :]
+                continue;
             }
-        } else {
+        }
+
+        let c = bytes[i] as char;
+        // Check for range like a-z
+        if i + 2 < bytes.len() && bytes[i + 1] == b'-' {
+            let end = bytes[i + 2] as char;
+            let start = c as u32;
+            let end = end as u32;
+            for code in start..=end {
+                if let Some(ch) = char::from_u32(code) {
+                    chars.push(ch);
+                }
+            }
+            i += 3;
+        } else if i + 1 == bytes.len() - 1 && bytes[i + 1] == b'-' {
+            // Trailing dash
             chars.push(c);
+            chars.push('-');
+            i += 2;
+        } else {
+            // Handle escape sequences
+            if c == '\\' && i + 1 < bytes.len() {
+                match bytes[i + 1] {
+                    b'n' => {
+                        chars.push('\n');
+                        i += 2;
+                        continue;
+                    }
+                    b't' => {
+                        chars.push('\t');
+                        i += 2;
+                        continue;
+                    }
+                    b'\\' => {
+                        chars.push('\\');
+                        i += 2;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            chars.push(c);
+            i += 1;
         }
     }
 
@@ -336,6 +396,29 @@ mod tests {
         assert_eq!(expand_char_set("abc"), vec!['a', 'b', 'c']);
         assert_eq!(expand_char_set("a-c"), vec!['a', 'b', 'c']);
         assert_eq!(expand_char_set("0-2"), vec!['0', '1', '2']);
+    }
+
+    #[test]
+    fn test_expand_char_class_lower() {
+        let lower = expand_char_set("[:lower:]");
+        assert_eq!(lower.len(), 26);
+        assert_eq!(lower[0], 'a');
+        assert_eq!(lower[25], 'z');
+    }
+
+    #[test]
+    fn test_expand_char_class_upper() {
+        let upper = expand_char_set("[:upper:]");
+        assert_eq!(upper.len(), 26);
+        assert_eq!(upper[0], 'A');
+        assert_eq!(upper[25], 'Z');
+    }
+
+    #[tokio::test]
+    async fn test_tr_char_class_lower_to_upper() {
+        let result = run_tr(&["[:lower:]", "[:upper:]"], Some("hello world\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "HELLO WORLD\n");
     }
 
     #[test]

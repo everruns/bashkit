@@ -69,20 +69,25 @@ impl Builtin for Head {
 ///
 /// Options:
 ///   -n NUM   Output the last NUM lines (default: 10)
+///   -n +NUM  Output starting from line NUM (1-indexed)
 ///   -NUM     Shorthand for -n NUM
 pub struct Tail;
 
 #[async_trait]
 impl Builtin for Tail {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let (num_lines, files) = parse_head_tail_args(ctx.args, DEFAULT_LINES)?;
+        let (num_lines, from_start, files) = parse_tail_args(ctx.args, DEFAULT_LINES)?;
 
         let mut output = String::new();
 
         if files.is_empty() {
             // Read from stdin
             if let Some(stdin) = ctx.stdin {
-                output = take_last_lines(stdin, num_lines);
+                output = if from_start {
+                    take_from_line(stdin, num_lines)
+                } else {
+                    take_last_lines(stdin, num_lines)
+                };
             }
         } else {
             // Read from files
@@ -104,7 +109,12 @@ impl Builtin for Tail {
                 match ctx.fs.read_file(&path).await {
                     Ok(content) => {
                         let text = String::from_utf8_lossy(&content);
-                        output.push_str(&take_last_lines(&text, num_lines));
+                        let selected = if from_start {
+                            take_from_line(&text, num_lines)
+                        } else {
+                            take_last_lines(&text, num_lines)
+                        };
+                        output.push_str(&selected);
                     }
                     Err(e) => {
                         return Ok(ExecResult::err(format!("tail: {}: {}\n", file, e), 1));
@@ -117,10 +127,18 @@ impl Builtin for Tail {
     }
 }
 
-/// Parse arguments for head/tail commands
+/// Parse arguments for head command.
 /// Returns (num_lines, file_list)
 fn parse_head_tail_args(args: &[String], default: usize) -> Result<(usize, Vec<String>)> {
+    let (num_lines, _, files) = parse_tail_args(args, default)?;
+    Ok((num_lines, files))
+}
+
+/// Parse arguments for tail command, including +N "from start" syntax.
+/// Returns (num_lines, from_start, file_list)
+fn parse_tail_args(args: &[String], default: usize) -> Result<(usize, bool, Vec<String>)> {
     let mut num_lines = default;
+    let mut from_start = false;
     let mut files = Vec::new();
     let mut i = 0;
 
@@ -128,14 +146,27 @@ fn parse_head_tail_args(args: &[String], default: usize) -> Result<(usize, Vec<S
         let arg = &args[i];
 
         if arg == "-n" {
-            // -n NUM
+            // -n NUM or -n +NUM
             i += 1;
             if i < args.len() {
-                num_lines = args[i].parse().unwrap_or(default);
+                let val = &args[i];
+                if let Some(pos_str) = val.strip_prefix('+') {
+                    from_start = true;
+                    num_lines = pos_str.parse().unwrap_or(default);
+                } else {
+                    from_start = false;
+                    num_lines = val.parse().unwrap_or(default);
+                }
             }
         } else if let Some(num_str) = arg.strip_prefix("-n") {
-            // -nNUM (no space)
-            num_lines = num_str.parse().unwrap_or(default);
+            // -nNUM or -n+NUM (no space)
+            if let Some(pos_str) = num_str.strip_prefix('+') {
+                from_start = true;
+                num_lines = pos_str.parse().unwrap_or(default);
+            } else {
+                from_start = false;
+                num_lines = num_str.parse().unwrap_or(default);
+            }
         } else if let Some(num_str) = arg.strip_prefix('-') {
             // -NUM shorthand
             if let Ok(n) = num_str.parse::<usize>() {
@@ -149,7 +180,7 @@ fn parse_head_tail_args(args: &[String], default: usize) -> Result<(usize, Vec<S
         i += 1;
     }
 
-    Ok((num_lines, files))
+    Ok((num_lines, from_start, files))
 }
 
 /// Take the first N lines from text
@@ -160,6 +191,23 @@ fn take_first_lines(text: &str, n: usize) -> String {
     } else {
         let mut result = lines.join("\n");
         // Preserve trailing newline if original had one
+        if text.ends_with('\n') || !text.is_empty() {
+            result.push('\n');
+        }
+        result
+    }
+}
+
+/// Take lines starting from line N (1-indexed, like `tail -n +N`)
+fn take_from_line(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = if n == 0 { 0 } else { n - 1 };
+    let selected: Vec<&str> = lines.into_iter().skip(start).collect();
+
+    if selected.is_empty() {
+        String::new()
+    } else {
+        let mut result = selected.join("\n");
         if text.ends_with('\n') || !text.is_empty() {
             result.push('\n');
         }
@@ -317,5 +365,21 @@ mod tests {
         let result = run_tail(&["-n", "10"], Some(input)).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "a\nb\n");
+    }
+
+    #[tokio::test]
+    async fn test_tail_plus_n_from_start() {
+        let input = "header\nline1\nline2\nline3\n";
+        let result = run_tail(&["-n", "+2"], Some(input)).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "line1\nline2\nline3\n");
+    }
+
+    #[tokio::test]
+    async fn test_tail_plus_1_all_lines() {
+        let input = "a\nb\nc\n";
+        let result = run_tail(&["-n", "+1"], Some(input)).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "a\nb\nc\n");
     }
 }
