@@ -118,7 +118,6 @@ echo $((1 + 2 + 3 + 4))
 ### end
 
 ### arith_assign
-### skip: assignment inside $(()) not implemented
 # Assignment in arithmetic
 X=5; echo $((X = X + 1)); echo $X
 ### expect

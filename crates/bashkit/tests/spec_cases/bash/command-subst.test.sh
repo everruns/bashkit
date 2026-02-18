@@ -64,7 +64,6 @@ matched
 ### end
 
 ### subst_exit_code
-### skip: exit code propagation from command substitution not implemented
 # Exit code from command substitution
 result=$(false); echo $?
 ### expect

@@ -29,11 +29,12 @@ input value
 ### end
 
 ### herestring_empty
-### skip: empty herestring adds extra newline
-# Empty here string
+# Empty here string still produces a newline
 cat <<< ""
+echo "done"
 ### expect
 
+done
 ### end
 
 ### herestring_with_variable
