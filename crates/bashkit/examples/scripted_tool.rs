@@ -197,7 +197,9 @@ mod fakes {
         let uid = args.param_i64("user_id").ok_or("missing --user_id")?;
 
         let orders = match uid {
-            1 => r#"[{"order_id":101,"item":"Laptop","qty":1,"price":999.99},{"order_id":102,"item":"Mouse","qty":2,"price":29.99}]"#,
+            1 => {
+                r#"[{"order_id":101,"item":"Laptop","qty":1,"price":999.99},{"order_id":102,"item":"Mouse","qty":2,"price":29.99}]"#
+            }
             2 => r#"[{"order_id":201,"item":"Keyboard","qty":1,"price":79.99}]"#,
             3 => r#"[]"#,
             _ => return Err(format!("no orders for user {}", uid)),
