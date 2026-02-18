@@ -24,11 +24,9 @@ confidence-threshold = 0.8
 # Allow specific exceptions
 exceptions = []
 
-# TODO: Add clarifications as needed
-# [[licenses.clarify]]
-# name = "some-crate"
-# expression = "MIT"
-# license-files = [{ path = "LICENSE", hash = 0x00000000 }]
+# No license clarifications currently needed. All dependencies have
+# clear license metadata. Add [[licenses.clarify]] entries here if
+# cargo-deny reports ambiguous licenses for any dependency.
 
 [advisories]
 # Ignore unmaintained transitive dependencies we can't control

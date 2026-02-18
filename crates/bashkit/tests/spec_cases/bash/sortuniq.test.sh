@@ -112,7 +112,6 @@ printf '1\n10\n2\n5\n' | sort -rn
 ### end
 
 ### sort_case_insensitive
-### skip: sort -f (case insensitive) not implemented
 printf 'Banana\napple\nCherry\n' | sort -f
 ### expect
 apple
@@ -166,7 +165,6 @@ d
 ### end
 
 ### uniq_duplicate_only
-### skip: uniq -d (only duplicates) not implemented
 printf 'a\na\nb\nc\nc\n' | uniq -d
 ### expect
 a
@@ -174,7 +172,6 @@ c
 ### end
 
 ### uniq_unique_only
-### skip: uniq -u (only unique) not implemented
 printf 'a\na\nb\nc\nc\n' | uniq -u
 ### expect
 b

@@ -8,7 +8,7 @@
 //! - `### skip: reason` - Skip test entirely (not run in any test)
 //! - `### bash_diff: reason` - Known difference from real bash (runs in spec tests, excluded from comparison)
 //!
-//! ## Skipped Tests TODO (87 total)
+//! ## Skipped Tests TODO (76 total)
 //!
 //! The following tests are skipped and need fixes:
 //!
@@ -28,9 +28,11 @@
 //! - [ ] tr_truncate_set2 - tr truncation behavior differs
 //! - [ ] cut_only_delimited, cut_zero_terminated - not implemented
 //!
-//! ### sortuniq.test.sh (14 skipped) - sort/uniq flags
-//! - [ ] sort -f, -t, -k, -s, -c, -m, -h, -M, -o, -z - not implemented
-//! - [ ] uniq -d, -u, -i, -f - not implemented
+//! ### sortuniq.test.sh (11 skipped) - sort/uniq flags
+//! - [x] sort -f - case insensitive sort implemented
+//! - [ ] sort -t, -k, -s, -c, -m, -h, -M, -o, -z - not implemented
+//! - [x] uniq -d, -u - already implemented, tests unskipped
+//! - [ ] uniq -i, -f - not implemented
 //!
 //! ### echo.test.sh (4 skipped)
 //! - [x] echo_combined_en, echo_combined_ne - combined flag handling fixed
@@ -43,11 +45,11 @@
 //! ### fileops.test.sh (5 skipped) - filesystem visibility
 //! - [ ] mkdir_*, touch_*, mv_file - test conditionals not seeing fs changes
 //!
-//! ### wc.test.sh (5 skipped)
-//! - [ ] wc_chars_m_flag, wc_bytes_vs_chars - wc -m outputs full stats
-//! - [ ] wc_max_line_length - -L max line length not implemented
-//! - [ ] wc_long_bytes - wc --bytes outputs full stats
-//! - [ ] wc_unicode_chars - unicode character counting not implemented
+//! ### wc.test.sh (0 skipped)
+//! - [x] wc_chars_m_flag, wc_bytes_vs_chars - wc -m implemented
+//! - [x] wc_max_line_length - wc -L implemented
+//! - [x] wc_long_bytes - wc --bytes implemented
+//! - [x] wc_unicode_chars - unicode character counting implemented
 //!
 //! ### sleep.test.sh (3 skipped)
 //! - [ ] sleep_stderr_* - stderr redirect not implemented
@@ -70,19 +72,19 @@
 //! ### path.test.sh (2 skipped)
 //! - [ ] basename_no_args, dirname_no_args - error handling not implemented
 //!
-//! ### command-subst.test.sh (2 skipped)
-//! - [ ] subst_exit_code - exit code propagation needs work
+//! ### command-subst.test.sh (1 skipped)
+//! - [x] subst_exit_code - exit code propagation implemented
 //! - [ ] subst_backtick - backtick substitution not implemented
 //!
 //! ### arrays.test.sh (1 skipped)
 //! - [ ] array_indices - ${!arr[@]} array indices expansion not implemented
 //! - [x] array_slice - array slicing now implemented
 //!
-//! ### herestring.test.sh (1 skipped)
-//! - [ ] herestring_empty - empty herestring adds extra newline
+//! ### herestring.test.sh (0 skipped)
+//! - [x] herestring_empty - test rewritten to verify newline behavior
 //!
-//! ### arithmetic.test.sh (1 skipped)
-//! - [ ] arith_assign - assignment inside $(()) not implemented
+//! ### arithmetic.test.sh (0 skipped)
+//! - [x] arith_assign - assignment inside $(()) implemented
 //!
 //! ### control-flow.test.sh (enabled)
 //! - [x] Control flow tests enabled (31 tests passing)

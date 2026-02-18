@@ -11,11 +11,12 @@ use crate::interpreter::ExecResult;
 
 /// The sort builtin - sort lines of text.
 ///
-/// Usage: sort [-rnuV] [FILE...]
+/// Usage: sort [-fnruV] [FILE...]
 ///
 /// Options:
-///   -r   Reverse the result of comparisons
+///   -f   Fold lower case to upper case characters (case insensitive)
 ///   -n   Compare according to string numerical value
+///   -r   Reverse the result of comparisons
 ///   -u   Output only unique lines (like sort | uniq)
 ///   -V   Natural sort of version numbers
 pub struct Sort;
@@ -35,6 +36,10 @@ impl Builtin for Sort {
             .args
             .iter()
             .any(|a| a.contains('u') && a.starts_with('-'));
+        let fold_case = ctx
+            .args
+            .iter()
+            .any(|a| a.contains('f') && a.starts_with('-'));
 
         let files: Vec<_> = ctx.args.iter().filter(|a| !a.starts_with('-')).collect();
 
@@ -88,6 +93,8 @@ impl Builtin for Sort {
                     .partial_cmp(&b_num)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
+        } else if fold_case {
+            all_lines.sort_by_key(|a| a.to_lowercase());
         } else {
             all_lines.sort();
         }
@@ -307,6 +314,13 @@ mod tests {
         let result = run_sort(&["-u"], Some("apple\nbanana\napple\ncherry\nbanana\n")).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "apple\nbanana\ncherry\n");
+    }
+
+    #[tokio::test]
+    async fn test_sort_fold_case() {
+        let result = run_sort(&["-f"], Some("Banana\napple\nCherry\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "apple\nBanana\nCherry\n");
     }
 
     #[tokio::test]
