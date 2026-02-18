@@ -64,15 +64,18 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build and install with maturin
+      - name: Build wheel
         uses: PyO3/maturin-action@v1
         with:
-          command: develop
-          args: --release
+          command: build
+          args: --release --out dist -i python${{ matrix.python-version }}
+          rust-toolchain: stable
           working-directory: crates/bashkit-python
 
-      - name: Install test dependencies
-        run: pip install pytest pytest-asyncio
+      - name: Install wheel and test dependencies
+        run: |
+          pip install bashkit --no-index --find-links crates/bashkit-python/dist --force-reinstall
+          pip install pytest pytest-asyncio
 
       - name: Run tests
         working-directory: crates/bashkit-python
