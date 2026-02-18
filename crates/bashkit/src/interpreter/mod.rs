@@ -1307,10 +1307,16 @@ impl Interpreter {
                     noexec = true;
                     idx += 1;
                 }
-                // Accept but ignore these options (limited/no support in virtual mode)
-                // TODO: These options are accepted but not enforced in virtual mode
-                // -e (errexit), -x (xtrace), -v (verbose), -u (nounset)
-                // Would need interpreter changes to fully implement
+                // Accept but ignore these options. These are recognized for
+                // compatibility with scripts that set them, but not enforced
+                // in virtual mode:
+                // -e (errexit): would need per-command exit code checking
+                // -x (xtrace): would need trace output to stderr
+                // -v (verbose): would need input echoing
+                // -u (nounset): would need unset variable detection
+                // -o (option): would need set -o pipeline
+                // -i (interactive): not applicable in virtual mode
+                // -s (stdin): read from stdin (implicit behavior)
                 "-e" | "-x" | "-v" | "-u" | "-o" | "-i" | "-s" => {
                     idx += 1;
                 }
@@ -1732,7 +1738,9 @@ impl Interpreter {
                 ListOperator::Or => exit_code != 0,
                 ListOperator::Semicolon => true,
                 ListOperator::Background => {
-                    // TODO: Implement background execution
+                    // Background (&) runs command synchronously in virtual mode.
+                    // True process backgrounding requires OS process spawning which
+                    // is excluded from the sandboxed virtual environment by design.
                     true
                 }
             };
