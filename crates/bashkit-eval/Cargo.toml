@@ -15,7 +15,7 @@ name = "bashkit-eval"
 path = "src/main.rs"
 
 [dependencies]
-bashkit = { path = "../bashkit" }
+bashkit = { path = "../bashkit", features = ["scripted_tool"] }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
