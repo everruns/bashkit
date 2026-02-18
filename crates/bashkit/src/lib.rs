@@ -4249,4 +4249,104 @@ echo missing fi"#,
             *stderr_chunks
         );
     }
+
+    // ---- Streamed vs non-streamed equivalence tests ----
+    //
+    // These run the same script through exec() and exec_streaming() and assert
+    // that the final ExecResult is identical, plus concatenated chunks == stdout.
+
+    /// Helper: run script both ways, assert equivalence.
+    async fn assert_streaming_equivalence(script: &str) {
+        // Non-streaming
+        let mut bash_plain = Bash::new();
+        let plain = bash_plain.exec(script).await.unwrap();
+
+        // Streaming
+        let stdout_chunks: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let stderr_chunks: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let so = stdout_chunks.clone();
+        let se = stderr_chunks.clone();
+        let mut bash_stream = Bash::new();
+        let streamed = bash_stream
+            .exec_streaming(
+                script,
+                Box::new(move |stdout, stderr| {
+                    if !stdout.is_empty() {
+                        so.lock().unwrap().push(stdout.to_string());
+                    }
+                    if !stderr.is_empty() {
+                        se.lock().unwrap().push(stderr.to_string());
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Final results must match
+        assert_eq!(
+            plain.stdout, streamed.stdout,
+            "stdout mismatch for: {script}"
+        );
+        assert_eq!(
+            plain.stderr, streamed.stderr,
+            "stderr mismatch for: {script}"
+        );
+        assert_eq!(
+            plain.exit_code, streamed.exit_code,
+            "exit_code mismatch for: {script}"
+        );
+
+        // Concatenated chunks must equal full stdout/stderr
+        let reassembled_stdout: String = stdout_chunks.lock().unwrap().iter().cloned().collect();
+        assert_eq!(
+            reassembled_stdout, streamed.stdout,
+            "reassembled stdout chunks != final stdout for: {script}"
+        );
+        let reassembled_stderr: String = stderr_chunks.lock().unwrap().iter().cloned().collect();
+        assert_eq!(
+            reassembled_stderr, streamed.stderr,
+            "reassembled stderr chunks != final stderr for: {script}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_for_loop() {
+        assert_streaming_equivalence("for i in 1 2 3; do echo $i; done").await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_while_loop() {
+        assert_streaming_equivalence("i=0; while [ $i -lt 4 ]; do i=$((i+1)); echo $i; done").await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_nested_loops() {
+        assert_streaming_equivalence("for i in a b; do for j in 1 2; do echo \"$i$j\"; done; done")
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_mixed_list() {
+        assert_streaming_equivalence("echo start; for i in x y; do echo $i; done; echo end").await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_stderr() {
+        assert_streaming_equivalence("echo out; echo err >&2; echo out2").await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_pipeline() {
+        assert_streaming_equivalence("echo -e 'a\\nb\\nc' | grep b").await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_conditionals() {
+        assert_streaming_equivalence("if true; then echo yes; else echo no; fi; echo done").await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_subshell() {
+        assert_streaming_equivalence("x=$(echo hello); echo $x").await;
+    }
 }
