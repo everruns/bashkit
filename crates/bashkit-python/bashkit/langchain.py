@@ -14,9 +14,6 @@ Example:
 
 from __future__ import annotations
 
-import asyncio
-from typing import Optional, Type
-
 try:
     from langchain_core.tools import BaseTool, ToolException
     from pydantic import BaseModel, Field, PrivateAttr
@@ -40,9 +37,7 @@ from bashkit import BashTool as NativeBashTool
 class BashToolInput(BaseModel):
     """Input schema for BashTool."""
 
-    commands: str = Field(
-        description="Bash commands to execute (like `bash -c 'commands'`)"
-    )
+    commands: str = Field(description="Bash commands to execute (like `bash -c 'commands'`)")
 
 
 if LANGCHAIN_AVAILABLE:
@@ -58,7 +53,7 @@ if LANGCHAIN_AVAILABLE:
 
         name: str = ""  # Set in __init__ from bashkit
         description: str = ""  # Set in __init__ from bashkit
-        args_schema: Type[BaseModel] = BashToolInput
+        args_schema: type[BaseModel] = BashToolInput
         handle_tool_error: bool = True
 
         # Internal state - use PrivateAttr for pydantic v2 compatibility
@@ -66,10 +61,10 @@ if LANGCHAIN_AVAILABLE:
 
         def __init__(
             self,
-            username: Optional[str] = None,
-            hostname: Optional[str] = None,
-            max_commands: Optional[int] = None,
-            max_loop_iterations: Optional[int] = None,
+            username: str | None = None,
+            hostname: str | None = None,
+            max_commands: int | None = None,
+            max_loop_iterations: int | None = None,
             **kwargs,
         ):
             """Initialize BashkitTool.
@@ -126,11 +121,11 @@ if LANGCHAIN_AVAILABLE:
 
 
 def create_bash_tool(
-    username: Optional[str] = None,
-    hostname: Optional[str] = None,
-    max_commands: Optional[int] = None,
-    max_loop_iterations: Optional[int] = None,
-) -> "BashkitTool":
+    username: str | None = None,
+    hostname: str | None = None,
+    max_commands: int | None = None,
+    max_loop_iterations: int | None = None,
+) -> BashkitTool:
     """Create a LangChain-compatible Bashkit tool.
 
     Args:
@@ -152,8 +147,7 @@ def create_bash_tool(
     """
     if not LANGCHAIN_AVAILABLE:
         raise ImportError(
-            "langchain-core is required for LangChain integration. "
-            "Install with: pip install 'bashkit[langchain]'"
+            "langchain-core is required for LangChain integration. Install with: pip install 'bashkit[langchain]'"
         )
 
     return BashkitTool(

@@ -1,14 +1,12 @@
 """Type stubs for bashkit_py native module."""
 
-from typing import Optional
-
 class ExecResult:
     """Result from executing bash commands."""
 
     stdout: str
     stderr: str
     exit_code: int
-    error: Optional[str]
+    error: str | None
     success: bool
 
     def to_dict(self) -> dict[str, any]: ...
@@ -33,10 +31,10 @@ class BashTool:
 
     def __init__(
         self,
-        username: Optional[str] = None,
-        hostname: Optional[str] = None,
-        max_commands: Optional[int] = None,
-        max_loop_iterations: Optional[int] = None,
+        username: str | None = None,
+        hostname: str | None = None,
+        max_commands: int | None = None,
+        max_loop_iterations: int | None = None,
     ) -> None:
         """Create a new BashTool instance.
 

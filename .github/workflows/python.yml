@@ -31,6 +31,20 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Ruff check
+        run: uvx ruff check crates/bashkit-python
+
+      - name: Ruff format
+        run: uvx ruff format --check crates/bashkit-python
+
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -98,12 +112,13 @@ jobs:
   python-check:
     name: Python Check
     if: always()
-    needs: [test, build-wheel]
+    needs: [lint, test, build-wheel]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
         run: |
-          if [[ "${{ needs.test.result }}" != "success" ]] || \
+          if [[ "${{ needs.lint.result }}" != "success" ]] || \
+             [[ "${{ needs.test.result }}" != "success" ]] || \
              [[ "${{ needs.build-wheel.result }}" != "success" ]]; then
             echo "One or more Python CI jobs failed"
             exit 1

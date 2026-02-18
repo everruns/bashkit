@@ -4,8 +4,7 @@ import json
 
 import pytest
 
-from bashkit import BashTool, ExecResult, create_langchain_tool_spec
-
+from bashkit import BashTool, create_langchain_tool_spec
 
 # -- Construction -----------------------------------------------------------
 
@@ -19,7 +18,7 @@ def test_default_construction():
 
 def test_custom_construction():
     tool = BashTool(username="alice", hostname="box", max_commands=100, max_loop_iterations=500)
-    assert repr(tool) == "BashTool(username=\"alice\", hostname=\"box\")"
+    assert repr(tool) == 'BashTool(username="alice", hostname="box")'
 
 
 # -- Sync execution ---------------------------------------------------------
