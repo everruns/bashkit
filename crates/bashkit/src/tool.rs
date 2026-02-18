@@ -33,10 +33,11 @@
 
 use crate::builtins::Builtin;
 use crate::error::Error;
-use crate::{Bash, ExecResult, ExecutionLimits};
+use crate::{Bash, ExecResult, ExecutionLimits, OutputCallback};
 use async_trait::async_trait;
 use schemars::{schema_for, JsonSchema};
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
 
 /// Library version from Cargo.toml
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -140,7 +141,7 @@ impl From<ExecResult> for ToolResponse {
 /// Status update during tool execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolStatus {
-    /// Current phase (e.g., "validate", "parse", "execute", "complete")
+    /// Current phase (e.g., "validate", "parse", "execute", "output", "complete")
     pub phase: String,
     /// Optional message
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -151,6 +152,12 @@ pub struct ToolStatus {
     /// Estimated time remaining in milliseconds
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eta_ms: Option<u64>,
+    /// Incremental stdout/stderr chunk (only present when `phase == "output"`)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    /// Which stream the output belongs to: `"stdout"` or `"stderr"`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<String>,
 }
 
 impl ToolStatus {
@@ -161,6 +168,32 @@ impl ToolStatus {
             message: None,
             percent_complete: None,
             eta_ms: None,
+            output: None,
+            stream: None,
+        }
+    }
+
+    /// Create an output status carrying a stdout chunk.
+    pub fn stdout(chunk: impl Into<String>) -> Self {
+        Self {
+            phase: "output".to_string(),
+            message: None,
+            percent_complete: None,
+            eta_ms: None,
+            output: Some(chunk.into()),
+            stream: Some("stdout".to_string()),
+        }
+    }
+
+    /// Create an output status carrying a stderr chunk.
+    pub fn stderr(chunk: impl Into<String>) -> Self {
+        Self {
+            phase: "output".to_string(),
+            message: None,
+            percent_complete: None,
+            eta_ms: None,
+            output: Some(chunk.into()),
+            stream: Some("stderr".to_string()),
         }
     }
 
@@ -597,7 +630,21 @@ impl Tool for BashTool {
 
         status_callback(ToolStatus::new("execute").with_percent(20.0));
 
-        let response = match bash.exec(&req.commands).await {
+        // Wire streaming: forward output chunks as ToolStatus events
+        let status_cb = Arc::new(Mutex::new(status_callback));
+        let status_cb_output = status_cb.clone();
+        let output_cb: OutputCallback = Box::new(move |stdout_chunk, stderr_chunk| {
+            if let Ok(mut cb) = status_cb_output.lock() {
+                if !stdout_chunk.is_empty() {
+                    cb(ToolStatus::stdout(stdout_chunk));
+                }
+                if !stderr_chunk.is_empty() {
+                    cb(ToolStatus::stderr(stderr_chunk));
+                }
+            }
+        });
+
+        let response = match bash.exec_streaming(&req.commands, output_cb).await {
             Ok(result) => result.into(),
             Err(e) => ToolResponse {
                 stdout: String::new(),
@@ -607,7 +654,9 @@ impl Tool for BashTool {
             },
         };
 
-        status_callback(ToolStatus::new("complete").with_percent(100.0));
+        if let Ok(mut cb) = status_cb.lock() {
+            cb(ToolStatus::new("complete").with_percent(100.0));
+        }
 
         response
     }
@@ -965,5 +1014,125 @@ mod tests {
         let phases = phases.lock().expect("lock poisoned");
         assert!(phases.contains(&"validate".to_string()));
         assert!(phases.contains(&"complete".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_status_streams_output() {
+        let mut tool = BashTool::default();
+        let req = ToolRequest {
+            commands: "for i in a b c; do echo $i; done".to_string(),
+        };
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = events.clone();
+
+        let resp = tool
+            .execute_with_status(
+                req,
+                Box::new(move |status| {
+                    events_clone.lock().expect("lock poisoned").push(status);
+                }),
+            )
+            .await;
+
+        assert_eq!(resp.stdout, "a\nb\nc\n");
+        assert_eq!(resp.exit_code, 0);
+
+        let events = events.lock().expect("lock poisoned");
+        // Should have output events for each iteration
+        let output_events: Vec<_> = events.iter().filter(|s| s.phase == "output").collect();
+        assert_eq!(
+            output_events.len(),
+            3,
+            "expected 3 output events, got {output_events:?}"
+        );
+        assert_eq!(output_events[0].output.as_deref(), Some("a\n"));
+        assert_eq!(output_events[0].stream.as_deref(), Some("stdout"));
+        assert_eq!(output_events[1].output.as_deref(), Some("b\n"));
+        assert_eq!(output_events[2].output.as_deref(), Some("c\n"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_status_streams_list_commands() {
+        let mut tool = BashTool::default();
+        let req = ToolRequest {
+            commands: "echo start; echo end".to_string(),
+        };
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = events.clone();
+
+        let resp = tool
+            .execute_with_status(
+                req,
+                Box::new(move |status| {
+                    events_clone.lock().expect("lock poisoned").push(status);
+                }),
+            )
+            .await;
+
+        assert_eq!(resp.stdout, "start\nend\n");
+
+        let events = events.lock().expect("lock poisoned");
+        let output_events: Vec<_> = events.iter().filter(|s| s.phase == "output").collect();
+        assert_eq!(
+            output_events.len(),
+            2,
+            "expected 2 output events, got {output_events:?}"
+        );
+        assert_eq!(output_events[0].output.as_deref(), Some("start\n"));
+        assert_eq!(output_events[1].output.as_deref(), Some("end\n"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_status_no_duplicate_output() {
+        let mut tool = BashTool::default();
+        // mix of list + loop: should get 5 distinct events, no duplicates
+        let req = ToolRequest {
+            commands: "echo start; for i in 1 2 3; do echo $i; done; echo end".to_string(),
+        };
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = events.clone();
+
+        let resp = tool
+            .execute_with_status(
+                req,
+                Box::new(move |status| {
+                    events_clone.lock().expect("lock poisoned").push(status);
+                }),
+            )
+            .await;
+
+        assert_eq!(resp.stdout, "start\n1\n2\n3\nend\n");
+
+        let events = events.lock().expect("lock poisoned");
+        let output_events: Vec<_> = events
+            .iter()
+            .filter(|s| s.phase == "output")
+            .map(|s| s.output.as_deref().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            output_events,
+            vec!["start\n", "1\n", "2\n", "3\n", "end\n"],
+            "should have exactly 5 distinct output events"
+        );
+    }
+
+    #[test]
+    fn test_tool_status_stdout_constructor() {
+        let status = ToolStatus::stdout("hello\n");
+        assert_eq!(status.phase, "output");
+        assert_eq!(status.output.as_deref(), Some("hello\n"));
+        assert_eq!(status.stream.as_deref(), Some("stdout"));
+        assert!(status.message.is_none());
+    }
+
+    #[test]
+    fn test_tool_status_stderr_constructor() {
+        let status = ToolStatus::stderr("error\n");
+        assert_eq!(status.phase, "output");
+        assert_eq!(status.output.as_deref(), Some("error\n"));
+        assert_eq!(status.stream.as_deref(), Some("stderr"));
     }
 }
