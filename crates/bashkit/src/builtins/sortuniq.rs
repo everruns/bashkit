@@ -94,7 +94,7 @@ impl Builtin for Sort {
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
         } else if fold_case {
-            all_lines.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+            all_lines.sort_by_key(|a| a.to_lowercase());
         } else {
             all_lines.sort();
         }
