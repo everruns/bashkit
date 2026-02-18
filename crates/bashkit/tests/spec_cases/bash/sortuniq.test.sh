@@ -165,7 +165,6 @@ d
 ### end
 
 ### uniq_duplicate_only
-### skip: uniq -d (only duplicates) not implemented
 printf 'a\na\nb\nc\nc\n' | uniq -d
 ### expect
 a
@@ -173,7 +172,6 @@ c
 ### end
 
 ### uniq_unique_only
-### skip: uniq -u (only unique) not implemented
 printf 'a\na\nb\nc\nc\n' | uniq -u
 ### expect
 b
