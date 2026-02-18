@@ -25,6 +25,39 @@ use super::{Builtin, Context};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
 
+/// Convert a BRE (Basic Regular Expression) pattern to ERE for the regex crate.
+/// In BRE: ( ) { } are literal; \( \) \{ \} \+ \? \| are metacharacters.
+fn bre_to_ere(pattern: &str) -> String {
+    let mut result = String::with_capacity(pattern.len());
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            match chars[i + 1] {
+                '(' | ')' | '{' | '}' | '+' | '?' | '|' => {
+                    result.push(chars[i + 1]);
+                    i += 2;
+                }
+                _ => {
+                    result.push('\\');
+                    result.push(chars[i + 1]);
+                    i += 2;
+                }
+            }
+        } else if chars[i] == '(' || chars[i] == ')' || chars[i] == '{' || chars[i] == '}' {
+            result.push('\\');
+            result.push(chars[i]);
+            i += 1;
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    result
+}
+
 /// sed command - stream editor
 pub struct Sed;
 
@@ -394,18 +427,14 @@ fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, 
             let flags = parts.get(2).map(|s| s.as_str()).unwrap_or("");
 
             // Convert POSIX sed regex to Rust regex syntax
-            // In BRE mode: \( \) -> ( ) for capture groups, \+ -> +, \? -> ?
-            // In ERE mode: ( ) are already groups, + and ? work directly
+            // In BRE mode: \( \) are groups, ( ) are literal, \+ \? are quantifiers
+            // In ERE mode: ( ) are groups, + ? work directly
             let pattern = if extended_regex {
                 // ERE mode: no conversion needed for groups/quantifiers
                 pattern.clone()
             } else {
-                // BRE mode: convert escaped metacharacters
-                pattern
-                    .replace("\\(", "(")
-                    .replace("\\)", ")")
-                    .replace("\\+", "+")
-                    .replace("\\?", "?")
+                // BRE mode: proper char-by-char conversion
+                bre_to_ere(pattern)
             };
             // Build regex with optional case-insensitive flag
             let case_insensitive = flags.contains('i');

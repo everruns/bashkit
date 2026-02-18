@@ -51,6 +51,7 @@ struct GrepOptions {
     count_only: bool,
     files_with_matches: bool,
     fixed_strings: bool,
+    extended_regex: bool,
     only_matching: bool,
     word_regex: bool,
     quiet: bool,
@@ -78,6 +79,7 @@ impl GrepOptions {
             count_only: false,
             files_with_matches: false,
             fixed_strings: false,
+            extended_regex: false,
             only_matching: false,
             word_regex: false,
             quiet: false,
@@ -114,8 +116,8 @@ impl GrepOptions {
                         'o' => opts.only_matching = true,
                         'w' => opts.word_regex = true,
                         'F' => opts.fixed_strings = true,
-                        'E' => {} // Extended regex is default
-                        'P' => {} // Perl regex - regex crate supports most Perl features
+                        'E' => opts.extended_regex = true,
+                        'P' => opts.extended_regex = true, // Perl regex implies ERE
                         'q' => opts.quiet = true,
                         'x' => opts.whole_line = true,
                         'H' => opts.show_filename = true,
@@ -298,6 +300,11 @@ impl GrepOptions {
                 }
                 let pat = if self.fixed_strings {
                     regex::escape(p)
+                } else if !self.extended_regex {
+                    // BRE mode: convert to ERE for the regex crate
+                    // In BRE: ( ) are literal, \( \) are groups
+                    // In ERE/regex crate: ( ) are groups, \( \) are literal
+                    bre_to_ere(p)
                 } else {
                     p.clone()
                 };
@@ -333,6 +340,43 @@ impl GrepOptions {
             .build()
             .map_err(|e| Error::Execution(format!("grep: invalid pattern: {}", e)))
     }
+}
+
+/// Convert a BRE (Basic Regular Expression) pattern to ERE for the regex crate.
+/// In BRE: ( ) { } are literal; \( \) \{ \} \+ \? \| are metacharacters.
+/// In ERE/regex crate: ( ) { } + ? | are metacharacters.
+fn bre_to_ere(pattern: &str) -> String {
+    let mut result = String::with_capacity(pattern.len());
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            match chars[i + 1] {
+                // BRE escaped metacharacters → ERE unescaped
+                '(' | ')' | '{' | '}' | '+' | '?' | '|' => {
+                    result.push(chars[i + 1]);
+                    i += 2;
+                }
+                // Other escapes pass through
+                _ => {
+                    result.push('\\');
+                    result.push(chars[i + 1]);
+                    i += 2;
+                }
+            }
+        } else if chars[i] == '(' || chars[i] == ')' || chars[i] == '{' || chars[i] == '}' {
+            // BRE literal chars → escape them for ERE
+            result.push('\\');
+            result.push(chars[i]);
+            i += 1;
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    result
 }
 
 #[async_trait]
