@@ -142,3 +142,15 @@ printf "(%s)\n" ${arr[@]}
 (y)
 (z)
 ### end
+
+### array_for_loop_with_brace
+# Array and brace expansion mixed in for-loop word list
+arr=(a b)
+for x in "${arr[@]}" {1..3}; do echo $x; done
+### expect
+a
+b
+1
+2
+3
+### end

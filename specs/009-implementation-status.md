@@ -124,10 +124,10 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | File | Cases | Notes |
 |------|-------|-------|
 | arithmetic.test.sh | 29 | includes logical operators |
-| arrays.test.sh | 19 | includes indices, `${arr[@]}` / `${arr[*]}` expansion |
+| arrays.test.sh | 20 | includes indices, `${arr[@]}` / `${arr[*]}` expansion |
 | background.test.sh | 4 | |
 | bash-command.test.sh | 34 | bash/sh re-invocation |
-| brace-expansion.test.sh | 12 | {a,b,c}, {1..5} |
+| brace-expansion.test.sh | 21 | {a,b,c}, {1..5}, for-loop brace expansion |
 | column.test.sh | 10 | column alignment |
 | command-not-found.test.sh | 17 | unknown command handling |
 | command-subst.test.sh | 14 | 2 skipped |
@@ -140,7 +140,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | fileops.test.sh | 21 | |
 | find.test.sh | 10 | file search |
 | functions.test.sh | 14 | |
-| globs.test.sh | 10 | 1 skipped |
+| globs.test.sh | 12 | for-loop glob expansion, 1 skipped |
 | headtail.test.sh | 14 | |
 | herestring.test.sh | 8 | 1 skipped |
 | hextools.test.sh | 5 | od/xxd/hexdump (3 skipped) |

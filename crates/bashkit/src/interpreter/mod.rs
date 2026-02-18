@@ -502,13 +502,33 @@ impl Interpreter {
         let mut stderr = String::new();
         let mut exit_code = 0;
 
-        // Get iteration values
+        // Get iteration values: expand fields, then apply brace/glob expansion
         let values: Vec<String> = if let Some(words) = &for_cmd.words {
             let mut vals = Vec::new();
             for w in words {
-                // Use expand_word_to_fields to properly handle "${arr[@]}"
                 let fields = self.expand_word_to_fields(w).await?;
-                vals.extend(fields);
+
+                // Quoted words skip brace/glob expansion
+                if w.quoted {
+                    vals.extend(fields);
+                    continue;
+                }
+
+                for expanded in fields {
+                    let brace_expanded = self.expand_braces(&expanded);
+                    for item in brace_expanded {
+                        if self.contains_glob_chars(&item) {
+                            let glob_matches = self.expand_glob(&item).await?;
+                            if glob_matches.is_empty() {
+                                vals.push(item);
+                            } else {
+                                vals.extend(glob_matches);
+                            }
+                        } else {
+                            vals.push(item);
+                        }
+                    }
+                }
             }
             vals
         } else {
