@@ -70,8 +70,8 @@
 //! ### path.test.sh (2 skipped)
 //! - [ ] basename_no_args, dirname_no_args - error handling not implemented
 //!
-//! ### command-subst.test.sh (2 skipped)
-//! - [ ] subst_exit_code - exit code propagation needs work
+//! ### command-subst.test.sh (1 skipped)
+//! - [x] subst_exit_code - exit code propagation implemented
 //! - [ ] subst_backtick - backtick substitution not implemented
 //!
 //! ### arrays.test.sh (1 skipped)

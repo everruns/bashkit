@@ -1866,9 +1866,16 @@ impl Interpreter {
 
         let name = self.expand_word(&command.name).await?;
 
-        // If name is empty, this is an assignment-only command - keep permanently
+        // If name is empty, this is an assignment-only command - keep permanently.
+        // Preserve last_exit_code from any command substitution in the value
+        // (bash behavior: `x=$(false)` sets $? to 1).
         if name.is_empty() {
-            return Ok(ExecResult::ok(String::new()));
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: self.last_exit_code,
+                control_flow: crate::interpreter::ControlFlow::None,
+            });
         }
 
         // Has a command: prefix assignments are temporary (bash behavior).
@@ -2510,6 +2517,8 @@ impl Interpreter {
                     for cmd in commands {
                         let cmd_result = self.execute_command(cmd).await?;
                         stdout.push_str(&cmd_result.stdout);
+                        // Propagate exit code from last command in substitution
+                        self.last_exit_code = cmd_result.exit_code;
                     }
                     // Remove trailing newline (bash behavior)
                     let trimmed = stdout.trim_end_matches('\n');
