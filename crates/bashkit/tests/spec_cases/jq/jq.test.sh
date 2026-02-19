@@ -482,14 +482,14 @@ echo '5' | jq 'if . > 3 then "big" else "small" end'
 ### end
 
 ### jq_alternative
-### skip: alternative operator (//) not implemented
+### skip: jaq errors on .foo applied to null instead of returning null for //
 echo 'null' | jq '.foo // "default"'
 ### expect
 "default"
 ### end
 
 ### jq_try
-### skip: try operator not implemented
+# Try-catch handles runtime errors gracefully
 echo 'null' | jq 'try .foo catch "error"'
 ### expect
 "error"
@@ -512,7 +512,7 @@ echo '{"a":{"b":1}}' | jq 'getpath(["a","b"])'
 ### end
 
 ### jq_setpath
-### skip: setpath not implemented
+### skip: setpath not available in jaq standard library
 echo '{"a":1}' | jq 'setpath(["b"];2)'
 ### expect
 {"a":1,"b":2}
@@ -577,7 +577,7 @@ echo '{"a":{"b":1}}' | jq '[paths]'
 ### end
 
 ### jq_leaf_paths
-### skip: leaf_paths not implemented
+### skip: leaf_paths not available in jaq standard library
 echo '{"a":{"b":1}}' | jq '[leaf_paths]'
 ### expect
 [["a","b"]]
@@ -628,28 +628,28 @@ echo '1' | jq '[while(. < 5; . + 1)]'
 ### end
 
 ### jq_input
-### skip: input not implemented
+### skip: inputs iterator not wired to remaining stdin values
 printf '1\n2\n' | jq 'input'
 ### expect
 2
 ### end
 
 ### jq_inputs
-### skip: inputs not implemented
+### skip: inputs iterator not wired to remaining stdin values
 printf '1\n2\n3\n' | jq '[inputs]'
 ### expect
 [2,3]
 ### end
 
 ### jq_debug
-### skip: debug not implemented
+# Debug passes value through (stderr output not captured)
 echo '1' | jq 'debug'
 ### expect
 1
 ### end
 
 ### jq_env
-### skip: env not implemented
+### skip: shell env vars not propagated to jaq runtime
 FOO=bar jq -n 'env.FOO'
 ### expect
 "bar"
@@ -730,14 +730,14 @@ true
 ### end
 
 ### jq_match
-### skip: match not implemented
+### skip: jaq omits capture name field (real jq includes "name":null)
 echo '"hello"' | jq 'match("e(ll)o")'
 ### expect
 {"offset":1,"length":4,"string":"ello","captures":[{"offset":2,"length":2,"string":"ll","name":null}]}
 ### end
 
 ### jq_scan
-### skip: scan not implemented
+### skip: jaq scan requires explicit "g" flag for global match
 echo '"hello hello"' | jq '[scan("hel")]'
 ### expect
 ["hel","hel"]
@@ -838,4 +838,83 @@ jq -s '.' /tmp/jqtest2/a.json /tmp/jqtest2/b.json
     "x": 2
   }
 ]
+### end
+
+### jq_combined_flags_rn
+# Combined short flags -rn should work like -r -n
+jq -rn '"hello"'
+### expect
+hello
+### end
+
+### jq_combined_flags_sc
+# Combined short flags -sc should work like -s -c
+printf '1\n2\n3\n' | jq -sc 'add'
+### expect
+6
+### end
+
+### jq_arg_binding
+# --arg binds a string variable accessible as $name in filter
+jq -n --arg greeting hello '"say \($greeting)"'
+### expect
+"say hello"
+### end
+
+### jq_argjson_binding
+# --argjson binds a parsed JSON value accessible as $name in filter
+jq -n --argjson count 5 '$count + 1'
+### expect
+6
+### end
+
+### jq_empty_input
+# Empty input with no flags produces no output
+echo '' | jq '.'
+### expect
+### end
+
+### jq_ndjson
+# Multiple JSON values (NDJSON) are each processed separately
+printf '{"a":1}\n{"a":2}\n' | jq '.a'
+### expect
+1
+2
+### end
+
+### jq_multiple_arg_bindings
+# Multiple --arg flags each bind a separate variable
+jq -n --arg x hello --arg y world '"[\($x)] [\($y)]"'
+### expect
+"[hello] [world]"
+### end
+
+### jq_argjson_object
+# --argjson with a JSON object value
+jq -n --argjson obj '{"a":1}' '$obj.a'
+### expect
+1
+### end
+
+### jq_combined_flags_snr
+# Three combined short flags -snr
+jq -snr '"hello"'
+### expect
+hello
+### end
+
+### jq_exit_status_false
+# Exit status mode sets exit code 1 for false output
+echo 'false' | jq -e '.'
+### exit_code: 1
+### expect
+false
+### end
+
+### jq_exit_status_truthy
+# Exit status mode sets exit code 0 for truthy output
+echo '42' | jq -e '.'
+### exit_code: 0
+### expect
+42
 ### end
