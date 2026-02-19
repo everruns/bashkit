@@ -107,7 +107,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1030
+**Total spec test cases:** 1038
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
@@ -115,9 +115,9 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | AWK | 90 | Yes | 73 | 17 | loops, arrays, -v, ternary, field assign |
 | Grep | 81 | Yes | 76 | 5 | now with -z, -r, -a, -b, -H, -h, -f, -P |
 | Sed | 65 | Yes | 53 | 12 | hold space, change, regex ranges, -E |
-| JQ | 100 | Yes | 90 | 10 | reduce, walk, regex funcs |
+| JQ | 108 | Yes | 100 | 8 | reduce, walk, regex funcs, --arg/--argjson, combined flags |
 | Python | 58 | Yes | 50 | 8 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **1030** | **Yes** | **918** | **112** | |
+| **Total** | **1038** | **Yes** | **928** | **110** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -310,15 +310,21 @@ Features that may be added in the future (not intentionally excluded):
 
 ### JQ Limitations
 
-**Skipped Tests (10):**
+**Skipped Tests (8):**
 
 | Feature | Count | Notes |
 |---------|-------|-------|
-| Alternative `//` | 1 | Null coalescing operator |
-| Try-catch | 1 | `try` expression |
-| Path functions | 2 | `setpath`, `leaf_paths` |
-| I/O functions | 4 | `input`, `inputs`, `debug`, `env` |
-| Regex functions | 2 | `match`, `scan` |
+| Alternative `//` | 1 | jaq errors on `.foo` applied to null instead of returning null |
+| Path functions | 2 | `setpath`, `leaf_paths` not in jaq standard library |
+| I/O functions | 3 | `input`, `inputs` (iterator not wired), `env` (shell vars not propagated) |
+| Regex functions | 2 | `match` (jaq omits capture `name` field), `scan` (jaq needs explicit `"g"` flag) |
+
+**Recently Fixed:**
+- `try`/`catch` expressions now work (jaq handles runtime errors)
+- `debug` passes through values correctly (stderr not captured)
+- Combined short flags (`-rn`, `-sc`, `-snr`)
+- `--arg name value` and `--argjson name value` variable bindings
+- `--indent N` flag no longer eats the filter argument
 
 ### Curl Limitations
 

@@ -72,7 +72,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `grep` | `-i`, `-v`, `-c`, `-n`, `-E`, `-q` | Pattern matching |
 | `sed` | `s///[g]`, `d`, `p`, `q`, `a`, `i`, `c`, `h/H/g/G/x`, `-E`, `-n`, `!` | Stream editing |
 | `awk` | `'{print}'`, `-F`, `-v`, loops, arrays, increment, ternary | Text processing |
-| `jq` | `.field`, `.[n]`, pipes, file args | JSON processing |
+| `jq` | `.field`, `.[n]`, pipes, file args, `-r`, `-c`, `-n`, `-s`, `-S`, `-e`, `-j`, `--tab`, `--arg`, `--argjson`, `-V`, combined flags | JSON processing |
 | `sleep` | `N`, `N.N` | Pause execution (max 60s) |
 | `head` | `-n N`, `-N` | First N lines (default 10) |
 | `tail` | `-n N`, `-N` | Last N lines (default 10) |
