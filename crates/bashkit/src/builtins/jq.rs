@@ -129,7 +129,8 @@ impl Builtin for Jq {
             }
         }
 
-        // Parse arguments for flags
+        // Parse arguments for flags using index-based loop to support
+        // multi-arg flags like --arg name value and --argjson name value.
         let mut raw_output = false;
         let mut compact_output = false;
         let mut null_input = false;
@@ -140,32 +141,103 @@ impl Builtin for Jq {
         let mut join_output = false;
         let mut filter = ".";
         let mut file_args: Vec<&str> = Vec::new();
+        // Store variable bindings as (name, serde_json::Value) to avoid
+        // holding non-Send jaq Val across await points.
+        let mut var_bindings: Vec<(String, serde_json::Value)> = Vec::new();
 
         let mut found_filter = false;
-        for arg in ctx.args {
+        let mut i = 0;
+        while i < ctx.args.len() {
+            let arg = &ctx.args[i];
             if found_filter {
                 // Everything after the filter is a file argument
                 file_args.push(arg);
-            } else if arg == "-r" || arg == "--raw-output" {
+                i += 1;
+                continue;
+            }
+
+            if arg == "--" {
+                // End of options: next arg is filter, rest are files
+                i += 1;
+                if i < ctx.args.len() {
+                    filter = &ctx.args[i];
+                    found_filter = true;
+                }
+                i += 1;
+                continue;
+            }
+
+            if arg == "--raw-output" {
                 raw_output = true;
-            } else if arg == "-c" || arg == "--compact-output" {
+            } else if arg == "--compact-output" {
                 compact_output = true;
-            } else if arg == "-n" || arg == "--null-input" {
+            } else if arg == "--null-input" {
                 null_input = true;
-            } else if arg == "-S" || arg == "--sort-keys" {
+            } else if arg == "--sort-keys" {
                 sort_keys = true;
-            } else if arg == "-s" || arg == "--slurp" {
+            } else if arg == "--slurp" {
                 slurp = true;
-            } else if arg == "-e" || arg == "--exit-status" {
+            } else if arg == "--exit-status" {
                 exit_status = true;
             } else if arg == "--tab" {
                 tab_indent = true;
-            } else if arg == "-j" || arg == "--join-output" {
+            } else if arg == "--join-output" {
                 join_output = true;
-            } else if !arg.starts_with('-') {
+            } else if arg == "--arg" {
+                // --arg name value: bind $name to string value
+                if i + 2 < ctx.args.len() {
+                    let name = format!("${}", &ctx.args[i + 1]);
+                    let value = serde_json::Value::String(ctx.args[i + 2].to_string());
+                    var_bindings.push((name, value));
+                    i += 3;
+                    continue;
+                }
+                i += 1;
+                continue;
+            } else if arg == "--argjson" {
+                // --argjson name value: bind $name to parsed JSON value
+                if i + 2 < ctx.args.len() {
+                    let name = format!("${}", &ctx.args[i + 1]);
+                    let json_val: serde_json::Value = serde_json::from_str(&ctx.args[i + 2])
+                        .map_err(|e| {
+                            Error::Execution(format!("jq: invalid JSON for --argjson: {}", e))
+                        })?;
+                    var_bindings.push((name, json_val));
+                    i += 3;
+                    continue;
+                }
+                i += 1;
+                continue;
+            } else if arg == "--indent" {
+                // --indent N: skip the numeric argument (use default formatting)
+                i += 2;
+                continue;
+            } else if arg == "--args" || arg == "--jsonargs" {
+                // Remaining args are positional, not files; skip for now
+                i += 1;
+                continue;
+            } else if arg.starts_with("--") {
+                // Unknown long flag: skip
+            } else if arg.starts_with('-') && arg.len() > 1 {
+                // Short flag(s): may be combined like -rn, -sc, -snr
+                for ch in arg[1..].chars() {
+                    match ch {
+                        'r' => raw_output = true,
+                        'c' => compact_output = true,
+                        'n' => null_input = true,
+                        'S' => sort_keys = true,
+                        's' => slurp = true,
+                        'e' => exit_status = true,
+                        'j' => join_output = true,
+                        _ => {} // ignore unknown short flags
+                    }
+                }
+            } else {
+                // Non-flag argument: this is the filter
                 filter = arg;
                 found_filter = true;
             }
+            i += 1;
         }
 
         // Build input: read from file arguments if provided, otherwise stdin
@@ -221,19 +293,23 @@ impl Builtin for Jq {
             ))
         })?;
 
-        // Compile the filter
-        let filter = Compiler::default()
-            .with_funs(jaq_std::funs().chain(jaq_json::funs()))
-            .compile(modules)
-            .map_err(|errs| {
-                Error::Execution(format!(
-                    "jq: compile error: {}",
-                    errs.into_iter()
-                        .map(|e| format!("{:?}", e))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ))
-            })?;
+        // Compile the filter, registering any --arg/--argjson variable names
+        let var_names: Vec<&str> = var_bindings.iter().map(|(n, _)| n.as_str()).collect();
+        let compiler = Compiler::default().with_funs(jaq_std::funs().chain(jaq_json::funs()));
+        let compiler = if var_names.is_empty() {
+            compiler
+        } else {
+            compiler.with_global_vars(var_names.iter().copied())
+        };
+        let filter = compiler.compile(modules).map_err(|errs| {
+            Error::Execution(format!(
+                "jq: compile error: {}",
+                errs.into_iter()
+                    .map(|e| format!("{:?}", e))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })?;
 
         // Process input as JSON
         let mut output = String::new();
@@ -260,8 +336,12 @@ impl Builtin for Jq {
             // Create empty inputs iterator
             let inputs = RcIter::new(core::iter::empty());
 
-            // Run the filter
-            let ctx = Ctx::new([], &inputs);
+            // Run the filter, passing any --arg/--argjson variable values
+            let var_vals: Vec<Val> = var_bindings
+                .iter()
+                .map(|(_, v)| Val::from(v.clone()))
+                .collect();
+            let ctx = Ctx::new(var_vals, &inputs);
             for result in filter.run((ctx, jaq_input)) {
                 match result {
                     Ok(val) => {
@@ -705,5 +785,66 @@ mod tests {
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[0]["id"], 1);
         assert_eq!(arr[1]["id"], 2);
+    }
+
+    // --- Argument parsing bug regression tests ---
+
+    #[tokio::test]
+    async fn test_jq_combined_short_flags() {
+        // -rn should be parsed as -r + -n
+        let result = run_jq_with_args(&["-rn", "1+1"], "").await.unwrap();
+        assert_eq!(result.trim(), "2");
+    }
+
+    #[tokio::test]
+    async fn test_jq_combined_flags_sc() {
+        // -sc should be parsed as -s + -c
+        let result = run_jq_with_args(&["-sc", "add"], "1\n2\n3\n")
+            .await
+            .unwrap();
+        assert_eq!(result.trim(), "6");
+    }
+
+    #[tokio::test]
+    async fn test_jq_arg_flag() {
+        // --arg name value: $name should resolve to "value" in the filter
+        let result = run_jq_with_args(&["--arg", "name", "world", "-n", r#""hello \($name)""#], "")
+            .await
+            .unwrap();
+        assert_eq!(result.trim(), r#""hello world""#);
+    }
+
+    #[tokio::test]
+    async fn test_jq_argjson_flag() {
+        // --argjson count 5: $count should resolve to 5 (number, not string)
+        let result = run_jq_with_args(&["--argjson", "count", "5", "-n", "$count + 1"], "")
+            .await
+            .unwrap();
+        assert_eq!(result.trim(), "6");
+    }
+
+    #[tokio::test]
+    async fn test_jq_arg_does_not_eat_filter() {
+        // --arg name value '.' should NOT treat '.' as a file
+        let result = run_jq_with_args(&["--arg", "x", "hello", "."], r#"{"a":1}"#)
+            .await
+            .unwrap();
+        assert!(result.contains("\"a\": 1"));
+    }
+
+    #[tokio::test]
+    async fn test_jq_double_dash_separator() {
+        // -- ends option parsing; next arg is filter
+        let result = run_jq_with_args(&["-n", "--", "1+1"], "").await.unwrap();
+        assert_eq!(result.trim(), "2");
+    }
+
+    #[tokio::test]
+    async fn test_jq_indent_flag() {
+        // --indent 4 should not eat the filter
+        let result = run_jq_with_args(&["--indent", "4", "."], r#"{"a":1}"#)
+            .await
+            .unwrap();
+        assert!(result.contains("\"a\""));
     }
 }

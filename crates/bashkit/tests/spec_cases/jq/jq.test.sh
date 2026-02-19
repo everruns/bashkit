@@ -839,3 +839,31 @@ jq -s '.' /tmp/jqtest2/a.json /tmp/jqtest2/b.json
   }
 ]
 ### end
+
+### jq_combined_flags_rn
+# Combined short flags -rn should work like -r -n
+jq -rn '"hello"'
+### expect
+hello
+### end
+
+### jq_combined_flags_sc
+# Combined short flags -sc should work like -s -c
+printf '1\n2\n3\n' | jq -sc 'add'
+### expect
+6
+### end
+
+### jq_arg_binding
+# --arg binds a string variable accessible as $name in filter
+jq -n --arg greeting hello '"say \($greeting)"'
+### expect
+"say hello"
+### end
+
+### jq_argjson_binding
+# --argjson binds a parsed JSON value accessible as $name in filter
+jq -n --argjson count 5 '$count + 1'
+### expect
+6
+### end
