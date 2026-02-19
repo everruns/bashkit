@@ -847,4 +847,122 @@ mod tests {
             .unwrap();
         assert!(result.contains("\"a\""));
     }
+
+    // --- Negative tests ---
+
+    #[tokio::test]
+    async fn test_jq_invalid_json_input() {
+        let result = run_jq(".", "not valid json");
+        assert!(result.await.is_err(), "invalid JSON input should error");
+    }
+
+    #[tokio::test]
+    async fn test_jq_invalid_filter_syntax() {
+        let result = run_jq(".[", r#"{"a":1}"#);
+        assert!(result.await.is_err(), "invalid filter should error");
+    }
+
+    #[tokio::test]
+    async fn test_jq_invalid_argjson_value() {
+        let result = run_jq_with_args(&["--argjson", "x", "not json", "-n", "$x"], "");
+        assert!(
+            result.await.is_err(),
+            "invalid JSON for --argjson should error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_jq_empty_input_no_null() {
+        // Empty stdin without -n should produce empty output, not error
+        let result = run_jq(".", "").await.unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[tokio::test]
+    async fn test_jq_whitespace_only_input() {
+        let result = run_jq(".", "   \n\t  ").await.unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[tokio::test]
+    async fn test_jq_ndjson_multiple_values() {
+        // Multiple JSON values on separate lines (NDJSON)
+        let result = run_jq(".a", "{\"a\":1}\n{\"a\":2}\n").await.unwrap();
+        assert_eq!(result.trim(), "1\n2");
+    }
+
+    #[tokio::test]
+    async fn test_jq_exit_status_false() {
+        // -e flag: false output -> exit code 1
+        let jq = Jq;
+        let fs = Arc::new(InMemoryFs::new());
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args = vec!["-e".to_string(), ".".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: Some("false"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+        let result = jq.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1, "-e with false should exit 1");
+    }
+
+    #[tokio::test]
+    async fn test_jq_exit_status_truthy() {
+        // -e flag: truthy output -> exit code 0
+        let jq = Jq;
+        let fs = Arc::new(InMemoryFs::new());
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args = vec!["-e".to_string(), ".".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: Some("42"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+        let result = jq.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0, "-e with truthy value should exit 0");
+    }
+
+    #[tokio::test]
+    async fn test_jq_multiple_arg_bindings() {
+        let result = run_jq_with_args(
+            &[
+                "--arg",
+                "x",
+                "hello",
+                "--arg",
+                "y",
+                "world",
+                "-n",
+                r#""[\($x)] [\($y)]""#,
+            ],
+            "",
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.trim(), r#""[hello] [world]""#);
+    }
+
+    #[tokio::test]
+    async fn test_jq_combined_flags_snr() {
+        // -snr: slurp + null-input + raw-output
+        let result = run_jq_with_args(&["-snr", r#""hello""#], "").await.unwrap();
+        assert_eq!(result.trim(), "hello");
+    }
 }
