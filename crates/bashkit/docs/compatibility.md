@@ -62,6 +62,8 @@ for sandbox security reasons. See the compliance spec for details.
 | `local` | `VAR=value` | Local variables |
 | `source` | `file [args]` | Source script; loads functions/variables, PATH search, positional params |
 | `.` | `file [args]` | Alias for source |
+| `/path/to/script.sh` | `[args]` | Execute script by absolute/relative path (shebang stripped, call frame) |
+| `$PATH` search | `cmd [args]` | Search `$PATH` dirs for executable scripts (after builtins) |
 | `break` | `[N]` | Break from loop |
 | `continue` | `[N]` | Continue loop |
 | `return` | `[N]` | Return from function |
