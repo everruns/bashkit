@@ -35,7 +35,9 @@ should handle errors through exit codes and conditional execution.
 
 ### Security-Motivated
 
-1. **No process spawning**: External commands run as builtins, not subprocesses
+1. **No OS process spawning**: External commands run as builtins or virtual script
+   re-invocations, not OS subprocesses. Scripts can be executed by absolute path,
+   relative path, or `$PATH` search within the VFS.
 2. **No signal handling**: `trap` excluded for sandbox isolation
 3. **No process replacement**: `exec` excluded for containment
 4. **Virtual filesystem**: Real FS access requires explicit configuration

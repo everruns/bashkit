@@ -63,7 +63,7 @@ version = "3.0.11"
 criteria = "safe-to-deploy"
 
 [[exemptions.anyhow]]
-version = "1.0.101"
+version = "1.0.102"
 criteria = "safe-to-deploy"
 
 [[exemptions.approx]]
@@ -123,7 +123,7 @@ version = "1.12.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.bumpalo]]
-version = "3.20.1"
+version = "3.20.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.bytecount]]
@@ -183,11 +183,11 @@ version = "0.2.2"
 criteria = "safe-to-run"
 
 [[exemptions.clap]]
-version = "4.5.59"
+version = "4.5.60"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_builder]]
-version = "4.5.59"
+version = "4.5.60"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_derive]]
@@ -1039,11 +1039,11 @@ version = "3.0.10"
 criteria = "safe-to-run"
 
 [[exemptions.security-framework]]
-version = "3.6.0"
+version = "3.7.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.security-framework-sys]]
-version = "2.16.0"
+version = "2.17.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.semver]]
@@ -1147,7 +1147,7 @@ version = "2.6.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.syn]]
-version = "2.0.116"
+version = "2.0.117"
 criteria = "safe-to-deploy"
 
 [[exemptions.sync_wrapper]]

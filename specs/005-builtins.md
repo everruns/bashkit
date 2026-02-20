@@ -21,6 +21,20 @@ in a virtual environment. All builtins operate on the virtual filesystem.
 - `test`, `[` - Conditionals (see Test Operators below)
 - `read` - Input
 
+#### Script Execution by Path
+
+Commands containing `/` (absolute or relative paths) are resolved against the
+VFS. Commands without `/` are searched in `$PATH` directories for executable
+files. The dispatch order is: functions → special commands → builtins → path
+execution → $PATH search → "command not found".
+
+- Absolute: `/path/to/script.sh` — resolved directly
+- Relative: `./script.sh` — resolved relative to cwd
+- $PATH search: `myscript` — searches each `$PATH` directory for executable file
+- Shebang (`#!/bin/bash`) stripped; content executed as bash
+- `$0` = script name, `$1..N` = arguments
+- Exit 127: file not found; Exit 126: not executable or is a directory
+
 #### Test Operators (`test` / `[`)
 
 **String tests:**

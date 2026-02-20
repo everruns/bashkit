@@ -159,6 +159,8 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | timeout.test.sh | 17 | |
 | variables.test.sh | 44 | includes special vars, prefix env assignments |
 | wc.test.sh | 35 | word count (5 skipped) |
+| eval-bugs.test.sh | 3 | regression tests for eval/script bugs |
+| script-exec.test.sh | 10 | script execution by path, $PATH search, exit codes |
 
 ## Shell Features
 

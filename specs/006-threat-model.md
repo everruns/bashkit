@@ -257,7 +257,7 @@ max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
 | TM-ESC-005 | Shell escape | `exec /bin/bash` | exec not implemented (returns exit 127) | **MITIGATED** |
-| TM-ESC-006 | Subprocess | `./malicious` | External exec disabled (returns exit 127) | **MITIGATED** |
+| TM-ESC-006 | Subprocess | `./malicious` | Script execution runs within VFS sandbox (no host shell) | **MITIGATED** |
 | TM-ESC-007 | Background proc | `malicious &` | Background not implemented | **MITIGATED** |
 | TM-ESC-008 | eval injection | `eval "$user_input"` | eval runs in sandbox (builtins only) | **MITIGATED** |
 | TM-ESC-015 | bash/sh escape | `bash -c "malicious"` | Sandboxed re-invocation (no external bash) | **MITIGATED** |
@@ -277,6 +277,15 @@ processes. This enables common patterns while maintaining security:
 - `bash --version` returns Bashkit version (never real bash info)
 - Resource limits and virtual filesystem are shared with parent
 - No escape to host shell is possible
+
+**Script Execution by Path** (TM-ESC-006): Scripts can be executed by absolute
+path (`/path/to/script.sh`), relative path (`./script.sh`), or `$PATH` search.
+All execution stays within the virtual interpreter — no OS subprocess is spawned:
+- File must exist in VFS and have execute permission (mode & 0o111)
+- Exit 127 for missing files, exit 126 for non-executable or directories
+- Shebang line stripped; content parsed and executed as bash
+- `$0` = script name, `$1..N` = arguments via call frame
+- Resource limits and VFS constraints apply to executed scripts
 
 #### 2.3 Privilege Escalation
 

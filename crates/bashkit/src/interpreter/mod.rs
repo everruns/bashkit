@@ -2203,44 +2203,18 @@ impl Interpreter {
 
         // Check if command is a path to an executable script in the VFS
         if name.contains('/') {
-            let path = self.resolve_path(name);
-            if let Ok(content) = self.fs.read_file(&path).await {
-                // Check execute permission
-                if let Ok(meta) = self.fs.stat(&path).await {
-                    if meta.mode & 0o111 != 0 {
-                        let script_text = String::from_utf8_lossy(&content).to_string();
-                        // Strip shebang line if present
-                        let script_text = if script_text.starts_with("#!") {
-                            script_text
-                                .find('\n')
-                                .map(|pos| &script_text[pos + 1..])
-                                .unwrap_or("")
-                                .to_string()
-                        } else {
-                            script_text
-                        };
-                        let parser = Parser::with_limits(
-                            &script_text,
-                            self.limits.max_ast_depth,
-                            self.limits.max_parser_operations,
-                        );
-                        match parser.parse() {
-                            Ok(script) => {
-                                let result = self.execute(&script).await?;
-                                return self.apply_redirections(result, &command.redirects).await;
-                            }
-                            Err(e) => {
-                                return Ok(ExecResult::err(format!("bash: {}: {}\n", name, e), 2));
-                            }
-                        }
-                    } else {
-                        return Ok(ExecResult::err(
-                            format!("bash: {}: Permission denied\n", name),
-                            126,
-                        ));
-                    }
-                }
-            }
+            let result = self
+                .try_execute_script_by_path(name, &args, &command.redirects)
+                .await?;
+            return Ok(result);
+        }
+
+        // No slash in name: search $PATH for executable script
+        if let Some(result) = self
+            .try_execute_script_via_path_search(name, &args, &command.redirects)
+            .await?
+        {
+            return Ok(result);
         }
 
         // Command not found - return error like bash does (exit code 127)
@@ -2248,6 +2222,163 @@ impl Interpreter {
             format!("bash: {}: command not found", name),
             127,
         ))
+    }
+
+    /// Execute a script file by resolved path.
+    ///
+    /// Bash behavior for path-based commands (name contains `/`):
+    /// 1. Resolve path (absolute or relative to cwd)
+    /// 2. stat() — if not found: "No such file or directory" (exit 127)
+    /// 3. If directory: "Is a directory" (exit 126)
+    /// 4. If not executable (mode & 0o111 == 0): "Permission denied" (exit 126)
+    /// 5. Read file, strip shebang, parse, execute in call frame
+    async fn try_execute_script_by_path(
+        &mut self,
+        name: &str,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let path = self.resolve_path(name);
+
+        // stat the file
+        let meta = match self.fs.stat(&path).await {
+            Ok(m) => m,
+            Err(_) => {
+                return Ok(ExecResult::err(
+                    format!("bash: {}: No such file or directory", name),
+                    127,
+                ));
+            }
+        };
+
+        // Directory check
+        if meta.file_type.is_dir() {
+            return Ok(ExecResult::err(
+                format!("bash: {}: Is a directory", name),
+                126,
+            ));
+        }
+
+        // Execute permission check
+        if meta.mode & 0o111 == 0 {
+            return Ok(ExecResult::err(
+                format!("bash: {}: Permission denied", name),
+                126,
+            ));
+        }
+
+        // Read file content
+        let content = match self.fs.read_file(&path).await {
+            Ok(c) => String::from_utf8_lossy(&c).to_string(),
+            Err(_) => {
+                return Ok(ExecResult::err(
+                    format!("bash: {}: No such file or directory", name),
+                    127,
+                ));
+            }
+        };
+
+        self.execute_script_content(name, &content, args, redirects)
+            .await
+    }
+
+    /// Search $PATH for an executable script and run it.
+    ///
+    /// Returns `Ok(None)` if no matching file found (caller emits "command not found").
+    async fn try_execute_script_via_path_search(
+        &mut self,
+        name: &str,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<Option<ExecResult>> {
+        let path_var = self
+            .variables
+            .get("PATH")
+            .or_else(|| self.env.get("PATH"))
+            .cloned()
+            .unwrap_or_default();
+
+        for dir in path_var.split(':') {
+            if dir.is_empty() {
+                continue;
+            }
+            let candidate = PathBuf::from(dir).join(name);
+            if let Ok(meta) = self.fs.stat(&candidate).await {
+                if meta.file_type.is_dir() {
+                    continue;
+                }
+                if meta.mode & 0o111 == 0 {
+                    continue;
+                }
+                if let Ok(content) = self.fs.read_file(&candidate).await {
+                    let script_text = String::from_utf8_lossy(&content).to_string();
+                    let result = self
+                        .execute_script_content(name, &script_text, args, redirects)
+                        .await?;
+                    return Ok(Some(result));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Parse and execute script content in a new call frame.
+    ///
+    /// Shared by path-based and $PATH-based script execution.
+    /// Sets up $0 = script name, $1..N = args, strips shebang.
+    async fn execute_script_content(
+        &mut self,
+        name: &str,
+        content: &str,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        // Strip shebang line if present
+        let script_text = if content.starts_with("#!") {
+            content
+                .find('\n')
+                .map(|pos| &content[pos + 1..])
+                .unwrap_or("")
+        } else {
+            content
+        };
+
+        let parser = Parser::with_limits(
+            script_text,
+            self.limits.max_ast_depth,
+            self.limits.max_parser_operations,
+        );
+        let script = match parser.parse() {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(ExecResult::err(format!("bash: {}: {}\n", name, e), 2));
+            }
+        };
+
+        // Push call frame: $0 = script name, $1..N = args
+        self.call_stack.push(CallFrame {
+            name: name.to_string(),
+            locals: HashMap::new(),
+            positional: args.to_vec(),
+        });
+
+        let result = self.execute(&script).await;
+
+        // Pop call frame
+        self.call_stack.pop();
+
+        match result {
+            Ok(mut exec_result) => {
+                // Handle return - convert Return control flow to exit code
+                if let ControlFlow::Return(code) = exec_result.control_flow {
+                    exec_result.exit_code = code;
+                    exec_result.control_flow = ControlFlow::None;
+                }
+                self.apply_redirections(exec_result, redirects).await
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Execute `source` / `.` - read and execute commands from a file in current shell.
