@@ -830,6 +830,10 @@ criteria = "safe-to-deploy"
 version = "0.24.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.pyo3-build-config]]
+version = "0.28.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.pyo3-ffi]]
 version = "0.24.2"
 criteria = "safe-to-deploy"
