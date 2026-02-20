@@ -61,7 +61,7 @@ base64 = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 
 # Embedded Python interpreter (optional)
-monty = { git = "https://github.com/pydantic/monty", version = "0.0.6", optional = true }
+monty = { git = "https://github.com/pydantic/monty", version = "0.0.7", optional = true }
 
 [features]
 default = []
