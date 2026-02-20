@@ -156,14 +156,17 @@ to Codecov and available as CI artifacts.
 - Text processing tools: 73% pass rate (234/319 running, 85 skipped)
 - Core bash specs: 78% pass rate (367/471 running, 104 skipped)
 
-## TODO: Testing Gaps
+## Known Testing Gaps
 
-The following items need attention:
+Completed:
 
-- [x] **Enable bash_spec_tests in CI** - Done! 330/435 tests running
-- [x] **Add bash_comparison_tests to CI** - Done! 309 tests compared against real bash
-- [x] **Fix control-flow.test.sh** - Enabled! 31 tests now running
-- [x] **Add coverage tooling** - cargo-tarpaulin + Codecov via `.github/workflows/coverage.yml`
+- [x] Enable bash_spec_tests in CI — 330/435 tests running
+- [x] Add bash_comparison_tests to CI — 309 tests compared against real bash
+- [x] Fix control-flow.test.sh — 31 tests now running
+- [x] Add coverage tooling — cargo-tarpaulin + Codecov via `.github/workflows/coverage.yml`
+
+Outstanding:
+
 - [ ] **Fix skipped spec tests** (189 total):
   - Bash: 104 skipped (various implementation gaps)
   - AWK: 41 skipped (operators, control flow, functions)

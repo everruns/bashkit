@@ -314,11 +314,61 @@ attacks:
 5. **Parser fuel** (`max_parser_operations`, default 100K): Independent of depth,
    limits total parser work to prevent CPU exhaustion.
 
-## Python Direct Integration
+### Python / Monty Security (TM-PY-*)
+
+The `python`/`python3` builtins embed the Monty Python interpreter with VFS bridging.
+Python `pathlib.Path` operations are bridged to Bashkit's virtual filesystem.
+
+| Threat | Attack Example | Mitigation |
+|--------|---------------|------------|
+| Infinite loop (TM-PY-001) | `while True: pass` | Monty time limit (30s) + allocation cap |
+| Memory exhaustion (TM-PY-002) | Large allocation | Monty max_memory (64MB) + max_allocations (1M) |
+| Stack overflow (TM-PY-003) | Deep recursion | Monty max_recursion (200) |
+| Shell escape (TM-PY-004) | `os.system()` | Monty has no os.system/subprocess |
+| Real FS access (TM-PY-005) | `open()` | Monty has no open() builtin |
+| Real FS read (TM-PY-015) | `Path.read_text()` | VFS bridge reads only from BashKit VFS |
+| Real FS write (TM-PY-016) | `Path.write_text()` | VFS bridge writes only to BashKit VFS |
+| Path traversal (TM-PY-017) | `../../etc/passwd` | VFS path normalization |
+| Network access (TM-PY-020) | Socket/HTTP | Monty has no socket/network module |
+| VM crash (TM-PY-022) | Malformed input | Parser depth limit + resource limits |
+
+**Architecture:**
+
+```text
+Python code → Monty VM → OsCall pause → BashKit VFS bridge → resume
+```
 
 Monty runs directly in the host process. Resource limits (memory, allocations,
 time, recursion) are enforced by Monty's own runtime. All VFS operations are
 bridged through the host process — Python code never touches the real filesystem.
+
+### Git Security (TM-GIT-*)
+
+Optional virtual git operations via the `git` feature. All operations are confined
+to the virtual filesystem.
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| Host identity leak (TM-GIT-002) | Commit reveals real name/email | Configurable virtual identity | MITIGATED |
+| Host git config (TM-GIT-003) | Read ~/.gitconfig | No host filesystem access | MITIGATED |
+| Credential theft (TM-GIT-004) | Access credential store | No host filesystem access | MITIGATED |
+| Repository escape (TM-GIT-005) | Clone outside VFS | All paths in VFS | MITIGATED |
+| Many git objects (TM-GIT-007) | Millions of objects | `max_file_count` FS limit | MITIGATED |
+| Deep history (TM-GIT-008) | Very long commit log | Log limit parameter | MITIGATED |
+| Large pack files (TM-GIT-009) | Huge .git/objects/pack | `max_file_size` FS limit | MITIGATED |
+| Unauthorized clone (TM-GIT-001) | `git clone evil.com` | Remote URL allowlist | PLANNED (Phase 2) |
+| Push to unauthorized (TM-GIT-010) | `git push evil.com` | Remote URL allowlist | PLANNED (Phase 2) |
+
+**Virtual Identity:**
+
+```rust,ignore
+use bashkit::Bash;
+
+let bash = Bash::builder()
+    .git_author("sandbox", "sandbox@example.com")
+    .build();
+// Commits use virtual identity, never host ~/.gitconfig
+```
 
 ## Security Testing
 
@@ -331,6 +381,7 @@ Bashkit includes comprehensive security tests:
 - **Network Security**: [`tests/network_security_tests.rs`][network_tests] - 53 tests
 - **Builtin Error Security**: `tests/builtin_error_security_tests.rs` - 39 tests
 - **Logging Security**: `tests/logging_security_tests.rs` - 26 tests
+- **Git Security**: `tests/git_security_tests.rs` + `tests/git_remote_security_tests.rs`
 - **Fuzz Testing**: [`fuzz/`][fuzz] - Parser and lexer fuzzing
 
 ## Reporting Security Issues
@@ -352,6 +403,7 @@ All threats use stable IDs in the format `TM-<CATEGORY>-<NUMBER>`:
 | TM-ISO | Multi-Tenant Isolation |
 | TM-INT | Internal Error Handling |
 | TM-LOG | Logging Security |
+| TM-GIT | Git Security |
 | TM-PY | Python/Monty Security |
 
 Full threat analysis: [`specs/006-threat-model.md`][spec]

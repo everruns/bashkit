@@ -424,7 +424,7 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] Array indices `${!arr[@]}`
 - [x] `/dev/null` support (interpreter-level, cannot be bypassed by custom fs)
 
-### TODO: LLM Compatibility Gaps
+### Known LLM Compatibility Gaps
 
 Identified from eval analysis — features frequently used by LLM-generated scripts:
 

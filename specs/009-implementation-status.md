@@ -247,7 +247,7 @@ Features that may be added in the future (not intentionally excluded):
 - Field assignment `$2 = "X"`
 - `next` statement
 
-<!-- TODO: AWK remaining gaps for LLM compatibility -->
+<!-- Known AWK gaps for LLM compatibility (tracked in docs/compatibility.md) -->
 <!-- - Power operators (^ and **) - used in math scripts -->
 <!-- - printf %x/%o/%c formats - used in hex/octal output -->
 <!-- - match()/gensub() functions - used in text extraction -->
@@ -278,7 +278,7 @@ Features that may be added in the future (not intentionally excluded):
 - Numeric-regex range: `N,/pattern/`
 - Extended regex (`-E`), nth occurrence, address negation (`!`)
 
-<!-- TODO: SED remaining gaps for LLM compatibility -->
+<!-- Known SED gaps for LLM compatibility (tracked in docs/compatibility.md) -->
 <!-- - Ampersand (&) in replacement - very commonly used by LLMs -->
 <!-- - \n literal newline in replacement - used in line splitting -->
 <!-- - Grouped commands {cmd1;cmd2} - used in complex transforms -->
