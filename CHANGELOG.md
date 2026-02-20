@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.1.6] - 2026-02-20
+
+### Highlights
+
+- ScriptedTool for composing multi-tool bash orchestration with Python/LangChain bindings
+- Streaming output support for Tool trait
+- Script file execution by path
+- 10 interpreter bug fixes surfaced by eval harness
+
+### What's Changed
+
+* chore: pre-release maintenance checklist ([#223](https://github.com/everruns/bashkit/pull/223)) by @chaliy
+* feat(interpreter): support executing script files by path ([#222](https://github.com/everruns/bashkit/pull/222)) by @chaliy
+* fix(jq): fix argument parsing, add test coverage, update docs ([#221](https://github.com/everruns/bashkit/pull/221)) by @chaliy
+* feat(tool): add streaming output support ([#220](https://github.com/everruns/bashkit/pull/220)) by @chaliy
+* feat(python): ScriptedTool bindings + LangChain integration ([#219](https://github.com/everruns/bashkit/pull/219)) by @chaliy
+* refactor(examples): extract fake tools into separate module ([#218](https://github.com/everruns/bashkit/pull/218)) by @chaliy
+* chore: add small-PR preference to AGENTS.md ([#217](https://github.com/everruns/bashkit/pull/217)) by @chaliy
+* fix(builtins): resolve 10 eval-surfaced interpreter bugs ([#216](https://github.com/everruns/bashkit/pull/216)) by @chaliy
+* fix: address 10 code TODOs across codebase ([#215](https://github.com/everruns/bashkit/pull/215)) by @chaliy
+* test: add skipped tests for eval-surfaced interpreter bugs ([#214](https://github.com/everruns/bashkit/pull/214)) by @chaliy
+* feat(scripted_tool): add ScriptedTool for multi-tool bash composition ([#213](https://github.com/everruns/bashkit/pull/213)) by @chaliy
+* ci(python): add Python bindings CI with ruff and pytest ([#212](https://github.com/everruns/bashkit/pull/212)) by @chaliy
+* fix(interpreter): apply brace/glob expansion in for-loop word list ([#211](https://github.com/everruns/bashkit/pull/211)) by @chaliy
+* feat(python): add PydanticAI integration and example ([#210](https://github.com/everruns/bashkit/pull/210)) by @chaliy
+* fix(ci): add --allow-dirty for cargo publish after stripping monty ([#209](https://github.com/everruns/bashkit/pull/209)) by @chaliy
+* fix(ci): strip git-only monty dep before crates.io publish ([#208](https://github.com/everruns/bashkit/pull/208)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.5...v0.1.6
+
 ## [0.1.5] - 2026-02-17
 
 ### Highlights
