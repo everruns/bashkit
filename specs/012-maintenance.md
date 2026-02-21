@@ -88,6 +88,41 @@ regressions, stale docs, dependency rot, and security gaps.
 - [ ] Build/test commands in `AGENTS.md` still work
 - [ ] Pre-PR checklist in `AGENTS.md` covers current tooling
 
+### 9. Nightly CI Jobs
+
+Nightly workflows (`nightly.yml`, `fuzz.yml`) run heavy analysis that is too slow
+for every PR. They must be monitored explicitly because failures are silent — no PR
+is blocked by them.
+
+#### Checks
+
+- [ ] `gh run list --workflow=nightly.yml --limit 7` — all green for past week
+- [ ] `gh run list --workflow=fuzz.yml --limit 7` — all green for past week
+- [ ] If any failures: inspect with `gh run view <id> --log-failed`
+- [ ] Fuzz targets compile: `cd crates/bashkit && cargo +nightly fuzz list`
+- [ ] Git-sourced dependencies (e.g. `monty`) still resolve — check `Cargo.toml`
+  pins match upstream versions
+
+#### Escalation
+
+Nightly failures that persist for **more than 2 consecutive days** must be treated
+as blocking issues:
+
+1. Open a GitHub issue with label `ci:nightly` describing the failure
+2. Link the failing run(s) in the issue body
+3. Assign to the most recent contributor who touched the failing area
+4. If the failure is caused by an upstream dependency change, pin to a known-good
+   `rev` or `tag` immediately and open a follow-up issue to track the version bump
+
+Common failure patterns:
+
+| Pattern | Cause | Fix |
+|---------|-------|-----|
+| `failed to select a version for monty` | Upstream git dep bumped version | Update version pin or switch to `rev` pin |
+| `outdated or invalid JSON; try cargo clean` | Stale Miri cache | Self-heals; if persistent, clear CI cache |
+| `cannot find module or crate` in fuzz targets | Missing dependency in fuzz `Cargo.toml` | Add the crate to `crates/bashkit/fuzz/Cargo.toml` |
+| Fuzz target crashes | Real bug found by fuzzer | Reproduce locally, fix, add regression test |
+
 ## Running the Checklist
 
 Ask a coding agent: "Run the maintenance checklist from `specs/012-maintenance.md`"
@@ -101,8 +136,12 @@ The agent should:
 
 ## Automation
 
-Sections 1, 3, 5, 7 are fully automatable. Sections 2, 4, 6, 8 require human
+Sections 1, 3, 5, 7, 9 are fully automatable. Sections 2, 4, 6, 8 require human
 or agent review.
+
+Section 9 is enforced by `just check-nightly` which is called automatically by
+`just release-check`. It fails the release if any of the last 3 nightly/fuzz runs
+are red.
 
 ## References
 
