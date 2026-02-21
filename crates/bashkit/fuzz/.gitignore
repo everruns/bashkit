@@ -1,0 +1,7 @@
+# Fuzz artifacts and corpus (large, machine-generated)
+target/
+corpus/
+artifacts/
+
+# Override root .gitignore: commit Cargo.lock for reproducible fuzz builds
+!Cargo.lock

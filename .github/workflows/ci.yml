@@ -121,11 +121,30 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: cargo run --example agent_tool --features http_client
 
+  fuzz-check:
+    name: Fuzz Compile Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/cache-cargo-install-action@v3
+        with:
+          tool: cargo-fuzz
+          locked: true
+
+      - name: Verify fuzz targets compile
+        working-directory: crates/bashkit
+        run: cargo +nightly fuzz build
+
   # Gate job for branch protection — name must stay "Check"
   check:
     name: Check
     if: always()
-    needs: [lint, audit, test, examples]
+    needs: [lint, audit, test, examples, fuzz-check]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
@@ -133,7 +152,8 @@ jobs:
           if [[ "${{ needs.lint.result }}" != "success" ]] || \
              [[ "${{ needs.audit.result }}" != "success" ]] || \
              [[ "${{ needs.test.result }}" != "success" ]] || \
-             [[ "${{ needs.examples.result }}" != "success" ]]; then
+             [[ "${{ needs.examples.result }}" != "success" ]] || \
+             [[ "${{ needs.fuzz-check.result }}" != "success" ]]; then
             echo "One or more required jobs failed"
             exit 1
           fi
