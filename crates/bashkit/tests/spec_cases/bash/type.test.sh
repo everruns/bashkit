@@ -13,6 +13,7 @@ if is a shell keyword
 ### end
 
 ### type_function
+### bash_diff: real bash also prints function body
 # type reports functions
 myfunc() { echo hi; }
 type myfunc
@@ -22,6 +23,7 @@ myfunc is a function
 
 ### type_not_found
 ### exit_code:1
+### bash_diff: real bash writes error to stderr not stdout
 # type exits 1 for unknown command
 type nonexistent_cmd_xyz
 ### expect
@@ -66,6 +68,7 @@ true is a shell builtin
 ### end
 
 ### type_a_builtin
+### bash_diff: real bash also shows PATH entries for echo
 # type -a shows all matches
 type -a echo
 ### expect
@@ -73,6 +76,7 @@ echo is a shell builtin
 ### end
 
 ### which_builtin
+### bash_diff: real which shows PATH, bashkit shows name
 # which finds builtins
 which echo
 ### expect
@@ -87,6 +91,7 @@ which nonexistent_cmd_xyz
 ### end
 
 ### which_multiple
+### bash_diff: real which shows PATH, bashkit shows name
 # which handles multiple names
 which echo cat
 ### expect
@@ -95,6 +100,7 @@ cat
 ### end
 
 ### which_function
+### bash_diff: real which only searches PATH, not functions
 # which finds functions
 myfunc() { echo hi; }
 which myfunc
@@ -103,6 +109,7 @@ myfunc
 ### end
 
 ### hash_noop
+### bash_diff: real bash prints hash table contents
 # hash is a no-op in sandboxed env
 hash
 echo "ok"

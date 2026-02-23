@@ -31,6 +31,7 @@ ln -s /tmp/noforce_target.txt /tmp/noforce_link.txt
 
 ### ln_missing_operand
 ### exit_code:1
+### bash_diff: real ln -s with one arg creates link in cwd
 # ln with missing operand
 ln -s /tmp/only_one
 ### expect
