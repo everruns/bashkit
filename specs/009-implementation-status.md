@@ -107,17 +107,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1042
+**Total spec test cases:** 1043
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
 | Bash (core) | 640 | Yes | 592 | 48 | `bash_spec_tests` in CI |
 | AWK | 90 | Yes | 73 | 17 | loops, arrays, -v, ternary, field assign |
-| Grep | 81 | Yes | 76 | 5 | now with -z, -r, -a, -b, -H, -h, -f, -P |
+| Grep | 82 | Yes | 79 | 3 | now with -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude |
 | Sed | 65 | Yes | 53 | 12 | hold space, change, regex ranges, -E |
 | JQ | 108 | Yes | 100 | 8 | reduce, walk, regex funcs, --arg/--argjson, combined flags |
 | Python | 58 | Yes | 50 | 8 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **1042** | **Yes** | **944** | **98** | |
+| **Total** | **1043** | **Yes** | **948** | **95** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -277,19 +277,19 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Grep Limitations
 
-**Skipped Tests (5):**
+**Skipped Tests (3):**
 
 | Feature | Count | Notes |
 |---------|-------|-------|
 | Recursive test | 1 | Test needs VFS setup with files |
 | Pattern file `-f` | 1 | Requires file redirection support |
-| Include/exclude | 2 | `--include`, `--exclude` patterns |
 | Binary detection | 1 | Auto-detect binary files |
 
 **Implemented Features:**
 - Basic flags: `-i`, `-v`, `-c`, `-n`, `-o`, `-l`, `-w`, `-E`, `-F`, `-q`, `-m`, `-x`
 - Context: `-A`, `-B`, `-C` (after/before/context lines)
 - Multiple patterns: `-e`
+- Include/exclude: `--include=GLOB`, `--exclude=GLOB` for recursive search
 - Pattern file: `-f` (requires file to exist in VFS)
 - Filename control: `-H` (always show), `-h` (never show)
 - Byte offset: `-b`
