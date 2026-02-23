@@ -165,6 +165,8 @@ pub struct Interpreter {
     /// Monotonic counter incremented each time output is emitted via callback.
     /// Used to detect whether sub-calls already emitted output, preventing duplicates.
     output_emit_count: u64,
+    /// Pending nounset (set -u) error message, consumed by execute_command.
+    nounset_error: Option<String>,
 }
 
 impl Interpreter {
@@ -328,6 +330,7 @@ impl Interpreter {
             pipeline_stdin: None,
             output_callback: None,
             output_emit_count: 0,
+            nounset_error: None,
         }
     }
 
@@ -444,6 +447,11 @@ impl Interpreter {
             stderr.push_str(&result.stderr);
             exit_code = result.exit_code;
             self.last_exit_code = exit_code;
+
+            // Stop on control flow (e.g. nounset error uses Return to abort)
+            if result.control_flow != ControlFlow::None {
+                break;
+            }
 
             // NOTE: errexit (set -e) is handled internally by execute_command,
             // execute_list, and execute_command_sequence. We don't check here
@@ -1975,6 +1983,28 @@ impl Interpreter {
 
         let name = self.expand_word(&command.name).await?;
 
+        // Check for nounset error from variable expansion
+        if let Some(err_msg) = self.nounset_error.take() {
+            // Restore variable saves since we're aborting
+            for (name, old) in var_saves.into_iter().rev() {
+                match old {
+                    Some(v) => {
+                        self.variables.insert(name, v);
+                    }
+                    None => {
+                        self.variables.remove(&name);
+                    }
+                }
+            }
+            self.last_exit_code = 1;
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: err_msg,
+                exit_code: 1,
+                control_flow: ControlFlow::Return(1),
+            });
+        }
+
         // If name is empty, this is an assignment-only command - keep permanently.
         // Preserve last_exit_code from any command substitution in the value
         // (bash behavior: `x=$(false)` sets $? to 1).
@@ -2072,6 +2102,17 @@ impl Interpreter {
                     }
                 }
             }
+        }
+
+        // Check for nounset error from argument expansion
+        if let Some(err_msg) = self.nounset_error.take() {
+            self.last_exit_code = 1;
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: err_msg,
+                exit_code: 1,
+                control_flow: ControlFlow::Return(1),
+            });
         }
 
         // Handle input redirections first
@@ -3097,6 +3138,10 @@ impl Interpreter {
                     }
                 }
                 WordPart::Variable(name) => {
+                    // set -u (nounset): error on unset variables
+                    if self.is_nounset() && !self.is_variable_set(name) {
+                        self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
+                    }
                     result.push_str(&self.expand_variable(name));
                 }
                 WordPart::CommandSubstitution(commands) => {
@@ -4056,6 +4101,48 @@ impl Interpreter {
 
         // Not found - expand to empty string (bash behavior)
         String::new()
+    }
+
+    /// Check if a variable is set (for `set -u` / nounset).
+    fn is_variable_set(&self, name: &str) -> bool {
+        // Special variables are always "set"
+        if matches!(
+            name,
+            "?" | "#" | "@" | "*" | "$" | "!" | "-" | "RANDOM" | "LINENO"
+        ) {
+            return true;
+        }
+        // Positional params $0..$N
+        if let Ok(n) = name.parse::<usize>() {
+            if n == 0 {
+                return true;
+            }
+            return self
+                .call_stack
+                .last()
+                .map(|f| n <= f.positional.len())
+                .unwrap_or(false);
+        }
+        // Local variables
+        for frame in self.call_stack.iter().rev() {
+            if frame.locals.contains_key(name) {
+                return true;
+            }
+        }
+        // Shell variables
+        if self.variables.contains_key(name) {
+            return true;
+        }
+        // Environment
+        self.env.contains_key(name)
+    }
+
+    /// Check if nounset (`set -u`) is active.
+    fn is_nounset(&self) -> bool {
+        self.variables
+            .get("SHOPT_u")
+            .map(|v| v == "1")
+            .unwrap_or(false)
     }
 
     /// Set a local variable in the current call frame

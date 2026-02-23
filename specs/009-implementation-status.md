@@ -107,17 +107,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1052 (965 pass, 87 skip)
+**Total spec test cases:** 1068 (980 pass, 88 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 640 | Yes | 592 | 48 | `bash_spec_tests` in CI |
+| Bash (core) | 656 | Yes | 607 | 49 | `bash_spec_tests` in CI |
 | AWK | 90 | Yes | 73 | 17 | loops, arrays, -v, ternary, field assign |
 | Grep | 82 | Yes | 79 | 3 | now with -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude |
 | Sed | 65 | Yes | 53 | 12 | hold space, change, regex ranges, -E |
 | JQ | 108 | Yes | 100 | 8 | reduce, walk, regex funcs, --arg/--argjson, combined flags |
 | Python | 58 | Yes | 50 | 8 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **1043** | **Yes** | **948** | **95** | |
+| **Total** | **1059** | **Yes** | **963** | **96** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -141,12 +141,14 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | fileops.test.sh | 21 | |
 | find.test.sh | 10 | file search |
 | functions.test.sh | 14 | |
+| getopts.test.sh | 9 | POSIX option parsing, combined flags, silent mode |
 | globs.test.sh | 12 | for-loop glob expansion, 1 skipped |
 | headtail.test.sh | 14 | |
 | herestring.test.sh | 8 | 1 skipped |
 | hextools.test.sh | 5 | od/xxd/hexdump (3 skipped) |
 | negative-tests.test.sh | 16 | error conditions (3 skipped) |
 | nl.test.sh | 14 | line numbering |
+| nounset.test.sh | 7 | `set -u` unbound variable checks (1 skipped) |
 | paste.test.sh | 4 | line merging with `-s` serial and `-d` delimiter |
 | path.test.sh | 14 | |
 | pipes-redirects.test.sh | 19 | includes stderr redirects |
@@ -175,7 +177,7 @@ Features that may be added in the future (not intentionally excluded):
 | Extended globs `@()` `!()` | Medium | Requires `shopt -s extglob` |
 | Associative arrays `declare -A` | Medium | Bash 4+ feature |
 | `[[ =~ ]]` regex matching | Medium | Bash extension |
-| `getopts` | Medium | POSIX option parsing |
+| ~~`getopts`~~ | ~~Medium~~ | Implemented: POSIX option parsing |
 | ~~`command` builtin~~ | ~~Medium~~ | Implemented: `-v`, `-V`, bypass functions |
 | `alias` | Low | Interactive feature |
 | History expansion | Out of scope | Interactive only |
@@ -198,14 +200,14 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-**82 core builtins + 3 feature-gated = 85 total**
+**84 core builtins + 3 feature-gated = 87 total**
 
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,
 `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`,
 `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`,
 `sort`, `uniq`, `cut`, `tr`, `paste`, `column`, `diff`, `comm`, `date`,
-`wait`, `curl`, `wget`, `timeout`,
+`wait`, `curl`, `wget`, `timeout`, `command`, `getopts`,
 `time` (keyword), `whoami`, `hostname`, `uname`, `id`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
 `:` (colon), `eval`, `readonly`, `times`, `bash`, `sh`,
 `od`, `xxd`, `hexdump`, `strings`,
@@ -216,8 +218,8 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Not Yet Implemented
 
-`ln`, `chown`, `type`, `which`, `command`, `hash`, `declare`,
-`typeset`, `getopts`, `kill`
+`ln`, `chown`, `type`, `which`, `hash`, `declare`,
+`typeset`, `kill`
 
 ## Text Processing
 
