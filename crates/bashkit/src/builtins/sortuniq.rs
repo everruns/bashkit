@@ -95,6 +95,7 @@ impl Builtin for Sort {
         let mut delimiter: Option<char> = None;
         let mut key_field: Option<usize> = None;
         let mut output_file: Option<String> = None;
+        let mut zero_terminated = false;
         let mut files = Vec::new();
 
         let mut i = 0;
@@ -147,6 +148,7 @@ impl Builtin for Sort {
                         'c' | 'C' => check_sorted = true,
                         'h' => human_numeric = true,
                         'M' => month_sort = true,
+                        'z' => zero_terminated = true,
                         _ => {}
                     }
                 }
@@ -159,10 +161,14 @@ impl Builtin for Sort {
         // Collect all input
         let mut all_lines = Vec::new();
 
+        let line_sep = if zero_terminated { '\0' } else { '\n' };
+
         if files.is_empty() {
             if let Some(stdin) = ctx.stdin {
-                for line in stdin.lines() {
-                    all_lines.push(line.to_string());
+                for line in stdin.split(line_sep) {
+                    if !line.is_empty() {
+                        all_lines.push(line.to_string());
+                    }
                 }
             }
         } else {
@@ -176,8 +182,10 @@ impl Builtin for Sort {
                 match ctx.fs.read_file(&path).await {
                     Ok(content) => {
                         let text = String::from_utf8_lossy(&content);
-                        for line in text.lines() {
-                            all_lines.push(line.to_string());
+                        for line in text.split(line_sep) {
+                            if !line.is_empty() {
+                                all_lines.push(line.to_string());
+                            }
                         }
                     }
                     Err(e) => {
@@ -266,9 +274,10 @@ impl Builtin for Sort {
             all_lines.dedup();
         }
 
-        let mut output = all_lines.join("\n");
+        let sep = if zero_terminated { "\0" } else { "\n" };
+        let mut output = all_lines.join(sep);
         if !output.is_empty() {
-            output.push('\n');
+            output.push_str(sep);
         }
 
         // Write to output file if -o specified

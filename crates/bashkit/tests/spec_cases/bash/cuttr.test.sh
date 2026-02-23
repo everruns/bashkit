@@ -225,7 +225,6 @@ x
 ### end
 
 ### cut_zero_terminated
-### skip: cut -z (zero-terminated) not implemented
 printf 'a,b\0x,y\0' | cut -d, -f2 -z | tr '\0' '\n'
 ### expect
 b
