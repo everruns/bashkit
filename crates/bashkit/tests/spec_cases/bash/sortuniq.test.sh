@@ -120,7 +120,7 @@ Cherry
 ### end
 
 ### sort_field_delim
-### skip: sort -t (field delimiter) not implemented
+# Sort by field with delimiter
 printf 'b:2\na:1\nc:3\n' | sort -t: -k2n
 ### expect
 a:1
@@ -129,7 +129,7 @@ c:3
 ### end
 
 ### sort_key_field
-### skip: sort -k (key field) not implemented
+# Sort by key field
 printf 'Bob 25\nAlice 30\nDavid 20\n' | sort -k2n
 ### expect
 David 20
@@ -138,7 +138,7 @@ Alice 30
 ### end
 
 ### sort_stable
-### skip: sort -s (stable) not implemented
+# Stable sort preserves input order for equal keys
 printf 'b 1\na 2\nb 3\n' | sort -s -k1,1
 ### expect
 a 2
@@ -147,7 +147,7 @@ b 3
 ### end
 
 ### sort_check
-### skip: sort -c (check sorted) not implemented
+# Check if input is sorted
 printf 'a\nb\nc\n' | sort -c
 echo $?
 ### expect
@@ -178,7 +178,7 @@ b
 ### end
 
 ### uniq_ignore_case
-### skip: uniq -i (case insensitive) not implemented
+# Case insensitive dedup
 printf 'a\nA\nb\nB\n' | uniq -i
 ### expect
 a
@@ -186,7 +186,7 @@ b
 ### end
 
 ### uniq_skip_fields
-### skip: uniq -f (skip fields) not implemented
+# Skip fields before comparing
 printf 'x a\ny a\nx b\n' | uniq -f1
 ### expect
 x a
@@ -202,7 +202,7 @@ printf 'a\nb\na\nb\na\n' | sort | uniq -c
 ### end
 
 ### sort_human_numeric
-### skip: sort -h (human numeric) not implemented
+# Sort human-readable numeric values
 printf '10K\n1K\n100M\n1G\n' | sort -h
 ### expect
 1K
@@ -212,7 +212,7 @@ printf '10K\n1K\n100M\n1G\n' | sort -h
 ### end
 
 ### sort_month
-### skip: sort -M (month) not implemented
+# Sort by month name
 printf 'Mar\nJan\nFeb\n' | sort -M
 ### expect
 Jan
@@ -221,11 +221,45 @@ Mar
 ### end
 
 ### sort_output_file
-### skip: sort -o (output file) not implemented
+# Sort to output file
 printf 'b\na\n' | sort -o /tmp/sorted.txt && cat /tmp/sorted.txt
 ### expect
 a
 b
+### end
+
+### sort_check_unsorted
+# Check unsorted input returns 1
+printf 'b\na\n' | sort -c 2>/dev/null
+echo $?
+### expect
+1
+### end
+
+### sort_key_field_numeric_reverse
+# Sort by key with numeric reverse
+printf 'x 30\ny 10\nz 20\n' | sort -k2 -n -r
+### expect
+x 30
+z 20
+y 10
+### end
+
+### sort_field_delim_csv
+# Sort CSV by second column
+printf 'z,1\na,3\nm,2\n' | sort -t, -k2n
+### expect
+z,1
+m,2
+a,3
+### end
+
+### uniq_case_count
+# Case insensitive count
+printf 'Hello\nhello\nHELLO\nWorld\n' | uniq -ic
+### expect
+      3 Hello
+      1 World
 ### end
 
 ### sort_zero_terminated

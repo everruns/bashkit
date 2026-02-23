@@ -107,17 +107,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1038
+**Total spec test cases:** 1042
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 636 | Yes | 576 | 60 | `bash_spec_tests` in CI |
+| Bash (core) | 640 | Yes | 592 | 48 | `bash_spec_tests` in CI |
 | AWK | 90 | Yes | 73 | 17 | loops, arrays, -v, ternary, field assign |
 | Grep | 81 | Yes | 76 | 5 | now with -z, -r, -a, -b, -H, -h, -f, -P |
 | Sed | 65 | Yes | 53 | 12 | hold space, change, regex ranges, -E |
 | JQ | 108 | Yes | 100 | 8 | reduce, walk, regex funcs, --arg/--argjson, combined flags |
 | Python | 58 | Yes | 50 | 8 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **1038** | **Yes** | **928** | **110** | |
+| **Total** | **1042** | **Yes** | **944** | **98** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -152,7 +152,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | printf.test.sh | 24 | format specifiers, array expansion |
 | procsub.test.sh | 6 | |
 | sleep.test.sh | 6 | |
-| sortuniq.test.sh | 28 | sort and uniq (14 skipped) |
+| sortuniq.test.sh | 32 | sort and uniq (2 skipped) |
 | source.test.sh | 21 | source/., function loading, PATH search, positional params |
 | test-operators.test.sh | 17 | file/string tests (2 skipped) |
 | time.test.sh | 11 | Wall-clock only (user/sys always 0) |

@@ -9,17 +9,32 @@ use crate::interpreter::ExecResult;
 /// The cut builtin - remove sections from each line.
 ///
 /// Usage: cut -d DELIM -f FIELDS [FILE...]
+///        cut -c CHARS [FILE...]
 ///
 /// Options:
-///   -d DELIM   Use DELIM instead of TAB for field delimiter
-///   -f FIELDS  Select only these fields (1-indexed, comma-separated or ranges)
+///   -d DELIM            Use DELIM instead of TAB for field delimiter
+///   -f FIELDS           Select only these fields (1-indexed)
+///   -c CHARS            Select only these characters (1-indexed)
+///   -s                  Only print lines containing delimiter (with -f)
+///   --complement        Complement the selection
+///   --output-delimiter  Use STRING as output delimiter
 pub struct Cut;
+
+#[derive(PartialEq)]
+enum CutMode {
+    Fields,
+    Chars,
+}
 
 #[async_trait]
 impl Builtin for Cut {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         let mut delimiter = '\t';
-        let mut fields_spec = String::new();
+        let mut spec = String::new();
+        let mut mode = CutMode::Fields;
+        let mut complement = false;
+        let mut only_delimited = false;
+        let mut output_delimiter: Option<String> = None;
         let mut files = Vec::new();
 
         // Parse arguments
@@ -36,44 +51,116 @@ impl Builtin for Cut {
             } else if arg == "-f" {
                 i += 1;
                 if i < ctx.args.len() {
-                    fields_spec = ctx.args[i].clone();
+                    spec = ctx.args[i].clone();
+                    mode = CutMode::Fields;
                 }
             } else if let Some(f) = arg.strip_prefix("-f") {
-                fields_spec = f.to_string();
+                spec = f.to_string();
+                mode = CutMode::Fields;
+            } else if arg == "-c" {
+                i += 1;
+                if i < ctx.args.len() {
+                    spec = ctx.args[i].clone();
+                    mode = CutMode::Chars;
+                }
+            } else if let Some(c) = arg.strip_prefix("-c") {
+                spec = c.to_string();
+                mode = CutMode::Chars;
+            } else if arg == "-s" {
+                only_delimited = true;
+            } else if arg == "--complement" {
+                complement = true;
+            } else if let Some(od) = arg.strip_prefix("--output-delimiter=") {
+                output_delimiter = Some(od.to_string());
+            } else if arg == "--output-delimiter" {
+                i += 1;
+                if i < ctx.args.len() {
+                    output_delimiter = Some(ctx.args[i].clone());
+                }
             } else if !arg.starts_with('-') {
                 files.push(arg.clone());
             }
             i += 1;
         }
 
-        if fields_spec.is_empty() {
+        if spec.is_empty() {
             return Ok(ExecResult::err(
                 "cut: you must specify a list of fields\n".to_string(),
                 1,
             ));
         }
 
-        // Parse field specification
-        let fields = parse_field_spec(&fields_spec);
+        // Parse position specification (supports open-ended ranges like "3-" and "-3")
+        let positions = parse_position_spec(&spec);
+        let out_delim = output_delimiter.unwrap_or_else(|| delimiter.to_string());
+
+        let process_line = |line: &str| -> Option<String> {
+            match mode {
+                CutMode::Chars => {
+                    let chars: Vec<char> = line.chars().collect();
+                    let total = chars.len();
+                    let resolved = resolve_positions(&positions, total);
+                    let selected: Vec<char> = if complement {
+                        chars
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| !resolved.contains(&(i + 1)))
+                            .map(|(_, c)| *c)
+                            .collect()
+                    } else {
+                        resolved
+                            .iter()
+                            .filter_map(|&p| chars.get(p - 1).copied())
+                            .collect()
+                    };
+                    Some(selected.into_iter().collect())
+                }
+                CutMode::Fields => {
+                    // -s: skip lines without delimiter
+                    if only_delimited && !line.contains(delimiter) {
+                        return None;
+                    }
+                    let parts: Vec<&str> = line.split(delimiter).collect();
+                    let total = parts.len();
+                    let resolved = resolve_positions(&positions, total);
+                    let selected: Vec<&str> = if complement {
+                        parts
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| !resolved.contains(&(i + 1)))
+                            .map(|(_, s)| *s)
+                            .collect()
+                    } else {
+                        resolved
+                            .iter()
+                            .filter_map(|&f| parts.get(f - 1).copied())
+                            .collect()
+                    };
+                    Some(selected.join(&out_delim))
+                }
+            }
+        };
 
         let mut output = String::new();
 
         if files.is_empty() || files.iter().all(|f| f.as_str() == "-") {
-            // Read from stdin
             if let Some(stdin) = ctx.stdin {
                 for line in stdin.lines() {
-                    output.push_str(&cut_line(line, delimiter, &fields));
-                    output.push('\n');
+                    if let Some(result) = process_line(line) {
+                        output.push_str(&result);
+                        output.push('\n');
+                    }
                 }
             }
         } else {
-            // Read from files
             for file in &files {
                 if file.as_str() == "-" {
                     if let Some(stdin) = ctx.stdin {
                         for line in stdin.lines() {
-                            output.push_str(&cut_line(line, delimiter, &fields));
-                            output.push('\n');
+                            if let Some(result) = process_line(line) {
+                                output.push_str(&result);
+                                output.push('\n');
+                            }
                         }
                     }
                     continue;
@@ -89,8 +176,10 @@ impl Builtin for Cut {
                     Ok(content) => {
                         let text = String::from_utf8_lossy(&content);
                         for line in text.lines() {
-                            output.push_str(&cut_line(line, delimiter, &fields));
-                            output.push('\n');
+                            if let Some(result) = process_line(line) {
+                                output.push_str(&result);
+                                output.push('\n');
+                            }
                         }
                     }
                     Err(e) => {
@@ -104,77 +193,156 @@ impl Builtin for Cut {
     }
 }
 
-/// Parse a field specification like "1", "1,3", "1-3", "1,3-5"
-fn parse_field_spec(spec: &str) -> Vec<usize> {
-    let mut fields = Vec::new();
+/// Position in a cut specification — can be open-ended
+#[derive(Debug, Clone)]
+enum Position {
+    Single(usize),
+    Range(usize, usize),
+    FromStart(usize), // -N (1 to N)
+    ToEnd(usize),     // N- (N to end)
+}
+
+/// Parse a position specification like "1", "1,3", "1-3", "3-", "-3"
+fn parse_position_spec(spec: &str) -> Vec<Position> {
+    let mut positions = Vec::new();
 
     for part in spec.split(',') {
         if let Some((start, end)) = part.split_once('-') {
-            let start: usize = start.parse().unwrap_or(1);
-            let end: usize = end.parse().unwrap_or(start);
-            for f in start..=end {
-                if f > 0 {
-                    fields.push(f);
+            if start.is_empty() {
+                // -N
+                if let Ok(n) = end.parse::<usize>() {
+                    positions.push(Position::FromStart(n));
                 }
+            } else if end.is_empty() {
+                // N-
+                if let Ok(n) = start.parse::<usize>() {
+                    positions.push(Position::ToEnd(n));
+                }
+            } else {
+                // N-M
+                let s: usize = start.parse().unwrap_or(1);
+                let e: usize = end.parse().unwrap_or(s);
+                positions.push(Position::Range(s, e));
             }
         } else if let Ok(f) = part.parse::<usize>() {
             if f > 0 {
-                fields.push(f);
+                positions.push(Position::Single(f));
             }
         }
     }
 
-    fields.sort();
-    fields.dedup();
-    fields
+    positions
 }
 
-/// Cut fields from a line
-fn cut_line(line: &str, delimiter: char, fields: &[usize]) -> String {
-    let parts: Vec<&str> = line.split(delimiter).collect();
-    let selected: Vec<&str> = fields
-        .iter()
-        .filter_map(|&f| parts.get(f - 1).copied())
-        .collect();
-    selected.join(&delimiter.to_string())
+/// Resolve position specifications into concrete 1-indexed positions
+fn resolve_positions(positions: &[Position], total: usize) -> Vec<usize> {
+    let mut result = Vec::new();
+    for pos in positions {
+        match pos {
+            Position::Single(n) => {
+                if *n > 0 && *n <= total {
+                    result.push(*n);
+                }
+            }
+            Position::Range(s, e) => {
+                let start = (*s).max(1);
+                let end = (*e).min(total);
+                for i in start..=end {
+                    result.push(i);
+                }
+            }
+            Position::FromStart(n) => {
+                for i in 1..=(*n).min(total) {
+                    result.push(i);
+                }
+            }
+            Position::ToEnd(n) => {
+                let start = (*n).max(1);
+                for i in start..=total {
+                    result.push(i);
+                }
+            }
+        }
+    }
+    result.sort();
+    result.dedup();
+    result
 }
 
 /// The tr builtin - translate or delete characters.
 ///
-/// Usage: tr [-d] SET1 [SET2]
+/// Usage: tr [-d] [-s] [-c] SET1 [SET2]
 ///
 /// Options:
 ///   -d   Delete characters in SET1
+///   -s   Squeeze repeated output characters in SET2 (or SET1 if no SET2)
+///   -c   Complement SET1 (use all chars NOT in SET1)
 ///
 /// SET1 and SET2 can contain character ranges like a-z, A-Z, 0-9
+/// and POSIX classes like [:lower:], [:upper:], [:digit:]
 pub struct Tr;
 
 #[async_trait]
 impl Builtin for Tr {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let delete = ctx.args.iter().any(|a| a == "-d");
-        // Only treat as flag if it's a known flag like "-d", not a lone "-" which is a valid char set
-        let non_flag_args: Vec<_> = ctx
-            .args
-            .iter()
-            .filter(|a| *a != "-d" && (a.len() == 1 || !a.starts_with('-')))
-            .collect();
+        let mut delete = false;
+        let mut squeeze = false;
+        let mut complement = false;
+
+        // Parse flags (can be combined like -ds, -cd)
+        let mut non_flag_args: Vec<&String> = Vec::new();
+        for arg in ctx.args.iter() {
+            if arg.starts_with('-')
+                && arg.len() > 1
+                && arg.chars().skip(1).all(|c| "dsc".contains(c))
+            {
+                for c in arg.chars().skip(1) {
+                    match c {
+                        'd' => delete = true,
+                        's' => squeeze = true,
+                        'c' => complement = true,
+                        _ => {}
+                    }
+                }
+            } else {
+                non_flag_args.push(arg);
+            }
+        }
 
         if non_flag_args.is_empty() {
             return Ok(ExecResult::err("tr: missing operand\n".to_string(), 1));
         }
 
-        let set1 = expand_char_set(non_flag_args[0]);
+        let mut set1 = expand_char_set(non_flag_args[0]);
+        if complement {
+            // Complement: use all ASCII chars NOT in set1
+            let original = set1.clone();
+            set1 = (0u8..=127)
+                .map(|b| b as char)
+                .filter(|c| !original.contains(c))
+                .collect();
+        }
 
-        let result = if delete {
-            // Delete mode
-            let stdin = ctx.stdin.unwrap_or("");
+        let stdin = ctx.stdin.unwrap_or("");
+
+        let result = if delete && squeeze {
+            // -ds: delete SET1 chars, then squeeze SET2 chars
+            let set2 = if non_flag_args.len() >= 2 {
+                expand_char_set(non_flag_args[1])
+            } else {
+                set1.clone()
+            };
+            let after_delete: String = stdin.chars().filter(|c| !set1.contains(c)).collect();
+            squeeze_chars(&after_delete, &set2)
+        } else if delete {
             stdin
                 .chars()
                 .filter(|c| !set1.contains(c))
                 .collect::<String>()
+        } else if squeeze && non_flag_args.len() < 2 {
+            // -s with only SET1: squeeze characters in SET1
+            squeeze_chars(stdin, &set1)
         } else {
-            // Translate mode
             if non_flag_args.len() < 2 {
                 return Ok(ExecResult::err(
                     "tr: missing operand after SET1\n".to_string(),
@@ -183,23 +351,42 @@ impl Builtin for Tr {
             }
 
             let set2 = expand_char_set(non_flag_args[1]);
-            let stdin = ctx.stdin.unwrap_or("");
 
-            stdin
+            let translated: String = stdin
                 .chars()
                 .map(|c| {
                     if let Some(pos) = set1.iter().position(|&x| x == c) {
-                        // Get corresponding char from set2, or last char if set2 is shorter
                         *set2.get(pos).or(set2.last()).unwrap_or(&c)
                     } else {
                         c
                     }
                 })
-                .collect::<String>()
+                .collect();
+
+            if squeeze {
+                squeeze_chars(&translated, &set2)
+            } else {
+                translated
+            }
         };
 
         Ok(ExecResult::ok(result))
     }
+}
+
+/// Squeeze repeated consecutive characters that are in the given set
+fn squeeze_chars(s: &str, set: &[char]) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut last_char: Option<char> = None;
+
+    for c in s.chars() {
+        if set.contains(&c) && last_char == Some(c) {
+            continue; // skip repeated char in squeeze set
+        }
+        result.push(c);
+        last_char = Some(c);
+    }
+    result
 }
 
 /// Expand a character set specification like "a-z" into a list of characters.
@@ -422,10 +609,53 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_field_spec() {
-        assert_eq!(parse_field_spec("1"), vec![1]);
-        assert_eq!(parse_field_spec("1,3"), vec![1, 3]);
-        assert_eq!(parse_field_spec("1-3"), vec![1, 2, 3]);
-        assert_eq!(parse_field_spec("1,3-5"), vec![1, 3, 4, 5]);
+    fn test_parse_position_spec() {
+        // Resolved against 10 total positions
+        let resolve = |spec: &str| resolve_positions(&parse_position_spec(spec), 10);
+        assert_eq!(resolve("1"), vec![1]);
+        assert_eq!(resolve("1,3"), vec![1, 3]);
+        assert_eq!(resolve("1-3"), vec![1, 2, 3]);
+        assert_eq!(resolve("1,3-5"), vec![1, 3, 4, 5]);
+        assert_eq!(resolve("3-"), vec![3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(resolve("-3"), vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn test_cut_char_mode() {
+        let result = run_cut(&["-c", "1-5"], Some("hello world\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_cut_complement() {
+        let result = run_cut(&["-d", ",", "--complement", "-f", "2"], Some("a,b,c,d\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "a,c,d\n");
+    }
+
+    #[tokio::test]
+    async fn test_cut_only_delimited() {
+        let result = run_cut(
+            &["-d", ",", "-f", "1", "-s"],
+            Some("a,b,c\nno delim\nx,y\n"),
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "a\nx\n");
+    }
+
+    #[tokio::test]
+    async fn test_tr_squeeze() {
+        let result = run_tr(&["-s", "eol "], Some("heeelllo   wooorld\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "helo world\n");
+    }
+
+    #[tokio::test]
+    async fn test_tr_complement_delete() {
+        let result = run_tr(&["-cd", "0-9\n"], Some("hello123\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "123\n");
     }
 }
