@@ -170,6 +170,10 @@ criteria = "safe-to-deploy"
 version = "0.4.43"
 criteria = "safe-to-deploy"
 
+[[exemptions.chrono]]
+version = "0.4.44"
+criteria = "safe-to-deploy"
+
 [[exemptions.ciborium]]
 version = "0.2.2"
 criteria = "safe-to-run"
