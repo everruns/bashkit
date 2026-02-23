@@ -210,7 +210,7 @@ bird
 ### end
 
 ### sed_hold_h
-### skip: hold space with grouped commands not implemented
+# Hold space with grouped commands
 printf 'a\nb\n' | sed '1h; 2{x;p;x}'
 ### expect
 a
@@ -219,7 +219,7 @@ b
 ### end
 
 ### sed_hold_H
-### skip: hold space (H) command not implemented
+# Hold space H append with multi-command pipeline
 printf 'a\nb\nc\n' | sed 'H; $!d; x; s/\n/ /g'
 ### expect
  a b c
@@ -241,21 +241,21 @@ three
 ### end
 
 ### sed_quit_Q
-### skip: quit (Q) command not implemented
+# Q (quiet quit) exits without printing current line
 printf 'a\nb\nc\n' | sed '2Q'
 ### expect
 a
 ### end
 
 ### sed_branch_t
-### skip: branch (t) command not implemented
+# Branch on substitution with label
 printf 'abc\n' | sed ':loop; s/a/X/; t loop'
 ### expect
 Xbc
 ### end
 
 ### sed_grouped_commands
-### skip: grouped commands not implemented
+# Grouped commands with address
 printf 'a\nb\nc\n' | sed '2{s/b/X/;p}'
 ### expect
 a
@@ -462,7 +462,7 @@ printf 'hello\n' | sed 's/hello/\&/'
 ### end
 
 ### sed_step_address
-### skip: step addresses (first~step) not implemented
+# Step address: delete every 2nd line
 printf 'a\nb\nc\nd\ne\nf\n' | sed '0~2d'
 ### expect
 a
@@ -471,7 +471,7 @@ e
 ### end
 
 ### sed_zero_address
-### skip: 0,/pattern/ addressing not implemented
+# 0,/pattern/ addressing: substitute only first match
 printf 'no\nyes\nyes\n' | sed '0,/yes/s/yes/FIRST/'
 ### expect
 no
@@ -484,4 +484,71 @@ printf 'a\nstart\nb\nend\nc\n' | sed '/start/,/end/d'
 ### expect
 a
 c
+### end
+
+### sed_group_delete
+# Grouped commands: address with delete
+printf 'a\nb\nc\n' | sed '2{d}'
+### expect
+a
+c
+### end
+
+### sed_group_nested_hold
+# Grouped commands with hold space operations
+printf 'x\ny\n' | sed '1{h;d}; 2{x;p;x}'
+### expect
+x
+y
+### end
+
+### sed_branch_b_unconditional
+# Unconditional branch to end
+printf 'a\nb\nc\n' | sed '2b; s/./X/'
+### expect
+X
+b
+X
+### end
+
+### sed_branch_t_no_match
+# t does NOT branch when substitution fails
+printf 'abc\n' | sed ':top; s/z/Z/; t top; s/a/X/'
+### expect
+Xbc
+### end
+
+### sed_Q_first_line
+# Q on first line prints nothing
+printf 'a\nb\n' | sed '1Q'
+### expect
+### end
+
+### sed_step_address_1_2
+# Step address: every 2nd line starting at line 1
+printf 'a\nb\nc\nd\n' | sed '1~2s/.*/X/'
+### expect
+X
+b
+X
+d
+### end
+
+### sed_zero_address_first_line_match
+# 0,/pattern/ where first line matches
+printf 'yes\nyes\nno\n' | sed '0,/yes/s/yes/FIRST/'
+### expect
+FIRST
+yes
+no
+### end
+
+### sed_group_with_regex_addr
+# Grouped commands with regex address
+printf 'foo\nbar\nbaz\n' | sed '/bar/{s/bar/BAR/;p}'
+### expect
+foo
+BAR
+BAR
+baz
 ### end

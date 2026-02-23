@@ -73,14 +73,19 @@ enum SedCommand {
     Delete,
     Print,
     Quit,
+    QuitNoprint, // Q - quit without printing
     Append(String),
     Insert(String),
-    Change(String), // c\text - replace line
-    HoldCopy,       // h - copy pattern to hold
-    HoldAppend,     // H - append pattern to hold
-    GetCopy,        // g - copy hold to pattern
-    GetAppend,      // G - append hold to pattern
-    Exchange,       // x - swap pattern and hold
+    Change(String),                                  // c\text - replace line
+    HoldCopy,                                        // h - copy pattern to hold
+    HoldAppend,                                      // H - append pattern to hold
+    GetCopy,                                         // g - copy hold to pattern
+    GetAppend,                                       // G - append hold to pattern
+    Exchange,                                        // x - swap pattern and hold
+    Group(Vec<(Option<Address>, bool, SedCommand)>), // { cmd1; cmd2; ... }
+    Label(String),                                   // :label
+    Branch(Option<String>),                          // b [label] - unconditional branch
+    BranchIfSub(Option<String>),                     // t [label] - branch if substitution succeeded
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +97,8 @@ enum Address {
     Last,
     RegexRange(Regex, Regex),     // /start/,/end/ - regex range
     LineRegexRange(usize, Regex), // N,/end/
+    Step(usize, usize),           // first~step - every step-th line starting at first
+    ZeroRegex(Regex),             // 0,/pattern/ - from line 0 to first match
 }
 
 impl Address {
@@ -102,8 +109,19 @@ impl Address {
             Address::Range(start, end) => line_num >= *start && line_num <= *end,
             Address::Regex(re) => re.is_match(line),
             Address::Last => line_num == total_lines,
-            // Regex ranges handled separately in execution
-            Address::RegexRange(_, _) | Address::LineRegexRange(_, _) => false,
+            Address::Step(first, step) => {
+                if *step == 0 {
+                    line_num == *first
+                } else if *first == 0 {
+                    line_num.is_multiple_of(*step)
+                } else {
+                    line_num >= *first && (line_num - *first).is_multiple_of(*step)
+                }
+            }
+            // Ranges with state handled separately
+            Address::RegexRange(_, _) | Address::LineRegexRange(_, _) | Address::ZeroRegex(_) => {
+                false
+            }
         }
     }
 
@@ -136,6 +154,25 @@ impl Address {
                     true
                 } else if line_num >= *start_line {
                     *in_range = true;
+                    true
+                } else {
+                    false
+                }
+            }
+            Address::ZeroRegex(end_re) => {
+                // 0,/pattern/ — always match from line 1; stop after first match
+                if *in_range {
+                    if end_re.is_match(line) {
+                        *in_range = false;
+                    }
+                    true
+                } else if line_num == 1 {
+                    // Start matching from line 1 (0 is virtual start)
+                    *in_range = true;
+                    // Check if first line already matches end pattern
+                    if end_re.is_match(line) {
+                        *in_range = false;
+                    }
                     true
                 } else {
                     false
@@ -213,7 +250,7 @@ impl SedOptions {
 }
 
 /// Split a sed command string into individual commands separated by semicolons.
-/// This is careful to not split inside s/pattern/replacement/ structures.
+/// This is careful to not split inside s/pattern/replacement/ or { } blocks.
 fn split_sed_commands(s: &str) -> Vec<&str> {
     let mut result = Vec::new();
     let mut start = 0;
@@ -221,6 +258,7 @@ fn split_sed_commands(s: &str) -> Vec<&str> {
     let mut delim_count = 0;
     let mut delim: Option<char> = None;
     let mut escaped = false;
+    let mut brace_depth = 0;
     let chars: Vec<char> = s.chars().collect();
 
     for (i, &c) in chars.iter().enumerate() {
@@ -247,7 +285,11 @@ fn split_sed_commands(s: &str) -> Vec<&str> {
                     in_subst = false;
                 }
             }
-        } else if c == ';' {
+        } else if c == '{' {
+            brace_depth += 1;
+        } else if c == '}' {
+            brace_depth -= 1;
+        } else if c == ';' && brace_depth == 0 {
             result.push(&s[start..i]);
             start = i + 1;
         }
@@ -275,12 +317,25 @@ fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
             .map_err(|_| Error::Execution("sed: invalid address".to_string()))?;
         let rest = &s[end..];
 
+        // Check for step address: first~step
+        if let Some(after_tilde) = rest.strip_prefix('~') {
+            let end2 = after_tilde
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(after_tilde.len());
+            if end2 > 0 {
+                let step: usize = after_tilde[..end2]
+                    .parse()
+                    .map_err(|_| Error::Execution("sed: invalid step address".to_string()))?;
+                return Ok((Some(Address::Step(num, step)), &after_tilde[end2..]));
+            }
+        }
+
         // Check for range
         if let Some(rest) = rest.strip_prefix(',') {
             if let Some(after_dollar) = rest.strip_prefix('$') {
                 return Ok((Some(Address::Range(num, usize::MAX)), after_dollar));
             }
-            // N,/pattern/ range
+            // N,/pattern/ range — 0,/pat/ is special (matches first occurrence)
             if let Some(after_slash) = rest.strip_prefix('/') {
                 let end2 = after_slash.find('/').ok_or_else(|| {
                     Error::Execution("sed: unterminated address regex".to_string())
@@ -288,6 +343,9 @@ fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
                 let pattern = &after_slash[..end2];
                 let regex = Regex::new(pattern)
                     .map_err(|e| Error::Execution(format!("sed: invalid regex: {}", e)))?;
+                if num == 0 {
+                    return Ok((Some(Address::ZeroRegex(regex)), &after_slash[end2 + 1..]));
+                }
                 return Ok((
                     Some(Address::LineRegexRange(num, regex)),
                     &after_slash[end2 + 1..],
@@ -519,6 +577,47 @@ fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, 
         }
         'G' => Ok((address, negate, SedCommand::GetAppend)),
         'x' => Ok((address, negate, SedCommand::Exchange)),
+        'Q' => Ok((address, negate, SedCommand::QuitNoprint)),
+        ':' => {
+            // Label: :name
+            let label = rest[1..].trim().to_string();
+            Ok((None, false, SedCommand::Label(label)))
+        }
+        'b' => {
+            // Branch: b [label] — unconditional jump
+            let label = rest[1..].trim();
+            let label = if label.is_empty() {
+                None
+            } else {
+                Some(label.to_string())
+            };
+            Ok((address, negate, SedCommand::Branch(label)))
+        }
+        't' => {
+            // Branch if substitution: t [label]
+            let label = rest[1..].trim();
+            let label = if label.is_empty() {
+                None
+            } else {
+                Some(label.to_string())
+            };
+            Ok((address, negate, SedCommand::BranchIfSub(label)))
+        }
+        '{' => {
+            // Grouped commands: { cmd1; cmd2; ... }
+            // Find matching closing brace
+            let inner = rest[1..].trim();
+            let inner = inner.strip_suffix('}').unwrap_or(inner);
+            let mut group_cmds = Vec::new();
+            for cmd_str in split_sed_commands(inner) {
+                let trimmed = cmd_str.trim();
+                if !trimmed.is_empty() {
+                    let (a, n, c) = parse_sed_command(trimmed, extended_regex)?;
+                    group_cmds.push((a, n, c));
+                }
+            }
+            Ok((address, negate, SedCommand::Group(group_cmds)))
+        }
         _ => Err(Error::Execution(format!(
             "sed: unknown command: {}",
             first_char
@@ -552,6 +651,114 @@ fn replace_nth<'a>(
 
     // nth occurrence not found, return original
     std::borrow::Cow::Borrowed(text)
+}
+
+/// Mutable state passed through command execution
+struct LineState {
+    current_line: String,
+    should_print: bool,
+    deleted: bool,
+    extra_output: Vec<String>, // lines printed by 'p' command (printed immediately)
+    insert_text: Option<String>,
+    append_text: Option<String>,
+    quit: bool,
+    quit_noprint: bool,
+    hold_space: String,
+    sub_happened: bool, // track if any substitution succeeded (for t command)
+}
+
+/// Execute a single sed command against the current line state.
+/// Returns true if the command was applied (for branching logic).
+fn exec_sed_cmd(cmd: &SedCommand, state: &mut LineState, _line_num: usize, _total_lines: usize) {
+    match cmd {
+        SedCommand::Substitute {
+            pattern,
+            replacement,
+            global,
+            nth,
+            print_only,
+        } => {
+            let new_line = if *global {
+                pattern.replace_all(&state.current_line, replacement.as_str())
+            } else if let Some(n) = nth {
+                replace_nth(pattern, &state.current_line, replacement, *n)
+            } else {
+                pattern.replace(&state.current_line, replacement.as_str())
+            };
+
+            if new_line != state.current_line {
+                state.current_line = new_line.into_owned();
+                state.sub_happened = true;
+                if *print_only {
+                    state.extra_output.push(state.current_line.clone());
+                }
+            }
+        }
+        SedCommand::Delete => {
+            state.deleted = true;
+            state.should_print = false;
+        }
+        SedCommand::Print => {
+            // Print current pattern space immediately (snapshot at this point)
+            state.extra_output.push(state.current_line.clone());
+        }
+        SedCommand::Quit => {
+            state.quit = true;
+        }
+        SedCommand::QuitNoprint => {
+            state.quit_noprint = true;
+        }
+        SedCommand::Append(text) => {
+            state.append_text = Some(text.clone());
+        }
+        SedCommand::Insert(text) => {
+            state.insert_text = Some(text.clone());
+        }
+        SedCommand::Change(text) => {
+            state.current_line = text.clone();
+            state.deleted = false;
+            state.should_print = true;
+        }
+        SedCommand::HoldCopy => {
+            state.hold_space = state.current_line.clone();
+        }
+        SedCommand::HoldAppend => {
+            state.hold_space.push('\n');
+            state.hold_space.push_str(&state.current_line);
+        }
+        SedCommand::GetCopy => {
+            state.current_line = state.hold_space.clone();
+        }
+        SedCommand::GetAppend => {
+            state.current_line.push('\n');
+            state.current_line.push_str(&state.hold_space);
+        }
+        SedCommand::Exchange => {
+            std::mem::swap(&mut state.current_line, &mut state.hold_space);
+        }
+        SedCommand::Group(cmds) => {
+            for (_addr, _negate, sub_cmd) in cmds {
+                exec_sed_cmd(sub_cmd, state, _line_num, _total_lines);
+                if state.deleted || state.quit || state.quit_noprint {
+                    break;
+                }
+            }
+        }
+        // Labels and branches are handled at the top-level command loop
+        SedCommand::Label(_) | SedCommand::Branch(_) | SedCommand::BranchIfSub(_) => {}
+    }
+}
+
+/// Count total commands (including nested) for range state tracking
+fn count_commands(cmds: &[(Option<Address>, bool, SedCommand)]) -> usize {
+    let mut count = 0;
+    for (_, _, cmd) in cmds {
+        count += 1;
+        if let SedCommand::Group(sub) = cmd {
+            count += count_commands(sub);
+        }
+    }
+    count
 }
 
 #[async_trait]
@@ -591,128 +798,134 @@ impl Builtin for Sed {
             let lines: Vec<&str> = content.lines().collect();
             let total_lines = lines.len();
             let mut file_output = String::new();
-            let mut quit = false;
             let mut hold_space = String::new();
+            let mut global_quit = false;
             // Track range state per command
-            let mut range_state: Vec<bool> = vec![false; opts.commands.len()];
+            let mut range_state: Vec<bool> = vec![false; count_commands(&opts.commands)];
 
             for (idx, line) in lines.iter().enumerate() {
-                if quit {
+                if global_quit {
                     break;
                 }
 
                 let line_num = idx + 1;
-                let mut current_line = line.to_string();
-                let mut should_print = !opts.quiet;
-                let mut deleted = false;
-                let mut extra_print = false;
-                let mut insert_text: Option<String> = None;
-                let mut append_text: Option<String> = None;
+                let mut state = LineState {
+                    current_line: line.to_string(),
+                    should_print: !opts.quiet,
+                    deleted: false,
+                    extra_output: Vec::new(),
+                    insert_text: None,
+                    append_text: None,
+                    quit: false,
+                    quit_noprint: false,
+                    hold_space: hold_space.clone(),
+                    sub_happened: false,
+                };
 
-                for (cmd_idx, (addr, negate, cmd)) in opts.commands.iter().enumerate() {
+                // Execute commands with branch/label support
+                let mut cmd_idx = 0;
+                let max_iterations = 1000; // prevent infinite loops
+                let mut iterations = 0;
+                while cmd_idx < opts.commands.len() && iterations < max_iterations {
+                    iterations += 1;
+                    let (addr, negate, cmd) = &opts.commands[cmd_idx];
+
                     let addr_matches = addr
                         .as_ref()
                         .map(|a| {
                             a.matches_with_state(
                                 line_num,
                                 total_lines,
-                                &current_line,
+                                &state.current_line,
                                 &mut range_state[cmd_idx],
                             )
                         })
                         .unwrap_or(true);
 
-                    // Apply negation if needed
                     let should_apply = if *negate { !addr_matches } else { addr_matches };
 
                     if !should_apply {
+                        cmd_idx += 1;
                         continue;
                     }
 
                     match cmd {
-                        SedCommand::Substitute {
-                            pattern,
-                            replacement,
-                            global,
-                            nth,
-                            print_only,
-                        } => {
-                            let new_line = if *global {
-                                pattern.replace_all(&current_line, replacement.as_str())
-                            } else if let Some(n) = nth {
-                                replace_nth(pattern, &current_line, replacement, *n)
-                            } else {
-                                pattern.replace(&current_line, replacement.as_str())
-                            };
-
-                            if new_line != current_line {
-                                current_line = new_line.into_owned();
-                                if *print_only {
-                                    extra_print = true;
+                        SedCommand::Label(_) => {
+                            // Labels are just markers, skip
+                            cmd_idx += 1;
+                        }
+                        SedCommand::Branch(label) => {
+                            if let Some(label) = label {
+                                // Jump to label
+                                if let Some(pos) = find_label(&opts.commands, label) {
+                                    cmd_idx = pos;
+                                } else {
+                                    cmd_idx += 1;
                                 }
+                            } else {
+                                // b with no label = jump to end (skip remaining)
+                                break;
                             }
                         }
-                        SedCommand::Delete => {
-                            deleted = true;
-                            should_print = false;
+                        SedCommand::BranchIfSub(label) => {
+                            if state.sub_happened {
+                                state.sub_happened = false;
+                                if let Some(label) = label {
+                                    if let Some(pos) = find_label(&opts.commands, label) {
+                                        cmd_idx = pos;
+                                    } else {
+                                        cmd_idx += 1;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                cmd_idx += 1;
+                            }
                         }
-                        SedCommand::Print => {
-                            extra_print = true;
+                        _ => {
+                            exec_sed_cmd(cmd, &mut state, line_num, total_lines);
+                            cmd_idx += 1;
                         }
-                        SedCommand::Quit => {
-                            quit = true;
-                        }
-                        SedCommand::Append(text) => {
-                            append_text = Some(text.clone());
-                        }
-                        SedCommand::Insert(text) => {
-                            insert_text = Some(text.clone());
-                        }
-                        SedCommand::Change(text) => {
-                            current_line = text.clone();
-                            deleted = false;
-                            should_print = true;
-                        }
-                        SedCommand::HoldCopy => {
-                            hold_space = current_line.clone();
-                        }
-                        SedCommand::HoldAppend => {
-                            hold_space.push('\n');
-                            hold_space.push_str(&current_line);
-                        }
-                        SedCommand::GetCopy => {
-                            current_line = hold_space.clone();
-                        }
-                        SedCommand::GetAppend => {
-                            current_line.push('\n');
-                            current_line.push_str(&hold_space);
-                        }
-                        SedCommand::Exchange => {
-                            std::mem::swap(&mut current_line, &mut hold_space);
-                        }
+                    }
+
+                    if state.deleted || state.quit || state.quit_noprint {
+                        break;
                     }
                 }
 
+                hold_space = state.hold_space;
+
                 // Insert text comes before the line
-                if let Some(text) = insert_text {
+                if let Some(text) = state.insert_text {
                     file_output.push_str(&text);
                     file_output.push('\n');
                 }
 
-                if !deleted && should_print {
-                    file_output.push_str(&current_line);
-                    file_output.push('\n');
-                }
+                if state.quit_noprint {
+                    global_quit = true;
+                    // Q does NOT print the current line
+                } else {
+                    // Extra output from p command comes before auto-print
+                    for extra in &state.extra_output {
+                        file_output.push_str(extra);
+                        file_output.push('\n');
+                    }
 
-                if extra_print {
-                    file_output.push_str(&current_line);
-                    file_output.push('\n');
-                }
+                    if !state.deleted && state.should_print {
+                        file_output.push_str(&state.current_line);
+                        file_output.push('\n');
+                    }
 
-                // Append text comes after the line
-                if let Some(text) = append_text {
-                    file_output.push_str(&text);
-                    file_output.push('\n');
+                    // Append text comes after the line
+                    if let Some(text) = state.append_text {
+                        file_output.push_str(&text);
+                        file_output.push('\n');
+                    }
+
+                    if state.quit {
+                        global_quit = true;
+                    }
                 }
             }
 
@@ -740,6 +953,18 @@ impl Builtin for Sed {
 
         Ok(ExecResult::ok(output))
     }
+}
+
+/// Find the index of a label command in the command list
+fn find_label(cmds: &[(Option<Address>, bool, SedCommand)], target: &str) -> Option<usize> {
+    for (i, (_, _, cmd)) in cmds.iter().enumerate() {
+        if let SedCommand::Label(name) = cmd {
+            if name == target {
+                return Some(i);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
