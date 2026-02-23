@@ -74,6 +74,9 @@ execution → $PATH search → "command not found".
 - `mv` - Move/rename files
 - `touch` - Create empty files
 - `chmod` - Change permissions (octal mode)
+- `chown` - Change ownership (no-op in VFS, validates file existence)
+- `ln` - Create links (`-s` symbolic, `-f` force)
+- `kill` - Send signals (no-op in VFS, `-l` lists signals)
 
 #### Text Processing
 - `cat` - Concatenate files (`-v`, `-n`, `-e`, `-t`)
