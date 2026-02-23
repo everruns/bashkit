@@ -336,17 +336,25 @@ foo
 ### end
 
 ### grep_include_pattern
-### skip: --include not implemented
-grep --include='*.txt' pattern /some/dir
-### exit_code: 1
+# Include only .txt files in recursive search
+mkdir -p /tmp/grepdir && printf 'hello\n' > /tmp/grepdir/a.txt && printf 'hello\n' > /tmp/grepdir/b.log && grep -r --include='*.txt' hello /tmp/grepdir
 ### expect
+/tmp/grepdir/a.txt:hello
 ### end
 
 ### grep_exclude_pattern
-### skip: --exclude not implemented
-grep --exclude='*.log' pattern /some/dir
-### exit_code: 1
+# Exclude .log files in recursive search
+mkdir -p /tmp/grepdir2 && printf 'hello\n' > /tmp/grepdir2/a.txt && printf 'hello\n' > /tmp/grepdir2/b.log && grep -r --exclude='*.log' hello /tmp/grepdir2
 ### expect
+/tmp/grepdir2/a.txt:hello
+### end
+
+### grep_include_no_match
+# Include pattern that matches no files
+mkdir -p /tmp/grepdir3 && printf 'hello\n' > /tmp/grepdir3/a.log && grep -r --include='*.txt' hello /tmp/grepdir3
+echo $?
+### expect
+1
 ### end
 
 ### grep_line_buffered

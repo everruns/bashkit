@@ -59,13 +59,15 @@ struct GrepOptions {
     whole_line: bool,
     after_context: usize,
     before_context: usize,
-    show_filename: bool,          // -H: always show filename
-    no_filename: bool,            // -h: never show filename
-    byte_offset: bool,            // -b: show byte offset
-    pattern_file: Option<String>, // -f: read patterns from file
-    null_terminated: bool,        // -z: null-terminated lines
-    recursive: bool,              // -r: recursive search
-    binary_as_text: bool,         // -a: treat binary as text
+    show_filename: bool,           // -H: always show filename
+    no_filename: bool,             // -h: never show filename
+    byte_offset: bool,             // -b: show byte offset
+    pattern_file: Option<String>,  // -f: read patterns from file
+    null_terminated: bool,         // -z: null-terminated lines
+    recursive: bool,               // -r: recursive search
+    binary_as_text: bool,          // -a: treat binary as text
+    include_patterns: Vec<String>, // --include=GLOB
+    exclude_patterns: Vec<String>, // --exclude=GLOB
 }
 
 impl GrepOptions {
@@ -94,6 +96,8 @@ impl GrepOptions {
             null_terminated: false,
             recursive: false,
             binary_as_text: false,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
         };
 
         let mut positional = Vec::new();
@@ -262,10 +266,10 @@ impl GrepOptions {
                     // --color / --color=always/never/auto - no-op (we don't output ANSI)
                 } else if opt == "line-buffered" {
                     // --line-buffered - no-op (output is already line-oriented)
-                } else if opt.starts_with("include=") {
-                    // --include=PATTERN - skip for now, requires -r
-                } else if opt.starts_with("exclude=") {
-                    // --exclude=PATTERN - skip for now, requires -r
+                } else if let Some(pat) = opt.strip_prefix("include=") {
+                    opts.include_patterns.push(strip_quotes(pat));
+                } else if let Some(pat) = opt.strip_prefix("exclude=") {
+                    opts.exclude_patterns.push(strip_quotes(pat));
                 }
                 // Ignore other unknown long options
             } else {
@@ -340,6 +344,37 @@ impl GrepOptions {
             .build()
             .map_err(|e| Error::Execution(format!("grep: invalid pattern: {}", e)))
     }
+}
+
+/// Strip surrounding single or double quotes from a value
+fn strip_quotes(s: &str) -> String {
+    if (s.starts_with('\'') && s.ends_with('\'')) || (s.starts_with('"') && s.ends_with('"')) {
+        s[1..s.len() - 1].to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+/// Check if a filename matches a simple glob pattern (e.g., "*.txt", "*.log")
+fn glob_matches(filename: &str, pattern: &str) -> bool {
+    if let Some(suffix) = pattern.strip_prefix('*') {
+        filename.ends_with(suffix)
+    } else if let Some(prefix) = pattern.strip_suffix('*') {
+        filename.starts_with(prefix)
+    } else {
+        filename == pattern
+    }
+}
+
+/// Check if a filename should be included based on include/exclude patterns
+fn should_include_file(filename: &str, include: &[String], exclude: &[String]) -> bool {
+    if !include.is_empty() && !include.iter().any(|p| glob_matches(filename, p)) {
+        return false;
+    }
+    if exclude.iter().any(|p| glob_matches(filename, p)) {
+        return false;
+    }
+    true
 }
 
 /// Convert a BRE (Basic Regular Expression) pattern to ERE for the regex crate.
@@ -466,12 +501,17 @@ impl Builtin for Grep {
                         let entry_path = path.join(&entry.name);
                         if entry.metadata.file_type.is_dir() {
                             dirs_to_process.push(entry_path);
-                        } else if entry.metadata.file_type.is_file() {
+                        } else if entry.metadata.file_type.is_file()
+                            && should_include_file(
+                                &entry.name,
+                                &opts.include_patterns,
+                                &opts.exclude_patterns,
+                            )
+                        {
                             if let Ok(content) = ctx.fs.read_file(&entry_path).await {
                                 let text = process_content(content, opts.binary_as_text);
                                 inputs.push((entry_path.to_string_lossy().into_owned(), text));
                             }
-                            // Skip unreadable files in recursive mode
                         }
                     }
                 } else if let Ok(content) = ctx.fs.read_file(&path).await {
@@ -507,13 +547,13 @@ impl Builtin for Grep {
             inputs
         };
 
-        // -H forces filename display, -h suppresses it, otherwise show for multiple files
+        // -H forces filename display, -h suppresses it, otherwise show for multiple files/recursive
         let show_filename = if opts.no_filename {
             false
-        } else if opts.show_filename {
+        } else if opts.show_filename || opts.recursive {
             true
         } else {
-            opts.files.len() > 1
+            inputs.len() > 1
         };
         let has_context = opts.before_context > 0 || opts.after_context > 0;
 
@@ -753,7 +793,7 @@ impl Builtin for Grep {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
+    use crate::fs::{FileSystem, InMemoryFs};
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -894,5 +934,107 @@ mod tests {
         let result = run_grep(&["-l", "foo"], Some("foo\nbar")).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "(stdin)\n");
+    }
+
+    #[test]
+    fn test_glob_matches() {
+        assert!(glob_matches("file.txt", "*.txt"));
+        assert!(!glob_matches("file.log", "*.txt"));
+        assert!(glob_matches("readme.md", "readme*"));
+        assert!(!glob_matches("license.md", "readme*"));
+        assert!(glob_matches("exact.txt", "exact.txt"));
+        assert!(!glob_matches("other.txt", "exact.txt"));
+    }
+
+    #[test]
+    fn test_should_include_file() {
+        assert!(should_include_file("foo.txt", &[], &[]));
+
+        let inc = vec!["*.txt".to_string()];
+        assert!(should_include_file("foo.txt", &inc, &[]));
+        assert!(!should_include_file("foo.log", &inc, &[]));
+
+        let exc = vec!["*.log".to_string()];
+        assert!(should_include_file("foo.txt", &[], &exc));
+        assert!(!should_include_file("foo.log", &[], &exc));
+
+        assert!(should_include_file("foo.txt", &inc, &exc));
+        assert!(!should_include_file("foo.log", &inc, &exc));
+    }
+
+    #[tokio::test]
+    async fn test_grep_recursive_include() {
+        let grep = Grep;
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(&PathBuf::from("/dir"), true).await.unwrap();
+        fs.write_file(&PathBuf::from("/dir/a.txt"), b"hello\n")
+            .await
+            .unwrap();
+        fs.write_file(&PathBuf::from("/dir/b.log"), b"hello\n")
+            .await
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["-r", "--include=*.txt", "hello", "/dir"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("/dir/a.txt:hello"));
+        assert!(!result.stdout.contains("b.log"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_recursive_exclude() {
+        let grep = Grep;
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(&PathBuf::from("/dir"), true).await.unwrap();
+        fs.write_file(&PathBuf::from("/dir/a.txt"), b"hello\n")
+            .await
+            .unwrap();
+        fs.write_file(&PathBuf::from("/dir/b.log"), b"hello\n")
+            .await
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["-r", "--exclude=*.log", "hello", "/dir"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("/dir/a.txt:hello"));
+        assert!(!result.stdout.contains("b.log"));
     }
 }
