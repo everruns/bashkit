@@ -3886,23 +3886,22 @@ impl Interpreter {
                     offset,
                     length,
                 } => {
-                    // ${var:offset} or ${var:offset:length}
+                    // ${var:offset} or ${var:offset:length} - character-based indexing
                     let value = self.expand_variable(name);
+                    let char_count = value.chars().count();
                     let offset_val: isize = self.evaluate_arithmetic(offset) as isize;
                     let start = if offset_val < 0 {
-                        // Negative offset counts from end
-                        (value.len() as isize + offset_val).max(0) as usize
+                        (char_count as isize + offset_val).max(0) as usize
                     } else {
-                        (offset_val as usize).min(value.len())
+                        (offset_val as usize).min(char_count)
                     };
-                    let substr = if let Some(len_expr) = length {
+                    let substr: String = if let Some(len_expr) = length {
                         let len_val = self.evaluate_arithmetic(len_expr) as usize;
-                        let end = (start + len_val).min(value.len());
-                        &value[start..end]
+                        value.chars().skip(start).take(len_val).collect()
                     } else {
-                        &value[start..]
+                        value.chars().skip(start).collect()
                     };
-                    result.push_str(substr);
+                    result.push_str(&substr);
                 }
                 WordPart::ArraySlice {
                     name,
@@ -4429,6 +4428,11 @@ impl Interpreter {
         let expr = expr.trim();
 
         if expr.is_empty() {
+            return 0;
+        }
+
+        // Non-ASCII chars can't be valid arithmetic; bail to avoid byte/char index mismatch
+        if !expr.is_ascii() {
             return 0;
         }
 
