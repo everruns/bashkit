@@ -441,6 +441,11 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Check for conditional expression [[ ... ]]
+        if matches!(self.current_token, Some(tokens::Token::DoubleLeftBracket)) {
+            return self.parse_compound_with_redirects(|s| s.parse_conditional());
+        }
+
         // Check for arithmetic command ((expression))
         if matches!(self.current_token, Some(tokens::Token::DoubleLeftParen)) {
             return self.parse_compound_with_redirects(|s| s.parse_arithmetic_command());
@@ -994,6 +999,118 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse arithmetic command ((expression))
+    /// Parse [[ conditional expression ]]
+    fn parse_conditional(&mut self) -> Result<CompoundCommand> {
+        self.advance(); // consume '[['
+
+        let mut words = Vec::new();
+        let mut saw_regex_op = false;
+
+        loop {
+            match &self.current_token {
+                Some(tokens::Token::DoubleRightBracket) => {
+                    self.advance(); // consume ']]'
+                    break;
+                }
+                Some(tokens::Token::Word(w))
+                | Some(tokens::Token::LiteralWord(w))
+                | Some(tokens::Token::QuotedWord(w)) => {
+                    let w_clone = w.clone();
+                    let is_quoted =
+                        matches!(self.current_token, Some(tokens::Token::QuotedWord(_)));
+                    let is_literal =
+                        matches!(self.current_token, Some(tokens::Token::LiteralWord(_)));
+
+                    // After =~, collect the regex pattern (may contain parens)
+                    if saw_regex_op {
+                        let pattern = self.collect_conditional_regex_pattern(&w_clone);
+                        words.push(Word::literal(&pattern));
+                        saw_regex_op = false;
+                        continue;
+                    }
+
+                    if w_clone == "=~" {
+                        saw_regex_op = true;
+                    }
+
+                    let word = if is_literal {
+                        Word {
+                            parts: vec![WordPart::Literal(w_clone)],
+                            quoted: true,
+                        }
+                    } else {
+                        let mut parsed = self.parse_word(w_clone);
+                        if is_quoted {
+                            parsed.quoted = true;
+                        }
+                        parsed
+                    };
+                    words.push(word);
+                    self.advance();
+                }
+                // Operators that the lexer tokenizes separately
+                Some(tokens::Token::And) => {
+                    words.push(Word::literal("&&"));
+                    self.advance();
+                }
+                Some(tokens::Token::Or) => {
+                    words.push(Word::literal("||"));
+                    self.advance();
+                }
+                Some(tokens::Token::LeftParen) => {
+                    words.push(Word::literal("("));
+                    self.advance();
+                }
+                Some(tokens::Token::RightParen) => {
+                    words.push(Word::literal(")"));
+                    self.advance();
+                }
+                None => {
+                    return Err(crate::error::Error::Parse(
+                        "unexpected end of input in [[ ]]".to_string(),
+                    ));
+                }
+                _ => {
+                    // Skip unknown tokens
+                    self.advance();
+                }
+            }
+        }
+
+        Ok(CompoundCommand::Conditional(words))
+    }
+
+    /// Collect a regex pattern after =~ in [[ ]], handling parens and special chars.
+    fn collect_conditional_regex_pattern(&mut self, first_word: &str) -> String {
+        let mut pattern = first_word.to_string();
+        self.advance(); // consume the first word
+
+        // Concatenate adjacent tokens that are part of the regex pattern
+        loop {
+            match &self.current_token {
+                Some(tokens::Token::DoubleRightBracket) => break,
+                Some(tokens::Token::And) | Some(tokens::Token::Or) => break,
+                Some(tokens::Token::LeftParen) => {
+                    pattern.push('(');
+                    self.advance();
+                }
+                Some(tokens::Token::RightParen) => {
+                    pattern.push(')');
+                    self.advance();
+                }
+                Some(tokens::Token::Word(w))
+                | Some(tokens::Token::LiteralWord(w))
+                | Some(tokens::Token::QuotedWord(w)) => {
+                    pattern.push_str(w);
+                    self.advance();
+                }
+                _ => break,
+            }
+        }
+
+        pattern
+    }
+
     fn parse_arithmetic_command(&mut self) -> Result<CompoundCommand> {
         self.advance(); // consume '(('
 

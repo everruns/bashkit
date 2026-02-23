@@ -36,9 +36,17 @@ echo a > /x1.txt; echo b > /x2.txt; echo /x[12].txt
 ### end
 
 ### glob_recursive
-### skip: recursive glob (**) not implemented
-echo /**/*.txt
+### bash_diff: Bashkit VFS has files, real bash CI filesystem does not
+# Recursive glob with **
+mkdir -p /recur/sub1/deep
+mkdir -p /recur/sub2
+echo a > /recur/f1.txt
+echo b > /recur/sub1/f2.txt
+echo c > /recur/sub1/deep/f3.txt
+echo d > /recur/sub2/f4.txt
+echo /recur/**/*.txt
 ### expect
+/recur/f1.txt /recur/sub1/deep/f3.txt /recur/sub1/f2.txt /recur/sub2/f4.txt
 ### end
 
 ### glob_brace

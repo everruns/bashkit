@@ -107,17 +107,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1043 (954 pass, 89 skip)
+**Total spec test cases:** 1085 (997 pass, 88 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 640 | Yes | 592 | 48 | `bash_spec_tests` in CI |
+| Bash (core) | 673 | Yes | 624 | 49 | `bash_spec_tests` in CI |
 | AWK | 90 | Yes | 73 | 17 | loops, arrays, -v, ternary, field assign |
 | Grep | 82 | Yes | 79 | 3 | now with -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude |
 | Sed | 65 | Yes | 53 | 12 | hold space, change, regex ranges, -E |
 | JQ | 108 | Yes | 100 | 8 | reduce, walk, regex funcs, --arg/--argjson, combined flags |
 | Python | 58 | Yes | 50 | 8 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **1043** | **Yes** | **948** | **95** | |
+| **Total** | **1076** | **Yes** | **980** | **96** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -129,8 +129,10 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | bash-command.test.sh | 34 | bash/sh re-invocation |
 | brace-expansion.test.sh | 21 | {a,b,c}, {1..5}, for-loop brace expansion |
 | column.test.sh | 10 | column alignment |
+| command.test.sh | 9 | `command -v`, `-V`, function bypass |
 | command-not-found.test.sh | 17 | unknown command handling |
-| command-subst.test.sh | 14 | 2 skipped |
+| conditional.test.sh | 17 | `[[ ]]` conditionals, `=~` regex, BASH_REMATCH |
+| command-subst.test.sh | 14 | includes backtick substitution (1 skipped) |
 | control-flow.test.sh | 33 | if/elif/else, for, while, case |
 | cuttr.test.sh | 32 | cut and tr commands (25 skipped) |
 | date.test.sh | 38 | format specifiers, `-d` relative/compound/epoch, `-R`, `-I`, `%N` (3 skipped) |
@@ -140,13 +142,15 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | fileops.test.sh | 21 | |
 | find.test.sh | 10 | file search |
 | functions.test.sh | 14 | |
-| globs.test.sh | 12 | for-loop glob expansion, 1 skipped |
+| getopts.test.sh | 9 | POSIX option parsing, combined flags, silent mode |
+| globs.test.sh | 12 | for-loop glob expansion, recursive `**` |
 | headtail.test.sh | 14 | |
 | herestring.test.sh | 8 | 1 skipped |
 | hextools.test.sh | 5 | od/xxd/hexdump (3 skipped) |
 | negative-tests.test.sh | 16 | error conditions (3 skipped) |
 | nl.test.sh | 14 | line numbering |
-| paste.test.sh | 4 | line merging (2 skipped) |
+| nounset.test.sh | 7 | `set -u` unbound variable checks (1 skipped) |
+| paste.test.sh | 4 | line merging with `-s` serial and `-d` delimiter |
 | path.test.sh | 14 | |
 | pipes-redirects.test.sh | 19 | includes stderr redirects |
 | printf.test.sh | 24 | format specifiers, array expansion |
@@ -173,9 +177,9 @@ Features that may be added in the future (not intentionally excluded):
 | Coprocesses `coproc` | Low | Rarely used |
 | Extended globs `@()` `!()` | Medium | Requires `shopt -s extglob` |
 | Associative arrays `declare -A` | Medium | Bash 4+ feature |
-| `[[ =~ ]]` regex matching | Medium | Bash extension |
-| `getopts` | Medium | POSIX option parsing |
-| `command` builtin | Medium | POSIX command lookup |
+| ~~`[[ =~ ]]` regex matching~~ | ~~Medium~~ | Implemented: `[[ ]]` conditionals with `=~` and BASH_REMATCH |
+| ~~`getopts`~~ | ~~Medium~~ | Implemented: POSIX option parsing |
+| ~~`command` builtin~~ | ~~Medium~~ | Implemented: `-v`, `-V`, bypass functions |
 | `alias` | Low | Interactive feature |
 | History expansion | Out of scope | Interactive only |
 
@@ -197,14 +201,14 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-**82 core builtins + 3 feature-gated = 85 total**
+**84 core builtins + 3 feature-gated = 87 total**
 
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,
 `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`,
 `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`,
 `sort`, `uniq`, `cut`, `tr`, `paste`, `column`, `diff`, `comm`, `date`,
-`wait`, `curl`, `wget`, `timeout`,
+`wait`, `curl`, `wget`, `timeout`, `command`, `getopts`,
 `time` (keyword), `whoami`, `hostname`, `uname`, `id`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
 `:` (colon), `eval`, `readonly`, `times`, `bash`, `sh`,
 `od`, `xxd`, `hexdump`, `strings`,
@@ -215,8 +219,8 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Not Yet Implemented
 
-`ln`, `chown`, `type`, `which`, `command`, `hash`, `declare`,
-`typeset`, `getopts`, `kill`
+`ln`, `chown`, `type`, `which`, `hash`, `declare`,
+`typeset`, `kill`
 
 ## Text Processing
 
