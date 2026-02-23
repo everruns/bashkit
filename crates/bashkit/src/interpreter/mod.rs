@@ -4076,7 +4076,12 @@ impl Interpreter {
             ParameterOp::Error => {
                 // ${var:?error} - error if unset/empty
                 if value.is_empty() {
-                    // In real bash this would exit, we just return empty
+                    let msg = if operand.is_empty() {
+                        format!("bash: {}: parameter null or not set\n", name)
+                    } else {
+                        format!("bash: {}: {}\n", name, operand)
+                    };
+                    self.nounset_error = Some(msg);
                     String::new()
                 } else {
                     value.to_string()
@@ -4148,6 +4153,43 @@ impl Interpreter {
         global: bool,
     ) -> String {
         if pattern.is_empty() {
+            return value.to_string();
+        }
+
+        // Handle # prefix anchor (match at start only)
+        if let Some(rest) = pattern.strip_prefix('#') {
+            if rest.is_empty() {
+                return value.to_string();
+            }
+            if let Some(stripped) = value.strip_prefix(rest) {
+                return format!("{}{}", replacement, stripped);
+            }
+            // Try glob match at prefix
+            if rest.contains('*') {
+                let matched = self.remove_pattern(value, rest, true, false);
+                if matched != value {
+                    let prefix_len = value.len() - matched.len();
+                    return format!("{}{}", replacement, &value[prefix_len..]);
+                }
+            }
+            return value.to_string();
+        }
+
+        // Handle % suffix anchor (match at end only)
+        if let Some(rest) = pattern.strip_prefix('%') {
+            if rest.is_empty() {
+                return value.to_string();
+            }
+            if let Some(stripped) = value.strip_suffix(rest) {
+                return format!("{}{}", stripped, replacement);
+            }
+            // Try glob match at suffix
+            if rest.contains('*') {
+                let matched = self.remove_pattern(value, rest, false, false);
+                if matched != value {
+                    return format!("{}{}", matched, replacement);
+                }
+            }
             return value.to_string();
         }
 

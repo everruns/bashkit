@@ -107,17 +107,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1060 (1038 pass, 22 skip)
+**Total spec test cases:** 1144 (1090 pass, 54 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 711 | Yes | 705 | 6 | `bash_spec_tests` in CI |
+| Bash (core) | 741 | Yes | 735 | 6 | `bash_spec_tests` in CI |
 | AWK | 90 | Yes | 73 | 17 | loops, arrays, -v, ternary, field assign |
 | Grep | 82 | Yes | 79 | 3 | now with -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude |
 | Sed | 65 | Yes | 53 | 12 | hold space, change, regex ranges, -E |
 | JQ | 108 | Yes | 100 | 8 | reduce, walk, regex funcs, --arg/--argjson, combined flags |
 | Python | 58 | Yes | 50 | 8 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **1087** | **Yes** | **1034** | **53** | |
+| **Total** | **1144** | **Yes** | **1090** | **54** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -168,6 +168,9 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | ln.test.sh | 5 | `ln -s`, `-f`, symlink creation |
 | eval-bugs.test.sh | 4 | regression tests for eval/script bugs |
 | script-exec.test.sh | 10 | script execution by path, $PATH search, exit codes |
+| heredoc.test.sh | 9 | heredoc variable expansion, quoted delimiters, file redirects |
+| string-ops.test.sh | 15 | string replacement (prefix/suffix anchored), `${var:?}`, case conversion |
+| read-builtin.test.sh | 7 | `read` builtin, IFS splitting, `-r` flag, here-string input |
 
 ## Shell Features
 

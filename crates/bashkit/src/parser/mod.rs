@@ -2231,11 +2231,23 @@ impl<'a> Parser<'a> {
                                     } else {
                                         false
                                     };
-                                    // Read pattern until /
+                                    // Read pattern until / (handle \/ as escaped /)
                                     let mut pattern = String::new();
                                     while let Some(&ch) = chars.peek() {
                                         if ch == '/' || ch == '}' {
                                             break;
+                                        }
+                                        if ch == '\\' {
+                                            chars.next(); // consume backslash
+                                            if let Some(&next) = chars.peek() {
+                                                if next == '/' {
+                                                    // \/ -> literal /
+                                                    pattern.push(chars.next().unwrap());
+                                                    continue;
+                                                }
+                                            }
+                                            pattern.push('\\');
+                                            continue;
                                         }
                                         pattern.push(chars.next().unwrap());
                                     }
