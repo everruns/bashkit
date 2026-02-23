@@ -71,7 +71,6 @@ result=$(false); echo $?
 ### end
 
 ### subst_backtick
-### skip: backtick command substitution not implemented
 echo `echo hello`
 ### expect
 hello

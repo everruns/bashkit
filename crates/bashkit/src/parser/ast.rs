@@ -108,6 +108,8 @@ pub enum CompoundCommand {
     Arithmetic(String),
     /// Time command - measure execution time
     Time(TimeCommand),
+    /// Conditional expression [[ ... ]]
+    Conditional(Vec<Word>),
 }
 
 /// Time command - wraps a command and measures its execution time.

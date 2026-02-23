@@ -418,6 +418,34 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 }
+            } else if ch == '`' {
+                // Backtick command substitution: convert `cmd` to $(cmd)
+                self.advance(); // consume opening `
+                word.push_str("$(");
+                while let Some(c) = self.peek_char() {
+                    if c == '`' {
+                        self.advance(); // consume closing `
+                        break;
+                    }
+                    if c == '\\' {
+                        // In backticks, backslash only escapes $, `, \, newline
+                        self.advance();
+                        if let Some(next) = self.peek_char() {
+                            if matches!(next, '$' | '`' | '\\' | '\n') {
+                                word.push(next);
+                                self.advance();
+                            } else {
+                                word.push('\\');
+                                word.push(next);
+                                self.advance();
+                            }
+                        }
+                    } else {
+                        word.push(c);
+                        self.advance();
+                    }
+                }
+                word.push(')');
             } else if ch == '\\' {
                 self.advance();
                 if let Some(next) = self.peek_char() {
@@ -491,6 +519,34 @@ impl<'a> Lexer<'a> {
                             }
                         }
                     }
+                }
+                '`' => {
+                    // Backtick command substitution inside double quotes
+                    self.advance(); // consume opening `
+                    content.push_str("$(");
+                    while let Some(c) = self.peek_char() {
+                        if c == '`' {
+                            self.advance();
+                            break;
+                        }
+                        if c == '\\' {
+                            self.advance();
+                            if let Some(next) = self.peek_char() {
+                                if matches!(next, '$' | '`' | '\\' | '"') {
+                                    content.push(next);
+                                    self.advance();
+                                } else {
+                                    content.push('\\');
+                                    content.push(next);
+                                    self.advance();
+                                }
+                            }
+                        } else {
+                            content.push(c);
+                            self.advance();
+                        }
+                    }
+                    content.push(')');
                 }
                 _ => {
                     content.push(ch);

@@ -53,6 +53,33 @@ use fail::fail_point;
 /// This is handled at the interpreter level to prevent custom filesystems from bypassing it.
 const DEV_NULL: &str = "/dev/null";
 
+/// Check if a name is a shell keyword (for `command -v`/`command -V`).
+fn is_keyword(name: &str) -> bool {
+    matches!(
+        name,
+        "if" | "then"
+            | "else"
+            | "elif"
+            | "fi"
+            | "for"
+            | "while"
+            | "until"
+            | "do"
+            | "done"
+            | "case"
+            | "esac"
+            | "in"
+            | "function"
+            | "select"
+            | "time"
+            | "{"
+            | "}"
+            | "[["
+            | "]]"
+            | "!"
+    )
+}
+
 /// Check if a path refers to /dev/null after normalization.
 /// Handles attempts to bypass via paths like `/dev/../dev/null`.
 fn is_dev_null(path: &Path) -> bool {
@@ -138,6 +165,8 @@ pub struct Interpreter {
     /// Monotonic counter incremented each time output is emitted via callback.
     /// Used to detect whether sub-calls already emitted output, preventing duplicates.
     output_emit_count: u64,
+    /// Pending nounset (set -u) error message, consumed by execute_command.
+    nounset_error: Option<String>,
 }
 
 impl Interpreter {
@@ -301,6 +330,7 @@ impl Interpreter {
             pipeline_stdin: None,
             output_callback: None,
             output_emit_count: 0,
+            nounset_error: None,
         }
     }
 
@@ -418,6 +448,11 @@ impl Interpreter {
             exit_code = result.exit_code;
             self.last_exit_code = exit_code;
 
+            // Stop on control flow (e.g. nounset error uses Return to abort)
+            if result.control_flow != ControlFlow::None {
+                break;
+            }
+
             // NOTE: errexit (set -e) is handled internally by execute_command,
             // execute_list, and execute_command_sequence. We don't check here
             // because those methods handle the nuances of && / || chains,
@@ -447,7 +482,7 @@ impl Interpreter {
                 CompoundCommand::Case(cmd) => cmd.span.line(),
                 CompoundCommand::Time(cmd) => cmd.span.line(),
                 CompoundCommand::Subshell(_) | CompoundCommand::BraceGroup(_) => 1,
-                CompoundCommand::Arithmetic(_) => 1,
+                CompoundCommand::Arithmetic(_) | CompoundCommand::Conditional(_) => 1,
             },
             Command::Function(c) => c.span.line(),
         }
@@ -526,6 +561,7 @@ impl Interpreter {
             CompoundCommand::Case(case_cmd) => self.execute_case(case_cmd).await,
             CompoundCommand::Arithmetic(expr) => self.execute_arithmetic_command(expr).await,
             CompoundCommand::Time(time_cmd) => self.execute_time(time_cmd).await,
+            CompoundCommand::Conditional(words) => self.execute_conditional(words).await,
         }
     }
 
@@ -776,6 +812,164 @@ impl Interpreter {
 
     /// Execute an arithmetic command ((expression))
     /// Returns exit code 0 if result is non-zero, 1 if result is zero
+    /// Execute a [[ conditional expression ]]
+    async fn execute_conditional(&mut self, words: &[Word]) -> Result<ExecResult> {
+        // Expand all words
+        let mut expanded = Vec::new();
+        for word in words {
+            expanded.push(self.expand_word(word).await?);
+        }
+
+        let result = self.evaluate_conditional(&expanded).await;
+        let exit_code = if result { 0 } else { 1 };
+        self.last_exit_code = exit_code;
+
+        Ok(ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code,
+            control_flow: ControlFlow::None,
+        })
+    }
+
+    /// Evaluate a [[ ]] conditional expression from expanded words.
+    fn evaluate_conditional<'a>(
+        &'a mut self,
+        args: &'a [String],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
+        Box::pin(async move {
+            if args.is_empty() {
+                return false;
+            }
+
+            // Handle negation
+            if args[0] == "!" {
+                return !self.evaluate_conditional(&args[1..]).await;
+            }
+
+            // Handle parentheses
+            if args.first().map(|s| s.as_str()) == Some("(")
+                && args.last().map(|s| s.as_str()) == Some(")")
+            {
+                return self.evaluate_conditional(&args[1..args.len() - 1]).await;
+            }
+
+            // Look for logical operators (lowest precedence, right to left)
+            for i in (0..args.len()).rev() {
+                if args[i] == "&&" && i > 0 {
+                    return self.evaluate_conditional(&args[..i]).await
+                        && self.evaluate_conditional(&args[i + 1..]).await;
+                }
+            }
+            for i in (0..args.len()).rev() {
+                if args[i] == "||" && i > 0 {
+                    return self.evaluate_conditional(&args[..i]).await
+                        || self.evaluate_conditional(&args[i + 1..]).await;
+                }
+            }
+
+            match args.len() {
+                1 => !args[0].is_empty(),
+                2 => {
+                    // Unary operators
+                    match args[0].as_str() {
+                        "-z" => args[1].is_empty(),
+                        "-n" => !args[1].is_empty(),
+                        "-e" | "-a" => self
+                            .fs
+                            .exists(std::path::Path::new(&args[1]))
+                            .await
+                            .unwrap_or(false),
+                        "-f" => self
+                            .fs
+                            .stat(std::path::Path::new(&args[1]))
+                            .await
+                            .map(|m| m.file_type.is_file())
+                            .unwrap_or(false),
+                        "-d" => self
+                            .fs
+                            .stat(std::path::Path::new(&args[1]))
+                            .await
+                            .map(|m| m.file_type.is_dir())
+                            .unwrap_or(false),
+                        "-r" | "-w" | "-x" => self
+                            .fs
+                            .exists(std::path::Path::new(&args[1]))
+                            .await
+                            .unwrap_or(false),
+                        "-s" => self
+                            .fs
+                            .stat(std::path::Path::new(&args[1]))
+                            .await
+                            .map(|m| m.size > 0)
+                            .unwrap_or(false),
+                        _ => !args[0].is_empty(),
+                    }
+                }
+                3 => {
+                    // Binary operators
+                    match args[1].as_str() {
+                        "=" | "==" => args[0] == args[2],
+                        "!=" => args[0] != args[2],
+                        "<" => args[0] < args[2],
+                        ">" => args[0] > args[2],
+                        "-eq" => {
+                            args[0].parse::<i64>().unwrap_or(0)
+                                == args[2].parse::<i64>().unwrap_or(0)
+                        }
+                        "-ne" => {
+                            args[0].parse::<i64>().unwrap_or(0)
+                                != args[2].parse::<i64>().unwrap_or(0)
+                        }
+                        "-lt" => {
+                            args[0].parse::<i64>().unwrap_or(0)
+                                < args[2].parse::<i64>().unwrap_or(0)
+                        }
+                        "-le" => {
+                            args[0].parse::<i64>().unwrap_or(0)
+                                <= args[2].parse::<i64>().unwrap_or(0)
+                        }
+                        "-gt" => {
+                            args[0].parse::<i64>().unwrap_or(0)
+                                > args[2].parse::<i64>().unwrap_or(0)
+                        }
+                        "-ge" => {
+                            args[0].parse::<i64>().unwrap_or(0)
+                                >= args[2].parse::<i64>().unwrap_or(0)
+                        }
+                        "=~" => self.regex_match(&args[0], &args[2]),
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }
+        })
+    }
+
+    /// Perform regex match and set BASH_REMATCH array.
+    fn regex_match(&mut self, string: &str, pattern: &str) -> bool {
+        match regex::Regex::new(pattern) {
+            Ok(re) => {
+                if let Some(captures) = re.captures(string) {
+                    // Set BASH_REMATCH array
+                    let mut rematch = HashMap::new();
+                    for (i, m) in captures.iter().enumerate() {
+                        rematch.insert(i, m.map(|m| m.as_str().to_string()).unwrap_or_default());
+                    }
+                    self.arrays.insert("BASH_REMATCH".to_string(), rematch);
+                    true
+                } else {
+                    self.arrays.remove("BASH_REMATCH");
+                    false
+                }
+            }
+            Err(_) => {
+                self.arrays.remove("BASH_REMATCH");
+                false
+            }
+        }
+    }
+
     async fn execute_arithmetic_command(&mut self, expr: &str) -> Result<ExecResult> {
         let result = self.execute_arithmetic_with_side_effects(expr);
         let exit_code = if result != 0 { 0 } else { 1 };
@@ -1948,6 +2142,28 @@ impl Interpreter {
 
         let name = self.expand_word(&command.name).await?;
 
+        // Check for nounset error from variable expansion
+        if let Some(err_msg) = self.nounset_error.take() {
+            // Restore variable saves since we're aborting
+            for (name, old) in var_saves.into_iter().rev() {
+                match old {
+                    Some(v) => {
+                        self.variables.insert(name, v);
+                    }
+                    None => {
+                        self.variables.remove(&name);
+                    }
+                }
+            }
+            self.last_exit_code = 1;
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: err_msg,
+                exit_code: 1,
+                control_flow: ControlFlow::Return(1),
+            });
+        }
+
         // If name is empty, this is an assignment-only command - keep permanently.
         // Preserve last_exit_code from any command substitution in the value
         // (bash behavior: `x=$(false)` sets $? to 1).
@@ -2045,6 +2261,17 @@ impl Interpreter {
                     }
                 }
             }
+        }
+
+        // Check for nounset error from argument expansion
+        if let Some(err_msg) = self.nounset_error.take() {
+            self.last_exit_code = 1;
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: err_msg,
+                exit_code: 1,
+                control_flow: ControlFlow::Return(1),
+            });
         }
 
         // Handle input redirections first
@@ -2159,6 +2386,18 @@ impl Interpreter {
 
         if name == "eval" {
             return self.execute_eval(&args, stdin, &command.redirects).await;
+        }
+
+        // Handle `command` builtin - needs interpreter-level access to builtins/functions
+        if name == "command" {
+            return self
+                .execute_command_builtin(&args, stdin, &command.redirects)
+                .await;
+        }
+
+        // Handle `getopts` builtin - needs to read/write shell variables (OPTIND, OPTARG)
+        if name == "getopts" {
+            return self.execute_getopts(&args, &command.redirects).await;
         }
 
         // Check for builtins
@@ -2538,6 +2777,300 @@ impl Interpreter {
         Ok(result)
     }
 
+    /// Execute the `getopts` builtin (POSIX option parsing).
+    ///
+    /// Usage: `getopts optstring name [args...]`
+    ///
+    /// Parses options from positional params (or `args`).
+    /// Uses/updates `OPTIND` variable for tracking position.
+    /// Sets `name` variable to the found option letter.
+    /// Sets `OPTARG` for options that take arguments (marked with `:` in optstring).
+    /// Returns 0 while options remain, 1 when done.
+    async fn execute_getopts(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        if args.len() < 2 {
+            let result = ExecResult::err("getopts: usage: getopts optstring name [arg ...]\n", 2);
+            return Ok(result);
+        }
+
+        let optstring = &args[0];
+        let varname = &args[1];
+
+        // Get the arguments to parse (remaining args, or positional params)
+        let parse_args: Vec<String> = if args.len() > 2 {
+            args[2..].to_vec()
+        } else {
+            // Use positional parameters $1, $2, ...
+            self.call_stack
+                .last()
+                .map(|frame| frame.positional.clone())
+                .unwrap_or_default()
+        };
+
+        // Get current OPTIND (1-based index into args)
+        let optind: usize = self
+            .variables
+            .get("OPTIND")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+
+        // Check if we're past the end
+        if optind < 1 || optind > parse_args.len() {
+            self.variables.insert(varname.clone(), "?".to_string());
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 1,
+                control_flow: crate::interpreter::ControlFlow::None,
+            });
+        }
+
+        let current_arg = &parse_args[optind - 1];
+
+        // Check if this is an option (starts with -)
+        if !current_arg.starts_with('-') || current_arg == "-" || current_arg == "--" {
+            self.variables.insert(varname.clone(), "?".to_string());
+            if current_arg == "--" {
+                self.variables
+                    .insert("OPTIND".to_string(), (optind + 1).to_string());
+            }
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 1,
+                control_flow: crate::interpreter::ControlFlow::None,
+            });
+        }
+
+        // Parse the option character(s) from current arg
+        // Handle multi-char option groups like -abc
+        let opt_chars: Vec<char> = current_arg[1..].chars().collect();
+
+        // Track position within the current argument for multi-char options
+        let char_idx: usize = self
+            .variables
+            .get("_OPTCHAR_IDX")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+
+        if char_idx >= opt_chars.len() {
+            // Should not happen, but advance
+            self.variables
+                .insert("OPTIND".to_string(), (optind + 1).to_string());
+            self.variables.remove("_OPTCHAR_IDX");
+            self.variables.insert(varname.clone(), "?".to_string());
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 1,
+                control_flow: crate::interpreter::ControlFlow::None,
+            });
+        }
+
+        let opt_char = opt_chars[char_idx];
+        let silent = optstring.starts_with(':');
+        let spec = if silent { &optstring[1..] } else { optstring };
+
+        // Check if this option is in the optstring
+        if let Some(pos) = spec.find(opt_char) {
+            let needs_arg = spec.get(pos + 1..pos + 2) == Some(":");
+            self.variables.insert(varname.clone(), opt_char.to_string());
+
+            if needs_arg {
+                // Option needs an argument
+                if char_idx + 1 < opt_chars.len() {
+                    // Rest of current arg is the argument
+                    let arg_val: String = opt_chars[char_idx + 1..].iter().collect();
+                    self.variables.insert("OPTARG".to_string(), arg_val);
+                    self.variables
+                        .insert("OPTIND".to_string(), (optind + 1).to_string());
+                    self.variables.remove("_OPTCHAR_IDX");
+                } else if optind < parse_args.len() {
+                    // Next arg is the argument
+                    self.variables
+                        .insert("OPTARG".to_string(), parse_args[optind].clone());
+                    self.variables
+                        .insert("OPTIND".to_string(), (optind + 2).to_string());
+                    self.variables.remove("_OPTCHAR_IDX");
+                } else {
+                    // Missing argument
+                    self.variables.remove("OPTARG");
+                    self.variables
+                        .insert("OPTIND".to_string(), (optind + 1).to_string());
+                    self.variables.remove("_OPTCHAR_IDX");
+                    if silent {
+                        self.variables.insert(varname.clone(), ":".to_string());
+                        self.variables
+                            .insert("OPTARG".to_string(), opt_char.to_string());
+                    } else {
+                        self.variables.insert(varname.clone(), "?".to_string());
+                        let mut result = ExecResult::ok(String::new());
+                        result.stderr = format!(
+                            "bash: getopts: option requires an argument -- '{}'\n",
+                            opt_char
+                        );
+                        result = self.apply_redirections(result, redirects).await?;
+                        return Ok(result);
+                    }
+                }
+            } else {
+                // No argument needed
+                self.variables.remove("OPTARG");
+                if char_idx + 1 < opt_chars.len() {
+                    // More chars in this arg
+                    self.variables
+                        .insert("_OPTCHAR_IDX".to_string(), (char_idx + 1).to_string());
+                } else {
+                    // Move to next arg
+                    self.variables
+                        .insert("OPTIND".to_string(), (optind + 1).to_string());
+                    self.variables.remove("_OPTCHAR_IDX");
+                }
+            }
+        } else {
+            // Unknown option
+            self.variables.remove("OPTARG");
+            if char_idx + 1 < opt_chars.len() {
+                self.variables
+                    .insert("_OPTCHAR_IDX".to_string(), (char_idx + 1).to_string());
+            } else {
+                self.variables
+                    .insert("OPTIND".to_string(), (optind + 1).to_string());
+                self.variables.remove("_OPTCHAR_IDX");
+            }
+
+            if silent {
+                self.variables.insert(varname.clone(), "?".to_string());
+                self.variables
+                    .insert("OPTARG".to_string(), opt_char.to_string());
+            } else {
+                self.variables.insert(varname.clone(), "?".to_string());
+                let mut result = ExecResult::ok(String::new());
+                result.stderr = format!("bash: getopts: illegal option -- '{}'\n", opt_char);
+                result = self.apply_redirections(result, redirects).await?;
+                return Ok(result);
+            }
+        }
+
+        let mut result = ExecResult::ok(String::new());
+        result = self.apply_redirections(result, redirects).await?;
+        Ok(result)
+    }
+
+    /// Execute the `command` builtin.
+    ///
+    /// - `command -v name` — print command path/name if found (exit 0) or nothing (exit 1)
+    /// - `command -V name` — verbose: describe what `name` is
+    /// - `command name args...` — run `name` bypassing shell functions
+    async fn execute_command_builtin(
+        &mut self,
+        args: &[String],
+        _stdin: Option<String>,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        if args.is_empty() {
+            return Ok(ExecResult::ok(String::new()));
+        }
+
+        let mut mode = ' '; // default: run the command
+        let mut cmd_args_start = 0;
+
+        // Parse flags
+        let mut i = 0;
+        while i < args.len() {
+            let arg = &args[i];
+            if arg == "-v" {
+                mode = 'v';
+                i += 1;
+            } else if arg == "-V" {
+                mode = 'V';
+                i += 1;
+            } else if arg == "-p" {
+                // -p: use default PATH (ignore in sandboxed env)
+                i += 1;
+            } else {
+                cmd_args_start = i;
+                break;
+            }
+        }
+
+        if cmd_args_start >= args.len() {
+            return Ok(ExecResult::ok(String::new()));
+        }
+
+        let cmd_name = &args[cmd_args_start];
+
+        match mode {
+            'v' => {
+                // command -v: print name if it's a known command
+                let found = self.builtins.contains_key(cmd_name.as_str())
+                    || self.functions.contains_key(cmd_name.as_str())
+                    || is_keyword(cmd_name);
+                let mut result = if found {
+                    ExecResult::ok(format!("{}\n", cmd_name))
+                } else {
+                    ExecResult {
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        exit_code: 1,
+                        control_flow: crate::interpreter::ControlFlow::None,
+                    }
+                };
+                result = self.apply_redirections(result, redirects).await?;
+                Ok(result)
+            }
+            'V' => {
+                // command -V: verbose description
+                let description = if self.functions.contains_key(cmd_name.as_str()) {
+                    format!("{} is a function\n", cmd_name)
+                } else if self.builtins.contains_key(cmd_name.as_str()) {
+                    format!("{} is a shell builtin\n", cmd_name)
+                } else if is_keyword(cmd_name) {
+                    format!("{} is a shell keyword\n", cmd_name)
+                } else {
+                    return Ok(ExecResult::err(
+                        format!("bash: command: {}: not found\n", cmd_name),
+                        1,
+                    ));
+                };
+                let mut result = ExecResult::ok(description);
+                result = self.apply_redirections(result, redirects).await?;
+                Ok(result)
+            }
+            _ => {
+                // command name args...: run bypassing functions (use builtin only)
+                // Build a synthetic simple command and execute it, skipping function lookup
+                let remaining = &args[cmd_args_start..];
+                if let Some(builtin) = self.builtins.get(remaining[0].as_str()) {
+                    let builtin_args = &remaining[1..];
+                    let ctx = builtins::Context {
+                        args: builtin_args,
+                        env: &self.env,
+                        variables: &mut self.variables,
+                        cwd: &mut self.cwd,
+                        fs: Arc::clone(&self.fs),
+                        stdin: _stdin.as_deref(),
+                        #[cfg(feature = "http_client")]
+                        http_client: self.http_client.as_ref(),
+                        #[cfg(feature = "git")]
+                        git_client: self.git_client.as_ref(),
+                    };
+                    let mut result = builtin.execute(ctx).await?;
+                    result = self.apply_redirections(result, redirects).await?;
+                    Ok(result)
+                } else {
+                    Ok(ExecResult::err(
+                        format!("bash: {}: command not found\n", remaining[0]),
+                        127,
+                    ))
+                }
+            }
+        }
+    }
+
     /// Process input redirections (< file, <<< string)
     async fn process_input_redirections(
         &mut self,
@@ -2764,6 +3297,10 @@ impl Interpreter {
                     }
                 }
                 WordPart::Variable(name) => {
+                    // set -u (nounset): error on unset variables
+                    if self.is_nounset() && !self.is_variable_set(name) {
+                        self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
+                    }
                     result.push_str(&self.expand_variable(name));
                 }
                 WordPart::CommandSubstitution(commands) => {
@@ -3725,6 +4262,48 @@ impl Interpreter {
         String::new()
     }
 
+    /// Check if a variable is set (for `set -u` / nounset).
+    fn is_variable_set(&self, name: &str) -> bool {
+        // Special variables are always "set"
+        if matches!(
+            name,
+            "?" | "#" | "@" | "*" | "$" | "!" | "-" | "RANDOM" | "LINENO"
+        ) {
+            return true;
+        }
+        // Positional params $0..$N
+        if let Ok(n) = name.parse::<usize>() {
+            if n == 0 {
+                return true;
+            }
+            return self
+                .call_stack
+                .last()
+                .map(|f| n <= f.positional.len())
+                .unwrap_or(false);
+        }
+        // Local variables
+        for frame in self.call_stack.iter().rev() {
+            if frame.locals.contains_key(name) {
+                return true;
+            }
+        }
+        // Shell variables
+        if self.variables.contains_key(name) {
+            return true;
+        }
+        // Environment
+        self.env.contains_key(name)
+    }
+
+    /// Check if nounset (`set -u`) is active.
+    fn is_nounset(&self) -> bool {
+        self.variables
+            .get("SHOPT_u")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
     /// Set a local variable in the current call frame
     #[allow(dead_code)]
     fn set_local(&mut self, name: &str, value: &str) {
@@ -3889,6 +4468,11 @@ impl Interpreter {
 
     /// Expand a glob pattern against the filesystem
     async fn expand_glob(&self, pattern: &str) -> Result<Vec<String>> {
+        // Check for ** (recursive glob)
+        if pattern.contains("**") {
+            return self.expand_glob_recursive(pattern).await;
+        }
+
         let mut matches = Vec::new();
 
         // Split pattern into directory and filename parts
@@ -3953,6 +4537,86 @@ impl Interpreter {
         // Sort matches alphabetically (bash behavior)
         matches.sort();
         Ok(matches)
+    }
+
+    /// Expand a glob pattern containing ** (recursive directory matching).
+    async fn expand_glob_recursive(&self, pattern: &str) -> Result<Vec<String>> {
+        let is_absolute = pattern.starts_with('/');
+        let components: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+
+        // Find the ** component
+        let star_star_idx = match components.iter().position(|&c| c == "**") {
+            Some(i) => i,
+            None => return Ok(Vec::new()),
+        };
+
+        // Build the base directory from components before **
+        let base_dir = if is_absolute {
+            let mut p = PathBuf::from("/");
+            for c in &components[..star_star_idx] {
+                p.push(c);
+            }
+            p
+        } else {
+            let mut p = self.cwd.clone();
+            for c in &components[..star_star_idx] {
+                p.push(c);
+            }
+            p
+        };
+
+        // Pattern components after **
+        let after_pattern: Vec<&str> = components[star_star_idx + 1..].to_vec();
+
+        // Collect all directories recursively (including the base)
+        let mut all_dirs = vec![base_dir.clone()];
+        self.collect_dirs_recursive(&base_dir, &mut all_dirs).await;
+
+        let mut matches = Vec::new();
+
+        for dir in &all_dirs {
+            if after_pattern.is_empty() {
+                // ** alone matches all files recursively
+                if let Ok(entries) = self.fs.read_dir(dir).await {
+                    for entry in entries {
+                        if !entry.metadata.file_type.is_dir() {
+                            matches.push(dir.join(&entry.name).to_string_lossy().to_string());
+                        }
+                    }
+                }
+            } else if after_pattern.len() == 1 {
+                // Single pattern after **: match files in this directory
+                if let Ok(entries) = self.fs.read_dir(dir).await {
+                    for entry in entries {
+                        if self.glob_match(&entry.name, after_pattern[0]) {
+                            matches.push(dir.join(&entry.name).to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        matches.sort();
+        Ok(matches)
+    }
+
+    /// Recursively collect all subdirectories starting from dir.
+    fn collect_dirs_recursive<'a>(
+        &'a self,
+        dir: &'a Path,
+        result: &'a mut Vec<PathBuf>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            if let Ok(entries) = self.fs.read_dir(dir).await {
+                for entry in entries {
+                    if entry.metadata.file_type.is_dir() {
+                        let subdir = dir.join(&entry.name);
+                        result.push(subdir.clone());
+                        self.collect_dirs_recursive(&subdir, result).await;
+                    }
+                }
+            }
+        })
     }
 }
 
