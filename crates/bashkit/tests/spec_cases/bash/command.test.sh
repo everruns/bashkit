@@ -28,6 +28,7 @@ echo is a shell builtin
 ### end
 
 ### command_V_function
+### bash_diff: real bash also prints the function body
 # command -V describes functions
 my_func() { echo hi; }
 command -V my_func
