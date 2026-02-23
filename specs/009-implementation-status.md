@@ -143,7 +143,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | find.test.sh | 10 | file search |
 | functions.test.sh | 14 | |
 | getopts.test.sh | 9 | POSIX option parsing, combined flags, silent mode |
-| globs.test.sh | 12 | for-loop glob expansion, 1 skipped |
+| globs.test.sh | 12 | for-loop glob expansion, recursive `**` |
 | headtail.test.sh | 14 | |
 | herestring.test.sh | 8 | 1 skipped |
 | hextools.test.sh | 5 | od/xxd/hexdump (3 skipped) |

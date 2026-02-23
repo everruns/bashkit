@@ -4468,6 +4468,11 @@ impl Interpreter {
 
     /// Expand a glob pattern against the filesystem
     async fn expand_glob(&self, pattern: &str) -> Result<Vec<String>> {
+        // Check for ** (recursive glob)
+        if pattern.contains("**") {
+            return self.expand_glob_recursive(pattern).await;
+        }
+
         let mut matches = Vec::new();
 
         // Split pattern into directory and filename parts
@@ -4532,6 +4537,86 @@ impl Interpreter {
         // Sort matches alphabetically (bash behavior)
         matches.sort();
         Ok(matches)
+    }
+
+    /// Expand a glob pattern containing ** (recursive directory matching).
+    async fn expand_glob_recursive(&self, pattern: &str) -> Result<Vec<String>> {
+        let is_absolute = pattern.starts_with('/');
+        let components: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+
+        // Find the ** component
+        let star_star_idx = match components.iter().position(|&c| c == "**") {
+            Some(i) => i,
+            None => return Ok(Vec::new()),
+        };
+
+        // Build the base directory from components before **
+        let base_dir = if is_absolute {
+            let mut p = PathBuf::from("/");
+            for c in &components[..star_star_idx] {
+                p.push(c);
+            }
+            p
+        } else {
+            let mut p = self.cwd.clone();
+            for c in &components[..star_star_idx] {
+                p.push(c);
+            }
+            p
+        };
+
+        // Pattern components after **
+        let after_pattern: Vec<&str> = components[star_star_idx + 1..].to_vec();
+
+        // Collect all directories recursively (including the base)
+        let mut all_dirs = vec![base_dir.clone()];
+        self.collect_dirs_recursive(&base_dir, &mut all_dirs).await;
+
+        let mut matches = Vec::new();
+
+        for dir in &all_dirs {
+            if after_pattern.is_empty() {
+                // ** alone matches all files recursively
+                if let Ok(entries) = self.fs.read_dir(dir).await {
+                    for entry in entries {
+                        if !entry.metadata.file_type.is_dir() {
+                            matches.push(dir.join(&entry.name).to_string_lossy().to_string());
+                        }
+                    }
+                }
+            } else if after_pattern.len() == 1 {
+                // Single pattern after **: match files in this directory
+                if let Ok(entries) = self.fs.read_dir(dir).await {
+                    for entry in entries {
+                        if self.glob_match(&entry.name, after_pattern[0]) {
+                            matches.push(dir.join(&entry.name).to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        matches.sort();
+        Ok(matches)
+    }
+
+    /// Recursively collect all subdirectories starting from dir.
+    fn collect_dirs_recursive<'a>(
+        &'a self,
+        dir: &'a Path,
+        result: &'a mut Vec<PathBuf>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            if let Ok(entries) = self.fs.read_dir(dir).await {
+                for entry in entries {
+                    if entry.metadata.file_type.is_dir() {
+                        let subdir = dir.join(&entry.name);
+                        result.push(subdir.clone());
+                        self.collect_dirs_recursive(&subdir, result).await;
+                    }
+                }
+            }
+        })
     }
 }
 
