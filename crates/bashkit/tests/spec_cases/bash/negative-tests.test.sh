@@ -51,7 +51,6 @@ echo $((0 || 0))
 ### end
 
 ### neg_string_compare_equal
-### skip: test string comparison with \< not fully implemented
 # Equal strings not less/greater
 [ "abc" \< "abc" ] && echo "less" || echo "not less"
 ### expect

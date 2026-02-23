@@ -107,7 +107,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1043
+**Total spec test cases:** 1043 (951 pass, 92 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
@@ -144,7 +144,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | headtail.test.sh | 14 | |
 | herestring.test.sh | 8 | 1 skipped |
 | hextools.test.sh | 5 | od/xxd/hexdump (3 skipped) |
-| negative-tests.test.sh | 16 | error conditions (4 skipped) |
+| negative-tests.test.sh | 16 | error conditions (3 skipped) |
 | nl.test.sh | 14 | line numbering |
 | paste.test.sh | 4 | line merging (2 skipped) |
 | path.test.sh | 14 | |
@@ -154,7 +154,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | sleep.test.sh | 6 | |
 | sortuniq.test.sh | 32 | sort and uniq (2 skipped) |
 | source.test.sh | 21 | source/., function loading, PATH search, positional params |
-| test-operators.test.sh | 17 | file/string tests (2 skipped) |
+| test-operators.test.sh | 17 | file/string tests |
 | time.test.sh | 11 | Wall-clock only (user/sys always 0) |
 | timeout.test.sh | 17 | |
 | variables.test.sh | 44 | includes special vars, prefix env assignments |
