@@ -107,7 +107,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1043 (954 pass, 89 skip)
+**Total spec test cases:** 1052 (965 pass, 87 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
@@ -129,6 +129,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | bash-command.test.sh | 34 | bash/sh re-invocation |
 | brace-expansion.test.sh | 21 | {a,b,c}, {1..5}, for-loop brace expansion |
 | column.test.sh | 10 | column alignment |
+| command.test.sh | 9 | `command -v`, `-V`, function bypass |
 | command-not-found.test.sh | 17 | unknown command handling |
 | command-subst.test.sh | 14 | 2 skipped |
 | control-flow.test.sh | 33 | if/elif/else, for, while, case |
@@ -146,7 +147,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | hextools.test.sh | 5 | od/xxd/hexdump (3 skipped) |
 | negative-tests.test.sh | 16 | error conditions (3 skipped) |
 | nl.test.sh | 14 | line numbering |
-| paste.test.sh | 4 | line merging (2 skipped) |
+| paste.test.sh | 4 | line merging with `-s` serial and `-d` delimiter |
 | path.test.sh | 14 | |
 | pipes-redirects.test.sh | 19 | includes stderr redirects |
 | printf.test.sh | 24 | format specifiers, array expansion |
@@ -175,7 +176,7 @@ Features that may be added in the future (not intentionally excluded):
 | Associative arrays `declare -A` | Medium | Bash 4+ feature |
 | `[[ =~ ]]` regex matching | Medium | Bash extension |
 | `getopts` | Medium | POSIX option parsing |
-| `command` builtin | Medium | POSIX command lookup |
+| ~~`command` builtin~~ | ~~Medium~~ | Implemented: `-v`, `-V`, bypass functions |
 | `alias` | Low | Interactive feature |
 | History expansion | Out of scope | Interactive only |
 

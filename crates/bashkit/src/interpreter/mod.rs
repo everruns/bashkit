@@ -53,6 +53,33 @@ use fail::fail_point;
 /// This is handled at the interpreter level to prevent custom filesystems from bypassing it.
 const DEV_NULL: &str = "/dev/null";
 
+/// Check if a name is a shell keyword (for `command -v`/`command -V`).
+fn is_keyword(name: &str) -> bool {
+    matches!(
+        name,
+        "if" | "then"
+            | "else"
+            | "elif"
+            | "fi"
+            | "for"
+            | "while"
+            | "until"
+            | "do"
+            | "done"
+            | "case"
+            | "esac"
+            | "in"
+            | "function"
+            | "select"
+            | "time"
+            | "{"
+            | "}"
+            | "[["
+            | "]]"
+            | "!"
+    )
+}
+
 /// Check if a path refers to /dev/null after normalization.
 /// Handles attempts to bypass via paths like `/dev/../dev/null`.
 fn is_dev_null(path: &Path) -> bool {
@@ -2161,6 +2188,13 @@ impl Interpreter {
             return self.execute_eval(&args, stdin, &command.redirects).await;
         }
 
+        // Handle `command` builtin - needs interpreter-level access to builtins/functions
+        if name == "command" {
+            return self
+                .execute_command_builtin(&args, stdin, &command.redirects)
+                .await;
+        }
+
         // Check for builtins
         if let Some(builtin) = self.builtins.get(name) {
             let ctx = builtins::Context {
@@ -2536,6 +2570,117 @@ impl Interpreter {
 
         result = self.apply_redirections(result, redirects).await?;
         Ok(result)
+    }
+
+    /// Execute the `command` builtin.
+    ///
+    /// - `command -v name` — print command path/name if found (exit 0) or nothing (exit 1)
+    /// - `command -V name` — verbose: describe what `name` is
+    /// - `command name args...` — run `name` bypassing shell functions
+    async fn execute_command_builtin(
+        &mut self,
+        args: &[String],
+        _stdin: Option<String>,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        if args.is_empty() {
+            return Ok(ExecResult::ok(String::new()));
+        }
+
+        let mut mode = ' '; // default: run the command
+        let mut cmd_args_start = 0;
+
+        // Parse flags
+        let mut i = 0;
+        while i < args.len() {
+            let arg = &args[i];
+            if arg == "-v" {
+                mode = 'v';
+                i += 1;
+            } else if arg == "-V" {
+                mode = 'V';
+                i += 1;
+            } else if arg == "-p" {
+                // -p: use default PATH (ignore in sandboxed env)
+                i += 1;
+            } else {
+                cmd_args_start = i;
+                break;
+            }
+        }
+
+        if cmd_args_start >= args.len() {
+            return Ok(ExecResult::ok(String::new()));
+        }
+
+        let cmd_name = &args[cmd_args_start];
+
+        match mode {
+            'v' => {
+                // command -v: print name if it's a known command
+                let found = self.builtins.contains_key(cmd_name.as_str())
+                    || self.functions.contains_key(cmd_name.as_str())
+                    || is_keyword(cmd_name);
+                let mut result = if found {
+                    ExecResult::ok(format!("{}\n", cmd_name))
+                } else {
+                    ExecResult {
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        exit_code: 1,
+                        control_flow: crate::interpreter::ControlFlow::None,
+                    }
+                };
+                result = self.apply_redirections(result, redirects).await?;
+                Ok(result)
+            }
+            'V' => {
+                // command -V: verbose description
+                let description = if self.functions.contains_key(cmd_name.as_str()) {
+                    format!("{} is a function\n", cmd_name)
+                } else if self.builtins.contains_key(cmd_name.as_str()) {
+                    format!("{} is a shell builtin\n", cmd_name)
+                } else if is_keyword(cmd_name) {
+                    format!("{} is a shell keyword\n", cmd_name)
+                } else {
+                    return Ok(ExecResult::err(
+                        format!("bash: command: {}: not found\n", cmd_name),
+                        1,
+                    ));
+                };
+                let mut result = ExecResult::ok(description);
+                result = self.apply_redirections(result, redirects).await?;
+                Ok(result)
+            }
+            _ => {
+                // command name args...: run bypassing functions (use builtin only)
+                // Build a synthetic simple command and execute it, skipping function lookup
+                let remaining = &args[cmd_args_start..];
+                if let Some(builtin) = self.builtins.get(remaining[0].as_str()) {
+                    let builtin_args = &remaining[1..];
+                    let ctx = builtins::Context {
+                        args: builtin_args,
+                        env: &self.env,
+                        variables: &mut self.variables,
+                        cwd: &mut self.cwd,
+                        fs: Arc::clone(&self.fs),
+                        stdin: _stdin.as_deref(),
+                        #[cfg(feature = "http_client")]
+                        http_client: self.http_client.as_ref(),
+                        #[cfg(feature = "git")]
+                        git_client: self.git_client.as_ref(),
+                    };
+                    let mut result = builtin.execute(ctx).await?;
+                    result = self.apply_redirections(result, redirects).await?;
+                    Ok(result)
+                } else {
+                    Ok(ExecResult::err(
+                        format!("bash: {}: command not found\n", remaining[0]),
+                        127,
+                    ))
+                }
+            }
+        }
     }
 
     /// Process input redirections (< file, <<< string)
