@@ -107,17 +107,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1068 (980 pass, 88 skip)
+**Total spec test cases:** 1085 (997 pass, 88 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 656 | Yes | 607 | 49 | `bash_spec_tests` in CI |
+| Bash (core) | 673 | Yes | 624 | 49 | `bash_spec_tests` in CI |
 | AWK | 90 | Yes | 73 | 17 | loops, arrays, -v, ternary, field assign |
 | Grep | 82 | Yes | 79 | 3 | now with -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude |
 | Sed | 65 | Yes | 53 | 12 | hold space, change, regex ranges, -E |
 | JQ | 108 | Yes | 100 | 8 | reduce, walk, regex funcs, --arg/--argjson, combined flags |
 | Python | 58 | Yes | 50 | 8 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **1059** | **Yes** | **963** | **96** | |
+| **Total** | **1076** | **Yes** | **980** | **96** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -131,6 +131,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | column.test.sh | 10 | column alignment |
 | command.test.sh | 9 | `command -v`, `-V`, function bypass |
 | command-not-found.test.sh | 17 | unknown command handling |
+| conditional.test.sh | 17 | `[[ ]]` conditionals, `=~` regex, BASH_REMATCH |
 | command-subst.test.sh | 14 | 2 skipped |
 | control-flow.test.sh | 33 | if/elif/else, for, while, case |
 | cuttr.test.sh | 32 | cut and tr commands (25 skipped) |
@@ -176,7 +177,7 @@ Features that may be added in the future (not intentionally excluded):
 | Coprocesses `coproc` | Low | Rarely used |
 | Extended globs `@()` `!()` | Medium | Requires `shopt -s extglob` |
 | Associative arrays `declare -A` | Medium | Bash 4+ feature |
-| `[[ =~ ]]` regex matching | Medium | Bash extension |
+| ~~`[[ =~ ]]` regex matching~~ | ~~Medium~~ | Implemented: `[[ ]]` conditionals with `=~` and BASH_REMATCH |
 | ~~`getopts`~~ | ~~Medium~~ | Implemented: POSIX option parsing |
 | ~~`command` builtin~~ | ~~Medium~~ | Implemented: `-v`, `-V`, bypass functions |
 | `alias` | Low | Interactive feature |

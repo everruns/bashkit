@@ -482,7 +482,7 @@ impl Interpreter {
                 CompoundCommand::Case(cmd) => cmd.span.line(),
                 CompoundCommand::Time(cmd) => cmd.span.line(),
                 CompoundCommand::Subshell(_) | CompoundCommand::BraceGroup(_) => 1,
-                CompoundCommand::Arithmetic(_) => 1,
+                CompoundCommand::Arithmetic(_) | CompoundCommand::Conditional(_) => 1,
             },
             Command::Function(c) => c.span.line(),
         }
@@ -561,6 +561,7 @@ impl Interpreter {
             CompoundCommand::Case(case_cmd) => self.execute_case(case_cmd).await,
             CompoundCommand::Arithmetic(expr) => self.execute_arithmetic_command(expr).await,
             CompoundCommand::Time(time_cmd) => self.execute_time(time_cmd).await,
+            CompoundCommand::Conditional(words) => self.execute_conditional(words).await,
         }
     }
 
@@ -811,6 +812,164 @@ impl Interpreter {
 
     /// Execute an arithmetic command ((expression))
     /// Returns exit code 0 if result is non-zero, 1 if result is zero
+    /// Execute a [[ conditional expression ]]
+    async fn execute_conditional(&mut self, words: &[Word]) -> Result<ExecResult> {
+        // Expand all words
+        let mut expanded = Vec::new();
+        for word in words {
+            expanded.push(self.expand_word(word).await?);
+        }
+
+        let result = self.evaluate_conditional(&expanded).await;
+        let exit_code = if result { 0 } else { 1 };
+        self.last_exit_code = exit_code;
+
+        Ok(ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code,
+            control_flow: ControlFlow::None,
+        })
+    }
+
+    /// Evaluate a [[ ]] conditional expression from expanded words.
+    fn evaluate_conditional<'a>(
+        &'a mut self,
+        args: &'a [String],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
+        Box::pin(async move {
+            if args.is_empty() {
+                return false;
+            }
+
+            // Handle negation
+            if args[0] == "!" {
+                return !self.evaluate_conditional(&args[1..]).await;
+            }
+
+            // Handle parentheses
+            if args.first().map(|s| s.as_str()) == Some("(")
+                && args.last().map(|s| s.as_str()) == Some(")")
+            {
+                return self.evaluate_conditional(&args[1..args.len() - 1]).await;
+            }
+
+            // Look for logical operators (lowest precedence, right to left)
+            for i in (0..args.len()).rev() {
+                if args[i] == "&&" && i > 0 {
+                    return self.evaluate_conditional(&args[..i]).await
+                        && self.evaluate_conditional(&args[i + 1..]).await;
+                }
+            }
+            for i in (0..args.len()).rev() {
+                if args[i] == "||" && i > 0 {
+                    return self.evaluate_conditional(&args[..i]).await
+                        || self.evaluate_conditional(&args[i + 1..]).await;
+                }
+            }
+
+            match args.len() {
+                1 => !args[0].is_empty(),
+                2 => {
+                    // Unary operators
+                    match args[0].as_str() {
+                        "-z" => args[1].is_empty(),
+                        "-n" => !args[1].is_empty(),
+                        "-e" | "-a" => self
+                            .fs
+                            .exists(std::path::Path::new(&args[1]))
+                            .await
+                            .unwrap_or(false),
+                        "-f" => self
+                            .fs
+                            .stat(std::path::Path::new(&args[1]))
+                            .await
+                            .map(|m| m.file_type.is_file())
+                            .unwrap_or(false),
+                        "-d" => self
+                            .fs
+                            .stat(std::path::Path::new(&args[1]))
+                            .await
+                            .map(|m| m.file_type.is_dir())
+                            .unwrap_or(false),
+                        "-r" | "-w" | "-x" => self
+                            .fs
+                            .exists(std::path::Path::new(&args[1]))
+                            .await
+                            .unwrap_or(false),
+                        "-s" => self
+                            .fs
+                            .stat(std::path::Path::new(&args[1]))
+                            .await
+                            .map(|m| m.size > 0)
+                            .unwrap_or(false),
+                        _ => !args[0].is_empty(),
+                    }
+                }
+                3 => {
+                    // Binary operators
+                    match args[1].as_str() {
+                        "=" | "==" => args[0] == args[2],
+                        "!=" => args[0] != args[2],
+                        "<" => args[0] < args[2],
+                        ">" => args[0] > args[2],
+                        "-eq" => {
+                            args[0].parse::<i64>().unwrap_or(0)
+                                == args[2].parse::<i64>().unwrap_or(0)
+                        }
+                        "-ne" => {
+                            args[0].parse::<i64>().unwrap_or(0)
+                                != args[2].parse::<i64>().unwrap_or(0)
+                        }
+                        "-lt" => {
+                            args[0].parse::<i64>().unwrap_or(0)
+                                < args[2].parse::<i64>().unwrap_or(0)
+                        }
+                        "-le" => {
+                            args[0].parse::<i64>().unwrap_or(0)
+                                <= args[2].parse::<i64>().unwrap_or(0)
+                        }
+                        "-gt" => {
+                            args[0].parse::<i64>().unwrap_or(0)
+                                > args[2].parse::<i64>().unwrap_or(0)
+                        }
+                        "-ge" => {
+                            args[0].parse::<i64>().unwrap_or(0)
+                                >= args[2].parse::<i64>().unwrap_or(0)
+                        }
+                        "=~" => self.regex_match(&args[0], &args[2]),
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }
+        })
+    }
+
+    /// Perform regex match and set BASH_REMATCH array.
+    fn regex_match(&mut self, string: &str, pattern: &str) -> bool {
+        match regex::Regex::new(pattern) {
+            Ok(re) => {
+                if let Some(captures) = re.captures(string) {
+                    // Set BASH_REMATCH array
+                    let mut rematch = HashMap::new();
+                    for (i, m) in captures.iter().enumerate() {
+                        rematch.insert(i, m.map(|m| m.as_str().to_string()).unwrap_or_default());
+                    }
+                    self.arrays.insert("BASH_REMATCH".to_string(), rematch);
+                    true
+                } else {
+                    self.arrays.remove("BASH_REMATCH");
+                    false
+                }
+            }
+            Err(_) => {
+                self.arrays.remove("BASH_REMATCH");
+                false
+            }
+        }
+    }
+
     async fn execute_arithmetic_command(&mut self, expr: &str) -> Result<ExecResult> {
         let result = self.execute_arithmetic_with_side_effects(expr);
         let exit_code = if result != 0 { 0 } else { 1 };
