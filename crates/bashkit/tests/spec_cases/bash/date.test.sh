@@ -135,14 +135,14 @@ valid
 ### end
 
 ### date_rfc_format
-### skip: date -R flag not implemented
+# RFC 2822 format
 date -R | grep -qE '^[A-Z][a-z]{2},' && echo "valid"
 ### expect
 valid
 ### end
 
 ### date_iso_flag
-### skip: date -I flag not implemented
+# ISO 8601 format
 date -I | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' && echo "valid"
 ### expect
 valid
@@ -188,7 +188,7 @@ valid
 ### end
 
 ### date_nanoseconds
-### skip: %N (nanoseconds) not implemented
+# Nanoseconds format
 date +%N | grep -qE '^[0-9]{9}$' && echo "valid"
 ### expect
 valid
