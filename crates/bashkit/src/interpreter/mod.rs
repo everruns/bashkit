@@ -3383,9 +3383,7 @@ impl Interpreter {
                 // Declare without value
                 if is_array {
                     // Initialize empty array if not exists
-                    self.arrays
-                        .entry(name.to_string())
-                        .or_default();
+                    self.arrays.entry(name.to_string()).or_default();
                 } else if !self.variables.contains_key(*name) {
                     self.variables.insert(name.to_string(), String::new());
                 }
