@@ -8,7 +8,6 @@ c
 ### end
 
 ### paste_serial
-### skip: paste -s requires file arguments, not stdin-only in bashkit
 # Serial mode merges lines with tabs
 printf 'a\nb\nc\n' | paste -s
 ### expect
@@ -16,8 +15,7 @@ a	b	c
 ### end
 
 ### paste_custom_delimiter
-### skip: paste -d requires file arguments
-# Custom delimiter
+# Custom delimiter with serial mode
 printf '1\n2\n3\n' | paste -d, -s
 ### expect
 1,2,3
