@@ -2195,6 +2195,11 @@ impl Interpreter {
                 .await;
         }
 
+        // Handle `getopts` builtin - needs to read/write shell variables (OPTIND, OPTARG)
+        if name == "getopts" {
+            return self.execute_getopts(&args, &command.redirects).await;
+        }
+
         // Check for builtins
         if let Some(builtin) = self.builtins.get(name) {
             let ctx = builtins::Context {
@@ -2568,6 +2573,189 @@ impl Interpreter {
 
         self.pipeline_stdin = prev_pipeline_stdin;
 
+        result = self.apply_redirections(result, redirects).await?;
+        Ok(result)
+    }
+
+    /// Execute the `getopts` builtin (POSIX option parsing).
+    ///
+    /// Usage: `getopts optstring name [args...]`
+    ///
+    /// Parses options from positional params (or `args`).
+    /// Uses/updates `OPTIND` variable for tracking position.
+    /// Sets `name` variable to the found option letter.
+    /// Sets `OPTARG` for options that take arguments (marked with `:` in optstring).
+    /// Returns 0 while options remain, 1 when done.
+    async fn execute_getopts(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        if args.len() < 2 {
+            let result = ExecResult::err("getopts: usage: getopts optstring name [arg ...]\n", 2);
+            return Ok(result);
+        }
+
+        let optstring = &args[0];
+        let varname = &args[1];
+
+        // Get the arguments to parse (remaining args, or positional params)
+        let parse_args: Vec<String> = if args.len() > 2 {
+            args[2..].to_vec()
+        } else {
+            // Use positional parameters $1, $2, ...
+            self.call_stack
+                .last()
+                .map(|frame| frame.positional.clone())
+                .unwrap_or_default()
+        };
+
+        // Get current OPTIND (1-based index into args)
+        let optind: usize = self
+            .variables
+            .get("OPTIND")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+
+        // Check if we're past the end
+        if optind < 1 || optind > parse_args.len() {
+            self.variables.insert(varname.clone(), "?".to_string());
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 1,
+                control_flow: crate::interpreter::ControlFlow::None,
+            });
+        }
+
+        let current_arg = &parse_args[optind - 1];
+
+        // Check if this is an option (starts with -)
+        if !current_arg.starts_with('-') || current_arg == "-" || current_arg == "--" {
+            self.variables.insert(varname.clone(), "?".to_string());
+            if current_arg == "--" {
+                self.variables
+                    .insert("OPTIND".to_string(), (optind + 1).to_string());
+            }
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 1,
+                control_flow: crate::interpreter::ControlFlow::None,
+            });
+        }
+
+        // Parse the option character(s) from current arg
+        // Handle multi-char option groups like -abc
+        let opt_chars: Vec<char> = current_arg[1..].chars().collect();
+
+        // Track position within the current argument for multi-char options
+        let char_idx: usize = self
+            .variables
+            .get("_OPTCHAR_IDX")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+
+        if char_idx >= opt_chars.len() {
+            // Should not happen, but advance
+            self.variables
+                .insert("OPTIND".to_string(), (optind + 1).to_string());
+            self.variables.remove("_OPTCHAR_IDX");
+            self.variables.insert(varname.clone(), "?".to_string());
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 1,
+                control_flow: crate::interpreter::ControlFlow::None,
+            });
+        }
+
+        let opt_char = opt_chars[char_idx];
+        let silent = optstring.starts_with(':');
+        let spec = if silent { &optstring[1..] } else { optstring };
+
+        // Check if this option is in the optstring
+        if let Some(pos) = spec.find(opt_char) {
+            let needs_arg = spec.get(pos + 1..pos + 2) == Some(":");
+            self.variables.insert(varname.clone(), opt_char.to_string());
+
+            if needs_arg {
+                // Option needs an argument
+                if char_idx + 1 < opt_chars.len() {
+                    // Rest of current arg is the argument
+                    let arg_val: String = opt_chars[char_idx + 1..].iter().collect();
+                    self.variables.insert("OPTARG".to_string(), arg_val);
+                    self.variables
+                        .insert("OPTIND".to_string(), (optind + 1).to_string());
+                    self.variables.remove("_OPTCHAR_IDX");
+                } else if optind < parse_args.len() {
+                    // Next arg is the argument
+                    self.variables
+                        .insert("OPTARG".to_string(), parse_args[optind].clone());
+                    self.variables
+                        .insert("OPTIND".to_string(), (optind + 2).to_string());
+                    self.variables.remove("_OPTCHAR_IDX");
+                } else {
+                    // Missing argument
+                    self.variables.remove("OPTARG");
+                    self.variables
+                        .insert("OPTIND".to_string(), (optind + 1).to_string());
+                    self.variables.remove("_OPTCHAR_IDX");
+                    if silent {
+                        self.variables.insert(varname.clone(), ":".to_string());
+                        self.variables
+                            .insert("OPTARG".to_string(), opt_char.to_string());
+                    } else {
+                        self.variables.insert(varname.clone(), "?".to_string());
+                        let mut result = ExecResult::ok(String::new());
+                        result.stderr = format!(
+                            "bash: getopts: option requires an argument -- '{}'\n",
+                            opt_char
+                        );
+                        result = self.apply_redirections(result, redirects).await?;
+                        return Ok(result);
+                    }
+                }
+            } else {
+                // No argument needed
+                self.variables.remove("OPTARG");
+                if char_idx + 1 < opt_chars.len() {
+                    // More chars in this arg
+                    self.variables
+                        .insert("_OPTCHAR_IDX".to_string(), (char_idx + 1).to_string());
+                } else {
+                    // Move to next arg
+                    self.variables
+                        .insert("OPTIND".to_string(), (optind + 1).to_string());
+                    self.variables.remove("_OPTCHAR_IDX");
+                }
+            }
+        } else {
+            // Unknown option
+            self.variables.remove("OPTARG");
+            if char_idx + 1 < opt_chars.len() {
+                self.variables
+                    .insert("_OPTCHAR_IDX".to_string(), (char_idx + 1).to_string());
+            } else {
+                self.variables
+                    .insert("OPTIND".to_string(), (optind + 1).to_string());
+                self.variables.remove("_OPTCHAR_IDX");
+            }
+
+            if silent {
+                self.variables.insert(varname.clone(), "?".to_string());
+                self.variables
+                    .insert("OPTARG".to_string(), opt_char.to_string());
+            } else {
+                self.variables.insert(varname.clone(), "?".to_string());
+                let mut result = ExecResult::ok(String::new());
+                result.stderr = format!("bash: getopts: illegal option -- '{}'\n", opt_char);
+                result = self.apply_redirections(result, redirects).await?;
+                return Ok(result);
+            }
+        }
+
+        let mut result = ExecResult::ok(String::new());
         result = self.apply_redirections(result, redirects).await?;
         Ok(result)
     }
