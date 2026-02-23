@@ -418,6 +418,21 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 }
+            } else if ch == '\\' {
+                self.advance();
+                if let Some(next) = self.peek_char() {
+                    if next == '\n' {
+                        // Line continuation: skip backslash + newline
+                        self.advance();
+                    } else {
+                        // Escaped character: backslash quotes the next char
+                        // (quote removal — only the literal char survives)
+                        word.push(next);
+                        self.advance();
+                    }
+                } else {
+                    word.push('\\');
+                }
             } else if self.is_word_char(ch) {
                 word.push(ch);
                 self.advance();

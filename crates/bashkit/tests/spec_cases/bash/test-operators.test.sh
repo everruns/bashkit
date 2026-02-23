@@ -62,7 +62,6 @@ empty
 ### end
 
 ### test_string_lt
-### skip: test string comparison with \< not fully implemented
 # String less than comparison
 [ "apple" \< "banana" ] && echo "less"
 ### expect
@@ -70,7 +69,6 @@ less
 ### end
 
 ### test_string_gt
-### skip: test string comparison with \> not fully implemented
 # String greater than comparison
 [ "zoo" \> "apple" ] && echo "greater"
 ### expect
