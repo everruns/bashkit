@@ -92,6 +92,7 @@ impl Builtin for Sort {
         let mut check_sorted = false;
         let mut human_numeric = false;
         let mut month_sort = false;
+        let mut merge = false;
         let mut delimiter: Option<char> = None;
         let mut key_field: Option<usize> = None;
         let mut output_file: Option<String> = None;
@@ -148,6 +149,7 @@ impl Builtin for Sort {
                         'c' | 'C' => check_sorted = true,
                         'h' => human_numeric = true,
                         'M' => month_sort = true,
+                        'm' => merge = true,
                         'z' => zero_terminated = true,
                         _ => {}
                     }
@@ -193,6 +195,62 @@ impl Builtin for Sort {
                     }
                 }
             }
+        }
+
+        // Merge mode: k-way merge of pre-sorted inputs
+        if merge && !files.is_empty() {
+            let mut streams: Vec<Vec<String>> = Vec::new();
+            for file in &files {
+                let path = if file.starts_with('/') {
+                    std::path::PathBuf::from(file)
+                } else {
+                    ctx.cwd.join(file)
+                };
+                match ctx.fs.read_file(&path).await {
+                    Ok(content) => {
+                        let text = String::from_utf8_lossy(&content);
+                        let lines: Vec<String> = text
+                            .split(line_sep)
+                            .filter(|l| !l.is_empty())
+                            .map(|l| l.to_string())
+                            .collect();
+                        streams.push(lines);
+                    }
+                    Err(e) => {
+                        return Ok(ExecResult::err(format!("sort: {}: {}\n", file, e), 1));
+                    }
+                }
+            }
+            // k-way merge using indices
+            let mut indices: Vec<usize> = vec![0; streams.len()];
+            let mut merged = Vec::new();
+            loop {
+                let mut best: Option<(usize, &str)> = None;
+                for (i, stream) in streams.iter().enumerate() {
+                    if indices[i] < stream.len() {
+                        let line = &stream[indices[i]];
+                        if let Some((_, best_line)) = best {
+                            if line.as_str() < best_line {
+                                best = Some((i, line));
+                            }
+                        } else {
+                            best = Some((i, line));
+                        }
+                    }
+                }
+                if let Some((i, line)) = best {
+                    merged.push(line.to_string());
+                    indices[i] += 1;
+                } else {
+                    break;
+                }
+            }
+            let sep = if zero_terminated { "\0" } else { "\n" };
+            let mut output = merged.join(sep);
+            if !output.is_empty() {
+                output.push_str(sep);
+            }
+            return Ok(ExecResult::ok(output));
         }
 
         // Check sorted mode

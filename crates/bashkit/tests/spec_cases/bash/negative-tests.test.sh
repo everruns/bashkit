@@ -1,9 +1,8 @@
 ### neg_array_indices_empty
-### skip: empty array indices expansion outputs extra newline
 # Empty array has no indices
-arr=(); echo "${!arr[@]}"
+arr=(); echo ">${!arr[@]}<"
 ### expect
-
+><
 ### end
 
 ### neg_test_nonexistent_file
@@ -29,7 +28,6 @@ echo {item}
 ### end
 
 ### neg_brace_no_expand_space
-### skip: brace with space parsing issue
 # Brace with space doesn't expand
 echo { a,b,c }
 ### expect

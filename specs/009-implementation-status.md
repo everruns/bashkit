@@ -107,17 +107,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1096 (1047 pass, 49 skip)
+**Total spec test cases:** 1087 (1034 pass, 53 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 684 | Yes | 674 | 10 | `bash_spec_tests` in CI |
+| Bash (core) | 684 | Yes | 679 | 5 | `bash_spec_tests` in CI |
 | AWK | 90 | Yes | 73 | 17 | loops, arrays, -v, ternary, field assign |
 | Grep | 82 | Yes | 79 | 3 | now with -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude |
 | Sed | 65 | Yes | 53 | 12 | hold space, change, regex ranges, -E |
 | JQ | 108 | Yes | 100 | 8 | reduce, walk, regex funcs, --arg/--argjson, combined flags |
 | Python | 58 | Yes | 50 | 8 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **1087** | **Yes** | **1029** | **58** | |
+| **Total** | **1087** | **Yes** | **1034** | **53** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -135,9 +135,9 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | command-subst.test.sh | 14 | includes backtick substitution (1 skipped) |
 | control-flow.test.sh | 32 | if/elif/else, for, while, case |
 | cuttr.test.sh | 32 | cut and tr commands, `-z` zero-terminated |
-| date.test.sh | 38 | format specifiers, `-d` relative/compound/epoch, `-R`, `-I`, `%N` (3 skipped) |
+| date.test.sh | 38 | format specifiers, `-d` relative/compound/epoch, `-R`, `-I`, `%N` (2 skipped) |
 | diff.test.sh | 4 | line diffs |
-| echo.test.sh | 24 | escape sequences (1 skipped) |
+| echo.test.sh | 24 | escape sequences |
 | errexit.test.sh | 8 | set -e tests |
 | fileops.test.sh | 21 | |
 | find.test.sh | 10 | file search |
@@ -147,7 +147,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | headtail.test.sh | 14 | |
 | herestring.test.sh | 8 | 1 skipped |
 | hextools.test.sh | 5 | od/xxd/hexdump (3 skipped) |
-| negative-tests.test.sh | 13 | error conditions (2 skipped) |
+| negative-tests.test.sh | 13 | error conditions |
 | nl.test.sh | 14 | line numbering |
 | nounset.test.sh | 7 | `set -u` unbound variable checks, `${var:-default}` nounset-aware |
 | paste.test.sh | 4 | line merging with `-s` serial and `-d` delimiter |
@@ -156,7 +156,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | printf.test.sh | 24 | format specifiers, array expansion |
 | procsub.test.sh | 6 | |
 | sleep.test.sh | 6 | |
-| sortuniq.test.sh | 32 | sort and uniq, `-z` zero-terminated (1 skipped) |
+| sortuniq.test.sh | 32 | sort and uniq, `-z` zero-terminated, `-m` merge |
 | source.test.sh | 21 | source/., function loading, PATH search, positional params |
 | test-operators.test.sh | 17 | file/string tests |
 | time.test.sh | 11 | Wall-clock only (user/sys always 0) |

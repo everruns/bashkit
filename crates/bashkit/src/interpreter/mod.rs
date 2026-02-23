@@ -4697,6 +4697,11 @@ impl Interpreter {
         let suffix: String = chars[end + 1..].iter().collect();
         let brace_content: String = chars[start + 1..end].iter().collect();
 
+        // Brace content with leading/trailing space is not expanded
+        if brace_content.starts_with(' ') || brace_content.ends_with(' ') {
+            return vec![s.to_string()];
+        }
+
         // Check for range expansion like {1..5} or {a..z}
         if let Some(range_result) = self.try_expand_range(&brace_content) {
             let mut results = Vec::new();
