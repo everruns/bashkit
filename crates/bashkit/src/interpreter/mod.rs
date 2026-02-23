@@ -130,6 +130,8 @@ pub struct Interpreter {
     variables: HashMap<String, String>,
     /// Arrays - stored as name -> index -> value
     arrays: HashMap<String, HashMap<usize, String>>,
+    /// Associative arrays (declare -A) - stored as name -> key -> value
+    assoc_arrays: HashMap<String, HashMap<String, String>>,
     cwd: PathBuf,
     last_exit_code: i32,
     /// Built-in commands (default + custom)
@@ -237,6 +239,8 @@ impl Interpreter {
         builtins.insert("touch".to_string(), Box::new(builtins::Touch));
         builtins.insert("chmod".to_string(), Box::new(builtins::Chmod));
         builtins.insert("ln".to_string(), Box::new(builtins::Ln));
+        builtins.insert("chown".to_string(), Box::new(builtins::Chown));
+        builtins.insert("kill".to_string(), Box::new(builtins::Kill));
         builtins.insert("wc".to_string(), Box::new(builtins::Wc));
         builtins.insert("nl".to_string(), Box::new(builtins::Nl));
         builtins.insert("paste".to_string(), Box::new(builtins::Paste));
@@ -314,6 +318,7 @@ impl Interpreter {
             env: HashMap::new(),
             variables: HashMap::new(),
             arrays: HashMap::new(),
+            assoc_arrays: HashMap::new(),
             cwd: PathBuf::from("/home/user"),
             last_exit_code: 0,
             builtins,
@@ -2084,16 +2089,30 @@ impl Interpreter {
                 AssignmentValue::Scalar(word) => {
                     let value = self.expand_word(word).await?;
                     if let Some(index_str) = &assignment.index {
-                        // arr[index]=value - set array element
-                        let index: usize =
-                            self.evaluate_arithmetic(index_str).try_into().unwrap_or(0);
-                        let arr = self.arrays.entry(assignment.name.clone()).or_default();
-                        if assignment.append {
-                            // Append to existing element
-                            let existing = arr.get(&index).cloned().unwrap_or_default();
-                            arr.insert(index, existing + &value);
+                        if self.assoc_arrays.contains_key(&assignment.name) {
+                            // Associative array: use string key
+                            let key = self.expand_variable_or_literal(index_str);
+                            let arr = self
+                                .assoc_arrays
+                                .entry(assignment.name.clone())
+                                .or_default();
+                            if assignment.append {
+                                let existing = arr.get(&key).cloned().unwrap_or_default();
+                                arr.insert(key, existing + &value);
+                            } else {
+                                arr.insert(key, value);
+                            }
                         } else {
-                            arr.insert(index, value);
+                            // Indexed array: use numeric index
+                            let index: usize =
+                                self.evaluate_arithmetic(index_str).try_into().unwrap_or(0);
+                            let arr = self.arrays.entry(assignment.name.clone()).or_default();
+                            if assignment.append {
+                                let existing = arr.get(&index).cloned().unwrap_or_default();
+                                arr.insert(index, existing + &value);
+                            } else {
+                                arr.insert(index, value);
+                            }
                         }
                     } else if assignment.append {
                         // VAR+=value - append to variable
@@ -2421,6 +2440,34 @@ impl Interpreter {
             return self
                 .execute_declare_builtin(&args, &command.redirects)
                 .await;
+        }
+
+        // Handle `unset` with array element syntax: unset 'arr[key]'
+        if name == "unset" {
+            for arg in &args {
+                if let Some(bracket) = arg.find('[') {
+                    if arg.ends_with(']') {
+                        let arr_name = &arg[..bracket];
+                        let key = &arg[bracket + 1..arg.len() - 1];
+                        let expanded_key = self.expand_variable_or_literal(key);
+                        if let Some(arr) = self.assoc_arrays.get_mut(arr_name) {
+                            arr.remove(&expanded_key);
+                        } else if let Some(arr) = self.arrays.get_mut(arr_name) {
+                            if let Ok(idx) = key.parse::<usize>() {
+                                arr.remove(&idx);
+                            }
+                        }
+                        continue;
+                    }
+                }
+                // Regular unset
+                self.variables.remove(arg.as_str());
+                self.arrays.remove(arg.as_str());
+                self.assoc_arrays.remove(arg.as_str());
+            }
+            let mut result = ExecResult::ok(String::new());
+            result = self.apply_redirections(result, &command.redirects).await?;
+            return Ok(result);
         }
 
         // Handle `getopts` builtin - needs to read/write shell variables (OPTIND, OPTARG)
@@ -3284,6 +3331,7 @@ impl Interpreter {
         let mut is_readonly = false;
         let mut is_export = false;
         let mut is_array = false;
+        let mut is_assoc = false;
         let mut is_integer = false;
         let mut names: Vec<&str> = Vec::new();
 
@@ -3296,10 +3344,7 @@ impl Interpreter {
                         'x' => is_export = true,
                         'a' => is_array = true,
                         'i' => is_integer = true,
-                        'A' => {
-                            // Associative arrays not yet supported
-                            is_array = true;
-                        }
+                        'A' => is_assoc = true,
                         'g' | 'l' | 'n' | 'u' | 't' | 'f' | 'F' => {} // ignored
                         _ => {}
                     }
@@ -3331,6 +3376,15 @@ impl Interpreter {
                             attrs = String::from("-r");
                         }
                         output.push_str(&format!("declare {} {}=\"{}\"\n", attrs, var_name, value));
+                    } else if let Some(arr) = self.assoc_arrays.get(var_name) {
+                        let mut items: Vec<_> = arr.iter().collect();
+                        items.sort_by_key(|(k, _)| (*k).clone());
+                        let inner: String = items
+                            .iter()
+                            .map(|(k, v)| format!("[{}]=\"{}\"", k, v))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        output.push_str(&format!("declare -A {}=({})\n", var_name, inner));
                     } else if let Some(arr) = self.arrays.get(var_name) {
                         let mut items: Vec<_> = arr.iter().collect();
                         items.sort_by_key(|(k, _)| *k);
@@ -3353,13 +3407,89 @@ impl Interpreter {
             return Ok(result);
         }
 
-        // Set variables
+        // Reconstruct compound assignments: declare -A m=([a]="1" [b]="2")
+        // Args may be split across names: ["m=([a]=1", "[b]=2)"]
+        let mut merged_names: Vec<String> = Vec::new();
+        let mut pending: Option<String> = None;
         for name in &names {
+            if let Some(ref mut p) = pending {
+                p.push(' ');
+                p.push_str(name);
+                if name.ends_with(')') {
+                    merged_names.push(p.clone());
+                    pending = None;
+                }
+            } else if let Some(eq_pos) = name.find("=(") {
+                if name.ends_with(')') {
+                    merged_names.push(name.to_string());
+                } else {
+                    pending = Some(name.to_string());
+                    let _ = eq_pos; // used above in find
+                }
+            } else {
+                merged_names.push(name.to_string());
+            }
+        }
+        if let Some(p) = pending {
+            merged_names.push(p);
+        }
+
+        // Set variables
+        for name in &merged_names {
             if let Some(eq_pos) = name.find('=') {
                 let var_name = &name[..eq_pos];
                 let value = &name[eq_pos + 1..];
 
-                if is_integer {
+                // Handle compound array assignment: declare -A m=([k]="v" ...)
+                if (is_assoc || is_array) && value.starts_with('(') && value.ends_with(')') {
+                    let inner = &value[1..value.len() - 1];
+                    if is_assoc {
+                        let arr = self.assoc_arrays.entry(var_name.to_string()).or_default();
+                        arr.clear();
+                        // Parse [key]="value" pairs
+                        let mut rest = inner.trim();
+                        while let Some(bracket_start) = rest.find('[') {
+                            if let Some(bracket_end) = rest[bracket_start..].find(']') {
+                                let key = &rest[bracket_start + 1..bracket_start + bracket_end];
+                                let after = &rest[bracket_start + bracket_end + 1..];
+                                if let Some(eq_rest) = after.strip_prefix('=') {
+                                    let eq_rest = eq_rest.trim_start();
+                                    let (val, remainder) = if let Some(stripped) =
+                                        eq_rest.strip_prefix('"')
+                                    {
+                                        // Quoted value
+                                        if let Some(end_q) = stripped.find('"') {
+                                            (&stripped[..end_q], stripped[end_q + 1..].trim_start())
+                                        } else {
+                                            (stripped.trim_end_matches('"'), "")
+                                        }
+                                    } else {
+                                        // Unquoted value — up to next space or end
+                                        match eq_rest.find(char::is_whitespace) {
+                                            Some(sp) => {
+                                                (&eq_rest[..sp], eq_rest[sp..].trim_start())
+                                            }
+                                            None => (eq_rest, ""),
+                                        }
+                                    };
+                                    arr.insert(key.to_string(), val.to_string());
+                                    rest = remainder;
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    } else {
+                        // Indexed array: declare -a arr=(a b c)
+                        let arr = self.arrays.entry(var_name.to_string()).or_default();
+                        arr.clear();
+                        for (idx, val) in inner.split_whitespace().enumerate() {
+                            arr.insert(idx, val.trim_matches('"').to_string());
+                        }
+                    }
+                } else if is_integer {
                     // Try to evaluate as integer
                     let int_val: i64 = value.parse().unwrap_or(0);
                     self.variables
@@ -3381,10 +3511,13 @@ impl Interpreter {
                 }
             } else {
                 // Declare without value
-                if is_array {
-                    // Initialize empty array if not exists
+                if is_assoc {
+                    // Initialize empty associative array
+                    self.assoc_arrays.entry(name.to_string()).or_default();
+                } else if is_array {
+                    // Initialize empty indexed array
                     self.arrays.entry(name.to_string()).or_default();
-                } else if !self.variables.contains_key(*name) {
+                } else if !self.variables.contains_key(name.as_str()) {
                     self.variables.insert(name.to_string(), String::new());
                 }
                 if is_readonly {
@@ -3394,7 +3527,10 @@ impl Interpreter {
                 if is_export {
                     self.env.insert(
                         name.to_string(),
-                        self.variables.get(*name).cloned().unwrap_or_default(),
+                        self.variables
+                            .get(name.as_str())
+                            .cloned()
+                            .unwrap_or_default(),
                     );
                 }
             }
@@ -3700,7 +3836,13 @@ impl Interpreter {
                 WordPart::ArrayAccess { name, index } => {
                     if index == "@" || index == "*" {
                         // ${arr[@]} or ${arr[*]} - expand to all elements
-                        if let Some(arr) = self.arrays.get(name) {
+                        if let Some(arr) = self.assoc_arrays.get(name) {
+                            let mut keys: Vec<_> = arr.keys().collect();
+                            keys.sort();
+                            let values: Vec<String> =
+                                keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
+                            result.push_str(&values.join(" "));
+                        } else if let Some(arr) = self.arrays.get(name) {
                             let mut indices: Vec<_> = arr.keys().collect();
                             indices.sort();
                             let values: Vec<_> =
@@ -3708,6 +3850,12 @@ impl Interpreter {
                             result.push_str(
                                 &values.into_iter().cloned().collect::<Vec<_>>().join(" "),
                             );
+                        }
+                    } else if let Some(arr) = self.assoc_arrays.get(name) {
+                        // ${assoc[key]} - get by string key
+                        let key = self.expand_variable_or_literal(index);
+                        if let Some(value) = arr.get(&key) {
+                            result.push_str(value);
                         }
                     } else {
                         // ${arr[n]} - get specific element
@@ -3720,8 +3868,12 @@ impl Interpreter {
                     }
                 }
                 WordPart::ArrayIndices(name) => {
-                    // ${!arr[@]} or ${!arr[*]} - expand to array indices
-                    if let Some(arr) = self.arrays.get(name) {
+                    // ${!arr[@]} or ${!arr[*]} - expand to array indices/keys
+                    if let Some(arr) = self.assoc_arrays.get(name) {
+                        let mut keys: Vec<_> = arr.keys().cloned().collect();
+                        keys.sort();
+                        result.push_str(&keys.join(" "));
+                    } else if let Some(arr) = self.arrays.get(name) {
                         let mut indices: Vec<_> = arr.keys().collect();
                         indices.sort();
                         let index_strs: Vec<String> =
@@ -3734,23 +3886,22 @@ impl Interpreter {
                     offset,
                     length,
                 } => {
-                    // ${var:offset} or ${var:offset:length}
+                    // ${var:offset} or ${var:offset:length} - character-based indexing
                     let value = self.expand_variable(name);
+                    let char_count = value.chars().count();
                     let offset_val: isize = self.evaluate_arithmetic(offset) as isize;
                     let start = if offset_val < 0 {
-                        // Negative offset counts from end
-                        (value.len() as isize + offset_val).max(0) as usize
+                        (char_count as isize + offset_val).max(0) as usize
                     } else {
-                        (offset_val as usize).min(value.len())
+                        (offset_val as usize).min(char_count)
                     };
-                    let substr = if let Some(len_expr) = length {
+                    let substr: String = if let Some(len_expr) = length {
                         let len_val = self.evaluate_arithmetic(len_expr) as usize;
-                        let end = (start + len_val).min(value.len());
-                        &value[start..end]
+                        value.chars().skip(start).take(len_val).collect()
                     } else {
-                        &value[start..]
+                        value.chars().skip(start).collect()
                     };
-                    result.push_str(substr);
+                    result.push_str(&substr);
                 }
                 WordPart::ArraySlice {
                     name,
@@ -3789,7 +3940,9 @@ impl Interpreter {
                 }
                 WordPart::ArrayLength(name) => {
                     // ${#arr[@]} - number of elements
-                    if let Some(arr) = self.arrays.get(name) {
+                    if let Some(arr) = self.assoc_arrays.get(name) {
+                        result.push_str(&arr.len().to_string());
+                    } else if let Some(arr) = self.arrays.get(name) {
                         result.push_str(&arr.len().to_string());
                     } else {
                         result.push('0');
@@ -3840,6 +3993,17 @@ impl Interpreter {
         if word.parts.len() == 1 {
             if let WordPart::ArrayAccess { name, index } = &word.parts[0] {
                 if index == "@" || index == "*" {
+                    // Check assoc arrays first
+                    if let Some(arr) = self.assoc_arrays.get(name) {
+                        let mut keys: Vec<_> = arr.keys().cloned().collect();
+                        keys.sort();
+                        let values: Vec<String> =
+                            keys.iter().filter_map(|k| arr.get(k).cloned()).collect();
+                        if word.quoted && index == "*" {
+                            return Ok(vec![values.join(" ")]);
+                        }
+                        return Ok(values);
+                    }
                     if let Some(arr) = self.arrays.get(name) {
                         let mut indices: Vec<_> = arr.keys().collect();
                         indices.sort();
@@ -3853,6 +4017,20 @@ impl Interpreter {
                     }
                     return Ok(Vec::new());
                 }
+            }
+            // "${!arr[@]}" - array keys/indices as separate fields
+            if let WordPart::ArrayIndices(name) = &word.parts[0] {
+                if let Some(arr) = self.assoc_arrays.get(name) {
+                    let mut keys: Vec<_> = arr.keys().cloned().collect();
+                    keys.sort();
+                    return Ok(keys);
+                }
+                if let Some(arr) = self.arrays.get(name) {
+                    let mut indices: Vec<_> = arr.keys().collect();
+                    indices.sort();
+                    return Ok(indices.iter().map(|i| i.to_string()).collect());
+                }
+                return Ok(Vec::new());
             }
         }
 
@@ -4253,6 +4431,11 @@ impl Interpreter {
             return 0;
         }
 
+        // Non-ASCII chars can't be valid arithmetic; bail to avoid byte/char index mismatch
+        if !expr.is_ascii() {
+            return 0;
+        }
+
         // THREAT[TM-DOS-025]: Bail out if arithmetic nesting is too deep
         if arith_depth >= Self::MAX_ARITHMETIC_DEPTH {
             return 0;
@@ -4500,6 +4683,21 @@ impl Interpreter {
     }
 
     /// Expand a variable by name, checking local scope, positional params, shell vars, then env
+    /// Expand a string as a variable reference, or return as literal.
+    /// Used for associative array keys which may be variable refs or literals.
+    fn expand_variable_or_literal(&self, s: &str) -> String {
+        // Handle $var and ${var} references in assoc array keys
+        let trimmed = s.trim();
+        if let Some(var_name) = trimmed.strip_prefix('$') {
+            let var_name = var_name.trim_start_matches('{').trim_end_matches('}');
+            return self.expand_variable(var_name);
+        }
+        if let Some(val) = self.variables.get(s) {
+            return val.clone();
+        }
+        s.to_string()
+    }
+
     fn expand_variable(&self, name: &str) -> String {
         // Check for special parameters (POSIX required)
         match name {

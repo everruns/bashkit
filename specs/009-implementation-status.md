@@ -107,11 +107,11 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1087 (1034 pass, 53 skip)
+**Total spec test cases:** 1060 (1038 pass, 22 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 684 | Yes | 679 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 711 | Yes | 705 | 6 | `bash_spec_tests` in CI |
 | AWK | 90 | Yes | 73 | 17 | loops, arrays, -v, ternary, field assign |
 | Grep | 82 | Yes | 79 | 3 | now with -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude |
 | Sed | 65 | Yes | 53 | 12 | hold space, change, regex ranges, -E |
@@ -179,7 +179,7 @@ Features that may be added in the future (not intentionally excluded):
 |---------|----------|-------|
 | Coprocesses `coproc` | Low | Rarely used |
 | Extended globs `@()` `!()` | Medium | Requires `shopt -s extglob` |
-| Associative arrays `declare -A` | Medium | Bash 4+ feature |
+| ~~Associative arrays `declare -A`~~ | ~~Medium~~ | Implemented: key-value access, iteration, unset, `${!m[@]}` |
 | ~~`[[ =~ ]]` regex matching~~ | ~~Medium~~ | Implemented: `[[ ]]` conditionals with `=~` and BASH_REMATCH |
 | ~~`getopts`~~ | ~~Medium~~ | Implemented: POSIX option parsing |
 | ~~`command` builtin~~ | ~~Medium~~ | Implemented: `-v`, `-V`, bypass functions |
@@ -197,7 +197,7 @@ Features that may be added in the future (not intentionally excluded):
 | `local` | Declaration | Proper scoping in nested functions |
 | `return` | Basic usage | Return value propagation |
 | Heredocs | Basic | Variable expansion inside |
-| Arrays | Indexing, `[@]`/`[*]` as separate args, `${!arr[@]}`, `+=` | Slice `${arr[@]:1:2}` |
+| Arrays | Indexing, `[@]`/`[*]` as separate args, `${!arr[@]}`, `+=`, slice `${arr[@]:1:2}`, assoc `declare -A` | Compound init `declare -A m=([k]=v)` |
 | `echo -n` | Flag parsed | Trailing newline handling |
 | `time` | Wall-clock timing | User/sys CPU time (always 0) |
 | `timeout` | Basic usage | `-k` kill timeout |
@@ -207,15 +207,15 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-**90 core builtins + 3 feature-gated = 93 total**
+**92 core builtins + 3 feature-gated = 95 total**
 
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,
 `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`,
-`basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `ln`, `wc`,
+`basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `wc`,
 `sort`, `uniq`, `cut`, `tr`, `paste`, `column`, `diff`, `comm`, `date`,
 `wait`, `curl`, `wget`, `timeout`, `command`, `getopts`,
-`type`, `which`, `hash`, `declare`, `typeset`,
+`type`, `which`, `hash`, `declare`, `typeset`, `kill`,
 `time` (keyword), `whoami`, `hostname`, `uname`, `id`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
 `:` (colon), `eval`, `readonly`, `times`, `bash`, `sh`,
 `od`, `xxd`, `hexdump`, `strings`,
@@ -226,7 +226,7 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Not Yet Implemented
 
-`chown`, `kill`
+None currently tracked.
 
 ## Text Processing
 

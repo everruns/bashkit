@@ -211,3 +211,31 @@ fn test_unicode_handling() {
         }
     });
 }
+
+/// Regression: proptest found multi-byte char panic in variable expansion
+/// Input "${:¡%" caused byte index panic in substring/parameter expansion
+#[test]
+fn test_multibyte_in_variable_expansion() {
+    let scripts = [
+        "X='${:¡%'; echo $X",
+        "X='¡%'; echo ${X:1}",
+        "X='日本語'; echo ${X:1:2}",
+        "X='émoji'; echo ${X:0:3}",
+        "X='über'; echo ${#X}",
+    ];
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        for script in scripts {
+            let limits = ExecutionLimits::new()
+                .max_commands(10)
+                .timeout(Duration::from_millis(100));
+            let mut bash = Bash::builder().limits(limits).build();
+            let _ = bash.exec(script).await;
+        }
+    });
+}

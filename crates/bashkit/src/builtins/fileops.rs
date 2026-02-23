@@ -556,6 +556,92 @@ impl Builtin for Ln {
     }
 }
 
+/// The chown builtin - change file ownership (no-op in VFS).
+///
+/// Usage: chown [-R] OWNER[:GROUP] FILE...
+///
+/// In the virtual filesystem there are no real UIDs/GIDs, so chown is a no-op
+/// that simply validates arguments and succeeds silently.
+pub struct Chown;
+
+#[async_trait]
+impl Builtin for Chown {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        let mut recursive = false;
+        let mut positional: Vec<&str> = Vec::new();
+
+        for arg in ctx.args {
+            match arg.as_str() {
+                "-R" | "--recursive" => recursive = true,
+                _ if arg.starts_with('-') => {} // ignore other flags
+                _ => positional.push(arg),
+            }
+        }
+        let _ = recursive; // accepted but irrelevant in VFS
+
+        if positional.len() < 2 {
+            return Ok(ExecResult::err("chown: missing operand\n".to_string(), 1));
+        }
+
+        // Validate that target files exist
+        let _owner = positional[0]; // accepted but not applied
+        for file in &positional[1..] {
+            let path = resolve_path(ctx.cwd, file);
+            if !ctx.fs.exists(&path).await.unwrap_or(false) {
+                return Ok(ExecResult::err(
+                    format!(
+                        "chown: cannot access '{}': No such file or directory\n",
+                        file
+                    ),
+                    1,
+                ));
+            }
+        }
+
+        Ok(ExecResult::ok(String::new()))
+    }
+}
+
+/// The kill builtin - send signal to process (no-op in VFS).
+///
+/// Usage: kill [-s SIGNAL] [-SIGNAL] PID...
+///
+/// Since there are no real processes in the virtual environment, kill is a no-op
+/// that accepts the command syntax for compatibility.
+pub struct Kill;
+
+#[async_trait]
+impl Builtin for Kill {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        let mut pids: Vec<&str> = Vec::new();
+
+        for arg in ctx.args {
+            if arg == "-l" || arg == "-L" {
+                // List signal names
+                return Ok(ExecResult::ok(
+                    "HUP INT QUIT ILL TRAP ABRT BUS FPE KILL USR1 SEGV USR2 PIPE ALRM TERM\n"
+                        .to_string(),
+                ));
+            }
+            if arg.starts_with('-') {
+                continue; // skip signal spec
+            }
+            pids.push(arg);
+        }
+
+        if pids.is_empty() {
+            return Ok(ExecResult::err(
+                "kill: usage: kill [-s sigspec | -n signum | -sigspec] pid | jobspec ...\n"
+                    .to_string(),
+                2,
+            ));
+        }
+
+        // In VFS, no real processes exist — just succeed silently
+        Ok(ExecResult::ok(String::new()))
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
