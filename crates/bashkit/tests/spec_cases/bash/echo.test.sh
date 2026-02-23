@@ -70,7 +70,6 @@ hello   world
 ### end
 
 ### echo_escape_r
-### skip: carriage return display varies by terminal, test verifies CR is processed
 # Echo with carriage return - raw output contains CR character
 echo -e "hello\rworld" | cat -v | grep -q 'hello.*world' && echo "valid"
 ### expect

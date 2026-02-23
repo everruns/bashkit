@@ -120,7 +120,6 @@ valid
 ### end
 
 ### date_combined_format
-### skip: quoted format string not handling space correctly
 # Multiple format specifiers
 date +"%Y-%m-%d %H:%M:%S" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$' && echo "valid"
 ### expect

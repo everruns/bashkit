@@ -306,24 +306,40 @@ impl<'a> Lexer<'a> {
             // Handle quoted strings within words (e.g., a="Hello" or VAR="value")
             // This handles the case where a word like `a=` is followed by a quoted string
             if ch == '"' || ch == '\'' {
-                // Check if this is a quoted value in an assignment (word ends with = or +=)
-                if word.ends_with('=') || word.ends_with("+=") {
-                    // Include the quoted string as part of this word
-                    let quote_char = ch;
-                    word.push(ch);
-                    self.advance();
-                    while let Some(c) = self.peek_char() {
-                        word.push(c);
-                        self.advance();
-                        if c == quote_char && !word.ends_with(&format!("\\{}", quote_char)) {
-                            break;
-                        }
-                    }
-                    continue;
-                } else {
-                    // Not after =, so this is a separate quoted token
+                if word.is_empty() {
+                    // Start of a new token — let the main tokenizer handle quotes
                     break;
                 }
+                // Word already has content — concatenate the quoted segment
+                // This handles: VAR="val", date +"%Y", echo foo"bar"
+                let quote_char = ch;
+                self.advance(); // consume opening quote
+                while let Some(c) = self.peek_char() {
+                    if c == quote_char {
+                        self.advance(); // consume closing quote
+                        break;
+                    }
+                    if c == '\\' && quote_char == '"' {
+                        self.advance();
+                        if let Some(next) = self.peek_char() {
+                            match next {
+                                '"' | '\\' | '$' | '`' => {
+                                    word.push(next);
+                                    self.advance();
+                                }
+                                _ => {
+                                    word.push('\\');
+                                    word.push(next);
+                                    self.advance();
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                    word.push(c);
+                    self.advance();
+                }
+                continue;
             } else if ch == '$' {
                 // Handle variable references and command substitution
                 word.push(ch);

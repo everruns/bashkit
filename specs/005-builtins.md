@@ -76,7 +76,7 @@ execution → $PATH search → "command not found".
 - `chmod` - Change permissions (octal mode)
 
 #### Text Processing
-- `cat` - Concatenate files
+- `cat` - Concatenate files (`-v`, `-n`, `-e`, `-t`)
 - `nl` - Number lines (`-b`, `-n`, `-s`, `-i`, `-v`, `-w`)
 - `head`, `tail` - First/last N lines
 - `grep` - Pattern matching (`-i`, `-v`, `-c`, `-n`, `-o`, `-l`, `-w`, `-E`, `-F`, `-P`, `-q`, `-m`, `-x`, `-A`, `-B`, `-C`, `-e`, `-f`, `-H`, `-h`, `-b`, `-a`, `-z`, `-r`)

@@ -1695,6 +1695,18 @@ impl<'a> Parser<'a> {
                         target: Word::literal(dst_fd.to_string()),
                     });
                 }
+                // { and } as arguments (not in command position) are literal words
+                Some(tokens::Token::LeftBrace) | Some(tokens::Token::RightBrace)
+                    if !words.is_empty() =>
+                {
+                    let sym = if matches!(self.current_token, Some(tokens::Token::LeftBrace)) {
+                        "{"
+                    } else {
+                        "}"
+                    };
+                    words.push(Word::literal(sym));
+                    self.advance();
+                }
                 Some(tokens::Token::Newline)
                 | Some(tokens::Token::Semicolon)
                 | Some(tokens::Token::Pipe)
