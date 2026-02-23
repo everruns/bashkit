@@ -107,7 +107,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1043 (951 pass, 92 skip)
+**Total spec test cases:** 1043 (954 pass, 89 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
@@ -133,7 +133,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | command-subst.test.sh | 14 | 2 skipped |
 | control-flow.test.sh | 33 | if/elif/else, for, while, case |
 | cuttr.test.sh | 32 | cut and tr commands (25 skipped) |
-| date.test.sh | 38 | format specifiers, `-d` relative/compound/epoch (6 skipped) |
+| date.test.sh | 38 | format specifiers, `-d` relative/compound/epoch, `-R`, `-I`, `%N` (3 skipped) |
 | diff.test.sh | 4 | line diffs |
 | echo.test.sh | 24 | escape sequences (1 skipped) |
 | errexit.test.sh | 8 | set -e tests |

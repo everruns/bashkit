@@ -17,11 +17,13 @@ use crate::interpreter::ExecResult;
 
 /// The date builtin - display or set date and time.
 ///
-/// Usage: date [+FORMAT] [-u]
+/// Usage: date [+FORMAT] [-u] [-R] [-I[TIMESPEC]]
 ///
 /// Options:
 ///   +FORMAT  Output date according to FORMAT
 ///   -u       Display UTC time instead of local time
+///   -R       Output RFC 2822 formatted date
+///   -I[FMT]  Output ISO 8601 formatted date (FMT: date, hours, minutes, seconds)
 ///
 /// FORMAT specifiers:
 ///   %Y  Year with century (e.g., 2024)
@@ -31,6 +33,7 @@ use crate::interpreter::ExecResult;
 ///   %M  Minute (00-59)
 ///   %S  Second (00-59)
 ///   %s  Seconds since Unix epoch
+///   %N  Nanoseconds (000000000-999999999)
 ///   %a  Abbreviated weekday name
 ///   %A  Full weekday name
 ///   %b  Abbreviated month name
@@ -209,12 +212,87 @@ fn unit_duration(unit: &str, n: i64) -> Duration {
     }
 }
 
+/// Expand `%N` (nanoseconds) in a format string, replacing it with the
+/// zero-padded nanosecond value from the given datetime.
+fn expand_nanoseconds(format: &str, nanos: u32) -> String {
+    // Replace %N with the 9-digit nanosecond value
+    // Must not replace %%N (literal %N)
+    let mut result = String::with_capacity(format.len());
+    let mut chars = format.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '%' {
+            match chars.peek() {
+                Some(&'%') => {
+                    // %% → pass through both (chrono will render as literal %)
+                    result.push('%');
+                    result.push('%');
+                    chars.next();
+                }
+                Some(&'N') => {
+                    chars.next();
+                    let _ = write!(result, "{:09}", nanos);
+                }
+                _ => {
+                    result.push('%');
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// Format an RFC 2822 date string from a UTC datetime.
+fn format_rfc2822(dt: &DateTime<Utc>, utc: bool) -> String {
+    if utc {
+        dt.format("%a, %d %b %Y %H:%M:%S +0000").to_string()
+    } else {
+        let local_dt: DateTime<Local> = (*dt).into();
+        local_dt.format("%a, %d %b %Y %H:%M:%S %z").to_string()
+    }
+}
+
+/// Format an ISO 8601 date string.
+fn format_iso8601(dt: &DateTime<Utc>, utc: bool, precision: &str) -> String {
+    match precision {
+        "hours" => {
+            if utc {
+                dt.format("%Y-%m-%dT%H+00:00").to_string()
+            } else {
+                let local_dt: DateTime<Local> = (*dt).into();
+                local_dt.format("%Y-%m-%dT%H%:z").to_string()
+            }
+        }
+        "minutes" => {
+            if utc {
+                dt.format("%Y-%m-%dT%H:%M+00:00").to_string()
+            } else {
+                let local_dt: DateTime<Local> = (*dt).into();
+                local_dt.format("%Y-%m-%dT%H:%M%:z").to_string()
+            }
+        }
+        "seconds" | "s" => {
+            if utc {
+                dt.format("%Y-%m-%dT%H:%M:%S+00:00").to_string()
+            } else {
+                let local_dt: DateTime<Local> = (*dt).into();
+                local_dt.format("%Y-%m-%dT%H:%M:%S%:z").to_string()
+            }
+        }
+        // "date" or default
+        _ => dt.format("%Y-%m-%d").to_string(),
+    }
+}
+
 #[async_trait]
 impl Builtin for Date {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         let mut utc = false;
         let mut format_arg: Option<String> = None;
         let mut date_str: Option<String> = None;
+        let mut rfc2822 = false;
+        let mut iso8601: Option<String> = None;
 
         let mut i = 0;
         while i < ctx.args.len() {
@@ -228,10 +306,40 @@ impl Builtin for Date {
                 }
             } else if let Some(val) = arg.strip_prefix("--date=") {
                 date_str = Some(strip_surrounding_quotes(val).to_string());
+            } else if arg == "-R" || arg == "--rfc-2822" || arg == "--rfc-email" {
+                rfc2822 = true;
+            } else if arg == "-I" || arg == "--iso-8601" {
+                iso8601 = Some("date".to_string());
+            } else if let Some(val) = arg.strip_prefix("-I") {
+                iso8601 = Some(val.to_string());
+            } else if let Some(val) = arg.strip_prefix("--iso-8601=") {
+                iso8601 = Some(val.to_string());
             } else if arg.starts_with('+') {
                 format_arg = Some(arg.clone());
             }
             i += 1;
+        }
+
+        // Get the datetime to format
+        let dt_utc = if let Some(ref ds) = date_str {
+            match parse_date_string(ds) {
+                Ok(dt) => dt,
+                Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),
+            }
+        } else {
+            Utc::now()
+        };
+
+        // Handle -R (RFC 2822) output
+        if rfc2822 {
+            let output = format_rfc2822(&dt_utc, utc);
+            return Ok(ExecResult::ok(format!("{}\n", output)));
+        }
+
+        // Handle -I (ISO 8601) output
+        if let Some(ref precision) = iso8601 {
+            let output = format_iso8601(&dt_utc, utc, precision);
+            return Ok(ExecResult::ok(format!("{}\n", output)));
         }
 
         let default_format = "%a %b %e %H:%M:%S %Z %Y".to_string();
@@ -240,9 +348,13 @@ impl Builtin for Date {
             None => &default_format,
         };
 
+        // Expand %N before chrono validation (chrono doesn't know %N)
+        let nanos = dt_utc.timestamp_subsec_nanos();
+        let format = expand_nanoseconds(format, nanos);
+
         // SECURITY: Validate format string before use to prevent panics
         // THREAT[TM-INT-003]: Invalid format strings could cause chrono to panic
-        if let Err(e) = validate_format(format) {
+        if let Err(e) = validate_format(&format) {
             return Ok(ExecResult {
                 stdout: String::new(),
                 stderr: format!("date: {}\n", e),
@@ -253,27 +365,11 @@ impl Builtin for Date {
 
         // Format the date, handling potential errors gracefully.
         let mut output = String::new();
-        let format_result = if let Some(ref ds) = date_str {
-            // Parse the date string
-            match parse_date_string(ds) {
-                Ok(dt) => {
-                    if utc {
-                        write!(output, "{}", dt.format(format))
-                    } else {
-                        let local_dt: DateTime<Local> = dt.into();
-                        write!(output, "{}", local_dt.format(format))
-                    }
-                }
-                Err(e) => {
-                    return Ok(ExecResult::err(format!("{}\n", e), 1));
-                }
-            }
-        } else if utc {
-            let now = Utc::now();
-            write!(output, "{}", now.format(format))
+        let format_result = if utc {
+            write!(output, "{}", dt_utc.format(&format))
         } else {
-            let now = Local::now();
-            write!(output, "{}", now.format(format))
+            let local_dt: DateTime<Local> = dt_utc.into();
+            write!(output, "{}", local_dt.format(&format))
         };
 
         match format_result {
@@ -624,5 +720,82 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         let date = result.stdout.trim();
         assert_eq!(date.len(), 10);
+    }
+
+    // === -R (RFC 2822) tests ===
+
+    #[tokio::test]
+    async fn test_date_rfc2822() {
+        let result = run_date(&["-R"]).await;
+        assert_eq!(result.exit_code, 0);
+        let output = result.stdout.trim();
+        // RFC 2822: "Mon, 15 Jan 2024 12:00:00 +0000"
+        assert!(output.contains(','), "RFC 2822 should contain comma");
+        assert!(output.len() > 20);
+    }
+
+    #[tokio::test]
+    async fn test_date_rfc2822_utc() {
+        let result = run_date(&["-u", "-R"]).await;
+        assert_eq!(result.exit_code, 0);
+        let output = result.stdout.trim();
+        assert!(output.ends_with("+0000"));
+    }
+
+    // === -I (ISO 8601) tests ===
+
+    #[tokio::test]
+    async fn test_date_iso8601_default() {
+        let result = run_date(&["-I"]).await;
+        assert_eq!(result.exit_code, 0);
+        let output = result.stdout.trim();
+        // Just date: YYYY-MM-DD
+        assert_eq!(output.len(), 10);
+        assert!(output.contains('-'));
+    }
+
+    #[tokio::test]
+    async fn test_date_iso8601_seconds() {
+        let result = run_date(&["-Iseconds"]).await;
+        assert_eq!(result.exit_code, 0);
+        let output = result.stdout.trim();
+        assert!(output.contains('T'));
+        assert!(output.contains(':'));
+    }
+
+    // === %N (nanoseconds) tests ===
+
+    #[tokio::test]
+    async fn test_date_nanoseconds() {
+        let result = run_date(&["+%N"]).await;
+        assert_eq!(result.exit_code, 0);
+        let output = result.stdout.trim();
+        assert_eq!(output.len(), 9, "nanoseconds should be 9 digits");
+        assert!(output.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[tokio::test]
+    async fn test_date_nanoseconds_in_format() {
+        let result = run_date(&["+%S.%N"]).await;
+        assert_eq!(result.exit_code, 0);
+        let output = result.stdout.trim();
+        assert!(output.contains('.'));
+        let parts: Vec<&str> = output.split('.').collect();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[1].len(), 9);
+    }
+
+    #[test]
+    fn test_expand_nanoseconds_basic() {
+        assert_eq!(expand_nanoseconds("%N", 123456789), "123456789");
+        assert_eq!(expand_nanoseconds("%N", 0), "000000000");
+        assert_eq!(expand_nanoseconds("%S.%N", 42), "%S.000000042");
+    }
+
+    #[test]
+    fn test_expand_nanoseconds_double_percent() {
+        // %%N should become %N (literal %) after chrono processes %%
+        // We only expand single %N, not %%N
+        assert_eq!(expand_nanoseconds("%%N", 123), "%%N");
     }
 }
