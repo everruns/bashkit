@@ -132,7 +132,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | command.test.sh | 9 | `command -v`, `-V`, function bypass |
 | command-not-found.test.sh | 17 | unknown command handling |
 | conditional.test.sh | 17 | `[[ ]]` conditionals, `=~` regex, BASH_REMATCH |
-| command-subst.test.sh | 14 | 2 skipped |
+| command-subst.test.sh | 14 | includes backtick substitution (1 skipped) |
 | control-flow.test.sh | 33 | if/elif/else, for, while, case |
 | cuttr.test.sh | 32 | cut and tr commands (25 skipped) |
 | date.test.sh | 38 | format specifiers, `-d` relative/compound/epoch, `-R`, `-I`, `%N` (3 skipped) |
