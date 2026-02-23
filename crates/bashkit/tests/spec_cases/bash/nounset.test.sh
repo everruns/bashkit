@@ -45,7 +45,6 @@ value=
 
 ### nounset_default_value_ok
 # ${var:-default} should not error under set -u
-### skip: parameter expansion with :- needs nounset awareness
 set -u
 echo "${UNDEFINED_XYZ:-fallback}"
 ### expect

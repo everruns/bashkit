@@ -236,6 +236,7 @@ impl Interpreter {
         builtins.insert("mv".to_string(), Box::new(builtins::Mv));
         builtins.insert("touch".to_string(), Box::new(builtins::Touch));
         builtins.insert("chmod".to_string(), Box::new(builtins::Chmod));
+        builtins.insert("ln".to_string(), Box::new(builtins::Ln));
         builtins.insert("wc".to_string(), Box::new(builtins::Wc));
         builtins.insert("nl".to_string(), Box::new(builtins::Nl));
         builtins.insert("paste".to_string(), Box::new(builtins::Paste));
@@ -453,10 +454,16 @@ impl Interpreter {
                 break;
             }
 
-            // NOTE: errexit (set -e) is handled internally by execute_command,
-            // execute_list, and execute_command_sequence. We don't check here
-            // because those methods handle the nuances of && / || chains,
-            // if/while conditions, etc.
+            // errexit (set -e): stop on non-zero exit for top-level simple commands.
+            // List commands handle errexit internally (with && / || chain awareness).
+            // Negated pipelines (! cmd) explicitly handle the exit code.
+            if self.is_errexit_enabled() && exit_code != 0 {
+                let suppressed = matches!(command, Command::List(_))
+                    || matches!(command, Command::Pipeline(p) if p.negated);
+                if !suppressed {
+                    break;
+                }
+            }
         }
 
         Ok(ExecResult {
@@ -2395,6 +2402,27 @@ impl Interpreter {
                 .await;
         }
 
+        // Handle `type`/`which`/`hash` builtins - need interpreter-level access
+        if name == "type" {
+            return self.execute_type_builtin(&args, &command.redirects).await;
+        }
+        if name == "which" {
+            return self.execute_which_builtin(&args, &command.redirects).await;
+        }
+        if name == "hash" {
+            // hash is a no-op in sandboxed env (no real PATH search cache)
+            let mut result = ExecResult::ok(String::new());
+            result = self.apply_redirections(result, &command.redirects).await?;
+            return Ok(result);
+        }
+
+        // Handle `declare`/`typeset` - needs interpreter-level access to arrays
+        if name == "declare" || name == "typeset" {
+            return self
+                .execute_declare_builtin(&args, &command.redirects)
+                .await;
+        }
+
         // Handle `getopts` builtin - needs to read/write shell variables (OPTIND, OPTARG)
         if name == "getopts" {
             return self.execute_getopts(&args, &command.redirects).await;
@@ -3071,6 +3099,314 @@ impl Interpreter {
         }
     }
 
+    /// Execute `type` builtin — describe command type.
+    ///
+    /// - `type name` — "name is a shell builtin" / "name is a function" / etc.
+    /// - `type -t name` — print just the type word: builtin, function, keyword, file, alias
+    /// - `type -p name` — print path if it would be found on PATH
+    /// - `type -a name` — show all matches (functions, builtins, keywords)
+    async fn execute_type_builtin(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        if args.is_empty() {
+            return Ok(ExecResult::err(
+                "bash: type: usage: type [-afptP] name [name ...]\n".to_string(),
+                1,
+            ));
+        }
+
+        let mut type_only = false; // -t
+        let mut path_only = false; // -p
+        let mut show_all = false; // -a
+        let mut names: Vec<&str> = Vec::new();
+
+        for arg in args {
+            if arg.starts_with('-') && arg.len() > 1 {
+                for c in arg[1..].chars() {
+                    match c {
+                        't' => type_only = true,
+                        'p' => path_only = true,
+                        'a' => show_all = true,
+                        'f' => {} // -f: suppress function lookup (ignored for now)
+                        'P' => path_only = true,
+                        _ => {
+                            return Ok(ExecResult::err(
+                                format!(
+                                    "bash: type: -{}: invalid option\ntype: usage: type [-afptP] name [name ...]\n",
+                                    c
+                                ),
+                                1,
+                            ));
+                        }
+                    }
+                }
+            } else {
+                names.push(arg);
+            }
+        }
+
+        let mut output = String::new();
+        let mut all_found = true;
+
+        for name in &names {
+            let is_func = self.functions.contains_key(*name);
+            let is_builtin = self.builtins.contains_key(*name);
+            let is_kw = is_keyword(name);
+
+            if type_only {
+                if is_func {
+                    output.push_str("function\n");
+                } else if is_kw {
+                    output.push_str("keyword\n");
+                } else if is_builtin {
+                    output.push_str("builtin\n");
+                } else {
+                    // not found — print nothing, set exit code
+                    all_found = false;
+                }
+            } else if path_only {
+                // -p only reports external files; builtins/functions have no path
+                if !is_func && !is_builtin && !is_kw {
+                    all_found = false;
+                }
+                // In sandboxed env there are no external files, so nothing to print
+            } else {
+                // default verbose output
+                let mut found_any = false;
+                if is_func {
+                    output.push_str(&format!("{} is a function\n", name));
+                    found_any = true;
+                    if !show_all {
+                        continue;
+                    }
+                }
+                if is_kw {
+                    output.push_str(&format!("{} is a shell keyword\n", name));
+                    found_any = true;
+                    if !show_all {
+                        continue;
+                    }
+                }
+                if is_builtin {
+                    output.push_str(&format!("{} is a shell builtin\n", name));
+                    found_any = true;
+                    if !show_all {
+                        continue;
+                    }
+                }
+                if !found_any {
+                    output.push_str(&format!("bash: type: {}: not found\n", name));
+                    all_found = false;
+                }
+            }
+        }
+
+        let exit_code = if all_found { 0 } else { 1 };
+        let mut result = ExecResult {
+            stdout: output,
+            stderr: String::new(),
+            exit_code,
+            control_flow: ControlFlow::None,
+        };
+        result = self.apply_redirections(result, redirects).await?;
+        Ok(result)
+    }
+
+    /// Execute `which` builtin — locate a command.
+    ///
+    /// In bashkit's sandboxed environment, builtins are the equivalent of
+    /// executables on PATH. Reports the name if found.
+    async fn execute_which_builtin(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let names: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
+        if names.is_empty() {
+            return Ok(ExecResult::ok(String::new()));
+        }
+
+        let mut output = String::new();
+        let mut all_found = true;
+
+        for name in &names {
+            if self.builtins.contains_key(*name)
+                || self.functions.contains_key(*name)
+                || is_keyword(name)
+            {
+                output.push_str(&format!("{}\n", name));
+            } else {
+                all_found = false;
+            }
+        }
+
+        let exit_code = if all_found { 0 } else { 1 };
+        let mut result = ExecResult {
+            stdout: output,
+            stderr: String::new(),
+            exit_code,
+            control_flow: ControlFlow::None,
+        };
+        result = self.apply_redirections(result, redirects).await?;
+        Ok(result)
+    }
+
+    /// Execute `declare`/`typeset` builtin — declare variables with attributes.
+    ///
+    /// - `declare var=value` — set variable
+    /// - `declare -i var=value` — integer attribute (stored as-is)
+    /// - `declare -r var=value` — readonly
+    /// - `declare -x var=value` — export
+    /// - `declare -a arr` — indexed array
+    /// - `declare -p [var]` — print variable declarations
+    async fn execute_declare_builtin(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        if args.is_empty() {
+            // declare with no args: print all variables (like set)
+            let mut output = String::new();
+            let mut entries: Vec<_> = self.variables.iter().collect();
+            entries.sort_by_key(|(k, _)| (*k).clone());
+            for (name, value) in entries {
+                output.push_str(&format!("declare -- {}=\"{}\"\n", name, value));
+            }
+            let mut result = ExecResult::ok(output);
+            result = self.apply_redirections(result, redirects).await?;
+            return Ok(result);
+        }
+
+        let mut print_mode = false;
+        let mut is_readonly = false;
+        let mut is_export = false;
+        let mut is_array = false;
+        let mut is_integer = false;
+        let mut names: Vec<&str> = Vec::new();
+
+        for arg in args {
+            if arg.starts_with('-') && !arg.contains('=') {
+                for c in arg[1..].chars() {
+                    match c {
+                        'p' => print_mode = true,
+                        'r' => is_readonly = true,
+                        'x' => is_export = true,
+                        'a' => is_array = true,
+                        'i' => is_integer = true,
+                        'A' => {
+                            // Associative arrays not yet supported
+                            is_array = true;
+                        }
+                        'g' | 'l' | 'n' | 'u' | 't' | 'f' | 'F' => {} // ignored
+                        _ => {}
+                    }
+                }
+            } else {
+                names.push(arg);
+            }
+        }
+
+        if print_mode {
+            let mut output = String::new();
+            if names.is_empty() {
+                // Print all variables
+                let mut entries: Vec<_> = self.variables.iter().collect();
+                entries.sort_by_key(|(k, _)| (*k).clone());
+                for (name, value) in entries {
+                    output.push_str(&format!("declare -- {}=\"{}\"\n", name, value));
+                }
+            } else {
+                for name in &names {
+                    // Strip =value if present
+                    let var_name = name.split('=').next().unwrap_or(name);
+                    if let Some(value) = self.variables.get(var_name) {
+                        let mut attrs = String::from("--");
+                        if self
+                            .variables
+                            .contains_key(&format!("_READONLY_{}", var_name))
+                        {
+                            attrs = String::from("-r");
+                        }
+                        output.push_str(&format!("declare {} {}=\"{}\"\n", attrs, var_name, value));
+                    } else if let Some(arr) = self.arrays.get(var_name) {
+                        let mut items: Vec<_> = arr.iter().collect();
+                        items.sort_by_key(|(k, _)| *k);
+                        let inner: String = items
+                            .iter()
+                            .map(|(k, v)| format!("[{}]=\"{}\"", k, v))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        output.push_str(&format!("declare -a {}=({})\n", var_name, inner));
+                    } else {
+                        return Ok(ExecResult::err(
+                            format!("bash: declare: {}: not found\n", var_name),
+                            1,
+                        ));
+                    }
+                }
+            }
+            let mut result = ExecResult::ok(output);
+            result = self.apply_redirections(result, redirects).await?;
+            return Ok(result);
+        }
+
+        // Set variables
+        for name in &names {
+            if let Some(eq_pos) = name.find('=') {
+                let var_name = &name[..eq_pos];
+                let value = &name[eq_pos + 1..];
+
+                if is_integer {
+                    // Try to evaluate as integer
+                    let int_val: i64 = value.parse().unwrap_or(0);
+                    self.variables
+                        .insert(var_name.to_string(), int_val.to_string());
+                } else {
+                    self.variables
+                        .insert(var_name.to_string(), value.to_string());
+                }
+
+                if is_readonly {
+                    self.variables
+                        .insert(format!("_READONLY_{}", var_name), "1".to_string());
+                }
+                if is_export {
+                    self.env.insert(
+                        var_name.to_string(),
+                        self.variables.get(var_name).cloned().unwrap_or_default(),
+                    );
+                }
+            } else {
+                // Declare without value
+                if is_array {
+                    // Initialize empty array if not exists
+                    self.arrays
+                        .entry(name.to_string())
+                        .or_default();
+                } else if !self.variables.contains_key(*name) {
+                    self.variables.insert(name.to_string(), String::new());
+                }
+                if is_readonly {
+                    self.variables
+                        .insert(format!("_READONLY_{}", name), "1".to_string());
+                }
+                if is_export {
+                    self.env.insert(
+                        name.to_string(),
+                        self.variables.get(*name).cloned().unwrap_or_default(),
+                    );
+                }
+            }
+        }
+
+        let mut result = ExecResult::ok(String::new());
+        result = self.apply_redirections(result, redirects).await?;
+        Ok(result)
+    }
+
     /// Process input redirections (< file, <<< string)
     async fn process_input_redirections(
         &mut self,
@@ -3347,6 +3683,18 @@ impl Interpreter {
                     operator,
                     operand,
                 } => {
+                    // Under set -u, operators like :-, :=, :+, :? suppress nounset errors
+                    // because the script is explicitly handling unset variables.
+                    let suppress_nounset = matches!(
+                        operator,
+                        ParameterOp::UseDefault
+                            | ParameterOp::AssignDefault
+                            | ParameterOp::UseReplacement
+                            | ParameterOp::Error
+                    );
+                    if self.is_nounset() && !suppress_nounset && !self.is_variable_set(name) {
+                        self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
+                    }
                     let value = self.expand_variable(name);
                     let expanded = self.apply_parameter_op(&value, name, operator, operand);
                     result.push_str(&expanded);

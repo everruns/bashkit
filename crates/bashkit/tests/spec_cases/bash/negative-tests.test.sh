@@ -79,7 +79,6 @@ nonempty
 ### end
 
 ### neg_errexit_stops
-### skip: errexit timing with set -e not working correctly
 # set -e stops execution on error
 ### exit_code:1
 set -e

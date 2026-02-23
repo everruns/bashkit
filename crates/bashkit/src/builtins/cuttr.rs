@@ -34,6 +34,7 @@ impl Builtin for Cut {
         let mut mode = CutMode::Fields;
         let mut complement = false;
         let mut only_delimited = false;
+        let mut zero_terminated = false;
         let mut output_delimiter: Option<String> = None;
         let mut files = Vec::new();
 
@@ -68,6 +69,8 @@ impl Builtin for Cut {
                 mode = CutMode::Chars;
             } else if arg == "-s" {
                 only_delimited = true;
+            } else if arg == "-z" {
+                zero_terminated = true;
             } else if arg == "--complement" {
                 complement = true;
             } else if let Some(od) = arg.strip_prefix("--output-delimiter=") {
@@ -142,26 +145,30 @@ impl Builtin for Cut {
         };
 
         let mut output = String::new();
+        let line_sep = if zero_terminated { '\0' } else { '\n' };
+        let out_sep = if zero_terminated { "\0" } else { "\n" };
+
+        let process_input = |text: &str, output: &mut String| {
+            for line in text.split(line_sep) {
+                if line.is_empty() {
+                    continue;
+                }
+                if let Some(result) = process_line(line) {
+                    output.push_str(&result);
+                    output.push_str(out_sep);
+                }
+            }
+        };
 
         if files.is_empty() || files.iter().all(|f| f.as_str() == "-") {
             if let Some(stdin) = ctx.stdin {
-                for line in stdin.lines() {
-                    if let Some(result) = process_line(line) {
-                        output.push_str(&result);
-                        output.push('\n');
-                    }
-                }
+                process_input(stdin, &mut output);
             }
         } else {
             for file in &files {
                 if file.as_str() == "-" {
                     if let Some(stdin) = ctx.stdin {
-                        for line in stdin.lines() {
-                            if let Some(result) = process_line(line) {
-                                output.push_str(&result);
-                                output.push('\n');
-                            }
-                        }
+                        process_input(stdin, &mut output);
                     }
                     continue;
                 }
@@ -175,12 +182,7 @@ impl Builtin for Cut {
                 match ctx.fs.read_file(&path).await {
                     Ok(content) => {
                         let text = String::from_utf8_lossy(&content);
-                        for line in text.lines() {
-                            if let Some(result) = process_line(line) {
-                                output.push_str(&result);
-                                output.push('\n');
-                            }
-                        }
+                        process_input(&text, &mut output);
                     }
                     Err(e) => {
                         return Ok(ExecResult::err(format!("cut: {}: {}\n", file, e), 1));
@@ -461,6 +463,11 @@ fn expand_char_set(spec: &str) -> Vec<char> {
                     }
                     b't' => {
                         chars.push('\t');
+                        i += 2;
+                        continue;
+                    }
+                    b'0' => {
+                        chars.push('\0');
                         i += 2;
                         continue;
                     }

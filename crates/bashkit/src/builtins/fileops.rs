@@ -479,6 +479,83 @@ impl Builtin for Chmod {
     }
 }
 
+/// The ln builtin - create links.
+///
+/// Usage: ln [-s] [-f] TARGET LINK_NAME
+///        ln [-s] [-f] TARGET... DIRECTORY
+///
+/// Options:
+///   -s   Create symbolic link (default in Bashkit; hard links not supported in VFS)
+///   -f   Force: remove existing destination files
+///
+/// Note: In Bashkit's virtual filesystem, all links are symbolic.
+/// Hard links are not supported; `-s` is implied.
+pub struct Ln;
+
+#[async_trait]
+impl Builtin for Ln {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        let mut force = false;
+        let mut files: Vec<&str> = Vec::new();
+
+        for arg in ctx.args.iter() {
+            if arg.starts_with('-') && arg.len() > 1 {
+                for c in arg[1..].chars() {
+                    match c {
+                        's' => {} // symbolic — always symbolic in VFS
+                        'f' => force = true,
+                        _ => {
+                            return Ok(ExecResult::err(
+                                format!("ln: invalid option -- '{}'\n", c),
+                                1,
+                            ));
+                        }
+                    }
+                }
+            } else {
+                files.push(arg);
+            }
+        }
+
+        if files.len() < 2 {
+            return Ok(ExecResult::err("ln: missing file operand\n".to_string(), 1));
+        }
+
+        let target = files[0];
+        let link_name = files[1];
+        let link_path = resolve_path(ctx.cwd, link_name);
+
+        // If link already exists
+        if ctx.fs.exists(&link_path).await.unwrap_or(false) {
+            if force {
+                // Remove existing
+                let _ = ctx.fs.remove(&link_path, false).await;
+            } else {
+                return Ok(ExecResult::err(
+                    format!(
+                        "ln: failed to create symbolic link '{}': File exists\n",
+                        link_name
+                    ),
+                    1,
+                ));
+            }
+        }
+
+        let target_path = Path::new(target);
+        if let Err(e) = ctx.fs.symlink(target_path, &link_path).await {
+            return Ok(ExecResult::err(
+                format!(
+                    "ln: failed to create symbolic link '{}': {}\n",
+                    link_name, e
+                ),
+                1,
+            ));
+        }
+
+        Ok(ExecResult::ok(String::new()))
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
