@@ -107,36 +107,49 @@ async fn security_loop_counter_reset() {
 }
 
 /// Test: Function depth bypass is detected
-#[tokio::test]
+///
+/// This test deliberately bypasses function depth limits, causing deep recursion.
+/// Run on a thread with 8MB stack so the command limit (not the OS stack) halts it.
+#[test]
 #[serial]
-async fn security_function_depth_bypass() {
-    fail::cfg("limits::push_function", "return(skip_check)").unwrap();
+fn security_function_depth_bypass() {
+    let handle = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024) // 8 MB stack
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                fail::cfg("limits::push_function", "return(skip_check)").unwrap();
 
-    // Try recursive function - without limit check, this would cause stack overflow
-    let result = run_script_with_limits(
-        r#"
-        recurse() {
-            echo "depth"
-            recurse
-        }
-        recurse
-        "#,
-        ExecutionLimits::new()
-            .max_function_depth(5)
-            .max_commands(100)
-            .timeout(Duration::from_secs(2)),
-    )
-    .await;
+                let result = run_script_with_limits(
+                    r#"
+                    recurse() {
+                        echo "depth"
+                        recurse
+                    }
+                    recurse
+                    "#,
+                    ExecutionLimits::new()
+                        .max_function_depth(5)
+                        .max_commands(100)
+                        .timeout(Duration::from_secs(2)),
+                )
+                .await;
 
-    fail::cfg("limits::push_function", "off").unwrap();
+                fail::cfg("limits::push_function", "off").unwrap();
 
-    // Should hit command limit even if function depth is bypassed
-    assert!(
-        result.stderr.contains("limit")
-            || result.stderr.contains("exceeded")
-            || result.exit_code != 0,
-        "Recursive function should be limited"
-    );
+                assert!(
+                    result.stderr.contains("limit")
+                        || result.stderr.contains("exceeded")
+                        || result.exit_code != 0,
+                    "Recursive function should be limited"
+                );
+            });
+        })
+        .unwrap();
+    handle.join().unwrap();
 }
 
 // =============================================================================
