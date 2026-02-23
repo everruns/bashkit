@@ -259,32 +259,21 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Sed Limitations
 
-**Skipped Tests (13):**
-
-| Feature | Count | Notes |
-|---------|-------|-------|
-| Hold space (h/H) | 2 | `h` copy, `H` append to hold (multi-cmd interaction) |
-| Pattern ranges | 3 | `/start/,/end/d`, `/pattern/,$d` address range delete |
-| Branching | 2 | `b`, `t`, `:label` commands, `Q` quiet quit |
-| Grouped commands | 1 | `{cmd1;cmd2}` blocks |
-| Special addresses | 2 | `0~2` step, `0,/pattern/` first match |
-| Replacement escapes | 2 | `\n` newline, `&` with adjacent chars |
-| Ampersand | 1 | `&` in replacement refers to matched text |
+**Skipped Tests: 0** (all previously-skipped sed tests now pass)
 
 **Recently Implemented:**
+- Grouped commands: `{cmd1;cmd2}` blocks with address support
+- Branching: `b` (unconditional), `t` (on substitution), `:label`
+- `Q` (quiet quit) — exits without printing current line
+- Step addresses: `0~2` (every Nth line)
+- `0,/pattern/` addressing (first match only)
+- Hold space with grouped commands: `h`, `H` in `{...}` blocks
 - Hold space commands: `h` (copy), `H` (append), `g` (get), `G` (get-append), `x` (exchange)
 - Change command: `c\text` line replacement
 - Regex range addressing: `/start/,/end/` with stateful tracking
 - Numeric-regex range: `N,/pattern/`
 - Extended regex (`-E`), nth occurrence, address negation (`!`)
-
-<!-- Known SED gaps for LLM compatibility (tracked in docs/compatibility.md) -->
-<!-- - Ampersand (&) in replacement - very commonly used by LLMs -->
-<!-- - \n literal newline in replacement - used in line splitting -->
-<!-- - Grouped commands {cmd1;cmd2} - used in complex transforms -->
-<!-- - Branch/label (b/t/:label) - used in advanced scripts -->
-<!-- - 0~2 step addressing - used for even/odd line processing -->
-<!-- - Q (quiet quit) command -->
+- Ampersand `&` in replacement, `\n` literal newline in replacement
 
 ### Grep Limitations
 
