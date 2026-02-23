@@ -263,7 +263,6 @@ printf 'Hello\nhello\nHELLO\nWorld\n' | uniq -ic
 ### end
 
 ### sort_zero_terminated
-### skip: sort -z (zero terminated) not implemented
 printf 'b\0a\0c\0' | sort -z | tr '\0' '\n'
 ### expect
 a

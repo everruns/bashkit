@@ -107,17 +107,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1085 (997 pass, 88 skip)
+**Total spec test cases:** 1096 (1047 pass, 49 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 673 | Yes | 624 | 49 | `bash_spec_tests` in CI |
+| Bash (core) | 684 | Yes | 674 | 10 | `bash_spec_tests` in CI |
 | AWK | 90 | Yes | 73 | 17 | loops, arrays, -v, ternary, field assign |
 | Grep | 82 | Yes | 79 | 3 | now with -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude |
 | Sed | 65 | Yes | 53 | 12 | hold space, change, regex ranges, -E |
 | JQ | 108 | Yes | 100 | 8 | reduce, walk, regex funcs, --arg/--argjson, combined flags |
 | Python | 58 | Yes | 50 | 8 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **1076** | **Yes** | **980** | **96** | |
+| **Total** | **1087** | **Yes** | **1029** | **58** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -133,8 +133,8 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | command-not-found.test.sh | 17 | unknown command handling |
 | conditional.test.sh | 17 | `[[ ]]` conditionals, `=~` regex, BASH_REMATCH |
 | command-subst.test.sh | 14 | includes backtick substitution (1 skipped) |
-| control-flow.test.sh | 33 | if/elif/else, for, while, case |
-| cuttr.test.sh | 32 | cut and tr commands (25 skipped) |
+| control-flow.test.sh | 32 | if/elif/else, for, while, case |
+| cuttr.test.sh | 32 | cut and tr commands, `-z` zero-terminated |
 | date.test.sh | 38 | format specifiers, `-d` relative/compound/epoch, `-R`, `-I`, `%N` (3 skipped) |
 | diff.test.sh | 4 | line diffs |
 | echo.test.sh | 24 | escape sequences (1 skipped) |
@@ -147,23 +147,26 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | headtail.test.sh | 14 | |
 | herestring.test.sh | 8 | 1 skipped |
 | hextools.test.sh | 5 | od/xxd/hexdump (3 skipped) |
-| negative-tests.test.sh | 16 | error conditions (3 skipped) |
+| negative-tests.test.sh | 13 | error conditions (2 skipped) |
 | nl.test.sh | 14 | line numbering |
-| nounset.test.sh | 7 | `set -u` unbound variable checks (1 skipped) |
+| nounset.test.sh | 7 | `set -u` unbound variable checks, `${var:-default}` nounset-aware |
 | paste.test.sh | 4 | line merging with `-s` serial and `-d` delimiter |
 | path.test.sh | 14 | |
 | pipes-redirects.test.sh | 19 | includes stderr redirects |
 | printf.test.sh | 24 | format specifiers, array expansion |
 | procsub.test.sh | 6 | |
 | sleep.test.sh | 6 | |
-| sortuniq.test.sh | 32 | sort and uniq (2 skipped) |
+| sortuniq.test.sh | 32 | sort and uniq, `-z` zero-terminated (1 skipped) |
 | source.test.sh | 21 | source/., function loading, PATH search, positional params |
 | test-operators.test.sh | 17 | file/string tests |
 | time.test.sh | 11 | Wall-clock only (user/sys always 0) |
 | timeout.test.sh | 17 | |
 | variables.test.sh | 44 | includes special vars, prefix env assignments |
 | wc.test.sh | 35 | word count (5 skipped) |
-| eval-bugs.test.sh | 3 | regression tests for eval/script bugs |
+| type.test.sh | 15 | `type`, `which`, `hash` builtins |
+| declare.test.sh | 10 | `declare`/`typeset`, `-i`, `-r`, `-x`, `-a`, `-p` |
+| ln.test.sh | 5 | `ln -s`, `-f`, symlink creation |
+| eval-bugs.test.sh | 4 | regression tests for eval/script bugs |
 | script-exec.test.sh | 10 | script execution by path, $PATH search, exit codes |
 
 ## Shell Features
@@ -180,6 +183,9 @@ Features that may be added in the future (not intentionally excluded):
 | ~~`[[ =~ ]]` regex matching~~ | ~~Medium~~ | Implemented: `[[ ]]` conditionals with `=~` and BASH_REMATCH |
 | ~~`getopts`~~ | ~~Medium~~ | Implemented: POSIX option parsing |
 | ~~`command` builtin~~ | ~~Medium~~ | Implemented: `-v`, `-V`, bypass functions |
+| ~~`type`/`which` builtins~~ | ~~Medium~~ | Implemented: `-t`, `-a`, `-p` flags |
+| ~~`declare` builtin~~ | ~~Medium~~ | Implemented: `-i`, `-r`, `-x`, `-a`, `-p` |
+| ~~`ln` builtin~~ | ~~Medium~~ | Implemented: symbolic links (`-s`, `-f`) |
 | `alias` | Low | Interactive feature |
 | History expansion | Out of scope | Interactive only |
 
@@ -201,14 +207,15 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-**84 core builtins + 3 feature-gated = 87 total**
+**90 core builtins + 3 feature-gated = 93 total**
 
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,
 `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`,
-`basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `wc`,
+`basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `ln`, `wc`,
 `sort`, `uniq`, `cut`, `tr`, `paste`, `column`, `diff`, `comm`, `date`,
 `wait`, `curl`, `wget`, `timeout`, `command`, `getopts`,
+`type`, `which`, `hash`, `declare`, `typeset`,
 `time` (keyword), `whoami`, `hostname`, `uname`, `id`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
 `:` (colon), `eval`, `readonly`, `times`, `bash`, `sh`,
 `od`, `xxd`, `hexdump`, `strings`,
@@ -219,8 +226,7 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Not Yet Implemented
 
-`ln`, `chown`, `type`, `which`, `hash`, `declare`,
-`typeset`, `kill`
+`chown`, `kill`
 
 ## Text Processing
 

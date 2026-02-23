@@ -81,7 +81,7 @@ pub use disk::{Df, Du};
 pub use echo::Echo;
 pub use environ::{Env, History, Printenv};
 pub use export::Export;
-pub use fileops::{Chmod, Cp, Mkdir, Mv, Rm, Touch};
+pub use fileops::{Chmod, Cp, Ln, Mkdir, Mv, Rm, Touch};
 pub use flow::{Break, Colon, Continue, Exit, False, Return, True};
 pub use grep::Grep;
 pub use headtail::{Head, Tail};

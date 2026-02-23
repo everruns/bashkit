@@ -280,11 +280,28 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a pipeline (commands connected by |)
+    ///
+    /// Handles `!` pipeline negation: `! cmd | cmd2` negates the exit code.
     fn parse_pipeline(&mut self) -> Result<Option<Command>> {
         let start_span = self.current_span;
+
+        // Check for pipeline negation: `! command`
+        let negated = match &self.current_token {
+            Some(tokens::Token::Word(w)) if w == "!" => {
+                self.advance();
+                true
+            }
+            _ => false,
+        };
+
         let first = match self.parse_command()? {
             Some(cmd) => cmd,
-            None => return Ok(None),
+            None => {
+                if negated {
+                    return Err(self.error("expected command after !"));
+                }
+                return Ok(None);
+            }
         };
 
         let mut commands = vec![first];
@@ -300,11 +317,11 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if commands.len() == 1 {
+        if commands.len() == 1 && !negated {
             Ok(Some(commands.remove(0)))
         } else {
             Ok(Some(Command::Pipeline(Pipeline {
-                negated: false,
+                negated,
                 commands,
                 span: start_span.merge(self.current_span),
             })))
