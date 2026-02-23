@@ -155,7 +155,6 @@ echo $?
 ### end
 
 ### sort_merge
-### skip: sort -m (merge) not implemented
 printf 'a\nc\n' > /tmp/f1 && printf 'b\nd\n' > /tmp/f2 && sort -m /tmp/f1 /tmp/f2
 ### expect
 a

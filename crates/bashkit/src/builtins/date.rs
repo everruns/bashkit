@@ -343,8 +343,13 @@ impl Builtin for Date {
         }
 
         let default_format = "%a %b %e %H:%M:%S %Z %Y".to_string();
+        let format_owned;
         let format = match &format_arg {
-            Some(fmt) => &fmt[1..], // Strip leading '+'
+            Some(fmt) => {
+                let without_plus = &fmt[1..]; // Strip leading '+'
+                format_owned = strip_surrounding_quotes(without_plus).to_string();
+                &format_owned
+            }
             None => &default_format,
         };
 
