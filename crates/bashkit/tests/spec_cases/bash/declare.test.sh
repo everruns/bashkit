@@ -81,3 +81,65 @@ echo "$myvar"
 ### expect
 hello
 ### end
+
+### nameref_basic
+# declare -n creates a name reference
+x=hello
+declare -n ref=x
+echo "$ref"
+### expect
+hello
+### end
+
+### nameref_assign_through
+# Assigning to nameref assigns to target variable
+x=old
+declare -n ref=x
+ref=new
+echo "$x"
+### expect
+new
+### end
+
+### nameref_chain
+# Nameref can chain through another nameref
+a=value
+declare -n b=a
+declare -n c=b
+echo "$c"
+### expect
+value
+### end
+
+### nameref_in_function
+# Nameref used to pass variable names to functions
+set_via_ref() {
+  declare -n ref=$1
+  ref="set_by_function"
+}
+result=""
+set_via_ref result
+echo "$result"
+### expect
+set_by_function
+### end
+
+### nameref_read_unset
+# Reading through nameref to unset variable returns empty
+declare -n ref=nonexistent_var
+echo "[$ref]"
+### expect
+[]
+### end
+
+### nameref_reassign_target
+# Changing the target variable reflects through the nameref
+x=first
+declare -n ref=x
+echo "$ref"
+x=second
+echo "$ref"
+### expect
+first
+second
+### end
