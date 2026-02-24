@@ -201,3 +201,73 @@ echo $((1 || 0 && 0))
 ### expect
 1
 ### end
+
+### arith_exponentiation
+# ** power operator
+echo $((2 ** 10))
+### expect
+1024
+### end
+
+### arith_exponentiation_variable
+# ** with variable
+x=5; echo $(( x ** 2 ))
+### expect
+25
+### end
+
+### arith_base_hex
+# Base conversion: 16#ff = 255
+echo $((16#ff))
+### expect
+255
+### end
+
+### arith_base_binary
+# Base conversion: 2#1010 = 10
+echo $((2#1010))
+### expect
+10
+### end
+
+### arith_base_octal
+# Base conversion: 8#77 = 63
+echo $((8#77))
+### expect
+63
+### end
+
+### arith_hex_literal
+# 0x hex literal
+echo $((0xff))
+### expect
+255
+### end
+
+### arith_octal_literal
+# Octal literal
+echo $((077))
+### expect
+63
+### end
+
+### arith_unary_negate
+# Unary negation
+echo $((-5))
+### expect
+-5
+### end
+
+### arith_bitwise_not
+# Bitwise NOT
+echo $((~0))
+### expect
+-1
+### end
+
+### arith_logical_not
+# Logical NOT
+echo $((!0))
+### expect
+1
+### end

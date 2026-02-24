@@ -2475,6 +2475,11 @@ impl Interpreter {
             return self.execute_getopts(&args, &command.redirects).await;
         }
 
+        // Handle `mapfile`/`readarray` - needs direct access to arrays
+        if name == "mapfile" || name == "readarray" {
+            return self.execute_mapfile(&args, stdin.as_deref()).await;
+        }
+
         // Check for builtins
         if let Some(builtin) = self.builtins.get(name) {
             let ctx = builtins::Context {
@@ -2854,6 +2859,53 @@ impl Interpreter {
 
     /// Execute the `getopts` builtin (POSIX option parsing).
     ///
+    /// Execute mapfile/readarray builtin — reads lines into an indexed array.
+    /// Handled inline because it needs direct access to self.arrays.
+    async fn execute_mapfile(
+        &mut self,
+        args: &[String],
+        stdin_data: Option<&str>,
+    ) -> Result<ExecResult> {
+        let mut trim_trailing = false; // -t: strip trailing newlines
+        let mut array_name = "MAPFILE".to_string();
+        let mut positional = Vec::new();
+
+        for arg in args {
+            match arg.as_str() {
+                "-t" => trim_trailing = true,
+                a if a.starts_with('-') => {} // skip unknown flags
+                _ => positional.push(arg.clone()),
+            }
+        }
+
+        if let Some(name) = positional.first() {
+            array_name = name.clone();
+        }
+
+        let input = stdin_data.unwrap_or("");
+
+        // Clear existing array
+        self.arrays.remove(&array_name);
+
+        // Split into lines and populate array
+        if !input.is_empty() {
+            let mut arr = HashMap::new();
+            for (idx, line) in input.lines().enumerate() {
+                let value = if trim_trailing {
+                    line.to_string()
+                } else {
+                    format!("{}\n", line)
+                };
+                arr.insert(idx, value);
+            }
+            if !arr.is_empty() {
+                self.arrays.insert(array_name, arr);
+            }
+        }
+
+        Ok(ExecResult::ok(String::new()))
+    }
+
     /// Usage: `getopts optstring name [args...]`
     ///
     /// Parses options from positional params (or `args`).
@@ -4416,9 +4468,12 @@ impl Interpreter {
     fn expand_arithmetic_vars(&self, expr: &str) -> String {
         let mut result = String::new();
         let mut chars = expr.chars().peekable();
+        // Track whether we're in a numeric literal context (after # or 0x)
+        let mut in_numeric_literal = false;
 
         while let Some(ch) = chars.next() {
             if ch == '$' {
+                in_numeric_literal = false;
                 // Handle $var syntax (common in arithmetic)
                 let mut name = String::new();
                 while let Some(&c) = chars.peek() {
@@ -4438,7 +4493,26 @@ impl Interpreter {
                 } else {
                     result.push(ch);
                 }
+            } else if ch == '#' {
+                // base#value syntax: digits before # are base, chars after are literal digits
+                result.push(ch);
+                in_numeric_literal = true;
+            } else if in_numeric_literal && (ch.is_ascii_alphanumeric() || ch == '_') {
+                // Part of a base#value literal — don't expand as variable
+                result.push(ch);
+            } else if ch.is_ascii_digit() {
+                result.push(ch);
+                // Check for 0x/0X hex prefix
+                if ch == '0' {
+                    if let Some(&next) = chars.peek() {
+                        if next == 'x' || next == 'X' {
+                            result.push(chars.next().unwrap());
+                            in_numeric_literal = true;
+                        }
+                    }
+                }
             } else if ch.is_ascii_alphabetic() || ch == '_' {
+                in_numeric_literal = false;
                 // Could be a variable name
                 let mut name = String::new();
                 name.push(ch);
@@ -4457,6 +4531,7 @@ impl Interpreter {
                     result.push_str(&value);
                 }
             } else {
+                in_numeric_literal = false;
                 result.push(ch);
             }
         }
@@ -4688,17 +4763,28 @@ impl Interpreter {
             }
         }
 
-        // Multiplication/Division/Modulo (higher precedence)
+        // Multiplication/Division/Modulo (higher precedence, skip ** which is power)
         depth = 0;
         for i in (0..chars.len()).rev() {
             match chars[i] {
                 '(' => depth += 1,
                 ')' => depth -= 1,
-                '*' | '/' | '%' if depth == 0 => {
+                '*' if depth == 0 => {
+                    // Skip ** (power operator handled below)
+                    if i + 1 < chars.len() && chars[i + 1] == '*' {
+                        continue;
+                    }
+                    if i > 0 && chars[i - 1] == '*' {
+                        continue;
+                    }
+                    let left = self.parse_arithmetic_impl(&expr[..i], arith_depth + 1);
+                    let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
+                    return left * right;
+                }
+                '/' | '%' if depth == 0 => {
                     let left = self.parse_arithmetic_impl(&expr[..i], arith_depth + 1);
                     let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
                     return match chars[i] {
-                        '*' => left * right,
                         '/' => {
                             if right != 0 {
                                 left / right
@@ -4718,6 +4804,62 @@ impl Interpreter {
                 }
                 _ => {}
             }
+        }
+
+        // Exponentiation ** (right-associative, higher precedence than */%)
+        depth = 0;
+        for i in 0..chars.len() {
+            match chars[i] {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                '*' if depth == 0 && i + 1 < chars.len() && chars[i + 1] == '*' => {
+                    let left = self.parse_arithmetic_impl(&expr[..i], arith_depth + 1);
+                    // Right-associative: parse from i+2 onward (may contain more **)
+                    let right = self.parse_arithmetic_impl(&expr[i + 2..], arith_depth + 1);
+                    return left.pow(right as u32);
+                }
+                _ => {}
+            }
+        }
+
+        // Unary negation and bitwise NOT
+        if let Some(rest) = expr.strip_prefix('-') {
+            let rest = rest.trim();
+            if !rest.is_empty() {
+                return -self.parse_arithmetic_impl(rest, arith_depth + 1);
+            }
+        }
+        if let Some(rest) = expr.strip_prefix('~') {
+            let rest = rest.trim();
+            if !rest.is_empty() {
+                return !self.parse_arithmetic_impl(rest, arith_depth + 1);
+            }
+        }
+        if let Some(rest) = expr.strip_prefix('!') {
+            let rest = rest.trim();
+            if !rest.is_empty() {
+                let val = self.parse_arithmetic_impl(rest, arith_depth + 1);
+                return if val == 0 { 1 } else { 0 };
+            }
+        }
+
+        // Base conversion: base#value (e.g., 16#ff = 255, 2#1010 = 10)
+        if let Some(hash_pos) = expr.find('#') {
+            let base_str = &expr[..hash_pos];
+            let value_str = &expr[hash_pos + 1..];
+            if let Ok(base) = base_str.parse::<u32>() {
+                if (2..=64).contains(&base) {
+                    return i64::from_str_radix(value_str, base).unwrap_or(0);
+                }
+            }
+        }
+
+        // Hex (0x...), octal (0...) literals
+        if expr.starts_with("0x") || expr.starts_with("0X") {
+            return i64::from_str_radix(&expr[2..], 16).unwrap_or(0);
+        }
+        if expr.starts_with('0') && expr.len() > 1 && expr.chars().all(|c| c.is_ascii_digit()) {
+            return i64::from_str_radix(&expr[1..], 8).unwrap_or(0);
         }
 
         // Parse as number
