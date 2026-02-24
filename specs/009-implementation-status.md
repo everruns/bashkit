@@ -103,17 +103,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1292 (1287 pass, 5 skip)
+**Total spec test cases:** 1297 (1292 pass, 5 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 874 | Yes | 869 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 879 | Yes | 874 | 5 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
 | JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
 | Python | 57 | Yes | 57 | 0 | embedded Python (Monty) |
-| **Total** | **1292** | **Yes** | **1287** | **5** | |
+| **Total** | **1297** | **Yes** | **1292** | **5** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -157,7 +157,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | test-operators.test.sh | 17 | file/string tests |
 | time.test.sh | 11 | Wall-clock only (user/sys always 0) |
 | timeout.test.sh | 17 | |
-| variables.test.sh | 73 | includes special vars, prefix env, PIPESTATUS, trap EXIT, `${var@Q}`, `\<newline>` line continuation, PWD/HOME/USER/HOSTNAME/BASH_VERSION/SECONDS |
+| variables.test.sh | 78 | includes special vars, prefix env, PIPESTATUS, trap EXIT, `${var@Q}`, `\<newline>` line continuation, PWD/HOME/USER/HOSTNAME/BASH_VERSION/SECONDS, `set -x` xtrace |
 | wc.test.sh | 35 | word count (5 skipped) |
 | type.test.sh | 15 | `type`, `which`, `hash` builtins |
 | declare.test.sh | 10 | `declare`/`typeset`, `-i`, `-r`, `-x`, `-a`, `-p` |
