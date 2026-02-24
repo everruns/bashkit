@@ -945,12 +945,12 @@ impl<'a> Parser<'a> {
                 self.skip_newlines()?;
             }
 
-            cases.push(CaseItem { patterns, commands });
-
-            // Consume ;; if present
-            if self.is_case_terminator() {
-                self.advance_double_semicolon();
-            }
+            let terminator = self.parse_case_terminator();
+            cases.push(CaseItem {
+                patterns,
+                commands,
+                terminator,
+            });
             self.skip_newlines()?;
         }
 
@@ -1000,18 +1000,30 @@ impl<'a> Parser<'a> {
 
     /// Check if current token is ;; (case terminator)
     fn is_case_terminator(&self) -> bool {
-        // The lexer returns Semicolon for ; but we need ;;
-        // For now, check for two semicolons
-        matches!(self.current_token, Some(tokens::Token::Semicolon))
+        matches!(
+            self.current_token,
+            Some(tokens::Token::DoubleSemicolon)
+                | Some(tokens::Token::SemiAmp)
+                | Some(tokens::Token::DoubleSemiAmp)
+        )
     }
 
-    /// Advance past ;; (double semicolon)
-    fn advance_double_semicolon(&mut self) {
-        if matches!(self.current_token, Some(tokens::Token::Semicolon)) {
-            self.advance();
-            if matches!(self.current_token, Some(tokens::Token::Semicolon)) {
+    /// Parse case terminator: `;;` (break), `;&` (fallthrough), `;;&` (continue matching)
+    fn parse_case_terminator(&mut self) -> ast::CaseTerminator {
+        match self.current_token {
+            Some(tokens::Token::SemiAmp) => {
                 self.advance();
+                ast::CaseTerminator::FallThrough
             }
+            Some(tokens::Token::DoubleSemiAmp) => {
+                self.advance();
+                ast::CaseTerminator::Continue
+            }
+            Some(tokens::Token::DoubleSemicolon) => {
+                self.advance();
+                ast::CaseTerminator::Break
+            }
+            _ => ast::CaseTerminator::Break,
         }
     }
 

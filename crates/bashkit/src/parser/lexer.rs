@@ -77,7 +77,20 @@ impl<'a> Lexer<'a> {
             }
             ';' => {
                 self.advance();
-                Some(Token::Semicolon)
+                if self.peek_char() == Some(';') {
+                    self.advance();
+                    if self.peek_char() == Some('&') {
+                        self.advance();
+                        Some(Token::DoubleSemiAmp) // ;;&
+                    } else {
+                        Some(Token::DoubleSemicolon) // ;;
+                    }
+                } else if self.peek_char() == Some('&') {
+                    self.advance();
+                    Some(Token::SemiAmp) // ;&
+                } else {
+                    Some(Token::Semicolon)
+                }
             }
             '|' => {
                 self.advance();

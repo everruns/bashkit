@@ -1327,20 +1327,59 @@ impl Interpreter {
 
     /// Execute a case statement
     async fn execute_case(&mut self, case_cmd: &CaseCommand) -> Result<ExecResult> {
+        use crate::parser::CaseTerminator;
         let word_value = self.expand_word(&case_cmd.word).await?;
 
-        // Try each case item in order
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+        let mut fallthrough = false;
+
         for case_item in &case_cmd.cases {
-            for pattern in &case_item.patterns {
-                let pattern_str = self.expand_word(pattern).await?;
-                if self.pattern_matches(&word_value, &pattern_str) {
-                    return self.execute_command_sequence(&case_item.commands).await;
+            let matched = if fallthrough {
+                true
+            } else {
+                let mut m = false;
+                for pattern in &case_item.patterns {
+                    let pattern_str = self.expand_word(pattern).await?;
+                    if self.pattern_matches(&word_value, &pattern_str) {
+                        m = true;
+                        break;
+                    }
+                }
+                m
+            };
+
+            if matched {
+                let r = self.execute_command_sequence(&case_item.commands).await?;
+                stdout.push_str(&r.stdout);
+                stderr.push_str(&r.stderr);
+                exit_code = r.exit_code;
+                match case_item.terminator {
+                    CaseTerminator::Break => {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: r.control_flow,
+                        });
+                    }
+                    CaseTerminator::FallThrough => {
+                        fallthrough = true;
+                    }
+                    CaseTerminator::Continue => {
+                        fallthrough = false;
+                    }
                 }
             }
         }
 
-        // No pattern matched - return success with no output
-        Ok(ExecResult::ok(String::new()))
+        Ok(ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+            control_flow: ControlFlow::None,
+        })
     }
 
     /// Execute a time command - measure wall-clock execution time

@@ -173,6 +173,47 @@ case hello in hel*) echo prefix;; esac
 prefix
 ### end
 
+### case_fallthrough
+# Case ;& falls through to next body
+case a in a) echo first ;& b) echo second ;; esac
+### expect
+first
+second
+### end
+
+### case_fallthrough_chain
+# Case ;& chains through multiple bodies
+case a in a) echo one ;& b) echo two ;& c) echo three ;; esac
+### expect
+one
+two
+three
+### end
+
+### case_continue_matching
+# Case ;;& continues checking remaining patterns
+case "test" in t*) echo prefix ;;& *es*) echo middle ;; *z*) echo nope ;; esac
+### expect
+prefix
+middle
+### end
+
+### case_continue_no_match
+# Case ;;& skips non-matching subsequent patterns
+case "hello" in h*) echo first ;;& *z*) echo nope ;; *lo) echo last ;; esac
+### expect
+first
+last
+### end
+
+### case_fallthrough_no_match
+# Case ;& falls through even if next pattern wouldn't match
+case a in a) echo matched ;& z) echo fell_through ;; esac
+### expect
+matched
+fell_through
+### end
+
 ### and_list_success
 # AND list with success
 true && echo yes
