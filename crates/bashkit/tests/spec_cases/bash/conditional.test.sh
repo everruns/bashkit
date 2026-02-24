@@ -118,3 +118,52 @@ echo $?
 ### expect
 1
 ### end
+
+### cond_glob_star
+# [[ == ]] with * glob pattern
+[[ "hello.txt" == *.txt ]] && echo match || echo no
+### expect
+match
+### end
+
+### cond_glob_star_no_match
+# [[ == ]] glob * doesn't match wrong extension
+[[ "hello.txt" == *.log ]] && echo match || echo no
+### expect
+no
+### end
+
+### cond_glob_question
+# [[ == ]] with ? single-char glob
+[[ "abc" == ?b? ]] && echo match || echo no
+### expect
+match
+### end
+
+### cond_glob_prefix
+# [[ == ]] with prefix glob
+[[ "hello_world" == hello* ]] && echo match || echo no
+### expect
+match
+### end
+
+### cond_glob_suffix
+# [[ == ]] with suffix glob
+[[ "test_file" == *_file ]] && echo match || echo no
+### expect
+match
+### end
+
+### cond_glob_not_equal
+# [[ != ]] with glob pattern
+[[ "hello.txt" != *.log ]] && echo diff || echo same
+### expect
+diff
+### end
+
+### cond_exact_match_no_glob
+# [[ == ]] exact match with no glob chars
+[[ "hello" == "hello" ]] && echo yes || echo no
+### expect
+yes
+### end

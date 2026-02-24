@@ -959,8 +959,8 @@ impl Interpreter {
                 3 => {
                     // Binary operators
                     match args[1].as_str() {
-                        "=" | "==" => args[0] == args[2],
-                        "!=" => args[0] != args[2],
+                        "=" | "==" => self.pattern_matches(&args[0], &args[2]),
+                        "!=" => !self.pattern_matches(&args[0], &args[2]),
                         "<" => args[0] < args[2],
                         ">" => args[0] > args[2],
                         "-eq" => {

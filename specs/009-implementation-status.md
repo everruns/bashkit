@@ -103,16 +103,16 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1174 (1169 pass, 5 skip)
+**Total spec test cases:** 1181 (1176 pass, 5 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 813 | Yes | 808 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 820 | Yes | 815 | 5 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
 | JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
-| **Total** | **1174** | **Yes** | **1169** | **5** | |
+| **Total** | **1181** | **Yes** | **1176** | **5** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -126,7 +126,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | column.test.sh | 10 | column alignment |
 | command.test.sh | 9 | `command -v`, `-V`, function bypass |
 | command-not-found.test.sh | 17 | unknown command handling |
-| conditional.test.sh | 17 | `[[ ]]` conditionals, `=~` regex, BASH_REMATCH |
+| conditional.test.sh | 24 | `[[ ]]` conditionals, `=~` regex, BASH_REMATCH, glob `==`/`!=` |
 | command-subst.test.sh | 14 | includes backtick substitution (1 skipped) |
 | control-flow.test.sh | 43 | if/elif/else, for, while, case, trap ERR, `[[ =~ ]]` BASH_REMATCH |
 | cuttr.test.sh | 32 | cut and tr commands, `-z` zero-terminated |
