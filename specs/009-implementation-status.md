@@ -310,10 +310,7 @@ None currently tracked.
 - `--arg name value` and `--argjson name value` variable bindings
 - `--indent N` flag no longer eats the filter argument
 - `env` builtin now exposes bashkit shell env vars to jaq runtime
-<<<<<<< HEAD
 - `input`/`inputs` iterators wired to shared input stream
-=======
->>>>>>> aaf2160 (feat(jq): expose shell env vars to jaq runtime via `env` builtin)
 
 ### Curl Limitations
 
