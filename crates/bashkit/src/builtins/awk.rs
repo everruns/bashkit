@@ -107,6 +107,50 @@ enum AwkValue {
     Uninitialized,
 }
 
+/// Format number using AWK's OFMT (%.6g): 6 significant digits, trim trailing zeros.
+fn format_awk_number(n: f64) -> String {
+    if n.is_nan() {
+        return "nan".to_string();
+    }
+    if n.is_infinite() {
+        return if n > 0.0 { "inf" } else { "-inf" }.to_string();
+    }
+    // Integers: no decimal point
+    if n.fract() == 0.0 && n.abs() < 1e16 {
+        return format!("{}", n as i64);
+    }
+    // %.6g: use 6 significant digits
+    let abs = n.abs();
+    let exp = abs.log10().floor() as i32;
+    if !(-4..6).contains(&exp) {
+        // Scientific notation: 5 decimal places = 6 sig digits
+        let mut s = format!("{:.*e}", 5, n);
+        // Trim trailing zeros in mantissa
+        if let Some(e_pos) = s.find('e') {
+            let (mantissa, exp_part) = s.split_at(e_pos);
+            let trimmed = mantissa.trim_end_matches('0').trim_end_matches('.');
+            s = format!("{}{}", trimmed, exp_part);
+        }
+        // Normalize exponent format: e1 -> e+01 etc. to match C printf
+        // Actually AWK uses e+06 style. Rust uses e6. Fix:
+        if let Some(e_pos) = s.find('e') {
+            let exp_str = &s[e_pos + 1..];
+            let exp_val: i32 = exp_str.parse().unwrap_or(0);
+            let mantissa = &s[..e_pos];
+            s = format!("{}e{:+03}", mantissa, exp_val);
+        }
+        s
+    } else {
+        // Fixed notation
+        let decimal_places = (5 - exp).max(0) as usize;
+        let mut s = format!("{:.*}", decimal_places, n);
+        if s.contains('.') {
+            s = s.trim_end_matches('0').trim_end_matches('.').to_string();
+        }
+        s
+    }
+}
+
 impl AwkValue {
     fn as_number(&self) -> f64 {
         match self {
@@ -118,13 +162,7 @@ impl AwkValue {
 
     fn as_string(&self) -> String {
         match self {
-            AwkValue::Number(n) => {
-                if n.fract() == 0.0 {
-                    format!("{}", *n as i64)
-                } else {
-                    format!("{}", n)
-                }
-            }
+            AwkValue::Number(n) => format_awk_number(*n),
             AwkValue::String(s) => s.clone(),
             AwkValue::Uninitialized => String::new(),
         }
@@ -2340,13 +2378,18 @@ impl AwkInterpreter {
             AwkAction::ForIn(var, arr_name, actions) => {
                 // Collect array keys matching the pattern arr_name[*]
                 let prefix = format!("{}[", arr_name);
-                let keys: Vec<String> = self
+                let mut keys: Vec<String> = self
                     .state
                     .variables
                     .keys()
                     .filter(|k| k.starts_with(&prefix) && k.ends_with(']'))
                     .map(|k| k[prefix.len()..k.len() - 1].to_string())
                     .collect();
+                // Sort for deterministic iteration: numeric keys first, then lexical
+                keys.sort_by(|a, b| match (a.parse::<f64>(), b.parse::<f64>()) {
+                    (Ok(na), Ok(nb)) => na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal),
+                    _ => a.cmp(b),
+                });
 
                 for key in keys {
                     self.state.set_variable(var, AwkValue::String(key));

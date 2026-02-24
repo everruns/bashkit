@@ -418,10 +418,16 @@ printf '0\n' | awk '{print sin($1), cos($1)}'
 ### end
 
 ### awk_exp_log_func
-### skip: exp/log function output precision differs
+# exp/log use %.6g formatting (6 significant digits)
 printf '1\n' | awk '{print exp($1)}'
 ### expect
 2.71828
+### end
+
+### awk_log_func
+printf '100\n' | awk '{print log($1)}'
+### expect
+4.60517
 ### end
 
 ### awk_match_func
@@ -514,11 +520,20 @@ found
 ### end
 
 ### awk_for_in_array
-### skip: for-in array iteration order not deterministic
+# for-in iterates keys in sorted order (numeric, then lexical)
 printf 'a\n' | awk 'BEGIN {a[1]="x"; a[2]="y"} {for (k in a) print k, a[k]}'
 ### expect
 1 x
 2 y
+### end
+
+### awk_for_in_string_keys
+# for-in with string keys sorts lexically
+printf 'a\n' | awk 'BEGIN {a["b"]="2"; a["a"]="1"; a["c"]="3"} {for (k in a) print k, a[k]}'
+### expect
+a 1
+b 2
+c 3
 ### end
 
 ### awk_delete_array
