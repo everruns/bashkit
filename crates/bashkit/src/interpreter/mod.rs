@@ -312,6 +312,7 @@ impl Interpreter {
         builtins.insert("xargs".to_string(), Box::new(builtins::Xargs));
         builtins.insert("tee".to_string(), Box::new(builtins::Tee));
         builtins.insert("watch".to_string(), Box::new(builtins::Watch));
+        builtins.insert("shopt".to_string(), Box::new(builtins::Shopt));
 
         // Merge custom builtins (override defaults if same name)
         for (name, builtin) in custom_builtins {
@@ -716,7 +717,14 @@ impl Interpreter {
                         if self.contains_glob_chars(&item) {
                             let glob_matches = self.expand_glob(&item).await?;
                             if glob_matches.is_empty() {
-                                vals.push(item);
+                                let nullglob = self
+                                    .variables
+                                    .get("SHOPT_nullglob")
+                                    .map(|v| v == "1")
+                                    .unwrap_or(false);
+                                if !nullglob {
+                                    vals.push(item);
+                                }
                             } else {
                                 vals.extend(glob_matches);
                             }
@@ -837,7 +845,14 @@ impl Interpreter {
                         if self.contains_glob_chars(&item) {
                             let glob_matches = self.expand_glob(&item).await?;
                             if glob_matches.is_empty() {
-                                values.push(item);
+                                let nullglob = self
+                                    .variables
+                                    .get("SHOPT_nullglob")
+                                    .map(|v| v == "1")
+                                    .unwrap_or(false);
+                                if !nullglob {
+                                    values.push(item);
+                                }
                             } else {
                                 values.extend(glob_matches);
                             }
@@ -2641,8 +2656,17 @@ impl Interpreter {
                     if self.contains_glob_chars(&item) {
                         let glob_matches = self.expand_glob(&item).await?;
                         if glob_matches.is_empty() {
-                            // No matches - keep original pattern (bash behavior)
-                            args.push(item);
+                            // nullglob: unmatched globs expand to nothing
+                            let nullglob = self
+                                .variables
+                                .get("SHOPT_nullglob")
+                                .map(|v| v == "1")
+                                .unwrap_or(false);
+                            if !nullglob {
+                                // Default: keep original pattern (bash behavior)
+                                args.push(item);
+                            }
+                            // With nullglob: skip (produce nothing)
                         } else {
                             args.extend(glob_matches);
                         }
