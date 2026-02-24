@@ -448,3 +448,90 @@ echo "hello\tworld"
 ### expect
 hello\tworld
 ### end
+
+### var_pwd_set
+# $PWD is set to current directory
+### bash_diff
+echo "$PWD" | grep -q "/" && echo "has_slash"
+### expect
+has_slash
+### end
+
+### var_home_set
+# $HOME is set
+### bash_diff
+test -n "$HOME" && echo "home_set"
+### expect
+home_set
+### end
+
+### var_user_set
+# $USER is set
+### bash_diff
+test -n "$USER" && echo "user_set"
+### expect
+user_set
+### end
+
+### var_hostname_set
+# $HOSTNAME is set
+### bash_diff
+test -n "$HOSTNAME" && echo "hostname_set"
+### expect
+hostname_set
+### end
+
+### var_bash_version
+# BASH_VERSION is set
+### bash_diff
+test -n "$BASH_VERSION" && echo "version_set"
+### expect
+version_set
+### end
+
+### var_bash_versinfo_array
+# BASH_VERSINFO is an array with version parts
+### bash_diff
+echo "${#BASH_VERSINFO[@]}"
+test -n "${BASH_VERSINFO[0]}" && echo "major_set"
+### expect
+6
+major_set
+### end
+
+### var_uid_set
+# $UID is set
+### bash_diff
+test -n "$UID" && echo "uid_set"
+### expect
+uid_set
+### end
+
+### var_seconds
+# $SECONDS is set (always 0 in bashkit)
+### bash_diff
+test -n "$SECONDS" && echo "seconds_set"
+### expect
+seconds_set
+### end
+
+### var_pwd_updates_with_cd
+# $PWD updates after cd
+### bash_diff
+mkdir -p /tmp/test_pwd_cd
+cd /tmp/test_pwd_cd
+echo "$PWD"
+### expect
+/tmp/test_pwd_cd
+### end
+
+### var_oldpwd_set_after_cd
+# $OLDPWD is set after cd
+### bash_diff
+mkdir -p /tmp/test_oldpwd_cd
+old="$PWD"
+cd /tmp/test_oldpwd_cd
+echo "$OLDPWD" | grep -q "/" && echo "oldpwd_set"
+### expect
+oldpwd_set
+### end
