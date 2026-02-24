@@ -338,3 +338,73 @@ trap 'echo goodbye' EXIT; echo hello
 hello
 goodbye
 ### end
+
+### var_pipefail
+# set -o pipefail returns rightmost non-zero exit code
+set -o pipefail; false | true; echo $?
+### expect
+1
+### end
+
+### var_pipefail_all_success
+# pipefail with all-success pipeline returns 0
+set -o pipefail; true | true; echo $?
+### expect
+0
+### end
+
+### var_pipefail_last_fails
+# pipefail with last command failing
+set -o pipefail; true | false; echo $?
+### expect
+1
+### end
+
+### var_pipefail_disable
+# set +o pipefail disables pipefail
+set -o pipefail; set +o pipefail; false | true; echo $?
+### expect
+0
+### end
+
+### var_error_if_unset_set
+# ${var:?message} succeeds when set
+x=hello; echo ${x:?should not error}
+### expect
+hello
+### end
+
+### var_transform_quote
+# ${var@Q} quotes for reuse
+x='hello world'; echo ${x@Q}
+### expect
+'hello world'
+### end
+
+### var_transform_uppercase_all
+# ${var@U} uppercases all
+x=hello; echo ${x@U}
+### expect
+HELLO
+### end
+
+### var_transform_uppercase_first
+# ${var@u} uppercases first char
+x=hello; echo ${x@u}
+### expect
+Hello
+### end
+
+### var_transform_lowercase
+# ${var@L} lowercases all
+x=HELLO; echo ${x@L}
+### expect
+hello
+### end
+
+### var_transform_assign
+# ${var@A} shows assignment form
+x=hello; echo ${x@A}
+### expect
+x='hello'
+### end

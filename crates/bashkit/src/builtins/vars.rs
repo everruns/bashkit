@@ -25,11 +25,28 @@ impl Builtin for Unset {
 
 /// set builtin - set/display shell options and positional parameters
 ///
-/// Currently supports:
-/// - `set -e` - exit on error (stored but not enforced yet)
-/// - `set -x` - trace mode (stored but not enforced yet)
+/// Supports:
+/// - `set -e` / `set +e` - errexit
+/// - `set -u` / `set +u` - nounset
+/// - `set -x` / `set +x` - xtrace
+/// - `set -o option` / `set +o option` - long option names
 /// - `set --` - set positional parameters
 pub struct Set;
+
+/// Map long option names to their SHOPT_* variable names
+fn option_name_to_var(name: &str) -> Option<&'static str> {
+    match name {
+        "errexit" => Some("SHOPT_e"),
+        "nounset" => Some("SHOPT_u"),
+        "xtrace" => Some("SHOPT_x"),
+        "verbose" => Some("SHOPT_v"),
+        "pipefail" => Some("SHOPT_pipefail"),
+        "noclobber" => Some("SHOPT_C"),
+        "noglob" => Some("SHOPT_f"),
+        "noexec" => Some("SHOPT_n"),
+        _ => None,
+    }
+}
 
 #[async_trait]
 impl Builtin for Set {
@@ -43,13 +60,25 @@ impl Builtin for Set {
             return Ok(ExecResult::ok(output));
         }
 
-        for arg in ctx.args.iter() {
+        let mut i = 0;
+        while i < ctx.args.len() {
+            let arg = &ctx.args[i];
             if arg == "--" {
-                // Set positional parameters (would need call stack access)
-                // For now, just consume remaining args
                 break;
+            } else if (arg.starts_with('-') || arg.starts_with('+'))
+                && arg.len() > 1
+                && (arg.as_bytes()[1] == b'o' && arg.len() == 2)
+            {
+                // -o option_name / +o option_name
+                let enable = arg.starts_with('-');
+                i += 1;
+                if i < ctx.args.len() {
+                    if let Some(var) = option_name_to_var(&ctx.args[i]) {
+                        ctx.variables
+                            .insert(var.to_string(), if enable { "1" } else { "0" }.to_string());
+                    }
+                }
             } else if arg.starts_with('-') || arg.starts_with('+') {
-                // Shell options - store in variables for now
                 let enable = arg.starts_with('-');
                 for opt in arg.chars().skip(1) {
                     let opt_name = format!("SHOPT_{}", opt);
@@ -57,6 +86,7 @@ impl Builtin for Set {
                         .insert(opt_name, if enable { "1" } else { "0" }.to_string());
                 }
             }
+            i += 1;
         }
 
         Ok(ExecResult::ok(String::new()))

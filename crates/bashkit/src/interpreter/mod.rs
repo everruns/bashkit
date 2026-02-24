@@ -121,6 +121,8 @@ pub struct ShellOptions {
     /// Print commands before execution (set -x) - stored but not enforced
     #[allow(dead_code)]
     pub xtrace: bool,
+    /// Return rightmost non-zero exit code from pipeline (set -o pipefail)
+    pub pipefail: bool,
 }
 
 /// Interpreter state.
@@ -463,6 +465,15 @@ impl Interpreter {
             // Stop on control flow (e.g. nounset error uses Return to abort)
             if result.control_flow != ControlFlow::None {
                 break;
+            }
+
+            // Run ERR trap on non-zero exit (unless in conditional chain)
+            if exit_code != 0 {
+                let suppressed = matches!(command, Command::List(_))
+                    || matches!(command, Command::Pipeline(p) if p.negated);
+                if !suppressed {
+                    self.run_err_trap(&mut stdout, &mut stderr).await;
+                }
             }
 
             // errexit (set -e): stop on non-zero exit for top-level simple commands.
@@ -1972,6 +1983,13 @@ impl Interpreter {
         }
         self.arrays.insert("PIPESTATUS".to_string(), ps_arr);
 
+        // pipefail: return rightmost non-zero exit code from pipeline
+        if self.is_pipefail() {
+            if let Some(&nonzero) = pipe_statuses.iter().rev().find(|&&c| c != 0) {
+                last_result.exit_code = nonzero;
+            }
+        }
+
         // Handle negation
         if pipeline.negated {
             last_result.exit_code = if last_result.exit_code == 0 { 1 } else { 0 };
@@ -2002,6 +2020,16 @@ impl Interpreter {
                 exit_code,
                 control_flow,
             });
+        }
+
+        // Check if first command in a semicolon-separated list failed => ERR trap
+        // Only fire if the first rest operator is semicolon (not &&/||)
+        let first_op_is_semicolon = list
+            .rest
+            .first()
+            .is_some_and(|(op, _)| matches!(op, ListOperator::Semicolon));
+        if exit_code != 0 && first_op_is_semicolon {
+            self.run_err_trap(&mut stdout, &mut stderr).await;
         }
 
         // Track if the list contains any && or || operators
@@ -2079,6 +2107,11 @@ impl Interpreter {
                         exit_code,
                         control_flow,
                     });
+                }
+
+                // ERR trap: fire on non-zero exit after semicolon commands (not &&/||)
+                if exit_code != 0 && !current_is_conditional {
+                    self.run_err_trap(&mut stdout, &mut stderr).await;
                 }
             }
         }
@@ -2585,6 +2618,25 @@ impl Interpreter {
                     ExecResult::err(format!("bash: {}: builtin failed unexpectedly\n", name), 1)
                 }
             };
+
+            // Post-process: read -a populates array from marker variable
+            let markers: Vec<(String, String)> = self
+                .variables
+                .iter()
+                .filter(|(k, _)| k.starts_with("_ARRAY_READ_"))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            for (marker, value) in markers {
+                let arr_name = marker.strip_prefix("_ARRAY_READ_").unwrap();
+                let mut arr = HashMap::new();
+                for (i, word) in value.split('\x1F').enumerate() {
+                    if !word.is_empty() {
+                        arr.insert(i, word.to_string());
+                    }
+                }
+                self.arrays.insert(arr_name.to_string(), arr);
+                self.variables.remove(&marker);
+            }
 
             // Handle output redirections
             return self.apply_redirections(result, &command.redirects).await;
@@ -4120,6 +4172,65 @@ impl Interpreter {
                         result.push_str(&path_str);
                     }
                 }
+                WordPart::Transformation { name, operator } => {
+                    let value = self.expand_variable(name);
+                    let transformed = match operator {
+                        'Q' => {
+                            // Quote for reuse as input
+                            format!("'{}'", value.replace('\'', "'\\''"))
+                        }
+                        'E' => {
+                            // Expand backslash escape sequences
+                            value
+                                .replace("\\n", "\n")
+                                .replace("\\t", "\t")
+                                .replace("\\\\", "\\")
+                        }
+                        'P' => {
+                            // Prompt string expansion (simplified)
+                            value.clone()
+                        }
+                        'A' => {
+                            // Assignment statement form
+                            format!("{}='{}'", name, value.replace('\'', "'\\''"))
+                        }
+                        'K' => {
+                            // Display as key-value pairs (for assoc arrays, same as value for scalars)
+                            value.clone()
+                        }
+                        'a' => {
+                            // Attribute flags for the variable
+                            let mut attrs = String::new();
+                            if self.variables.contains_key(&format!("_READONLY_{}", name)) {
+                                attrs.push('r');
+                            }
+                            if self.env.contains_key(name.as_str()) {
+                                attrs.push('x');
+                            }
+                            attrs
+                        }
+                        'u' | 'U' => {
+                            // Uppercase (u = first char, U = all)
+                            if *operator == 'U' {
+                                value.to_uppercase()
+                            } else {
+                                let mut chars = value.chars();
+                                match chars.next() {
+                                    Some(first) => {
+                                        first.to_uppercase().collect::<String>() + chars.as_str()
+                                    }
+                                    None => String::new(),
+                                }
+                            }
+                        }
+                        'L' => {
+                            // Lowercase all
+                            value.to_lowercase()
+                        }
+                        _ => value.clone(),
+                    };
+                    result.push_str(&transformed);
+                }
             }
             is_first_part = false;
         }
@@ -5289,6 +5400,31 @@ impl Interpreter {
             .get("SHOPT_u")
             .map(|v| v == "1")
             .unwrap_or(false)
+    }
+
+    /// Check if pipefail (`set -o pipefail`) is active.
+    fn is_pipefail(&self) -> bool {
+        self.options.pipefail
+            || self
+                .variables
+                .get("SHOPT_pipefail")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+    }
+
+    /// Run ERR trap if registered. Appends trap output to stdout/stderr.
+    async fn run_err_trap(&mut self, stdout: &mut String, stderr: &mut String) {
+        if let Some(trap_cmd) = self.traps.get("ERR").cloned() {
+            if let Ok(trap_script) = Parser::new(&trap_cmd).parse() {
+                let emit_before = self.output_emit_count;
+                if let Ok(trap_result) = self.execute_command_sequence(&trap_script.commands).await
+                {
+                    self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
+                    stdout.push_str(&trap_result.stdout);
+                    stderr.push_str(&trap_result.stderr);
+                }
+            }
+        }
     }
 
     /// Set a local variable in the current call frame

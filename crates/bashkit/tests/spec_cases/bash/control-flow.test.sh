@@ -247,3 +247,27 @@ for ((i=3; i>=1; i--)); do echo $i; done
 2
 1
 ### end
+
+### trap_err
+# trap ERR fires on non-zero exit
+trap 'echo ERR' ERR; false; echo after
+### expect
+ERR
+after
+### end
+
+### trap_err_not_on_success
+# trap ERR does not fire on success
+trap 'echo ERR' ERR; true; echo ok
+### expect
+ok
+### end
+
+### trap_multiple
+# Multiple traps can coexist
+trap 'echo BYE' EXIT; trap 'echo ERR' ERR; false; echo done
+### expect
+ERR
+done
+BYE
+### end

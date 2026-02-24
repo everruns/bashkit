@@ -299,6 +299,9 @@ impl fmt::Display for Word {
                     let prefix = if *is_input { "<" } else { ">" };
                     write!(f, "{}({:?})", prefix, commands)?
                 }
+                WordPart::Transformation { name, operator } => {
+                    write!(f, "${{{}@{}}}", name, operator)?
+                }
             }
         }
         Ok(())
@@ -353,6 +356,8 @@ pub enum WordPart {
         /// True for <(cmd), false for >(cmd)
         is_input: bool,
     },
+    /// Parameter transformation `${var@op}` where op is Q, E, P, A, K, a, u, U, L
+    Transformation { name: String, operator: char },
 }
 
 /// Parameter expansion operators

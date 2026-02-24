@@ -19,15 +19,30 @@ impl Builtin for Printf {
             return Ok(ExecResult::ok(String::new()));
         }
 
-        let format = &ctx.args[0];
-        let args = &ctx.args[1..];
+        let mut args_iter = ctx.args.iter();
+        let mut var_name: Option<String> = None;
+
+        // Check for -v varname flag
+        let format = loop {
+            match args_iter.next() {
+                Some(arg) if arg == "-v" => {
+                    if let Some(vname) = args_iter.next() {
+                        var_name = Some(vname.clone());
+                    }
+                }
+                Some(arg) => break arg.clone(),
+                None => return Ok(ExecResult::ok(String::new())),
+            }
+        };
+
+        let args: Vec<String> = args_iter.cloned().collect();
         let mut arg_index = 0;
         let mut output = String::new();
 
         // Bash printf repeats the format string until all args are consumed
         loop {
             let start_index = arg_index;
-            output.push_str(&format_string(format, args, &mut arg_index));
+            output.push_str(&format_string(&format, &args, &mut arg_index));
 
             // If no args were consumed or we've used all args, stop
             if arg_index == start_index || arg_index >= args.len() {
@@ -35,7 +50,13 @@ impl Builtin for Printf {
             }
         }
 
-        Ok(ExecResult::ok(output))
+        if let Some(name) = var_name {
+            // -v: assign to variable instead of printing
+            ctx.variables.insert(name, output);
+            Ok(ExecResult::ok(String::new()))
+        } else {
+            Ok(ExecResult::ok(output))
+        }
     }
 }
 

@@ -2358,6 +2358,27 @@ impl<'a> Parser<'a> {
                                         operand: String::new(),
                                     });
                                 }
+                                '@' => {
+                                    // Parameter transformation ${var@op}
+                                    chars.next(); // consume '@'
+                                    if let Some(&op) = chars.peek() {
+                                        chars.next(); // consume operator
+                                                      // Consume closing }
+                                        if chars.peek() == Some(&'}') {
+                                            chars.next();
+                                        }
+                                        parts.push(WordPart::Transformation {
+                                            name: var_name,
+                                            operator: op,
+                                        });
+                                    } else {
+                                        // No operator, treat as variable
+                                        if chars.peek() == Some(&'}') {
+                                            chars.next();
+                                        }
+                                        parts.push(WordPart::Variable(var_name));
+                                    }
+                                }
                                 '}' => {
                                     chars.next();
                                     if !var_name.is_empty() {
