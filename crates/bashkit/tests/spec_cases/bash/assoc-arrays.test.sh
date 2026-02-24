@@ -68,13 +68,38 @@ echo "${m[b]}"
 ### end
 
 ### assoc_declare_inline
-### skip: compound array assignment parsing not yet implemented
 declare -A m=([foo]="bar" [baz]="qux")
 echo "${m[foo]}"
 echo "${m[baz]}"
 ### expect
 bar
 qux
+### end
+
+### assoc_declare_inline_unquoted
+declare -A m=([a]=1 [b]=2 [c]=3)
+echo "${m[a]}"
+echo "${m[c]}"
+### expect
+1
+3
+### end
+
+### assoc_declare_inline_single_entry
+declare -A m=([only]="value")
+echo "${m[only]}"
+echo "${#m[@]}"
+### expect
+value
+1
+### end
+
+### assoc_declare_inline_overwrite
+declare -A m=([k]="old")
+m[k]="new"
+echo "${m[k]}"
+### expect
+new
 ### end
 
 ### assoc_numeric_string_key

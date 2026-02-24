@@ -158,10 +158,11 @@ c
 ### end
 
 ### grep_recursive
-### skip: recursive grep not implemented for virtual fs
-grep -r pattern /some/dir
-### exit_code: 1
+# Recursive grep through directory
+mkdir -p /tmp/greprecur/sub && printf 'match\n' > /tmp/greprecur/a.txt && printf 'nope\n' > /tmp/greprecur/sub/b.txt && printf 'match here\n' > /tmp/greprecur/sub/c.txt && grep -r match /tmp/greprecur | sort
 ### expect
+/tmp/greprecur/a.txt:match
+/tmp/greprecur/sub/c.txt:match here
 ### end
 
 ### grep_multiple_patterns
@@ -173,11 +174,30 @@ bar
 ### end
 
 ### grep_pattern_file
-### skip: requires file redirection support
-printf 'foo\nbar\nbaz\n' | grep -f /patterns.txt
+# Read patterns from file
+printf 'foo\nbar\n' > /tmp/greppatterns.txt
+printf 'foo\nbar\nbaz\n' | grep -f /tmp/greppatterns.txt
 ### expect
 foo
 bar
+### end
+
+### grep_recursive_no_match
+# Recursive grep with no matches
+mkdir -p /tmp/greprecur2 && printf 'nope\n' > /tmp/greprecur2/a.txt
+grep -r zzz /tmp/greprecur2
+echo $?
+### expect
+1
+### end
+
+### grep_pattern_file_no_match
+# Pattern file with no matching patterns
+printf 'zzz\n' > /tmp/greppat2.txt
+printf 'foo\nbar\n' | grep -f /tmp/greppat2.txt
+echo $?
+### expect
+1
 ### end
 
 ### grep_null_data

@@ -278,8 +278,8 @@ impl GrepOptions {
             i += 1;
         }
 
-        // First positional is pattern (if no -e patterns)
-        if opts.patterns.is_empty() {
+        // First positional is pattern (if no -e patterns and no -f file)
+        if opts.patterns.is_empty() && opts.pattern_file.is_none() {
             if positional.is_empty() {
                 return Err(Error::Execution("grep: missing pattern".to_string()));
             }

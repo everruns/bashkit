@@ -477,6 +477,57 @@ impl<'a> Lexer<'a> {
                 } else {
                     word.push('\\');
                 }
+            } else if ch == '(' && word.ends_with('=') && self.looks_like_assoc_assign() {
+                // Associative compound assignment: var=([k]="v" ...) — keep entire
+                // (...) as part of word so declare -A m=([k]="v") stays one token.
+                // Regular indexed arr=(a b "c d") is left for parser token-by-token path.
+                word.push(ch);
+                self.advance();
+                let mut depth = 1;
+                while let Some(c) = self.peek_char() {
+                    word.push(c);
+                    self.advance();
+                    match c {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        '"' => {
+                            while let Some(qc) = self.peek_char() {
+                                word.push(qc);
+                                self.advance();
+                                if qc == '"' {
+                                    break;
+                                }
+                                if qc == '\\' {
+                                    if let Some(esc) = self.peek_char() {
+                                        word.push(esc);
+                                        self.advance();
+                                    }
+                                }
+                            }
+                        }
+                        '\'' => {
+                            while let Some(qc) = self.peek_char() {
+                                word.push(qc);
+                                self.advance();
+                                if qc == '\'' {
+                                    break;
+                                }
+                            }
+                        }
+                        '\\' => {
+                            if let Some(esc) = self.peek_char() {
+                                word.push(esc);
+                                self.advance();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             } else if self.is_word_char(ch) {
                 word.push(ch);
                 self.advance();
@@ -756,6 +807,26 @@ impl<'a> Lexer<'a> {
         Some(Token::Word(word))
     }
 
+    /// Peek ahead (without consuming) to see if `=(` starts an associative
+    /// compound assignment like `([key]=val ...)`.  Returns true when the
+    /// first non-whitespace char after `(` is `[`.
+    fn looks_like_assoc_assign(&self) -> bool {
+        let mut chars = self.chars.clone();
+        // Skip the `(` we haven't consumed yet
+        if chars.next() != Some('(') {
+            return false;
+        }
+        // Skip optional whitespace
+        for ch in chars {
+            match ch {
+                ' ' | '\t' => continue,
+                '[' => return true,
+                _ => return false,
+            }
+        }
+        false
+    }
+
     fn is_word_char(&self, ch: char) -> bool {
         !matches!(
             ch,
@@ -957,5 +1028,26 @@ mod tests {
         // Now read heredoc content
         let content = lexer.read_heredoc("EOF");
         assert_eq!(content, "hello\nworld\n");
+    }
+
+    #[test]
+    fn test_assoc_compound_assignment() {
+        // declare -A m=([foo]="bar" [baz]="qux") should keep the compound
+        // assignment as a single Word token
+        let mut lexer = Lexer::new(r#"m=([foo]="bar" [baz]="qux")"#);
+        assert_eq!(
+            lexer.next_token(),
+            Some(Token::Word(r#"m=([foo]="bar" [baz]="qux")"#.to_string()))
+        );
+        assert_eq!(lexer.next_token(), None);
+    }
+
+    #[test]
+    fn test_indexed_array_not_collapsed() {
+        // arr=("hello world") should NOT be collapsed — parser handles
+        // quoted elements token-by-token via the LeftParen path
+        let mut lexer = Lexer::new(r#"arr=("hello world")"#);
+        assert_eq!(lexer.next_token(), Some(Token::Word("arr=".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::LeftParen));
     }
 }

@@ -200,7 +200,7 @@ Features that may be added in the future (not intentionally excluded):
 | `local` | Declaration | Proper scoping in nested functions |
 | `return` | Basic usage | Return value propagation |
 | Heredocs | Basic | Variable expansion inside |
-| Arrays | Indexing, `[@]`/`[*]` as separate args, `${!arr[@]}`, `+=`, slice `${arr[@]:1:2}`, assoc `declare -A` | Compound init `declare -A m=([k]=v)` |
+| Arrays | Indexing, `[@]`/`[*]` as separate args, `${!arr[@]}`, `+=`, slice `${arr[@]:1:2}`, assoc `declare -A`, compound init `declare -A m=([k]=v)` | — |
 | `echo -n` | Flag parsed | Trailing newline handling |
 | `time` | Wall-clock timing | User/sys CPU time (always 0) |
 | `timeout` | Basic usage | `-k` kill timeout |
@@ -248,7 +248,7 @@ None currently tracked.
 | Functions | 3 | `match()`, `gensub()`, `exit` statement |
 | Field handling | 2 | `-F'\t'` tab delimiter, missing field returns empty |
 | Negation | 1 | `!$1` logical negation operator |
-| ORS/getline | 2 | Output record separator, getline |
+| ~~ORS/getline~~ | ~~2~~ | ✅ Implemented |
 | $0 modification | 1 | `$0 = "x y z"` re-splits fields |
 
 **Recently Implemented:**
@@ -258,6 +258,8 @@ None currently tracked.
 - `-v var=value` flag for variable initialization
 - Ternary operator `(cond ? a : b)`
 - Field assignment `$2 = "X"`
+- `getline` — reads next input record into `$0`
+- ORS (output record separator) tests verified
 - `next` statement
 
 <!-- Known AWK gaps for LLM compatibility (tracked in docs/compatibility.md) -->
@@ -320,7 +322,7 @@ None currently tracked.
 |---------|-------|-------|
 | Alternative `//` | 1 | jaq errors on `.foo` applied to null instead of returning null |
 | Path functions | 2 | `setpath`, `leaf_paths` not in jaq standard library |
-| I/O functions | 3 | `input`, `inputs` (iterator not wired), `env` (shell vars not propagated) |
+| ~~I/O functions~~ | ~~3~~ | ✅ `input`, `inputs`, `env` all implemented |
 | Regex functions | 2 | `match` (jaq omits capture `name` field), `scan` (jaq needs explicit `"g"` flag) |
 
 **Recently Fixed:**
@@ -329,6 +331,8 @@ None currently tracked.
 - Combined short flags (`-rn`, `-sc`, `-snr`)
 - `--arg name value` and `--argjson name value` variable bindings
 - `--indent N` flag no longer eats the filter argument
+- `env` builtin now exposes bashkit shell env vars to jaq runtime
+- `input`/`inputs` iterators wired to shared input stream
 
 ### Curl Limitations
 

@@ -628,17 +628,31 @@ echo '1' | jq '[while(. < 5; . + 1)]'
 ### end
 
 ### jq_input
-### skip: inputs iterator not wired to remaining stdin values
+# input reads next value from stdin
 printf '1\n2\n' | jq 'input'
 ### expect
 2
 ### end
 
 ### jq_inputs
-### skip: inputs iterator not wired to remaining stdin values
-printf '1\n2\n3\n' | jq '[inputs]'
+# inputs collects all remaining stdin values
+printf '1\n2\n3\n' | jq -c '[inputs]'
 ### expect
 [2,3]
+### end
+
+### jq_input_with_dot
+# input alongside current value
+printf '{"a":1}\n{"b":2}\n' | jq -c '[., input]'
+### expect
+[{"a":1},{"b":2}]
+### end
+
+### jq_inputs_empty
+# inputs with single value yields empty array
+printf '42\n' | jq -c '[inputs]'
+### expect
+[]
 ### end
 
 ### jq_debug
@@ -649,10 +663,24 @@ echo '1' | jq 'debug'
 ### end
 
 ### jq_env
-### skip: shell env vars not propagated to jaq runtime
+# Shell env vars accessible via env builtin
 FOO=bar jq -n 'env.FOO'
 ### expect
 "bar"
+### end
+
+### jq_env_missing
+# Missing env var returns null
+jq -n 'env.NONEXISTENT_VAR_XYZ'
+### expect
+null
+### end
+
+### jq_env_in_pipeline
+# env var set via export
+export MYVAL=hello; jq -n 'env.MYVAL'
+### expect
+"hello"
 ### end
 
 ### jq_multiple_filters
