@@ -1102,8 +1102,7 @@ impl Interpreter {
                     rhs_value
                 };
 
-                self.variables
-                    .insert(var_name.to_string(), final_value.to_string());
+                self.set_variable(var_name.to_string(), final_value.to_string());
                 return final_value;
             }
         }
@@ -1113,16 +1112,14 @@ impl Interpreter {
             let var_name = stripped.trim();
             let current = self.evaluate_arithmetic(var_name);
             let new_value = current + 1;
-            self.variables
-                .insert(var_name.to_string(), new_value.to_string());
+            self.set_variable(var_name.to_string(), new_value.to_string());
             return new_value;
         }
         if let Some(stripped) = expr.strip_prefix("--") {
             let var_name = stripped.trim();
             let current = self.evaluate_arithmetic(var_name);
             let new_value = current - 1;
-            self.variables
-                .insert(var_name.to_string(), new_value.to_string());
+            self.set_variable(var_name.to_string(), new_value.to_string());
             return new_value;
         }
 
@@ -1131,16 +1128,14 @@ impl Interpreter {
             let var_name = stripped.trim();
             let current = self.evaluate_arithmetic(var_name);
             let new_value = current + 1;
-            self.variables
-                .insert(var_name.to_string(), new_value.to_string());
+            self.set_variable(var_name.to_string(), new_value.to_string());
             return current; // Return old value for post-increment
         }
         if let Some(stripped) = expr.strip_suffix("--") {
             let var_name = stripped.trim();
             let current = self.evaluate_arithmetic(var_name);
             let new_value = current - 1;
-            self.variables
-                .insert(var_name.to_string(), new_value.to_string());
+            self.set_variable(var_name.to_string(), new_value.to_string());
             return current; // Return old value for post-decrement
         }
 
@@ -2188,10 +2183,9 @@ impl Interpreter {
                     } else if assignment.append {
                         // VAR+=value - append to variable
                         let existing = self.expand_variable(&assignment.name);
-                        self.variables
-                            .insert(assignment.name.clone(), existing + &value);
+                        self.set_variable(assignment.name.clone(), existing + &value);
                     } else {
-                        self.variables.insert(assignment.name.clone(), value);
+                        self.set_variable(assignment.name.clone(), value);
                     }
                 }
                 AssignmentValue::Array(words) => {
@@ -2443,7 +2437,7 @@ impl Interpreter {
                         let value = &arg[eq_pos + 1..];
                         frame.locals.insert(var_name.to_string(), value.to_string());
                     } else {
-                        // Just declare without value
+                        // Just declare without value — empty string (bash behavior)
                         frame.locals.insert(arg.to_string(), String::new());
                     }
                 }
@@ -4312,7 +4306,7 @@ impl Interpreter {
             ParameterOp::AssignDefault => {
                 // ${var:=default} - assign default if unset/empty
                 if value.is_empty() {
-                    self.variables.insert(name.to_string(), operand.to_string());
+                    self.set_variable(name.to_string(), operand.to_string());
                     operand.to_string()
                 } else {
                     value.to_string()
@@ -4654,7 +4648,7 @@ impl Interpreter {
             let var_name = var_name.trim();
             if Self::is_valid_var_name(var_name) {
                 let val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0) + 1;
-                self.variables.insert(var_name.to_string(), val.to_string());
+                self.set_variable(var_name.to_string(), val.to_string());
                 return val;
             }
         }
@@ -4662,7 +4656,7 @@ impl Interpreter {
             let var_name = var_name.trim();
             if Self::is_valid_var_name(var_name) {
                 let val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0) - 1;
-                self.variables.insert(var_name.to_string(), val.to_string());
+                self.set_variable(var_name.to_string(), val.to_string());
                 return val;
             }
         }
@@ -4672,8 +4666,7 @@ impl Interpreter {
             let var_name = var_name.trim();
             if Self::is_valid_var_name(var_name) {
                 let old_val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0);
-                self.variables
-                    .insert(var_name.to_string(), (old_val + 1).to_string());
+                self.set_variable(var_name.to_string(), (old_val + 1).to_string());
                 return old_val;
             }
         }
@@ -4681,8 +4674,7 @@ impl Interpreter {
             let var_name = var_name.trim();
             if Self::is_valid_var_name(var_name) {
                 let old_val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0);
-                self.variables
-                    .insert(var_name.to_string(), (old_val - 1).to_string());
+                self.set_variable(var_name.to_string(), (old_val - 1).to_string());
                 return old_val;
             }
         }
@@ -4754,8 +4746,7 @@ impl Interpreter {
                             _ => rhs_val,
                         }
                     };
-                    self.variables
-                        .insert(var_name.to_string(), value.to_string());
+                    self.set_variable(var_name.to_string(), value.to_string());
                     return value;
                 }
             }
@@ -5250,6 +5241,21 @@ impl Interpreter {
             return val.clone();
         }
         s.to_string()
+    }
+
+    /// Set a variable, respecting dynamic scoping.
+    /// If the variable is declared `local` in any active call frame, update that frame.
+    /// Otherwise, set in global variables.
+    fn set_variable(&mut self, name: String, value: String) {
+        for frame in self.call_stack.iter_mut().rev() {
+            if let std::collections::hash_map::Entry::Occupied(mut e) =
+                frame.locals.entry(name.clone())
+            {
+                e.insert(value);
+                return;
+            }
+        }
+        self.variables.insert(name, value);
     }
 
     fn expand_variable(&self, name: &str) -> String {

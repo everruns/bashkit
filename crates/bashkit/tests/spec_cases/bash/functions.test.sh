@@ -115,3 +115,47 @@ a
 b
 c
 ### end
+
+### func_local_nested_write
+# Writes in nested function update local frame (dynamic scoping)
+outer() {
+  local x=outer
+  inner
+  echo "after inner: $x"
+}
+inner() {
+  x=modified
+}
+outer
+### expect
+after inner: modified
+### end
+
+### func_local_no_value
+# local x (no value) initializes to empty (bash behavior)
+x=global
+wrapper() {
+  local x
+  echo "in wrapper: [$x]"
+}
+wrapper
+echo "after: $x"
+### expect
+in wrapper: []
+after: global
+### end
+
+### func_local_assign_stays_local
+# local declaration + assignment stays local
+x=global
+outer() {
+  local x
+  x=local_val
+  echo "in outer: $x"
+}
+outer
+echo "after outer: $x"
+### expect
+in outer: local_val
+after outer: global
+### end
