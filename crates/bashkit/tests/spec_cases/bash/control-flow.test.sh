@@ -271,3 +271,72 @@ ERR
 done
 BYE
 ### end
+
+### regex_match_basic
+# [[ =~ ]] regex match returns correct exit code
+[[ "hello123" =~ [0-9]+ ]]; echo $?
+[[ "hello" =~ [0-9]+ ]]; echo $?
+### expect
+0
+1
+### end
+
+### regex_match_bash_rematch
+# BASH_REMATCH populated with capture groups
+x="hello123world"
+[[ "$x" =~ ([0-9]+) ]]
+echo "${BASH_REMATCH[0]}"
+echo "${BASH_REMATCH[1]}"
+### expect
+123
+123
+### end
+
+### regex_match_multiple_groups
+# Multiple capture groups in BASH_REMATCH
+[[ "2024-01-15" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})$ ]]
+echo "${BASH_REMATCH[0]}"
+echo "${BASH_REMATCH[1]}"
+echo "${BASH_REMATCH[2]}"
+echo "${BASH_REMATCH[3]}"
+### expect
+2024-01-15
+2024
+01
+15
+### end
+
+### regex_match_nested_groups
+# Nested capture groups
+[[ "foo123bar" =~ (foo([0-9]+)bar) ]]
+echo "${BASH_REMATCH[0]}"
+echo "${BASH_REMATCH[1]}"
+echo "${BASH_REMATCH[2]}"
+### expect
+foo123bar
+foo123bar
+123
+### end
+
+### regex_match_no_match_clears
+# BASH_REMATCH cleared on no match
+[[ "abc123" =~ ([0-9]+) ]]
+echo "before: ${#BASH_REMATCH[@]}"
+[[ "abc" =~ ([0-9]+) ]]
+echo "after: ${#BASH_REMATCH[@]}"
+### expect
+before: 2
+after: 0
+### end
+
+### regex_match_in_conditional
+# Regex match used in && chain
+x="error: line 42"
+if [[ "$x" =~ error:\ line\ ([0-9]+) ]]; then
+  echo "line ${BASH_REMATCH[1]}"
+else
+  echo "no match"
+fi
+### expect
+line 42
+### end
