@@ -405,3 +405,91 @@ echo $((5 >= 3)); echo $((5 >= 5)); echo $((4 >= 5))
 1
 0
 ### end
+
+### let_basic
+# let evaluates arithmetic and assigns
+let x=5+3
+echo $x
+### expect
+8
+### end
+
+### let_multiple
+# let evaluates multiple expressions
+let a=2 b=3 c=a+b
+echo $a $b $c
+### expect
+2 3 5
+### end
+
+### let_exit_zero
+# let returns 0 when last expression is non-zero
+let x=5
+echo $?
+### expect
+0
+### end
+
+### let_exit_one
+# let returns 1 when last expression is zero
+let x=0
+echo $?
+### expect
+1
+### end
+
+### let_increment
+# let with increment operators
+x=5; let x++
+echo $x
+### expect
+6
+### end
+
+### let_compound_assign
+# let with compound assignment
+x=10; let x+=5
+echo $x
+### expect
+15
+### end
+
+### let_no_args
+# let with no arguments returns 1
+let 2>/dev/null
+echo $?
+### expect
+1
+### end
+
+### declare_i_basic
+# declare -i evaluates arithmetic on assignment
+declare -i x=5+3
+echo $x
+### expect
+8
+### end
+
+### declare_i_expression
+# declare -i with complex expression
+declare -i x=2*3+4
+echo $x
+### expect
+10
+### end
+
+### declare_i_variable_ref
+# declare -i referencing other variables
+a=5; b=3; declare -i x=a+b
+echo $x
+### expect
+8
+### end
+
+### declare_i_plain_number
+# declare -i with plain number
+declare -i x=42
+echo $x
+### expect
+42
+### end
