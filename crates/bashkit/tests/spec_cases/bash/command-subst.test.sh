@@ -96,3 +96,59 @@ VAR=$(printf 'hello\n\n\n'); echo "x${VAR}y"
 ### expect
 xhelloy
 ### end
+
+### subst_nested_quotes
+# Nested double quotes inside $() inside double quotes
+echo "$(echo "hello world")"
+### expect
+hello world
+### end
+
+### subst_nested_quotes_var
+# Variable expansion in nested quoted $()
+x="John"; echo "Hello, $(echo "$x")!"
+### expect
+Hello, John!
+### end
+
+### subst_deeply_nested_quotes
+# Deeply nested $() with quotes
+echo "nested: $(echo "$(echo "deep")")"
+### expect
+nested: deep
+### end
+
+### subst_nested_single_quotes
+# Single quotes inside $() inside double quotes
+echo "$(echo 'single quoted')"
+### expect
+single quoted
+### end
+
+### subst_nested_quotes_no_expand
+# Nested quotes without variable (literal string)
+echo "result=$(echo "done")"
+### expect
+result=done
+### end
+
+### subst_nested_quotes_empty
+# Nested quotes with empty inner string
+echo "x$(echo "")y"
+### expect
+xy
+### end
+
+### subst_nested_quotes_multiple
+# Multiple nested $() in same double-quoted string
+echo "$(echo "a") and $(echo "b")"
+### expect
+a and b
+### end
+
+### subst_nested_quotes_escape
+# Escaped characters inside nested $()
+echo "$(echo "hello\"world")"
+### expect
+hello"world
+### end
