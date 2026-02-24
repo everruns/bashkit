@@ -200,7 +200,7 @@ Features that may be added in the future (not intentionally excluded):
 | `local` | Declaration | Proper scoping in nested functions |
 | `return` | Basic usage | Return value propagation |
 | Heredocs | Basic | Variable expansion inside |
-| Arrays | Indexing, `[@]`/`[*]` as separate args, `${!arr[@]}`, `+=`, slice `${arr[@]:1:2}`, assoc `declare -A` | Compound init `declare -A m=([k]=v)` |
+| Arrays | Indexing, `[@]`/`[*]` as separate args, `${!arr[@]}`, `+=`, slice `${arr[@]:1:2}`, assoc `declare -A`, compound init `declare -A m=([k]=v)` | — |
 | `echo -n` | Flag parsed | Trailing newline handling |
 | `time` | Wall-clock timing | User/sys CPU time (always 0) |
 | `timeout` | Basic usage | `-k` kill timeout |
