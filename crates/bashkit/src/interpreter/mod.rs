@@ -2169,9 +2169,18 @@ impl Interpreter {
                                 arr.insert(key, value);
                             }
                         } else {
-                            // Indexed array: use numeric index
-                            let index: usize =
-                                self.evaluate_arithmetic(index_str).try_into().unwrap_or(0);
+                            // Indexed array: use numeric index (supports negative)
+                            let raw_idx = self.evaluate_arithmetic(index_str);
+                            let index = if raw_idx < 0 {
+                                let len = self
+                                    .arrays
+                                    .get(&assignment.name)
+                                    .and_then(|a| a.keys().max().map(|m| m + 1))
+                                    .unwrap_or(0) as i64;
+                                (len + raw_idx).max(0) as usize
+                            } else {
+                                raw_idx as usize
+                            };
                             let arr = self.arrays.entry(assignment.name.clone()).or_default();
                             if assignment.append {
                                 let existing = arr.get(&index).cloned().unwrap_or_default();
@@ -4029,8 +4038,19 @@ impl Interpreter {
                             result.push_str(value);
                         }
                     } else {
-                        // ${arr[n]} - get specific element
-                        let idx: usize = self.evaluate_arithmetic(index).try_into().unwrap_or(0);
+                        // ${arr[n]} - get specific element (supports negative indexing)
+                        let raw_idx = self.evaluate_arithmetic(index);
+                        let idx = if raw_idx < 0 {
+                            // Negative index: count from end
+                            let len = self
+                                .arrays
+                                .get(name)
+                                .map(|a| a.keys().max().map(|m| m + 1).unwrap_or(0))
+                                .unwrap_or(0) as i64;
+                            (len + raw_idx).max(0) as usize
+                        } else {
+                            raw_idx as usize
+                        };
                         if let Some(arr) = self.arrays.get(name) {
                             if let Some(value) = arr.get(&idx) {
                                 result.push_str(value);
