@@ -103,23 +103,23 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1170 (1165 pass, 5 skip)
+**Total spec test cases:** 1174 (1169 pass, 5 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 809 | Yes | 804 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 813 | Yes | 808 | 5 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
 | JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
-| **Total** | **1170** | **Yes** | **1165** | **5** | |
+| **Total** | **1174** | **Yes** | **1169** | **5** | |
 
 ### Bash Spec Tests Breakdown
 
 | File | Cases | Notes |
 |------|-------|-------|
 | arithmetic.test.sh | 57 | includes logical, bitwise, compound assign, increment/decrement |
-| arrays.test.sh | 20 | includes indices, `${arr[@]}` / `${arr[*]}` expansion |
+| arrays.test.sh | 27 | indices, `${arr[@]}` / `${arr[*]}`, negative indexing `${arr[-1]}` |
 | background.test.sh | 4 | |
 | bash-command.test.sh | 34 | bash/sh re-invocation |
 | brace-expansion.test.sh | 21 | {a,b,c}, {1..5}, for-loop brace expansion |
