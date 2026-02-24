@@ -329,6 +329,54 @@ before: 2
 after: 0
 ### end
 
+### while_read_input_redirect
+# while read ... done < file
+printf "a\nb\nc\n" > /tmp/wr_test
+while read -r line; do echo "got: $line"; done < /tmp/wr_test
+### expect
+got: a
+got: b
+got: c
+### end
+
+### while_read_herestring
+# while read ... done <<< string
+while read -r line; do echo "line: $line"; done <<< "hello"
+### expect
+line: hello
+### end
+
+### while_read_heredoc
+# while read ... done << EOF
+while read -r line; do echo "$line"; done << EOF
+alpha
+beta
+EOF
+### expect
+alpha
+beta
+### end
+
+### while_read_sum
+# Sum numbers from file redirect
+printf "10\n20\n30\n" > /tmp/wr_sum
+total=0
+while read -r n; do total=$((total + n)); done < /tmp/wr_sum
+echo $total
+### expect
+60
+### end
+
+### for_output_redirect
+# for loop with output redirect
+for i in a b c; do echo $i; done > /tmp/for_out
+cat /tmp/for_out
+### expect
+a
+b
+c
+### end
+
 ### regex_match_in_conditional
 # Regex match used in && chain
 x="error: line 42"

@@ -415,6 +415,59 @@ impl<'a> Parser<'a> {
                         target: Word::literal(dst_fd.to_string()),
                     });
                 }
+                Some(tokens::Token::HereString) => {
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: None,
+                            kind: RedirectKind::HereString,
+                            target,
+                        });
+                    }
+                }
+                Some(tokens::Token::HereDoc) | Some(tokens::Token::HereDocStrip) => {
+                    let strip_tabs =
+                        matches!(self.current_token, Some(tokens::Token::HereDocStrip));
+                    self.advance();
+                    let (delimiter, quoted) = match &self.current_token {
+                        Some(tokens::Token::Word(w)) => (w.clone(), false),
+                        Some(tokens::Token::LiteralWord(w)) => (w.clone(), true),
+                        Some(tokens::Token::QuotedWord(w)) => (w.clone(), true),
+                        _ => break,
+                    };
+                    let content = self.lexer.read_heredoc(&delimiter);
+                    let content = if strip_tabs {
+                        let had_trailing_newline = content.ends_with('\n');
+                        let mut stripped: String = content
+                            .lines()
+                            .map(|l| l.trim_start_matches('\t'))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if had_trailing_newline {
+                            stripped.push('\n');
+                        }
+                        stripped
+                    } else {
+                        content
+                    };
+                    self.advance();
+                    let target = if quoted {
+                        Word::quoted_literal(content)
+                    } else {
+                        self.parse_word(content)
+                    };
+                    let kind = if strip_tabs {
+                        RedirectKind::HereDocStrip
+                    } else {
+                        RedirectKind::HereDoc
+                    };
+                    redirects.push(Redirect {
+                        fd: None,
+                        kind,
+                        target,
+                    });
+                    break; // heredoc consumes rest of input line
+                }
                 _ => break,
             }
         }
