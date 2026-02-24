@@ -104,7 +104,7 @@ pub use strings::Strings;
 pub use system::{Hostname, Id, Uname, Whoami, DEFAULT_HOSTNAME, DEFAULT_USERNAME};
 pub use test::{Bracket, Test};
 pub use timeout::Timeout;
-pub use vars::{Eval, Local, Readonly, Set, Shift, Times, Unset};
+pub use vars::{Eval, Local, Readonly, Set, Shift, Shopt, Times, Unset};
 pub use wait::Wait;
 pub use wc::Wc;
 
