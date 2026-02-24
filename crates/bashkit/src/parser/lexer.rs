@@ -590,6 +590,16 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 }
+                '$' => {
+                    content.push('$');
+                    self.advance();
+                    if self.peek_char() == Some('(') {
+                        // $(...) command substitution — track paren depth
+                        content.push('(');
+                        self.advance();
+                        self.read_command_subst_into(&mut content);
+                    }
+                }
                 '`' => {
                     // Backtick command substitution inside double quotes
                     self.advance(); // consume opening `
@@ -626,6 +636,89 @@ impl<'a> Lexer<'a> {
         }
 
         Some(Token::QuotedWord(content))
+    }
+
+    /// Read command substitution content after `$(`, handling nested parens and quotes.
+    /// Appends chars to `content` and adds the closing `)`.
+    fn read_command_subst_into(&mut self, content: &mut String) {
+        let mut depth = 1;
+        while let Some(c) = self.peek_char() {
+            match c {
+                '(' => {
+                    depth += 1;
+                    content.push(c);
+                    self.advance();
+                }
+                ')' => {
+                    depth -= 1;
+                    self.advance();
+                    if depth == 0 {
+                        content.push(')');
+                        break;
+                    }
+                    content.push(c);
+                }
+                '"' => {
+                    // Nested double-quoted string inside $()
+                    content.push('"');
+                    self.advance();
+                    while let Some(qc) = self.peek_char() {
+                        match qc {
+                            '"' => {
+                                content.push('"');
+                                self.advance();
+                                break;
+                            }
+                            '\\' => {
+                                content.push('\\');
+                                self.advance();
+                                if let Some(esc) = self.peek_char() {
+                                    content.push(esc);
+                                    self.advance();
+                                }
+                            }
+                            '$' => {
+                                content.push('$');
+                                self.advance();
+                                if self.peek_char() == Some('(') {
+                                    content.push('(');
+                                    self.advance();
+                                    self.read_command_subst_into(content);
+                                }
+                            }
+                            _ => {
+                                content.push(qc);
+                                self.advance();
+                            }
+                        }
+                    }
+                }
+                '\'' => {
+                    // Single-quoted string inside $()
+                    content.push('\'');
+                    self.advance();
+                    while let Some(qc) = self.peek_char() {
+                        content.push(qc);
+                        self.advance();
+                        if qc == '\'' {
+                            break;
+                        }
+                    }
+                }
+                '\\' => {
+                    content.push('\\');
+                    self.advance();
+                    if let Some(esc) = self.peek_char() {
+                        content.push(esc);
+                        self.advance();
+                    }
+                }
+                _ => {
+                    content.push(c);
+                    self.advance();
+                }
+            }
+        }
     }
 
     /// Check if the content starting with { looks like a brace expansion
