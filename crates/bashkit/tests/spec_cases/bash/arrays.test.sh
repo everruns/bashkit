@@ -182,3 +182,33 @@ printf 'hello\nworld\n' | mapfile -t; echo ${MAPFILE[0]}; echo ${MAPFILE[1]}
 hello
 world
 ### end
+
+### array_negative_index_last
+# Negative index gets last element
+arr=(a b c d e); echo "${arr[-1]}"
+### expect
+e
+### end
+
+### array_negative_index_second_last
+# Negative index gets second-to-last
+arr=(a b c d e); echo "${arr[-2]}"
+### expect
+d
+### end
+
+### array_negative_index_first
+# Negative index wrapping to first
+arr=(a b c); echo "${arr[-3]}"
+### expect
+a
+### end
+
+### array_negative_all_values
+# ${arr[@]} with negative indexing for assignment
+arr=(10 20 30 40 50)
+arr[-1]=99
+echo "${arr[@]}"
+### expect
+10 20 30 40 99
+### end
