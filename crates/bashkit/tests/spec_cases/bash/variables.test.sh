@@ -408,3 +408,43 @@ x=hello; echo ${x@A}
 ### expect
 x='hello'
 ### end
+
+### var_line_continuation_dquote
+# Backslash-newline inside double quotes is line continuation
+echo "hel\
+lo"
+### expect
+hello
+### end
+
+### var_line_continuation_dquote_var
+# Line continuation in double-quoted variable assignment
+x="abc\
+def"; echo "$x"
+### expect
+abcdef
+### end
+
+### var_line_continuation_dquote_multi
+# Multiple line continuations
+echo "one\
+two\
+three"
+### expect
+onetwothree
+### end
+
+### var_line_continuation_unquoted
+# Backslash-newline in unquoted context
+echo hel\
+lo
+### expect
+hello
+### end
+
+### var_line_continuation_preserves_other_escapes
+# Backslash before non-newline in double quotes is preserved
+echo "hello\tworld"
+### expect
+hello\tworld
+### end
