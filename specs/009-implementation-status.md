@@ -248,7 +248,7 @@ None currently tracked.
 | Functions | 3 | `match()`, `gensub()`, `exit` statement |
 | Field handling | 2 | `-F'\t'` tab delimiter, missing field returns empty |
 | Negation | 1 | `!$1` logical negation operator |
-| ORS/getline | 2 | Output record separator, getline |
+| ~~ORS/getline~~ | ~~2~~ | ✅ Implemented |
 | $0 modification | 1 | `$0 = "x y z"` re-splits fields |
 
 **Recently Implemented:**
@@ -258,6 +258,8 @@ None currently tracked.
 - `-v var=value` flag for variable initialization
 - Ternary operator `(cond ? a : b)`
 - Field assignment `$2 = "X"`
+- `getline` — reads next input record into `$0`
+- ORS (output record separator) tests verified
 - `next` statement
 
 <!-- Known AWK gaps for LLM compatibility (tracked in docs/compatibility.md) -->
