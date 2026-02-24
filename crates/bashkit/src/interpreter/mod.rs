@@ -3860,6 +3860,8 @@ impl Interpreter {
         let mut is_assoc = false;
         let mut is_integer = false;
         let mut is_nameref = false;
+        let mut is_lowercase = false;
+        let mut is_uppercase = false;
         let mut names: Vec<&str> = Vec::new();
 
         for arg in args {
@@ -3873,7 +3875,9 @@ impl Interpreter {
                         'i' => is_integer = true,
                         'A' => is_assoc = true,
                         'n' => is_nameref = true,
-                        'g' | 'l' | 'u' | 't' | 'f' | 'F' => {} // ignored
+                        'l' => is_lowercase = true,
+                        'u' => is_uppercase = true,
+                        'g' | 't' | 'f' | 'F' => {} // ignored
                         _ => {}
                     }
                 }
@@ -4027,10 +4031,28 @@ impl Interpreter {
                     self.variables
                         .insert(var_name.to_string(), int_val.to_string());
                 } else {
-                    self.variables
-                        .insert(var_name.to_string(), value.to_string());
+                    // Apply case conversion attributes
+                    let final_value = if is_lowercase {
+                        value.to_lowercase()
+                    } else if is_uppercase {
+                        value.to_uppercase()
+                    } else {
+                        value.to_string()
+                    };
+                    self.variables.insert(var_name.to_string(), final_value);
                 }
 
+                // Set case conversion attribute markers
+                if is_lowercase {
+                    self.variables
+                        .insert(format!("_LOWER_{}", var_name), "1".to_string());
+                    self.variables.remove(&format!("_UPPER_{}", var_name));
+                }
+                if is_uppercase {
+                    self.variables
+                        .insert(format!("_UPPER_{}", var_name), "1".to_string());
+                    self.variables.remove(&format!("_LOWER_{}", var_name));
+                }
                 if is_readonly {
                     self.variables
                         .insert(format!("_READONLY_{}", var_name), "1".to_string());
@@ -4054,6 +4076,17 @@ impl Interpreter {
                     self.arrays.entry(name.to_string()).or_default();
                 } else if !self.variables.contains_key(name.as_str()) {
                     self.variables.insert(name.to_string(), String::new());
+                }
+                // Set case conversion attribute markers
+                if is_lowercase {
+                    self.variables
+                        .insert(format!("_LOWER_{}", name), "1".to_string());
+                    self.variables.remove(&format!("_UPPER_{}", name));
+                }
+                if is_uppercase {
+                    self.variables
+                        .insert(format!("_UPPER_{}", name), "1".to_string());
+                    self.variables.remove(&format!("_LOWER_{}", name));
                 }
                 if is_readonly {
                     self.variables
@@ -5627,6 +5660,24 @@ impl Interpreter {
     fn set_variable(&mut self, name: String, value: String) {
         // Resolve nameref: if `name` is a nameref, assign to the target instead
         let resolved = self.resolve_nameref(&name).to_string();
+        // Apply case conversion attributes (declare -l / declare -u)
+        let value = if self
+            .variables
+            .get(&format!("_LOWER_{}", resolved))
+            .map(|v| v == "1")
+            .unwrap_or(false)
+        {
+            value.to_lowercase()
+        } else if self
+            .variables
+            .get(&format!("_UPPER_{}", resolved))
+            .map(|v| v == "1")
+            .unwrap_or(false)
+        {
+            value.to_uppercase()
+        } else {
+            value
+        };
         for frame in self.call_stack.iter_mut().rev() {
             if let std::collections::hash_map::Entry::Occupied(mut e) =
                 frame.locals.entry(resolved.clone())
