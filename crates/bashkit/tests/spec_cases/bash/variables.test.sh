@@ -580,3 +580,95 @@ echo hello
 ### expect
 hello
 ### end
+
+### shopt_set_and_query
+# shopt -s sets option, -q queries it
+shopt -s nullglob
+shopt -q nullglob && echo "on" || echo "off"
+shopt -u nullglob
+shopt -q nullglob && echo "on" || echo "off"
+### expect
+on
+off
+### end
+
+### shopt_print_format
+# shopt -p prints in reusable format
+### bash_diff
+shopt -s extglob
+shopt -p extglob
+shopt -u extglob
+shopt -p extglob
+### expect
+shopt -s extglob
+shopt -u extglob
+### end
+
+### shopt_invalid_option
+# shopt rejects invalid option names
+shopt -s nonexistent_option
+echo "exit:$?"
+### expect
+exit:1
+### end
+### exit_code: 1
+
+### shopt_show_specific
+# shopt shows status of named option
+### bash_diff
+shopt nullglob
+shopt -s nullglob
+shopt nullglob
+### expect
+nullglob                        off
+nullglob                        on
+### end
+
+### shopt_nullglob_no_matches
+# shopt -s nullglob: unmatched globs expand to nothing
+### bash_diff
+shopt -s nullglob
+for f in /tmp/nonexistent_pattern_xyz_*.txt; do
+  echo "found: $f"
+done
+echo "done"
+### expect
+done
+### end
+
+### shopt_nullglob_off_keeps_pattern
+# Without nullglob, unmatched globs keep the pattern
+for f in /tmp/nonexistent_pattern_xyz_*.txt; do
+  echo "found: $f"
+done
+echo "done"
+### expect
+found: /tmp/nonexistent_pattern_xyz_*.txt
+done
+### end
+
+### shopt_nullglob_with_matches
+# nullglob doesn't affect globs that have matches
+### bash_diff
+echo "test" > /tmp/shopt_test1.txt
+echo "test" > /tmp/shopt_test2.txt
+shopt -s nullglob
+count=0
+for f in /tmp/shopt_test*.txt; do
+  count=$((count + 1))
+done
+echo "count:$count"
+### expect
+count:2
+### end
+
+### shopt_multiple_options
+# shopt -s can set multiple options
+### bash_diff
+shopt -s nullglob extglob
+shopt -q nullglob && echo "null:on" || echo "null:off"
+shopt -q extglob && echo "ext:on" || echo "ext:off"
+### expect
+null:on
+ext:on
+### end
