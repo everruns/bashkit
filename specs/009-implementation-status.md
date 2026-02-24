@@ -322,7 +322,7 @@ None currently tracked.
 |---------|-------|-------|
 | Alternative `//` | 1 | jaq errors on `.foo` applied to null instead of returning null |
 | Path functions | 2 | `setpath`, `leaf_paths` not in jaq standard library |
-| I/O functions | 3 | `input`, `inputs` (iterator not wired), `env` (shell vars not propagated) |
+| I/O functions | 2 | `input`, `inputs` (iterator not wired); ~~`env`~~ ✅ |
 | Regex functions | 2 | `match` (jaq omits capture `name` field), `scan` (jaq needs explicit `"g"` flag) |
 
 **Recently Fixed:**
@@ -331,6 +331,7 @@ None currently tracked.
 - Combined short flags (`-rn`, `-sc`, `-snr`)
 - `--arg name value` and `--argjson name value` variable bindings
 - `--indent N` flag no longer eats the filter argument
+- `env` builtin now exposes bashkit shell env vars to jaq runtime
 
 ### Curl Limitations
 

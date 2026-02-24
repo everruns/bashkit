@@ -649,10 +649,24 @@ echo '1' | jq 'debug'
 ### end
 
 ### jq_env
-### skip: shell env vars not propagated to jaq runtime
+# Shell env vars accessible via env builtin
 FOO=bar jq -n 'env.FOO'
 ### expect
 "bar"
+### end
+
+### jq_env_missing
+# Missing env var returns null
+jq -n 'env.NONEXISTENT_VAR_XYZ'
+### expect
+null
+### end
+
+### jq_env_in_pipeline
+# env var set via export
+export MYVAL=hello; jq -n 'env.MYVAL'
+### expect
+"hello"
 ### end
 
 ### jq_multiple_filters
