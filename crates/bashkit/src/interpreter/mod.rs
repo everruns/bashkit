@@ -571,7 +571,19 @@ impl Interpreter {
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
                 Command::List(list) => self.execute_list(list).await,
                 Command::Compound(compound, redirects) => {
+                    // Process input redirections before executing compound
+                    let stdin = self.process_input_redirections(None, redirects).await?;
+                    let prev_pipeline_stdin = if stdin.is_some() {
+                        let prev = self.pipeline_stdin.take();
+                        self.pipeline_stdin = stdin;
+                        Some(prev)
+                    } else {
+                        None
+                    };
                     let result = self.execute_compound(compound).await?;
+                    if let Some(prev) = prev_pipeline_stdin {
+                        self.pipeline_stdin = prev;
+                    }
                     if redirects.is_empty() {
                         Ok(result)
                     } else {
