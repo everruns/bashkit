@@ -429,3 +429,42 @@ fi
 ### expect
 line 42
 ### end
+
+### select_basic
+# select reads from stdin and sets variable
+echo "2" | select item in alpha beta gamma; do echo "got: $item"; break; done
+### expect
+got: beta
+### end
+
+### select_reply
+# select sets REPLY to raw input
+echo "1" | select x in one two three; do echo "REPLY=$REPLY x=$x"; break; done
+### expect
+REPLY=1 x=one
+### end
+
+### select_invalid
+# select with invalid number sets variable to empty
+echo "9" | select x in a b c; do echo "x='$x' REPLY=$REPLY"; break; done
+### expect
+x='' REPLY=9
+### end
+
+### select_multiple_iterations
+# select loops until break
+printf "1\n2\n3\n" | select x in a b c; do echo "$x"; if [ "$REPLY" = "3" ]; then break; fi; done
+### expect
+a
+b
+c
+### end
+
+### select_eof_exits
+# select exits on EOF (prints newline, exit code 1)
+echo "1" | select x in a b; do echo "$x"; done
+### exit_code: 1
+### expect
+a
+
+### end

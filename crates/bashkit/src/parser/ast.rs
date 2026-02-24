@@ -100,6 +100,8 @@ pub enum CompoundCommand {
     Until(UntilCommand),
     /// Case statement
     Case(CaseCommand),
+    /// Select loop
+    Select(SelectCommand),
     /// Subshell (commands in parentheses)
     Subshell(Vec<Command>),
     /// Brace group
@@ -143,6 +145,16 @@ pub struct IfCommand {
 pub struct ForCommand {
     pub variable: String,
     pub words: Option<Vec<Word>>,
+    pub body: Vec<Command>,
+    /// Source span of this command
+    pub span: Span,
+}
+
+/// Select loop.
+#[derive(Debug, Clone)]
+pub struct SelectCommand {
+    pub variable: String,
+    pub words: Vec<Word>,
     pub body: Vec<Command>,
     /// Source span of this command
     pub span: Span,
