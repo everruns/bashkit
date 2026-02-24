@@ -103,16 +103,16 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1161 (1156 pass, 5 skip)
+**Total spec test cases:** 1170 (1165 pass, 5 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 800 | Yes | 795 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 809 | Yes | 804 | 5 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
 | JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
-| **Total** | **1161** | **Yes** | **1156** | **5** | |
+| **Total** | **1170** | **Yes** | **1165** | **5** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -128,7 +128,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | command-not-found.test.sh | 17 | unknown command handling |
 | conditional.test.sh | 17 | `[[ ]]` conditionals, `=~` regex, BASH_REMATCH |
 | command-subst.test.sh | 14 | includes backtick substitution (1 skipped) |
-| control-flow.test.sh | 37 | if/elif/else, for, while, case, trap ERR |
+| control-flow.test.sh | 43 | if/elif/else, for, while, case, trap ERR, `[[ =~ ]]` BASH_REMATCH |
 | cuttr.test.sh | 32 | cut and tr commands, `-z` zero-terminated |
 | date.test.sh | 38 | format specifiers, `-d` relative/compound/epoch, `-R`, `-I`, `%N` (2 skipped) |
 | diff.test.sh | 4 | line diffs |
@@ -136,7 +136,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | errexit.test.sh | 8 | set -e tests |
 | fileops.test.sh | 21 | |
 | find.test.sh | 10 | file search |
-| functions.test.sh | 14 | |
+| functions.test.sh | 17 | local dynamic scoping, nested writes |
 | getopts.test.sh | 9 | POSIX option parsing, combined flags, silent mode |
 | globs.test.sh | 12 | for-loop glob expansion, recursive `**` |
 | headtail.test.sh | 14 | |
