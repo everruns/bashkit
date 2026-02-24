@@ -82,3 +82,14 @@ EOF
 ### expect
 value: 42, cmd: hi, math: 84
 ### end
+
+### heredoc_tab_strip
+# <<- strips leading tabs from content and delimiter
+cat <<-EOF
+	hello
+	world
+	EOF
+### expect
+hello
+world
+### end

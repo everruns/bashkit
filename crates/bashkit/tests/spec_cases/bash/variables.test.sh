@@ -308,3 +308,33 @@ PERSIST=yes; echo $PERSIST
 ### expect
 yes
 ### end
+
+### var_prefix_match
+# ${!prefix*} - names of variables with given prefix
+MYVAR1=a; MYVAR2=b; MYVAR3=c; echo ${!MYVAR*}
+### expect
+MYVAR1 MYVAR2 MYVAR3
+### end
+
+### var_subshell_isolation
+# Subshell variable changes don't leak to parent
+X=orig; (X=changed; echo $X); echo $X
+### expect
+changed
+orig
+### end
+
+### var_pipestatus
+# PIPESTATUS array tracks per-command exit codes
+false | true | false; echo ${PIPESTATUS[0]}-${PIPESTATUS[1]}-${PIPESTATUS[2]}
+### expect
+1-0-1
+### end
+
+### var_trap_exit
+# trap EXIT handler runs on script completion
+trap 'echo goodbye' EXIT; echo hello
+### expect
+hello
+goodbye
+### end

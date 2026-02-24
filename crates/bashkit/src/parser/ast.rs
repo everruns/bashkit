@@ -294,6 +294,7 @@ impl fmt::Display for Word {
                     }
                 }
                 WordPart::IndirectExpansion(name) => write!(f, "${{!{}}}", name)?,
+                WordPart::PrefixMatch(prefix) => write!(f, "${{!{}*}}", prefix)?,
                 WordPart::ProcessSubstitution { commands, is_input } => {
                     let prefix = if *is_input { "<" } else { ">" };
                     write!(f, "{}({:?})", prefix, commands)?
@@ -343,6 +344,8 @@ pub enum WordPart {
     },
     /// Indirect expansion `${!var}` - expands to value of variable named by var's value
     IndirectExpansion(String),
+    /// Prefix matching `${!prefix*}` or `${!prefix@}` - names of variables with given prefix
+    PrefixMatch(String),
     /// Process substitution <(cmd) or >(cmd)
     ProcessSubstitution {
         /// The commands to run
@@ -413,6 +416,8 @@ pub enum RedirectKind {
     Input,
     /// << - here document
     HereDoc,
+    /// <<- - here document with leading tab stripping
+    HereDocStrip,
     /// <<< - here string
     HereString,
     /// >& - duplicate output fd

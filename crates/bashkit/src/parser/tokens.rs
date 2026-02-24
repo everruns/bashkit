@@ -47,6 +47,9 @@ pub enum Token {
     /// Here document (<<)
     HereDoc,
 
+    /// Here document with tab stripping (<<-)
+    HereDocStrip,
+
     /// Here string (<<<)
     HereString,
 

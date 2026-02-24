@@ -271,3 +271,137 @@ echo $((!0))
 ### expect
 1
 ### end
+
+### arith_bitwise_xor
+# Bitwise XOR
+echo $((5 ^ 3))
+### expect
+6
+### end
+
+### arith_shift_left
+# Left shift
+echo $((1 << 4))
+### expect
+16
+### end
+
+### arith_shift_right
+# Right shift
+echo $((16 >> 2))
+### expect
+4
+### end
+
+### arith_compound_add_assign
+# Compound += assignment
+x=10; echo $(( x += 5 ))
+### expect
+15
+### end
+
+### arith_compound_sub_assign
+# Compound -= assignment
+x=10; echo $(( x -= 3 ))
+### expect
+7
+### end
+
+### arith_compound_mul_assign
+# Compound *= assignment
+x=4; echo $(( x *= 3 ))
+### expect
+12
+### end
+
+### arith_compound_and_assign
+# Compound &= assignment
+x=7; echo $(( x &= 3 ))
+### expect
+3
+### end
+
+### arith_compound_or_assign
+# Compound |= assignment
+x=5; echo $(( x |= 2 ))
+### expect
+7
+### end
+
+### arith_compound_xor_assign
+# Compound ^= assignment
+x=5; echo $(( x ^= 3 ))
+### expect
+6
+### end
+
+### arith_compound_shl_assign
+# Compound <<= assignment
+x=1; echo $(( x <<= 4 ))
+### expect
+16
+### end
+
+### arith_compound_shr_assign
+# Compound >>= assignment
+x=16; echo $(( x >>= 2 ))
+### expect
+4
+### end
+
+### arith_pre_increment
+# Pre-increment ++var
+x=5; echo $(( ++x )); echo $x
+### expect
+6
+6
+### end
+
+### arith_post_increment
+# Post-increment var++
+x=5; echo $(( x++ )); echo $x
+### expect
+5
+6
+### end
+
+### arith_pre_decrement
+# Pre-decrement --var
+x=5; echo $(( --x )); echo $x
+### expect
+4
+4
+### end
+
+### arith_post_decrement
+# Post-decrement var--
+x=5; echo $(( x-- )); echo $x
+### expect
+5
+4
+### end
+
+### arith_comma_operator
+# Comma operator (evaluate all, return last)
+echo $(( x=3, y=4, x+y ))
+### expect
+7
+### end
+
+### arith_compare_le
+# Less than or equal
+echo $((3 <= 5)); echo $((5 <= 5)); echo $((6 <= 5))
+### expect
+1
+1
+0
+### end
+
+### arith_compare_ge
+# Greater than or equal
+echo $((5 >= 3)); echo $((5 >= 5)); echo $((4 >= 5))
+### expect
+1
+1
+0
+### end

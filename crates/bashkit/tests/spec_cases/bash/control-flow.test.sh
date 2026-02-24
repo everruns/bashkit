@@ -229,3 +229,21 @@ redirected
 ### expect
 hello
 ### end
+
+### arith_for_le
+# C-style for loop with <= condition
+for ((i=1; i<=3; i++)); do echo $i; done
+### expect
+1
+2
+3
+### end
+
+### arith_for_ge
+# C-style for loop with >= (countdown)
+for ((i=3; i>=1; i--)); do echo $i; done
+### expect
+3
+2
+1
+### end

@@ -122,6 +122,9 @@ impl<'a> Lexer<'a> {
                     if self.peek_char() == Some('<') {
                         self.advance();
                         Some(Token::HereString)
+                    } else if self.peek_char() == Some('-') {
+                        self.advance();
+                        Some(Token::HereDocStrip)
                     } else {
                         Some(Token::HereDoc)
                     }
