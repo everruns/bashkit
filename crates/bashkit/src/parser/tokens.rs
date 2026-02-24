@@ -23,6 +23,15 @@ pub enum Token {
     /// Semicolon (;)
     Semicolon,
 
+    /// Double semicolon (;;) — case break
+    DoubleSemicolon,
+
+    /// Case fallthrough (;&)
+    SemiAmp,
+
+    /// Case continue-matching (;;&)
+    DoubleSemiAmp,
+
     /// Pipe (|)
     Pipe,
 

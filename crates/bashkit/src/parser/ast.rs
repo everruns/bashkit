@@ -190,11 +190,23 @@ pub struct CaseCommand {
     pub span: Span,
 }
 
+/// Terminator for a case item.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CaseTerminator {
+    /// `;;` — stop matching
+    Break,
+    /// `;&` — fall through to next case body unconditionally
+    FallThrough,
+    /// `;;&` — continue checking remaining patterns
+    Continue,
+}
+
 /// A single case item.
 #[derive(Debug, Clone)]
 pub struct CaseItem {
     pub patterns: Vec<Word>,
     pub commands: Vec<Command>,
+    pub terminator: CaseTerminator,
 }
 
 /// Function definition.
