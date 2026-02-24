@@ -183,3 +183,17 @@ printf "(%s)\n" "${arr[@]}"
 ### expect
 (only)
 ### end
+
+### printf_v_flag
+# printf -v assigns to variable
+printf -v result "%d + %d = %d" 3 4 7; echo "$result"
+### expect
+3 + 4 = 7
+### end
+
+### printf_v_formatted
+# printf -v with padding
+printf -v padded "%05d" 42; echo "$padded"
+### expect
+00042
+### end

@@ -20,21 +20,60 @@ impl Builtin for Read {
 
         // Parse flags
         let mut raw_mode = false; // -r: don't interpret backslashes
+        let mut array_mode = false; // -a: read into array
+        let mut delimiter = None::<char>; // -d: custom delimiter
+        let mut nchars = None::<usize>; // -n: read N chars
         let mut prompt = None::<String>; // -p prompt
         let mut var_args = Vec::new();
         let mut args_iter = ctx.args.iter();
         while let Some(arg) = args_iter.next() {
             if arg.starts_with('-') && arg.len() > 1 {
-                for flag in arg[1..].chars() {
+                let mut chars = arg[1..].chars();
+                while let Some(flag) = chars.next() {
                     match flag {
                         'r' => raw_mode = true,
+                        'a' => array_mode = true,
+                        'd' => {
+                            // -d delim: use first char of next arg as delimiter
+                            let rest: String = chars.collect();
+                            let delim_str = if rest.is_empty() {
+                                args_iter.next().map(|s| s.as_str()).unwrap_or("")
+                            } else {
+                                &rest
+                            };
+                            delimiter = delim_str.chars().next();
+                            break;
+                        }
+                        'n' => {
+                            let rest: String = chars.collect();
+                            let n_str = if rest.is_empty() {
+                                args_iter.next().map(|s| s.as_str()).unwrap_or("0")
+                            } else {
+                                &rest
+                            };
+                            nchars = n_str.parse().ok();
+                            break;
+                        }
                         'p' => {
-                            // -p takes next arg as prompt
-                            if let Some(p) = args_iter.next() {
-                                prompt = Some(p.clone());
+                            let rest: String = chars.collect();
+                            prompt = Some(if rest.is_empty() {
+                                args_iter.next().cloned().unwrap_or_default()
+                            } else {
+                                rest
+                            });
+                            break;
+                        }
+                        't' | 's' | 'u' | 'e' | 'i' => {
+                            // -t timeout, -s silent, -u fd: accept and ignore
+                            if matches!(flag, 't' | 'u') {
+                                let rest: String = chars.collect();
+                                if rest.is_empty() {
+                                    args_iter.next();
+                                }
+                                break;
                             }
                         }
-                        _ => {} // ignore unknown flags
+                        _ => {}
                     }
                 }
             } else {
@@ -43,8 +82,14 @@ impl Builtin for Read {
         }
         let _ = prompt; // prompt is for interactive use, ignored in non-interactive
 
-        // Get first line
-        let line = if raw_mode {
+        // Extract input based on delimiter or nchars
+        let line = if let Some(n) = nchars {
+            // -n N: read at most N chars
+            input.chars().take(n).collect::<String>()
+        } else if let Some(delim) = delimiter {
+            // -d delim: read until delimiter
+            input.split(delim).next().unwrap_or("").to_string()
+        } else if raw_mode {
             // -r: treat backslashes literally
             input.lines().next().unwrap_or("").to_string()
         } else {
@@ -61,13 +106,6 @@ impl Builtin for Read {
             result
         };
 
-        // If no variable names given, use REPLY
-        let var_names: Vec<&str> = if var_args.is_empty() {
-            vec!["REPLY"]
-        } else {
-            var_args
-        };
-
         // Split line by IFS (default: space, tab, newline)
         let ifs = ctx.env.get("IFS").map(|s| s.as_str()).unwrap_or(" \t\n");
         let words: Vec<&str> = if ifs.is_empty() {
@@ -77,6 +115,24 @@ impl Builtin for Read {
             line.split(|c: char| ifs.contains(c))
                 .filter(|s| !s.is_empty())
                 .collect()
+        };
+
+        if array_mode {
+            // -a: read all words into array variable
+            let arr_name = var_args.first().copied().unwrap_or("REPLY");
+            // Store as _ARRAY_<name>_<idx> for the interpreter to pick up
+            ctx.variables.insert(
+                format!("_ARRAY_READ_{}", arr_name),
+                words.join("\x1F"), // unit separator as delimiter
+            );
+            return Ok(ExecResult::ok(String::new()));
+        }
+
+        // If no variable names given, use REPLY
+        let var_names: Vec<&str> = if var_args.is_empty() {
+            vec!["REPLY"]
+        } else {
+            var_args
         };
 
         // Assign words to variables

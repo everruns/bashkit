@@ -42,3 +42,27 @@ echo "one two three four" | { read a b; echo "$a|$b"; }
 ### expect
 one|two three four
 ### end
+
+### read_array
+# read -a reads words into indexed array
+read -a arr <<< "one two three"
+echo "${arr[0]} ${arr[1]} ${arr[2]}"
+### expect
+one two three
+### end
+
+### read_array_length
+# read -a array length
+read -a arr <<< "a b c d"
+echo ${#arr[@]}
+### expect
+4
+### end
+
+### read_nchars
+# read -n N reads N characters
+read -n 3 var <<< "hello"
+echo "$var"
+### expect
+hel
+### end

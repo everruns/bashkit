@@ -16,7 +16,6 @@ stateless, virtual execution model or pose security risks.
 | Feature | Rationale | Threat ID |
 |---------|-----------|-----------|
 | `exec` builtin | Cannot replace shell process in sandbox; breaks containment | TM-ESC-005 |
-| `trap` builtin | Stateless model - no persistent handlers; no signal sources in virtual environment | - |
 | Background execution (`&`) | Stateless model - no persistent processes between commands | TM-ESC-007 |
 | Job control (`bg`, `fg`, `jobs`) | Requires process state; interactive feature | - |
 | Symlink following | Prevents symlink loop attacks and sandbox escape | TM-DOS-011 |
@@ -39,10 +38,7 @@ traversal is blocked. This prevents:
 - Symlink-based sandbox escapes (e.g., `link -> /etc/passwd`)
 
 **Security Exclusions**: `exec` is excluded because it would replace the shell
-process, breaking sandbox containment. `trap` is excluded because signal
-handlers require persistent state (conflicts with stateless model) and there
-are no signal sources in the virtual environment. Scripts should use exit-code-based error
-handling instead.
+process, breaking sandbox containment.
 
 **bash/sh Commands**: The `bash` and `sh` commands are implemented as virtual
 re-invocations of the Bashkit interpreter, NOT external process spawning. This
@@ -91,7 +87,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | `set` | Implemented | Set options and positional parameters |
 | `shift` | Implemented | Shift positional parameters |
 | `times` | Implemented | Display process times (returns zeros in virtual mode) |
-| `trap` | **Excluded** | See [Intentionally Unimplemented](#intentionally-unimplemented-features) |
+| `trap` | Implemented | EXIT, ERR handlers; signal traps stored but no signal delivery in virtual mode |
 | `unset` | Implemented | Remove variables and functions |
 
 ### Pipelines and Lists
@@ -107,22 +103,22 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1105 (1095 pass, 10 skip)
+**Total spec test cases:** 1161 (1156 pass, 5 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 744 | Yes | 739 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 800 | Yes | 795 | 5 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
-| JQ | 114 | Yes | 109 | 5 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
-| **Total** | **1105** | **Yes** | **1095** | **10** | |
+| JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
+| **Total** | **1161** | **Yes** | **1156** | **5** | |
 
 ### Bash Spec Tests Breakdown
 
 | File | Cases | Notes |
 |------|-------|-------|
-| arithmetic.test.sh | 29 | includes logical operators |
+| arithmetic.test.sh | 57 | includes logical, bitwise, compound assign, increment/decrement |
 | arrays.test.sh | 20 | includes indices, `${arr[@]}` / `${arr[*]}` expansion |
 | background.test.sh | 4 | |
 | bash-command.test.sh | 34 | bash/sh re-invocation |
@@ -132,7 +128,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | command-not-found.test.sh | 17 | unknown command handling |
 | conditional.test.sh | 17 | `[[ ]]` conditionals, `=~` regex, BASH_REMATCH |
 | command-subst.test.sh | 14 | includes backtick substitution (1 skipped) |
-| control-flow.test.sh | 32 | if/elif/else, for, while, case |
+| control-flow.test.sh | 37 | if/elif/else, for, while, case, trap ERR |
 | cuttr.test.sh | 32 | cut and tr commands, `-z` zero-terminated |
 | date.test.sh | 38 | format specifiers, `-d` relative/compound/epoch, `-R`, `-I`, `%N` (2 skipped) |
 | diff.test.sh | 4 | line diffs |
@@ -152,7 +148,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | paste.test.sh | 4 | line merging with `-s` serial and `-d` delimiter |
 | path.test.sh | 14 | |
 | pipes-redirects.test.sh | 19 | includes stderr redirects |
-| printf.test.sh | 24 | format specifiers, array expansion |
+| printf.test.sh | 26 | format specifiers, array expansion, `-v` variable assignment |
 | procsub.test.sh | 6 | |
 | sleep.test.sh | 6 | |
 | sortuniq.test.sh | 32 | sort and uniq, `-z` zero-terminated, `-m` merge |
@@ -160,16 +156,16 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | test-operators.test.sh | 17 | file/string tests |
 | time.test.sh | 11 | Wall-clock only (user/sys always 0) |
 | timeout.test.sh | 17 | |
-| variables.test.sh | 44 | includes special vars, prefix env assignments |
+| variables.test.sh | 58 | includes special vars, prefix env, PIPESTATUS, trap EXIT, `${var@Q}` |
 | wc.test.sh | 35 | word count (5 skipped) |
 | type.test.sh | 15 | `type`, `which`, `hash` builtins |
 | declare.test.sh | 10 | `declare`/`typeset`, `-i`, `-r`, `-x`, `-a`, `-p` |
 | ln.test.sh | 5 | `ln -s`, `-f`, symlink creation |
 | eval-bugs.test.sh | 4 | regression tests for eval/script bugs |
 | script-exec.test.sh | 10 | script execution by path, $PATH search, exit codes |
-| heredoc.test.sh | 9 | heredoc variable expansion, quoted delimiters, file redirects |
-| string-ops.test.sh | 15 | string replacement (prefix/suffix anchored), `${var:?}`, case conversion |
-| read-builtin.test.sh | 7 | `read` builtin, IFS splitting, `-r` flag, here-string input |
+| heredoc.test.sh | 10 | heredoc variable expansion, quoted delimiters, file redirects, `<<-` tab strip |
+| string-ops.test.sh | 14 | string replacement (prefix/suffix anchored), `${var:?}`, case conversion |
+| read-builtin.test.sh | 10 | `read` builtin, IFS splitting, `-r`, `-a` (array), `-n` (nchars), here-string |
 
 ## Shell Features
 
@@ -198,9 +194,10 @@ Features that may be added in the future (not intentionally excluded):
 | Prefix env assignments | `VAR=val cmd` temporarily sets env for cmd | Array prefix assignments not in env |
 | `local` | Declaration | Proper scoping in nested functions |
 | `return` | Basic usage | Return value propagation |
-| Heredocs | Basic | Variable expansion inside |
+| Heredocs | Basic, `<<-` tab strip, variable expansion | — |
 | Arrays | Indexing, `[@]`/`[*]` as separate args, `${!arr[@]}`, `+=`, slice `${arr[@]:1:2}`, assoc `declare -A`, compound init `declare -A m=([k]=v)` | — |
-| `echo -n` | Flag parsed | Trailing newline handling |
+| `trap` | EXIT, ERR handlers | No signal delivery in virtual mode (INT, TERM stored but not triggered) |
+| `set -o pipefail` | Pipeline returns rightmost non-zero exit code | — |
 | `time` | Wall-clock timing | User/sys CPU time (always 0) |
 | `timeout` | Basic usage | `-k` kill timeout |
 | `bash`/`sh` | `-c`, `-n`, script files, stdin, `--version`, `--help` | `-e` (exit on error), `-x` (trace), `-o`, login shell |

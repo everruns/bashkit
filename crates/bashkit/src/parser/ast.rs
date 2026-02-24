@@ -294,9 +294,13 @@ impl fmt::Display for Word {
                     }
                 }
                 WordPart::IndirectExpansion(name) => write!(f, "${{!{}}}", name)?,
+                WordPart::PrefixMatch(prefix) => write!(f, "${{!{}*}}", prefix)?,
                 WordPart::ProcessSubstitution { commands, is_input } => {
                     let prefix = if *is_input { "<" } else { ">" };
                     write!(f, "{}({:?})", prefix, commands)?
+                }
+                WordPart::Transformation { name, operator } => {
+                    write!(f, "${{{}@{}}}", name, operator)?
                 }
             }
         }
@@ -343,6 +347,8 @@ pub enum WordPart {
     },
     /// Indirect expansion `${!var}` - expands to value of variable named by var's value
     IndirectExpansion(String),
+    /// Prefix matching `${!prefix*}` or `${!prefix@}` - names of variables with given prefix
+    PrefixMatch(String),
     /// Process substitution <(cmd) or >(cmd)
     ProcessSubstitution {
         /// The commands to run
@@ -350,6 +356,8 @@ pub enum WordPart {
         /// True for <(cmd), false for >(cmd)
         is_input: bool,
     },
+    /// Parameter transformation `${var@op}` where op is Q, E, P, A, K, a, u, U, L
+    Transformation { name: String, operator: char },
 }
 
 /// Parameter expansion operators
@@ -413,6 +421,8 @@ pub enum RedirectKind {
     Input,
     /// << - here document
     HereDoc,
+    /// <<- - here document with leading tab stripping
+    HereDocStrip,
     /// <<< - here string
     HereString,
     /// >& - duplicate output fd
