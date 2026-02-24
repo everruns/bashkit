@@ -17,6 +17,7 @@ impl Builtin for Cd {
             .args
             .first()
             .map(|s| s.as_str())
+            .or_else(|| ctx.variables.get("HOME").map(|s| s.as_str()))
             .or_else(|| ctx.env.get("HOME").map(|s| s.as_str()))
             .unwrap_or("/home/user");
 
@@ -24,8 +25,9 @@ impl Builtin for Cd {
             PathBuf::from(target)
         } else if target == "-" {
             // Go to previous directory
-            ctx.env
+            ctx.variables
                 .get("OLDPWD")
+                .or_else(|| ctx.env.get("OLDPWD"))
                 .map(PathBuf::from)
                 .unwrap_or_else(|| ctx.cwd.clone())
         } else {
@@ -39,6 +41,9 @@ impl Builtin for Cd {
         if ctx.fs.exists(&normalized).await? {
             let metadata = ctx.fs.stat(&normalized).await?;
             if metadata.file_type.is_dir() {
+                // Set OLDPWD before changing directory
+                let old_cwd = ctx.cwd.to_string_lossy().to_string();
+                ctx.variables.insert("OLDPWD".to_string(), old_cwd);
                 *ctx.cwd = normalized;
                 Ok(ExecResult::ok(""))
             } else {

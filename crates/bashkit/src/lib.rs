@@ -1154,14 +1154,19 @@ impl BashBuilder {
         let mut interpreter =
             Interpreter::with_config(Arc::clone(&fs), username.clone(), hostname, custom_builtins);
 
-        // Set environment variables
-        for (key, value) in env {
-            interpreter.set_env(&key, &value);
+        // Set environment variables (also override shell variable defaults)
+        for (key, value) in &env {
+            interpreter.set_env(key, value);
+            // Shell variables like HOME, USER should also be set as variables
+            // so they take precedence over the defaults
+            interpreter.set_var(key, value);
         }
+        drop(env);
 
         // If username is set, automatically set USER env var
         if let Some(ref username) = username {
             interpreter.set_env("USER", username);
+            interpreter.set_var("USER", username);
         }
 
         if let Some(cwd) = cwd {
@@ -3106,10 +3111,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_tilde_expansion_default_home() {
-        // ~ should default to /home/user if HOME is not set
+        // ~ should default to /home/sandbox (DEFAULT_USERNAME is "sandbox")
         let mut bash = Bash::new();
         let result = bash.exec("echo ~").await.unwrap();
-        assert_eq!(result.stdout, "/home/user\n");
+        assert_eq!(result.stdout, "/home/sandbox\n");
     }
 
     #[tokio::test]
