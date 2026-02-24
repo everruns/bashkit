@@ -35,7 +35,13 @@ async fn main() -> anyhow::Result<()> {
 
 ## Overview
 
-[![Overview Video](https://img.youtube.com/vi/0rIGX7mSlMg/maxresdefault.jpg)](https://www.youtube.com/watch?v=0rIGX7mSlMg)
+<div align="center">
+  <a href="https://www.youtube.com/watch?v=0rIGX7mSlMg">
+    <img src="assets/overview-thumb.jpg" alt="Watch the overview video" width="600">
+    <br>
+    <strong>▶ Watch the 10-minute overview</strong>
+  </a>
+</div>
 
 ## Built-in Commands (85)
 
