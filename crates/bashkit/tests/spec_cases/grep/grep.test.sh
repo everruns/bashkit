@@ -348,11 +348,18 @@ printf 'foo123\n' | grep -P 'foo\d+'
 foo123
 ### end
 
-### grep_ignore_binary
-### skip: binary file detection not implemented
+### grep_binary_detect
+# Binary file detection: content with null bytes triggers binary message
 printf 'foo\0bar\n' | grep foo
 ### expect
-foo
+Binary file (standard input) matches
+### end
+
+### grep_binary_with_a_flag
+# -a flag treats binary as text, outputs match normally
+printf 'foo\0bar\n' | grep -a foo
+### expect
+foobar
 ### end
 
 ### grep_include_pattern

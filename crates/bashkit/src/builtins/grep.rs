@@ -570,6 +570,9 @@ impl Builtin for Grep {
             let mut match_count = 0;
             let mut file_matched = false;
 
+            // Binary detection: content with null bytes, -a and -z not set
+            let is_binary = !opts.binary_as_text && !opts.null_terminated && content.contains('\0');
+
             // Split on null bytes if -z flag is set, otherwise split on newlines
             let lines: Vec<&str> = if opts.null_terminated {
                 content.split('\0').collect()
@@ -669,6 +672,16 @@ impl Builtin for Grep {
             }
 
             // Now generate output
+            // Binary file: just report "Binary file X matches" instead of lines
+            if is_binary && file_matched && !opts.count_only && !opts.files_with_matches {
+                let display_name = if filename.is_empty() {
+                    "(standard input)"
+                } else {
+                    filename.as_str()
+                };
+                output.push_str(&format!("Binary file {} matches\n", display_name));
+                continue 'file_loop;
+            }
             if opts.files_with_matches && file_matched {
                 output.push_str(filename);
                 output.push('\n');
