@@ -103,16 +103,16 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1194 (1189 pass, 5 skip)
+**Total spec test cases:** 1199 (1194 pass, 5 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 833 | Yes | 828 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 838 | Yes | 833 | 5 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
 | JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
-| **Total** | **1194** | **Yes** | **1189** | **5** | |
+| **Total** | **1199** | **Yes** | **1194** | **5** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -156,7 +156,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | test-operators.test.sh | 17 | file/string tests |
 | time.test.sh | 11 | Wall-clock only (user/sys always 0) |
 | timeout.test.sh | 17 | |
-| variables.test.sh | 58 | includes special vars, prefix env, PIPESTATUS, trap EXIT, `${var@Q}` |
+| variables.test.sh | 63 | includes special vars, prefix env, PIPESTATUS, trap EXIT, `${var@Q}`, `\<newline>` line continuation |
 | wc.test.sh | 35 | word count (5 skipped) |
 | type.test.sh | 15 | `type`, `which`, `hash` builtins |
 | declare.test.sh | 10 | `declare`/`typeset`, `-i`, `-r`, `-x`, `-a`, `-p` |
