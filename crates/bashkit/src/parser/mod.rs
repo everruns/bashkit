@@ -497,6 +497,7 @@ impl<'a> Parser<'a> {
                 "while" => return self.parse_compound_with_redirects(|s| s.parse_while()),
                 "until" => return self.parse_compound_with_redirects(|s| s.parse_until()),
                 "case" => return self.parse_compound_with_redirects(|s| s.parse_case()),
+                "select" => return self.parse_compound_with_redirects(|s| s.parse_select()),
                 "time" => return self.parse_compound_with_redirects(|s| s.parse_time()),
                 "function" => return self.parse_function_keyword().map(Some),
                 _ => {
@@ -676,6 +677,83 @@ impl<'a> Parser<'a> {
 
         self.pop_depth();
         Ok(CompoundCommand::For(ForCommand {
+            variable,
+            words,
+            body,
+            span: start_span.merge(self.current_span),
+        }))
+    }
+
+    /// Parse select loop: select var in list; do body; done
+    fn parse_select(&mut self) -> Result<CompoundCommand> {
+        let start_span = self.current_span;
+        self.push_depth()?;
+        self.advance(); // consume 'select'
+        self.skip_newlines()?;
+
+        // Expect variable name
+        let variable = match &self.current_token {
+            Some(tokens::Token::Word(w))
+            | Some(tokens::Token::LiteralWord(w))
+            | Some(tokens::Token::QuotedWord(w)) => w.clone(),
+            _ => {
+                self.pop_depth();
+                return Err(Error::Parse("expected variable name in select".to_string()));
+            }
+        };
+        self.advance();
+
+        // Expect 'in' keyword
+        if !self.is_keyword("in") {
+            self.pop_depth();
+            return Err(Error::Parse("expected 'in' in select".to_string()));
+        }
+        self.advance(); // consume 'in'
+
+        // Parse word list until do/newline/;
+        let mut words = Vec::new();
+        loop {
+            match &self.current_token {
+                Some(tokens::Token::Word(w)) if w == "do" => break,
+                Some(tokens::Token::Word(w)) | Some(tokens::Token::QuotedWord(w)) => {
+                    let is_quoted =
+                        matches!(&self.current_token, Some(tokens::Token::QuotedWord(_)));
+                    let mut word = self.parse_word(w.clone());
+                    if is_quoted {
+                        word.quoted = true;
+                    }
+                    words.push(word);
+                    self.advance();
+                }
+                Some(tokens::Token::LiteralWord(w)) => {
+                    words.push(Word {
+                        parts: vec![WordPart::Literal(w.clone())],
+                        quoted: true,
+                    });
+                    self.advance();
+                }
+                Some(tokens::Token::Newline) | Some(tokens::Token::Semicolon) => {
+                    self.advance();
+                    break;
+                }
+                _ => break,
+            }
+        }
+
+        self.skip_newlines()?;
+
+        // Expect 'do'
+        self.expect_keyword("do")?;
+        self.skip_newlines()?;
+
+        // Parse body
+        let body = self.parse_compound_list("done")?;
+
+        // Expect 'done'
+        self.expect_keyword("done")?;
+
+        self.pop_depth();
+        Ok(CompoundCommand::Select(SelectCommand {
             variable,
             words,
             body,

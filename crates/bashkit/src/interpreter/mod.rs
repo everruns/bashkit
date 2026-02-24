@@ -42,8 +42,8 @@ pub type OutputCallback = Box<dyn FnMut(&str, &str) + Send + Sync>;
 use crate::parser::{
     ArithmeticForCommand, AssignmentValue, CaseCommand, Command, CommandList, CompoundCommand,
     ForCommand, FunctionDef, IfCommand, ListOperator, ParameterOp, Parser, Pipeline, Redirect,
-    RedirectKind, Script, SimpleCommand, Span, TimeCommand, UntilCommand, WhileCommand, Word,
-    WordPart,
+    RedirectKind, Script, SelectCommand, SimpleCommand, Span, TimeCommand, UntilCommand,
+    WhileCommand, Word, WordPart,
 };
 
 #[cfg(feature = "failpoints")]
@@ -522,6 +522,7 @@ impl Interpreter {
                 CompoundCommand::While(cmd) => cmd.span.line(),
                 CompoundCommand::Until(cmd) => cmd.span.line(),
                 CompoundCommand::Case(cmd) => cmd.span.line(),
+                CompoundCommand::Select(cmd) => cmd.span.line(),
                 CompoundCommand::Time(cmd) => cmd.span.line(),
                 CompoundCommand::Subshell(_) | CompoundCommand::BraceGroup(_) => 1,
                 CompoundCommand::Arithmetic(_) | CompoundCommand::Conditional(_) => 1,
@@ -621,6 +622,7 @@ impl Interpreter {
             }
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
             CompoundCommand::Case(case_cmd) => self.execute_case(case_cmd).await,
+            CompoundCommand::Select(select_cmd) => self.execute_select(select_cmd).await,
             CompoundCommand::Arithmetic(expr) => self.execute_arithmetic_command(expr).await,
             CompoundCommand::Time(time_cmd) => self.execute_time(time_cmd).await,
             CompoundCommand::Conditional(words) => self.execute_conditional(words).await,
@@ -764,6 +766,173 @@ impl Interpreter {
                         });
                     }
                 }
+            }
+        }
+
+        Ok(ExecResult {
+            stdout,
+            stderr,
+            exit_code,
+            control_flow: ControlFlow::None,
+        })
+    }
+
+    /// Execute a select loop: select var in list; do body; done
+    ///
+    /// Reads lines from pipeline_stdin. Each line is treated as the user's
+    /// menu selection. If the line is a valid number, the variable is set to
+    /// the corresponding item; otherwise it is set to empty. REPLY is always
+    /// set to the raw input. EOF ends the loop.
+    async fn execute_select(&mut self, select_cmd: &SelectCommand) -> Result<ExecResult> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        // Expand word list
+        let mut values = Vec::new();
+        for w in &select_cmd.words {
+            let fields = self.expand_word_to_fields(w).await?;
+            if w.quoted {
+                values.extend(fields);
+            } else {
+                for expanded in fields {
+                    let brace_expanded = self.expand_braces(&expanded);
+                    for item in brace_expanded {
+                        if self.contains_glob_chars(&item) {
+                            let glob_matches = self.expand_glob(&item).await?;
+                            if glob_matches.is_empty() {
+                                values.push(item);
+                            } else {
+                                values.extend(glob_matches);
+                            }
+                        } else {
+                            values.push(item);
+                        }
+                    }
+                }
+            }
+        }
+
+        if values.is_empty() {
+            return Ok(ExecResult {
+                stdout,
+                stderr,
+                exit_code,
+                control_flow: ControlFlow::None,
+            });
+        }
+
+        // Build menu string
+        let menu: String = values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| format!("{}) {}", i + 1, v))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let ps3 = self
+            .variables
+            .get("PS3")
+            .cloned()
+            .unwrap_or_else(|| "#? ".to_string());
+
+        // Reset loop counter
+        self.counters.reset_loop();
+
+        loop {
+            self.counters.tick_loop(&self.limits)?;
+
+            // Output menu to stderr
+            stderr.push_str(&menu);
+            stderr.push('\n');
+            stderr.push_str(&ps3);
+
+            // Read a line from pipeline_stdin
+            let line = if let Some(ref ps) = self.pipeline_stdin {
+                if ps.is_empty() {
+                    // EOF: bash prints newline and exits with code 1
+                    stdout.push('\n');
+                    exit_code = 1;
+                    break;
+                }
+                let data = ps.clone();
+                if let Some(newline_pos) = data.find('\n') {
+                    let line = data[..newline_pos].to_string();
+                    self.pipeline_stdin = Some(data[newline_pos + 1..].to_string());
+                    line
+                } else {
+                    self.pipeline_stdin = Some(String::new());
+                    data
+                }
+            } else {
+                // No stdin: bash prints newline and exits with code 1
+                stdout.push('\n');
+                exit_code = 1;
+                break;
+            };
+
+            // Set REPLY to raw input
+            self.variables.insert("REPLY".to_string(), line.clone());
+
+            // Parse selection number
+            let selected = line
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .and_then(|n| {
+                    if n >= 1 && n <= values.len() {
+                        Some(values[n - 1].clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
+
+            self.variables.insert(select_cmd.variable.clone(), selected);
+
+            // Execute body
+            let emit_before = self.output_emit_count;
+            let result = self.execute_command_sequence(&select_cmd.body).await?;
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+            stdout.push_str(&result.stdout);
+            stderr.push_str(&result.stderr);
+            exit_code = result.exit_code;
+
+            // Check for break/continue
+            match result.control_flow {
+                ControlFlow::Break(n) => {
+                    if n <= 1 {
+                        break;
+                    } else {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Break(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Continue(n) => {
+                    if n <= 1 {
+                        continue;
+                    } else {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow: ControlFlow::Continue(n - 1),
+                        });
+                    }
+                }
+                ControlFlow::Return(code) => {
+                    return Ok(ExecResult {
+                        stdout,
+                        stderr,
+                        exit_code: code,
+                        control_flow: ControlFlow::Return(code),
+                    });
+                }
+                ControlFlow::None => {}
             }
         }
 
