@@ -363,16 +363,20 @@ impl Builtin for Jq {
         let mut has_output = false;
         let mut all_null_or_false = true;
 
-        for jaq_input in inputs_to_process {
-            // Create empty inputs iterator
-            let inputs = RcIter::new(core::iter::empty());
+        // Shared input iterator: main loop pops one value per filter run,
+        // and jaq's input/inputs functions consume from the same source.
+        let shared_inputs = RcIter::new(inputs_to_process.into_iter().map(Ok::<Val, String>));
+
+        for jaq_input in &shared_inputs {
+            let jaq_input: Val =
+                jaq_input.map_err(|e| Error::Execution(format!("jq: input error: {}", e)))?;
 
             // Run the filter, passing any --arg/--argjson variable values
             let var_vals: Vec<Val> = var_bindings
                 .iter()
                 .map(|(_, v)| Val::from(v.clone()))
                 .collect();
-            let ctx = Ctx::new(var_vals, &inputs);
+            let ctx = Ctx::new(var_vals, &shared_inputs);
             for result in filter.run((ctx, jaq_input)) {
                 match result {
                     Ok(val) => {
@@ -625,6 +629,27 @@ mod tests {
     /// TM-DOS-027: Deeply nested JSON arrays must be rejected
     /// Note: serde_json has a built-in recursion limit (~128 levels) that fires first.
     /// Our check_json_depth is defense-in-depth for values within serde's limit.
+    #[tokio::test]
+    async fn test_jq_input_reads_next() {
+        let result = run_jq_with_args(&["input"], "1\n2").await.unwrap();
+        assert_eq!(result.trim(), "2");
+    }
+
+    #[tokio::test]
+    async fn test_jq_inputs_collects_remaining() {
+        let result = run_jq_with_args(&["-c", "[inputs]"], "1\n2\n3")
+            .await
+            .unwrap();
+        assert_eq!(result.trim(), "[2,3]");
+    }
+
+    #[tokio::test]
+    async fn test_jq_inputs_single_value() {
+        // With single input, inputs yields empty array
+        let result = run_jq_with_args(&["-c", "[inputs]"], "42").await.unwrap();
+        assert_eq!(result.trim(), "[]");
+    }
+
     #[tokio::test]
     async fn test_jq_json_depth_limit_arrays() {
         // Build 150-level nested JSON: [[[[....[1]....]]]]
