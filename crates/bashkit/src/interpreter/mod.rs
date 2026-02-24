@@ -2431,12 +2431,29 @@ impl Interpreter {
                 positional: args.clone(),
             });
 
+            // Set FUNCNAME array from call stack (index 0 = current, 1 = caller, ...)
+            let funcname_arr: HashMap<usize, String> = self
+                .call_stack
+                .iter()
+                .rev()
+                .enumerate()
+                .map(|(i, f)| (i, f.name.clone()))
+                .collect();
+            let prev_funcname = self.arrays.insert("FUNCNAME".to_string(), funcname_arr);
+
             // Execute function body
             let mut result = self.execute_command(&func_def.body).await?;
 
             // Pop call frame and function counter
             self.call_stack.pop();
             self.counters.pop_function();
+
+            // Restore previous FUNCNAME (or set from remaining stack)
+            if self.call_stack.is_empty() {
+                self.arrays.remove("FUNCNAME");
+            } else if let Some(prev) = prev_funcname {
+                self.arrays.insert("FUNCNAME".to_string(), prev);
+            }
 
             // Handle return - convert Return control flow to exit code
             if let ControlFlow::Return(code) = result.control_flow {

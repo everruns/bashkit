@@ -962,6 +962,10 @@ criteria = "safe-to-deploy"
 version = "0.8.9"
 criteria = "safe-to-deploy"
 
+[[exemptions.regex-syntax]]
+version = "0.8.10"
+criteria = "safe-to-deploy"
+
 [[exemptions.reqwest]]
 version = "0.13.2"
 criteria = "safe-to-deploy"

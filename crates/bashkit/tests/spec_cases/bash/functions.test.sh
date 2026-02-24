@@ -159,3 +159,47 @@ echo "after outer: $x"
 in outer: local_val
 after outer: global
 ### end
+
+### func_funcname_basic
+# FUNCNAME[0] is current function name
+myfunc() { echo "${FUNCNAME[0]}"; }
+myfunc
+### expect
+myfunc
+### end
+
+### func_funcname_call_stack
+# FUNCNAME array reflects call stack
+inner() { echo "${FUNCNAME[@]}"; }
+outer() { inner; }
+outer
+### expect
+inner outer
+### end
+
+### func_funcname_depth
+# FUNCNAME array length matches nesting depth
+a() { echo "${#FUNCNAME[@]}"; }
+b() { a; }
+c() { b; }
+c
+### expect
+3
+### end
+
+### func_funcname_empty_outside
+# FUNCNAME is empty outside functions
+echo "${#FUNCNAME[@]}"
+### expect
+0
+### end
+
+### func_funcname_restored
+# FUNCNAME is cleared after function returns
+f() { echo "in: ${FUNCNAME[0]}"; }
+f
+echo "out: ${#FUNCNAME[@]}"
+### expect
+in: f
+out: 0
+### end
