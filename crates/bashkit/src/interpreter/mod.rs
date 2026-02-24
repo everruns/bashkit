@@ -2616,6 +2616,24 @@ impl Interpreter {
                 .await;
         }
 
+        // Handle `let` - evaluate arithmetic expressions with assignment
+        if name == "let" {
+            let mut last_val = 0i64;
+            for arg in &args {
+                last_val = self.evaluate_arithmetic_with_assign(arg);
+            }
+            // let returns 1 if last expression is 0, 0 otherwise
+            let exit_code = if last_val == 0 { 1 } else { 0 };
+            let mut result = ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code,
+                control_flow: ControlFlow::None,
+            };
+            result = self.apply_redirections(result, &command.redirects).await?;
+            return Ok(result);
+        }
+
         // Handle `unset` with array element syntax: unset 'arr[key]'
         if name == "unset" {
             for arg in &args {
@@ -3735,8 +3753,8 @@ impl Interpreter {
                         }
                     }
                 } else if is_integer {
-                    // Try to evaluate as integer
-                    let int_val: i64 = value.parse().unwrap_or(0);
+                    // Evaluate as arithmetic expression
+                    let int_val = self.evaluate_arithmetic_with_assign(value);
                     self.variables
                         .insert(var_name.to_string(), int_val.to_string());
                 } else {

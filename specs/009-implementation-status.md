@@ -103,22 +103,23 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1214 (1209 pass, 5 skip)
+**Total spec test cases:** 1277 (1272 pass, 5 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 853 | Yes | 848 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 859 | Yes | 854 | 5 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
 | JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
-| **Total** | **1214** | **Yes** | **1209** | **5** | |
+| Python | 57 | Yes | 57 | 0 | embedded Python (Monty) |
+| **Total** | **1277** | **Yes** | **1272** | **5** | |
 
 ### Bash Spec Tests Breakdown
 
 | File | Cases | Notes |
 |------|-------|-------|
-| arithmetic.test.sh | 57 | includes logical, bitwise, compound assign, increment/decrement |
+| arithmetic.test.sh | 68 | includes logical, bitwise, compound assign, increment/decrement, `let` builtin, `declare -i` arithmetic |
 | arrays.test.sh | 27 | indices, `${arr[@]}` / `${arr[*]}`, negative indexing `${arr[-1]}` |
 | background.test.sh | 4 | |
 | bash-command.test.sh | 34 | bash/sh re-invocation |
@@ -206,7 +207,7 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-**92 core builtins + 3 feature-gated = 95 total**
+**93 core builtins + 3 feature-gated = 96 total**
 
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,
@@ -214,7 +215,7 @@ Features that may be added in the future (not intentionally excluded):
 `basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `wc`,
 `sort`, `uniq`, `cut`, `tr`, `paste`, `column`, `diff`, `comm`, `date`,
 `wait`, `curl`, `wget`, `timeout`, `command`, `getopts`,
-`type`, `which`, `hash`, `declare`, `typeset`, `kill`,
+`type`, `which`, `hash`, `declare`, `typeset`, `let`, `kill`,
 `time` (keyword), `whoami`, `hostname`, `uname`, `id`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
 `:` (colon), `eval`, `readonly`, `times`, `bash`, `sh`,
 `od`, `xxd`, `hexdump`, `strings`,
