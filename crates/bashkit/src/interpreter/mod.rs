@@ -3859,6 +3859,7 @@ impl Interpreter {
         let mut is_array = false;
         let mut is_assoc = false;
         let mut is_integer = false;
+        let mut is_nameref = false;
         let mut names: Vec<&str> = Vec::new();
 
         for arg in args {
@@ -3871,7 +3872,8 @@ impl Interpreter {
                         'a' => is_array = true,
                         'i' => is_integer = true,
                         'A' => is_assoc = true,
-                        'g' | 'l' | 'n' | 'u' | 't' | 'f' | 'F' => {} // ignored
+                        'n' => is_nameref = true,
+                        'g' | 'l' | 'u' | 't' | 'f' | 'F' => {} // ignored
                         _ => {}
                     }
                 }
@@ -4015,6 +4017,10 @@ impl Interpreter {
                             arr.insert(idx, val.trim_matches('"').to_string());
                         }
                     }
+                } else if is_nameref {
+                    // declare -n ref=target: create nameref
+                    self.variables
+                        .insert(format!("_NAMEREF_{}", var_name), value.to_string());
                 } else if is_integer {
                     // Evaluate as arithmetic expression
                     let int_val = self.evaluate_arithmetic_with_assign(value);
@@ -4037,7 +4043,10 @@ impl Interpreter {
                 }
             } else {
                 // Declare without value
-                if is_assoc {
+                if is_nameref {
+                    // declare -n ref (without value) - just mark as nameref
+                    // The target will be set later via assignment
+                } else if is_assoc {
                     // Initialize empty associative array
                     self.assoc_arrays.entry(name.to_string()).or_default();
                 } else if is_array {
@@ -5616,18 +5625,40 @@ impl Interpreter {
     /// If the variable is declared `local` in any active call frame, update that frame.
     /// Otherwise, set in global variables.
     fn set_variable(&mut self, name: String, value: String) {
+        // Resolve nameref: if `name` is a nameref, assign to the target instead
+        let resolved = self.resolve_nameref(&name).to_string();
         for frame in self.call_stack.iter_mut().rev() {
             if let std::collections::hash_map::Entry::Occupied(mut e) =
-                frame.locals.entry(name.clone())
+                frame.locals.entry(resolved.clone())
             {
                 e.insert(value);
                 return;
             }
         }
-        self.variables.insert(name, value);
+        self.variables.insert(resolved, value);
+    }
+
+    /// Resolve nameref chains: if `name` has a `_NAMEREF_<name>` marker,
+    /// follow the chain (up to 10 levels to prevent infinite loops).
+    fn resolve_nameref<'a>(&'a self, name: &'a str) -> &'a str {
+        let mut current = name;
+        for _ in 0..10 {
+            let key = format!("_NAMEREF_{}", current);
+            if let Some(target) = self.variables.get(&key) {
+                // target is owned by the HashMap, so we can return a reference to it
+                // But we need to work with &str. Let's use a different approach.
+                current = target.as_str();
+            } else {
+                break;
+            }
+        }
+        current
     }
 
     fn expand_variable(&self, name: &str) -> String {
+        // Resolve nameref before expansion
+        let name = self.resolve_nameref(name);
+
         // Check for special parameters (POSIX required)
         match name {
             "?" => return self.last_exit_code.to_string(),
