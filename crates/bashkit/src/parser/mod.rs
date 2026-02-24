@@ -676,10 +676,13 @@ impl<'a> Parser<'a> {
                 Some(tokens::Token::Word(w))
                 | Some(tokens::Token::LiteralWord(w))
                 | Some(tokens::Token::QuotedWord(w)) => {
-                    if !current_expr.is_empty()
-                        && !current_expr.ends_with(' ')
-                        && !current_expr.ends_with('(')
-                    {
+                    // Don't add space when joining operator pairs like < + =3 → <=3
+                    let skip_space = current_expr.ends_with('<')
+                        || current_expr.ends_with('>')
+                        || current_expr.ends_with(' ')
+                        || current_expr.ends_with('(')
+                        || current_expr.is_empty();
+                    if !skip_space {
                         current_expr.push(' ');
                     }
                     current_expr.push_str(w);
@@ -1601,7 +1604,9 @@ impl<'a> Parser<'a> {
                         target,
                     });
                 }
-                Some(tokens::Token::HereDoc) => {
+                Some(tokens::Token::HereDoc) | Some(tokens::Token::HereDocStrip) => {
+                    let strip_tabs =
+                        matches!(self.current_token, Some(tokens::Token::HereDocStrip));
                     self.advance();
                     // Get the delimiter word and track if it was quoted
                     // Quoted delimiters (single or double quotes) disable variable expansion
@@ -1616,6 +1621,22 @@ impl<'a> Parser<'a> {
                     // Read the here document content (reads until delimiter line)
                     let content = self.lexer.read_heredoc(&delimiter);
 
+                    // Strip leading tabs for <<-
+                    let content = if strip_tabs {
+                        let had_trailing_newline = content.ends_with('\n');
+                        let mut stripped: String = content
+                            .lines()
+                            .map(|l| l.trim_start_matches('\t'))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if had_trailing_newline {
+                            stripped.push('\n');
+                        }
+                        stripped
+                    } else {
+                        content
+                    };
+
                     // Now advance to get the next token after the heredoc
                     self.advance();
 
@@ -1627,9 +1648,15 @@ impl<'a> Parser<'a> {
                         self.parse_word(content)
                     };
 
+                    let kind = if strip_tabs {
+                        RedirectKind::HereDocStrip
+                    } else {
+                        RedirectKind::HereDoc
+                    };
+
                     redirects.push(Redirect {
                         fd: None,
-                        kind: RedirectKind::HereDoc,
+                        kind,
                         target,
                     });
 
@@ -2000,7 +2027,7 @@ impl<'a> Parser<'a> {
                         chars.next(); // consume '!'
                         let mut var_name = String::new();
                         while let Some(&c) = chars.peek() {
-                            if c == '}' || c == '[' {
+                            if c == '}' || c == '[' || c == '*' || c == '@' {
                                 break;
                             }
                             var_name.push(chars.next().unwrap());
@@ -2031,16 +2058,23 @@ impl<'a> Parser<'a> {
                             chars.next(); // consume '}'
                             parts.push(WordPart::IndirectExpansion(var_name));
                         } else {
-                            // ${!prefix*} or ${!prefix@} - prefix matching (not fully supported)
-                            // For now, consume until } and treat as variable
+                            // ${!prefix*} or ${!prefix@} - prefix matching
+                            let mut suffix = String::new();
                             while let Some(&c) = chars.peek() {
                                 if c == '}' {
                                     chars.next();
                                     break;
                                 }
-                                var_name.push(chars.next().unwrap());
+                                suffix.push(chars.next().unwrap());
                             }
-                            parts.push(WordPart::Variable(format!("!{}", var_name)));
+                            // Strip trailing * or @
+                            if suffix.ends_with('*') || suffix.ends_with('@') {
+                                let full_prefix =
+                                    format!("{}{}", var_name, &suffix[..suffix.len() - 1]);
+                                parts.push(WordPart::PrefixMatch(full_prefix));
+                            } else {
+                                parts.push(WordPart::Variable(format!("!{}{}", var_name, suffix)));
+                            }
                         }
                     } else {
                         // Read variable name
@@ -2323,6 +2357,27 @@ impl<'a> Parser<'a> {
                                         operator: op,
                                         operand: String::new(),
                                     });
+                                }
+                                '@' => {
+                                    // Parameter transformation ${var@op}
+                                    chars.next(); // consume '@'
+                                    if let Some(&op) = chars.peek() {
+                                        chars.next(); // consume operator
+                                                      // Consume closing }
+                                        if chars.peek() == Some(&'}') {
+                                            chars.next();
+                                        }
+                                        parts.push(WordPart::Transformation {
+                                            name: var_name,
+                                            operator: op,
+                                        });
+                                    } else {
+                                        // No operator, treat as variable
+                                        if chars.peek() == Some(&'}') {
+                                            chars.next();
+                                        }
+                                        parts.push(WordPart::Variable(var_name));
+                                    }
                                 }
                                 '}' => {
                                     chars.next();
