@@ -107,17 +107,16 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1144 (1090 pass, 54 skip)
+**Total spec test cases:** 1105 (1095 pass, 10 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 741 | Yes | 735 | 6 | `bash_spec_tests` in CI |
-| AWK | 90 | Yes | 73 | 17 | loops, arrays, -v, ternary, field assign |
-| Grep | 82 | Yes | 79 | 3 | now with -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude |
-| Sed | 65 | Yes | 53 | 12 | hold space, change, regex ranges, -E |
-| JQ | 108 | Yes | 100 | 8 | reduce, walk, regex funcs, --arg/--argjson, combined flags |
-| Python | 58 | Yes | 50 | 8 | **Experimental.** VFS bridging, pathlib, env vars |
-| **Total** | **1144** | **Yes** | **1090** | **54** | |
+| Bash (core) | 744 | Yes | 739 | 5 | `bash_spec_tests` in CI |
+| AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
+| Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
+| Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
+| JQ | 114 | Yes | 109 | 5 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
+| **Total** | **1105** | **Yes** | **1095** | **10** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -239,38 +238,24 @@ None currently tracked.
 - Array assignment in split: `split($0, arr, ":")` ✅
 - Complex regex patterns
 
-**Skipped Tests (15):**
+**Skipped Tests: 0** (all AWK tests pass)
 
-| Feature | Count | Notes |
-|---------|-------|-------|
-| Power operators | 2 | `^`, `**` |
-| Printf formats | 4 | `%x`, `%o`, `%c`, width specifier |
-| Functions | 3 | `match()`, `gensub()`, `exit` statement |
-| Field handling | 2 | `-F'\t'` tab delimiter, missing field returns empty |
-| Negation | 1 | `!$1` logical negation operator |
-| ~~ORS/getline~~ | ~~2~~ | ✅ Implemented |
-| $0 modification | 1 | `$0 = "x y z"` re-splits fields |
-
-**Recently Implemented:**
+**Implemented Features:**
 - For/while/do-while loops with break/continue
 - Postfix/prefix increment/decrement (`i++`, `++i`, `i--`, `--i`)
-- Arrays: `arr[key]=val`, `"key" in arr`, `for (k in arr)`, `delete arr[k]`
+- Arrays: `arr[key]=val`, `"key" in arr`, `for (k in arr)` (sorted), `delete arr[k]`
 - `-v var=value` flag for variable initialization
 - Ternary operator `(cond ? a : b)`
-- Field assignment `$2 = "X"`
+- Field assignment `$2 = "X"`, `$0 = "x y z"` re-splits fields
 - `getline` — reads next input record into `$0`
-- ORS (output record separator) tests verified
-- `next` statement
-
-<!-- Known AWK gaps for LLM compatibility (tracked in docs/compatibility.md) -->
-<!-- - Power operators (^ and **) - used in math scripts -->
-<!-- - printf %x/%o/%c formats - used in hex/octal output -->
-<!-- - match()/gensub() functions - used in text extraction -->
-<!-- - exit statement with code - used in error handling -->
-<!-- - !$1 negation - used in filtering empty fields -->
-<!-- - ORS variable - used in custom output formatting -->
-<!-- - getline - used in multi-file processing -->
-<!-- - $0 modification with field re-splitting -->
+- ORS (output record separator)
+- `next`, `exit` with code
+- Power operators `^`, `**`
+- Printf formats: `%x`, `%o`, `%c`, width specifier
+- `match()` (RSTART/RLENGTH), `gensub()`, `sub()`, `gsub()`
+- `!$1` logical negation, `-F'\t'` tab delimiter
+- `%.6g` number formatting (OFMT-compatible)
+- Deterministic `for-in` iteration (sorted keys)
 
 ### Sed Limitations
 
@@ -292,13 +277,7 @@ None currently tracked.
 
 ### Grep Limitations
 
-**Skipped Tests (3):**
-
-| Feature | Count | Notes |
-|---------|-------|-------|
-| Recursive test | 1 | Test needs VFS setup with files |
-| Pattern file `-f` | 1 | Requires file redirection support |
-| Binary detection | 1 | Auto-detect binary files |
+**Skipped Tests: 0** (all grep tests pass)
 
 **Implemented Features:**
 - Basic flags: `-i`, `-v`, `-c`, `-n`, `-o`, `-l`, `-w`, `-E`, `-F`, `-q`, `-m`, `-x`
@@ -310,19 +289,18 @@ None currently tracked.
 - Byte offset: `-b`
 - Null-terminated: `-z` (split on `\0` instead of `\n`)
 - Recursive: `-r`/`-R` (uses VFS read_dir)
-- Binary handling: `-a` (filter null bytes)
+- Binary handling: `-a` (filter null bytes), auto-detect binary (null byte → "Binary file ... matches")
 - Perl regex: `-P` (regex crate supports PCRE features)
 - No-op flags: `--color`, `--line-buffered`
 
 ### JQ Limitations
 
-**Skipped Tests (8):**
+**Skipped Tests (5):**
 
 | Feature | Count | Notes |
 |---------|-------|-------|
 | Alternative `//` | 1 | jaq errors on `.foo` applied to null instead of returning null |
 | Path functions | 2 | `setpath`, `leaf_paths` not in jaq standard library |
-| ~~I/O functions~~ | ~~3~~ | ✅ `input`, `inputs`, `env` all implemented |
 | Regex functions | 2 | `match` (jaq omits capture `name` field), `scan` (jaq needs explicit `"g"` flag) |
 
 **Recently Fixed:**
