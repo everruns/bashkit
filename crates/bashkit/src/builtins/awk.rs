@@ -83,6 +83,7 @@ enum AwkAction {
     Break,
     Continue,
     Delete(String, AwkExpr), // delete arr[key]
+    Getline,                 // getline — read next input record into $0
     #[allow(dead_code)] // Exit code support for future
     Exit(Option<AwkExpr>),
     Expression(AwkExpr),
@@ -483,6 +484,9 @@ impl<'a> AwkParser<'a> {
         }
         if self.matches_keyword("delete") {
             return self.parse_delete();
+        }
+        if self.matches_keyword("getline") {
+            return Ok(AwkAction::Getline);
         }
         if self.matches_keyword("exit") {
             self.skip_whitespace();
@@ -1049,7 +1053,7 @@ impl<'a> AwkParser<'a> {
         let remaining = &self.input[self.pos..];
         let keywords = [
             "in", "if", "else", "while", "for", "do", "break", "continue", "next", "exit",
-            "delete", "print", "printf",
+            "delete", "getline", "print", "printf",
         ];
         for kw in keywords {
             if remaining.starts_with(kw) {
@@ -1510,6 +1514,10 @@ enum AwkFlow {
 struct AwkInterpreter {
     state: AwkState,
     output: String,
+    /// Lines of current input file (set before main loop)
+    input_lines: Vec<String>,
+    /// Current line index within input_lines
+    line_index: usize,
 }
 
 impl AwkInterpreter {
@@ -1517,6 +1525,8 @@ impl AwkInterpreter {
         Self {
             state: AwkState::default(),
             output: String::new(),
+            input_lines: Vec::new(),
+            line_index: 0,
         }
     }
 
@@ -2380,6 +2390,15 @@ impl AwkInterpreter {
                 AwkFlow::Continue
             }
             AwkAction::Next => AwkFlow::Next,
+            AwkAction::Getline => {
+                // Advance to next input line and update $0, NR, NF, FNR
+                self.line_index += 1;
+                if self.line_index < self.input_lines.len() {
+                    let line = self.input_lines[self.line_index].clone();
+                    self.state.set_line(&line);
+                }
+                AwkFlow::Continue
+            }
             AwkAction::Break => AwkFlow::Break,
             AwkAction::Continue => AwkFlow::LoopContinue,
             AwkAction::Exit(expr) => {
@@ -2556,8 +2575,13 @@ impl Builtin for Awk {
 
         'files: for input in inputs {
             interp.state.fnr = 0;
-            for line in input.lines() {
-                interp.state.set_line(line);
+            // Index-based iteration so getline can advance the index
+            interp.input_lines = input.lines().map(|l| l.to_string()).collect();
+            interp.line_index = 0;
+
+            while interp.line_index < interp.input_lines.len() {
+                let line = interp.input_lines[interp.line_index].clone();
+                interp.state.set_line(&line);
 
                 for rule in &program.main_rules {
                     // Check pattern
@@ -2587,6 +2611,7 @@ impl Builtin for Awk {
                         }
                     }
                 }
+                interp.line_index += 1;
             }
         }
 
@@ -3022,6 +3047,29 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "line1\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_getline_basic() {
+        let result = run_awk(&["{getline; print}"], Some("line1\nline2"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "line2\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_getline_updates_fields() {
+        let result = run_awk(&["{getline; print $1}"], Some("a b\nc d"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "c\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_getline_at_eof() {
+        // getline at EOF should keep current $0
+        let result = run_awk(&["{getline; print}"], Some("only")).await.unwrap();
+        assert_eq!(result.stdout, "only\n");
     }
 
     #[tokio::test]

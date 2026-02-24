@@ -22,6 +22,21 @@ use crate::interpreter::ExecResult;
 /// produce deeply nested parse trees in jaq.
 const MAX_JQ_JSON_DEPTH: usize = 100;
 
+/// RAII guard that restores process env vars when dropped.
+/// Ensures cleanup even on early-return error paths.
+struct EnvRestoreGuard(Vec<(String, Option<String>)>);
+
+impl Drop for EnvRestoreGuard {
+    fn drop(&mut self) {
+        for (k, old) in &self.0 {
+            match old {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+    }
+}
+
 /// jq command - JSON processor
 pub struct Jq;
 
@@ -328,20 +343,40 @@ impl Builtin for Jq {
             json_vals.into_iter().map(Val::from).collect()
         };
 
+        // Expose bashkit's shell env/variables to the process environment so
+        // jaq's built-in `env` function (which reads std::env::vars()) works.
+        // Include both ctx.env (prefix assignments like FOO=bar jq ...)
+        // and ctx.variables (set via export builtin).
+        // Uses a drop guard to ensure cleanup on all return paths.
+        let mut seen = std::collections::HashSet::new();
+        let mut env_backup: Vec<(String, Option<String>)> = Vec::new();
+        for (k, v) in ctx.env.iter().chain(ctx.variables.iter()) {
+            if seen.insert(k.clone()) {
+                let old = std::env::var(k).ok();
+                std::env::set_var(k, v);
+                env_backup.push((k.clone(), old));
+            }
+        }
+        let _env_guard = EnvRestoreGuard(env_backup);
+
         // Track for -e exit status
         let mut has_output = false;
         let mut all_null_or_false = true;
 
-        for jaq_input in inputs_to_process {
-            // Create empty inputs iterator
-            let inputs = RcIter::new(core::iter::empty());
+        // Shared input iterator: main loop pops one value per filter run,
+        // and jaq's input/inputs functions consume from the same source.
+        let shared_inputs = RcIter::new(inputs_to_process.into_iter().map(Ok::<Val, String>));
+
+        for jaq_input in &shared_inputs {
+            let jaq_input: Val =
+                jaq_input.map_err(|e| Error::Execution(format!("jq: input error: {}", e)))?;
 
             // Run the filter, passing any --arg/--argjson variable values
             let var_vals: Vec<Val> = var_bindings
                 .iter()
                 .map(|(_, v)| Val::from(v.clone()))
                 .collect();
-            let ctx = Ctx::new(var_vals, &inputs);
+            let ctx = Ctx::new(var_vals, &shared_inputs);
             for result in filter.run((ctx, jaq_input)) {
                 match result {
                     Ok(val) => {
@@ -595,6 +630,27 @@ mod tests {
     /// Note: serde_json has a built-in recursion limit (~128 levels) that fires first.
     /// Our check_json_depth is defense-in-depth for values within serde's limit.
     #[tokio::test]
+    async fn test_jq_input_reads_next() {
+        let result = run_jq_with_args(&["input"], "1\n2").await.unwrap();
+        assert_eq!(result.trim(), "2");
+    }
+
+    #[tokio::test]
+    async fn test_jq_inputs_collects_remaining() {
+        let result = run_jq_with_args(&["-c", "[inputs]"], "1\n2\n3")
+            .await
+            .unwrap();
+        assert_eq!(result.trim(), "[2,3]");
+    }
+
+    #[tokio::test]
+    async fn test_jq_inputs_single_value() {
+        // With single input, inputs yields empty array
+        let result = run_jq_with_args(&["-c", "[inputs]"], "42").await.unwrap();
+        assert_eq!(result.trim(), "[]");
+    }
+
+    #[tokio::test]
     async fn test_jq_json_depth_limit_arrays() {
         // Build 150-level nested JSON: [[[[....[1]....]]]]
         let depth = 150;
@@ -785,6 +841,60 @@ mod tests {
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[0]["id"], 1);
         assert_eq!(arr[1]["id"], 2);
+    }
+
+    // --- env tests ---
+
+    #[tokio::test]
+    async fn test_jq_env_access() {
+        let jq = Jq;
+        let fs = Arc::new(InMemoryFs::new());
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let mut env = HashMap::new();
+        env.insert("TESTVAR".to_string(), "hello".to_string());
+        let args = vec!["-n".to_string(), "env.TESTVAR".to_string()];
+
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = jq.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "\"hello\"");
+    }
+
+    #[tokio::test]
+    async fn test_jq_env_missing_var() {
+        let jq = Jq;
+        let fs = Arc::new(InMemoryFs::new());
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args = vec!["-n".to_string(), "env.NO_SUCH_VAR_999".to_string()];
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = jq.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "null");
     }
 
     // --- Argument parsing bug regression tests ---

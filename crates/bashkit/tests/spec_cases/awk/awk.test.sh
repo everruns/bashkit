@@ -299,10 +299,10 @@ printf '\n' | awk '{print NF}'
 ### end
 
 ### awk_missing_field
-### skip: spec runner expects empty but awk outputs newline for empty print
-printf 'a b\n' | awk '{print $5}'
+# Accessing a field beyond NF returns empty string
+printf 'a b\n' | awk '{if ($5 == "") print "empty"; else print $5}'
 ### expect
-
+empty
 ### end
 
 ### awk_subtraction
@@ -528,10 +528,32 @@ no
 ### end
 
 ### awk_getline
-### skip: getline not implemented
+# getline reads next input record
 printf 'line1\nline2\n' | awk '{getline; print}'
 ### expect
 line2
+### end
+
+### awk_getline_updates_dollar_zero
+# getline updates $0 and fields
+printf 'a b\nc d\n' | awk '{getline; print $1}'
+### expect
+c
+### end
+
+### awk_getline_at_eof
+# getline at end of input keeps last record
+printf 'only\n' | awk '{getline; print}'
+### expect
+only
+### end
+
+### awk_getline_three_lines
+# getline skips every other line
+printf 'A\nB\nC\nD\n' | awk '{getline; print}'
+### expect
+B
+D
 ### end
 
 ### awk_multiple_patterns
@@ -569,8 +591,8 @@ a,b,c
 ### end
 
 ### awk_ors
-### skip: spec runner appends trailing newline but ORS=";" suppresses it
-printf 'a\nb\n' | awk 'BEGIN {ORS=";"} {print $0}'
+# Custom output record separator
+printf 'a\nb\n' | awk 'BEGIN {ORS=";"} {print $0}'; echo
 ### expect
 a;b;
 ### end
