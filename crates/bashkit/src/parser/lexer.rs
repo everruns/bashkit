@@ -326,6 +326,10 @@ impl<'a> Lexer<'a> {
                         self.advance();
                         if let Some(next) = self.peek_char() {
                             match next {
+                                '\n' => {
+                                    // \<newline> is line continuation: discard both
+                                    self.advance();
+                                }
                                 '"' | '\\' | '$' | '`' => {
                                     word.push(next);
                                     self.advance();
@@ -578,7 +582,11 @@ impl<'a> Lexer<'a> {
                     if let Some(next) = self.peek_char() {
                         // Handle escape sequences
                         match next {
-                            '"' | '\\' | '$' | '`' | '\n' => {
+                            '\n' => {
+                                // \<newline> is line continuation: discard both
+                                self.advance();
+                            }
+                            '"' | '\\' | '$' | '`' => {
                                 content.push(next);
                                 self.advance();
                             }
