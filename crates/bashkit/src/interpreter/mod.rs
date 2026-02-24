@@ -118,8 +118,7 @@ struct CallFrame {
 pub struct ShellOptions {
     /// Exit immediately if a command exits with non-zero status (set -e)
     pub errexit: bool,
-    /// Print commands before execution (set -x) - stored but not enforced
-    #[allow(dead_code)]
+    /// Print commands before execution (set -x)
     pub xtrace: bool,
     /// Return rightmost non-zero exit code from pipeline (set -o pipefail)
     pub pipefail: bool,
@@ -390,6 +389,16 @@ impl Interpreter {
             || self
                 .variables
                 .get("SHOPT_e")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+    }
+
+    /// Check if xtrace (set -x) is enabled
+    fn is_xtrace_enabled(&self) -> bool {
+        self.options.xtrace
+            || self
+                .variables
+                .get("SHOPT_x")
                 .map(|v| v == "1")
                 .unwrap_or(false)
     }
@@ -1865,7 +1874,6 @@ impl Interpreter {
                 // compatibility with scripts that set them, but not enforced
                 // in virtual mode:
                 // -e (errexit): would need per-command exit code checking
-                // -x (xtrace): would need trace output to stderr
                 // -v (verbose): would need input echoing
                 // -u (nounset): would need unset variable detection
                 // -o (option): would need set -o pipeline
@@ -2536,6 +2544,32 @@ impl Interpreter {
             }
         }
 
+        // Emit xtrace (set -x): build trace line for stderr
+        let xtrace_line = if self.is_xtrace_enabled() {
+            let ps4 = self
+                .variables
+                .get("PS4")
+                .cloned()
+                .unwrap_or_else(|| "+ ".to_string());
+            let mut trace = ps4;
+            trace.push_str(&name);
+            for word in &command.args {
+                let expanded = self.expand_word(word).await.unwrap_or_default();
+                trace.push(' ');
+                if expanded.contains(' ') || expanded.contains('\t') || expanded.is_empty() {
+                    trace.push('\'');
+                    trace.push_str(&expanded.replace('\'', "'\\''"));
+                    trace.push('\'');
+                } else {
+                    trace.push_str(&expanded);
+                }
+            }
+            trace.push('\n');
+            Some(trace)
+        } else {
+            None
+        };
+
         // Dispatch to the appropriate handler
         let result = self.execute_dispatched_command(&name, command, stdin).await;
 
@@ -2563,7 +2597,16 @@ impl Interpreter {
             }
         }
 
-        result
+        // Prepend xtrace to stderr (like real bash, xtrace goes to the
+        // shell's stderr, unaffected by per-command redirections like 2>&1).
+        if let Some(trace) = xtrace_line {
+            result.map(|mut r| {
+                r.stderr = trace + &r.stderr;
+                r
+            })
+        } else {
+            result
+        }
     }
 
     /// Execute a command after name resolution and prefix assignment setup.
@@ -6835,5 +6878,79 @@ mod tests {
         assert!(result.stdout.contains("args: 3"));
         assert!(result.stdout.contains("first: a"));
         assert!(result.stdout.contains("all: a b c"));
+    }
+
+    #[tokio::test]
+    async fn test_xtrace_basic() {
+        // set -x sends trace to stderr
+        let result = run_script("set -x; echo hello").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "hello\n");
+        assert!(
+            result.stderr.contains("+ echo hello"),
+            "stderr should contain xtrace: {:?}",
+            result.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_xtrace_multiple_commands() {
+        let result = run_script("set -x; echo one; echo two").await;
+        assert_eq!(result.stdout, "one\ntwo\n");
+        assert!(result.stderr.contains("+ echo one"));
+        assert!(result.stderr.contains("+ echo two"));
+    }
+
+    #[tokio::test]
+    async fn test_xtrace_expanded_variables() {
+        // Trace shows expanded values, not variable names
+        let result = run_script("x=hello; set -x; echo $x").await;
+        assert_eq!(result.stdout, "hello\n");
+        assert!(
+            result.stderr.contains("+ echo hello"),
+            "xtrace should show expanded value: {:?}",
+            result.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_xtrace_disable() {
+        // set +x disables tracing; set +x itself is traced
+        let result = run_script("set -x; echo traced; set +x; echo not_traced").await;
+        assert_eq!(result.stdout, "traced\nnot_traced\n");
+        assert!(result.stderr.contains("+ echo traced"));
+        assert!(
+            result.stderr.contains("+ set +x"),
+            "set +x should be traced: {:?}",
+            result.stderr
+        );
+        assert!(
+            !result.stderr.contains("+ echo not_traced"),
+            "echo after set +x should NOT be traced: {:?}",
+            result.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_xtrace_no_trace_without_flag() {
+        let result = run_script("echo hello").await;
+        assert_eq!(result.stdout, "hello\n");
+        assert!(
+            result.stderr.is_empty(),
+            "no xtrace without set -x: {:?}",
+            result.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_xtrace_not_captured_by_redirect() {
+        // 2>&1 should NOT capture xtrace (matches real bash behavior)
+        let result = run_script("set -x; echo hello 2>&1").await;
+        assert_eq!(result.stdout, "hello\n");
+        assert!(
+            result.stderr.contains("+ echo hello"),
+            "xtrace should stay in stderr even with 2>&1: {:?}",
+            result.stderr
+        );
     }
 }

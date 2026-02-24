@@ -535,3 +535,48 @@ echo "$OLDPWD" | grep -q "/" && echo "oldpwd_set"
 ### expect
 oldpwd_set
 ### end
+
+### xtrace_stdout_unaffected
+# set -x does not alter stdout
+set -x
+echo hello
+### expect
+hello
+### end
+
+### xtrace_multiple_stdout
+# set -x does not alter stdout for multiple commands
+set -x
+echo one
+echo two
+### expect
+one
+two
+### end
+
+### xtrace_disable_stdout
+# set +x properly disables tracing, stdout unaffected
+set -x
+echo traced
+set +x
+echo not_traced
+### expect
+traced
+not_traced
+### end
+
+### xtrace_expanded_vars_stdout
+# set -x with variables does not alter stdout
+x=hello
+set -x
+echo $x
+### expect
+hello
+### end
+
+### xtrace_no_output_without_flag
+# Without set -x, no trace output
+echo hello
+### expect
+hello
+### end
