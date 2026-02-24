@@ -319,11 +319,33 @@ impl Interpreter {
             builtins.insert(name, builtin);
         }
 
+        // Initialize default shell variables
+        let mut variables = HashMap::new();
+        variables.insert("HOME".to_string(), format!("/home/{}", &username_val));
+        variables.insert("USER".to_string(), username_val.clone());
+        variables.insert("UID".to_string(), "1000".to_string());
+        variables.insert("EUID".to_string(), "1000".to_string());
+        variables.insert("HOSTNAME".to_string(), hostname_val.clone());
+
+        // BASH_VERSINFO array: (major minor patch build status machine)
+        let version = env!("CARGO_PKG_VERSION");
+        let parts: Vec<&str> = version.split('.').collect();
+        let mut bash_versinfo = HashMap::new();
+        bash_versinfo.insert(0, parts.first().unwrap_or(&"0").to_string());
+        bash_versinfo.insert(1, parts.get(1).unwrap_or(&"0").to_string());
+        bash_versinfo.insert(2, parts.get(2).unwrap_or(&"0").to_string());
+        bash_versinfo.insert(3, "0".to_string());
+        bash_versinfo.insert(4, "release".to_string());
+        bash_versinfo.insert(5, "virtual".to_string());
+
+        let mut arrays = HashMap::new();
+        arrays.insert("BASH_VERSINFO".to_string(), bash_versinfo);
+
         Self {
             fs,
             env: HashMap::new(),
-            variables: HashMap::new(),
-            arrays: HashMap::new(),
+            variables,
+            arrays,
             assoc_arrays: HashMap::new(),
             cwd: PathBuf::from("/home/user"),
             last_exit_code: 0,
@@ -380,6 +402,11 @@ impl Interpreter {
     /// Set an environment variable.
     pub fn set_env(&mut self, key: &str, value: &str) {
         self.env.insert(key.to_string(), value.to_string());
+    }
+
+    /// Set a shell variable (public API for builder).
+    pub fn set_var(&mut self, key: &str, value: &str) {
+        self.variables.insert(key.to_string(), value.to_string());
     }
 
     /// Set the current working directory.
@@ -5599,6 +5626,31 @@ impl Interpreter {
                 // $LINENO - current line number from command span
                 return self.current_line.to_string();
             }
+            "PWD" => {
+                return self.cwd.to_string_lossy().to_string();
+            }
+            "OLDPWD" => {
+                if let Some(v) = self.variables.get("OLDPWD") {
+                    return v.clone();
+                }
+                return self.cwd.to_string_lossy().to_string();
+            }
+            "HOSTNAME" => {
+                if let Some(v) = self.variables.get("HOSTNAME") {
+                    return v.clone();
+                }
+                return "localhost".to_string();
+            }
+            "BASH_VERSION" => {
+                return format!("{}-bashkit", env!("CARGO_PKG_VERSION"));
+            }
+            "SECONDS" => {
+                // Seconds since shell started - always 0 in stateless model
+                if let Some(v) = self.variables.get("SECONDS") {
+                    return v.clone();
+                }
+                return "0".to_string();
+            }
             _ => {}
         }
 
@@ -5646,7 +5698,19 @@ impl Interpreter {
         // Special variables are always "set"
         if matches!(
             name,
-            "?" | "#" | "@" | "*" | "$" | "!" | "-" | "RANDOM" | "LINENO"
+            "?" | "#"
+                | "@"
+                | "*"
+                | "$"
+                | "!"
+                | "-"
+                | "RANDOM"
+                | "LINENO"
+                | "PWD"
+                | "OLDPWD"
+                | "HOSTNAME"
+                | "BASH_VERSION"
+                | "SECONDS"
         ) {
             return true;
         }
@@ -6733,9 +6797,9 @@ mod tests {
     async fn test_bash_c_special_chars() {
         // Special characters in commands handled safely
         let result = run_script("bash -c 'echo \"$HOME\"'").await;
-        // Should not leak real home directory
+        // Should use virtual home directory, not real system path
         assert!(!result.stdout.contains("/root"));
-        assert!(!result.stdout.contains("/home/"));
+        assert!(result.stdout.contains("/home/sandbox"));
     }
 
     #[tokio::test]
