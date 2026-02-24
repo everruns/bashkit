@@ -1078,6 +1078,13 @@ impl<'a> Parser<'a> {
                     self.advance();
                 }
                 Some(tokens::Token::LeftParen) => {
+                    if saw_regex_op {
+                        // Regex pattern starts with '(' — collect it
+                        let pattern = self.collect_conditional_regex_pattern("(");
+                        words.push(Word::literal(&pattern));
+                        saw_regex_op = false;
+                        continue;
+                    }
                     words.push(Word::literal("("));
                     self.advance();
                 }
