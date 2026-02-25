@@ -103,17 +103,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1399 (1394 pass, 5 skip)
+**Total spec test cases:** 1411 (1406 pass, 5 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 981 | Yes | 976 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 993 | Yes | 988 | 5 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
 | JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
 | Python | 57 | Yes | 57 | 0 | embedded Python (Monty) |
-| **Total** | **1399** | **Yes** | **1394** | **5** | |
+| **Total** | **1411** | **Yes** | **1406** | **5** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -170,6 +170,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | string-ops.test.sh | 14 | string replacement (prefix/suffix anchored), `${var:?}`, case conversion |
 | read-builtin.test.sh | 10 | `read` builtin, IFS splitting, `-r`, `-a` (array), `-n` (nchars), here-string |
 | expr.test.sh | 13 | `expr` arithmetic, string ops, pattern matching, exit codes |
+| dirstack.test.sh | 12 | `pushd`, `popd`, `dirs` directory stack operations |
 
 ## Shell Features
 
@@ -188,6 +189,7 @@ Features that may be added in the future (not intentionally excluded):
 | ~~`type`/`which` builtins~~ | ~~Medium~~ | Implemented: `-t`, `-a`, `-p` flags |
 | ~~`declare` builtin~~ | ~~Medium~~ | Implemented: `-i`, `-r`, `-x`, `-a`, `-p`, `-n`, `-l`, `-u` |
 | ~~`ln` builtin~~ | ~~Medium~~ | Implemented: symbolic links (`-s`, `-f`) |
+| ~~Directory stack `pushd`/`popd`/`dirs`~~ | ~~Low-Medium~~ | Implemented: push, pop, swap, clear, display |
 | `alias` | Low | Interactive feature |
 | History expansion | Out of scope | Interactive only |
 
@@ -210,7 +212,7 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-**94 core builtins + 3 feature-gated = 97 total**
+**97 core builtins + 3 feature-gated = 100 total**
 
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,
@@ -224,6 +226,7 @@ Features that may be added in the future (not intentionally excluded):
 `od`, `xxd`, `hexdump`, `strings`,
 `tar`, `gzip`, `gunzip`, `file`, `less`, `stat`, `watch`,
 `env`, `printenv`, `history`, `df`, `du`,
+`pushd`, `popd`, `dirs`,
 `git` (requires `git` feature, see [010-git-support.md](010-git-support.md)),
 `python`, `python3` (requires `python` feature, see [011-python-builtin.md](011-python-builtin.md))
 
