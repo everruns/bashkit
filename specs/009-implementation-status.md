@@ -103,17 +103,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1329 (1324 pass, 5 skip)
+**Total spec test cases:** 1336 (1331 pass, 5 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 911 | Yes | 906 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 918 | Yes | 913 | 5 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
 | JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
 | Python | 57 | Yes | 57 | 0 | embedded Python (Monty) |
-| **Total** | **1329** | **Yes** | **1324** | **5** | |
+| **Total** | **1336** | **Yes** | **1331** | **5** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -135,7 +135,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | diff.test.sh | 4 | line diffs |
 | echo.test.sh | 24 | escape sequences |
 | errexit.test.sh | 8 | set -e tests |
-| fileops.test.sh | 21 | |
+| fileops.test.sh | 28 | `mktemp`, `-d`, `-p`, template |
 | find.test.sh | 10 | file search |
 | functions.test.sh | 22 | local dynamic scoping, nested writes, FUNCNAME call stack |
 | getopts.test.sh | 9 | POSIX option parsing, combined flags, silent mode |
