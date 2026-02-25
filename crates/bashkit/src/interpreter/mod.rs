@@ -1227,6 +1227,35 @@ impl Interpreter {
                                 >= args[2].parse::<i64>().unwrap_or(0)
                         }
                         "=~" => self.regex_match(&args[0], &args[2]),
+                        "-nt" => {
+                            let lm = self.fs.stat(std::path::Path::new(&args[0])).await;
+                            let rm = self.fs.stat(std::path::Path::new(&args[2])).await;
+                            match (lm, rm) {
+                                (Ok(l), Ok(r)) => l.modified > r.modified,
+                                (Ok(_), Err(_)) => true,
+                                _ => false,
+                            }
+                        }
+                        "-ot" => {
+                            let lm = self.fs.stat(std::path::Path::new(&args[0])).await;
+                            let rm = self.fs.stat(std::path::Path::new(&args[2])).await;
+                            match (lm, rm) {
+                                (Ok(l), Ok(r)) => l.modified < r.modified,
+                                (Err(_), Ok(_)) => true,
+                                _ => false,
+                            }
+                        }
+                        "-ef" => {
+                            let lp = crate::builtins::resolve_path(
+                                &std::path::PathBuf::from("/"),
+                                &args[0],
+                            );
+                            let rp = crate::builtins::resolve_path(
+                                &std::path::PathBuf::from("/"),
+                                &args[2],
+                            );
+                            lp == rp
+                        }
                         _ => false,
                     }
                 }

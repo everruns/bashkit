@@ -123,3 +123,95 @@ both true
 ### expect
 one true
 ### end
+
+### test_file_newer_than
+# Test -nt (file1 newer than file2)
+### bash_diff
+echo "old" > /tmp/old.txt
+sleep 0.01
+echo "new" > /tmp/new.txt
+[ /tmp/new.txt -nt /tmp/old.txt ] && echo "newer"
+### expect
+newer
+### end
+
+### test_file_older_than
+# Test -ot (file1 older than file2)
+### bash_diff
+echo "first" > /tmp/first.txt
+sleep 0.01
+echo "second" > /tmp/second.txt
+[ /tmp/first.txt -ot /tmp/second.txt ] && echo "older"
+### expect
+older
+### end
+
+### test_file_nt_nonexistent
+# -nt returns true if left exists and right doesn't
+echo "exists" > /tmp/exists_nt.txt
+[ /tmp/exists_nt.txt -nt /tmp/nonexistent_nt ] && echo "newer"
+### expect
+newer
+### end
+
+### test_file_ot_nonexistent
+# -ot returns true if left doesn't exist and right does
+echo "exists" > /tmp/exists_ot.txt
+[ /tmp/nonexistent_ot -ot /tmp/exists_ot.txt ] && echo "older"
+### expect
+older
+### end
+
+### test_file_ef_same_path
+# -ef returns true for same file
+echo "data" > /tmp/ef_test.txt
+[ /tmp/ef_test.txt -ef /tmp/ef_test.txt ] && echo "same"
+### expect
+same
+### end
+
+### test_file_ef_different_path
+# -ef returns false for different files
+echo "a" > /tmp/ef_a.txt
+echo "b" > /tmp/ef_b.txt
+[ /tmp/ef_a.txt -ef /tmp/ef_b.txt ] || echo "different"
+### expect
+different
+### end
+
+### test_file_nt_both_nonexistent
+# -nt returns false if both don't exist
+[ /tmp/no1 -nt /tmp/no2 ] || echo "false"
+### expect
+false
+### end
+
+### test_cond_nt
+# [[ ]] also supports -nt
+### bash_diff
+echo "old" > /tmp/c_old.txt
+sleep 0.01
+echo "new" > /tmp/c_new.txt
+[[ /tmp/c_new.txt -nt /tmp/c_old.txt ]] && echo "newer"
+### expect
+newer
+### end
+
+### test_cond_ot
+# [[ ]] also supports -ot
+### bash_diff
+echo "first" > /tmp/c_first.txt
+sleep 0.01
+echo "second" > /tmp/c_second.txt
+[[ /tmp/c_first.txt -ot /tmp/c_second.txt ]] && echo "older"
+### expect
+older
+### end
+
+### test_cond_ef
+# [[ ]] also supports -ef
+echo "data" > /tmp/c_ef.txt
+[[ /tmp/c_ef.txt -ef /tmp/c_ef.txt ]] && echo "same"
+### expect
+same
+### end

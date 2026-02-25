@@ -110,7 +110,7 @@ fn evaluate_expression<'a>(
             }
             3 => {
                 // Binary operators
-                evaluate_binary(&args[0], &args[1], &args[2])
+                evaluate_binary(&args[0], &args[1], &args[2], fs).await
             }
             _ => false,
         }
@@ -198,7 +198,7 @@ async fn evaluate_unary(op: &str, arg: &str, fs: &Arc<dyn FileSystem>) -> bool {
 }
 
 /// Evaluate a binary test expression
-fn evaluate_binary(left: &str, op: &str, right: &str) -> bool {
+async fn evaluate_binary(left: &str, op: &str, right: &str, fs: &Arc<dyn FileSystem>) -> bool {
     match op {
         // String comparisons
         "=" | "==" => left == right,
@@ -214,8 +214,34 @@ fn evaluate_binary(left: &str, op: &str, right: &str) -> bool {
         "-gt" => parse_int(left) > parse_int(right),
         "-ge" => parse_int(left) >= parse_int(right),
 
-        // File comparisons (not implemented)
-        "-nt" | "-ot" | "-ef" => false,
+        // File comparisons
+        "-nt" => {
+            // file1 is newer than file2
+            let left_meta = fs.stat(Path::new(left)).await;
+            let right_meta = fs.stat(Path::new(right)).await;
+            match (left_meta, right_meta) {
+                (Ok(lm), Ok(rm)) => lm.modified > rm.modified,
+                (Ok(_), Err(_)) => true, // left exists, right doesn't → left is newer
+                _ => false,
+            }
+        }
+        "-ot" => {
+            // file1 is older than file2
+            let left_meta = fs.stat(Path::new(left)).await;
+            let right_meta = fs.stat(Path::new(right)).await;
+            match (left_meta, right_meta) {
+                (Ok(lm), Ok(rm)) => lm.modified < rm.modified,
+                (Err(_), Ok(_)) => true, // left doesn't exist, right does → left is older
+                _ => false,
+            }
+        }
+        "-ef" => {
+            // file1 and file2 refer to the same file (same path after resolution)
+            // In VFS without inodes, compare canonical paths
+            let left_path = super::resolve_path(&std::path::PathBuf::from("/"), left);
+            let right_path = super::resolve_path(&std::path::PathBuf::from("/"), right);
+            left_path == right_path
+        }
 
         _ => false,
     }
