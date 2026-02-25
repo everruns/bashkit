@@ -116,7 +116,9 @@ jobs:
           # python_scripts requires monty git dep (not on crates.io)
           # cargo run --example python_scripts --features python
 
+      # External API dependency — don't block CI on Anthropic outages
       - name: Run LLM agent example
+        continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: cargo run --example agent_tool --features http_client
