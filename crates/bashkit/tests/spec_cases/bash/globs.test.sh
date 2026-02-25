@@ -37,7 +37,8 @@ echo a > /x1.txt; echo b > /x2.txt; echo /x[12].txt
 
 ### glob_recursive
 ### bash_diff: Bashkit VFS has files, real bash CI filesystem does not
-# Recursive glob with **
+# Recursive glob with ** (requires globstar)
+shopt -s globstar
 mkdir -p /recur/sub1/deep
 mkdir -p /recur/sub2
 echo a > /recur/f1.txt

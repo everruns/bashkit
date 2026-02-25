@@ -103,17 +103,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1411 (1406 pass, 5 skip)
+**Total spec test cases:** 1424 (1419 pass, 5 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 993 | Yes | 988 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 1006 | Yes | 1001 | 5 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
 | JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
 | Python | 57 | Yes | 57 | 0 | embedded Python (Monty) |
-| **Total** | **1411** | **Yes** | **1406** | **5** | |
+| **Total** | **1424** | **Yes** | **1419** | **5** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -139,6 +139,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | find.test.sh | 10 | file search |
 | functions.test.sh | 26 | local dynamic scoping, nested writes, FUNCNAME call stack, `caller` builtin |
 | getopts.test.sh | 9 | POSIX option parsing, combined flags, silent mode |
+| glob-options.test.sh | 13 | dotglob, nocaseglob, failglob, nullglob, noglob, globstar |
 | globs.test.sh | 12 | for-loop glob expansion, recursive `**` |
 | headtail.test.sh | 14 | |
 | herestring.test.sh | 8 | 1 skipped |
