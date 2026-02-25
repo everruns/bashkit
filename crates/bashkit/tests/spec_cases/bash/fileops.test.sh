@@ -177,3 +177,68 @@ echo $?
 ### expect
 0
 ### end
+
+### mktemp_creates_file
+# mktemp creates a temp file and prints its path
+f=$(mktemp)
+[ -f "$f" ] && echo "ok"
+### expect
+ok
+### end
+
+### mktemp_in_tmp
+# mktemp creates file under /tmp
+f=$(mktemp)
+echo "$f" | grep -q "^/tmp/" && echo "in_tmp"
+### expect
+in_tmp
+### end
+
+### mktemp_directory
+# mktemp -d creates a directory
+d=$(mktemp -d)
+[ -d "$d" ] && echo "ok"
+### expect
+ok
+### end
+
+### mktemp_template
+# mktemp with template replaces XXXXXX
+f=$(mktemp /tmp/myapp.XXXXXX)
+echo "$f" | grep -q "^/tmp/myapp\." && echo "matched"
+[ -f "$f" ] && echo "exists"
+### expect
+matched
+exists
+### end
+
+### mktemp_dir_template
+# mktemp -d with template
+d=$(mktemp -d /tmp/mydir.XXXXXX)
+echo "$d" | grep -q "^/tmp/mydir\." && echo "matched"
+[ -d "$d" ] && echo "exists"
+### expect
+matched
+exists
+### end
+
+### mktemp_unique
+# mktemp creates unique names
+f1=$(mktemp)
+f2=$(mktemp)
+[ "$f1" != "$f2" ] && echo "unique"
+### expect
+unique
+### end
+
+### mktemp_p_flag
+# mktemp -p uses specified directory
+### bash_diff
+mkdir -p /tmp/custom
+f=$(mktemp -p /tmp/custom)
+echo "$f" | grep -q "^/tmp/custom/" && echo "in_custom"
+[ -f "$f" ] && echo "exists"
+### expect
+in_custom
+exists
+### end
