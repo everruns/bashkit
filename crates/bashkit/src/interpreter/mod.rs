@@ -2843,10 +2843,35 @@ impl Interpreter {
         // Handle `trap` - register signal/event handlers
         if name == "trap" {
             if args.is_empty() {
-                // List traps
+                // List all traps
                 let mut output = String::new();
-                for (sig, cmd) in &self.traps {
+                let mut sorted: Vec<_> = self.traps.iter().collect();
+                sorted.sort_by_key(|(sig, _)| (*sig).clone());
+                for (sig, cmd) in sorted {
                     output.push_str(&format!("trap -- '{}' {}\n", cmd, sig));
+                }
+                let mut result = ExecResult::ok(output);
+                result = self.apply_redirections(result, &command.redirects).await?;
+                return Ok(result);
+            }
+            // Handle -p flag (print traps)
+            if args[0] == "-p" {
+                let mut output = String::new();
+                if args.len() == 1 {
+                    // trap -p: print all traps
+                    let mut sorted: Vec<_> = self.traps.iter().collect();
+                    sorted.sort_by_key(|(sig, _)| (*sig).clone());
+                    for (sig, cmd) in sorted {
+                        output.push_str(&format!("trap -- '{}' {}\n", cmd, sig));
+                    }
+                } else {
+                    // trap -p SIG ...: print specific traps
+                    for sig in &args[1..] {
+                        let sig_upper = sig.to_uppercase();
+                        if let Some(cmd) = self.traps.get(&sig_upper) {
+                            output.push_str(&format!("trap -- '{}' {}\n", cmd, sig_upper));
+                        }
+                    }
                 }
                 let mut result = ExecResult::ok(output);
                 result = self.apply_redirections(result, &command.redirects).await?;

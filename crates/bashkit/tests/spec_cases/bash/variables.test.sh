@@ -719,3 +719,51 @@ echo "$state"
 ### expect
 set -o xtrace
 ### end
+
+### trap_print_specific
+# trap -p shows specific trap
+trap "echo bye" EXIT
+trap -p EXIT
+trap - EXIT
+### expect
+trap -- 'echo bye' EXIT
+### end
+
+### trap_print_all
+# trap -p with no args shows all traps
+trap "echo cleanup" EXIT
+trap "echo oops" ERR
+trap -p | sort
+trap - EXIT
+trap - ERR
+### expect
+trap -- 'echo cleanup' EXIT
+trap -- 'echo oops' ERR
+### end
+
+### trap_print_unset
+# trap -p for unset signal produces no output
+result=$(trap -p INT)
+echo "result:${result}end"
+### expect
+result:end
+### end
+
+### trap_list_all
+# trap with no args lists all traps
+trap "echo done" EXIT
+trap | sort
+trap - EXIT
+### expect
+trap -- 'echo done' EXIT
+### end
+
+### trap_reset_and_print
+# trap - removes trap, trap -p confirms
+trap "echo bye" EXIT
+trap - EXIT
+result=$(trap -p EXIT)
+echo "after reset:${result}end"
+### expect
+after reset:end
+### end
