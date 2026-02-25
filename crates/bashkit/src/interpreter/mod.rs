@@ -2959,6 +2959,41 @@ impl Interpreter {
             return self.execute_getopts(&args, &command.redirects).await;
         }
 
+        // Handle `caller` - needs direct access to call stack
+        if name == "caller" {
+            let frame_num: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+            if self.call_stack.is_empty() {
+                // Outside any function
+                let mut result = ExecResult::err(String::new(), 1);
+                result = self.apply_redirections(result, &command.redirects).await?;
+                return Ok(result);
+            }
+            // caller 0 = immediate caller context
+            // call_stack includes current function; top-level is implicit
+            let source = "main";
+            let line = 1;
+            let output = if frame_num == 0 && self.call_stack.len() == 1 {
+                // Called from a function invoked at top level
+                format!("{} main {}\n", line, source)
+            } else if frame_num + 1 < self.call_stack.len() {
+                // Caller frame exists in stack
+                let idx = self.call_stack.len() - 2 - frame_num;
+                let frame = &self.call_stack[idx];
+                format!("{} {} {}\n", line, frame.name, source)
+            } else if frame_num + 1 == self.call_stack.len() {
+                // Frame is the top-level caller
+                format!("{} main {}\n", line, source)
+            } else {
+                // Frame out of range
+                let mut result = ExecResult::err(String::new(), 1);
+                result = self.apply_redirections(result, &command.redirects).await?;
+                return Ok(result);
+            };
+            let mut result = ExecResult::ok(output);
+            result = self.apply_redirections(result, &command.redirects).await?;
+            return Ok(result);
+        }
+
         // Handle `mapfile`/`readarray` - needs direct access to arrays
         if name == "mapfile" || name == "readarray" {
             return self.execute_mapfile(&args, stdin.as_deref()).await;
