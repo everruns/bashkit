@@ -642,6 +642,94 @@ impl Builtin for Kill {
     }
 }
 
+/// The mktemp builtin - create temporary files or directories.
+///
+/// Usage: mktemp [-d] [-p DIR] [-t] [TEMPLATE]
+///
+/// Options:
+///   -d       Create a directory instead of a file
+///   -p DIR   Use DIR as prefix (default: /tmp)
+///   -t       Interpret TEMPLATE relative to a temp directory
+pub struct Mktemp;
+
+#[async_trait]
+impl Builtin for Mktemp {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        let mut create_dir = false;
+        let mut prefix_dir = "/tmp".to_string();
+        let mut template: Option<String> = None;
+        let mut use_tmpdir = false;
+
+        let mut i = 0;
+        while i < ctx.args.len() {
+            match ctx.args[i].as_str() {
+                "-d" => create_dir = true,
+                "-p" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        prefix_dir = ctx.args[i].clone();
+                    }
+                }
+                "-t" => use_tmpdir = true,
+                arg if !arg.starts_with('-') => {
+                    template = Some(arg.to_string());
+                }
+                _ => {} // ignore unknown flags
+            }
+            i += 1;
+        }
+
+        // Generate random suffix
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+        let random = RandomState::new().build_hasher().finish();
+        let suffix = format!("{:010x}", random % 0xFF_FFFF_FFFF);
+
+        // Build path
+        let name = if let Some(tmpl) = &template {
+            if tmpl.contains("XXXXXX") {
+                tmpl.replacen("XXXXXX", &suffix[..6], 1)
+            } else {
+                format!("{}.{}", tmpl, &suffix[..6])
+            }
+        } else {
+            format!("tmp.{}", &suffix[..10])
+        };
+
+        let path = if use_tmpdir || template.is_none() || !name.contains('/') {
+            format!("{}/{}", prefix_dir, name)
+        } else {
+            let p = resolve_path(ctx.cwd, &name);
+            p.to_string_lossy().to_string()
+        };
+
+        let full_path = std::path::PathBuf::from(&path);
+
+        // Ensure parent directory exists
+        if let Some(parent) = full_path.parent() {
+            if !ctx.fs.exists(parent).await.unwrap_or(false) {
+                let _ = ctx.fs.mkdir(parent, true).await;
+            }
+        }
+
+        if create_dir {
+            if let Err(e) = ctx.fs.mkdir(&full_path, true).await {
+                return Ok(ExecResult::err(
+                    format!("mktemp: failed to create directory '{}': {}\n", path, e),
+                    1,
+                ));
+            }
+        } else if let Err(e) = ctx.fs.write_file(&full_path, &[]).await {
+            return Ok(ExecResult::err(
+                format!("mktemp: failed to create file '{}': {}\n", path, e),
+                1,
+            ));
+        }
+
+        Ok(ExecResult::ok(format!("{}\n", path)))
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
