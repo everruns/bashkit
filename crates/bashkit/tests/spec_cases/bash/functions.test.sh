@@ -203,3 +203,39 @@ echo "out: ${#FUNCNAME[@]}"
 in: f
 out: 0
 ### end
+
+### func_caller_in_function
+# caller reports calling context
+### bash_diff
+f() { caller 0; }
+f
+### expect
+1 main main
+### end
+
+### func_caller_nested
+# caller 0 reports immediate caller
+### bash_diff
+inner() { caller 0; }
+outer() { inner; }
+outer
+### expect
+1 outer main
+### end
+
+### func_caller_outside
+# caller outside function returns error
+caller 0
+echo "exit:$?"
+### expect
+exit:1
+### end
+
+### func_caller_no_args
+# caller with no args works same as caller 0
+### bash_diff
+f() { caller; }
+f
+### expect
+1 main main
+### end
