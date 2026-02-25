@@ -548,6 +548,32 @@ impl<'a> Lexer<'a> {
                         _ => {}
                     }
                 }
+            } else if ch == '(' && word.ends_with(['@', '?', '*', '+', '!']) {
+                // Extglob: @(...), ?(...), *(...), +(...), !(...)
+                // Consume through matching ) including nested parens
+                word.push(ch);
+                self.advance();
+                let mut depth = 1;
+                while let Some(c) = self.peek_char() {
+                    word.push(c);
+                    self.advance();
+                    match c {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        '\\' => {
+                            if let Some(esc) = self.peek_char() {
+                                word.push(esc);
+                                self.advance();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             } else if self.is_word_char(ch) {
                 word.push(ch);
                 self.advance();

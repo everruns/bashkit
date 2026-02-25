@@ -2128,6 +2128,20 @@ impl Interpreter {
         }
     }
 
+    /// Check if pattern contains extglob operators
+    fn contains_extglob(&self, s: &str) -> bool {
+        if !self.is_extglob() {
+            return false;
+        }
+        let bytes = s.as_bytes();
+        for i in 0..bytes.len().saturating_sub(1) {
+            if matches!(bytes[i], b'@' | b'?' | b'*' | b'+' | b'!') && bytes[i + 1] == b'(' {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Check if a value matches a shell pattern
     fn pattern_matches(&self, value: &str, pattern: &str) -> bool {
         // Handle special case of * (match anything)
@@ -2135,9 +2149,12 @@ impl Interpreter {
             return true;
         }
 
-        // Glob pattern matching with *, ?, and [] support
-        if pattern.contains('*') || pattern.contains('?') || pattern.contains('[') {
-            // Simple wildcard matching
+        // Glob pattern matching with *, ?, [], and extglob support
+        if pattern.contains('*')
+            || pattern.contains('?')
+            || pattern.contains('[')
+            || self.contains_extglob(pattern)
+        {
             self.glob_match(value, pattern)
         } else {
             // Literal match
@@ -2150,8 +2167,70 @@ impl Interpreter {
         self.glob_match_impl(value, pattern, false)
     }
 
+    /// Parse an extglob pattern-list from pattern string starting after '('.
+    /// Returns (alternatives, rest_of_pattern) or None if malformed.
+    fn parse_extglob_pattern_list(pattern: &str) -> Option<(Vec<String>, String)> {
+        let mut depth = 1;
+        let mut end = 0;
+        let chars: Vec<char> = pattern.chars().collect();
+        while end < chars.len() {
+            match chars[end] {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let inner: String = chars[..end].iter().collect();
+                        let rest: String = chars[end + 1..].iter().collect();
+                        // Split on | at depth 0
+                        let mut alts = Vec::new();
+                        let mut current = String::new();
+                        let mut d = 0;
+                        for c in inner.chars() {
+                            match c {
+                                '(' => {
+                                    d += 1;
+                                    current.push(c);
+                                }
+                                ')' => {
+                                    d -= 1;
+                                    current.push(c);
+                                }
+                                '|' if d == 0 => {
+                                    alts.push(current.clone());
+                                    current.clear();
+                                }
+                                _ => current.push(c),
+                            }
+                        }
+                        alts.push(current);
+                        return Some((alts, rest));
+                    }
+                }
+                '\\' => {
+                    end += 1; // skip escaped char
+                }
+                _ => {}
+            }
+            end += 1;
+        }
+        None // unclosed paren
+    }
+
     /// Glob match with optional case-insensitive mode
     fn glob_match_impl(&self, value: &str, pattern: &str, nocase: bool) -> bool {
+        let extglob = self.is_extglob();
+
+        // Check for extglob at the start of pattern
+        if extglob && pattern.len() >= 2 {
+            let bytes = pattern.as_bytes();
+            if matches!(bytes[0], b'@' | b'?' | b'*' | b'+' | b'!') && bytes[1] == b'(' {
+                let op = bytes[0];
+                if let Some((alts, rest)) = Self::parse_extglob_pattern_list(&pattern[2..]) {
+                    return self.match_extglob(op, &alts, &rest, value, nocase);
+                }
+            }
+        }
+
         let mut value_chars = value.chars().peekable();
         let mut pattern_chars = pattern.chars().peekable();
 
@@ -2160,6 +2239,15 @@ impl Interpreter {
                 (None, None) => return true,
                 (None, Some(_)) => return false,
                 (Some('*'), _) => {
+                    // Check for extglob *(...)
+                    let mut pc_clone = pattern_chars.clone();
+                    pc_clone.next();
+                    if extglob && pc_clone.peek() == Some(&'(') {
+                        // Extglob *(pattern-list) — collect remaining pattern
+                        let remaining_pattern: String = pattern_chars.collect();
+                        let remaining_value: String = value_chars.collect();
+                        return self.glob_match_impl(&remaining_value, &remaining_pattern, nocase);
+                    }
                     pattern_chars.next();
                     // * matches zero or more characters
                     if pattern_chars.peek().is_none() {
@@ -2178,11 +2266,22 @@ impl Interpreter {
                     let remaining_pattern: String = pattern_chars.collect();
                     return self.glob_match_impl("", &remaining_pattern, nocase);
                 }
-                (Some('?'), Some(_)) => {
-                    pattern_chars.next();
-                    value_chars.next();
+                (Some('?'), _) => {
+                    // Check for extglob ?(...)
+                    let mut pc_clone = pattern_chars.clone();
+                    pc_clone.next();
+                    if extglob && pc_clone.peek() == Some(&'(') {
+                        let remaining_pattern: String = pattern_chars.collect();
+                        let remaining_value: String = value_chars.collect();
+                        return self.glob_match_impl(&remaining_value, &remaining_pattern, nocase);
+                    }
+                    if value_chars.peek().is_some() {
+                        pattern_chars.next();
+                        value_chars.next();
+                    } else {
+                        return false;
+                    }
                 }
-                (Some('?'), None) => return false,
                 (Some('['), Some(v)) => {
                     pattern_chars.next(); // consume '['
                     let match_char = if nocase { v.to_ascii_lowercase() } else { v };
@@ -2201,6 +2300,20 @@ impl Interpreter {
                 }
                 (Some('['), None) => return false,
                 (Some(p), Some(v)) => {
+                    // Check for extglob operators: @(, +(, !(
+                    if extglob && matches!(p, '@' | '+' | '!') {
+                        let mut pc_clone = pattern_chars.clone();
+                        pc_clone.next();
+                        if pc_clone.peek() == Some(&'(') {
+                            let remaining_pattern: String = pattern_chars.collect();
+                            let remaining_value: String = value_chars.collect();
+                            return self.glob_match_impl(
+                                &remaining_value,
+                                &remaining_pattern,
+                                nocase,
+                            );
+                        }
+                    }
                     let matches = if nocase {
                         p.eq_ignore_ascii_case(&v)
                     } else {
@@ -2215,6 +2328,121 @@ impl Interpreter {
                 }
                 (Some(_), None) => return false,
             }
+        }
+    }
+
+    /// Match an extglob pattern against a value.
+    /// op: b'@', b'?', b'*', b'+', b'!'
+    /// alts: the | separated alternatives
+    /// rest: pattern after the closing )
+    fn match_extglob(
+        &self,
+        op: u8,
+        alts: &[String],
+        rest: &str,
+        value: &str,
+        nocase: bool,
+    ) -> bool {
+        match op {
+            b'@' => {
+                // @(a|b) — exactly one of the alternatives
+                for alt in alts {
+                    let full = format!("{}{}", alt, rest);
+                    if self.glob_match_impl(value, &full, nocase) {
+                        return true;
+                    }
+                }
+                false
+            }
+            b'?' => {
+                // ?(a|b) — zero or one of the alternatives
+                // Try zero: skip the extglob entirely
+                if self.glob_match_impl(value, rest, nocase) {
+                    return true;
+                }
+                // Try one
+                for alt in alts {
+                    let full = format!("{}{}", alt, rest);
+                    if self.glob_match_impl(value, &full, nocase) {
+                        return true;
+                    }
+                }
+                false
+            }
+            b'+' => {
+                // +(a|b) — one or more of the alternatives
+                for alt in alts {
+                    let full = format!("{}{}", alt, rest);
+                    if self.glob_match_impl(value, &full, nocase) {
+                        return true;
+                    }
+                    // Try alt followed by more +(a|b)rest
+                    // We need to try consuming `alt` prefix then matching +(...)rest again
+                    for split in 1..=value.len() {
+                        let prefix = &value[..split];
+                        let suffix = &value[split..];
+                        if self.glob_match_impl(prefix, alt, nocase) {
+                            // Rebuild the extglob for the suffix
+                            let inner = alts.join("|");
+                            let re_pattern = format!("+({}){}", inner, rest);
+                            if self.glob_match_impl(suffix, &re_pattern, nocase) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            b'*' => {
+                // *(a|b) — zero or more of the alternatives
+                // Try zero
+                if self.glob_match_impl(value, rest, nocase) {
+                    return true;
+                }
+                // Try one or more (same as +(...))
+                for alt in alts {
+                    let full = format!("{}{}", alt, rest);
+                    if self.glob_match_impl(value, &full, nocase) {
+                        return true;
+                    }
+                    for split in 1..=value.len() {
+                        let prefix = &value[..split];
+                        let suffix = &value[split..];
+                        if self.glob_match_impl(prefix, alt, nocase) {
+                            let inner = alts.join("|");
+                            let re_pattern = format!("*({}){}", inner, rest);
+                            if self.glob_match_impl(suffix, &re_pattern, nocase) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            b'!' => {
+                // !(a|b) — match anything except one of the alternatives
+                // Try every possible split point: prefix must NOT match any alt, rest matches
+                // Actually: !(pat) matches anything that doesn't match @(pat)
+                let inner = alts.join("|");
+                let positive = format!("@({}){}", inner, rest);
+                !self.glob_match_impl(value, &positive, nocase)
+                    && self.glob_match_impl(value, rest, nocase)
+                    || {
+                        // !(pat) can also consume characters — try each split
+                        for split in 1..=value.len() {
+                            let prefix = &value[..split];
+                            let suffix = &value[split..];
+                            // prefix must not match any alt
+                            let prefix_matches_any =
+                                alts.iter().any(|a| self.glob_match_impl(prefix, a, nocase));
+                            if !prefix_matches_any && self.glob_match_impl(suffix, rest, nocase) {
+                                return true;
+                            }
+                        }
+                        false
+                    }
+            }
+            _ => false,
         }
     }
 
@@ -6300,6 +6528,14 @@ impl Interpreter {
     fn is_globstar(&self) -> bool {
         self.variables
             .get("SHOPT_globstar")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Check if extglob shopt is enabled
+    fn is_extglob(&self) -> bool {
+        self.variables
+            .get("SHOPT_extglob")
             .map(|v| v == "1")
             .unwrap_or(false)
     }

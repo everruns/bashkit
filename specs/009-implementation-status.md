@@ -103,17 +103,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1437 (1432 pass, 5 skip)
+**Total spec test cases:** 1452 (1447 pass, 5 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 1019 | Yes | 1014 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 1034 | Yes | 1029 | 5 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
 | JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
 | Python | 57 | Yes | 57 | 0 | embedded Python (Monty) |
-| **Total** | **1437** | **Yes** | **1432** | **5** | |
+| **Total** | **1452** | **Yes** | **1447** | **5** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -172,6 +172,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | string-ops.test.sh | 14 | string replacement (prefix/suffix anchored), `${var:?}`, case conversion |
 | read-builtin.test.sh | 10 | `read` builtin, IFS splitting, `-r`, `-a` (array), `-n` (nchars), here-string |
 | expr.test.sh | 13 | `expr` arithmetic, string ops, pattern matching, exit codes |
+| extglob.test.sh | 15 | `@()`, `?()`, `*()`, `+()`, `!()` extended globs |
 | dirstack.test.sh | 12 | `pushd`, `popd`, `dirs` directory stack operations |
 
 ## Shell Features
@@ -183,7 +184,7 @@ Features that may be added in the future (not intentionally excluded):
 | Feature | Priority | Notes |
 |---------|----------|-------|
 | Coprocesses `coproc` | Low | Rarely used |
-| Extended globs `@()` `!()` | Medium | Requires `shopt -s extglob` |
+| ~~Extended globs `@()` `!()` `?()` `*()` `+()`~~ | ~~Medium~~ | Implemented: all five extglob operators |
 | ~~Associative arrays `declare -A`~~ | ~~Medium~~ | Implemented: key-value access, iteration, unset, `${!m[@]}` |
 | ~~`[[ =~ ]]` regex matching~~ | ~~Medium~~ | Implemented: `[[ ]]` conditionals with `=~` and BASH_REMATCH |
 | ~~`getopts`~~ | ~~Medium~~ | Implemented: POSIX option parsing |
