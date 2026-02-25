@@ -103,17 +103,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1389 (1384 pass, 5 skip)
+**Total spec test cases:** 1399 (1394 pass, 5 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 971 | Yes | 966 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 981 | Yes | 976 | 5 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
 | JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
 | Python | 57 | Yes | 57 | 0 | embedded Python (Monty) |
-| **Total** | **1389** | **Yes** | **1384** | **5** | |
+| **Total** | **1399** | **Yes** | **1394** | **5** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -154,7 +154,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | sleep.test.sh | 6 | |
 | sortuniq.test.sh | 32 | sort and uniq, `-z` zero-terminated, `-m` merge |
 | source.test.sh | 21 | source/., function loading, PATH search, positional params |
-| test-operators.test.sh | 17 | file/string tests |
+| test-operators.test.sh | 27 | file/string tests, `-nt`/`-ot`/`-ef` file comparisons |
 | time.test.sh | 11 | Wall-clock only (user/sys always 0) |
 | timeout.test.sh | 17 | |
 | variables.test.sh | 97 | includes special vars, prefix env, PIPESTATUS, trap EXIT, `${var@Q}`, `\<newline>` line continuation, PWD/HOME/USER/HOSTNAME/BASH_VERSION/SECONDS, `set -x` xtrace, `shopt` builtin, nullglob, `set -o`/`set +o` display, `trap -p` |
