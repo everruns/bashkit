@@ -21,8 +21,8 @@ use tokio::sync::Mutex;
 // JSON <-> Python helpers
 // ============================================================================
 
-/// Convert serde_json::Value → PyObject
-fn json_to_py(py: Python<'_>, val: &serde_json::Value) -> PyResult<PyObject> {
+/// Convert serde_json::Value → Py<PyAny>
+fn json_to_py(py: Python<'_>, val: &serde_json::Value) -> PyResult<Py<PyAny>> {
     match val {
         serde_json::Value::Null => Ok(py.None()),
         serde_json::Value::Bool(b) => Ok(b.into_pyobject(py)?.to_owned().into_any().unbind()),
@@ -37,7 +37,7 @@ fn json_to_py(py: Python<'_>, val: &serde_json::Value) -> PyResult<PyObject> {
         }
         serde_json::Value::String(s) => Ok(s.into_pyobject(py)?.into_any().unbind()),
         serde_json::Value::Array(arr) => {
-            let items: Vec<PyObject> = arr
+            let items: Vec<Py<PyAny>> = arr
                 .iter()
                 .map(|v| json_to_py(py, v))
                 .collect::<PyResult<_>>()?;
@@ -53,7 +53,7 @@ fn json_to_py(py: Python<'_>, val: &serde_json::Value) -> PyResult<PyObject> {
     }
 }
 
-/// Convert PyObject → serde_json::Value (for schema dicts)
+/// Convert Py<PyAny> → serde_json::Value (for schema dicts)
 #[allow(clippy::only_used_in_recursion)]
 fn py_to_json(py: Python<'_>, obj: &Bound<'_, pyo3::PyAny>) -> PyResult<serde_json::Value> {
     if obj.is_none() {
@@ -71,14 +71,14 @@ fn py_to_json(py: Python<'_>, obj: &Bound<'_, pyo3::PyAny>) -> PyResult<serde_js
     if let Ok(s) = obj.extract::<String>() {
         return Ok(serde_json::Value::String(s));
     }
-    if let Ok(list) = obj.downcast::<PyList>() {
+    if let Ok(list) = obj.cast::<PyList>() {
         let arr: Vec<serde_json::Value> = list
             .iter()
             .map(|item| py_to_json(py, &item))
             .collect::<PyResult<_>>()?;
         return Ok(serde_json::Value::Array(arr));
     }
-    if let Ok(dict) = obj.downcast::<PyDict>() {
+    if let Ok(dict) = obj.cast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             let key: String = k.extract()?;
@@ -96,7 +96,7 @@ fn py_to_json(py: Python<'_>, obj: &Bound<'_, pyo3::PyAny>) -> PyResult<serde_js
 // ============================================================================
 
 /// Result from executing bash commands
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct ExecResult {
     #[pyo3(get)]
@@ -134,7 +134,7 @@ impl ExecResult {
 
     /// Return output as dict
     fn to_dict(&self) -> pyo3::PyResult<pyo3::Py<PyDict>> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let dict = PyDict::new(py);
             dict.set_item("stdout", &self.stdout)?;
             dict.set_item("stderr", &self.stderr)?;
@@ -332,7 +332,7 @@ struct PyToolEntry {
     name: String,
     description: String,
     schema: serde_json::Value,
-    callback: PyObject,
+    callback: Py<PyAny>,
 }
 
 /// Compose Python callbacks as bash builtins for multi-tool orchestration.
@@ -370,7 +370,7 @@ pub struct ScriptedTool {
 
 impl ScriptedTool {
     /// Build a Rust ScriptedTool from stored Python config.
-    /// Each Python callback is wrapped via `Python::with_gil`.
+    /// Each Python callback is wrapped via `Python::attach`.
     fn build_rust_tool(&self) -> RustScriptedTool {
         let mut builder = RustScriptedTool::builder(&self.name);
 
@@ -379,12 +379,12 @@ impl ScriptedTool {
         }
 
         for entry in &self.tools {
-            let py_cb = Python::with_gil(|py| entry.callback.clone_ref(py));
+            let py_cb = Python::attach(|py| entry.callback.clone_ref(py));
             let tool_name = entry.name.clone();
 
             let callback = move |args: &ToolArgs| -> Result<String, String> {
-                Python::with_gil(|py| {
-                    let params = json_to_py(py, &args.params).map_err(|e| e.to_string())?;
+                Python::attach(|py| {
+                    let params = json_to_py(py, &args.params).map_err(|e: PyErr| e.to_string())?;
                     let stdin_arg = args.stdin.as_deref().map(|s| s.to_string());
 
                     let result = py_cb
@@ -466,7 +466,7 @@ impl ScriptedTool {
         py: Python<'_>,
         name: String,
         description: String,
-        callback: PyObject,
+        callback: Py<PyAny>,
         schema: Option<Bound<'_, pyo3::PyAny>>,
     ) -> PyResult<()> {
         let schema_val = match schema {
@@ -590,7 +590,7 @@ impl ScriptedTool {
 fn create_langchain_tool_spec() -> PyResult<pyo3::Py<PyDict>> {
     let tool = RustBashTool::default();
 
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let dict = PyDict::new(py);
         dict.set_item("name", tool.name())?;
         dict.set_item("description", tool.description())?;
