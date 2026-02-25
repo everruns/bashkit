@@ -672,3 +672,50 @@ shopt -q extglob && echo "ext:on" || echo "ext:off"
 null:on
 ext:on
 ### end
+
+### set_dash_o_display
+# set -o shows options in human-readable format with grep
+set -o | grep "^errexit"
+### expect
+errexit        	off
+### end
+
+### set_dash_o_shows_enabled
+# set -o reflects enabled options
+set -e
+set -o | grep "^errexit"
+### expect
+errexit        	on
+### end
+
+### set_plus_o_display
+# set +o shows options in re-executable format
+set +o | grep "errexit"
+### expect
+set +o errexit
+### end
+
+### set_plus_o_shows_enabled
+# set +o reflects enabled options
+set -o pipefail
+set +o | grep "pipefail"
+### expect
+set -o pipefail
+### end
+
+### set_dash_o_noclobber
+# set -o noclobber and display
+set -o noclobber
+set -o | grep "^noclobber"
+### expect
+noclobber      	on
+### end
+
+### set_plus_o_restore
+# set +o output can be used to restore state
+set -o xtrace
+state=$(set +o 2>/dev/null | grep xtrace)
+echo "$state"
+### expect
+set -o xtrace
+### end

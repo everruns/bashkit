@@ -48,6 +48,40 @@ fn option_name_to_var(name: &str) -> Option<&'static str> {
     }
 }
 
+/// All known `set -o` options with their variable names, in display order.
+const SET_O_OPTIONS: &[(&str, &str)] = &[
+    ("errexit", "SHOPT_e"),
+    ("noglob", "SHOPT_f"),
+    ("noclobber", "SHOPT_C"),
+    ("noexec", "SHOPT_n"),
+    ("nounset", "SHOPT_u"),
+    ("pipefail", "SHOPT_pipefail"),
+    ("verbose", "SHOPT_v"),
+    ("xtrace", "SHOPT_x"),
+];
+
+/// Format option display for `set -o` (human-readable).
+fn format_set_dash_o(variables: &std::collections::HashMap<String, String>) -> String {
+    let mut output = String::new();
+    for (name, var) in SET_O_OPTIONS {
+        let enabled = variables.get(*var).map(|v| v == "1").unwrap_or(false);
+        let state = if enabled { "on" } else { "off" };
+        output.push_str(&format!("{:<15}\t{}\n", name, state));
+    }
+    output
+}
+
+/// Format option display for `set +o` (re-executable).
+fn format_set_plus_o(variables: &std::collections::HashMap<String, String>) -> String {
+    let mut output = String::new();
+    for (name, var) in SET_O_OPTIONS {
+        let enabled = variables.get(*var).map(|v| v == "1").unwrap_or(false);
+        let flag = if enabled { "-o" } else { "+o" };
+        output.push_str(&format!("set {} {}\n", flag, name));
+    }
+    output
+}
+
 #[async_trait]
 impl Builtin for Set {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -69,14 +103,23 @@ impl Builtin for Set {
                 && arg.len() > 1
                 && (arg.as_bytes()[1] == b'o' && arg.len() == 2)
             {
-                // -o option_name / +o option_name
+                // -o / +o: either display options or set/unset a named option
                 let enable = arg.starts_with('-');
-                i += 1;
-                if i < ctx.args.len() {
+                if i + 1 < ctx.args.len() {
+                    // -o option_name / +o option_name
+                    i += 1;
                     if let Some(var) = option_name_to_var(&ctx.args[i]) {
                         ctx.variables
                             .insert(var.to_string(), if enable { "1" } else { "0" }.to_string());
                     }
+                } else {
+                    // Bare -o or +o: display options
+                    let output = if enable {
+                        format_set_dash_o(ctx.variables)
+                    } else {
+                        format_set_plus_o(ctx.variables)
+                    };
+                    return Ok(ExecResult::ok(output));
                 }
             } else if arg.starts_with('-') || arg.starts_with('+') {
                 let enable = arg.starts_with('-');
