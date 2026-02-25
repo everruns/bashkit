@@ -258,6 +258,8 @@ impl Interpreter {
         builtins.insert("xxd".to_string(), Box::new(builtins::Xxd));
         builtins.insert("hexdump".to_string(), Box::new(builtins::Hexdump));
         builtins.insert("seq".to_string(), Box::new(builtins::Seq));
+        builtins.insert("tac".to_string(), Box::new(builtins::Tac));
+        builtins.insert("rev".to_string(), Box::new(builtins::Rev));
         builtins.insert("sort".to_string(), Box::new(builtins::Sort));
         builtins.insert("uniq".to_string(), Box::new(builtins::Uniq));
         builtins.insert("cut".to_string(), Box::new(builtins::Cut));
