@@ -63,6 +63,7 @@ mod timeout;
 mod vars;
 mod wait;
 mod wc;
+mod yes;
 
 #[cfg(feature = "git")]
 mod git;
@@ -94,7 +95,7 @@ pub use ls::{Find, Ls, Rmdir};
 pub use navigation::{Cd, Pwd};
 pub use nl::Nl;
 pub use paste::Paste;
-pub use path::{Basename, Dirname};
+pub use path::{Basename, Dirname, Realpath};
 pub use pipeline::{Tee, Watch, Xargs};
 pub use printf::Printf;
 pub use read::Read;
@@ -111,6 +112,7 @@ pub use timeout::Timeout;
 pub use vars::{Eval, Local, Readonly, Set, Shift, Shopt, Times, Unset};
 pub use wait::Wait;
 pub use wc::Wc;
+pub use yes::Yes;
 
 #[cfg(feature = "git")]
 pub use git::Git;
