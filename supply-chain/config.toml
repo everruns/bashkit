@@ -610,6 +610,10 @@ criteria = "safe-to-deploy"
 version = "0.3.89"
 criteria = "safe-to-deploy"
 
+[[exemptions.js-sys]]
+version = "0.3.90"
+criteria = "safe-to-deploy"
+
 [[exemptions.leb128fmt]]
 version = "0.1.0"
 criteria = "safe-to-deploy"
@@ -1386,20 +1390,40 @@ criteria = "safe-to-run"
 version = "0.2.112"
 criteria = "safe-to-deploy"
 
+[[exemptions.wasm-bindgen]]
+version = "0.2.113"
+criteria = "safe-to-deploy"
+
 [[exemptions.wasm-bindgen-futures]]
 version = "0.4.62"
+criteria = "safe-to-deploy"
+
+[[exemptions.wasm-bindgen-futures]]
+version = "0.4.63"
 criteria = "safe-to-deploy"
 
 [[exemptions.wasm-bindgen-macro]]
 version = "0.2.112"
 criteria = "safe-to-deploy"
 
+[[exemptions.wasm-bindgen-macro]]
+version = "0.2.113"
+criteria = "safe-to-deploy"
+
 [[exemptions.wasm-bindgen-macro-support]]
 version = "0.2.112"
 criteria = "safe-to-deploy"
 
+[[exemptions.wasm-bindgen-macro-support]]
+version = "0.2.113"
+criteria = "safe-to-deploy"
+
 [[exemptions.wasm-bindgen-shared]]
 version = "0.2.112"
+criteria = "safe-to-deploy"
+
+[[exemptions.wasm-bindgen-shared]]
+version = "0.2.113"
 criteria = "safe-to-deploy"
 
 [[exemptions.wasm-encoder]]
@@ -1420,6 +1444,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.web-sys]]
 version = "0.3.89"
+criteria = "safe-to-deploy"
+
+[[exemptions.web-sys]]
+version = "0.3.90"
 criteria = "safe-to-deploy"
 
 [[exemptions.web-time]]
