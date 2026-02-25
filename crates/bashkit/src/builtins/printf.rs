@@ -343,6 +343,10 @@ fn format_string(format: &str, args: &[String], arg_index: &mut usize) -> String
                             // String with escape sequences
                             output.push_str(&expand_escapes(arg));
                         }
+                        'q' => {
+                            // Shell-quoted string safe for reuse
+                            output.push_str(&shell_quote(arg));
+                        }
                         _ => {
                             // Unknown format - output literally
                             output.push('%');
@@ -361,6 +365,63 @@ fn format_string(format: &str, args: &[String], arg_index: &mut usize) -> String
     }
 
     output
+}
+
+/// Quote a string for safe shell reuse (printf %q behavior).
+///
+/// Matches bash behavior:
+/// - Empty string → `''`
+/// - Safe strings (only alnum/`_`/`.`/`-`/`:`/`=`/`+`/`@`/`,`/`%`/`^`/`/`) → unquoted
+/// - Strings with control chars (tab, newline, etc.) → `$'...'` quoting
+/// - Other strings → backslash-escape individual special characters
+fn shell_quote(s: &str) -> String {
+    if s.is_empty() {
+        return "''".to_string();
+    }
+
+    // Check if the string needs quoting at all
+    let needs_quoting = s
+        .chars()
+        .any(|c| !c.is_ascii_alphanumeric() && !"_/.:-=+@,%^".contains(c));
+
+    if !needs_quoting {
+        return s.to_string();
+    }
+
+    // Check for control characters that require $'...' quoting
+    let has_control = s.chars().any(|c| (c as u32) < 32 || c as u32 == 127);
+
+    if has_control {
+        // Use $'...' quoting
+        let mut out = String::from("$'");
+        for ch in s.chars() {
+            match ch {
+                '\'' => out.push_str("\\'"),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\t' => out.push_str("\\t"),
+                '\r' => out.push_str("\\r"),
+                c if (c as u32) < 32 || c as u32 == 127 => {
+                    out.push_str(&format!("\\x{:02x}", c as u32));
+                }
+                c => out.push(c),
+            }
+        }
+        out.push('\'');
+        out
+    } else {
+        // Backslash-escape individual special characters
+        let mut out = String::new();
+        for ch in s.chars() {
+            if ch.is_ascii_alphanumeric() || "_/.:-=+@,%^".contains(ch) {
+                out.push(ch);
+            } else {
+                out.push('\\');
+                out.push(ch);
+            }
+        }
+        out
+    }
 }
 
 /// Expand escape sequences in a string

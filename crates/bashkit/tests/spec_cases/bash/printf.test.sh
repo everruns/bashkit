@@ -197,3 +197,47 @@ printf -v padded "%05d" 42; echo "$padded"
 ### expect
 00042
 ### end
+
+### printf_q_space
+# printf %q escapes spaces
+printf '%q\n' 'hello world'
+### expect
+hello\ world
+### end
+
+### printf_q_simple
+# printf %q leaves safe strings unquoted
+printf '%q\n' 'simple'
+### expect
+simple
+### end
+
+### printf_q_empty
+# printf %q quotes empty string
+printf '%q\n' ''
+### expect
+''
+### end
+
+### printf_q_special_chars
+# printf %q escapes special shell chars
+printf '%q\n' 'a"b'
+### expect
+a\"b
+### end
+
+### printf_q_tab
+# printf %q uses $'...' for control chars
+### bash_diff
+x=$(printf 'hello\tworld')
+printf '%q\n' "$x"
+### expect
+$'hello\tworld'
+### end
+
+### printf_q_single_quote
+# printf %q escapes single quotes
+printf '%q\n' "it's"
+### expect
+it\'s
+### end
