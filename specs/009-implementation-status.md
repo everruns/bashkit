@@ -103,17 +103,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1424 (1419 pass, 5 skip)
+**Total spec test cases:** 1437 (1432 pass, 5 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 1006 | Yes | 1001 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 1019 | Yes | 1014 | 5 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
 | JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
 | Python | 57 | Yes | 57 | 0 | embedded Python (Monty) |
-| **Total** | **1424** | **Yes** | **1419** | **5** | |
+| **Total** | **1437** | **Yes** | **1432** | **5** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -123,6 +123,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | arrays.test.sh | 27 | indices, `${arr[@]}` / `${arr[*]}`, negative indexing `${arr[-1]}` |
 | background.test.sh | 4 | |
 | bash-command.test.sh | 34 | bash/sh re-invocation |
+| bash-flags.test.sh | 13 | bash `-e`, `-x`, `-u`, `-f`, `-o option` flags |
 | brace-expansion.test.sh | 21 | {a,b,c}, {1..5}, for-loop brace expansion |
 | column.test.sh | 10 | column alignment |
 | command.test.sh | 9 | `command -v`, `-V`, function bypass |
@@ -207,7 +208,7 @@ Features that may be added in the future (not intentionally excluded):
 | `set -o pipefail` | Pipeline returns rightmost non-zero exit code | — |
 | `time` | Wall-clock timing | User/sys CPU time (always 0) |
 | `timeout` | Basic usage | `-k` kill timeout |
-| `bash`/`sh` | `-c`, `-n`, script files, stdin, `--version`, `--help` | `-e` (exit on error), `-x` (trace), `-o`, login shell |
+| `bash`/`sh` | `-c`, `-n`, `-e`, `-x`, `-u`, `-f`, `-o option`, script files, stdin, `--version`, `--help` | Login shell |
 
 ## Builtins
 

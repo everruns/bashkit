@@ -1864,6 +1864,8 @@ impl Interpreter {
         let mut script_file: Option<String> = None;
         let mut script_args: Vec<String> = Vec::new();
         let mut noexec = false; // -n flag: syntax check only
+                                // Shell options to set before executing the script
+        let mut shell_opts: Vec<(&str, &str)> = Vec::new();
         let mut idx = 0;
 
         while idx < args.len() {
@@ -1884,7 +1886,10 @@ impl Interpreter {
                          Options:\n\
                          \t-c string\tExecute commands from string\n\
                          \t-n\t\tCheck syntax without executing (noexec)\n\
-                         \t-e\t\tExit on error (accepted, limited support)\n\
+                         \t-e\t\tExit on error (errexit)\n\
+                         \t-x\t\tPrint commands before execution (xtrace)\n\
+                         \t-u\t\tError on unset variables (nounset)\n\
+                         \t-o option\tSet option by name\n\
                          \t--version\tShow version\n\
                          \t--help\t\tShow this help\n",
                         shell_name
@@ -1906,20 +1911,59 @@ impl Interpreter {
                     break;
                 }
                 "-n" => {
-                    // Noexec: parse only, don't execute
                     noexec = true;
                     idx += 1;
                 }
-                // Accept but ignore these options. These are recognized for
-                // compatibility with scripts that set them, but not enforced
-                // in virtual mode:
-                // -e (errexit): would need per-command exit code checking
-                // -v (verbose): would need input echoing
-                // -u (nounset): would need unset variable detection
-                // -o (option): would need set -o pipeline
+                "-e" => {
+                    shell_opts.push(("SHOPT_e", "1"));
+                    idx += 1;
+                }
+                "-x" => {
+                    shell_opts.push(("SHOPT_x", "1"));
+                    idx += 1;
+                }
+                "-u" => {
+                    shell_opts.push(("SHOPT_u", "1"));
+                    idx += 1;
+                }
+                "-v" => {
+                    shell_opts.push(("SHOPT_v", "1"));
+                    idx += 1;
+                }
+                "-f" => {
+                    shell_opts.push(("SHOPT_f", "1"));
+                    idx += 1;
+                }
+                "-o" => {
+                    idx += 1;
+                    if idx >= args.len() {
+                        return Ok(ExecResult::err(
+                            format!("{}: -o: option requires an argument\n", shell_name),
+                            2,
+                        ));
+                    }
+                    let opt = &args[idx];
+                    match opt.as_str() {
+                        "errexit" => shell_opts.push(("SHOPT_e", "1")),
+                        "nounset" => shell_opts.push(("SHOPT_u", "1")),
+                        "xtrace" => shell_opts.push(("SHOPT_x", "1")),
+                        "verbose" => shell_opts.push(("SHOPT_v", "1")),
+                        "pipefail" => shell_opts.push(("SHOPT_pipefail", "1")),
+                        "noglob" => shell_opts.push(("SHOPT_f", "1")),
+                        "noclobber" => shell_opts.push(("SHOPT_C", "1")),
+                        _ => {
+                            return Ok(ExecResult::err(
+                                format!("{}: set: {}: invalid option name\n", shell_name, opt),
+                                2,
+                            ));
+                        }
+                    }
+                    idx += 1;
+                }
+                // Accept but don't act on these:
                 // -i (interactive): not applicable in virtual mode
                 // -s (stdin): read from stdin (implicit behavior)
-                "-e" | "-x" | "-v" | "-u" | "-o" | "-i" | "-s" => {
+                "-i" | "-s" => {
                     idx += 1;
                 }
                 "--" => {
@@ -1937,12 +1981,36 @@ impl Interpreter {
                     idx += 1;
                 }
                 s if s.starts_with('-') && s.len() > 1 => {
-                    // Combined short options like -ne, -ev
-                    for ch in s.chars().skip(1) {
-                        if ch == 'n' {
-                            noexec = true;
+                    // Combined short options like -ne, -ev, -euxo
+                    let chars: Vec<char> = s.chars().skip(1).collect();
+                    let mut ci = 0;
+                    while ci < chars.len() {
+                        match chars[ci] {
+                            'n' => noexec = true,
+                            'e' => shell_opts.push(("SHOPT_e", "1")),
+                            'x' => shell_opts.push(("SHOPT_x", "1")),
+                            'u' => shell_opts.push(("SHOPT_u", "1")),
+                            'v' => shell_opts.push(("SHOPT_v", "1")),
+                            'f' => shell_opts.push(("SHOPT_f", "1")),
+                            'o' => {
+                                // -o in combined form: next arg is option name
+                                idx += 1;
+                                if idx < args.len() {
+                                    match args[idx].as_str() {
+                                        "errexit" => shell_opts.push(("SHOPT_e", "1")),
+                                        "nounset" => shell_opts.push(("SHOPT_u", "1")),
+                                        "xtrace" => shell_opts.push(("SHOPT_x", "1")),
+                                        "verbose" => shell_opts.push(("SHOPT_v", "1")),
+                                        "pipefail" => shell_opts.push(("SHOPT_pipefail", "1")),
+                                        "noglob" => shell_opts.push(("SHOPT_f", "1")),
+                                        "noclobber" => shell_opts.push(("SHOPT_C", "1")),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            _ => {} // Ignore unknown
                         }
-                        // Ignore other options
+                        ci += 1;
                     }
                     idx += 1;
                 }
@@ -2030,8 +2098,25 @@ impl Interpreter {
             positional: positional_args,
         });
 
+        // Save and apply shell options (-e, -x, -u, -o pipefail, etc.)
+        let mut saved_opts: Vec<(String, Option<String>)> = Vec::new();
+        for (var, val) in &shell_opts {
+            let prev = self.variables.get(*var).cloned();
+            saved_opts.push((var.to_string(), prev));
+            self.variables.insert(var.to_string(), val.to_string());
+        }
+
         // Execute the script
         let result = self.execute(&script).await;
+
+        // Restore shell options
+        for (var, prev) in saved_opts {
+            if let Some(val) = prev {
+                self.variables.insert(var, val);
+            } else {
+                self.variables.remove(&var);
+            }
+        }
 
         // Pop the call frame
         self.call_stack.pop();
