@@ -90,3 +90,28 @@ echo "a b c" | rev
 ### expect
 c b a
 ### end
+
+### yes_default
+# yes outputs "y" by default (piped through head)
+yes | head -3
+### expect
+y
+y
+y
+### end
+
+### yes_custom_string
+# yes with custom string
+yes hello | head -2
+### expect
+hello
+hello
+### end
+
+### yes_multiple_args
+# yes joins multiple args with space
+yes a b c | head -2
+### expect
+a b c
+a b c
+### end

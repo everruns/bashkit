@@ -97,3 +97,35 @@ dirname file
 ### expect
 .
 ### end
+
+### realpath_absolute
+# realpath resolves .. components
+### bash_diff
+realpath /tmp/../tmp/test
+### expect
+/tmp/test
+### end
+
+### realpath_dot
+# realpath resolves . components
+### bash_diff
+realpath /home/user/./file.txt
+### expect
+/home/user/file.txt
+### end
+
+### realpath_dotdot
+# realpath resolves parent directory references
+### bash_diff
+realpath /home/user/docs/../file.txt
+### expect
+/home/user/file.txt
+### end
+
+### realpath_no_args
+# realpath with no args should error
+realpath 2>/dev/null
+echo $?
+### expect
+1
+### end

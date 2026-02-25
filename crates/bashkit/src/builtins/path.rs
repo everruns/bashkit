@@ -119,6 +119,38 @@ impl Builtin for Dirname {
     }
 }
 
+/// The realpath builtin - resolve absolute pathname.
+///
+/// Usage: realpath [PATH...]
+///
+/// Resolves `.` and `..` components and prints absolute canonical paths.
+/// In bashkit's virtual filesystem, symlink resolution is not performed.
+pub struct Realpath;
+
+#[async_trait]
+impl Builtin for Realpath {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if ctx.args.is_empty() {
+            return Ok(ExecResult::err(
+                "realpath: missing operand\n".to_string(),
+                1,
+            ));
+        }
+
+        let mut output = String::new();
+        for arg in ctx.args {
+            if arg.starts_with('-') {
+                continue; // skip flags like -e, -m, -s
+            }
+            let resolved = super::resolve_path(ctx.cwd, arg);
+            output.push_str(&resolved.to_string_lossy());
+            output.push('\n');
+        }
+
+        Ok(ExecResult::ok(output))
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {

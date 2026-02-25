@@ -237,6 +237,7 @@ impl Interpreter {
         builtins.insert("tail".to_string(), Box::new(builtins::Tail));
         builtins.insert("basename".to_string(), Box::new(builtins::Basename));
         builtins.insert("dirname".to_string(), Box::new(builtins::Dirname));
+        builtins.insert("realpath".to_string(), Box::new(builtins::Realpath));
         builtins.insert("mkdir".to_string(), Box::new(builtins::Mkdir));
         builtins.insert("mktemp".to_string(), Box::new(builtins::Mktemp));
         builtins.insert("rm".to_string(), Box::new(builtins::Rm));
@@ -260,6 +261,7 @@ impl Interpreter {
         builtins.insert("seq".to_string(), Box::new(builtins::Seq));
         builtins.insert("tac".to_string(), Box::new(builtins::Tac));
         builtins.insert("rev".to_string(), Box::new(builtins::Rev));
+        builtins.insert("yes".to_string(), Box::new(builtins::Yes));
         builtins.insert("sort".to_string(), Box::new(builtins::Sort));
         builtins.insert("uniq".to_string(), Box::new(builtins::Uniq));
         builtins.insert("cut".to_string(), Box::new(builtins::Cut));
