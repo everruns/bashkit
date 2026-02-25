@@ -143,3 +143,68 @@ echo "$ref"
 first
 second
 ### end
+
+### declare_lowercase
+# declare -l converts value to lowercase
+declare -l x=HELLO
+echo "$x"
+### expect
+hello
+### end
+
+### declare_uppercase
+# declare -u converts value to uppercase
+declare -u x=hello
+echo "$x"
+### expect
+HELLO
+### end
+
+### declare_lowercase_subsequent
+# declare -l applies to subsequent assignments
+declare -l x
+x=WORLD
+echo "$x"
+### expect
+world
+### end
+
+### declare_uppercase_subsequent
+# declare -u applies to subsequent assignments
+declare -u x
+x=world
+echo "$x"
+### expect
+WORLD
+### end
+
+### declare_lowercase_mixed
+# declare -l handles mixed case
+declare -l x=HeLLo_WoRLd
+echo "$x"
+### expect
+hello_world
+### end
+
+### declare_uppercase_overrides_lowercase
+# declare -u after -l overrides to uppercase
+declare -l x=Hello
+echo "$x"
+declare -u x
+x=Hello
+echo "$x"
+### expect
+hello
+HELLO
+### end
+
+### declare_case_in_function
+# declare -l works in functions
+toupper() {
+  declare -u result="$1"
+  echo "$result"
+}
+toupper "hello world"
+### expect
+HELLO WORLD
+### end

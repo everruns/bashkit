@@ -103,17 +103,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1305 (1300 pass, 5 skip)
+**Total spec test cases:** 1318 (1313 pass, 5 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 893 | Yes | 888 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 900 | Yes | 895 | 5 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
 | JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
 | Python | 57 | Yes | 57 | 0 | embedded Python (Monty) |
-| **Total** | **1311** | **Yes** | **1306** | **5** | |
+| **Total** | **1318** | **Yes** | **1313** | **5** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -160,7 +160,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | variables.test.sh | 86 | includes special vars, prefix env, PIPESTATUS, trap EXIT, `${var@Q}`, `\<newline>` line continuation, PWD/HOME/USER/HOSTNAME/BASH_VERSION/SECONDS, `set -x` xtrace, `shopt` builtin, nullglob |
 | wc.test.sh | 35 | word count (5 skipped) |
 | type.test.sh | 15 | `type`, `which`, `hash` builtins |
-| declare.test.sh | 16 | `declare`/`typeset`, `-i`, `-r`, `-x`, `-a`, `-p`, `-n` nameref |
+| declare.test.sh | 23 | `declare`/`typeset`, `-i`, `-r`, `-x`, `-a`, `-p`, `-n` nameref, `-l`/`-u` case conversion |
 | ln.test.sh | 5 | `ln -s`, `-f`, symlink creation |
 | eval-bugs.test.sh | 4 | regression tests for eval/script bugs |
 | script-exec.test.sh | 10 | script execution by path, $PATH search, exit codes |
@@ -183,7 +183,7 @@ Features that may be added in the future (not intentionally excluded):
 | ~~`getopts`~~ | ~~Medium~~ | Implemented: POSIX option parsing |
 | ~~`command` builtin~~ | ~~Medium~~ | Implemented: `-v`, `-V`, bypass functions |
 | ~~`type`/`which` builtins~~ | ~~Medium~~ | Implemented: `-t`, `-a`, `-p` flags |
-| ~~`declare` builtin~~ | ~~Medium~~ | Implemented: `-i`, `-r`, `-x`, `-a`, `-p` |
+| ~~`declare` builtin~~ | ~~Medium~~ | Implemented: `-i`, `-r`, `-x`, `-a`, `-p`, `-n`, `-l`, `-u` |
 | ~~`ln` builtin~~ | ~~Medium~~ | Implemented: symbolic links (`-s`, `-f`) |
 | `alias` | Low | Interactive feature |
 | History expansion | Out of scope | Interactive only |
