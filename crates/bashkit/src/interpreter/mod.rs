@@ -724,22 +724,15 @@ impl Interpreter {
                 for expanded in fields {
                     let brace_expanded = self.expand_braces(&expanded);
                     for item in brace_expanded {
-                        if self.contains_glob_chars(&item) {
-                            let glob_matches = self.expand_glob(&item).await?;
-                            if glob_matches.is_empty() {
-                                let nullglob = self
-                                    .variables
-                                    .get("SHOPT_nullglob")
-                                    .map(|v| v == "1")
-                                    .unwrap_or(false);
-                                if !nullglob {
-                                    vals.push(item);
-                                }
-                            } else {
-                                vals.extend(glob_matches);
+                        match self.expand_glob_item(&item).await {
+                            Ok(items) => vals.extend(items),
+                            Err(pat) => {
+                                self.last_exit_code = 1;
+                                return Ok(ExecResult::err(
+                                    format!("-bash: no match: {}\n", pat),
+                                    1,
+                                ));
                             }
-                        } else {
-                            vals.push(item);
                         }
                     }
                 }
@@ -852,22 +845,15 @@ impl Interpreter {
                 for expanded in fields {
                     let brace_expanded = self.expand_braces(&expanded);
                     for item in brace_expanded {
-                        if self.contains_glob_chars(&item) {
-                            let glob_matches = self.expand_glob(&item).await?;
-                            if glob_matches.is_empty() {
-                                let nullglob = self
-                                    .variables
-                                    .get("SHOPT_nullglob")
-                                    .map(|v| v == "1")
-                                    .unwrap_or(false);
-                                if !nullglob {
-                                    values.push(item);
-                                }
-                            } else {
-                                values.extend(glob_matches);
+                        match self.expand_glob_item(&item).await {
+                            Ok(items) => values.extend(items),
+                            Err(pat) => {
+                                self.last_exit_code = 1;
+                                return Ok(ExecResult::err(
+                                    format!("-bash: no match: {}\n", pat),
+                                    1,
+                                ));
                             }
-                        } else {
-                            values.push(item);
                         }
                     }
                 }
@@ -2076,6 +2062,11 @@ impl Interpreter {
 
     /// Simple glob pattern matching with support for *, ?, and [...]
     fn glob_match(&self, value: &str, pattern: &str) -> bool {
+        self.glob_match_impl(value, pattern, false)
+    }
+
+    /// Glob match with optional case-insensitive mode
+    fn glob_match_impl(&self, value: &str, pattern: &str, nocase: bool) -> bool {
         let mut value_chars = value.chars().peekable();
         let mut pattern_chars = pattern.chars().peekable();
 
@@ -2093,14 +2084,14 @@ impl Interpreter {
                     while value_chars.peek().is_some() {
                         let remaining_value: String = value_chars.clone().collect();
                         let remaining_pattern: String = pattern_chars.clone().collect();
-                        if self.glob_match(&remaining_value, &remaining_pattern) {
+                        if self.glob_match_impl(&remaining_value, &remaining_pattern, nocase) {
                             return true;
                         }
                         value_chars.next();
                     }
                     // Also try with empty match
                     let remaining_pattern: String = pattern_chars.collect();
-                    return self.glob_match("", &remaining_pattern);
+                    return self.glob_match_impl("", &remaining_pattern, nocase);
                 }
                 (Some('?'), Some(_)) => {
                     pattern_chars.next();
@@ -2109,7 +2100,10 @@ impl Interpreter {
                 (Some('?'), None) => return false,
                 (Some('['), Some(v)) => {
                     pattern_chars.next(); // consume '['
-                    if let Some(matched) = self.match_bracket_expr(&mut pattern_chars, v) {
+                    let match_char = if nocase { v.to_ascii_lowercase() } else { v };
+                    if let Some(matched) =
+                        self.match_bracket_expr(&mut pattern_chars, match_char, nocase)
+                    {
                         if matched {
                             value_chars.next();
                         } else {
@@ -2122,7 +2116,12 @@ impl Interpreter {
                 }
                 (Some('['), None) => return false,
                 (Some(p), Some(v)) => {
-                    if p == v {
+                    let matches = if nocase {
+                        p.eq_ignore_ascii_case(&v)
+                    } else {
+                        p == v
+                    };
+                    if matches {
                         pattern_chars.next();
                         value_chars.next();
                     } else {
@@ -2140,6 +2139,7 @@ impl Interpreter {
         &self,
         pattern_chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
         value_char: char,
+        nocase: bool,
     ) -> Option<bool> {
         let mut chars_in_class = Vec::new();
         let mut negate = false;
@@ -2182,7 +2182,12 @@ impl Interpreter {
             }
         }
 
-        let matched = chars_in_class.contains(&value_char);
+        let matched = if nocase {
+            let lc = value_char.to_ascii_lowercase();
+            chars_in_class.iter().any(|&c| c.to_ascii_lowercase() == lc)
+        } else {
+            chars_in_class.contains(&value_char)
+        };
         Some(if negate { !matched } else { matched })
     }
 
@@ -2692,25 +2697,12 @@ impl Interpreter {
 
                 // Step 2: For each brace-expanded item, do glob expansion
                 for item in brace_expanded {
-                    if self.contains_glob_chars(&item) {
-                        let glob_matches = self.expand_glob(&item).await?;
-                        if glob_matches.is_empty() {
-                            // nullglob: unmatched globs expand to nothing
-                            let nullglob = self
-                                .variables
-                                .get("SHOPT_nullglob")
-                                .map(|v| v == "1")
-                                .unwrap_or(false);
-                            if !nullglob {
-                                // Default: keep original pattern (bash behavior)
-                                args.push(item);
-                            }
-                            // With nullglob: skip (produce nothing)
-                        } else {
-                            args.extend(glob_matches);
+                    match self.expand_glob_item(&item).await {
+                        Ok(items) => args.extend(items),
+                        Err(pat) => {
+                            self.last_exit_code = 1;
+                            return Ok(ExecResult::err(format!("-bash: no match: {}\n", pat), 1));
                         }
-                    } else {
-                        args.push(item);
                     }
                 }
             }
@@ -6187,14 +6179,82 @@ impl Interpreter {
         s.contains('*') || s.contains('?') || s.contains('[')
     }
 
+    /// Check if dotglob shopt is enabled
+    fn is_dotglob(&self) -> bool {
+        self.variables
+            .get("SHOPT_dotglob")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Check if nocaseglob shopt is enabled
+    fn is_nocaseglob(&self) -> bool {
+        self.variables
+            .get("SHOPT_nocaseglob")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Check if noglob (set -f) is enabled
+    fn is_noglob(&self) -> bool {
+        self.variables
+            .get("SHOPT_f")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Check if failglob shopt is enabled
+    fn is_failglob(&self) -> bool {
+        self.variables
+            .get("SHOPT_failglob")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Check if globstar shopt is enabled
+    fn is_globstar(&self) -> bool {
+        self.variables
+            .get("SHOPT_globstar")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Expand glob for a single item, applying noglob/failglob/nullglob.
+    /// Returns Err(pattern) if failglob triggers, Ok(items) otherwise.
+    async fn expand_glob_item(&self, item: &str) -> std::result::Result<Vec<String>, String> {
+        if !self.contains_glob_chars(item) || self.is_noglob() {
+            return Ok(vec![item.to_string()]);
+        }
+        let glob_matches = self.expand_glob(item).await.unwrap_or_default();
+        if glob_matches.is_empty() {
+            if self.is_failglob() {
+                return Err(item.to_string());
+            }
+            let nullglob = self
+                .variables
+                .get("SHOPT_nullglob")
+                .map(|v| v == "1")
+                .unwrap_or(false);
+            if nullglob {
+                Ok(vec![])
+            } else {
+                Ok(vec![item.to_string()])
+            }
+        } else {
+            Ok(glob_matches)
+        }
+    }
+
     /// Expand a glob pattern against the filesystem
     async fn expand_glob(&self, pattern: &str) -> Result<Vec<String>> {
-        // Check for ** (recursive glob)
-        if pattern.contains("**") {
+        // Check for ** (recursive glob) — only when globstar is enabled
+        if pattern.contains("**") && self.is_globstar() {
             return self.expand_glob_recursive(pattern).await;
         }
 
         let mut matches = Vec::new();
+        let dotglob = self.is_dotglob();
+        let nocase = self.is_nocaseglob();
 
         // Split pattern into directory and filename parts
         let path = Path::new(pattern);
@@ -6233,9 +6293,17 @@ impl Interpreter {
             Err(_) => return Ok(matches),
         };
 
+        // Check if pattern explicitly starts with dot
+        let pattern_starts_with_dot = file_pattern.starts_with('.');
+
         // Match each entry against the pattern
         for entry in entries {
-            if self.glob_match(&entry.name, &file_pattern) {
+            // Skip dotfiles unless dotglob is set or pattern explicitly starts with '.'
+            if entry.name.starts_with('.') && !dotglob && !pattern_starts_with_dot {
+                continue;
+            }
+
+            if self.glob_match_impl(&entry.name, &file_pattern, nocase) {
                 // Construct the full path
                 let full_path = if path.is_absolute() {
                     dir.join(&entry.name).to_string_lossy().to_string()
@@ -6264,6 +6332,8 @@ impl Interpreter {
     async fn expand_glob_recursive(&self, pattern: &str) -> Result<Vec<String>> {
         let is_absolute = pattern.starts_with('/');
         let components: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+        let dotglob = self.is_dotglob();
+        let nocase = self.is_nocaseglob();
 
         // Find the ** component
         let star_star_idx = match components.iter().position(|&c| c == "**") {
@@ -6300,6 +6370,9 @@ impl Interpreter {
                 // ** alone matches all files recursively
                 if let Ok(entries) = self.fs.read_dir(dir).await {
                     for entry in entries {
+                        if entry.name.starts_with('.') && !dotglob {
+                            continue;
+                        }
                         if !entry.metadata.file_type.is_dir() {
                             matches.push(dir.join(&entry.name).to_string_lossy().to_string());
                         }
@@ -6307,9 +6380,14 @@ impl Interpreter {
                 }
             } else if after_pattern.len() == 1 {
                 // Single pattern after **: match files in this directory
+                let pat = after_pattern[0];
+                let pattern_starts_with_dot = pat.starts_with('.');
                 if let Ok(entries) = self.fs.read_dir(dir).await {
                     for entry in entries {
-                        if self.glob_match(&entry.name, after_pattern[0]) {
+                        if entry.name.starts_with('.') && !dotglob && !pattern_starts_with_dot {
+                            continue;
+                        }
+                        if self.glob_match_impl(&entry.name, pat, nocase) {
                             matches.push(dir.join(&entry.name).to_string_lossy().to_string());
                         }
                     }
