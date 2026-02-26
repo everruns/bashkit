@@ -231,6 +231,16 @@ impl<'a> Lexer<'a> {
         while let Some(ch) = self.peek_char() {
             if ch == ' ' || ch == '\t' {
                 self.advance();
+            } else if ch == '\\' {
+                // Check for backslash-newline (line continuation) between tokens
+                let mut lookahead = self.chars.clone();
+                lookahead.next(); // skip backslash
+                if lookahead.next() == Some('\n') {
+                    self.advance(); // consume backslash
+                    self.advance(); // consume newline
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
