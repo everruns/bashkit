@@ -1161,9 +1161,7 @@ impl Interpreter {
                     match args[0].as_str() {
                         "-z" => args[1].is_empty(),
                         "-n" => !args[1].is_empty(),
-                        "-e" | "-a" => {
-                            self.fs.exists(&resolve(&args[1])).await.unwrap_or(false)
-                        }
+                        "-e" | "-a" => self.fs.exists(&resolve(&args[1])).await.unwrap_or(false),
                         "-f" => self
                             .fs
                             .stat(&resolve(&args[1]))
