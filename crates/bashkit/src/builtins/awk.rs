@@ -30,6 +30,13 @@ struct AwkProgram {
     begin_actions: Vec<AwkAction>,
     main_rules: Vec<AwkRule>,
     end_actions: Vec<AwkAction>,
+    functions: HashMap<String, AwkFunctionDef>,
+}
+
+#[derive(Debug, Clone)]
+struct AwkFunctionDef {
+    params: Vec<String>,
+    body: Vec<AwkAction>,
 }
 
 #[derive(Debug)]
@@ -68,7 +75,7 @@ enum AwkExpr {
     FieldAssign(Box<AwkExpr>, Box<AwkExpr>), // $n = val
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum AwkAction {
     Print(Vec<AwkExpr>),
     Printf(String, Vec<AwkExpr>),
@@ -86,6 +93,7 @@ enum AwkAction {
     Getline,                 // getline — read next input record into $0
     #[allow(dead_code)] // Exit code support for future
     Exit(Option<AwkExpr>),
+    Return(Option<AwkExpr>),
     Expression(AwkExpr),
 }
 
@@ -100,7 +108,7 @@ struct AwkState {
     fnr: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum AwkValue {
     Number(f64),
     String(String),
@@ -330,6 +338,7 @@ impl<'a> AwkParser<'a> {
             begin_actions: Vec::new(),
             main_rules: Vec::new(),
             end_actions: Vec::new(),
+            functions: HashMap::new(),
         };
 
         self.skip_whitespace();
@@ -340,8 +349,12 @@ impl<'a> AwkParser<'a> {
                 break;
             }
 
-            // Check for BEGIN/END
-            if self.matches_keyword("BEGIN") {
+            // Check for function/BEGIN/END
+            if self.matches_keyword("function") {
+                self.skip_whitespace();
+                let (name, func_def) = self.parse_function_def()?;
+                program.functions.insert(name, func_def);
+            } else if self.matches_keyword("BEGIN") {
                 self.skip_whitespace();
                 let actions = self.parse_action_block()?;
                 program.begin_actions.extend(actions);
@@ -372,6 +385,68 @@ impl<'a> AwkParser<'a> {
         }
 
         Ok(program)
+    }
+
+    /// Parse a user-defined function: function name(params) { body }
+    fn parse_function_def(&mut self) -> Result<(String, AwkFunctionDef)> {
+        // Parse function name
+        let name = self.read_identifier()?;
+        self.skip_whitespace();
+
+        // Expect '('
+        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != '(' {
+            return Err(Error::Execution(
+                "awk: expected '(' after function name".to_string(),
+            ));
+        }
+        self.pos += 1;
+
+        // Parse parameter list
+        let mut params = Vec::new();
+        self.skip_whitespace();
+        while self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() != ')' {
+            if !params.is_empty() {
+                if self.input.chars().nth(self.pos).unwrap() == ',' {
+                    self.pos += 1;
+                }
+                self.skip_whitespace();
+            }
+            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() != ')' {
+                params.push(self.read_identifier()?);
+                self.skip_whitespace();
+            }
+        }
+
+        // Expect ')'
+        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ')' {
+            return Err(Error::Execution(
+                "awk: expected ')' after function parameters".to_string(),
+            ));
+        }
+        self.pos += 1;
+        self.skip_whitespace();
+
+        // Parse function body as action block
+        let body = self.parse_action_block()?;
+
+        Ok((name, AwkFunctionDef { params, body }))
+    }
+
+    /// Read an identifier (alphanumeric + underscore)
+    fn read_identifier(&mut self) -> Result<String> {
+        let start = self.pos;
+        while self.pos < self.input.len() {
+            let c = self.input.chars().nth(self.pos).unwrap();
+            if c.is_alphanumeric() || c == '_' {
+                self.pos += 1;
+            } else {
+                break;
+            }
+        }
+        if self.pos == start {
+            return Err(Error::Execution("awk: expected identifier".to_string()));
+        }
+        Ok(self.input[start..self.pos].to_string())
     }
 
     fn matches_keyword(&mut self, keyword: &str) -> bool {
@@ -536,6 +611,17 @@ impl<'a> AwkParser<'a> {
                 }
             }
             return Ok(AwkAction::Exit(None));
+        }
+        if self.matches_keyword("return") {
+            self.skip_whitespace();
+            if self.pos < self.input.len() {
+                let c = self.input.chars().nth(self.pos).unwrap();
+                if c != '}' && c != ';' {
+                    let expr = self.parse_expression()?;
+                    return Ok(AwkAction::Return(Some(expr)));
+                }
+            }
+            return Ok(AwkAction::Return(None));
         }
         if self.matches_keyword("if") {
             return self.parse_if();
@@ -1091,7 +1177,7 @@ impl<'a> AwkParser<'a> {
         let remaining = &self.input[self.pos..];
         let keywords = [
             "in", "if", "else", "while", "for", "do", "break", "continue", "next", "exit",
-            "delete", "getline", "print", "printf",
+            "return", "delete", "getline", "print", "printf", "function",
         ];
         for kw in keywords {
             if remaining.starts_with(kw) {
@@ -1547,6 +1633,7 @@ enum AwkFlow {
     Break,             // Break out of loop
     LoopContinue,      // Continue to next loop iteration
     Exit(Option<i32>), // Exit program with optional code
+    Return(AwkValue),  // Return from user-defined function
 }
 
 struct AwkInterpreter {
@@ -1556,6 +1643,8 @@ struct AwkInterpreter {
     input_lines: Vec<String>,
     /// Current line index within input_lines
     line_index: usize,
+    /// User-defined functions
+    functions: HashMap<String, AwkFunctionDef>,
 }
 
 impl AwkInterpreter {
@@ -1565,6 +1654,7 @@ impl AwkInterpreter {
             output: String::new(),
             input_lines: Vec::new(),
             line_index: 0,
+            functions: HashMap::new(),
         }
     }
 
@@ -2042,8 +2132,53 @@ impl AwkInterpreter {
                     self.eval_expr(&args[2])
                 }
             }
-            _ => AwkValue::Uninitialized,
+            _ => {
+                // Check for user-defined function
+                if let Some(func) = self.functions.get(name).cloned() {
+                    self.call_user_function(&func, args)
+                } else {
+                    AwkValue::Uninitialized
+                }
+            }
         }
+    }
+
+    fn call_user_function(&mut self, func: &AwkFunctionDef, args: &[AwkExpr]) -> AwkValue {
+        // Save current local variables that will be shadowed
+        let mut saved: Vec<(String, AwkValue)> = Vec::new();
+        for param in &func.params {
+            saved.push((param.clone(), self.state.get_variable(param)));
+        }
+
+        // Bind arguments to parameters
+        for (i, param) in func.params.iter().enumerate() {
+            let val = if i < args.len() {
+                self.eval_expr(&args[i])
+            } else {
+                AwkValue::Uninitialized
+            };
+            self.state.set_variable(param, val);
+        }
+
+        // Execute function body, capture return value
+        let mut return_value = AwkValue::Uninitialized;
+        for action in &func.body.clone() {
+            match self.exec_action(action) {
+                AwkFlow::Return(val) => {
+                    return_value = val;
+                    break;
+                }
+                AwkFlow::Exit(_) => break,
+                _ => {}
+            }
+        }
+
+        // Restore saved variables
+        for (name, val) in saved {
+            self.state.set_variable(&name, val);
+        }
+
+        return_value
     }
 
     fn format_string(&self, format: &str, values: &[AwkValue]) -> String {
@@ -2448,6 +2583,13 @@ impl AwkInterpreter {
                 let code = expr.as_ref().map(|e| self.eval_expr(e).as_number() as i32);
                 AwkFlow::Exit(code)
             }
+            AwkAction::Return(expr) => {
+                let val = expr
+                    .as_ref()
+                    .map(|e| self.eval_expr(e))
+                    .unwrap_or(AwkValue::Uninitialized);
+                AwkFlow::Return(val)
+            }
             AwkAction::Expression(expr) => {
                 self.eval_expr(expr);
                 AwkFlow::Continue
@@ -2565,6 +2707,7 @@ impl Builtin for Awk {
         let program = parser.parse()?;
 
         let mut interp = AwkInterpreter::new();
+        interp.functions = program.functions.clone();
         interp.state.fs = Self::process_escape_sequences(&field_sep);
 
         // Set pre-assigned variables (-v)
