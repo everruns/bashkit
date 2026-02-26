@@ -1150,34 +1150,38 @@ impl Interpreter {
                 1 => !args[0].is_empty(),
                 2 => {
                     // Unary operators
+                    let resolve = |p: &str| -> std::path::PathBuf {
+                        let path = std::path::Path::new(p);
+                        if path.is_absolute() {
+                            path.to_path_buf()
+                        } else {
+                            self.cwd.join(path)
+                        }
+                    };
                     match args[0].as_str() {
                         "-z" => args[1].is_empty(),
                         "-n" => !args[1].is_empty(),
-                        "-e" | "-a" => self
-                            .fs
-                            .exists(std::path::Path::new(&args[1]))
-                            .await
-                            .unwrap_or(false),
+                        "-e" | "-a" => {
+                            self.fs.exists(&resolve(&args[1])).await.unwrap_or(false)
+                        }
                         "-f" => self
                             .fs
-                            .stat(std::path::Path::new(&args[1]))
+                            .stat(&resolve(&args[1]))
                             .await
                             .map(|m| m.file_type.is_file())
                             .unwrap_or(false),
                         "-d" => self
                             .fs
-                            .stat(std::path::Path::new(&args[1]))
+                            .stat(&resolve(&args[1]))
                             .await
                             .map(|m| m.file_type.is_dir())
                             .unwrap_or(false),
-                        "-r" | "-w" | "-x" => self
-                            .fs
-                            .exists(std::path::Path::new(&args[1]))
-                            .await
-                            .unwrap_or(false),
+                        "-r" | "-w" | "-x" => {
+                            self.fs.exists(&resolve(&args[1])).await.unwrap_or(false)
+                        }
                         "-s" => self
                             .fs
-                            .stat(std::path::Path::new(&args[1]))
+                            .stat(&resolve(&args[1]))
                             .await
                             .map(|m| m.size > 0)
                             .unwrap_or(false),
