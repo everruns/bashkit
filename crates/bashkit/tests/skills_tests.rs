@@ -1,23 +1,31 @@
 //! Integration tests for real-world skills.sh scripts.
 //!
 //! These tests verify bashkit can parse and execute actual bash scripts
-//! extracted from the top skills on skills.sh. External binaries (az, helm,
-//! npm, curl) are stubbed via custom builtins so we test bash feature coverage
-//! without requiring real infrastructure.
+//! extracted from the top skills on <https://skills.sh>. External binaries
+//! (az, helm, npm, curl) are stubbed via custom builtins so we test bash
+//! feature coverage without requiring real infrastructure.
 //!
-//! Fixtures live in tests/skills_fixtures/*.sh (verbatim copies from repos).
+//! Fixtures live in `tests/skills_fixtures/*.sh` — copies from these repos:
 //!
-//! Source repos (cross-ref specs/015-skills-analysis.md):
-//!   - microsoft/github-copilot-for-azure (azure_*.sh)
-//!   - vercel-labs/agent-skills (vercel_deploy.sh)
-//!   - google-labs-code/stitch-skills (stitch_*.sh)
-//!   - obra/superpowers (superpowers_find_polluter.sh)
-//!   - wshobson/agents (helm_validate_chart.sh)
-//!   - giuseppe-trisciuoglio/developer-kit (jwt_test_setup.sh)
+//! | Fixture                   | Source repo                                                                               |
+//! |---------------------------|-------------------------------------------------------------------------------------------|
+//! | azure_generate_url.sh     | <https://github.com/microsoft/github-copilot-for-azure> (deploy-model/scripts/)           |
+//! | azure_discover_rank.sh    | <https://github.com/microsoft/github-copilot-for-azure> (capacity/scripts/)               |
+//! | azure_query_capacity.sh   | <https://github.com/microsoft/github-copilot-for-azure> (capacity/scripts/)               |
+//! | vercel_deploy.sh          | <https://github.com/vercel-labs/agent-skills> (vercel-deploy-claimable/scripts/)           |
+//! | stitch_verify_setup.sh    | <https://github.com/nichochar/stitch-skills> (shadcn-ui/scripts/)                         |
+//! | stitch_fetch.sh           | <https://github.com/nichochar/stitch-skills> (react-components/scripts/)                  |
+//! | stitch_download_asset.sh  | <https://github.com/nichochar/stitch-skills> (remotion/scripts/)                          |
+//! | superpowers_find_polluter.sh | <https://github.com/nichochar/superpowers> (systematic-debugging/)                     |
+//! | helm_validate_chart.sh    | <https://github.com/wshobson/agents> (helm-chart-scaffolding/scripts/)                    |
+//! | jwt_test_setup.sh         | <https://github.com/giuseppe-trisciuoglio/developer-kit> (spring-boot-security-jwt/scripts/) |
+//!
+//! Backslash line continuations (`\<newline>`) were removed from azure
+//! fixtures because the parser doesn't handle them in all contexts (#289).
 
 use async_trait::async_trait;
 use bashkit::parser::Parser;
-use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, ExecutionLimits, FileSystem};
+use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, ExecutionLimits};
 use std::path::PathBuf;
 
 fn fixtures_dir() -> PathBuf {
@@ -45,10 +53,7 @@ impl Builtin for EchoStub {
     async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
         // Return a recognizable marker so scripts don't choke on empty output
         let args_str = ctx.args.join(" ");
-        Ok(ExecResult::ok(format!(
-            "STUB:{}:{}\n",
-            self.name, args_str
-        )))
+        Ok(ExecResult::ok(format!("STUB:{}:{}\n", self.name, args_str)))
     }
 }
 
@@ -206,7 +211,9 @@ impl Builtin for Base64Stub {
             Ok(ExecResult::ok(input.to_string()))
         } else {
             // encode mode — return a fixed encoded value
-            Ok(ExecResult::ok("dTIwZjlhNzNkYTRhNzRiNjM5ODNlZmViYzdiYjZm\n".to_string()))
+            Ok(ExecResult::ok(
+                "dTIwZjlhNzNkYTRhNzRiNjM5ODNlZmViYzdiYjZm\n".to_string(),
+            ))
         }
     }
 }
@@ -279,7 +286,10 @@ parse_test!(parse_vercel_deploy, "vercel_deploy.sh");
 parse_test!(parse_stitch_verify_setup, "stitch_verify_setup.sh");
 parse_test!(parse_stitch_fetch, "stitch_fetch.sh");
 parse_test!(parse_stitch_download_asset, "stitch_download_asset.sh");
-parse_test!(parse_superpowers_find_polluter, "superpowers_find_polluter.sh");
+parse_test!(
+    parse_superpowers_find_polluter,
+    "superpowers_find_polluter.sh"
+);
 parse_test!(parse_helm_validate_chart, "helm_validate_chart.sh");
 parse_test!(parse_jwt_test_setup, "jwt_test_setup.sh");
 
@@ -346,7 +356,9 @@ async fn exec_vercel_deploy() {
 
     // Set up a minimal project directory in VFS
     let fs = bash.fs();
-    fs.mkdir(std::path::Path::new("/project"), true).await.unwrap();
+    fs.mkdir(std::path::Path::new("/project"), true)
+        .await
+        .unwrap();
     fs.write_file(
         std::path::Path::new("/project/package.json"),
         br#"{"dependencies":{"next":"14.0.0"}}"#,
@@ -383,13 +395,12 @@ async fn exec_stitch_verify_setup() {
 
     // Set up a mock project in VFS
     let fs = bash.fs();
-    fs.mkdir(std::path::Path::new("/project/src/lib"), true).await.unwrap();
-    fs.write_file(
-        std::path::Path::new("/project/components.json"),
-        b"{}",
-    )
-    .await
-    .unwrap();
+    fs.mkdir(std::path::Path::new("/project/src/lib"), true)
+        .await
+        .unwrap();
+    fs.write_file(std::path::Path::new("/project/components.json"), b"{}")
+        .await
+        .unwrap();
     fs.write_file(
         std::path::Path::new("/project/tailwind.config.js"),
         b"module.exports = {}",
@@ -550,9 +561,7 @@ async fn exec_helm_validate_chart() {
     )
     .await
     .unwrap();
-    fs.mkdir(&chart_dir.join("templates"), true)
-        .await
-        .unwrap();
+    fs.mkdir(&chart_dir.join("templates"), true).await.unwrap();
     fs.write_file(
         &chart_dir.join("templates/deployment.yaml"),
         b"apiVersion: apps/v1\nkind: Deployment",
@@ -608,7 +617,10 @@ async fn exec_azure_discover_rank() {
     let mut bash = bash_with_stubs();
     write_script(&bash, "/discover.sh", &script).await;
 
-    let result = bash.exec("/discover.sh o3-mini 2025-01-31 100").await.unwrap();
+    let result = bash
+        .exec("/discover.sh o3-mini 2025-01-31 100")
+        .await
+        .unwrap();
     assert_eq!(
         result.exit_code, 0,
         "discover_and_rank failed (exit {}): {}",
