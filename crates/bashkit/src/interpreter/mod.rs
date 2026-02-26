@@ -3394,6 +3394,18 @@ impl Interpreter {
                 self.variables.remove(&marker);
             }
 
+            // Post-process: shift builtin updates positional parameters
+            if let Some(shift_str) = self.variables.remove("_SHIFT_COUNT") {
+                let n: usize = shift_str.parse().unwrap_or(1);
+                if let Some(frame) = self.call_stack.last_mut() {
+                    if n <= frame.positional.len() {
+                        frame.positional.drain(..n);
+                    } else {
+                        frame.positional.clear();
+                    }
+                }
+            }
+
             // Handle output redirections
             return self.apply_redirections(result, &command.redirects).await;
         }
