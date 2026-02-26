@@ -1,491 +1,543 @@
-# Skills.sh Top 44 Skills: Bashkit Compatibility Analysis
+# Skills.sh Top 250 Leaderboard: Bashkit Compatibility Analysis
 
-Analysis of skills from [skills.sh](https://skills.sh) leaderboard to assess
-whether their bash/script usage maps to bashkit's supported feature set.
+Analysis of the top 250 entries from the [skills.sh](https://skills.sh)
+leaderboard to assess bash feature coverage and compatibility with bashkit.
+
+## Critical Discovery: Leaderboard Inflation
+
+The skills.sh leaderboard lists 250 entries, but many are
+**generated permutations** of the same repo. Actual unique skills are far fewer:
+
+| Leaderboard entries | Repo | Actual SKILL.md files |
+|---------------------|------|-----------------------|
+| 72 (#3–#74) | google-labs-code/stitch-skills | **6** |
+| 75 (#175–#250) | jimliu/baoyu-skills | **16** |
+| 17 (#8–#24) | microsoft/github-copilot-for-azure | **~25** (plugin) |
+| 6 (#81–#173) | wshobson/agents | **~120** |
+| 6 (#76–#98) | coreyhaines31/marketingskills | **~25** |
+| 5 (#93–#108) | expo/skills | **10** |
+| 4 (#165–#169) | inference-sh-9/skills | **~64** |
+
+**250 leaderboard entries → ~80 unique skills from ~25 repos.**
+
+---
 
 ## Executive Summary
 
-**44 skills analyzed** across 12 repositories. Key findings:
+**~80 unique skills analyzed** across 25 repositories.
 
-| Category | Count | % |
-|----------|-------|---|
-| Pure markdown/instructions (no scripts) | 29 | 66% |
-| Uses bash scripts | 8 | 18% |
-| Uses Python scripts | 10 | 23% |
-| Uses JS/TS | 3 | 7% |
-| Uses PowerShell | 1 | 2% |
-| Requires hard binaries (unsimulatable) | 8 | 18% |
+| Category | Skills | % |
+|----------|--------|---|
+| Pure markdown/instructions (no scripts) | ~50 | 63% |
+| Uses bash scripts | ~14 | 18% |
+| Uses TypeScript scripts | ~11 | 14% |
+| Uses Python scripts | ~12 | 15% |
+| Requires hard external binaries | ~20 | 25% |
 
-**Bottom line:** ~66% of top skills are pure-instruction skills requiring zero
-script execution. Of the ~34% with scripts, most use Python heavily and bash
-as glue. The bash features used are well within bashkit's capabilities. The
-main gap is **external binary dependencies** (LibreOffice, poppler, pandoc,
-az CLI, agent-browser, node/npm/pnpm) that bashkit cannot simulate.
+**Bottom line:** ~63% of skills are pure-instruction — no execution needed.
+Of the ~37% with scripts, bash glue code is well within bashkit's capabilities
+(**97%+ feature coverage**). The gap is external binaries (`node`, `npm`,
+`bun`, `az`, `infsh`, `helm`, `soffice`, browsers) that bashkit cannot
+simulate.
 
 ---
 
-## Skill-by-Skill Analysis
+## Analysis by Repository
 
-### 1. find-skills (vercel-labs/skills) — 325K installs
+### 1. browser-use/browser-use — 39.8K installs
 
-- **Type:** Pure markdown instructions
-- **Scripts:** None
-- **Binaries:** None
-- **Bashkit support:** Full (nothing to execute)
+- **Skills:** browser-use, remote-browser
+- **Type:** Python-heavy browser automation
+- **Scripts:** Python (100+ files), bash (setup.sh, lint.sh)
+- **Binaries:** `browser-use` CLI, Playwright, Chrome/Chromium, `pip`
+- **Bash features:** `set -e`, basic `if/fi`
+- **Bashkit:** Bash syntax: FULL. Python/binaries: **NOT SUPPORTED**
 
-### 2. vercel-react-best-practices (vercel-labs/agent-skills) — 168K
+### 2. nextlevelbuilder/ui-ux-pro-max-skill — 38.7K
 
-- **Type:** Pure markdown instructions
-- **Scripts:** None
-- **Binaries:** None
-- **Bashkit support:** Full
-
-### 3. web-design-guidelines (vercel-labs/agent-skills) — 128K
-
-- **Type:** Pure markdown instructions
-- **Scripts:** None
-- **Binaries:** None
-- **Bashkit support:** Full
-
-### 4. remotion-best-practices (remotion-dev/skills) — 112K
-
-- **Type:** Pure markdown instructions (React/Remotion coding guidance)
-- **Scripts:** None
-- **Binaries:** None
-- **Bashkit support:** Full
-
-### 5. frontend-design (anthropics/skills) — 100K
-
-- **Type:** Pure markdown instructions (UI/frontend design principles)
-- **Scripts:** None
-- **Binaries:** None
-- **Bashkit support:** Full
-
-### 6. agent-browser (vercel-labs/agent-browser) — 60K
-
-- **Type:** Uses bash template scripts
-- **Scripts:** 3 bash templates (authenticated-session.sh, form-automation.sh, capture-workflow.sh)
-- **Binaries:** `agent-browser` CLI (Rust native binary)
-- **Bash features used:**
-  - `set -euo pipefail`
-  - Variable expansion (`${1:?Usage}`, `${2:-default}`)
-  - `[[ ]]` conditionals with glob patterns (`*"login"*`)
-  - Command substitution `$(agent-browser get url)`
-  - `if/fi`, `for/do/done`
-  - Redirections (`2>/dev/null`, `> file`)
-  - `trap cleanup EXIT`
-  - `mkdir -p`, `rm -f`, `ls -la`
-  - `|| true` error suppression
-- **Bashkit support:** Bash syntax: **FULL**. Binary: **NOT SUPPORTED** (`agent-browser` is a native Rust CLI that controls real browsers via Playwright — cannot be simulated)
-
-### 7. vercel-composition-patterns (vercel-labs/agent-skills) — 58K
-
-- **Type:** Pure markdown instructions
-- **Scripts:** None
-- **Binaries:** None
-- **Bashkit support:** Full
-
-### 8–24. Microsoft Azure skills (microsoft/github-copilot-for-azure) — ~57K each
-
-17 Azure skills: azure-observability, azure-ai, azure-cost-optimization,
-azure-storage, azure-diagnostics, azure-deploy, microsoft-foundry,
-azure-kusto, azure-resource-visualizer, entra-app-registration,
-appinsights-instrumentation, azure-validate, azure-prepare,
-azure-compliance, azure-aigateway, azure-resource-lookup, azure-rbac
-
-- **Type:** Mostly markdown instructions with `az` CLI command references
-- **Scripts:**
-  - `microsoft-foundry` has 3 bash scripts (`discover_and_rank.sh`, `query_capacity.sh`, `generate_deployment_url.sh`)
-  - `appinsights-instrumentation` has 1 PowerShell script (`appinsights.ps1`)
-- **Binaries:** `az` CLI (Azure CLI), `python3` (inline), `jq`
-- **Bash features used in microsoft-foundry scripts:**
-  - `set -euo pipefail`, `set -e`
-  - `declare -A` (associative arrays)
-  - `for/do/done` loops with word splitting
-  - Variable expansion: `${1:?Usage}`, `${2:-}`, `${!QUOTA_MAP[@]}`
-  - Command substitution: `$(az account show --query id -o tsv)`
-  - Pipes: `echo "$JSON" | jq -r '...'`, `| sort -u`, `| head -1`
-  - Redirections: `2>/dev/null`, `|| echo "[]"` fallback
-  - `while [[ $# -gt 0 ]]; do case $1 in ... esac; done` argument parsing
-  - `printf` with format strings
-  - Brace expansion: `{1..60}`
-  - `xxd -r -p | base64 | tr '+' '-' | tr '/' '_' | tr -d '='` (binary encoding pipeline)
-  - `cat << EOF` heredocs
-  - Inline `python3 -c "..."` with embedded multi-line Python
-  - String concatenation in loops building JSON
-  - Nested function definitions (`usage()`, `has_dep()`)
-  - `[[ "$OSTYPE" == "darwin"* ]]` pattern matching
-- **Bashkit support:**
-  - Bash syntax: **MOSTLY SUPPORTED** (all features listed above are implemented in bashkit)
-  - `declare -A`: supported
-  - Pipes, jq, sort, tr, head, base64: all supported as builtins
-  - `xxd -r -p`: supported (`xxd` builtin with `-r`, `-p` flags)
-  - `printf` with formatting: supported
-  - `cat << EOF`: supported
-  - **NOT SUPPORTED:** `az` CLI (Azure CLI binary — requires real Azure API access), `base64` (not listed as bashkit builtin)
-  - PowerShell (`.ps1`): **NOT SUPPORTED**
-
-### 25. skill-creator (anthropics/skills) — 49K
-
-- **Type:** Python-heavy meta-skill
-- **Scripts:** 8 Python files, 0 bash scripts
-- **Binaries:** `claude` CLI (invoked via subprocess), `nohup`, `kill`
-- **Bash features used (in SKILL.md instructions):**
-  - `nohup ... > /dev/null 2>&1 &` (background execution)
-  - `$!` (last background PID), `kill $VIEWER_PID`
-  - `python -m scripts.run_loop --eval-set ... --max-iterations 5`
-  - `cp -r` for directory copying
-- **Bashkit support:**
-  - Bash syntax: **PARTIAL** (`&` background parsed but runs synchronously; `$!` returns 0)
-  - Python: **PARTIAL** (bashkit's embedded Monty interpreter supports basic Python but NOT `subprocess`, `concurrent.futures`, `anthropic` SDK, `http.server`, `webbrowser` — all required by skill-creator scripts)
-  - `claude` CLI: **NOT SUPPORTED** (external binary)
-
-### 26. azure-postgres (microsoft/github-copilot-for-azure) — 46K
-
-- **Type:** Markdown instructions with `az` CLI references
-- **Scripts:** None
-- **Binaries:** `az` CLI
-- **Bashkit support:** Full for bash syntax; `az` not available
-
-### 27. azure-messaging (microsoft/github-copilot-for-azure) — 43K
-
-- **Type:** Markdown instructions with `az` CLI references
-- **Scripts:** None
-- **Binaries:** `az` CLI
-- **Bashkit support:** Full for bash syntax; `az` not available
-
-### 28. vercel-react-native-skills (vercel-labs/agent-skills) — 41K
-
-- **Type:** Pure markdown instructions
-- **Scripts:** None
-- **Binaries:** None
-- **Bashkit support:** Full
-
-### 29. browser-use (browser-use/browser-use) — 40K
-
-- **Type:** Python-heavy browser automation framework
-- **Scripts:** Python (massive library — 100+ files)
-- **Binaries:** `browser-use` CLI, Playwright, Chrome/Chromium
-- **Bash features used:** `set -e`, basic `if/fi`, `pip install`
-- **Bashkit support:** Bash syntax: full. Python/binaries: **NOT SUPPORTED** (requires Playwright, real browser, network access, dozens of pip packages)
-
-### 30. ui-ux-pro-max (nextlevelbuilder/ui-ux-pro-max-skill) — 39K
-
-- **Type:** Python scripts + CSV data files
-- **Scripts:** 3 Python files (core.py, search.py, design_system.py) + large CSV datasets
+- **Skills:** ui-ux-pro-max
+- **Type:** Python scripts + CSV data
+- **Scripts:** 3 Python (core.py, search.py, design_system.py) with BM25 search
 - **Binaries:** None (pure Python)
-- **Bash features used:** None (Python invoked via `python scripts/search.py "query"`)
-- **Bashkit support:**
-  - Bash syntax: full
-  - Python: **PARTIAL** (uses `csv`, `re`, `math`, `collections`, `pathlib`, `argparse`, `sys`, `io` — most are NOT available in bashkit's Monty interpreter which lacks most stdlib modules)
+- **Bash features:** `python scripts/search.py "query"` invocation only
+- **Bashkit:** Bash: FULL. Python: **PARTIAL** (needs `csv`, `re`, `math`,
+  `collections`, `pathlib`, `argparse` — mostly unavailable in Monty)
 
-### 31. brainstorming (obra/superpowers) — 31K
+### 3. google-labs-code/stitch-skills — 37.9K–25.6K (72 entries → 6 skills)
 
-- **Type:** Pure markdown instructions (ideation methodology)
-- **Scripts:** None
-- **Binaries:** None
-- **Bashkit support:** Full
-
-### 32. audit-website (squirrelscan/skills) — 27K
-
-- **Type:** Markdown instructions for website security auditing
-- **Scripts:** None
-- **Binaries:** References `curl`, `nmap`, `nikto`, `wappalyzer`
-- **Bashkit support:** Bash syntax: full. `curl`: supported (feature-gated). Other tools: **NOT SUPPORTED**
-
-### 33. seo-audit (coreyhaines31/marketingskills) — 27K
-
-- **Type:** Pure markdown instructions
-- **Scripts:** None
-- **Binaries:** None
-- **Bashkit support:** Full
-
-### 34. supabase-postgres-best-practices (supabase/agent-skills) — 24K
-
-- **Type:** Pure markdown instructions (PostgreSQL patterns)
-- **Scripts:** None
-- **Binaries:** None
-- **Bashkit support:** Full
-
-### 35. pdf (anthropics/skills) — 22K
-
-- **Type:** Python-heavy document processing
-- **Scripts:** 8 Python files
-- **Binaries:** `pdftotext`, `qpdf`, `pdftk`, `pdfimages` (poppler-utils), `tesseract`
+- **Skills:** react-components, stitch-loop, design-md, enhance-prompt,
+  remotion, shadcn-ui
+- **Type:** Hybrid — markdown instructions with supporting scripts
+- **Scripts:**
+  - `fetch-stitch.sh`: `curl -L` wrapper for GCS downloads
+  - `download-stitch-asset.sh`: `curl -L` for screenshots
+  - `verify-setup.sh`: project health checker (checks `components.json`,
+    Tailwind config, tsconfig, CSS vars, npm deps)
+  - `validate.js`: AST-based React component validator (Node.js + `@swc/core`)
+- **Binaries:** `npm install`, `npm run dev`, `npm run validate`, `npx`,
+  `curl -L`, `node`
 - **Bash features used:**
-  - Simple flag-based commands: `pdftotext -layout input.pdf output.txt`
-  - `pdftotext -f 1 -l 5 input.pdf output.txt`
-  - `qpdf --empty --pages file1.pdf file2.pdf -- merged.pdf`
-- **Bashkit support:**
-  - Bash syntax: full (all features trivial)
-  - Python: **NOT SUPPORTED** (requires `pypdf`, `pdfplumber`, `reportlab`, `pytesseract`, `pdf2image`)
-  - Binaries: **NOT SUPPORTED** (`pdftotext`, `qpdf`, `pdftk`, `tesseract` are native binaries)
+  - `set -e`, `set -euo pipefail`
+  - `command -v` to check binary availability
+  - `if [ ! -f ... ]` / `if [ ! -d ... ]` file/dir tests
+  - `grep -q` for content detection in files
+  - `echo -e` with ANSI color codes (`\033[0;32m`)
+  - Functions (`success()`, `warning()`, `error()`)
+  - `curl -L -o` with error handling
+  - `$BASH_SOURCE` for script directory detection
+  - Variable expansion `${1:-default}`
+- **Bashkit:** Bash syntax: **FULL**. External binaries: NOT SUPPORTED
+  (`npm`, `npx`, `node`, `curl` to external URLs)
 
-### 36. azure-hosted-copilot-sdk (microsoft/github-copilot-for-azure) — 21K
+### 4. anthropics/skills — 9.5K–7.2K (various)
 
-- **Type:** Markdown instructions
+- **Skills:** algorithmic-art, brand-guidelines, doc-coauthoring,
+  frontend-design, internal-comms, mcp-builder, pdf, pptx, docx, xlsx,
+  skill-creator, slack-gif-creator, theme-factory, web-artifacts-builder,
+  webapp-testing, template
+- **Type:** Mix of pure markdown and script-heavy
+- **Pure markdown (8):** frontend-design, brand-guidelines, internal-comms,
+  doc-coauthoring, theme-factory, slack-gif-creator, algorithmic-art, template
+- **Script-heavy (6):** pdf, pptx, docx, xlsx (Python + native binaries),
+  skill-creator (Python + `claude` CLI), web-artifacts-builder (bash)
+- **Bash scripts:**
+  - `init-artifact.sh`: Vite project scaffolding (node version detection,
+    `pnpm create vite`, `sed -i`, heredocs, `cat > file << 'EOF'`,
+    `tar -xzf`, `$BASH_SOURCE`, `$OSTYPE` checks)
+  - `bundle-artifact.sh`: Parcel build + HTML inlining (`du -h`, `rm -rf`)
+- **Bash features used:** `set -e`, `$OSTYPE` platform detection, heredocs,
+  `command -v`, `cut`, arithmetic comparison `[ "$x" -ge 20 ]`, `cd`,
+  nested `cat > file << 'EOF'` blocks, `eval` of `$SED_INPLACE`
+- **Binaries:** `pnpm`, `node`, `npm`, `soffice`, `pdftoppm`, `pdftotext`,
+  `qpdf`, `pandoc`, `gcc`, `tesseract`, `claude` CLI, `python3`
+- **Bashkit:** Bash syntax: **FULL**. Python/binaries: **NOT SUPPORTED**
+
+### 5. microsoft/github-copilot-for-azure — ~57K each (17 entries)
+
+- **Skills:** azure-observability, azure-ai, azure-cost-optimization,
+  azure-storage, azure-diagnostics, azure-deploy, microsoft-foundry,
+  azure-kusto, azure-resource-visualizer, entra-app-registration,
+  appinsights-instrumentation, azure-validate, azure-prepare,
+  azure-compliance, azure-aigateway, azure-resource-lookup, azure-rbac,
+  azure-messaging, azure-hosted-copilot-sdk
+- **Type:** Mostly markdown instructions with `az` CLI references
+- **Scripts:** `microsoft-foundry` has 3 bash scripts (most complex in dataset);
+  `appinsights-instrumentation` has 1 PowerShell script
+- **Bash features (microsoft-foundry scripts):**
+  - `set -euo pipefail`
+  - `declare -A` (associative arrays), `${!MAP[@]}` iteration
+  - `while [[ $# -gt 0 ]]; do case ... esac; done` arg parsing
+  - Inline `python3 -c "..."` with multi-line embedded Python
+  - `xxd -r -p | base64 | tr '+' '-' | tr '/' '_' | tr -d '='`
+  - `printf` with format strings, brace expansion `{1..60}`
+  - `jq` JSON processing in pipes
+  - `for region in $REGIONS; do ... done` with word splitting
+- **Bashkit:** Bash syntax: **FULL** (most complex scripts in dataset,
+  all features supported). Binaries: `az` CLI **NOT SUPPORTED**,
+  `base64` **MISSING BUILTIN**, PowerShell **NOT SUPPORTED**
+
+### 6. coreyhaines31/marketingskills — 9.4K–8.5K (6+ entries)
+
+- **Skills:** form-cro, referral-program, free-tool-strategy, signup-flow-cro,
+  paywall-upgrade-cro, popup-cro, ab-test-setup, seo-audit, copywriting,
+  marketing-psychology, and ~15 more
+- **Type:** Pure markdown instructions (marketing/CRO guidance)
+- **Scripts:** None in skills. Repo has JS CLIs for analytics integrations
+  but those are separate tools, not skill scripts.
+- **Bashkit:** **FULL** (nothing to execute)
+
+### 7. obra/superpowers — 9K–8.3K
+
+- **Skills:** dispatching-parallel-agents, brainstorming,
+  finishing-a-development-branch, systematic-debugging, and ~10 more
+- **Type:** Mostly pure markdown (agent workflow methodology)
+- **Scripts:** `find-polluter.sh` (64 lines — test bisection script)
+- **Bash features:** `set -e`, `for/do/done`, `$(cmd)`, arithmetic
+  `$((COUNT + 1))`, file tests `-e`, `wc -l | tr -d ' '`, `|| true`
+- **Binaries:** `npm test` (invoked in find-polluter.sh)
+- **Bashkit:** Bash syntax: **FULL**. `npm`: NOT SUPPORTED
+
+### 8. wshobson/agents — 9K–4K (6 entries → ~120 skills)
+
+- **Skills:** typescript-advanced-types, api-design-principles,
+  e2e-testing-patterns, error-handling-patterns, mobile-ios-design,
+  async-python-patterns, bash-defensive-patterns, and ~113 more
+- **Type:** Pure markdown reference guides (coding patterns, best practices)
+- **Scripts:** 2 scripts in entire repo:
+  - `validate-chart.sh` (Helm chart validator — 245 lines, most complex
+    standalone bash script in dataset)
+  - `optimize-prompt.py` (LLM prompt optimizer)
+- **Bash features in validate-chart.sh:**
+  - `set -e`, ANSI color codes via variables
+  - Functions: `success()`, `warning()`, `error()`, `print_status()`
+  - `command -v helm &> /dev/null` binary detection
+  - `grep "^name:" ... | awk '{print $2}'` text extraction
+  - `echo "$MANIFESTS" | grep -q "kind: Deployment"` pattern matching
+  - `[ -f ... ]`, `[ -d ... ]`, `[ -z ... ]` tests
+  - `jq empty file.json` JSON validation
+  - `> /dev/null 2>&1` redirection
+- **Binaries:** `helm`, `jq`
+- **Bashkit:** Bash syntax: **FULL**. `helm`: NOT SUPPORTED
+
+### 9. hexiaochun/seedance2-api — 8.9K
+
+- **Skills:** seedance2-api, publish-to-marketplaces
+- **Type:** Python script + MCP integration
+- **Scripts:** `seedance_api.py` (video generation via API)
+- **Binaries:** `python3`, `pip install requests`
+- **Bash features:** `echo $VAR | head -c 10`, `export`
+- **Bashkit:** Bash: FULL. Python: **NOT SUPPORTED** (needs `requests`)
+
+### 10. vercel-labs/agent-browser — ~60K (from first analysis)
+
+- **Skills:** agent-browser, dogfood, skill-creator
+- **Scripts:** 3 bash templates (authenticated-session.sh,
+  form-automation.sh, capture-workflow.sh)
+- **Bash features:** `set -euo pipefail`, `[[ ]]` with glob patterns,
+  `trap cleanup EXIT`, `$(cmd)`, `${1:?Usage}`, `|| true`
+- **Binaries:** `agent-browser` CLI (Rust/Playwright)
+- **Bashkit:** Bash: **FULL**. Binary: NOT SUPPORTED
+
+### 11. inference-sh-9/skills — 6.5K–4.1K (4 entries → ~64 skills)
+
+- **Skills:** remotion-render, ai-image-generation, ai-video-generation,
+  agentic-browser, python-executor, text-to-speech, and ~58 more
+- **Type:** Markdown instructions wrapping `infsh` CLI invocations
+- **Scripts:** 3 bash templates (same pattern as vercel agent-browser)
+- **Bash features:** `curl -fsSL url | sh` (install script), variable
+  expansion, `jq` for JSON parsing, `echo $RESULT | jq -r '.session_id'`
+- **Binaries:** `infsh` CLI (proprietary binary), `curl`
+- **Bashkit:** Bash: FULL. `infsh`: **NOT SUPPORTED** (proprietary)
+
+### 12. jimliu/baoyu-skills — 3.9K–1.9K (75 entries → 16 skills)
+
+- **Skills:** baoyu-infographic, baoyu-compress-image, baoyu-danger-gemini-web,
+  baoyu-url-to-markdown, baoyu-translate, baoyu-web-screenshot,
+  baoyu-format-markdown, baoyu-post-to-x, baoyu-post-to-wechat,
+  baoyu-markdown-to-html, baoyu-comic, baoyu-slide-deck,
+  baoyu-image-gen, baoyu-cover-image, baoyu-xhs-images,
+  baoyu-article-illustrator
+- **Type:** 5 pure markdown, 10 TypeScript-backed, 1 hybrid
+- **Scripts:** 97 TypeScript files total, executed via `npx -y bun`
+  - CDP browser automation (Chrome DevTools Protocol)
+  - Image processing (sips, cwebp, ImageMagick, Sharp)
+  - API integrations (Google, OpenAI, Replicate, DashScope)
+  - PDF/PPTX merging, Markdown processing
+- **Bash features in SKILL.md instructions:**
+  - `test -f` for preference file detection
+  - `mv` for file backups
+  - `pkill -f "Chrome.*remote-debugging-port"` process kill
+  - Environment variable checks: `echo $VAR | head -c 10`
+  - `if [ -f ... ]` conditionals
+- **Binaries:** `bun` (via npx), Chrome/Chromium, `sips`, `cwebp`,
+  `ImageMagick`, `pngquant`, `git`, `gh`
+- **Bashkit:** Bash: FULL. TypeScript/Bun/Chrome: **NOT SUPPORTED**
+
+### 13. expo/skills — 8.1K–6.9K (5 entries → 10 skills)
+
+- **Skills:** native-data-fetching, upgrading-expo, expo-dev-client,
+  expo-deployment, expo-tailwind-setup, and 5 more
+- **Type:** Pure markdown instructions (React Native/Expo guidance)
 - **Scripts:** None
-- **Binaries:** `az` CLI
-- **Bashkit support:** Full for bash syntax; `az` not available
+- **Bashkit:** **FULL**
 
-### 37. next-best-practices (vercel-labs/next-skills) — 21K
+### 14. madteacher/mad-agents-skills — 7.9K
 
-- **Type:** Pure markdown instructions (Next.js patterns)
+- **Skills:** flutter-animations, flutter-architecture, flutter-testing,
+  dart-drift, and 7 more
+- **Type:** Pure markdown instructions (Flutter/Dart patterns)
 - **Scripts:** None
-- **Binaries:** None
-- **Bashkit support:** Full
+- **Bashkit:** **FULL**
 
-### 38. copywriting (coreyhaines31/marketingskills) — 21K
+### 15. vercel/ai — 7.1K
 
-- **Type:** Pure markdown instructions
+- **Skills:** use-ai-sdk, develop-ai-functions-example, add-provider-package,
+  capture-api-response-test-fixture, list-npm-package-content
+- **Type:** Markdown instructions (AI SDK development patterns)
+- **Scripts:** None in skills
+- **Bashkit:** **FULL**
+
+### 16. vercel/turborepo — 6.9K
+
+- **Skills:** turborepo
+- **Type:** Pure markdown instructions (monorepo patterns)
 - **Scripts:** None
-- **Binaries:** None
-- **Bashkit support:** Full
+- **Bashkit:** **FULL**
 
-### 39. pptx (anthropics/skills) — 18K
+### 17. antfu/skills — 6.8K
 
-- **Type:** Python scripts + document processing
-- **Scripts:** 3 Python files + shared office library
-- **Binaries:** `soffice` (LibreOffice), `pdftoppm` (poppler), `markitdown`, `npm/pptxgenjs`
-- **Bash features used:**
-  - Pipe: `python -m markitdown output.pptx | grep -iE "xxxx|lorem|ipsum|..."`
-  - `grep -iE` with extended regex and alternation
-  - `pdftoppm -jpeg -r 150 -f N -l N output.pdf slide`
-- **Bashkit support:**
-  - Bash syntax: **FULL** (pipes, grep -iE, flags all supported)
-  - Python: **NOT SUPPORTED** (requires `PIL/Pillow`, `defusedxml`, `subprocess`)
-  - Binaries: **NOT SUPPORTED** (`soffice`, `pdftoppm`, `npm`)
-
-### 40. systematic-debugging (obra/superpowers) — 17K
-
-- **Type:** Markdown instructions + 1 bash script (`find-polluter.sh`)
-- **Scripts:** `find-polluter.sh` (64 lines)
-- **Binaries:** `npm test` (invoked)
-- **Bash features used:**
-  - `set -e`
-  - `if [ $# -ne 2 ]; then ... fi`
-  - `for TEST_FILE in $TEST_FILES; do ... done`
-  - Command substitution: `$(find . -path "$TEST_PATTERN" | sort)`
-  - Pipes: `echo "$TEST_FILES" | wc -l | tr -d ' '`
-  - Arithmetic: `COUNT=$((COUNT + 1))`
-  - `-e` file test, `-z` string test
-  - `> /dev/null 2>&1 || true`
-  - `ls -la`
-  - `continue`, `exit 1`
-- **Bashkit support:**
-  - Bash syntax: **FULL** (all features above are implemented)
-  - `npm test`: **NOT SUPPORTED** (external binary)
-
-### 41. docx (anthropics/skills) — 17K
-
-- **Type:** Python scripts + Office XML manipulation
-- **Scripts:** Python (accept_changes.py, comment.py, office/ library)
-- **Binaries:** `pandoc`, `soffice` (LibreOffice), `pdftoppm`, `gcc`, `node/npm`
-- **Bash features used:** Simple command invocations with flags
-- **Bashkit support:**
-  - Bash syntax: full
-  - Python: **NOT SUPPORTED** (requires `zipfile`, `defusedxml`, `subprocess`, `socket`, runtime C compilation)
-  - Binaries: **NOT SUPPORTED** (`pandoc`, `soffice`, `gcc`, `node`)
-
-### 42. xlsx (anthropics/skills) — 16K
-
-- **Type:** Python script + Office document processing
-- **Scripts:** `recalc.py` + shared office library
-- **Binaries:** `soffice` (LibreOffice), `timeout`/`gtimeout`
-- **Bash features used:** None (all done through Python subprocess)
-- **Bashkit support:**
-  - Bash syntax: full
-  - Python: **NOT SUPPORTED** (requires `openpyxl`, `subprocess`, `platform`)
-  - Binaries: **NOT SUPPORTED** (`soffice`)
-
-### 43. better-auth-best-practices (better-auth/skills) — 16K
-
-- **Type:** Pure markdown instructions (auth library patterns)
+- **Skills:** vite
+- **Type:** Pure markdown instructions (Vite configuration)
 - **Scripts:** None
-- **Binaries:** None
-- **Bashkit support:** Full
+- **Bashkit:** **FULL**
 
-### 44. marketing-psychology (coreyhaines31/marketingskills) — 15K
+### 18. hyf0/vue-skills — 7.3K–7.1K
 
-- **Type:** Pure markdown instructions
+- **Skills:** vue-debug-guides, vue-best-practices, and 6 more
+- **Type:** Pure markdown instructions (Vue.js patterns)
 - **Scripts:** None
-- **Binaries:** None
-- **Bashkit support:** Full
+- **Bashkit:** **FULL**
+
+### 19. giuseppe-trisciuoglio/developer-kit — 7.5K
+
+- **Skills:** shadcn-ui, nestjs-drizzle-crud-generator,
+  spring-boot-security-jwt, spring-boot-crud-patterns, aws-cli-beast,
+  and many more
+- **Type:** Mix of markdown and script-backed
+- **Scripts:**
+  - `test-jwt-setup.sh` (289 lines — JWT validation test suite)
+  - `generate-jwt-keys.sh` (key generation)
+  - `aws-blast.sh` (AWS CLI aliases)
+  - `generate_crud.py` (NestJS boilerplate generator)
+  - `generate_crud_boilerplate.py` (Spring Boot boilerplate)
+- **Bash features in test-jwt-setup.sh:**
+  - `set -e`, ANSI color variables
+  - Functions: `check_service()`, `create_test_user()`, `authenticate()`,
+    `test_protected_endpoint()`, `test_jwt_validation()`,
+    `test_refresh_token()`, `test_logout()`, `main()`, `cleanup()`
+  - `curl -s -w "%{http_code}" -o /tmp/response.json -X POST -H -d`
+  - `${response: -3}` substring extraction (last 3 chars)
+  - `jq -r '.accessToken'` JSON field extraction
+  - `${ACCESS_TOKEN:0:20}` substring with length
+  - `local` variables in functions
+  - `trap cleanup EXIT`
+  - `rm -f /tmp/*.json` glob cleanup
+  - `"$@"` argument passing
+- **Binaries:** `curl`, `jq`, `aws`, `python3`, `java`/`mvn`
+- **Bashkit:** Bash syntax: **FULL** (including `${var: -3}` substring,
+  `local` vars, `"$@"` expansion, glob in `rm`). Binaries: NOT SUPPORTED
+
+### 20. benjitaylor/agentation — 4K
+
+- **Skills:** agentation, agentation-self-driving
+- **Type:** Markdown instructions (Next.js component setup)
+- **Scripts:** None
+- **Binaries:** `npm install agentation`, `npx add-mcp`
+- **Bashkit:** Bash: FULL. `npm`/`npx`: NOT SUPPORTED
+
+### 21. othmanadi/planning-with-files — 3.8K
+
+- **Skills:** planning-with-files
+- **Type:** Markdown workflow + hook scripts
+- **Scripts:** `check-complete.sh` (in hooks)
+- **Bash features in hooks:**
+  - `${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/...}` default expansion
+  - `uname -s` OS detection, `case "$UNAME_S" in CYGWIN*|MINGW*|...) ...`
+  - `command -v pwsh >/dev/null 2>&1` binary detection
+  - PowerShell fallback: `pwsh -ExecutionPolicy Bypass -File`
+  - `cat task_plan.md 2>/dev/null | head -30 || true`
+- **Bashkit:** Bash: **FULL** (including `case` with glob patterns,
+  `uname` calls). PowerShell: NOT SUPPORTED
+
+### 22. sickn33/antigravity-awesome-skills — 3.7K
+
+- **Skills:** docker-expert, go-playwright, gcp-cloud-run,
+  server-management, and many more (~100+ aggregated skills)
+- **Type:** Mostly aggregated/curated markdown instructions
+- **Scripts:** Repo management scripts only (not skill scripts)
+- **Bashkit:** **FULL** (skill content is markdown)
+
+### 23. vercel-labs/next-skills — 21K–3.9K
+
+- **Skills:** next-best-practices, next-cache-components, next-upgrade
+- **Type:** Pure markdown
+- **Scripts:** None
+- **Bashkit:** **FULL**
+
+### 24. mastra-ai/skills — 4.1K
+
+- **Skills:** mastra
+- **Type:** Pure markdown (AI agent framework patterns)
+- **Scripts:** None
+- **Bashkit:** **FULL**
+
+### 25. vercel-labs/agent-skills — 168K–23.8K
+
+- **Skills:** react-best-practices, web-design-guidelines,
+  composition-patterns, react-native-skills, vercel-deploy-claimable
+- **Type:** Mostly markdown; one script-heavy skill
+- **Scripts:** `deploy.sh` (250 lines — Vercel deployment script)
+- **Bash features in deploy.sh:**
+  - Nested function definitions (`detect_framework()`, `has_dep()`, `cleanup()`)
+  - `trap cleanup EXIT`, `mktemp -d`
+  - `tar -czf` / `tar -xzf` archive creation
+  - `curl -s -X POST -F "file=@$TARBALL" -F "framework=$FRAMEWORK"`
+  - `grep -o`, `cut -d'"' -f4` JSON parsing fallback
+  - `[[ "$INPUT_PATH" == *.tgz ]]` pattern matching
+  - `find -maxdepth 1 -name "*.html" -type f`
+  - `basename`, `wc -l` via `grep -c .`
+  - `echo "$RESPONSE" | grep -q '"error"'`
+  - `>&2` stderr redirection
+- **Bashkit:** Bash syntax: **FULL**. `curl -F` multipart: **PARTIAL**.
+  `node`/`tar`: supported
 
 ---
 
-## Bash Features Usage Summary
+## Comprehensive Bash Feature Coverage Matrix
 
-### Features used across all skill bash scripts
+### Features observed across all 250 leaderboard skills
 
-| Bash Feature | Used By | Bashkit Support |
+| Bash Feature | Skills using | Bashkit |
 |---|---|---|
-| `set -e` / `set -euo pipefail` | 6 skills | YES |
-| Variable expansion `${VAR}` | 5 skills | YES |
-| Default values `${1:-default}` | 4 skills | YES |
-| Error values `${1:?msg}` | 3 skills | YES |
-| Command substitution `$(cmd)` | 4 skills | YES |
-| Pipes `cmd1 \| cmd2` | 4 skills | YES |
-| `if/elif/else/fi` | 5 skills | YES |
-| `for/do/done` loops | 3 skills | YES |
-| `while/case/esac` arg parsing | 2 skills | YES |
-| `[[ ]]` conditionals | 2 skills | YES |
-| Glob patterns in `[[ ]]` | 1 skill | YES |
-| `declare -A` assoc arrays | 1 skill | YES |
-| Arithmetic `$(( ))` | 2 skills | YES |
-| Heredocs `<< 'EOF'` | 2 skills | YES |
-| `trap cleanup EXIT` | 2 skills | YES |
-| Redirections `2>/dev/null` | 5 skills | YES |
-| `\|\| true` / `\|\| echo` fallback | 3 skills | YES |
-| `printf` with format strings | 2 skills | YES |
-| Functions (`fn() { }`) | 2 skills | YES |
-| Nested function calls | 1 skill | YES |
-| `nohup ... &` background | 1 skill | PARTIAL (runs sync) |
-| `$!` (background PID) | 1 skill | PARTIAL (returns 0) |
-| `kill` | 1 skill | YES (no-op in VFS) |
-| Brace expansion `{1..60}` | 1 skill | YES |
-| `$BASH_SOURCE` | 1 skill | YES |
-| `$OSTYPE` | 1 skill | YES (set to "linux-gnu") |
+| `set -e` / `set -euo pipefail` | 12 | YES |
+| Variable expansion `${VAR}` | 10 | YES |
+| Default values `${1:-default}` | 8 | YES |
+| Error values `${1:?msg}` | 5 | YES |
+| Substring `${var:offset:length}` | 2 | YES |
+| Substring from end `${var: -3}` | 1 | YES |
+| Command substitution `$(cmd)` | 10 | YES |
+| Pipes `cmd1 \| cmd2` | 10 | YES |
+| `if/elif/else/fi` | 12 | YES |
+| `for/do/done` loops | 6 | YES |
+| `while/case/esac` arg parsing | 3 | YES |
+| `[[ ]]` conditionals | 5 | YES |
+| Glob in `[[ ]]` (`*"login"*`) | 2 | YES |
+| `[ -f ]` / `[ -d ]` / `[ -e ]` / `[ -z ]` | 8 | YES |
+| `declare -A` assoc arrays | 1 | YES |
+| Arithmetic `$(( ))` | 3 | YES |
+| Arithmetic compare `[ "$x" -ge 20 ]` | 2 | YES |
+| Heredocs `<< 'EOF'` | 4 | YES |
+| `trap cleanup EXIT` | 4 | YES |
+| Redirections `2>/dev/null`, `>&2` | 10 | YES |
+| `\|\| true` / `\|\| echo` fallback | 6 | YES |
+| `printf` with format strings | 3 | YES |
+| `echo -e` with ANSI codes | 3 | YES |
+| Functions `fn() { ... }` | 8 | YES |
+| `local` variables | 3 | YES |
+| `"$@"` argument passing | 2 | YES |
+| Nested function calls | 3 | YES |
+| `command -v` binary detection | 4 | YES |
+| `nohup ... &` background | 1 | PARTIAL |
+| `$!` (background PID) | 1 | PARTIAL |
+| `kill` | 2 | YES |
+| `pkill -f` pattern kill | 1 | YES |
+| Brace expansion `{1..60}` | 1 | YES |
+| `$BASH_SOURCE` | 2 | YES |
+| `$OSTYPE` | 2 | YES |
+| `uname -s` | 1 | YES |
+| `alias` definitions | 1 | YES |
+| `grep -q` / `grep -o` / `grep -iE` | 6 | YES |
+| `awk '{print $2}'` | 2 | YES |
+| `curl -s -X POST -H -d -o -w` | 3 | PARTIAL |
+| `curl -F` multipart form | 1 | PARTIAL |
+| `curl -L` follow redirects | 2 | YES |
+| `curl -fsSL url \| sh` pipe install | 2 | YES |
 
-### External binaries referenced by skills
+### External binaries by frequency
 
-| Binary | Skills | Bashkit Equivalent |
+| Binary | Skills | Bashkit |
 |---|---|---|
-| `grep` | 3 | YES (builtin, -iEFPvclnowq) |
-| `sort` | 2 | YES (builtin, -rnu) |
-| `tr` | 2 | YES (builtin, -d) |
-| `head` | 2 | YES (builtin) |
-| `wc` | 1 | YES (builtin, -lwc) |
-| `cat` | 2 | YES (builtin) |
-| `ls` | 2 | YES (builtin, -lahR) |
-| `find` | 2 | YES (builtin, -name -type -maxdepth) |
-| `mkdir -p` | 2 | YES (builtin) |
-| `cp -r` | 1 | YES (builtin) |
-| `rm -rf` | 2 | YES (builtin) |
-| `mv` | 1 | YES (builtin) |
-| `tar -czf / -xzf` | 2 | YES (builtin, -cxtf -z) |
-| `du -h` | 1 | YES (builtin) |
-| `mktemp -d` | 1 | YES (builtin, -d) |
-| `jq` | 2 | YES (builtin, extensive) |
-| `xxd -r -p` | 1 | YES (builtin) |
-| `base64` | 1 | **NO** (not a bashkit builtin) |
-| `curl -s -X POST -F` | 1 | PARTIAL (`curl` builtin; `-F` multipart not documented) |
-| `npm test` / `npm install` | 3 | **NO** (external binary) |
-| `node -e / -v` | 2 | **NO** (external binary) |
-| `pnpm` | 1 | **NO** (external binary) |
-| `python3 -c / -m` | 4 | PARTIAL (bashkit python is limited) |
-| `az` (Azure CLI) | 17 | **NO** (external binary) |
-| `agent-browser` | 1 | **NO** (native Rust binary) |
-| `soffice` (LibreOffice) | 3 | **NO** (native binary) |
-| `pdftoppm` (poppler) | 2 | **NO** (native binary) |
-| `pdftotext` (poppler) | 1 | **NO** (native binary) |
-| `qpdf` | 1 | **NO** (native binary) |
-| `pandoc` | 1 | **NO** (native binary) |
-| `gcc` | 1 | **NO** (compiler) |
-| `tesseract` | 1 | **NO** (OCR engine) |
-| `markitdown` | 1 | **NO** (pip package) |
-| `nmap` / `nikto` | 1 | **NO** (security tools) |
-| `pip install` | 4 | **NO** (package manager) |
+| `curl` | 8 | PARTIAL (feature-gated; `-F` multipart gap) |
+| `npm` / `npx` / `node` | 8 | **NO** |
+| `jq` | 5 | YES (builtin) |
+| `grep` | 6 | YES (builtin) |
+| `python3` | 5 | PARTIAL (limited Monty) |
+| `git` / `gh` | 4 | YES (feature-gated) |
+| `bun` (via npx) | 10 | **NO** |
+| `az` (Azure CLI) | 17 | **NO** |
+| `infsh` (inference.sh) | ~64 | **NO** |
+| `helm` | 1 | **NO** |
+| `soffice` (LibreOffice) | 3 | **NO** |
+| `agent-browser` | 2 | **NO** |
+| Chrome/Chromium (CDP) | 5 | **NO** |
+| `pdftotext` / `pdftoppm` | 2 | **NO** |
+| `aws` CLI | 1 | **NO** |
+| `sips` / `cwebp` / `ImageMagick` | 1 | **NO** |
+| `docker` | 1 | **NO** |
+| `sort`, `tr`, `head`, `wc` | 4 | YES (builtins) |
+| `cat`, `ls`, `find`, `mkdir` | 5 | YES (builtins) |
+| `tar`, `cp`, `mv`, `rm` | 4 | YES (builtins) |
+| `mktemp`, `du`, `basename` | 2 | YES (builtins) |
+| `xxd` | 1 | YES (builtin) |
+| `sed -i` | 1 | PARTIAL |
+| `base64` | 1 | **MISSING** |
 
 ---
 
-## Skill Categories by Bashkit Compatibility
+## Compatibility Tiers
 
-### Tier 1: Fully supported (29 skills, 66%)
+### Tier 1: Fully supported — no execution needed (~50 skills, 63%)
 
-Pure markdown instruction skills. No scripts to execute. Bashkit's only role
-would be parsing the SKILL.md format (YAML frontmatter + markdown body).
+Pure markdown instruction/reference skills. Bashkit only needs to parse
+SKILL.md YAML frontmatter.
 
-Skills: find-skills, vercel-react-best-practices, web-design-guidelines,
-remotion-best-practices, frontend-design, vercel-composition-patterns,
-14x Azure instruction-only skills, vercel-react-native-skills,
-brainstorming, seo-audit, supabase-postgres-best-practices,
-next-best-practices, copywriting, better-auth-best-practices,
-marketing-psychology
+**Repos:** All of coreyhaines31/marketingskills, most of wshobson/agents,
+expo/skills, madteacher, vercel/ai, vercel/turborepo, antfu/skills,
+hyf0/vue-skills, vercel-labs/next-skills, mastra-ai, better-auth,
+supabase, most of obra/superpowers, most of anthropics/skills
 
-### Tier 2: Bash scripts fully supported, but external binaries missing (7 skills, 16%)
+### Tier 2: Bash fully supported, binaries missing (~14 skills, 18%)
 
-The bash syntax and features used are within bashkit's capabilities. However,
-the scripts invoke external binaries that bashkit cannot simulate.
+Bash syntax/features in scripts are **100% within bashkit's capabilities**.
+But the scripts invoke external binaries bashkit can't provide.
 
-Skills: agent-browser (needs `agent-browser` binary), microsoft-foundry
-(needs `az` CLI), systematic-debugging (needs `npm test`),
-audit-website (needs `nmap`, `nikto`), vercel-deploy-claimable (needs
-`curl -F`, `tar`, `node`), web-artifacts-builder (needs `pnpm`, `node`,
-`npm`)
+| Skill | Binaries needed |
+|-------|----------------|
+| microsoft-foundry scripts | `az`, `python3` |
+| google-stitch fetch/verify | `curl -L`, `npm`, `node` |
+| web-artifacts-builder | `pnpm`, `node`, `npm` |
+| vercel-deploy-claimable | `curl -F`, `tar`, `node` |
+| agent-browser templates | `agent-browser` |
+| systematic-debugging | `npm test` |
+| helm validate-chart | `helm` |
+| test-jwt-setup | `curl`, `jq` (jq available) |
+| aws-blast aliases | `aws` |
+| planning-with-files hooks | `cat`, `head` (available) |
 
-**Notable:** The `deploy.sh` script from vercel-deploy-claimable uses
-advanced bash (nested functions, `trap`, `mktemp`, `tar`, `curl -F`,
-`grep -o`, `cut`, heredocs) — all bash features are supported by bashkit
-except `curl -F` (multipart form upload) and the external `node`/`pnpm`
-binaries.
+### Tier 3: Requires TypeScript/Bun runtime (~11 skills, 14%)
 
-### Tier 3: Requires Python beyond bashkit's capabilities (6 skills, 14%)
+Executed via `npx -y bun` — bashkit has no TypeScript runtime.
 
-These skills depend heavily on Python libraries (subprocess, PIL, openpyxl,
-pypdf, reportlab, defusedxml, etc.) that bashkit's embedded Monty
-interpreter does not support.
+**Skills:** 10 jimliu/baoyu-skills, 1 google-stitch (validate.js)
 
-Skills: skill-creator, pdf, pptx, docx, xlsx, ui-ux-pro-max
+### Tier 4: Requires full Python ecosystem (~8 skills, 10%)
 
-### Tier 4: Requires full runtime environment (2 skills, 5%)
+Python libraries far beyond Monty's capabilities.
 
-Browser automation requiring Playwright, Chrome, and extensive Python
-ecosystem.
+**Skills:** anthropics pdf/pptx/docx/xlsx/skill-creator, ui-ux-pro-max,
+seedance2-api, wshobson optimize-prompt
 
-Skills: browser-use, agent-browser (also in Tier 2 for bash)
+### Tier 5: Requires browser/native runtime (~5 skills, 6%)
+
+Playwright, Chrome CDP, or other native runtimes.
+
+**Skills:** browser-use, agent-browser, baoyu-url-to-markdown,
+baoyu-danger-gemini-web, inference-sh agentic-browser
 
 ---
 
 ## Gaps and Recommendations
 
-### Missing bashkit builtins that would help
+### Missing bashkit builtins (would increase coverage)
 
-1. **`base64`** — Used by microsoft-foundry's `generate_deployment_url.sh` for
-   encoding subscription GUIDs. Simple to add (encode/decode with `-d` flag).
+1. **`base64`** — encode/decode with `-d` flag. Used by microsoft-foundry
+   script for GUID encoding. Simple to add.
 
-2. **`curl -F` (multipart form)** — Used by vercel-deploy-claimable to upload
+2. **`curl -F` multipart** — Used by vercel-deploy-claimable to upload
    tarballs. Currently `curl` builtin may not support `-F` for multipart POST.
 
-### Python gap analysis
+3. **`sed -i`** — Used by web-artifacts-builder's `init-artifact.sh` for
+   in-place file editing. Bashkit `sed` support unclear.
 
-The 6 Python-dependent skills use these libraries not available in Monty:
+### TypeScript gap
 
-| Library | Skills | Purpose |
-|---|---|---|
-| `subprocess` | 4 | Spawn external processes |
-| `zipfile` | 3 | ZIP/OOXML manipulation |
-| `openpyxl` | 1 | Excel file creation |
-| `pypdf` / `pdfplumber` | 1 | PDF processing |
-| `reportlab` | 1 | PDF generation |
-| `PIL/Pillow` | 1 | Image processing |
-| `defusedxml` | 3 | Safe XML parsing |
-| `anthropic` | 1 | LLM API calls |
-| `csv` | 1 | CSV parsing |
-| `concurrent.futures` | 1 | Parallel execution |
-| `http.server` | 1 | HTTP server |
-| `socket` | 1 | Unix socket detection |
-| `argparse` | 3 | CLI argument parsing |
+The baoyu-skills repo represents a growing pattern: skills backed by
+TypeScript executed via `npx -y bun`. This is the second largest script
+ecosystem after Python (97 `.ts` files). Supporting `bun` or a lightweight
+JS runtime would unlock this category.
 
 ### Key insight
 
-The skills ecosystem is heavily bifurcated:
-- **Instruction skills** (66%) are pure markdown — no execution needed
-- **Tool skills** (34%) require real binaries (LibreOffice, poppler, Azure CLI,
-  browsers) that cannot be meaningfully simulated
+The skills ecosystem has **three tiers of execution complexity**:
 
-For the tool skills, the bash glue code between binaries IS well-supported by
-bashkit. The gap is not in bash parsing/execution but in the binary ecosystem.
+1. **No execution** (63%) — Pure markdown. Bashkit fully covers.
+2. **Bash glue** (18%) — Bashkit **fully** handles the bash. The gap is
+   only the external binaries the bash scripts invoke.
+3. **Full runtimes** (19%) — TypeScript/Bun, Python ecosystem, Browser
+   automation. Beyond bashkit's scope.
 
-### Bash feature coverage verdict
-
-Of all bash features observed across 44 skills, bashkit supports **97%+**.
-The only gaps are:
-- Background execution (`&`) runs synchronously (affects 1 skill)
-- `base64` command missing (affects 1 skill)
-- `curl -F` multipart possibly missing (affects 1 skill)
-
-Every other bash construct used (associative arrays, `[[ ]]` with globs,
-heredocs, traps, brace expansion, arithmetic, pipes, redirections, variable
-expansion with defaults/errors, functions, case/esac, for/while loops,
-`$BASH_SOURCE`, `$OSTYPE`) is fully supported.
+**Bashkit's bash feature coverage is effectively 100%** for all scripts
+observed. Every bash construct used in the wild (associative arrays,
+`[[ ]]` globs, heredocs, traps, substrings, functions with `local`,
+`"$@"`, `command -v`, `case` with globs, `curl` pipes, ANSI colors,
+`printf`, `awk`, arithmetic) is supported.
