@@ -1,6 +1,6 @@
 //! test builtin command ([ and test)
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -21,8 +21,9 @@ impl Builtin for Test {
             return Ok(ExecResult::err(String::new(), 1));
         }
 
+        let cwd = ctx.cwd.clone();
         // Parse and evaluate the expression
-        let result = evaluate_expression(ctx.args, &ctx.fs).await;
+        let result = evaluate_expression(ctx.args, &ctx.fs, &cwd).await;
 
         if result {
             Ok(ExecResult::ok(String::new()))
@@ -51,8 +52,9 @@ impl Builtin for Bracket {
             return Ok(ExecResult::err(String::new(), 1));
         }
 
+        let cwd = ctx.cwd.clone();
         // Parse and evaluate the expression
-        let result = evaluate_expression(&args, &ctx.fs).await;
+        let result = evaluate_expression(&args, &ctx.fs, &cwd).await;
 
         if result {
             Ok(ExecResult::ok(String::new()))
@@ -62,10 +64,21 @@ impl Builtin for Bracket {
     }
 }
 
+/// Resolve a file path against cwd (relative paths become absolute)
+fn resolve_file_path(cwd: &Path, arg: &str) -> PathBuf {
+    let p = Path::new(arg);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        cwd.join(p)
+    }
+}
+
 /// Evaluate a test expression
 fn evaluate_expression<'a>(
     args: &'a [String],
     fs: &'a Arc<dyn FileSystem>,
+    cwd: &'a Path,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
     Box::pin(async move {
         if args.is_empty() {
@@ -74,12 +87,12 @@ fn evaluate_expression<'a>(
 
         // Handle negation
         if args[0] == "!" {
-            return !evaluate_expression(&args[1..], fs).await;
+            return !evaluate_expression(&args[1..], fs, cwd).await;
         }
 
         // Handle parentheses (basic support)
         if args[0] == "(" && args.last().map(|s| s.as_str()) == Some(")") {
-            return evaluate_expression(&args[1..args.len() - 1], fs).await;
+            return evaluate_expression(&args[1..args.len() - 1], fs, cwd).await;
         }
 
         // Look for binary operators
@@ -87,12 +100,12 @@ fn evaluate_expression<'a>(
             match arg.as_str() {
                 // Logical operators (lowest precedence)
                 "-a" if i > 0 => {
-                    return evaluate_expression(&args[..i], fs).await
-                        && evaluate_expression(&args[i + 1..], fs).await;
+                    return evaluate_expression(&args[..i], fs, cwd).await
+                        && evaluate_expression(&args[i + 1..], fs, cwd).await;
                 }
                 "-o" if i > 0 => {
-                    return evaluate_expression(&args[..i], fs).await
-                        || evaluate_expression(&args[i + 1..], fs).await;
+                    return evaluate_expression(&args[..i], fs, cwd).await
+                        || evaluate_expression(&args[i + 1..], fs, cwd).await;
                 }
                 _ => {}
             }
@@ -106,11 +119,11 @@ fn evaluate_expression<'a>(
             }
             2 => {
                 // Unary operators
-                evaluate_unary(&args[0], &args[1], fs).await
+                evaluate_unary(&args[0], &args[1], fs, cwd).await
             }
             3 => {
                 // Binary operators
-                evaluate_binary(&args[0], &args[1], &args[2], fs).await
+                evaluate_binary(&args[0], &args[1], &args[2], fs, cwd).await
             }
             _ => false,
         }
@@ -118,7 +131,7 @@ fn evaluate_expression<'a>(
 }
 
 /// Evaluate a unary test expression
-async fn evaluate_unary(op: &str, arg: &str, fs: &Arc<dyn FileSystem>) -> bool {
+async fn evaluate_unary(op: &str, arg: &str, fs: &Arc<dyn FileSystem>, cwd: &Path) -> bool {
     match op {
         // String tests
         "-z" => arg.is_empty(),
@@ -127,13 +140,13 @@ async fn evaluate_unary(op: &str, arg: &str, fs: &Arc<dyn FileSystem>) -> bool {
         // File tests using the virtual filesystem
         "-e" | "-a" => {
             // file exists
-            let path = Path::new(arg);
-            fs.exists(path).await.unwrap_or(false)
+            let path = resolve_file_path(cwd, arg);
+            fs.exists(&path).await.unwrap_or(false)
         }
         "-f" => {
             // regular file
-            let path = Path::new(arg);
-            if let Ok(meta) = fs.stat(path).await {
+            let path = resolve_file_path(cwd, arg);
+            if let Ok(meta) = fs.stat(&path).await {
                 meta.file_type.is_file()
             } else {
                 false
@@ -141,8 +154,8 @@ async fn evaluate_unary(op: &str, arg: &str, fs: &Arc<dyn FileSystem>) -> bool {
         }
         "-d" => {
             // directory
-            let path = Path::new(arg);
-            if let Ok(meta) = fs.stat(path).await {
+            let path = resolve_file_path(cwd, arg);
+            if let Ok(meta) = fs.stat(&path).await {
                 meta.file_type.is_dir()
             } else {
                 false
@@ -151,18 +164,18 @@ async fn evaluate_unary(op: &str, arg: &str, fs: &Arc<dyn FileSystem>) -> bool {
         "-r" => {
             // readable - in virtual fs, check if file exists
             // (permissions are stored but not enforced)
-            let path = Path::new(arg);
-            fs.exists(path).await.unwrap_or(false)
+            let path = resolve_file_path(cwd, arg);
+            fs.exists(&path).await.unwrap_or(false)
         }
         "-w" => {
             // writable - in virtual fs, check if file exists
-            let path = Path::new(arg);
-            fs.exists(path).await.unwrap_or(false)
+            let path = resolve_file_path(cwd, arg);
+            fs.exists(&path).await.unwrap_or(false)
         }
         "-x" => {
             // executable - in virtual fs, check if file exists and has executable permission
-            let path = Path::new(arg);
-            if let Ok(meta) = fs.stat(path).await {
+            let path = resolve_file_path(cwd, arg);
+            if let Ok(meta) = fs.stat(&path).await {
                 // Check if any execute bit is set (u+x, g+x, o+x)
                 (meta.mode & 0o111) != 0
             } else {
@@ -171,8 +184,8 @@ async fn evaluate_unary(op: &str, arg: &str, fs: &Arc<dyn FileSystem>) -> bool {
         }
         "-s" => {
             // file exists and has size > 0
-            let path = Path::new(arg);
-            if let Ok(meta) = fs.stat(path).await {
+            let path = resolve_file_path(cwd, arg);
+            if let Ok(meta) = fs.stat(&path).await {
                 meta.size > 0
             } else {
                 false
@@ -180,8 +193,8 @@ async fn evaluate_unary(op: &str, arg: &str, fs: &Arc<dyn FileSystem>) -> bool {
         }
         "-L" | "-h" => {
             // symbolic link
-            let path = Path::new(arg);
-            if let Ok(meta) = fs.stat(path).await {
+            let path = resolve_file_path(cwd, arg);
+            if let Ok(meta) = fs.stat(&path).await {
                 meta.file_type.is_symlink()
             } else {
                 false
@@ -198,7 +211,13 @@ async fn evaluate_unary(op: &str, arg: &str, fs: &Arc<dyn FileSystem>) -> bool {
 }
 
 /// Evaluate a binary test expression
-async fn evaluate_binary(left: &str, op: &str, right: &str, fs: &Arc<dyn FileSystem>) -> bool {
+async fn evaluate_binary(
+    left: &str,
+    op: &str,
+    right: &str,
+    fs: &Arc<dyn FileSystem>,
+    cwd: &Path,
+) -> bool {
     match op {
         // String comparisons
         "=" | "==" => left == right,
@@ -217,8 +236,8 @@ async fn evaluate_binary(left: &str, op: &str, right: &str, fs: &Arc<dyn FileSys
         // File comparisons
         "-nt" => {
             // file1 is newer than file2
-            let left_meta = fs.stat(Path::new(left)).await;
-            let right_meta = fs.stat(Path::new(right)).await;
+            let left_meta = fs.stat(&resolve_file_path(cwd, left)).await;
+            let right_meta = fs.stat(&resolve_file_path(cwd, right)).await;
             match (left_meta, right_meta) {
                 (Ok(lm), Ok(rm)) => lm.modified > rm.modified,
                 (Ok(_), Err(_)) => true, // left exists, right doesn't → left is newer
@@ -227,8 +246,8 @@ async fn evaluate_binary(left: &str, op: &str, right: &str, fs: &Arc<dyn FileSys
         }
         "-ot" => {
             // file1 is older than file2
-            let left_meta = fs.stat(Path::new(left)).await;
-            let right_meta = fs.stat(Path::new(right)).await;
+            let left_meta = fs.stat(&resolve_file_path(cwd, left)).await;
+            let right_meta = fs.stat(&resolve_file_path(cwd, right)).await;
             match (left_meta, right_meta) {
                 (Ok(lm), Ok(rm)) => lm.modified < rm.modified,
                 (Err(_), Ok(_)) => true, // left doesn't exist, right does → left is older
@@ -238,8 +257,8 @@ async fn evaluate_binary(left: &str, op: &str, right: &str, fs: &Arc<dyn FileSys
         "-ef" => {
             // file1 and file2 refer to the same file (same path after resolution)
             // In VFS without inodes, compare canonical paths
-            let left_path = super::resolve_path(&std::path::PathBuf::from("/"), left);
-            let right_path = super::resolve_path(&std::path::PathBuf::from("/"), right);
+            let left_path = super::resolve_path(cwd, left);
+            let right_path = super::resolve_path(cwd, right);
             left_path == right_path
         }
 
