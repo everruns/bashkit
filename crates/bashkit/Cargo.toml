@@ -54,8 +54,8 @@ jaq-json = { workspace = true }
 # Compression (for gzip/gunzip)
 flate2 = { workspace = true }
 
-# Base64 encoding (for HTTP basic auth)
-base64 = { workspace = true, optional = true }
+# Base64 encoding (for base64 builtin and HTTP basic auth)
+base64 = { workspace = true }
 
 # Logging/tracing (optional)
 tracing = { workspace = true, optional = true }
@@ -65,7 +65,7 @@ monty = { git = "https://github.com/pydantic/monty", rev = "87f8f31", optional =
 
 [features]
 default = []
-http_client = ["reqwest", "base64"]
+http_client = ["reqwest"]
 # Enable fail points for security/fault injection testing
 # Usage: FAILPOINTS="fail_point_name=action" cargo test --features failpoints
 failpoints = ["fail/failpoints"]

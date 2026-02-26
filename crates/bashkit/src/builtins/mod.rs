@@ -24,6 +24,7 @@
 
 mod archive;
 mod awk;
+mod base64;
 mod cat;
 mod column;
 mod comm;
@@ -75,6 +76,7 @@ mod python;
 
 pub use archive::{Gunzip, Gzip, Tar};
 pub use awk::Awk;
+pub use base64::Base64;
 pub use cat::Cat;
 pub use column::Column;
 pub use comm::Comm;
