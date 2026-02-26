@@ -85,7 +85,9 @@ impl Builtin for Tar {
         let mut list = false;
         let mut verbose = false;
         let mut gzip = false;
+        let mut to_stdout = false;
         let mut archive_file: Option<String> = None;
+        let mut change_dir: Option<String> = None;
         let mut files: Vec<String> = Vec::new();
 
         // Parse arguments
@@ -93,6 +95,8 @@ impl Builtin for Tar {
         while i < ctx.args.len() {
             let arg = &ctx.args[i];
             if arg.starts_with('-') && !arg.starts_with("--") {
+                // Track whether 'f' or 'C' consumed the next arg
+                let mut consumed_next = false;
                 for c in arg[1..].chars() {
                     match c {
                         'c' => create = true,
@@ -100,8 +104,10 @@ impl Builtin for Tar {
                         't' => list = true,
                         'v' => verbose = true,
                         'z' => gzip = true,
+                        'O' => to_stdout = true,
                         'f' => {
                             i += 1;
+                            consumed_next = true;
                             if i >= ctx.args.len() {
                                 return Ok(ExecResult::err(
                                     "tar: option requires an argument -- 'f'\n".to_string(),
@@ -110,12 +116,26 @@ impl Builtin for Tar {
                             }
                             archive_file = Some(ctx.args[i].clone());
                         }
+                        'C' => {
+                            i += 1;
+                            consumed_next = true;
+                            if i >= ctx.args.len() {
+                                return Ok(ExecResult::err(
+                                    "tar: option requires an argument -- 'C'\n".to_string(),
+                                    2,
+                                ));
+                            }
+                            change_dir = Some(ctx.args[i].clone());
+                        }
                         _ => {
                             return Ok(ExecResult::err(
                                 format!("tar: invalid option -- '{}'\n", c),
                                 2,
                             ));
                         }
+                    }
+                    if consumed_next {
+                        break;
                     }
                 }
             } else {
@@ -150,7 +170,15 @@ impl Builtin for Tar {
             }
             create_tar(&ctx, &archive_name, &files, verbose, gzip).await
         } else if extract {
-            extract_tar(&ctx, &archive_name, verbose, gzip).await
+            extract_tar(
+                &ctx,
+                &archive_name,
+                verbose,
+                gzip,
+                change_dir.as_deref(),
+                to_stdout,
+            )
+            .await
         } else {
             list_tar(&ctx, &archive_name, verbose, gzip).await
         }
@@ -426,7 +454,15 @@ async fn extract_tar(
     archive_name: &str,
     verbose: bool,
     gzip: bool,
+    change_dir: Option<&str>,
+    to_stdout: bool,
 ) -> Result<ExecResult> {
+    // Resolve extraction base directory (-C flag)
+    let extract_base = if let Some(dir) = change_dir {
+        resolve_path(ctx.cwd, dir)
+    } else {
+        ctx.cwd.clone()
+    };
     let data = if archive_name == "-" {
         ctx.stdin.map(|s| s.as_bytes().to_vec()).unwrap_or_default()
     } else {
@@ -458,7 +494,13 @@ async fn extract_tar(
     };
 
     let mut verbose_output = String::new();
+    let mut stdout_output = String::new();
     let mut offset = 0;
+
+    // Ensure extract_base directory exists when -C is used
+    if change_dir.is_some() {
+        ctx.fs.mkdir(&extract_base, true).await?;
+    }
 
     while offset + TAR_BLOCK_SIZE <= tar_data.len() {
         let header = &tar_data[offset..offset + TAR_BLOCK_SIZE];
@@ -492,8 +534,10 @@ async fn extract_tar(
         match type_flag {
             b'5' | b'\0' if name.ends_with('/') => {
                 // Directory
-                let dir_path = resolve_path(ctx.cwd, &name);
-                ctx.fs.mkdir(&dir_path, true).await?;
+                if !to_stdout {
+                    let dir_path = resolve_path(&extract_base, &name);
+                    ctx.fs.mkdir(&dir_path, true).await?;
+                }
             }
             b'0' | b'\0' => {
                 // Regular file
@@ -508,14 +552,20 @@ async fn extract_tar(
                 }
 
                 let content = &tar_data[offset..offset + size];
-                let file_path = resolve_path(ctx.cwd, &name);
 
-                // Ensure parent directory exists
-                if let Some(parent) = file_path.parent() {
-                    ctx.fs.mkdir(parent, true).await?;
+                if to_stdout {
+                    // -O: write content to stdout
+                    stdout_output.push_str(&String::from_utf8_lossy(content));
+                } else {
+                    let file_path = resolve_path(&extract_base, &name);
+
+                    // Ensure parent directory exists
+                    if let Some(parent) = file_path.parent() {
+                        ctx.fs.mkdir(parent, true).await?;
+                    }
+
+                    ctx.fs.write_file(&file_path, content).await?;
                 }
-
-                ctx.fs.write_file(&file_path, content).await?;
                 offset = content_end;
             }
             _ => {
@@ -527,7 +577,7 @@ async fn extract_tar(
     }
 
     Ok(ExecResult {
-        stdout: String::new(),
+        stdout: stdout_output,
         stderr: verbose_output,
         exit_code: 0,
         control_flow: crate::interpreter::ControlFlow::None,
