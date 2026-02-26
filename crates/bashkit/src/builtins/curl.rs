@@ -74,6 +74,7 @@ impl Builtin for Curl {
         let mut max_time: Option<u64> = None;
         let mut connect_timeout: Option<u64> = None;
         let mut url: Option<String> = None;
+        let mut form_fields: Vec<String> = Vec::new();
 
         let mut i = 0;
         while i < ctx.args.len() {
@@ -151,6 +152,15 @@ impl Builtin for Curl {
                         connect_timeout = ctx.args[i].parse().ok();
                     }
                 }
+                "-F" | "--form" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        form_fields.push(ctx.args[i].clone());
+                        if method == "GET" {
+                            method = "POST".to_string();
+                        }
+                    }
+                }
                 _ if !arg.starts_with('-') => {
                     url = Some(arg.clone());
                 }
@@ -192,6 +202,7 @@ impl Builtin for Curl {
                     referer.as_deref(),
                     max_time,
                     connect_timeout,
+                    &form_fields,
                     &ctx,
                 )
                 .await;
@@ -216,6 +227,7 @@ impl Builtin for Curl {
             referer,
             max_time,
             connect_timeout,
+            form_fields,
         );
 
         Ok(ExecResult::err(
@@ -252,6 +264,7 @@ async fn execute_curl_request(
     referer: Option<&str>,
     max_time: Option<u64>,
     connect_timeout: Option<u64>,
+    form_fields: &[String],
     ctx: &Context<'_>,
 ) -> Result<ExecResult> {
     use crate::network::Method;
@@ -307,8 +320,75 @@ async fn execute_curl_request(
     // Verbose output buffer
     let mut verbose_output = String::new();
 
+    // Build multipart body if -F fields are present
+    let multipart_body: Option<Vec<u8>> = if !form_fields.is_empty() {
+        let boundary = format!(
+            "----bashkit{:016x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
+        header_pairs.push((
+            "Content-Type".to_string(),
+            format!("multipart/form-data; boundary={}", boundary),
+        ));
+        let mut body = Vec::new();
+        for field in form_fields {
+            if let Some(eq_pos) = field.find('=') {
+                let name = &field[..eq_pos];
+                let value = &field[eq_pos + 1..];
+                body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+                if let Some(file_path) = value.strip_prefix('@') {
+                    // File upload: key=@filepath[;type=mime]
+                    let (path, mime) = if let Some(semi) = file_path.find(';') {
+                        let p = &file_path[..semi];
+                        let rest = &file_path[semi + 1..];
+                        let m = rest
+                            .strip_prefix("type=")
+                            .unwrap_or("application/octet-stream");
+                        (p, m.to_string())
+                    } else {
+                        (file_path, guess_mime(file_path))
+                    };
+                    let resolved = resolve_path(ctx.cwd, path);
+                    let file_content = ctx.fs.read_file(&resolved).await.unwrap_or_default();
+                    let filename = std::path::Path::new(path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "file".to_string());
+                    body.extend_from_slice(
+                        format!(
+                            "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
+                            name, filename
+                        )
+                        .as_bytes(),
+                    );
+                    body.extend_from_slice(format!("Content-Type: {}\r\n\r\n", mime).as_bytes());
+                    body.extend_from_slice(&file_content);
+                } else {
+                    // Text field: key=value
+                    body.extend_from_slice(
+                        format!("Content-Disposition: form-data; name=\"{}\"\r\n\r\n", name)
+                            .as_bytes(),
+                    );
+                    body.extend_from_slice(value.as_bytes());
+                }
+                body.extend_from_slice(b"\r\n");
+            }
+        }
+        body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
+        Some(body)
+    } else {
+        None
+    };
+
     // Make the request
-    let body = data.map(|d| d.as_bytes());
+    let body = if multipart_body.is_some() {
+        multipart_body.as_deref()
+    } else {
+        data.map(|d| d.as_bytes())
+    };
     let mut current_url = url.to_string();
     let mut redirect_count = 0;
     const MAX_REDIRECTS: u32 = 10;
@@ -466,8 +546,30 @@ async fn execute_curl_request(
     }
 }
 
-/// Resolve a redirect URL which may be relative.
+/// Guess MIME type from file extension
 #[cfg(feature = "http_client")]
+fn guess_mime(path: &str) -> String {
+    match std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+    {
+        Some("json") => "application/json",
+        Some("xml") => "application/xml",
+        Some("html" | "htm") => "text/html",
+        Some("txt" | "log" | "csv") => "text/plain",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("pdf") => "application/pdf",
+        Some("gz" | "tgz") => "application/gzip",
+        Some("tar") => "application/x-tar",
+        Some("zip") => "application/zip",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
+/// Resolve a redirect URL which may be relative.
 fn resolve_redirect_url(base: &str, location: &str) -> String {
     if location.starts_with("http://") || location.starts_with("https://") {
         location.to_string()
