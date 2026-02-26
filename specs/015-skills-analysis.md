@@ -543,3 +543,36 @@ observed. Every bash construct used in the wild (associative arrays,
 `[[ ]]` globs, heredocs, traps, substrings, functions with `local`,
 `"$@"`, `command -v`, `case` with globs, `curl` pipes, ANSI colors,
 `printf`, `awk`, arithmetic) is supported.
+
+---
+
+## Test Validation Results
+
+Integration tests in `tests/skills_tests.rs` run 10 real skill scripts
+through bashkit parser and interpreter (with external binaries stubbed).
+
+### Parse tests: 10/10 pass
+
+All 10 fixture scripts parse successfully (after removing backslash
+line continuations — see #289).
+
+### Execution tests: 6/10 pass, 4 ignored
+
+| Test | Script | Status | Bug |
+|------|--------|--------|-----|
+| exec_azure_discover_rank | declare -A, ${!MAP[@]}, jq pipes | PASS | |
+| exec_helm_validate_chart | functions, command -v, grep -q, awk | PASS | |
+| exec_jwt_test_setup | ${var: -3}, local, trap, curl -w | PASS | |
+| exec_stitch_fetch | curl wrapper, $? check | PASS | |
+| exec_stitch_download_asset | dirname, mkdir -p, command -v, stat | PASS | |
+| exec_superpowers_find_polluter | for/find, $(( )), wc\|tr, \|\| true | PASS | |
+| exec_azure_generate_url | while/case, xxd\|base64\|tr, heredoc | IGNORE | #290 infinite loop |
+| exec_azure_query_capacity | pipefail, printf, brace expansion | IGNORE | pipefail stub |
+| exec_stitch_verify_setup | echo -e, [ -f ], grep -q, arrays | IGNORE | #291 VFS cwd |
+| exec_vercel_deploy | nested fns, trap, mktemp, tar, [[ ]] | IGNORE | exit code 2 |
+
+### Bugs found
+
+- **#289**: Backslash line continuation (`\` newline) fails in some parser contexts
+- **#290**: while/case arg parsing loop hits MaxLoopIterations for small input
+- **#291**: `[ -f ]` doesn't see VFS files after `cd` in script file execution
