@@ -27,15 +27,13 @@ async fn test_issue_275_backslash_paren_in_single_quotes() {
 /// Issue #279: "done" as case pattern should work
 #[tokio::test]
 async fn test_issue_279_done_as_case_pattern() {
-    let output = run(
-        r#"
+    let output = run(r#"
 status="done"
 case "$status" in
   done) echo "matched" ;;
   *) echo "nope" ;;
 esac
-"#,
-    )
+"#)
     .await;
     assert_eq!(output.trim(), "matched");
 }
@@ -43,16 +41,14 @@ esac
 /// Issue #279: Other reserved words as case patterns
 #[tokio::test]
 async fn test_issue_279_reserved_words_as_case_patterns() {
-    let output = run(
-        r#"
+    let output = run(r#"
 word="in"
 case "$word" in
   in) echo "matched_in" ;;
   do) echo "matched_do" ;;
   *) echo "nope" ;;
 esac
-"#,
-    )
+"#)
     .await;
     assert_eq!(output.trim(), "matched_in");
 }
@@ -65,7 +61,10 @@ async fn test_issue_282_find_type_f_vfs() {
         .mount_text("/data/file2.txt", "world")
         .mount_text("/data/subdir/file3.txt", "nested")
         .build();
-    let result = bash.exec("find /data -type f | sort").await.expect("exec failed");
+    let result = bash
+        .exec("find /data -type f | sort")
+        .await
+        .expect("exec failed");
     let lines: Vec<&str> = result.stdout.trim().lines().collect();
     assert!(
         lines.len() >= 3,
