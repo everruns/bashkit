@@ -5421,9 +5421,9 @@ impl Interpreter {
     }
 
     /// Maximum recursion depth for arithmetic expression evaluation.
-    /// THREAT[TM-DOS-025]: Prevents stack overflow via deeply nested arithmetic like
+    /// THREAT[TM-DOS-026]: Prevents stack overflow via deeply nested arithmetic like
     /// $(((((((...)))))))
-    const MAX_ARITHMETIC_DEPTH: usize = 200;
+    const MAX_ARITHMETIC_DEPTH: usize = 50;
 
     /// Evaluate arithmetic with assignment support (e.g. `X = X + 1`).
     /// Assignment must be handled before variable expansion so the LHS
@@ -5578,7 +5578,7 @@ impl Interpreter {
         // First expand any variables in the expression
         let expanded = self.expand_arithmetic_vars(expr);
 
-        // Parse and evaluate with depth tracking (TM-DOS-025)
+        // Parse and evaluate with depth tracking (TM-DOS-026)
         self.parse_arithmetic_impl(&expanded, 0)
     }
 
@@ -5658,7 +5658,7 @@ impl Interpreter {
     }
 
     /// Parse and evaluate a simple arithmetic expression with depth tracking.
-    /// THREAT[TM-DOS-025]: `arith_depth` prevents stack overflow from deeply nested expressions.
+    /// THREAT[TM-DOS-026]: `arith_depth` prevents stack overflow from deeply nested expressions.
     fn parse_arithmetic_impl(&self, expr: &str, arith_depth: usize) -> i64 {
         let expr = expr.trim();
 
@@ -5671,7 +5671,7 @@ impl Interpreter {
             return 0;
         }
 
-        // THREAT[TM-DOS-025]: Bail out if arithmetic nesting is too deep
+        // THREAT[TM-DOS-026]: Bail out if arithmetic nesting is too deep
         if arith_depth >= Self::MAX_ARITHMETIC_DEPTH {
             return 0;
         }

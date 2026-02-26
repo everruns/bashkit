@@ -125,22 +125,37 @@ for sandbox security reasons. See the compliance spec for details.
 | `xxd` | `-l`, `-s`, `-c`, `-g`, `-p` | Hex dump |
 | `hexdump` | `-C`, `-n`, `-s` | Display file in hex+ASCII |
 
+### Recently Added
+
+| Builtin | Flags / Arguments | Notes |
+|---------|-------------------|-------|
+| `ln` | `-s`, `-f` | Create links |
+| `chown` | `OWNER[:GROUP] FILE` | Change ownership (virtual) |
+| `kill` | `-SIGNAL PID` | Send signals (virtual) |
+| `trap` | `COMMAND SIGNAL...`, `-p`, `-l` | Signal/event handlers |
+| `type` | `NAME...` | Describe command type |
+| `which` | `NAME...` | Locate a command |
+| `command` | `-v`, `NAME...` | Run or identify commands |
+| `hash` | (none) | No-op in sandboxed env |
+| `declare`/`typeset` | `-i`, `-r`, `-x`, `-a`, `-p`, `-n`, `-l`, `-u` | Variable attributes |
+| `let` | `EXPR...` | Evaluate arithmetic |
+| `getopts` | `OPTSTRING NAME` | Parse positional parameters |
+| `caller` | `[FRAME]` | Display call stack frame |
+| `shopt` | `-s`, `-u`, `-q` | Shell options |
+| `seq` | `[FIRST [INCR]] LAST` | Print number sequence |
+| `tac` | (none) | Reverse file lines |
+| `rev` | (none) | Reverse characters per line |
+| `yes` | `[STRING]` | Output repeated string |
+| `expr` | `EXPRESSION` | Evaluate expressions |
+| `mktemp` | `-d`, `-p`, `-t` | Create temporary files |
+| `realpath` | `PATH` | Resolve path |
+| `pushd`/`popd`/`dirs` | standard flags | Directory stack |
+
 ### Not Implemented
 
 | Builtin | Priority | Status |
 |---------|----------|--------|
-| `ln` | Low | - |
-| `chown` | Low | - |
-| `kill` | Low | - |
 | `exec` | N/A | Security: intentionally excluded |
-| `trap` | N/A | Security: intentionally excluded |
-| `type` | Low | - |
-| `which` | Low | - |
-| `command` | Medium | POSIX utility |
-| `hash` | Low | - |
-| `declare` | Low | Bash extension |
-| `typeset` | Low | Bash extension |
-| `getopts` | Medium | POSIX utility |
 
 ---
 
