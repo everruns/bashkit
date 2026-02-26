@@ -295,6 +295,9 @@ struct FindOptions {
     name_pattern: Option<String>,
     type_filter: Option<char>,
     max_depth: Option<usize>,
+    // -exec is parsed but acts like -print (builtin can't invoke interpreter)
+    // WTF: exec needs interpreter access; for now just collect paths so scripts don't error
+    has_exec: bool,
 }
 
 /// The find builtin - search for files.
@@ -316,6 +319,7 @@ impl Builtin for Find {
             name_pattern: None,
             type_filter: None,
             max_depth: None,
+            has_exec: false,
         };
 
         // Parse arguments
@@ -367,8 +371,24 @@ impl Builtin for Find {
                         }
                     }
                 }
-                "-print" => {
+                "-print" | "-print0" => {
                     // Default action, ignore
+                }
+                "-exec" | "-execdir" => {
+                    // Parse -exec command {} \; or {} +
+                    // Skip all args until we find \; or +
+                    opts.has_exec = true;
+                    i += 1;
+                    while i < ctx.args.len() {
+                        let a = &ctx.args[i];
+                        if a == ";" || a == "\\;" || a == "+" {
+                            break;
+                        }
+                        i += 1;
+                    }
+                }
+                "-not" | "!" => {
+                    // Negation - skip (not fully supported)
                 }
                 s if s.starts_with('-') => {
                     return Ok(ExecResult::err(
