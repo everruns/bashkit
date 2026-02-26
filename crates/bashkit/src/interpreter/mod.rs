@@ -258,6 +258,7 @@ impl Interpreter {
         builtins.insert("od".to_string(), Box::new(builtins::Od));
         builtins.insert("xxd".to_string(), Box::new(builtins::Xxd));
         builtins.insert("hexdump".to_string(), Box::new(builtins::Hexdump));
+        builtins.insert("base64".to_string(), Box::new(builtins::Base64));
         builtins.insert("seq".to_string(), Box::new(builtins::Seq));
         builtins.insert("tac".to_string(), Box::new(builtins::Tac));
         builtins.insert("rev".to_string(), Box::new(builtins::Rev));
