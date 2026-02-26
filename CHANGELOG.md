@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.7] - 2026-02-26
 
 ### Highlights
 
@@ -59,7 +59,7 @@
 * chore(deps): upgrade monty to latest main (87f8f31) ([#226](https://github.com/everruns/bashkit/pull/226))
 * fix(ci): repair nightly CI and add fuzz compile guard ([#225](https://github.com/everruns/bashkit/pull/225))
 
-**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.6...HEAD
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.6...v0.1.7
 
 ## [0.1.6] - 2026-02-20
 
