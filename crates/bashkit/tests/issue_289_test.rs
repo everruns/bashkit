@@ -6,7 +6,9 @@ use bashkit::Bash;
 async fn issue_289_backslash_continuation_if() {
     let mut bash = Bash::new();
     let r = bash
-        .exec("A=\"\"\nB=\"\"\nif [ -z \"$A\" ] || \\\n   [ -z \"$B\" ]; then\n    echo missing\nfi")
+        .exec(
+            "A=\"\"\nB=\"\"\nif [ -z \"$A\" ] || \\\n   [ -z \"$B\" ]; then\n    echo missing\nfi",
+        )
         .await
         .unwrap();
     assert_eq!(r.stdout.trim(), "missing");
