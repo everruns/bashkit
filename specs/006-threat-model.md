@@ -191,7 +191,7 @@ runaway scripts without permanently breaking the session.
 | TM-DOS-020 | Function recursion | `f() { f; }; f` | Depth limit (100) | **MITIGATED** |
 | TM-DOS-021 | Command sub nesting | `$($($($())))` | Child parsers inherit remaining depth budget + fuel from parent | **MITIGATED** |
 | TM-DOS-022 | Parser recursion | Deeply nested `(((())))` | `max_ast_depth` limit (100) + `HARD_MAX_AST_DEPTH` cap (100) | **MITIGATED** |
-| TM-DOS-026 | Arithmetic recursion | `$(((((((...)))))))` deeply nested parens | `MAX_ARITHMETIC_DEPTH` limit (200) | **MITIGATED** |
+| TM-DOS-026 | Arithmetic recursion | `$(((((((...)))))))` deeply nested parens | `MAX_ARITHMETIC_DEPTH` limit (50) | **MITIGATED** |
 
 **Current Risk**: LOW - Both execution and parser protected
 
@@ -201,7 +201,7 @@ max_function_depth: 100,      // Runtime recursion (TM-DOS-020, TM-DOS-021)
 max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 // TM-DOS-021: Child parsers in command/process substitution inherit remaining
 // depth budget and fuel from parent parser (parser/mod.rs lines 1553, 1670)
-// TM-DOS-026: Arithmetic evaluator tracks recursion depth, capped at 200
+// TM-DOS-026: Arithmetic evaluator tracks recursion depth, capped at 50
 // (interpreter/mod.rs MAX_ARITHMETIC_DEPTH)
 ```
 
@@ -850,7 +850,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | V4 | TM-DOS-022 | Parser recursion | **MITIGATED** via `max_ast_depth` |
 | V5 | TM-DOS-018 | Nested loop multiplication | **MITIGATED** via `max_total_loop_iterations` (1M) |
 | V6 | TM-DOS-021 | Command sub parser limit bypass | **MITIGATED** via inherited depth/fuel |
-| V7 | TM-DOS-026 | Arithmetic recursion overflow | **MITIGATED** via `MAX_ARITHMETIC_DEPTH` (200) |
+| V7 | TM-DOS-026 | Arithmetic recursion overflow | **MITIGATED** via `MAX_ARITHMETIC_DEPTH` (50) |
 
 ### Open (Medium Priority)
 
@@ -881,7 +881,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Parser fuel (100K ops) | TM-DOS-024 | `limits.rs` | Yes |
 | AST depth limit (100) | TM-DOS-022 | `limits.rs` | Yes |
 | Child parser limit propagation | TM-DOS-021 | `parser/mod.rs` | Yes |
-| Arithmetic depth limit (200) | TM-DOS-026 | `interpreter/mod.rs` | Yes |
+| Arithmetic depth limit (50) | TM-DOS-026 | `interpreter/mod.rs` | Yes |
 | Builtin parser depth limit (100) | TM-DOS-027 | `builtins/awk.rs`, `builtins/jq.rs` | Yes |
 | Execution timeout (30s) | TM-DOS-023 | `limits.rs` | Yes |
 | Virtual filesystem | TM-ESC-001, TM-ESC-003 | `fs/memory.rs` | Yes |
@@ -927,7 +927,7 @@ ExecutionLimits::new()
     .max_input_bytes(10_000_000)       // TM-DOS-001 (10MB)
     .max_ast_depth(100)                // TM-DOS-022 (also inherited by child parsers: TM-DOS-021)
     .max_parser_operations(100_000)    // TM-DOS-024 (also inherited by child parsers: TM-DOS-021)
-// Note: MAX_ARITHMETIC_DEPTH (200) is a compile-time constant in interpreter (TM-DOS-026)
+// Note: MAX_ARITHMETIC_DEPTH (50) is a compile-time constant in interpreter (TM-DOS-026)
 // Note: MAX_AWK_PARSER_DEPTH (100) is a compile-time constant in builtins/awk.rs (TM-DOS-027)
 // Note: MAX_JQ_JSON_DEPTH (100) is a compile-time constant in builtins/jq.rs (TM-DOS-027)
 

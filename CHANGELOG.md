@@ -1,5 +1,66 @@
 # Changelog
 
+## [Unreleased]
+
+### Highlights
+
+- 20+ new builtins: `declare`/`typeset`, `let`, `getopts`, `trap`, `caller`, `shopt`, `pushd`/`popd`/`dirs`, `seq`, `tac`, `rev`, `yes`, `expr`, `mktemp`, `realpath`, and more
+- Glob options: `dotglob`, `nocaseglob`, `failglob`, `noglob`, `globstar`
+- Shell flags: `bash -e/-x/-u/-f/-o`, `set -x` xtrace debugging
+- `select` construct, `case ;;&` fallthrough, `FUNCNAME` variable
+- Nameref variables (`declare -n`), case conversion (`declare -l/-u`)
+- 10+ bug fixes for quoting, arrays, globs, and redirections
+
+### What's Changed
+
+* feat(interpreter): implement bash/sh -e/-x/-u/-f/-o flags ([#270](https://github.com/everruns/bashkit/pull/270))
+* chore(eval): run 2026-02-25 evals across 4 models ([#271](https://github.com/everruns/bashkit/pull/271))
+* feat(interpreter): implement glob options (dotglob, nocaseglob, failglob, noglob, globstar) ([#269](https://github.com/everruns/bashkit/pull/269))
+* feat(builtins): implement pushd, popd, dirs ([#268](https://github.com/everruns/bashkit/pull/268))
+* feat(builtins): implement file comparison test operators ([#267](https://github.com/everruns/bashkit/pull/267))
+* feat(builtins): implement expr builtin ([#266](https://github.com/everruns/bashkit/pull/266))
+* feat(builtins): implement yes and realpath builtins ([#265](https://github.com/everruns/bashkit/pull/265))
+* feat(interpreter): implement caller builtin ([#264](https://github.com/everruns/bashkit/pull/264))
+* feat(builtins): implement printf %q shell quoting ([#263](https://github.com/everruns/bashkit/pull/263))
+* feat(builtins): implement tac and rev builtins ([#262](https://github.com/everruns/bashkit/pull/262))
+* feat(builtins): implement seq builtin ([#261](https://github.com/everruns/bashkit/pull/261))
+* chore(deps): bump pyo3 to 0.28.2 and pyo3-async-runtimes to 0.28 ([#260](https://github.com/everruns/bashkit/pull/260))
+* feat(builtins): implement mktemp builtin ([#259](https://github.com/everruns/bashkit/pull/259))
+* feat(interpreter): implement trap -p flag and sorted trap listing ([#258](https://github.com/everruns/bashkit/pull/258))
+* feat(builtins): implement set -o / set +o option display ([#257](https://github.com/everruns/bashkit/pull/257))
+* feat(interpreter): implement declare -l/-u case conversion attributes ([#256](https://github.com/everruns/bashkit/pull/256))
+* feat(interpreter): implement declare -n nameref variables ([#255](https://github.com/everruns/bashkit/pull/255))
+* feat(builtins): implement shopt builtin with nullglob enforcement ([#254](https://github.com/everruns/bashkit/pull/254))
+* feat(interpreter): implement set -x xtrace debugging ([#253](https://github.com/everruns/bashkit/pull/253))
+* feat(bash): auto-populate shell variables (PWD, HOME, USER, etc.) ([#252](https://github.com/everruns/bashkit/pull/252))
+* feat(bash): implement select construct ([#251](https://github.com/everruns/bashkit/pull/251))
+* feat(bash): implement let builtin and fix declare -i arithmetic ([#250](https://github.com/everruns/bashkit/pull/250))
+* feat(bash): case ;& and ;;& fallthrough/continue-matching ([#249](https://github.com/everruns/bashkit/pull/249))
+* feat(bash): implement FUNCNAME special variable ([#248](https://github.com/everruns/bashkit/pull/248))
+* fix(bash): backslash-newline line continuation in double quotes ([#247](https://github.com/everruns/bashkit/pull/247))
+* fix(bash): nested double quotes inside $() in double-quoted strings ([#246](https://github.com/everruns/bashkit/pull/246))
+* fix(bash): input redirections on compound commands ([#245](https://github.com/everruns/bashkit/pull/245))
+* fix(bash): glob pattern matching in [[ == ]] and [[ != ]] ([#244](https://github.com/everruns/bashkit/pull/244))
+* fix(bash): negative array indexing ${arr[-1]} ([#243](https://github.com/everruns/bashkit/pull/243))
+* fix(bash): BASH_REMATCH not populated when regex starts with parens ([#242](https://github.com/everruns/bashkit/pull/242))
+* feat(bash): arithmetic exponentiation, base literals, mapfile ([#241](https://github.com/everruns/bashkit/pull/241))
+* feat: grep binary detection, awk %.6g and sorted for-in ([#240](https://github.com/everruns/bashkit/pull/240))
+* feat: bash compatibility — compound arrays, grep -f, awk getline, jq env/input ([#238](https://github.com/everruns/bashkit/pull/238))
+* feat: string ops, read -r, heredoc tests ([#237](https://github.com/everruns/bashkit/pull/237))
+* feat: associative arrays, chown/kill builtins, array slicing tests ([#236](https://github.com/everruns/bashkit/pull/236))
+* feat: cat -v, sort -m, brace/date/lexer fixes ([#234](https://github.com/everruns/bashkit/pull/234))
+* feat: type/which/declare/ln builtins, errexit, nounset fix, sort -z, cut -z ([#233](https://github.com/everruns/bashkit/pull/233))
+* feat: paste, command, getopts, nounset, [[ =~ ]], glob **, backtick subst ([#232](https://github.com/everruns/bashkit/pull/232))
+* feat(date): add -R, -I flags and %N format ([#231](https://github.com/everruns/bashkit/pull/231))
+* fix(lexer): handle backslash-escaped metacharacters ([#230](https://github.com/everruns/bashkit/pull/230))
+* feat(grep): add --include/--exclude glob patterns ([#229](https://github.com/everruns/bashkit/pull/229))
+* feat(sort,uniq,cut,tr): add sort/uniq/cut/tr missing options ([#228](https://github.com/everruns/bashkit/pull/228))
+* feat(sed): grouped commands, branching, Q quit, step/zero addresses ([#227](https://github.com/everruns/bashkit/pull/227))
+* chore(deps): upgrade monty to latest main (87f8f31) ([#226](https://github.com/everruns/bashkit/pull/226))
+* fix(ci): repair nightly CI and add fuzz compile guard ([#225](https://github.com/everruns/bashkit/pull/225))
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.6...HEAD
+
 ## [0.1.6] - 2026-02-20
 
 ### Highlights

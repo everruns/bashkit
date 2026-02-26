@@ -184,15 +184,6 @@ Features that may be added in the future (not intentionally excluded):
 | Feature | Priority | Notes |
 |---------|----------|-------|
 | Coprocesses `coproc` | Low | Rarely used |
-| ~~Extended globs `@()` `!()` `?()` `*()` `+()`~~ | ~~Medium~~ | Implemented: all five extglob operators |
-| ~~Associative arrays `declare -A`~~ | ~~Medium~~ | Implemented: key-value access, iteration, unset, `${!m[@]}` |
-| ~~`[[ =~ ]]` regex matching~~ | ~~Medium~~ | Implemented: `[[ ]]` conditionals with `=~` and BASH_REMATCH |
-| ~~`getopts`~~ | ~~Medium~~ | Implemented: POSIX option parsing |
-| ~~`command` builtin~~ | ~~Medium~~ | Implemented: `-v`, `-V`, bypass functions |
-| ~~`type`/`which` builtins~~ | ~~Medium~~ | Implemented: `-t`, `-a`, `-p` flags |
-| ~~`declare` builtin~~ | ~~Medium~~ | Implemented: `-i`, `-r`, `-x`, `-a`, `-p`, `-n`, `-l`, `-u` |
-| ~~`ln` builtin~~ | ~~Medium~~ | Implemented: symbolic links (`-s`, `-f`) |
-| ~~Directory stack `pushd`/`popd`/`dirs`~~ | ~~Low-Medium~~ | Implemented: push, pop, swap, clear, display |
 | `alias` | Low | Interactive feature |
 | History expansion | Out of scope | Interactive only |
 
@@ -215,15 +206,16 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-**97 core builtins + 3 feature-gated = 100 total**
+**106 core builtins + 3 feature-gated = 109 total**
 
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,
 `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`,
-`basename`, `dirname`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `wc`,
+`basename`, `dirname`, `realpath`, `mkdir`, `mktemp`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `wc`,
 `sort`, `uniq`, `cut`, `tr`, `paste`, `column`, `diff`, `comm`, `date`,
 `wait`, `curl`, `wget`, `timeout`, `command`, `getopts`,
 `type`, `which`, `hash`, `declare`, `typeset`, `let`, `kill`, `shopt`,
+`trap`, `caller`, `seq`, `tac`, `rev`, `yes`, `expr`,
 `time` (keyword), `whoami`, `hostname`, `uname`, `id`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
 `:` (colon), `eval`, `readonly`, `times`, `bash`, `sh`,
 `od`, `xxd`, `hexdump`, `strings`,

@@ -43,23 +43,23 @@ async fn main() -> anyhow::Result<()> {
   </a>
 </div>
 
-## Built-in Commands (85)
+## Built-in Commands (100+)
 
 | Category | Commands |
 |----------|----------|
 | Core | `echo`, `printf`, `cat`, `nl`, `read` |
-| Navigation | `cd`, `pwd`, `ls`, `find` |
+| Navigation | `cd`, `pwd`, `ls`, `find`, `pushd`, `popd`, `dirs` |
 | Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[` |
-| Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times` |
-| Text processing | `grep`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings` |
-| File operations | `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `rmdir` |
+| Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times`, `declare`, `typeset`, `let` |
+| Shell | `bash`, `sh` (virtual re-invocation), `:`, `trap`, `caller`, `getopts`, `shopt` |
+| Text processing | `grep`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr` |
+| File operations | `mkdir`, `mktemp`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath` |
 | File inspection | `file`, `stat`, `less` |
 | Archives | `tar`, `gzip`, `gunzip` |
 | Byte tools | `od`, `xxd`, `hexdump` |
-| Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch` |
+| Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill` |
 | Disk | `df`, `du` |
 | Pipeline | `xargs`, `tee` |
-| Shell | `bash`, `sh` (virtual re-invocation), `:` |
 | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
 | Network | `curl`, `wget` (requires allowlist) |
 | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature) |

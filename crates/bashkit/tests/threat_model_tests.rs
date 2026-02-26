@@ -157,8 +157,9 @@ mod resource_exhaustion {
             .await;
         let elapsed = start.elapsed();
 
-        // Should complete quickly due to either timeout or loop limit
-        assert!(elapsed < Duration::from_secs(5));
+        // Should complete quickly due to either timeout or loop limit.
+        // Under ASan the overhead can be ~10x, so use a generous bound.
+        assert!(elapsed < Duration::from_secs(15));
     }
 }
 

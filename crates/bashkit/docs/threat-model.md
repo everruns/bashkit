@@ -32,7 +32,7 @@ through configurable limits.
 | Recursion (TM-DOS-020) | `f() { f; }; f` | `max_function_depth` | [`limits.rs`][limits] |
 | Parser depth (TM-DOS-022) | `(((((...))))))` nesting | `max_ast_depth` + hard cap (100) | [`parser/mod.rs`][parser] |
 | Command sub depth (TM-DOS-021) | `$($($($())))` nesting | Inherited depth/fuel from parent | [`parser/mod.rs`][parser] |
-| Arithmetic depth (TM-DOS-026) | `$(((((...))))))` | `MAX_ARITHMETIC_DEPTH` (200) | [`interpreter/mod.rs`][interp] |
+| Arithmetic depth (TM-DOS-026) | `$(((((...))))))` | `MAX_ARITHMETIC_DEPTH` (50) | [`interpreter/mod.rs`][interp] |
 | Parser attack (TM-DOS-024) | Malformed input | `parser_timeout` | [`limits.rs`][limits] |
 | Filesystem bomb (TM-DOS-007) | Zip bomb extraction | `FsLimits` | [`fs/limits.rs`][fslimits] |
 | Many files (TM-DOS-006) | Create 1M files | `max_file_count` | [`fs/limits.rs`][fslimits] |
@@ -308,7 +308,7 @@ attacks:
    This prevents attackers from bypassing depth limits through nested substitutions.
 
 4. **Arithmetic depth limit** (TM-DOS-026): The arithmetic evaluator (`$((expr))`)
-   has its own depth limit (`MAX_ARITHMETIC_DEPTH = 200`) to prevent stack overflow
+   has its own depth limit (`MAX_ARITHMETIC_DEPTH = 50`) to prevent stack overflow
    from deeply nested parenthesized expressions.
 
 5. **Parser fuel** (`max_parser_operations`, default 100K): Independent of depth,
