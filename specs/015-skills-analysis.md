@@ -511,13 +511,15 @@ baoyu-danger-gemini-web, inference-sh agentic-browser
 ### Missing bashkit builtins (would increase coverage)
 
 1. **`base64`** — encode/decode with `-d` flag. Used by microsoft-foundry
-   script for GUID encoding. Simple to add.
+   script for GUID encoding. Simple to add (base64 crate already a dependency
+   for curl auth).
 
 2. **`curl -F` multipart** — Used by vercel-deploy-claimable to upload
-   tarballs. Currently `curl` builtin may not support `-F` for multipart POST.
+   tarballs. Currently `curl` builtin does not support `-F` for multipart POST
+   (unknown flags silently ignored at curl.rs:158).
 
-3. **`sed -i`** — Used by web-artifacts-builder's `init-artifact.sh` for
-   in-place file editing. Bashkit `sed` support unclear.
+Note: `sed -i` was initially flagged as a gap but is **fully implemented**
+(sed.rs:216-217, 932-951) with all 75 spec tests passing.
 
 ### TypeScript gap
 
