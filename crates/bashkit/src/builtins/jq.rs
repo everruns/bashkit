@@ -213,10 +213,15 @@ impl Builtin for Jq {
                 // --argjson name value: bind $name to parsed JSON value
                 if i + 2 < ctx.args.len() {
                     let name = format!("${}", &ctx.args[i + 1]);
-                    let json_val: serde_json::Value = serde_json::from_str(&ctx.args[i + 2])
-                        .map_err(|e| {
-                            Error::Execution(format!("jq: invalid JSON for --argjson: {}", e))
-                        })?;
+                    let json_val: serde_json::Value = match serde_json::from_str(&ctx.args[i + 2]) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return Ok(ExecResult::err(
+                                format!("jq: invalid JSON for --argjson: {}\n", e),
+                                2,
+                            ));
+                        }
+                    };
                     var_bindings.push((name, json_val));
                     i += 3;
                     continue;
@@ -298,15 +303,19 @@ impl Builtin for Jq {
             path: (),
         };
 
-        let modules = loader.load(&arena, program).map_err(|errs| {
-            Error::Execution(format!(
-                "jq: parse error: {}",
-                errs.into_iter()
-                    .map(|e| format!("{:?}", e))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))
-        })?;
+        let modules = match loader.load(&arena, program) {
+            Ok(m) => m,
+            Err(errs) => {
+                let msg = format!(
+                    "jq: parse error: {}\n",
+                    errs.into_iter()
+                        .map(|e| format!("{:?}", e))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                return Ok(ExecResult::err(msg, 3));
+            }
+        };
 
         // Compile the filter, registering any --arg/--argjson variable names
         let var_names: Vec<&str> = var_bindings.iter().map(|(n, _)| n.as_str()).collect();
@@ -316,15 +325,19 @@ impl Builtin for Jq {
         } else {
             compiler.with_global_vars(var_names.iter().copied())
         };
-        let filter = compiler.compile(modules).map_err(|errs| {
-            Error::Execution(format!(
-                "jq: compile error: {}",
-                errs.into_iter()
-                    .map(|e| format!("{:?}", e))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))
-        })?;
+        let filter = match compiler.compile(modules) {
+            Ok(f) => f,
+            Err(errs) => {
+                let msg = format!(
+                    "jq: compile error: {}\n",
+                    errs.into_iter()
+                        .map(|e| format!("{:?}", e))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                return Ok(ExecResult::err(msg, 3));
+            }
+        };
 
         // Process input as JSON
         let mut output = String::new();
@@ -335,12 +348,16 @@ impl Builtin for Jq {
             vec![Val::from(serde_json::Value::Null)]
         } else if slurp {
             // -s flag: read all inputs into a single array
-            let vals = Self::parse_json_values(input)?;
-            vec![Val::from(serde_json::Value::Array(vals))]
+            match Self::parse_json_values(input) {
+                Ok(vals) => vec![Val::from(serde_json::Value::Array(vals))],
+                Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 5)),
+            }
         } else {
             // Parse all JSON values from input (handles multi-line and NDJSON)
-            let json_vals = Self::parse_json_values(input)?;
-            json_vals.into_iter().map(Val::from).collect()
+            match Self::parse_json_values(input) {
+                Ok(json_vals) => json_vals.into_iter().map(Val::from).collect(),
+                Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 5)),
+            }
         };
 
         // Expose bashkit's shell env/variables to the process environment so
@@ -368,8 +385,12 @@ impl Builtin for Jq {
         let shared_inputs = RcIter::new(inputs_to_process.into_iter().map(Ok::<Val, String>));
 
         for jaq_input in &shared_inputs {
-            let jaq_input: Val =
-                jaq_input.map_err(|e| Error::Execution(format!("jq: input error: {}", e)))?;
+            let jaq_input: Val = match jaq_input {
+                Ok(v) => v,
+                Err(e) => {
+                    return Ok(ExecResult::err(format!("jq: input error: {}\n", e), 5));
+                }
+            };
 
             // Run the filter, passing any --arg/--argjson variable values
             let var_vals: Vec<Val> = var_bindings
@@ -432,10 +453,10 @@ impl Builtin for Jq {
                                         }
                                     }
                                     Err(e) => {
-                                        return Err(Error::Execution(format!(
-                                            "jq: output error: {}",
-                                            e
-                                        )));
+                                        return Ok(ExecResult::err(
+                                            format!("jq: output error: {}\n", e),
+                                            5,
+                                        ));
                                     }
                                 }
                             }
@@ -447,10 +468,10 @@ impl Builtin for Jq {
                                     output.push('\n');
                                 }
                                 Err(e) => {
-                                    return Err(Error::Execution(format!(
-                                        "jq: output error: {}",
-                                        e
-                                    )));
+                                    return Ok(ExecResult::err(
+                                        format!("jq: output error: {}\n", e),
+                                        5,
+                                    ));
                                 }
                             }
                         } else if tab_indent {
@@ -472,16 +493,16 @@ impl Builtin for Jq {
                                     output.push('\n');
                                 }
                                 Err(e) => {
-                                    return Err(Error::Execution(format!(
-                                        "jq: output error: {}",
-                                        e
-                                    )));
+                                    return Ok(ExecResult::err(
+                                        format!("jq: output error: {}\n", e),
+                                        5,
+                                    ));
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        return Err(Error::Execution(format!("jq: runtime error: {:?}", e)));
+                        return Ok(ExecResult::err(format!("jq: runtime error: {:?}\n", e), 5));
                     }
                 }
             }
@@ -598,6 +619,52 @@ mod tests {
         Ok(result.stdout)
     }
 
+    async fn run_jq_result(filter: &str, input: &str) -> Result<ExecResult> {
+        let jq = Jq;
+        let fs = Arc::new(InMemoryFs::new());
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args = vec![filter.to_string()];
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: Some(input),
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        jq.execute(ctx).await
+    }
+
+    async fn run_jq_result_with_args(args: &[&str], input: &str) -> Result<ExecResult> {
+        let jq = Jq;
+        let fs = Arc::new(InMemoryFs::new());
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: Some(input),
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        jq.execute(ctx).await
+    }
+
     #[tokio::test]
     async fn test_jq_raw_output() {
         let result = run_jq_with_args(&["-r", ".name"], r#"{"name":"test"}"#)
@@ -658,15 +725,15 @@ mod tests {
         let close = "]".repeat(depth);
         let input = format!("{open}1{close}");
 
-        let result = run_jq(".", &input).await;
+        let result = run_jq_result(".", &input).await.unwrap();
         assert!(
-            result.is_err(),
+            result.exit_code != 0,
             "deeply nested JSON arrays must be rejected"
         );
-        let err = result.unwrap_err().to_string();
         assert!(
-            err.contains("nesting too deep") || err.contains("recursion limit"),
-            "error should mention nesting or recursion limit: {err}"
+            result.stderr.contains("nesting too deep") || result.stderr.contains("recursion limit"),
+            "error should mention nesting or recursion limit: {}",
+            result.stderr
         );
     }
 
@@ -680,15 +747,15 @@ mod tests {
             input = format!(r#"{{"a":{input}}}"#);
         }
 
-        let result = run_jq(".", &input).await;
+        let result = run_jq_result(".", &input).await.unwrap();
         assert!(
-            result.is_err(),
+            result.exit_code != 0,
             "deeply nested JSON objects must be rejected"
         );
-        let err = result.unwrap_err().to_string();
         assert!(
-            err.contains("nesting too deep") || err.contains("recursion limit"),
-            "error should mention nesting or recursion limit: {err}"
+            result.stderr.contains("nesting too deep") || result.stderr.contains("recursion limit"),
+            "error should mention nesting or recursion limit: {}",
+            result.stderr
         );
     }
 
@@ -962,22 +1029,38 @@ mod tests {
 
     #[tokio::test]
     async fn test_jq_invalid_json_input() {
-        let result = run_jq(".", "not valid json");
-        assert!(result.await.is_err(), "invalid JSON input should error");
+        let result = run_jq_result(".", "not valid json").await.unwrap();
+        assert!(
+            result.exit_code != 0,
+            "invalid JSON input should have non-zero exit"
+        );
+        assert!(
+            result.stderr.contains("jq:"),
+            "should have jq error in stderr"
+        );
     }
 
     #[tokio::test]
     async fn test_jq_invalid_filter_syntax() {
-        let result = run_jq(".[", r#"{"a":1}"#);
-        assert!(result.await.is_err(), "invalid filter should error");
+        let result = run_jq_result(".[", r#"{"a":1}"#).await.unwrap();
+        assert!(
+            result.exit_code != 0,
+            "invalid filter should have non-zero exit"
+        );
+        assert!(
+            result.stderr.contains("jq:"),
+            "should have jq error in stderr"
+        );
     }
 
     #[tokio::test]
     async fn test_jq_invalid_argjson_value() {
-        let result = run_jq_with_args(&["--argjson", "x", "not json", "-n", "$x"], "");
+        let result = run_jq_result_with_args(&["--argjson", "x", "not json", "-n", "$x"], "")
+            .await
+            .unwrap();
         assert!(
-            result.await.is_err(),
-            "invalid JSON for --argjson should error"
+            result.exit_code != 0,
+            "invalid JSON for --argjson should have non-zero exit"
         );
     }
 
