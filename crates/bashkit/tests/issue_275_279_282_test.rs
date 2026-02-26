@@ -1,5 +1,9 @@
 //! Regression tests verifying issues #275, #279, #282 are not reproducible.
 //!
+//! - Issue #275: Parser corrupts `\(` in single-quoted strings — works correctly
+//! - Issue #279: `done` cannot be used as a case pattern — works correctly
+//! - Issue #282: `find -type f` doesn't enumerate VFS files — works correctly
+//!
 //! These issues were reported but code review and testing confirm
 //! they work correctly in the current implementation.
 
