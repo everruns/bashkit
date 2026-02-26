@@ -3087,8 +3087,15 @@ impl Interpreter {
                 .collect();
             let prev_funcname = self.arrays.insert("FUNCNAME".to_string(), funcname_arr);
 
+            // Forward pipeline stdin to function body
+            let prev_pipeline_stdin = self.pipeline_stdin.take();
+            self.pipeline_stdin = stdin;
+
             // Execute function body
             let mut result = self.execute_command(&func_def.body).await?;
+
+            // Restore previous pipeline stdin
+            self.pipeline_stdin = prev_pipeline_stdin;
 
             // Pop call frame and function counter
             self.call_stack.pop();
