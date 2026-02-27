@@ -5288,9 +5288,45 @@ impl Interpreter {
             }
         }
 
-        // For other words, expand to a single field
+        // For other words, expand to a single field then apply IFS word splitting
+        // when the word is unquoted and contains a command substitution.
+        // Per POSIX, unquoted $() results undergo field splitting on IFS.
         let expanded = self.expand_word(word).await?;
-        Ok(vec![expanded])
+
+        let has_command_subst = !word.quoted
+            && word
+                .parts
+                .iter()
+                .any(|p| matches!(p, WordPart::CommandSubstitution(_)));
+
+        if has_command_subst {
+            // Split on IFS characters (default: space, tab, newline).
+            // Consecutive IFS-whitespace characters are collapsed (no empty fields).
+            let ifs = self
+                .variables
+                .get("IFS")
+                .cloned()
+                .unwrap_or_else(|| " \t\n".to_string());
+
+            if ifs.is_empty() {
+                // Empty IFS: no splitting
+                return Ok(vec![expanded]);
+            }
+
+            let fields: Vec<String> = expanded
+                .split(|c: char| ifs.contains(c))
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect();
+
+            if fields.is_empty() {
+                // All-whitespace expansion produces zero fields (elision)
+                return Ok(Vec::new());
+            }
+            Ok(fields)
+        } else {
+            Ok(vec![expanded])
+        }
     }
 
     /// Apply parameter expansion operator
