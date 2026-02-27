@@ -259,6 +259,9 @@ impl Interpreter {
         builtins.insert("xxd".to_string(), Box::new(builtins::Xxd));
         builtins.insert("hexdump".to_string(), Box::new(builtins::Hexdump));
         builtins.insert("base64".to_string(), Box::new(builtins::Base64));
+        builtins.insert("md5sum".to_string(), Box::new(builtins::Md5sum));
+        builtins.insert("sha1sum".to_string(), Box::new(builtins::Sha1sum));
+        builtins.insert("sha256sum".to_string(), Box::new(builtins::Sha256sum));
         builtins.insert("seq".to_string(), Box::new(builtins::Seq));
         builtins.insert("tac".to_string(), Box::new(builtins::Tac));
         builtins.insert("rev".to_string(), Box::new(builtins::Rev));
