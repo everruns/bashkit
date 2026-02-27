@@ -141,8 +141,7 @@ Moniker defaults to `{provider}-{model}`, overridable via `--moniker`.
 | json_processing | JSON querying, transformation, merging | Nested JSON, NDJSON, config files |
 | complex_tasks | Multi-step real-world scenarios | Various |
 | code_search | Recursive grep, find+replace across codebases | Project source files |
-| variable_expansion | Parameter defaults, string manipulation operators | None |
-| environment | Source, export, env propagation | Config files |
+| environment | Source, export, env defaults, config propagation | Config files |
 
 ## Results & Analysis
 
