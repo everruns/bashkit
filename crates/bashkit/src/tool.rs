@@ -671,6 +671,7 @@ fn error_kind(e: &Error) -> String {
         Error::CommandNotFound(_) => "command_not_found".to_string(),
         Error::ResourceLimit(_) => "resource_limit".to_string(),
         Error::Network(_) => "network_error".to_string(),
+        Error::Regex(_) => "regex_error".to_string(),
         Error::Internal(_) => "internal_error".to_string(),
     }
 }

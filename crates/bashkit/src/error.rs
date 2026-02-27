@@ -49,6 +49,10 @@ pub enum Error {
     #[error("network error: {0}")]
     Network(String),
 
+    /// Regex compilation or matching error.
+    #[error("regex error: {0}")]
+    Regex(#[from] regex::Error),
+
     /// Internal error for unexpected failures.
     ///
     /// THREAT[TM-INT-002]: Unexpected internal failures should not crash the interpreter.
