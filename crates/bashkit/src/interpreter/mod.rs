@@ -1462,9 +1462,18 @@ impl Interpreter {
             self.counters.tick_loop(&self.limits)?;
 
             // Check condition (no errexit - conditions are expected to fail)
+            let emit_before_cond = self.output_emit_count;
             let condition_result = self
                 .execute_condition_sequence(&while_cmd.condition)
                 .await?;
+            // Condition commands produce visible output (e.g., `while cat <<EOF; do ... done`)
+            self.maybe_emit_output(
+                &condition_result.stdout,
+                &condition_result.stderr,
+                emit_before_cond,
+            );
+            stdout.push_str(&condition_result.stdout);
+            stderr.push_str(&condition_result.stderr);
             if condition_result.exit_code != 0 {
                 break;
             }
@@ -1547,9 +1556,18 @@ impl Interpreter {
             self.counters.tick_loop(&self.limits)?;
 
             // Check condition (no errexit - conditions are expected to fail)
+            let emit_before_cond = self.output_emit_count;
             let condition_result = self
                 .execute_condition_sequence(&until_cmd.condition)
                 .await?;
+            // Condition commands produce visible output
+            self.maybe_emit_output(
+                &condition_result.stdout,
+                &condition_result.stderr,
+                emit_before_cond,
+            );
+            stdout.push_str(&condition_result.stdout);
+            stderr.push_str(&condition_result.stderr);
             if condition_result.exit_code == 0 {
                 break;
             }

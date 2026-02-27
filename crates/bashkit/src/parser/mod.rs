@@ -466,7 +466,9 @@ impl<'a> Parser<'a> {
                         kind,
                         target,
                     });
-                    break; // heredoc consumes rest of input line
+                    // Rest-of-line tokens re-injected by lexer; break so callers
+                    // can see pipes/semicolons.
+                    break;
                 }
                 _ => break,
             }
@@ -1769,10 +1771,9 @@ impl<'a> Parser<'a> {
                     // Don't advance - let read_heredoc consume directly from lexer position
 
                     // Read the here document content (reads until delimiter line).
-                    // Also captures rest-of-line text (e.g. `> file` in
-                    // `cat <<EOF > file`) into lexer.heredoc_rest_of_line.
+                    // Rest-of-line tokens (redirects, pipes, etc.) are re-injected
+                    // into the lexer buffer by read_heredoc.
                     let content = self.lexer.read_heredoc(&delimiter);
-                    let rest_of_line = std::mem::take(&mut self.lexer.heredoc_rest_of_line);
 
                     // Strip leading tabs for <<-
                     let content = if strip_tabs {
@@ -1810,56 +1811,49 @@ impl<'a> Parser<'a> {
                         target,
                     });
 
-                    // Parse rest-of-line for additional redirects
-                    // (e.g. `> file` in `cat <<EOF > file`).
-                    // We parse tokens directly instead of using parse_simple_command
-                    // because that method returns None for redirect-only input
-                    // (no command word), dropping the redirects we need.
-                    if !rest_of_line.trim().is_empty() {
-                        let mut sub = Parser::new(&rest_of_line);
-                        loop {
-                            match &sub.current_token {
-                                Some(tokens::Token::RedirectOut) => {
-                                    sub.advance();
-                                    if let Ok(target) = sub.expect_word() {
-                                        redirects.push(Redirect {
-                                            fd: None,
-                                            kind: RedirectKind::Output,
-                                            target,
-                                        });
-                                    }
-                                }
-                                Some(tokens::Token::RedirectAppend) => {
-                                    sub.advance();
-                                    if let Ok(target) = sub.expect_word() {
-                                        redirects.push(Redirect {
-                                            fd: None,
-                                            kind: RedirectKind::Append,
-                                            target,
-                                        });
-                                    }
-                                }
-                                Some(tokens::Token::RedirectFd(fd)) => {
-                                    let fd = *fd;
-                                    sub.advance();
-                                    if let Ok(target) = sub.expect_word() {
-                                        redirects.push(Redirect {
-                                            fd: Some(fd),
-                                            kind: RedirectKind::Output,
-                                            target,
-                                        });
-                                    }
-                                }
-                                _ => break,
-                            }
-                        }
-                    }
-
-                    // Now advance past the heredoc body
+                    // Advance the parser token so it picks up re-injected
+                    // rest-of-line tokens (|, ;, &&, > file) from the lexer.
                     self.advance();
 
-                    // Heredoc body consumed subsequent lines from input.
-                    // Stop parsing this command - next tokens belong to new commands.
+                    // If re-injected tokens include redirects (e.g. `> file`
+                    // in `cat <<EOF > file`), consume them here before breaking
+                    // out to pipeline/list parsers.
+                    while let Some(tok) = &self.current_token {
+                        match tok {
+                            tokens::Token::RedirectOut => {
+                                self.advance();
+                                if let Ok(target) = self.expect_word() {
+                                    redirects.push(Redirect {
+                                        fd: None,
+                                        kind: RedirectKind::Output,
+                                        target,
+                                    });
+                                }
+                            }
+                            tokens::Token::RedirectAppend => {
+                                self.advance();
+                                if let Ok(target) = self.expect_word() {
+                                    redirects.push(Redirect {
+                                        fd: None,
+                                        kind: RedirectKind::Append,
+                                        target,
+                                    });
+                                }
+                            }
+                            tokens::Token::RedirectFd(fd) => {
+                                let fd = *fd;
+                                self.advance();
+                                if let Ok(target) = self.expect_word() {
+                                    redirects.push(Redirect {
+                                        fd: Some(fd),
+                                        kind: RedirectKind::Output,
+                                        target,
+                                    });
+                                }
+                            }
+                            _ => break,
+                        }
+                    }
                     break;
                 }
                 Some(tokens::Token::ProcessSubIn) | Some(tokens::Token::ProcessSubOut) => {
@@ -2787,5 +2781,36 @@ mod tests {
         let script = parser.parse().unwrap();
 
         assert!(matches!(&script.commands[0], Command::List(_)));
+    }
+
+    #[test]
+    fn test_heredoc_pipe() {
+        let parser = Parser::new("cat <<EOF | sort\nc\na\nb\nEOF\n");
+        let script = parser.parse().unwrap();
+        assert!(
+            matches!(&script.commands[0], Command::Pipeline(_)),
+            "heredoc with pipe should parse as Pipeline"
+        );
+    }
+
+    #[test]
+    fn test_heredoc_multiple_on_line() {
+        let input = "while cat <<E1 && cat <<E2; do cat <<E3; break; done\n1\nE1\n2\nE2\n3\nE3\n";
+        let parser = Parser::new(input);
+        let script = parser.parse().unwrap();
+        assert_eq!(script.commands.len(), 1);
+        if let Command::Compound(comp, _) = &script.commands[0] {
+            if let CompoundCommand::While(w) = comp {
+                assert!(
+                    !w.condition.is_empty(),
+                    "while condition should be non-empty"
+                );
+                assert!(!w.body.is_empty(), "while body should be non-empty");
+            } else {
+                panic!("expected While compound command");
+            }
+        } else {
+            panic!("expected Compound command");
+        }
     }
 }

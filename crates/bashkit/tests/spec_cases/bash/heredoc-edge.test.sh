@@ -28,7 +28,6 @@ $var $(echo nope) $((1+2))
 
 ### heredoc_partial_quote_delimiter
 # Partial quote in delimiter still prevents expansion
-### skip: TODO partial quoting in heredoc delimiter not implemented
 cat <<'EOF'"2"
 one
 two
@@ -40,7 +39,6 @@ two
 
 ### heredoc_pipe_first_line
 # Here doc with pipe on first line
-### skip: TODO heredoc piped to sort - pipe ordering issue
 cat <<EOF | sort
 c
 a
@@ -54,7 +52,6 @@ c
 
 ### heredoc_pipe_last_line
 # Here doc with pipe continued on last line
-### skip: TODO heredoc pipe continuation - pipe ordering issue
 cat <<EOF |
 c
 a
@@ -94,7 +91,6 @@ X 3
 
 ### heredoc_in_while_condition
 # Here doc in while condition and body
-### skip: TODO multiple heredocs in while condition not parsed
 while cat <<E1 && cat <<E2; do cat <<E3; break; done
 1
 E1
@@ -110,7 +106,6 @@ E3
 
 ### heredoc_multiline_condition
 # Here doc in while condition on multiple lines
-### skip: TODO multiple heredocs in while condition not parsed
 while cat <<E1 && cat <<E2
 1
 E1
@@ -130,7 +125,6 @@ done
 
 ### heredoc_with_multiline_dquote
 # Here doc with multiline double quoted string
-### skip: TODO heredoc followed by multiline dquote on same line not parsed correctly
 cat <<EOF; echo "two
 three"
 one
