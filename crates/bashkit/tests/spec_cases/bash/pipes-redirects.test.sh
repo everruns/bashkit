@@ -127,6 +127,7 @@ exit: 1
 # Redirect stderr content to file and verify it
 sleep abc 2>/tmp/sleep_err.txt
 cat /tmp/sleep_err.txt
+### bash_diff: bashkit sleep error lacks --help hint from coreutils
 ### expect
 sleep: invalid time interval 'abc'
 ### end
@@ -159,6 +160,7 @@ done
 ### redirect_stderr_append_content
 # Append stderr from multiple commands
 sleep abc 2>/tmp/err_multi.txt; sleep xyz 2>>/tmp/err_multi.txt; cat /tmp/err_multi.txt
+### bash_diff: bashkit sleep error lacks --help hint from coreutils
 ### expect
 sleep: invalid time interval 'abc'
 sleep: invalid time interval 'xyz'
