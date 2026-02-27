@@ -1,15 +1,17 @@
 // Provider abstraction for LLM APIs
-// Normalizes Anthropic Messages API and OpenAI Chat Completions API
-// into common Message/ContentBlock types for the agent loop
+// Normalizes Anthropic Messages API, OpenAI Chat Completions API,
+// and OpenAI Responses API into common Message/ContentBlock types for the agent loop
 
 pub mod anthropic;
 pub mod openai;
+pub mod openai_responses;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 pub use anthropic::AnthropicProvider;
 pub use openai::OpenAiProvider;
+pub use openai_responses::OpenAiResponsesProvider;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -77,8 +79,9 @@ pub fn create_provider(provider_name: &str, model: &str) -> anyhow::Result<Box<d
     match provider_name {
         "anthropic" => Ok(Box::new(AnthropicProvider::new(model)?)),
         "openai" => Ok(Box::new(OpenAiProvider::new(model)?)),
+        "openresponses" => Ok(Box::new(OpenAiResponsesProvider::new(model)?)),
         _ => anyhow::bail!(
-            "unknown provider: '{}'. Use 'anthropic' or 'openai'",
+            "unknown provider: '{}'. Use 'anthropic', 'openai', or 'openresponses'",
             provider_name
         ),
     }
