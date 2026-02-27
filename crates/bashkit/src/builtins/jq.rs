@@ -22,6 +22,32 @@ use crate::interpreter::ExecResult;
 /// produce deeply nested parse trees in jaq.
 const MAX_JQ_JSON_DEPTH: usize = 100;
 
+/// Custom jq definitions prepended to every filter to patch jaq limitations:
+/// - `setpath(p; v)`: recursive path-setting (not in jaq stdlib)
+/// - `leaf_paths`: paths to scalar leaves (not in jaq stdlib)
+/// - `match` override: adds `"name":null` to unnamed captures
+/// - `scan` override: uses "g" flag for global matching (jq default)
+const JQ_COMPAT_DEFS: &str = r#"
+def setpath(p; v):
+  if (p | length) == 0 then v
+  else p[0] as $k |
+    (if . == null then
+      if ($k | type) == "number" then [] else {} end
+    else . end) |
+    .[$k] |= setpath(p[1:]; v)
+  end;
+def leaf_paths: paths(scalars);
+def match(re; flags):
+  matches(re; flags)[] |
+  .[0] as $m |
+  { offset: $m.offset, length: $m.length, string: $m.string,
+    captures: [.[1:][] | { offset: .offset, length: .length, string: .string,
+    name: (if has("name") then .name else null end) }] };
+def match(re): match(re; "");
+def scan(re; flags): matches(re; "g" + flags)[] | .[0].string;
+def scan(re): scan(re; "");
+"#;
+
 /// RAII guard that restores process env vars when dropped.
 /// Ensures cleanup even on early-return error paths.
 struct EnvRestoreGuard(Vec<(String, Option<String>)>);
@@ -296,6 +322,11 @@ impl Builtin for Jq {
         // Set up the loader with standard library definitions
         let loader = load::Loader::new(jaq_std::defs().chain(jaq_json::defs()));
         let arena = load::Arena::default();
+
+        // Prepend compatibility definitions (setpath, leaf_paths, match, scan)
+        // to override jaq's defaults with jq-compatible behavior.
+        let compat_filter = format!("{}{}", JQ_COMPAT_DEFS, filter);
+        let filter = compat_filter.as_str();
 
         // Parse the filter
         let program = load::File {
