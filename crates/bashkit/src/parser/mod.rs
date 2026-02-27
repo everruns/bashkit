@@ -1768,15 +1768,18 @@ impl<'a> Parser<'a> {
                     };
                     // Don't advance - let read_heredoc consume directly from lexer position
 
-                    // Read the here document content (reads until delimiter line)
+                    // Read the here document content (reads until delimiter line).
+                    // Also captures rest-of-line text (e.g. `> file` in
+                    // `cat <<EOF > file`) into lexer.heredoc_rest_of_line.
                     let content = self.lexer.read_heredoc(&delimiter);
+                    let rest_of_line = std::mem::take(&mut self.lexer.heredoc_rest_of_line);
 
                     // Strip leading tabs for <<-
                     let content = if strip_tabs {
                         let had_trailing_newline = content.ends_with('\n');
                         let mut stripped: String = content
                             .lines()
-                            .map(|l| l.trim_start_matches('\t'))
+                            .map(|l: &str| l.trim_start_matches('\t'))
                             .collect::<Vec<_>>()
                             .join("\n");
                         if had_trailing_newline {
@@ -1786,9 +1789,6 @@ impl<'a> Parser<'a> {
                     } else {
                         content
                     };
-
-                    // Now advance to get the next token after the heredoc
-                    self.advance();
 
                     // If delimiter was quoted, content is literal (no expansion)
                     // Otherwise, parse for variable expansion
@@ -1809,6 +1809,54 @@ impl<'a> Parser<'a> {
                         kind,
                         target,
                     });
+
+                    // Parse rest-of-line for additional redirects
+                    // (e.g. `> file` in `cat <<EOF > file`).
+                    // We parse tokens directly instead of using parse_simple_command
+                    // because that method returns None for redirect-only input
+                    // (no command word), dropping the redirects we need.
+                    if !rest_of_line.trim().is_empty() {
+                        let mut sub = Parser::new(&rest_of_line);
+                        loop {
+                            match &sub.current_token {
+                                Some(tokens::Token::RedirectOut) => {
+                                    sub.advance();
+                                    if let Ok(target) = sub.expect_word() {
+                                        redirects.push(Redirect {
+                                            fd: None,
+                                            kind: RedirectKind::Output,
+                                            target,
+                                        });
+                                    }
+                                }
+                                Some(tokens::Token::RedirectAppend) => {
+                                    sub.advance();
+                                    if let Ok(target) = sub.expect_word() {
+                                        redirects.push(Redirect {
+                                            fd: None,
+                                            kind: RedirectKind::Append,
+                                            target,
+                                        });
+                                    }
+                                }
+                                Some(tokens::Token::RedirectFd(fd)) => {
+                                    let fd = *fd;
+                                    sub.advance();
+                                    if let Ok(target) = sub.expect_word() {
+                                        redirects.push(Redirect {
+                                            fd: Some(fd),
+                                            kind: RedirectKind::Output,
+                                            target,
+                                        });
+                                    }
+                                }
+                                _ => break,
+                            }
+                        }
+                    }
+
+                    // Now advance past the heredoc body
+                    self.advance();
 
                     // Heredoc body consumed subsequent lines from input.
                     // Stop parsing this command - next tokens belong to new commands.
