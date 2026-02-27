@@ -131,15 +131,17 @@ Moniker defaults to `{provider}-{model}`, overridable via `--moniker`.
 | Category | Tests | Pre-populated files |
 |----------|-------|-------------------|
 | file_operations | Create, copy, move, delete, find | Some tasks have seed files |
-| text_processing | grep, sed, awk on data | Log files, CSV, config files |
-| pipelines | Multi-stage pipes, command substitution | Text files |
-| scripting | Variables, arrays, loops, functions | None |
-| data_transformation | CSV↔JSON, log parsing | CSV, JSON, log files |
+| text_processing | grep, sed, awk, heredoc, comm | Log files, CSV, config files |
+| pipelines | Multi-stage pipes, process substitution, xargs, tee | Text files, log files |
+| scripting | Variables, arrays, loops, functions, trap, getopts, assoc arrays | Some tasks have seed files |
+| data_transformation | CSV↔JSON, log parsing, regex extraction | CSV, JSON, log files |
 | error_recovery | Handle missing files, bad input | Broken files |
 | system_info | whoami, date, env queries | None |
 | archive_operations | tar, gzip workflows | Project files |
 | json_processing | JSON querying, transformation, merging | Nested JSON, NDJSON, config files |
 | complex_tasks | Multi-step real-world scenarios | Various |
+| code_search | Recursive grep, find+replace across codebases | Project source files |
+| environment | Source, export, env defaults, config propagation | Config files |
 
 ## Results & Analysis
 
