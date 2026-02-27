@@ -57,6 +57,11 @@ flate2 = { workspace = true }
 # Base64 encoding (for base64 builtin and HTTP basic auth)
 base64 = { workspace = true }
 
+# Checksums (for md5sum, sha1sum, sha256sum builtins)
+md-5 = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+
 # Logging/tracing (optional)
 tracing = { workspace = true, optional = true }
 

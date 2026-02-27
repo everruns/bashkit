@@ -58,6 +58,11 @@ flate2 = "1"
 # Base64 encoding
 base64 = "0.22"
 
+# Checksums (md5sum, sha256sum, etc.)
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 

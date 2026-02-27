@@ -118,6 +118,10 @@ criteria = "safe-to-run"
 version = "2.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.block-buffer]]
+version = "0.10.4"
+criteria = "safe-to-deploy"
+
 [[exemptions.bstr]]
 version = "1.12.1"
 criteria = "safe-to-deploy"
@@ -246,6 +250,10 @@ criteria = "safe-to-deploy"
 version = "0.8.7"
 criteria = "safe-to-deploy"
 
+[[exemptions.cpufeatures]]
+version = "0.2.17"
+criteria = "safe-to-deploy"
+
 [[exemptions.crc32fast]]
 version = "1.5.0"
 criteria = "safe-to-deploy"
@@ -278,6 +286,10 @@ criteria = "safe-to-run"
 version = "0.2.4"
 criteria = "safe-to-run"
 
+[[exemptions.crypto-common]]
+version = "0.1.7"
+criteria = "safe-to-deploy"
+
 [[exemptions.derive-where]]
 version = "1.6.0"
 criteria = "safe-to-deploy"
@@ -285,6 +297,10 @@ criteria = "safe-to-deploy"
 [[exemptions.diff]]
 version = "0.1.13"
 criteria = "safe-to-run"
+
+[[exemptions.digest]]
+version = "0.10.7"
+criteria = "safe-to-deploy"
 
 [[exemptions.displaydoc]]
 version = "0.2.5"
@@ -396,6 +412,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.futures-util]]
 version = "0.3.32"
+criteria = "safe-to-deploy"
+
+[[exemptions.generic-array]]
+version = "0.14.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.get-size-derive2]]
@@ -656,6 +676,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.matrixmultiply]]
 version = "0.3.10"
+criteria = "safe-to-deploy"
+
+[[exemptions.md-5]]
+version = "0.10.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.memchr]]
@@ -1089,6 +1113,14 @@ criteria = "safe-to-run"
 [[exemptions.serial_test_derive]]
 version = "3.4.0"
 criteria = "safe-to-run"
+
+[[exemptions.sha1]]
+version = "0.10.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.sha2]]
+version = "0.10.9"
+criteria = "safe-to-deploy"
 
 [[exemptions.shlex]]
 version = "1.3.0"
