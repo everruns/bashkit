@@ -20,11 +20,11 @@ enum Commands {
         #[arg(long)]
         dataset: String,
 
-        /// Provider: "anthropic" or "openai"
+        /// Provider: "anthropic", "openai", or "openai-responses"
         #[arg(long)]
         provider: String,
 
-        /// Model name (e.g., "claude-sonnet-4-20250514", "gpt-4o")
+        /// Model name (e.g., "claude-sonnet-4-20250514", "gpt-4o", "gpt-5.3-codex")
         #[arg(long)]
         model: String,
 

@@ -24,7 +24,7 @@ JSONL Dataset → Runner → Agent Loop (per task) → Scorer → Report
 
 4. **VFS inspection for scoring** — `bash.fs()` returns `Arc<dyn FileSystem>` with `exists()`, `read_file()`, `stat()`. Scorer checks file state after agent loop.
 
-5. **Provider abstraction** — Common `Message`/`ContentBlock` types normalize Anthropic Messages API and OpenAI Chat Completions API differences. Agent loop is provider-agnostic.
+5. **Provider abstraction** — Common `Message`/`ContentBlock` types normalize Anthropic Messages API, OpenAI Chat Completions API, and OpenAI Responses API differences. Agent loop is provider-agnostic.
 
 6. **Sequential execution** — No concurrency. One task at a time. Simple.
 
@@ -85,12 +85,20 @@ Fields:
 - Auth: `OPENAI_API_KEY` env var
 - Tool format: `tool_calls` array + `role: "tool"` messages
 
+### OpenAI Responses API
+- Endpoint: `https://api.openai.com/v1/responses`
+- Auth: `OPENAI_API_KEY` env var
+- Tool format: `function_call` / `function_call_output` input items
+- Required for codex models (e.g., `gpt-5.3-codex`)
+- Multi-turn via manual input chaining (appends response output + tool results to next input)
+- Sets `reasoning.effort: "high"` for codex models automatically
+
 ## CLI
 
 ```
 bashkit-eval run \
   --dataset <path.jsonl> \
-  --provider <anthropic|openai> \
+  --provider <anthropic|openai|openai-responses> \
   --model <model-name> \
   [--max-turns 10] \
   [--save] \
