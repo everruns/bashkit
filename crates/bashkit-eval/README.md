@@ -40,7 +40,7 @@ just eval-save
 
 ## Dataset
 
-37 hand-curated tasks in JSONL format across 10 categories: file_operations, text_processing, pipelines, scripting, data_transformation, error_recovery, system_info, archive_operations, json_processing, complex_tasks.
+52 hand-curated tasks in JSONL format across 13 categories: file_operations, text_processing, pipelines, scripting, data_transformation, error_recovery, system_info, archive_operations, json_processing, complex_tasks, code_search, variable_expansion, environment.
 
 Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 
