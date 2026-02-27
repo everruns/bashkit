@@ -39,7 +39,6 @@ original
 
 ### subshell_function_isolation
 # Functions defined in subshell don't leak
-### skip: TODO function definitions in subshell leak to parent scope
 ( f() { echo inside; }; f )
 f 2>/dev/null
 echo status=$?
@@ -73,7 +72,6 @@ world
 
 ### subshell_cd_isolation
 # cd in subshell doesn't affect parent
-### skip: TODO cd in subshell leaks to parent (VFS model)
 original=$(pwd)
 ( cd / )
 test "$(pwd)" = "$original" && echo isolated
@@ -83,7 +81,6 @@ isolated
 
 ### subshell_traps_isolated
 # Traps in subshell don't leak to parent
-### skip: TODO trap in subshell not isolated
 trap 'echo parent' EXIT
 ( trap 'echo child' EXIT )
 trap - EXIT
@@ -125,7 +122,6 @@ third
 
 ### subshell_preserves_positional
 # Positional params in subshell don't leak
-### skip: TODO positional params in subshell leak to parent
 set -- a b c
 ( set -- x y; echo "$@" )
 echo "$@"
