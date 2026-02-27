@@ -78,6 +78,14 @@ impl WcFlags {
             max_line_length,
         }
     }
+
+    /// Number of active count fields
+    fn active_count(&self) -> usize {
+        [self.lines, self.words, self.bytes, self.chars, self.max_line_length]
+            .iter()
+            .filter(|&&b| b)
+            .count()
+    }
 }
 
 #[async_trait]
@@ -102,7 +110,9 @@ impl Builtin for Wc {
             // Read from stdin
             if let Some(stdin) = ctx.stdin {
                 let counts = count_text(stdin);
-                output.push_str(&format_counts(&counts, &flags, None));
+                // Real bash: no padding for single-value stdin, padded for multiple values
+                let padded = flags.active_count() > 1;
+                output.push_str(&format_counts(&counts, &flags, None, padded));
                 output.push('\n');
             }
         } else {
@@ -127,7 +137,7 @@ impl Builtin for Wc {
                             total_max_line = counts.max_line_length;
                         }
 
-                        output.push_str(&format_counts(&counts, &flags, Some(file)));
+                        output.push_str(&format_counts(&counts, &flags, Some(file), true));
                         output.push('\n');
                     }
                     Err(e) => {
@@ -145,7 +155,7 @@ impl Builtin for Wc {
                     chars: total_chars,
                     max_line_length: total_max_line,
                 };
-                output.push_str(&format_counts(&totals, &flags, Some(&"total".to_string())));
+                output.push_str(&format_counts(&totals, &flags, Some(&"total".to_string()), true));
                 output.push('\n');
             }
         }
@@ -178,32 +188,47 @@ fn count_text(text: &str) -> TextCounts {
     }
 }
 
-/// Format counts for output
-fn format_counts(counts: &TextCounts, flags: &WcFlags, filename: Option<&String>) -> String {
-    let mut parts = Vec::new();
+/// Format counts for output.
+/// When `padded` is true, right-align numbers in 8-char fields (used for file output).
+/// When `padded` is false, use minimal formatting like real bash stdin output.
+fn format_counts(
+    counts: &TextCounts,
+    flags: &WcFlags,
+    filename: Option<&String>,
+    padded: bool,
+) -> String {
+    let mut values: Vec<usize> = Vec::new();
 
     if flags.lines {
-        parts.push(format!("{:>8}", counts.lines));
+        values.push(counts.lines);
     }
     if flags.words {
-        parts.push(format!("{:>8}", counts.words));
+        values.push(counts.words);
     }
     if flags.bytes {
-        parts.push(format!("{:>8}", counts.bytes));
+        values.push(counts.bytes);
     }
     if flags.chars {
-        parts.push(format!("{:>8}", counts.chars));
+        values.push(counts.chars);
     }
     if flags.max_line_length {
-        parts.push(format!("{:>8}", counts.max_line_length));
+        values.push(counts.max_line_length);
     }
 
-    let mut result = parts.join("");
+    let result = if padded {
+        // Real bash uses 7-char wide fields separated by a space
+        let parts: Vec<String> = values.iter().map(|v| format!("{:>7}", v)).collect();
+        parts.join(" ")
+    } else {
+        let parts: Vec<String> = values.iter().map(|v| v.to_string()).collect();
+        parts.join(" ")
+    };
+
     if let Some(name) = filename {
-        result.push(' ');
-        result.push_str(name);
+        format!("{} {}", result, name)
+    } else {
+        result
     }
-    result
 }
 
 #[cfg(test)]
