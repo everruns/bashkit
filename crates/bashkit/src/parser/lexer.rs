@@ -2,6 +2,8 @@
 //!
 //! Tokenizes input into a stream of tokens with source position tracking.
 
+use std::collections::VecDeque;
+
 use super::span::{Position, Span};
 use super::tokens::Token;
 
@@ -19,9 +21,9 @@ pub struct Lexer<'a> {
     /// Current position in the input
     position: Position,
     chars: std::iter::Peekable<std::str::Chars<'a>>,
-    /// Rest-of-line text captured during heredoc parsing.
-    /// In `cat <<EOF > file`, this holds ` > file`.
-    pub heredoc_rest_of_line: String,
+    /// Buffer for re-injected characters (e.g., rest-of-line after heredoc delimiter).
+    /// Consumed before `chars`.
+    reinject_buf: VecDeque<char>,
 }
 
 impl<'a> Lexer<'a> {
@@ -31,7 +33,7 @@ impl<'a> Lexer<'a> {
             input,
             position: Position::new(),
             chars: input.chars().peekable(),
-            heredoc_rest_of_line: String::new(),
+            reinject_buf: VecDeque::new(),
         }
     }
 
@@ -47,11 +49,19 @@ impl<'a> Lexer<'a> {
     }
 
     fn peek_char(&mut self) -> Option<char> {
-        self.chars.peek().copied()
+        if let Some(&ch) = self.reinject_buf.front() {
+            Some(ch)
+        } else {
+            self.chars.peek().copied()
+        }
     }
 
     fn advance(&mut self) -> Option<char> {
-        let ch = self.chars.next();
+        let ch = if !self.reinject_buf.is_empty() {
+            self.reinject_buf.pop_front()
+        } else {
+            self.chars.next()
+        };
         if let Some(c) = ch {
             self.position.advance(c);
         }
@@ -708,8 +718,65 @@ impl<'a> Lexer<'a> {
             self.advance();
         }
 
+        // If next char is another quote or word char, concatenate (e.g., 'EOF'"2" -> EOF2).
+        // Any quoting makes the whole token literal.
+        self.read_continuation_into(&mut content);
+
         // Single-quoted strings are literal - no variable expansion
         Some(Token::LiteralWord(content))
+    }
+
+    /// After a closing quote, read any adjacent quoted or unquoted word chars
+    /// into `content`.  Handles concatenation like `'foo'"bar"baz` -> `foobarbaz`.
+    fn read_continuation_into(&mut self, content: &mut String) {
+        loop {
+            match self.peek_char() {
+                Some('\'') => {
+                    self.advance(); // opening '
+                    while let Some(ch) = self.peek_char() {
+                        if ch == '\'' {
+                            self.advance(); // closing '
+                            break;
+                        }
+                        content.push(ch);
+                        self.advance();
+                    }
+                }
+                Some('"') => {
+                    self.advance(); // opening "
+                    while let Some(ch) = self.peek_char() {
+                        if ch == '"' {
+                            self.advance(); // closing "
+                            break;
+                        }
+                        if ch == '\\' {
+                            self.advance();
+                            if let Some(next) = self.peek_char() {
+                                match next {
+                                    '"' | '\\' | '$' | '`' => {
+                                        content.push(next);
+                                        self.advance();
+                                    }
+                                    _ => {
+                                        content.push('\\');
+                                        content.push(next);
+                                        self.advance();
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+                        content.push(ch);
+                        self.advance();
+                    }
+                }
+                Some(ch) if self.is_word_char(ch) => {
+                    content.push(ch);
+                    self.advance();
+                }
+                _ => break,
+            }
+        }
     }
 
     /// Read ANSI-C quoted content ($'...').
@@ -1212,16 +1279,34 @@ impl<'a> Lexer<'a> {
         let mut content = String::new();
         let mut current_line = String::new();
 
-        // Collect the rest of the command line after the heredoc delimiter.
-        // In bash, `cat <<EOF > file` means `> file` is still part of
-        // the command and should be parsed for redirections.
-        self.heredoc_rest_of_line.clear();
+        // Save rest of current line (after the delimiter token on the command line).
+        // For `cat <<EOF | sort`, this captures ` | sort` so the parser can
+        // tokenize the pipe and subsequent command after the heredoc body.
+        //
+        // Quoted strings may span multiple lines (e.g., `cat <<EOF; echo "two\nthree"`),
+        // so we track quoting state and continue across newlines until quotes close.
+        let mut rest_of_line = String::new();
+        let mut in_double_quote = false;
+        let mut in_single_quote = false;
         while let Some(ch) = self.peek_char() {
             self.advance();
-            if ch == '\n' {
+            if ch == '\n' && !in_double_quote && !in_single_quote {
                 break;
             }
-            self.heredoc_rest_of_line.push(ch);
+            if ch == '"' && !in_single_quote {
+                in_double_quote = !in_double_quote;
+            } else if ch == '\'' && !in_double_quote {
+                in_single_quote = !in_single_quote;
+            } else if ch == '\\' && in_double_quote {
+                // Escaped char inside double quotes — skip the next char too
+                rest_of_line.push(ch);
+                if let Some(next) = self.peek_char() {
+                    rest_of_line.push(next);
+                    self.advance();
+                }
+                continue;
+            }
+            rest_of_line.push(ch);
         }
 
         // Read lines until we find the delimiter
@@ -1252,6 +1337,15 @@ impl<'a> Lexer<'a> {
                     break;
                 }
             }
+        }
+
+        // Re-inject saved rest-of-line so subsequent tokens (pipes, commands, etc.)
+        // are visible to the parser. Add a newline so the tokenizer sees the line break.
+        if !rest_of_line.is_empty() {
+            for ch in rest_of_line.chars() {
+                self.reinject_buf.push_back(ch);
+            }
+            self.reinject_buf.push_back('\n');
         }
 
         content
@@ -1370,7 +1464,6 @@ mod tests {
         let mut lexer = Lexer::new("\nhello\nworld\nEOF");
         let content = lexer.read_heredoc("EOF");
         assert_eq!(content, "hello\nworld\n");
-        assert_eq!(lexer.heredoc_rest_of_line.trim(), "");
     }
 
     #[test]
@@ -1378,7 +1471,6 @@ mod tests {
         let mut lexer = Lexer::new("\ntest\nEOF");
         let content = lexer.read_heredoc("EOF");
         assert_eq!(content, "test\n");
-        assert_eq!(lexer.heredoc_rest_of_line.trim(), "");
     }
 
     #[test]
@@ -1394,18 +1486,23 @@ mod tests {
         // Now read heredoc content
         let content = lexer.read_heredoc("EOF");
         assert_eq!(content, "hello\nworld\n");
-        assert_eq!(lexer.heredoc_rest_of_line.trim(), "");
     }
 
     #[test]
     fn test_read_heredoc_with_redirect() {
+        // Rest-of-line (> file.txt) is re-injected into the lexer buffer
         let mut lexer = Lexer::new("cat <<EOF > file.txt\nhello\nEOF");
         assert_eq!(lexer.next_token(), Some(Token::Word("cat".to_string())));
         assert_eq!(lexer.next_token(), Some(Token::HereDoc));
         assert_eq!(lexer.next_token(), Some(Token::Word("EOF".to_string())));
         let content = lexer.read_heredoc("EOF");
         assert_eq!(content, "hello\n");
-        assert_eq!(lexer.heredoc_rest_of_line.trim(), "> file.txt");
+        // The redirect tokens are now available from the lexer
+        assert_eq!(lexer.next_token(), Some(Token::RedirectOut));
+        assert_eq!(
+            lexer.next_token(),
+            Some(Token::Word("file.txt".to_string()))
+        );
     }
 
     #[test]
