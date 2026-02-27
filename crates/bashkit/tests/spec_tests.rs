@@ -8,86 +8,35 @@
 //! - `### skip: reason` - Skip test entirely (not run in any test)
 //! - `### bash_diff: reason` - Known difference from real bash (runs in spec tests, excluded from comparison)
 //!
-//! ## Skipped Tests TODO (66 total)
+//! ## Skipped Tests (18 total)
 //!
-//! The following tests are skipped and need fixes:
+//! Actual `### skip:` markers across spec test files:
 //!
-//! ### date.test.sh (30 skipped) - grep output expectations wrong
-//! - [ ] date_*_format tests - test expects empty but grep outputs matches
-//! - [ ] date_rfc_format, date_nanoseconds, date_set_time - flags not implemented
+//! ### date.test.sh (2 skipped)
+//! - [ ] date -s (set time) not implemented and requires privileges
+//! - [ ] timezone abbreviation format varies
 //!
-//! ### cuttr.test.sh (25 skipped) - cut/tr issues
-//! - [ ] tr_* (5) - tr output missing trailing newline
-//! - [ ] cut_char_* (5) - cut -c character mode not implemented
-//! - [ ] cut_field_to_end - cut field-to-end range not fully implemented
-//! - [ ] tr_squeeze, tr_complement - tr -s/-c not implemented
-//! - [ ] tr_class_* (4) - tr character class handling differs
-//! - [ ] tr_escape_* (2) - tr escape sequence handling differs
-//! - [ ] tr_multiple_chars - tr output missing trailing newline
-//! - [ ] cut_complement, cut_output_delimiter - not implemented
-//! - [ ] tr_truncate_set2 - tr truncation behavior differs
-//! - [ ] cut_only_delimited, cut_zero_terminated - not implemented
+//! ### hextools.test.sh (3 skipped)
+//! - [ ] xxd output format varies across platforms
+//! - [ ] od output format varies
+//! - [ ] hexdump -C output format varies
 //!
-//! ### sortuniq.test.sh (11 skipped) - sort/uniq flags
-//! - [x] sort -f - case insensitive sort implemented
-//! - [ ] sort -t, -k, -s, -c, -m, -h, -M, -o, -z - not implemented
-//! - [x] uniq -d, -u - already implemented, tests unskipped
-//! - [ ] uniq -i, -f - not implemented
+//! ### jq.test.sh (5 skipped)
+//! - [ ] jaq errors on .foo applied to null instead of returning null for //
+//! - [ ] setpath not available in jaq standard library
+//! - [ ] leaf_paths not available in jaq standard library
+//! - [ ] jaq omits capture name field (real jq includes "name":null)
+//! - [ ] jaq scan requires explicit "g" flag for global match
 //!
-//! ### echo.test.sh (4 skipped)
-//! - [x] echo_combined_en, echo_combined_ne - combined flag handling fixed
-//! - [x] echo_E_flag - -E flag now works
-//! - [x] echo_escape_hex, echo_escape_octal - hex/octal escapes work
-//! - [ ] echo_empty, echo_no_newline - test format expects empty/newline mismatch
-//! - [ ] echo_escape_r - carriage return handling differs
-//! - [ ] echo_double_dash - -- to end options not implemented
-//!
-//! ### fileops.test.sh (5 skipped) - filesystem visibility
-//! - [ ] mkdir_*, touch_*, mv_file - test conditionals not seeing fs changes
-//!
-//! ### wc.test.sh (0 skipped)
-//! - [x] wc_chars_m_flag, wc_bytes_vs_chars - wc -m implemented
-//! - [x] wc_max_line_length - wc -L implemented
-//! - [x] wc_long_bytes - wc --bytes implemented
-//! - [x] wc_unicode_chars - unicode character counting implemented
-//!
-//! ### sleep.test.sh (3 skipped)
-//! - [ ] sleep_stderr_* - stderr redirect not implemented
-//!
-//! ### globs.test.sh (3 skipped)
-//! - [ ] glob_bracket - bracket glob not fully implemented
-//! - [ ] glob_recursive - recursive glob (**) not implemented
-//! - [ ] brace_expansion - brace expansion not implemented
-//!
-//! ### timeout.test.sh (2 skipped)
-//! - [ ] timeout_* - timing-dependent tests, verified manually
-//!
-//! ### pipes-redirects.test.sh (2 skipped)
-//! - [ ] redirect_stderr - stderr redirect not fully implemented
-//! - [ ] redirect_combined - combined redirects not implemented
-//!
-//! ### headtail.test.sh (2 skipped)
-//! - [ ] head_default, tail_default - default line count not working with stdin
-//!
-//! ### path.test.sh (2 skipped)
-//! - [ ] basename_no_args, dirname_no_args - error handling not implemented
-//!
-//! ### command-subst.test.sh (1 skipped)
-//! - [x] subst_exit_code - exit code propagation implemented
-//! - [ ] subst_backtick - backtick substitution not implemented
-//!
-//! ### arrays.test.sh (1 skipped)
-//! - [ ] array_indices - ${!arr[@]} array indices expansion not implemented
-//! - [x] array_slice - array slicing now implemented
-//!
-//! ### herestring.test.sh (0 skipped)
-//! - [x] herestring_empty - test rewritten to verify newline behavior
-//!
-//! ### arithmetic.test.sh (0 skipped)
-//! - [x] arith_assign - assignment inside $(()) implemented
-//!
-//! ### control-flow.test.sh (enabled)
-//! - [x] Control flow tests enabled (31 tests passing)
+//! ### python.test.sh (8 skipped)
+//! - [ ] Monty does not support set & and | operators yet
+//! - [ ] Monty does not have filter() builtin yet
+//! - [ ] Monty does not support dict comprehension with enumerate yet
+//! - [ ] Monty does not support str.format() method yet
+//! - [ ] Monty does not support sorted() key parameter yet
+//! - [ ] Monty does not support chain assignment (a = b = c = 0) yet
+//! - [ ] Monty dict literal in bash quoting needs single-quote support
+//! - [ ] export propagation to ctx.env may not work in spec test runner
 
 mod spec_runner;
 
