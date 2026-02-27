@@ -1844,6 +1844,159 @@ impl Interpreter {
         Some(Duration::from_secs_f64(total_secs_f64))
     }
 
+    /// Execute `xargs` - build and execute command lines from stdin.
+    ///
+    /// Parses xargs options, splits stdin into arguments, and executes the
+    /// target command via the interpreter for each batch.
+    async fn execute_xargs(
+        &mut self,
+        args: &[String],
+        stdin: Option<String>,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let mut replace_str: Option<String> = None;
+        let mut max_args: Option<usize> = None;
+        let mut delimiter: Option<char> = None;
+        let mut command: Vec<String> = Vec::new();
+
+        // Parse xargs options
+        let mut i = 0;
+        while i < args.len() {
+            let arg = &args[i];
+            match arg.as_str() {
+                "-I" => {
+                    i += 1;
+                    if i >= args.len() {
+                        return Ok(ExecResult::err(
+                            "xargs: option requires an argument -- 'I'\n".to_string(),
+                            1,
+                        ));
+                    }
+                    replace_str = Some(args[i].clone());
+                    max_args = Some(1); // -I implies -n 1
+                }
+                "-n" => {
+                    i += 1;
+                    if i >= args.len() {
+                        return Ok(ExecResult::err(
+                            "xargs: option requires an argument -- 'n'\n".to_string(),
+                            1,
+                        ));
+                    }
+                    match args[i].parse::<usize>() {
+                        Ok(n) if n > 0 => max_args = Some(n),
+                        _ => {
+                            return Ok(ExecResult::err(
+                                format!("xargs: invalid number: '{}'\n", args[i]),
+                                1,
+                            ));
+                        }
+                    }
+                }
+                "-d" => {
+                    i += 1;
+                    if i >= args.len() {
+                        return Ok(ExecResult::err(
+                            "xargs: option requires an argument -- 'd'\n".to_string(),
+                            1,
+                        ));
+                    }
+                    delimiter = args[i].chars().next();
+                }
+                "-0" => {
+                    delimiter = Some('\0');
+                }
+                s if s.starts_with('-') && s != "-" => {
+                    return Ok(ExecResult::err(
+                        format!("xargs: invalid option -- '{}'\n", &s[1..]),
+                        1,
+                    ));
+                }
+                _ => {
+                    // Rest is the command
+                    command.extend(args[i..].iter().cloned());
+                    break;
+                }
+            }
+            i += 1;
+        }
+
+        // Default command is echo
+        if command.is_empty() {
+            command.push("echo".to_string());
+        }
+
+        // Read input
+        let input = stdin.as_deref().unwrap_or("");
+        if input.is_empty() {
+            let result = ExecResult::ok(String::new());
+            return self.apply_redirections(result, redirects).await;
+        }
+
+        // Split input by delimiter
+        let items: Vec<&str> = if let Some(delim) = delimiter {
+            input.split(delim).filter(|s| !s.is_empty()).collect()
+        } else {
+            input.split_whitespace().collect()
+        };
+
+        if items.is_empty() {
+            let result = ExecResult::ok(String::new());
+            return self.apply_redirections(result, redirects).await;
+        }
+
+        let mut combined_stdout = String::new();
+        let mut combined_stderr = String::new();
+        let mut last_exit_code = 0;
+
+        // Group items based on max_args
+        let chunk_size = max_args.unwrap_or(items.len());
+        let chunks: Vec<Vec<&str>> = items.chunks(chunk_size).map(|c| c.to_vec()).collect();
+
+        for chunk in chunks {
+            let cmd_args: Vec<String> = if let Some(ref repl) = replace_str {
+                // With -I, substitute REPLACE string in all command args
+                let item = chunk.first().unwrap_or(&"");
+                command.iter().map(|arg| arg.replace(repl, item)).collect()
+            } else {
+                // Append chunk items as arguments after the command
+                let mut full = command.clone();
+                full.extend(chunk.iter().map(|s| s.to_string()));
+                full
+            };
+
+            // Build a SimpleCommand and execute it through the interpreter
+            let cmd_name = cmd_args[0].clone();
+            let cmd_rest: Vec<Word> = cmd_args[1..]
+                .iter()
+                .map(|s| Word::literal(s.clone()))
+                .collect();
+
+            let inner_cmd = Command::Simple(SimpleCommand {
+                name: Word::literal(cmd_name),
+                args: cmd_rest,
+                redirects: Vec::new(),
+                assignments: Vec::new(),
+                span: Span::new(),
+            });
+
+            let result = self.execute_command(&inner_cmd).await?;
+            combined_stdout.push_str(&result.stdout);
+            combined_stderr.push_str(&result.stderr);
+            last_exit_code = result.exit_code;
+        }
+
+        let mut result = ExecResult {
+            stdout: combined_stdout,
+            stderr: combined_stderr,
+            exit_code: last_exit_code,
+            control_flow: ControlFlow::None,
+        };
+
+        result = self.apply_redirections(result, redirects).await?;
+        Ok(result)
+    }
+
     /// Execute `bash` or `sh` command - interpret scripts using this interpreter.
     ///
     /// Supports:
@@ -3154,6 +3307,11 @@ impl Interpreter {
         // Handle `timeout` specially - needs interpreter-level command execution
         if name == "timeout" {
             return self.execute_timeout(&args, stdin, &command.redirects).await;
+        }
+
+        // Handle `xargs` specially - needs interpreter-level command execution
+        if name == "xargs" {
+            return self.execute_xargs(&args, stdin, &command.redirects).await;
         }
 
         // Handle `bash` and `sh` specially - execute scripts using the interpreter
@@ -7578,5 +7736,104 @@ mod tests {
             "xtrace should stay in stderr even with 2>&1: {:?}",
             result.stderr
         );
+    }
+
+    // ==================== xargs execution tests ====================
+
+    #[tokio::test]
+    async fn test_xargs_executes_command() {
+        // xargs should execute the command, not echo it
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/workspace"), true)
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/workspace/file.txt"), b"hello world")
+            .await
+            .unwrap();
+
+        let mut interp = Interpreter::new(fs.clone());
+        let parser = Parser::new("echo /workspace/file.txt | xargs cat");
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(
+            result.stdout.trim(),
+            "hello world",
+            "xargs should execute cat, not echo it. Got: {:?}",
+            result.stdout
+        );
+    }
+
+    #[tokio::test]
+    async fn test_xargs_default_echo() {
+        // With no command, xargs defaults to echo
+        let result = run_script("echo 'a b c' | xargs").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "a b c");
+    }
+
+    #[tokio::test]
+    async fn test_xargs_splits_newlines() {
+        // xargs should split input on whitespace/newlines into separate args
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/workspace"), true)
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/workspace/a.txt"), b"AAA")
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/workspace/b.txt"), b"BBB")
+            .await
+            .unwrap();
+
+        let mut interp = Interpreter::new(fs.clone());
+        let script = "printf '/workspace/a.txt\\n/workspace/b.txt' | xargs cat";
+        let parser = Parser::new(script);
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result.stdout.contains("AAA"),
+            "should contain contents of a.txt"
+        );
+        assert!(
+            result.stdout.contains("BBB"),
+            "should contain contents of b.txt"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_xargs_n1_executes_per_item() {
+        // xargs -n 1 should execute once per argument
+        let result = run_script("echo 'a b c' | xargs -n 1 echo item:").await;
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<&str> = result.stdout.trim().lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "item: a");
+        assert_eq!(lines[1], "item: b");
+        assert_eq!(lines[2], "item: c");
+    }
+
+    #[tokio::test]
+    async fn test_xargs_replace_str() {
+        // xargs -I {} should substitute {} with each input line
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/workspace"), true)
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/workspace/hello.txt"), b"Hello!")
+            .await
+            .unwrap();
+
+        let mut interp = Interpreter::new(fs.clone());
+        let script = "echo /workspace/hello.txt | xargs -I {} cat {}";
+        let parser = Parser::new(script);
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "Hello!");
     }
 }
