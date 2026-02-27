@@ -1655,11 +1655,11 @@ version = "0.8.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy]]
-version = "0.8.39"
+version = "0.8.40"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy-derive]]
-version = "0.8.39"
+version = "0.8.40"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerofrom]]
