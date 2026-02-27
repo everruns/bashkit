@@ -81,10 +81,16 @@ impl WcFlags {
 
     /// Number of active count fields
     fn active_count(&self) -> usize {
-        [self.lines, self.words, self.bytes, self.chars, self.max_line_length]
-            .iter()
-            .filter(|&&b| b)
-            .count()
+        [
+            self.lines,
+            self.words,
+            self.bytes,
+            self.chars,
+            self.max_line_length,
+        ]
+        .iter()
+        .filter(|&&b| b)
+        .count()
     }
 }
 
@@ -155,7 +161,12 @@ impl Builtin for Wc {
                     chars: total_chars,
                     max_line_length: total_max_line,
                 };
-                output.push_str(&format_counts(&totals, &flags, Some(&"total".to_string()), true));
+                output.push_str(&format_counts(
+                    &totals,
+                    &flags,
+                    Some(&"total".to_string()),
+                    true,
+                ));
                 output.push('\n');
             }
         }
