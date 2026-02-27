@@ -2042,6 +2042,296 @@ impl Interpreter {
         Ok(result)
     }
 
+    /// Execute `find` with `-exec` support.
+    ///
+    /// Intercepts find when -exec is present so commands can be executed
+    /// through the interpreter. Supports:
+    /// - `find PATH -exec cmd {} \;`  (per-file execution)
+    /// - `find PATH -exec cmd {} +`   (batch execution)
+    /// - All standard find options: -name, -type, -maxdepth
+    async fn execute_find(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let mut search_paths: Vec<String> = Vec::new();
+        let mut name_pattern: Option<String> = None;
+        let mut type_filter: Option<char> = None;
+        let mut max_depth: Option<usize> = None;
+        let mut exec_args: Vec<String> = Vec::new();
+        let mut exec_batch = false;
+
+        // Parse arguments
+        let mut i = 0;
+        while i < args.len() {
+            let arg = &args[i];
+            match arg.as_str() {
+                "-name" => {
+                    i += 1;
+                    if i >= args.len() {
+                        return Ok(ExecResult::err(
+                            "find: missing argument to '-name'\n".to_string(),
+                            1,
+                        ));
+                    }
+                    name_pattern = Some(args[i].clone());
+                }
+                "-type" => {
+                    i += 1;
+                    if i >= args.len() {
+                        return Ok(ExecResult::err(
+                            "find: missing argument to '-type'\n".to_string(),
+                            1,
+                        ));
+                    }
+                    match args[i].as_str() {
+                        "f" | "d" | "l" => type_filter = Some(args[i].chars().next().unwrap()),
+                        t => {
+                            return Ok(ExecResult::err(format!("find: unknown type '{}'\n", t), 1));
+                        }
+                    }
+                }
+                "-maxdepth" => {
+                    i += 1;
+                    if i >= args.len() {
+                        return Ok(ExecResult::err(
+                            "find: missing argument to '-maxdepth'\n".to_string(),
+                            1,
+                        ));
+                    }
+                    match args[i].parse::<usize>() {
+                        Ok(n) => max_depth = Some(n),
+                        Err(_) => {
+                            return Ok(ExecResult::err(
+                                format!("find: invalid maxdepth value '{}'\n", args[i]),
+                                1,
+                            ));
+                        }
+                    }
+                }
+                "-print" | "-print0" => {}
+                "-exec" | "-execdir" => {
+                    i += 1;
+                    while i < args.len() {
+                        let a = &args[i];
+                        if a == ";" || a == "\\;" {
+                            break;
+                        }
+                        if a == "+" {
+                            exec_batch = true;
+                            break;
+                        }
+                        exec_args.push(a.clone());
+                        i += 1;
+                    }
+                }
+                "-not" | "!" => {}
+                s if s.starts_with('-') => {
+                    return Ok(ExecResult::err(
+                        format!("find: unknown predicate '{}'\n", s),
+                        1,
+                    ));
+                }
+                _ => {
+                    search_paths.push(arg.clone());
+                }
+            }
+            i += 1;
+        }
+
+        if search_paths.is_empty() {
+            search_paths.push(".".to_string());
+        }
+
+        // Collect matching paths via recursive walk
+        let mut matched_paths: Vec<String> = Vec::new();
+        for path_str in &search_paths {
+            let path = self.resolve_path(path_str);
+            if !self.fs.exists(&path).await.unwrap_or(false) {
+                return Ok(ExecResult::err(
+                    format!("find: '{}': No such file or directory\n", path_str),
+                    1,
+                ));
+            }
+            self.find_collect(
+                &path,
+                path_str,
+                &name_pattern,
+                type_filter,
+                max_depth,
+                0,
+                &mut matched_paths,
+            )
+            .await?;
+        }
+
+        // Execute commands for matched paths
+        if exec_args.is_empty() {
+            // No exec command parsed, just print
+            let output =
+                matched_paths.join("\n") + if matched_paths.is_empty() { "" } else { "\n" };
+            let result = ExecResult::ok(output);
+            return self.apply_redirections(result, redirects).await;
+        }
+
+        let mut combined_stdout = String::new();
+        let mut combined_stderr = String::new();
+        let mut last_exit_code = 0;
+
+        if exec_batch {
+            // Batch mode: -exec cmd {} +
+            // Replace {} with all paths at once
+            let cmd_args: Vec<String> = exec_args
+                .iter()
+                .flat_map(|arg| {
+                    if arg == "{}" {
+                        matched_paths.clone()
+                    } else {
+                        vec![arg.clone()]
+                    }
+                })
+                .collect();
+
+            if !cmd_args.is_empty() {
+                let cmd_name = cmd_args[0].clone();
+                let cmd_rest: Vec<Word> = cmd_args[1..]
+                    .iter()
+                    .map(|s| Word::literal(s.clone()))
+                    .collect();
+
+                let inner_cmd = Command::Simple(SimpleCommand {
+                    name: Word::literal(cmd_name),
+                    args: cmd_rest,
+                    redirects: Vec::new(),
+                    assignments: Vec::new(),
+                    span: Span::new(),
+                });
+
+                let result = self.execute_command(&inner_cmd).await?;
+                combined_stdout.push_str(&result.stdout);
+                combined_stderr.push_str(&result.stderr);
+                last_exit_code = result.exit_code;
+            }
+        } else {
+            // Per-file mode: -exec cmd {} \;
+            for found_path in &matched_paths {
+                let cmd_args: Vec<String> = exec_args
+                    .iter()
+                    .map(|arg| arg.replace("{}", found_path))
+                    .collect();
+
+                if cmd_args.is_empty() {
+                    continue;
+                }
+
+                let cmd_name = cmd_args[0].clone();
+                let cmd_rest: Vec<Word> = cmd_args[1..]
+                    .iter()
+                    .map(|s| Word::literal(s.clone()))
+                    .collect();
+
+                let inner_cmd = Command::Simple(SimpleCommand {
+                    name: Word::literal(cmd_name),
+                    args: cmd_rest,
+                    redirects: Vec::new(),
+                    assignments: Vec::new(),
+                    span: Span::new(),
+                });
+
+                let result = self.execute_command(&inner_cmd).await?;
+                combined_stdout.push_str(&result.stdout);
+                combined_stderr.push_str(&result.stderr);
+                last_exit_code = result.exit_code;
+            }
+        }
+
+        let mut result = ExecResult {
+            stdout: combined_stdout,
+            stderr: combined_stderr,
+            exit_code: last_exit_code,
+            control_flow: ControlFlow::None,
+        };
+
+        result = self.apply_redirections(result, redirects).await?;
+        Ok(result)
+    }
+
+    /// Recursively collect paths matching find criteria.
+    ///
+    /// Helper for `execute_find`. Walks the filesystem tree and collects
+    /// display paths of entries matching name/type/depth filters.
+    #[allow(clippy::too_many_arguments)]
+    fn find_collect<'a>(
+        &'a self,
+        path: &'a Path,
+        display_path: &'a str,
+        name_pattern: &'a Option<String>,
+        type_filter: Option<char>,
+        max_depth: Option<usize>,
+        current_depth: usize,
+        results: &'a mut Vec<String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            use crate::builtins::glob_match;
+
+            let metadata = self.fs.stat(path).await?;
+            let entry_name = Path::new(display_path)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| display_path.to_string());
+
+            let type_matches = match type_filter {
+                Some('f') => metadata.file_type.is_file(),
+                Some('d') => metadata.file_type.is_dir(),
+                Some('l') => metadata.file_type.is_symlink(),
+                _ => true,
+            };
+
+            let name_matches = match name_pattern {
+                Some(pattern) => glob_match(&entry_name, pattern),
+                None => true,
+            };
+
+            if type_matches && name_matches {
+                results.push(display_path.to_string());
+            }
+
+            if metadata.file_type.is_dir() {
+                if let Some(max) = max_depth {
+                    if current_depth >= max {
+                        return Ok(());
+                    }
+                }
+
+                let entries = self.fs.read_dir(path).await?;
+                let mut sorted_entries = entries;
+                sorted_entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+                for entry in sorted_entries {
+                    let child_path = path.join(&entry.name);
+                    let child_display = if display_path == "." {
+                        format!("./{}", entry.name)
+                    } else {
+                        format!("{}/{}", display_path, entry.name)
+                    };
+
+                    self.find_collect(
+                        &child_path,
+                        &child_display,
+                        name_pattern,
+                        type_filter,
+                        max_depth,
+                        current_depth + 1,
+                        results,
+                    )
+                    .await?;
+                }
+            }
+
+            Ok(())
+        })
+    }
+
     /// Execute `bash` or `sh` command - interpret scripts using this interpreter.
     ///
     /// Supports:
@@ -3366,6 +3656,11 @@ impl Interpreter {
         // Handle `xargs` specially - needs interpreter-level command execution
         if name == "xargs" {
             return self.execute_xargs(&args, stdin, &command.redirects).await;
+        }
+
+        // Handle `find -exec` specially - needs interpreter-level command execution
+        if name == "find" && args.iter().any(|a| a == "-exec" || a == "-execdir") {
+            return self.execute_find(&args, &command.redirects).await;
         }
 
         // Handle `bash` and `sh` specially - execute scripts using the interpreter
@@ -8024,5 +8319,166 @@ mod tests {
 
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "Hello!");
+    }
+
+    // ==================== find -exec tests ====================
+
+    #[tokio::test]
+    async fn test_find_exec_per_file() {
+        // find -exec cmd {} \; should execute cmd for each matched file
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/project"), true)
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/project/a.txt"), b"content-a")
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/project/b.txt"), b"content-b")
+            .await
+            .unwrap();
+
+        let mut interp = Interpreter::new(fs.clone());
+        interp.set_cwd(std::path::PathBuf::from("/"));
+
+        let script = r#"find /project -name "*.txt" -exec echo {} \;"#;
+        let parser = Parser::new(script);
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<&str> = result.stdout.trim().lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(result.stdout.contains("/project/a.txt"));
+        assert!(result.stdout.contains("/project/b.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_find_exec_batch_mode() {
+        // find -exec cmd {} + should execute cmd once with all matched paths
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/project"), true)
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/project/a.txt"), b"aaa")
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/project/b.txt"), b"bbb")
+            .await
+            .unwrap();
+
+        let mut interp = Interpreter::new(fs.clone());
+        interp.set_cwd(std::path::PathBuf::from("/"));
+
+        let script = r#"find /project -name "*.txt" -exec echo {} +"#;
+        let parser = Parser::new(script);
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        // Should be a single line with both paths
+        let lines: Vec<&str> = result.stdout.trim().lines().collect();
+        assert_eq!(lines.len(), 1);
+        assert!(result.stdout.contains("/project/a.txt"));
+        assert!(result.stdout.contains("/project/b.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_find_exec_cat_reads_files() {
+        // find -exec cat {} \; should actually read file contents
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/data"), true).await.unwrap();
+        fs.write_file(std::path::Path::new("/data/hello.txt"), b"Hello World")
+            .await
+            .unwrap();
+
+        let mut interp = Interpreter::new(fs.clone());
+        interp.set_cwd(std::path::PathBuf::from("/"));
+
+        let script = r#"find /data -name "hello.txt" -exec cat {} \;"#;
+        let parser = Parser::new(script);
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "Hello World");
+    }
+
+    #[tokio::test]
+    async fn test_find_exec_with_type_filter() {
+        // find -type f -exec should only process files
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/root/subdir"), true)
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/root/file.txt"), b"data")
+            .await
+            .unwrap();
+
+        let mut interp = Interpreter::new(fs.clone());
+        interp.set_cwd(std::path::PathBuf::from("/"));
+
+        let script = r#"find /root -type f -exec echo found {} \;"#;
+        let parser = Parser::new(script);
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("found /root/file.txt"));
+        assert!(!result.stdout.contains("found /root/subdir"));
+    }
+
+    #[tokio::test]
+    async fn test_find_exec_nonexistent_path() {
+        let fs = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(fs.clone());
+        interp.set_cwd(std::path::PathBuf::from("/"));
+
+        let script = r#"find /nonexistent -exec echo {} \;"#;
+        let parser = Parser::new(script);
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("No such file or directory"));
+    }
+
+    #[tokio::test]
+    async fn test_find_exec_no_matches() {
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/empty"), true)
+            .await
+            .unwrap();
+
+        let mut interp = Interpreter::new(fs.clone());
+        interp.set_cwd(std::path::PathBuf::from("/"));
+
+        let script = r#"find /empty -name "*.xyz" -exec echo {} \;"#;
+        let parser = Parser::new(script);
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_find_exec_multiple_placeholder() {
+        // {} can appear multiple times in the command template
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/src"), true).await.unwrap();
+        fs.write_file(std::path::Path::new("/src/test.txt"), b"hi")
+            .await
+            .unwrap();
+
+        let mut interp = Interpreter::new(fs.clone());
+        interp.set_cwd(std::path::PathBuf::from("/"));
+
+        let script = r#"find /src -name "test.txt" -exec echo {} {} \;"#;
+        let parser = Parser::new(script);
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "/src/test.txt /src/test.txt");
     }
 }

@@ -295,20 +295,19 @@ struct FindOptions {
     name_pattern: Option<String>,
     type_filter: Option<char>,
     max_depth: Option<usize>,
-    // -exec is parsed but acts like -print (builtin can't invoke interpreter)
-    // WTF: exec needs interpreter access; for now just collect paths so scripts don't error
-    has_exec: bool,
 }
 
 /// The find builtin - search for files.
 ///
-/// Usage: find [PATH...] [-name PATTERN] [-type TYPE] [-maxdepth N]
+/// Usage: find [PATH...] [-name PATTERN] [-type TYPE] [-maxdepth N] [-exec CMD {} \;]
 ///
 /// Options:
-///   -name PATTERN   Match filename against PATTERN (supports * and ?)
-///   -type TYPE      Match file type: f (file), d (directory), l (link)
-///   -maxdepth N     Descend at most N levels
-///   -print          Print matching paths (default)
+///   -name PATTERN      Match filename against PATTERN (supports * and ?)
+///   -type TYPE         Match file type: f (file), d (directory), l (link)
+///   -maxdepth N        Descend at most N levels
+///   -print             Print matching paths (default)
+///   -exec CMD {} \;    Execute CMD for each match ({} = path)
+///   -exec CMD {} +     Execute CMD once with all matches
 pub struct Find;
 
 #[async_trait]
@@ -319,7 +318,6 @@ impl Builtin for Find {
             name_pattern: None,
             type_filter: None,
             max_depth: None,
-            has_exec: false,
         };
 
         // Parse arguments
@@ -375,9 +373,8 @@ impl Builtin for Find {
                     // Default action, ignore
                 }
                 "-exec" | "-execdir" => {
-                    // Parse -exec command {} \; or {} +
-                    // Skip all args until we find \; or +
-                    opts.has_exec = true;
+                    // -exec is handled at interpreter level (execute_find);
+                    // skip args here for fallback path
                     i += 1;
                     while i < ctx.args.len() {
                         let a = &ctx.args[i];
@@ -501,7 +498,7 @@ fn find_recursive<'a>(
 }
 
 /// Simple glob pattern matching for find -name
-fn glob_match(value: &str, pattern: &str) -> bool {
+pub(crate) fn glob_match(value: &str, pattern: &str) -> bool {
     let mut value_chars = value.chars().peekable();
     let mut pattern_chars = pattern.chars().peekable();
 

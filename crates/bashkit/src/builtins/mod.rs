@@ -99,6 +99,7 @@ pub use headtail::{Head, Tail};
 pub use hextools::{Hexdump, Od, Xxd};
 pub use inspect::{File, Less, Stat};
 pub use jq::Jq;
+pub(crate) use ls::glob_match;
 pub use ls::{Find, Ls, Rmdir};
 pub use navigation::{Cd, Pwd};
 pub use nl::Nl;
