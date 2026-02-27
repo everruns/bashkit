@@ -133,20 +133,6 @@ vet-suggest:
 vet-certify crate version:
     cargo vet certify {{crate}} {{version}}
 
-# === Issues ===
-
-# Process GitHub issues (--dry-run to preview, --issue N for single, --help for all options)
-process-issues *args:
-    ./scripts/process-issues.sh {{args}}
-
-# Preview issue processing plan without making changes
-process-issues-plan *args:
-    ./scripts/process-issues.sh --dry-run {{args}}
-
-# Process a single issue by number
-process-issue num:
-    ./scripts/process-issues.sh --issue {{num}}
-
 # === Nightly CI ===
 
 # Check that recent nightly and fuzz CI runs are green (requires gh CLI)
