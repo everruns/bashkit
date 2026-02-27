@@ -5041,7 +5041,7 @@ impl Interpreter {
                     } else {
                         self.expand_variable(name)
                     };
-                    result.push_str(&value.len().to_string());
+                    result.push_str(&value.chars().count().to_string());
                 }
                 WordPart::ParameterExpansion {
                     name,

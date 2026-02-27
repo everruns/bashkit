@@ -232,6 +232,18 @@ fn format_string(format: &str, args: &[String], arg_index: &mut usize) -> String
                             output.push(val as char);
                         }
                     }
+                    'u' => {
+                        // \uHHHH - 4-digit unicode escape
+                        if let Some(c) = parse_unicode_escape(&mut chars, 4) {
+                            output.push(c);
+                        }
+                    }
+                    'U' => {
+                        // \UHHHHHHHH - 8-digit unicode escape
+                        if let Some(c) = parse_unicode_escape(&mut chars, 8) {
+                            output.push(c);
+                        }
+                    }
                     _ => {
                         output.push('\\');
                         output.push(next);
@@ -451,6 +463,18 @@ fn expand_escapes(s: &str) -> String {
                             output.push(val as char);
                         }
                     }
+                    'u' => {
+                        // \uHHHH - 4-digit unicode escape
+                        if let Some(c) = parse_unicode_escape(&mut chars, 4) {
+                            output.push(c);
+                        }
+                    }
+                    'U' => {
+                        // \UHHHHHHHH - 8-digit unicode escape
+                        if let Some(c) = parse_unicode_escape(&mut chars, 8) {
+                            output.push(c);
+                        }
+                    }
                     _ => {
                         output.push('\\');
                         output.push(next);
@@ -465,6 +489,30 @@ fn expand_escapes(s: &str) -> String {
     }
 
     output
+}
+
+/// Parse a unicode escape sequence (\uHHHH or \UHHHHHHHH) from a char iterator.
+/// `max_digits` is 4 for \u and 8 for \U.
+fn parse_unicode_escape(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+    max_digits: usize,
+) -> Option<char> {
+    let mut hex = String::new();
+    for _ in 0..max_digits {
+        if let Some(&c) = chars.peek() {
+            if c.is_ascii_hexdigit() {
+                hex.push(chars.next().unwrap());
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    if hex.is_empty() {
+        return None;
+    }
+    u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32)
 }
 
 #[cfg(test)]
@@ -532,5 +580,39 @@ mod tests {
         let args = vec!["255".to_string()];
         let mut idx = 0;
         assert_eq!(format_string("%04x", &args, &mut idx), "00ff");
+    }
+
+    #[test]
+    fn test_unicode_escape_u() {
+        // \u03bc -> μ (Greek small letter mu)
+        let args = vec![];
+        let mut idx = 0;
+        assert_eq!(format_string("\\u03bc", &args, &mut idx), "\u{03bc}");
+    }
+
+    #[test]
+    fn test_unicode_escape_big_u() {
+        // \U000003bc -> μ
+        let args = vec![];
+        let mut idx = 0;
+        assert_eq!(format_string("\\U000003bc", &args, &mut idx), "\u{03bc}");
+    }
+
+    #[test]
+    fn test_unicode_escape_ascii() {
+        // \u0041 -> A
+        let args = vec![];
+        let mut idx = 0;
+        assert_eq!(
+            format_string("\\u0041\\u0042\\u0043", &args, &mut idx),
+            "ABC"
+        );
+    }
+
+    #[test]
+    fn test_unicode_escape_in_expand() {
+        // %b format also handles \u escapes
+        assert_eq!(expand_escapes("\\u03bc"), "\u{03bc}");
+        assert_eq!(expand_escapes("\\U000003bc"), "\u{03bc}");
     }
 }
