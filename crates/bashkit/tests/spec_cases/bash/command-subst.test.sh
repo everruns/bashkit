@@ -152,3 +152,40 @@ echo "$(echo "hello\"world")"
 ### expect
 hello"world
 ### end
+
+### subst_word_split_for_loop
+# Command substitution output is word-split in for-loop list context
+mkdir -p /src
+echo "a" > /src/one.txt
+echo "b" > /src/two.txt
+echo "c" > /src/three.txt
+count=0
+for f in $(find /src -name "*.txt" -type f | sort); do
+  count=$((count + 1))
+done
+echo "$count"
+### expect
+3
+### end
+
+### subst_word_split_echo_multiword
+# Command substitution producing space-separated words splits in for-loop
+result=""
+for w in $(echo "alpha beta gamma"); do
+  result="${result}[${w}]"
+done
+echo "$result"
+### expect
+[alpha][beta][gamma]
+### end
+
+### subst_word_split_newlines
+# Command substitution with newline-separated output splits on newlines
+result=""
+for line in $(printf 'x\ny\nz'); do
+  result="${result}(${line})"
+done
+echo "$result"
+### expect
+(x)(y)(z)
+### end
