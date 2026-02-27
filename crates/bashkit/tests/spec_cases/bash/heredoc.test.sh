@@ -83,6 +83,44 @@ EOF
 value: 42, cmd: hi, math: 84
 ### end
 
+### heredoc_redirect_after
+# cat <<EOF > file should write heredoc content to file, not stdout
+cat <<EOF > /tmp/heredoc_redirect.txt
+line one
+line two
+EOF
+cat /tmp/heredoc_redirect.txt
+### expect
+line one
+line two
+### end
+
+### heredoc_redirect_after_with_vars
+# cat <<EOF > file with variable expansion
+NAME=world
+cat <<EOF > /tmp/heredoc_vars.txt
+hello $NAME
+EOF
+cat /tmp/heredoc_vars.txt
+### expect
+hello world
+### end
+
+### heredoc_redirect_after_multiline
+# cat <<EOF > file with multiline YAML-like content (issue #345)
+mkdir -p /tmp/app
+cat <<EOF > /tmp/app/config.yaml
+app:
+  name: myservice
+  port: 8080
+EOF
+cat /tmp/app/config.yaml
+### expect
+app:
+  name: myservice
+  port: 8080
+### end
+
 ### heredoc_tab_strip
 # <<- strips leading tabs from content and delimiter
 cat <<-EOF
