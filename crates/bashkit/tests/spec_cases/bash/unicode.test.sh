@@ -41,7 +41,7 @@ echo $'\U000003bc'
 
 ### unicode_printf_u
 # printf \u escape
-### skip: TODO printf \u unicode escape not implemented
+### bash_diff: system bash printf \u requires UTF-8 locale
 printf '\u03bc\n'
 ### expect
 μ
@@ -49,7 +49,7 @@ printf '\u03bc\n'
 
 ### unicode_printf_U
 # printf \U escape
-### skip: TODO printf \U unicode escape not implemented
+### bash_diff: system bash printf \U requires UTF-8 locale
 printf '\U000003bc\n'
 ### expect
 μ
@@ -65,7 +65,7 @@ café
 
 ### unicode_string_length
 # String length of unicode string
-### skip: TODO ${#x} counts bytes instead of characters for unicode
+### bash_diff: system bash ${#x} counts bytes in POSIX locale, chars in UTF-8
 x=café
 echo ${#x}
 ### expect
