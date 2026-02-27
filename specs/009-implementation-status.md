@@ -103,77 +103,95 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1452 (1447 pass, 5 skip)
+**Total spec test cases:** 1723 (1586 pass, 137 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 1034 | Yes | 1029 | 5 | `bash_spec_tests` in CI |
+| Bash (core) | 1305 | Yes | 1181 | 124 | `bash_spec_tests` in CI |
 | AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
 | Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
-| JQ | 114 | Yes | 114 | 0 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
-| Python | 57 | Yes | 57 | 0 | embedded Python (Monty) |
-| **Total** | **1452** | **Yes** | **1447** | **5** | |
+| JQ | 114 | Yes | 109 | 5 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
+| Python | 57 | Yes | 49 | 8 | embedded Python (Monty) |
+| **Total** | **1723** | **Yes** | **1586** | **137** | |
 
 ### Bash Spec Tests Breakdown
 
 | File | Cases | Notes |
 |------|-------|-------|
+| alias.test.sh | 15 | alias expansion (15 skipped) |
+| arith-dynamic.test.sh | 14 | dynamic arithmetic contexts (5 skipped) |
 | arithmetic.test.sh | 68 | includes logical, bitwise, compound assign, increment/decrement, `let` builtin, `declare -i` arithmetic |
+| array-slicing.test.sh | 8 | array slice operations |
 | arrays.test.sh | 27 | indices, `${arr[@]}` / `${arr[*]}`, negative indexing `${arr[-1]}` |
-| background.test.sh | 4 | |
-| bash-command.test.sh | 34 | bash/sh re-invocation |
+| assoc-arrays.test.sh | 15 | associative arrays `declare -A` |
+| background.test.sh | 2 | background job handling |
+| bash-command.test.sh | 25 | bash/sh re-invocation |
 | bash-flags.test.sh | 13 | bash `-e`, `-x`, `-u`, `-f`, `-o option` flags |
-| brace-expansion.test.sh | 21 | {a,b,c}, {1..5}, for-loop brace expansion |
-| column.test.sh | 10 | column alignment |
+| brace-expansion.test.sh | 20 | {a,b,c}, {1..5}, for-loop brace expansion |
+| checksum.test.sh | 10 | md5sum, sha256sum, sha1sum |
+| chown-kill.test.sh | 7 | chown, kill builtins |
+| column.test.sh | 5 | column alignment |
 | command.test.sh | 9 | `command -v`, `-V`, function bypass |
-| command-not-found.test.sh | 17 | unknown command handling |
+| command-not-found.test.sh | 9 | unknown command handling |
+| command-subst.test.sh | 22 | includes backtick substitution, nested quotes in `$()` |
 | conditional.test.sh | 24 | `[[ ]]` conditionals, `=~` regex, BASH_REMATCH, glob `==`/`!=` |
-| command-subst.test.sh | 22 | includes backtick substitution, nested quotes in `$()` (1 skipped) |
 | control-flow.test.sh | 58 | if/elif/else, for, while, case `;;`/`;&`/`;;&`, select, trap ERR, `[[ =~ ]]` BASH_REMATCH, compound input redirects |
 | cuttr.test.sh | 32 | cut and tr commands, `-z` zero-terminated |
-| date.test.sh | 38 | format specifiers, `-d` relative/compound/epoch, `-R`, `-I`, `%N` (2 skipped) |
+| date.test.sh | 37 | format specifiers, `-d` relative/compound/epoch, `-R`, `-I`, `%N` (2 skipped) |
+| declare.test.sh | 23 | `declare`/`typeset`, `-i`, `-r`, `-x`, `-a`, `-p`, `-n` nameref, `-l`/`-u` case conversion |
 | diff.test.sh | 4 | line diffs |
+| dirstack.test.sh | 12 | `pushd`, `popd`, `dirs` directory stack operations |
 | echo.test.sh | 24 | escape sequences |
+| empty-bodies.test.sh | 8 | empty loop/function bodies (5 skipped) |
 | errexit.test.sh | 8 | set -e tests |
+| eval-bugs.test.sh | 4 | regression tests for eval/script bugs |
+| exit-status.test.sh | 18 | exit code propagation |
+| expr.test.sh | 13 | `expr` arithmetic, string ops, pattern matching, exit codes |
+| extglob.test.sh | 15 | `@()`, `?()`, `*()`, `+()`, `!()` extended globs |
 | fileops.test.sh | 28 | `mktemp`, `-d`, `-p`, template |
-| find.test.sh | 10 | file search |
+| find.test.sh | 8 | file search |
 | functions.test.sh | 26 | local dynamic scoping, nested writes, FUNCNAME call stack, `caller` builtin |
 | getopts.test.sh | 9 | POSIX option parsing, combined flags, silent mode |
 | glob-options.test.sh | 13 | dotglob, nocaseglob, failglob, nullglob, noglob, globstar |
-| globs.test.sh | 12 | for-loop glob expansion, recursive `**` |
+| globs.test.sh | 9 | for-loop glob expansion, recursive `**` |
 | headtail.test.sh | 14 | |
-| herestring.test.sh | 8 | 1 skipped |
-| hextools.test.sh | 5 | od/xxd/hexdump (3 skipped) |
+| heredoc.test.sh | 10 | heredoc variable expansion, quoted delimiters, file redirects, `<<-` tab strip |
+| heredoc-edge.test.sh | 15 | heredoc edge cases (6 skipped) |
+| herestring.test.sh | 8 | here-string `<<<` |
+| hextools.test.sh | 4 | od/xxd/hexdump (3 skipped) |
+| ln.test.sh | 5 | `ln -s`, `-f`, symlink creation |
+| nameref.test.sh | 14 | nameref variables (14 skipped) |
 | negative-tests.test.sh | 13 | error conditions |
 | nl.test.sh | 14 | line numbering |
 | nounset.test.sh | 7 | `set -u` unbound variable checks, `${var:-default}` nounset-aware |
+| parse-errors.test.sh | 18 | syntax error detection (13 skipped) |
 | paste.test.sh | 4 | line merging with `-s` serial and `-d` delimiter |
 | path.test.sh | 18 | basename, dirname, `realpath` canonical path resolution |
 | pipes-redirects.test.sh | 19 | includes stderr redirects |
 | printf.test.sh | 32 | format specifiers, array expansion, `-v` variable assignment, `%q` shell quoting |
 | procsub.test.sh | 6 | |
-| sleep.test.sh | 6 | |
-| sortuniq.test.sh | 32 | sort and uniq, `-z` zero-terminated, `-m` merge |
-| source.test.sh | 21 | source/., function loading, PATH search, positional params |
-| test-operators.test.sh | 27 | file/string tests, `-nt`/`-ot`/`-ef` file comparisons |
-| time.test.sh | 11 | Wall-clock only (user/sys always 0) |
-| timeout.test.sh | 17 | |
-| variables.test.sh | 97 | includes special vars, prefix env, PIPESTATUS, trap EXIT, `${var@Q}`, `\<newline>` line continuation, PWD/HOME/USER/HOSTNAME/BASH_VERSION/SECONDS, `set -x` xtrace, `shopt` builtin, nullglob, `set -o`/`set +o` display, `trap -p` |
-| wc.test.sh | 35 | word count (5 skipped) |
-| type.test.sh | 15 | `type`, `which`, `hash` builtins |
-| declare.test.sh | 23 | `declare`/`typeset`, `-i`, `-r`, `-x`, `-a`, `-p`, `-n` nameref, `-l`/`-u` case conversion |
-| ln.test.sh | 5 | `ln -s`, `-f`, symlink creation |
-| eval-bugs.test.sh | 4 | regression tests for eval/script bugs |
+| quote.test.sh | 35 | quoting edge cases (2 skipped) |
+| read-builtin.test.sh | 10 | `read` builtin, IFS splitting, `-r`, `-a` (array), `-n` (nchars), here-string |
 | script-exec.test.sh | 10 | script execution by path, $PATH search, exit codes |
 | seq.test.sh | 12 | `seq` numeric sequences, `-w`, `-s`, decrement, negative |
-| textrev.test.sh | 14 | `tac` reverse line order, `rev` reverse characters, `yes` repeated output |
-| heredoc.test.sh | 10 | heredoc variable expansion, quoted delimiters, file redirects, `<<-` tab strip |
+| shell-grammar.test.sh | 23 | shell grammar edge cases |
+| sleep.test.sh | 6 | |
+| sortuniq.test.sh | 32 | sort `-f`/`-n`/`-r`/`-u`/`-V`/`-t`/`-k`/`-s`/`-c`/`-h`/`-M`/`-m`/`-z`/`-o`, uniq `-c`/`-d`/`-u`/`-i`/`-f` |
+| source.test.sh | 19 | source/., function loading, PATH search, positional params |
 | string-ops.test.sh | 14 | string replacement (prefix/suffix anchored), `${var:?}`, case conversion |
-| read-builtin.test.sh | 10 | `read` builtin, IFS splitting, `-r`, `-a` (array), `-n` (nchars), here-string |
-| expr.test.sh | 13 | `expr` arithmetic, string ops, pattern matching, exit codes |
-| extglob.test.sh | 15 | `@()`, `?()`, `*()`, `+()`, `!()` extended globs |
-| dirstack.test.sh | 12 | `pushd`, `popd`, `dirs` directory stack operations |
+| subshell.test.sh | 13 | subshell execution (4 skipped) |
+| temp-binding.test.sh | 10 | temporary variable bindings `VAR=val cmd` |
+| test-operators.test.sh | 27 | file/string tests, `-nt`/`-ot`/`-ef` file comparisons |
+| textrev.test.sh | 14 | `tac` reverse line order, `rev` reverse characters, `yes` repeated output |
+| time.test.sh | 11 | Wall-clock only (user/sys always 0) |
+| timeout.test.sh | 16 | |
+| type.test.sh | 15 | `type`, `which`, `hash` builtins |
+| unicode.test.sh | 17 | unicode handling (3 skipped) |
+| var-op-test.test.sh | 21 | variable operations (16 skipped) |
+| variables.test.sh | 97 | includes special vars, prefix env, PIPESTATUS, trap EXIT, `${var@Q}`, `\<newline>` line continuation, PWD/HOME/USER/HOSTNAME/BASH_VERSION/SECONDS, `set -x` xtrace, `shopt` builtin, nullglob, `set -o`/`set +o` display, `trap -p` |
+| wc.test.sh | 20 | word count |
+| word-split.test.sh | 39 | IFS word splitting (36 skipped) |
 
 ## Shell Features
 
