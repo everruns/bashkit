@@ -512,10 +512,13 @@ echo '{"a":{"b":1}}' | jq 'getpath(["a","b"])'
 ### end
 
 ### jq_setpath
-### skip: setpath not available in jaq standard library
+# Set value at path
 echo '{"a":1}' | jq 'setpath(["b"];2)'
 ### expect
-{"a":1,"b":2}
+{
+  "a": 1,
+  "b": 2
+}
 ### end
 
 ### jq_del
@@ -577,10 +580,15 @@ echo '{"a":{"b":1}}' | jq '[paths]'
 ### end
 
 ### jq_leaf_paths
-### skip: leaf_paths not available in jaq standard library
+# Get paths to leaf (scalar) values
 echo '{"a":{"b":1}}' | jq '[leaf_paths]'
 ### expect
-[["a","b"]]
+[
+  [
+    "a",
+    "b"
+  ]
+]
 ### end
 
 ### jq_any
@@ -758,15 +766,15 @@ true
 ### end
 
 ### jq_match
-### skip: jaq omits capture name field (real jq includes "name":null)
-echo '"hello"' | jq 'match("e(ll)o")'
+### bash_diff: jaq/serde_json sorts object keys alphabetically vs jq insertion order
+echo '"hello"' | jq -c 'match("e(ll)o")'
 ### expect
-{"offset":1,"length":4,"string":"ello","captures":[{"offset":2,"length":2,"string":"ll","name":null}]}
+{"captures":[{"length":2,"name":null,"offset":2,"string":"ll"}],"length":4,"offset":1,"string":"ello"}
 ### end
 
 ### jq_scan
-### skip: jaq scan requires explicit "g" flag for global match
-echo '"hello hello"' | jq '[scan("hel")]'
+# Scan for all regex matches
+echo '"hello hello"' | jq -c '[scan("hel")]'
 ### expect
 ["hel","hel"]
 ### end

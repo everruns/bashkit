@@ -8,7 +8,7 @@
 //! - `### skip: reason` - Skip test entirely (not run in any test)
 //! - `### bash_diff: reason` - Known difference from real bash (runs in spec tests, excluded from comparison)
 //!
-//! ## Skipped Tests (15 total)
+//! ## Skipped Tests (14 total)
 //!
 //! Actual `### skip:` markers across spec test files:
 //!
@@ -21,12 +21,8 @@
 //! - [ ] od output format varies
 //! - [ ] hexdump -C output format varies
 //!
-//! ### jq.test.sh (5 skipped)
+//! ### jq.test.sh (1 skipped)
 //! - [ ] jaq errors on .foo applied to null instead of returning null for //
-//! - [ ] setpath not available in jaq standard library
-//! - [ ] leaf_paths not available in jaq standard library
-//! - [ ] jaq omits capture name field (real jq includes "name":null)
-//! - [ ] jaq scan requires explicit "g" flag for global match
 //!
 //! ### python.test.sh (8 skipped)
 //! - [ ] Monty does not support set & and | operators yet
