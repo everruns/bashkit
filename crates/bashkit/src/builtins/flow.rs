@@ -43,6 +43,7 @@ impl Builtin for False {
 }
 
 /// The exit builtin - exit the shell with a status code.
+/// Bash truncates exit codes to 8-bit unsigned range (0-255) via `& 0xFF`.
 pub struct Exit;
 
 #[async_trait]
@@ -52,7 +53,8 @@ impl Builtin for Exit {
             .args
             .first()
             .and_then(|s| s.parse::<i32>().ok())
-            .unwrap_or(0);
+            .unwrap_or(0)
+            & 0xFF;
 
         // For now, we just return the exit code
         // In a full implementation, this would terminate the shell
@@ -92,7 +94,8 @@ impl Builtin for Continue {
     }
 }
 
-/// The return builtin - return from a function
+/// The return builtin - return from a function.
+/// Bash truncates return codes to 8-bit unsigned range (0-255) via `& 0xFF`.
 pub struct Return;
 
 #[async_trait]
@@ -102,7 +105,8 @@ impl Builtin for Return {
             .args
             .first()
             .and_then(|s| s.parse::<i32>().ok())
-            .unwrap_or(0);
+            .unwrap_or(0)
+            & 0xFF;
 
         Ok(ExecResult::with_control_flow(ControlFlow::Return(
             exit_code,

@@ -3050,10 +3050,19 @@ impl Interpreter {
             });
         }
 
-        // If name is empty, this is an assignment-only command - keep permanently.
-        // Preserve last_exit_code from any command substitution in the value
-        // (bash behavior: `x=$(false)` sets $? to 1).
+        // If name is empty after expansion, behavior depends on context:
+        // - Quoted empty string ('', "", "$empty") -> "command not found" (exit 127)
+        // - Unquoted expansion that vanished ($empty, $(true)) -> no-op, preserve $?
+        // - Assignment-only (VAR=val) -> no-op, preserve $?
         if name.is_empty() {
+            if command.name.quoted && command.assignments.is_empty() {
+                // Bash: '' as a command is "command not found"
+                self.last_exit_code = 127;
+                return Ok(ExecResult::err(
+                    "bash: : command not found\n".to_string(),
+                    127,
+                ));
+            }
             return Ok(ExecResult {
                 stdout: String::new(),
                 stderr: String::new(),
