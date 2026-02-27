@@ -372,8 +372,100 @@ impl<'a> Lexer<'a> {
                 continue;
             } else if ch == '$' {
                 // Handle variable references and command substitution
-                word.push(ch);
                 self.advance();
+
+                // $'...' — ANSI-C quoting: resolve escapes at parse time
+                if self.peek_char() == Some('\'') {
+                    self.advance(); // consume opening '
+                    word.push_str(&self.read_dollar_single_quoted_content());
+                    continue;
+                }
+
+                // $"..." — locale translation synonym, treated like "..."
+                if self.peek_char() == Some('"') {
+                    self.advance(); // consume opening "
+                    while let Some(c) = self.peek_char() {
+                        if c == '"' {
+                            self.advance();
+                            break;
+                        }
+                        if c == '\\' {
+                            self.advance();
+                            if let Some(next) = self.peek_char() {
+                                match next {
+                                    '\n' => {
+                                        self.advance();
+                                    }
+                                    '"' | '\\' | '$' | '`' => {
+                                        word.push(next);
+                                        self.advance();
+                                    }
+                                    _ => {
+                                        word.push('\\');
+                                        word.push(next);
+                                        self.advance();
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+                        if c == '$' {
+                            word.push(c);
+                            self.advance();
+                            if let Some(nc) = self.peek_char() {
+                                if nc == '{' {
+                                    word.push(nc);
+                                    self.advance();
+                                    while let Some(bc) = self.peek_char() {
+                                        word.push(bc);
+                                        self.advance();
+                                        if bc == '}' {
+                                            break;
+                                        }
+                                    }
+                                } else if nc == '(' {
+                                    word.push(nc);
+                                    self.advance();
+                                    let mut depth = 1;
+                                    while let Some(pc) = self.peek_char() {
+                                        word.push(pc);
+                                        self.advance();
+                                        if pc == '(' {
+                                            depth += 1;
+                                        } else if pc == ')' {
+                                            depth -= 1;
+                                            if depth == 0 {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                } else if nc.is_ascii_alphanumeric()
+                                    || nc == '_'
+                                    || matches!(nc, '?' | '#' | '@' | '*' | '!' | '$' | '-')
+                                {
+                                    word.push(nc);
+                                    self.advance();
+                                    if nc.is_ascii_alphabetic() || nc == '_' {
+                                        while let Some(vc) = self.peek_char() {
+                                            if vc.is_ascii_alphanumeric() || vc == '_' {
+                                                word.push(vc);
+                                                self.advance();
+                                            } else {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                        word.push(c);
+                        self.advance();
+                    }
+                    continue;
+                }
+
+                word.push(ch); // push the '$'
 
                 // Check for $( - command substitution or arithmetic
                 if self.peek_char() == Some('(') {
@@ -614,6 +706,117 @@ impl<'a> Lexer<'a> {
 
         // Single-quoted strings are literal - no variable expansion
         Some(Token::LiteralWord(content))
+    }
+
+    /// Read ANSI-C quoted content ($'...').
+    /// Opening $' already consumed. Returns the resolved string.
+    fn read_dollar_single_quoted_content(&mut self) -> String {
+        let mut out = String::new();
+        while let Some(ch) = self.peek_char() {
+            if ch == '\'' {
+                self.advance();
+                break;
+            }
+            if ch == '\\' {
+                self.advance();
+                if let Some(esc) = self.peek_char() {
+                    self.advance();
+                    match esc {
+                        'n' => out.push('\n'),
+                        't' => out.push('\t'),
+                        'r' => out.push('\r'),
+                        'a' => out.push('\x07'),
+                        'b' => out.push('\x08'),
+                        'f' => out.push('\x0C'),
+                        'v' => out.push('\x0B'),
+                        'e' | 'E' => out.push('\x1B'),
+                        '\\' => out.push('\\'),
+                        '\'' => out.push('\''),
+                        '"' => out.push('"'),
+                        '?' => out.push('?'),
+                        'x' => {
+                            let mut hex = String::new();
+                            for _ in 0..2 {
+                                if let Some(h) = self.peek_char() {
+                                    if h.is_ascii_hexdigit() {
+                                        hex.push(h);
+                                        self.advance();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            if let Ok(val) = u8::from_str_radix(&hex, 16) {
+                                out.push(val as char);
+                            }
+                        }
+                        'u' => {
+                            let mut hex = String::new();
+                            for _ in 0..4 {
+                                if let Some(h) = self.peek_char() {
+                                    if h.is_ascii_hexdigit() {
+                                        hex.push(h);
+                                        self.advance();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            if let Ok(val) = u32::from_str_radix(&hex, 16) {
+                                if let Some(c) = char::from_u32(val) {
+                                    out.push(c);
+                                }
+                            }
+                        }
+                        'U' => {
+                            let mut hex = String::new();
+                            for _ in 0..8 {
+                                if let Some(h) = self.peek_char() {
+                                    if h.is_ascii_hexdigit() {
+                                        hex.push(h);
+                                        self.advance();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            if let Ok(val) = u32::from_str_radix(&hex, 16) {
+                                if let Some(c) = char::from_u32(val) {
+                                    out.push(c);
+                                }
+                            }
+                        }
+                        '0'..='7' => {
+                            let mut oct = String::new();
+                            oct.push(esc);
+                            for _ in 0..2 {
+                                if let Some(o) = self.peek_char() {
+                                    if o.is_ascii_digit() && o < '8' {
+                                        oct.push(o);
+                                        self.advance();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            if let Ok(val) = u8::from_str_radix(&oct, 8) {
+                                out.push(val as char);
+                            }
+                        }
+                        _ => {
+                            out.push('\\');
+                            out.push(esc);
+                        }
+                    }
+                } else {
+                    out.push('\\');
+                }
+                continue;
+            }
+            out.push(ch);
+            self.advance();
+        }
+        out
     }
 
     fn read_double_quoted_string(&mut self) -> Option<Token> {
