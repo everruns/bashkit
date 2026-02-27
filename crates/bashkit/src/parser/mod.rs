@@ -1812,10 +1812,46 @@ impl<'a> Parser<'a> {
 
                     // Parse rest-of-line for additional redirects
                     // (e.g. `> file` in `cat <<EOF > file`).
+                    // We parse tokens directly instead of using parse_simple_command
+                    // because that method returns None for redirect-only input
+                    // (no command word), dropping the redirects we need.
                     if !rest_of_line.trim().is_empty() {
                         let mut sub = Parser::new(&rest_of_line);
-                        if let Ok(Some(sub_cmd)) = sub.parse_simple_command() {
-                            redirects.extend(sub_cmd.redirects);
+                        loop {
+                            match &sub.current_token {
+                                Some(tokens::Token::RedirectOut) => {
+                                    sub.advance();
+                                    if let Ok(target) = sub.expect_word() {
+                                        redirects.push(Redirect {
+                                            fd: None,
+                                            kind: RedirectKind::Output,
+                                            target,
+                                        });
+                                    }
+                                }
+                                Some(tokens::Token::RedirectAppend) => {
+                                    sub.advance();
+                                    if let Ok(target) = sub.expect_word() {
+                                        redirects.push(Redirect {
+                                            fd: None,
+                                            kind: RedirectKind::Append,
+                                            target,
+                                        });
+                                    }
+                                }
+                                Some(tokens::Token::RedirectFd(fd)) => {
+                                    let fd = *fd;
+                                    sub.advance();
+                                    if let Ok(target) = sub.expect_word() {
+                                        redirects.push(Redirect {
+                                            fd: Some(fd),
+                                            kind: RedirectKind::Output,
+                                            target,
+                                        });
+                                    }
+                                }
+                                _ => break,
+                            }
                         }
                     }
 

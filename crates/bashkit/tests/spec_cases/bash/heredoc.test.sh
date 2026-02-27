@@ -108,13 +108,13 @@ hello world
 
 ### heredoc_redirect_after_multiline
 # cat <<EOF > file with multiline YAML-like content (issue #345)
-mkdir -p /etc/app
-cat <<EOF > /etc/app/config.yaml
+mkdir -p /tmp/app
+cat <<EOF > /tmp/app/config.yaml
 app:
   name: myservice
   port: 8080
 EOF
-cat /etc/app/config.yaml
+cat /tmp/app/config.yaml
 ### expect
 app:
   name: myservice
