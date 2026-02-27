@@ -130,6 +130,29 @@ Categories with `-` indicate the model did not run those tasks.
 ### Previous Results
 
 <details>
+<summary>2026-02-27 — GPT-5.3-Codex via Responses API (37 tasks)</summary>
+
+First eval using the OpenAI Responses API (`--provider openresponses`). GPT-5.3-Codex scores
+30/37 (93%) — a significant jump over GPT-5.2's 27/37 (86%) via Chat Completions. Notably
+fixes `json_to_csv_export` and `script_function_lib` which blocked all previous models.
+
+| Metric | Haiku 4.5 | Sonnet 4 | Opus 4.6 | GPT-5.2 | GPT-5.3-Codex |
+|--------|-----------|----------|----------|---------|---------------|
+| Tasks passed | **35/37** | 34/37 | 33/37 | 27/37 | 30/37 |
+| Score | **98%** | 97% | 93% | 86% | 93% |
+| Tool calls | 104 (100 ok, 4 err) | 151 (144 ok, 7 err) | 169 (152 ok, 17 err) | 102 (74 ok, 28 err) | 95 (68 ok, 27 err) |
+| Tool call success | **96%** | 95% | 90% | 73% | 72% |
+| Tokens | 171K in / 21K out | 197K in / 25K out | 276K in / 33K out | 87K in / 14K out | 97K in / 33K out |
+| Duration | 3.2 min | 8.7 min | 11.2 min | 4.1 min | 10.6 min |
+
+GPT-5.3-Codex is the first model to pass `script_function_lib` and `json_to_csv_export` (previously
+blocked across all models due to bashkit interpreter bugs). It works around the `tr` character class
+issue and avoids jq `@csv` quoting. However, it introduces new failures on tasks other models pass
+(e.g., `data_csv_to_json`, `error_graceful_parse`, `file_ops_find_and_delete`).
+
+</details>
+
+<details>
 <summary>2026-02-25 — Post-Interpreter Fixes (37 tasks)</summary>
 
 Major interpreter improvements since last eval: awk arithmetic accumulation, pipe-to-while-loop
