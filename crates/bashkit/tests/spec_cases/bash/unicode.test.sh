@@ -25,7 +25,7 @@ echo "μ"
 
 ### unicode_dollar_single
 # Unicode in $'' via \u escape
-### skip: TODO $'' (dollar single quote) not implemented
+### bash_diff: system bash may not support \u in $''
 echo $'\u03bc'
 ### expect
 μ
@@ -33,7 +33,7 @@ echo $'\u03bc'
 
 ### unicode_dollar_single_U
 # Unicode in $'' via \U escape
-### skip: TODO $'' (dollar single quote) not implemented
+### bash_diff: system bash may not support \U in $''
 echo $'\U000003bc'
 ### expect
 μ
@@ -136,7 +136,7 @@ hello 🌍
 
 ### unicode_dollar_single_ascii
 # $'' with unicode for ASCII range
-### skip: TODO $'' (dollar single quote) not implemented
+### bash_diff: system bash may not support \u in $''
 echo $'\u0041\u0042\u0043'
 ### expect
 ABC
