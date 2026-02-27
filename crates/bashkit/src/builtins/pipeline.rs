@@ -16,8 +16,8 @@ use crate::interpreter::ExecResult;
 ///   -d DELIM     Use DELIM as delimiter instead of whitespace
 ///   -0           Use NUL as delimiter (same as -d '\0')
 ///
-/// Note: In virtual mode, xargs outputs the commands that would be run
-/// instead of executing them, unless the command is a builtin.
+/// Note: xargs is intercepted at the interpreter level for actual command
+/// execution. This builtin fallback only handles option parsing/validation.
 pub struct Xargs;
 
 #[async_trait]
