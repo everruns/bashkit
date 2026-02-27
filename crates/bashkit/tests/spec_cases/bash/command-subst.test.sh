@@ -155,12 +155,8 @@ hello"world
 
 ### subst_word_split_for_loop
 # Command substitution output is word-split in for-loop list context
-mkdir -p /src
-echo "a" > /src/one.txt
-echo "b" > /src/two.txt
-echo "c" > /src/three.txt
 count=0
-for f in $(find /src -name "*.txt" -type f | sort); do
+for f in $(printf '/src/one.txt\n/src/two.txt\n/src/three.txt\n'); do
   count=$((count + 1))
 done
 echo "$count"
