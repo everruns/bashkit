@@ -52,6 +52,16 @@ For each open issue (`gh issue list --state open`), in order by issue number:
 - Add resolution comment on the issue if helpful
 - Move to next issue
 
+### 10. Review ignored tests
+After all issues are processed, scan for `#[ignore]` tests across the codebase:
+- `grep -rn '#\[ignore\]' crates/` to find all ignored tests
+- For each ignored test, determine why it was ignored (read surrounding comments, git blame)
+- Classify into: (a) can un-ignore now — underlying issue fixed, (b) blocked — still needs work, create/link issue, (c) intentionally ignored — e.g. slow, requires external resource
+- Un-ignore tests in category (a), run them, verify they pass
+- For category (b), ensure a tracking issue exists
+- Commit any un-ignored tests as `test: un-ignore {test_name}, now passing`
+- Create a single PR for all un-ignored tests (separate from issue PRs)
+
 ## Rules
 - One issue = one PR. Do not bundle.
 - If an issue is unclear or not reproducible, comment asking for clarification and skip to next.
