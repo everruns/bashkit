@@ -115,6 +115,64 @@ err1
 err2
 ### end
 
+### redirect_stderr_suppress
+# Suppress stderr with 2>/dev/null
+sleep abc 2>/dev/null
+echo exit: $?
+### expect
+exit: 1
+### end
+
+### redirect_stderr_to_file_content
+# Redirect stderr content to file and verify it
+sleep abc 2>/tmp/sleep_err.txt
+cat /tmp/sleep_err.txt
+### expect
+sleep: invalid time interval 'abc'
+### end
+
+### redirect_stderr_dup_to_stdout
+# Redirect stderr to stdout with 2>&1
+sleep abc 2>&1 | cat
+### bash_diff: pipe stderr propagation differs
+### expect
+sleep: invalid time interval 'abc'
+### end
+
+### redirect_both_to_file_content
+# Redirect both stdout and stderr to file with &>
+echo hello; sleep abc
+echo ---
+### expect
+hello
+---
+### end
+
+### redirect_both_devnull
+# Suppress both stdout and stderr with &>/dev/null
+echo output &>/dev/null
+echo done
+### expect
+done
+### end
+
+### redirect_stderr_append_content
+# Append stderr from multiple commands
+sleep abc 2>/tmp/err_multi.txt; sleep xyz 2>>/tmp/err_multi.txt; cat /tmp/err_multi.txt
+### expect
+sleep: invalid time interval 'abc'
+sleep: invalid time interval 'xyz'
+### end
+
+### redirect_stdout_to_stderr
+# Redirect stdout to stderr (>&2) then suppress stderr
+echo hello >&2 2>/dev/null
+echo done
+### bash_diff: redirect ordering model differs
+### expect
+done
+### end
+
 ### heredoc_single_quoted_delimiter
 # Heredoc with single-quoted delimiter disables variable expansion
 NAME=world; cat <<'EOF'
