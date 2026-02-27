@@ -12,7 +12,6 @@ echo $(( x + 2 * 3 ))
 
 ### arith_dyn_var_expression
 # Variable containing expression is re-evaluated
-### skip: TODO arithmetic variable re-evaluation of expressions not implemented
 x='1 + 2'
 echo $(( x * 3 ))
 ### expect
@@ -29,7 +28,6 @@ echo $(( $x * 3 ))
 
 ### arith_dyn_quoted_substitution
 # "$x" in arithmetic
-### skip: TODO double-quoted substitution in arithmetic not implemented
 x='1 + 2'
 echo $(( "$x" * 3 ))
 ### expect
@@ -38,7 +36,6 @@ echo $(( "$x" * 3 ))
 
 ### arith_dyn_nested_var
 # Nested variable reference in arithmetic
-### skip: TODO recursive variable dereferencing in arithmetic not implemented
 a=3
 b=a
 echo $(( b + 1 ))
@@ -48,7 +45,6 @@ echo $(( b + 1 ))
 
 ### arith_dyn_array_index
 # Dynamic array index
-### skip: TODO array access in arithmetic expressions not implemented
 arr=(10 20 30 40)
 i=2
 echo $(( arr[i] ))
@@ -58,7 +54,6 @@ echo $(( arr[i] ))
 
 ### arith_dyn_array_index_expr
 # Expression as array index
-### skip: TODO array access in arithmetic expressions not implemented
 arr=(10 20 30 40)
 echo $(( arr[1+1] ))
 ### expect

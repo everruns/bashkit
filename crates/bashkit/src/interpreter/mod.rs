@@ -5774,8 +5774,49 @@ impl Interpreter {
         self.parse_arithmetic_impl(&expanded, 0)
     }
 
+    /// Recursively resolve a variable value in arithmetic context.
+    /// In bash arithmetic, bare variable names are recursively evaluated:
+    /// if b=a and a=3, then $((b)) evaluates b -> "a" -> 3.
+    /// If x='1 + 2', then $((x)) evaluates x -> "1 + 2" -> 3 (as sub-expression).
+    /// THREAT[TM-DOS-026]: `depth` prevents infinite recursion.
+    fn resolve_arith_var(&self, value: &str, depth: usize) -> String {
+        if depth >= Self::MAX_ARITHMETIC_DEPTH {
+            return "0".to_string();
+        }
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return "0".to_string();
+        }
+        // If value is a simple integer, return it directly
+        if trimmed.parse::<i64>().is_ok() {
+            return trimmed.to_string();
+        }
+        // If value looks like a variable name, recursively dereference
+        if Self::is_valid_var_name(trimmed) {
+            let inner = self.expand_variable(trimmed);
+            return self.resolve_arith_var(&inner, depth + 1);
+        }
+        // Value contains an expression (e.g. "1 + 2") — expand vars in it
+        // and wrap in parens to preserve grouping
+        let expanded = self.expand_arithmetic_vars_depth(trimmed, depth + 1);
+        format!("({})", expanded)
+    }
+
     /// Expand variables in arithmetic expression (no $ needed in $((...)))
     fn expand_arithmetic_vars(&self, expr: &str) -> String {
+        self.expand_arithmetic_vars_depth(expr, 0)
+    }
+
+    /// Inner implementation with depth tracking for recursive expansion.
+    /// THREAT[TM-DOS-026]: `depth` prevents stack overflow via recursive variable values.
+    fn expand_arithmetic_vars_depth(&self, expr: &str, depth: usize) -> String {
+        if depth >= Self::MAX_ARITHMETIC_DEPTH {
+            return "0".to_string();
+        }
+
+        // Strip double quotes — "$x" in arithmetic is the same as $x
+        let expr = expr.replace('"', "");
+
         let mut result = String::new();
         let mut chars = expr.chars().peekable();
         // Track whether we're in a numeric literal context (after # or 0x)
@@ -5794,6 +5835,8 @@ impl Interpreter {
                     }
                 }
                 if !name.is_empty() {
+                    // $var is direct text substitution — no recursive arithmetic eval.
+                    // Only bare names (without $) get recursive resolution.
                     let value = self.expand_variable(&name);
                     if value.is_empty() {
                         result.push('0');
@@ -5833,12 +5876,46 @@ impl Interpreter {
                         break;
                     }
                 }
-                // Expand the variable
-                let value = self.expand_variable(&name);
-                if value.is_empty() {
-                    result.push('0');
+                // Check for array access: name[expr]
+                if chars.peek() == Some(&'[') {
+                    chars.next(); // consume '['
+                    let mut index_expr = String::new();
+                    let mut bracket_depth = 1;
+                    while let Some(&c) = chars.peek() {
+                        chars.next();
+                        if c == '[' {
+                            bracket_depth += 1;
+                            index_expr.push(c);
+                        } else if c == ']' {
+                            bracket_depth -= 1;
+                            if bracket_depth == 0 {
+                                break;
+                            }
+                            index_expr.push(c);
+                        } else {
+                            index_expr.push(c);
+                        }
+                    }
+                    // Evaluate the index expression as arithmetic
+                    let idx = self.evaluate_arithmetic(&index_expr);
+                    // Look up array element
+                    if let Some(arr) = self.arrays.get(&name) {
+                        let idx_usize: usize = idx.try_into().unwrap_or(0);
+                        let value = arr.get(&idx_usize).cloned().unwrap_or_default();
+                        result.push_str(&self.resolve_arith_var(&value, depth));
+                    } else {
+                        // Not an array — treat as scalar (index 0 returns the var value)
+                        let value = self.expand_variable(&name);
+                        if idx == 0 {
+                            result.push_str(&self.resolve_arith_var(&value, depth));
+                        } else {
+                            result.push('0');
+                        }
+                    }
                 } else {
-                    result.push_str(&value);
+                    // Expand the variable with recursive arithmetic resolution
+                    let value = self.expand_variable(&name);
+                    result.push_str(&self.resolve_arith_var(&value, depth));
                 }
             } else {
                 in_numeric_literal = false;
