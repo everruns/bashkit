@@ -21,6 +21,9 @@ local*
 coverage/
 .venv/
 
+# Issue processor state
+.issue-processor/
+
 # Python build artifacts
 __pycache__/
 *.pyc
