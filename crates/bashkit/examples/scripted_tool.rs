@@ -37,6 +37,7 @@ async fn main() -> anyhow::Result<()> {
     let resp = tool
         .execute(ToolRequest {
             commands: "get_user --id 1".to_string(),
+            timeout_ms: None,
         })
         .await;
     println!("$ get_user --id 1");
@@ -47,6 +48,7 @@ async fn main() -> anyhow::Result<()> {
     let resp = tool
         .execute(ToolRequest {
             commands: "get_user --id 1 | jq -r '.name'".to_string(),
+            timeout_ms: None,
         })
         .await;
     println!("$ get_user --id 1 | jq -r '.name'");
@@ -67,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
     let resp = tool
         .execute(ToolRequest {
             commands: script.to_string(),
+            timeout_ms: None,
         })
         .await;
     println!("$ <multi-step script>");
@@ -91,6 +94,7 @@ async fn main() -> anyhow::Result<()> {
     let resp = tool
         .execute(ToolRequest {
             commands: script.to_string(),
+            timeout_ms: None,
         })
         .await;
     println!("$ <loop with conditional>");
@@ -113,6 +117,7 @@ async fn main() -> anyhow::Result<()> {
     let resp = tool
         .execute(ToolRequest {
             commands: script.to_string(),
+            timeout_ms: None,
         })
         .await;
     println!("$ <inventory check>");
@@ -133,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
     let resp = tool
         .execute(ToolRequest {
             commands: script.to_string(),
+            timeout_ms: None,
         })
         .await;
     println!("$ <aggregate report>");

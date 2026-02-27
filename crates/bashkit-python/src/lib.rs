@@ -491,7 +491,12 @@ impl ScriptedTool {
     fn execute<'py>(&self, py: Python<'py>, commands: String) -> PyResult<Bound<'py, PyAny>> {
         let mut tool = self.build_rust_tool();
         future_into_py(py, async move {
-            let resp = tool.execute(ToolRequest { commands }).await;
+            let resp = tool
+                .execute(ToolRequest {
+                    commands,
+                    timeout_ms: None,
+                })
+                .await;
             Ok(ExecResult {
                 stdout: resp.stdout,
                 stderr: resp.stderr,
@@ -507,7 +512,13 @@ impl ScriptedTool {
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-        let resp = rt.block_on(async move { tool.execute(ToolRequest { commands }).await });
+        let resp = rt.block_on(async move {
+            tool.execute(ToolRequest {
+                commands,
+                timeout_ms: None,
+            })
+            .await
+        });
         Ok(ExecResult {
             stdout: resp.stdout,
             stderr: resp.stderr,

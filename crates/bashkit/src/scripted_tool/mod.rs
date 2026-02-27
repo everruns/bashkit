@@ -42,6 +42,7 @@
 //!
 //! let resp = tool.execute(ToolRequest {
 //!     commands: "greet --name Alice".to_string(),
+//!     timeout_ms: None,
 //! }).await;
 //!
 //! assert_eq!(resp.stdout.trim(), "hello Alice");
@@ -415,6 +416,7 @@ mod tests {
         let resp = tool
             .execute(ToolRequest {
                 commands: String::new(),
+                timeout_ms: None,
             })
             .await;
         assert_eq!(resp.exit_code, 0);
@@ -427,6 +429,7 @@ mod tests {
         let resp = tool
             .execute(ToolRequest {
                 commands: "get_user --id 42".to_string(),
+                timeout_ms: None,
             })
             .await;
         assert_eq!(resp.exit_code, 0);
@@ -440,6 +443,7 @@ mod tests {
         let resp = tool
             .execute(ToolRequest {
                 commands: "get_user --id=42".to_string(),
+                timeout_ms: None,
             })
             .await;
         assert_eq!(resp.exit_code, 0);
@@ -452,6 +456,7 @@ mod tests {
         let resp = tool
             .execute(ToolRequest {
                 commands: "get_user --id 42 | jq -r '.name'".to_string(),
+                timeout_ms: None,
             })
             .await;
         assert_eq!(resp.exit_code, 0);
@@ -471,6 +476,7 @@ mod tests {
         let resp = tool
             .execute(ToolRequest {
                 commands: script.to_string(),
+                timeout_ms: None,
             })
             .await;
         assert_eq!(resp.exit_code, 0);
@@ -483,6 +489,7 @@ mod tests {
         let resp = tool
             .execute(ToolRequest {
                 commands: "fail_tool".to_string(),
+                timeout_ms: None,
             })
             .await;
         assert_ne!(resp.exit_code, 0);
@@ -495,6 +502,7 @@ mod tests {
         let resp = tool
             .execute(ToolRequest {
                 commands: "fail_tool || echo 'fallback'".to_string(),
+                timeout_ms: None,
             })
             .await;
         assert_eq!(resp.exit_code, 0);
@@ -507,6 +515,7 @@ mod tests {
         let resp = tool
             .execute(ToolRequest {
                 commands: "echo hello | from_stdin".to_string(),
+                timeout_ms: None,
             })
             .await;
         assert_eq!(resp.exit_code, 0);
@@ -524,6 +533,7 @@ mod tests {
         let resp = tool
             .execute(ToolRequest {
                 commands: script.to_string(),
+                timeout_ms: None,
             })
             .await;
         assert_eq!(resp.exit_code, 0);
@@ -545,6 +555,7 @@ mod tests {
         let resp = tool
             .execute(ToolRequest {
                 commands: script.to_string(),
+                timeout_ms: None,
             })
             .await;
         assert_eq!(resp.exit_code, 0);
@@ -563,6 +574,7 @@ mod tests {
         let resp = tool
             .execute(ToolRequest {
                 commands: "echo $API_BASE".to_string(),
+                timeout_ms: None,
             })
             .await;
         assert_eq!(resp.exit_code, 0);
@@ -581,6 +593,7 @@ mod tests {
             .execute_with_status(
                 ToolRequest {
                     commands: "get_user --id 1".to_string(),
+                    timeout_ms: None,
                 },
                 Box::new(move |status| {
                     phases_clone
@@ -605,6 +618,7 @@ mod tests {
         let resp1 = tool
             .execute(ToolRequest {
                 commands: "get_user --id 1 | jq -r '.name'".to_string(),
+                timeout_ms: None,
             })
             .await;
         assert_eq!(resp1.stdout.trim(), "Alice");
@@ -612,6 +626,7 @@ mod tests {
         let resp2 = tool
             .execute(ToolRequest {
                 commands: "get_orders --user_id 1 | jq 'length'".to_string(),
+                timeout_ms: None,
             })
             .await;
         assert_eq!(resp2.stdout.trim(), "2");
@@ -639,6 +654,7 @@ mod tests {
         let resp = tool
             .execute(ToolRequest {
                 commands: "search --verbose --query hello".to_string(),
+                timeout_ms: None,
             })
             .await;
         assert_eq!(resp.exit_code, 0);
@@ -657,6 +673,7 @@ mod tests {
         let resp = tool
             .execute(ToolRequest {
                 commands: "echo_args --name Alice --count 3".to_string(),
+                timeout_ms: None,
             })
             .await;
         assert_eq!(resp.exit_code, 0);
