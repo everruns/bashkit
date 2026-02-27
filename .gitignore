@@ -21,6 +21,9 @@ local*
 coverage/
 .venv/
 
+# Claude Code worktrees
+.claude/worktrees/
+
 # Python build artifacts
 __pycache__/
 *.pyc
