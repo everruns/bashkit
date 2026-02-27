@@ -18,7 +18,7 @@ OPENAI_API_KEY=... cargo run -p bashkit-eval -- run \
 # Run against OpenAI Responses API (required for codex models)
 OPENAI_API_KEY=... cargo run -p bashkit-eval -- run \
   --dataset crates/bashkit-eval/data/eval-tasks.jsonl \
-  --provider openai-responses --model gpt-5.3-codex --save
+  --provider openresponses --model gpt-5.3-codex --save
 
 # Custom moniker
 cargo run -p bashkit-eval -- run \
@@ -36,7 +36,7 @@ just eval-save
 | Option | Description |
 |--------|-------------|
 | `--dataset <path>` | Path to JSONL dataset file |
-| `--provider <name>` | `anthropic`, `openai`, or `openai-responses` |
+| `--provider <name>` | `anthropic`, `openai`, or `openresponses` |
 | `--model <name>` | Model name (e.g., `claude-sonnet-4-20250514`, `gpt-5.2`, `gpt-5.3-codex`) |
 | `--max-turns <n>` | Max agent turns per task (default: 10) |
 | `--save` | Save JSON + Markdown results to disk |

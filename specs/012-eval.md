@@ -98,7 +98,7 @@ Fields:
 ```
 bashkit-eval run \
   --dataset <path.jsonl> \
-  --provider <anthropic|openai|openai-responses> \
+  --provider <anthropic|openai|openresponses> \
   --model <model-name> \
   [--max-turns 10] \
   [--save] \

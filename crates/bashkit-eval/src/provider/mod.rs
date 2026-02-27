@@ -79,9 +79,9 @@ pub fn create_provider(provider_name: &str, model: &str) -> anyhow::Result<Box<d
     match provider_name {
         "anthropic" => Ok(Box::new(AnthropicProvider::new(model)?)),
         "openai" => Ok(Box::new(OpenAiProvider::new(model)?)),
-        "openai-responses" => Ok(Box::new(OpenAiResponsesProvider::new(model)?)),
+        "openresponses" => Ok(Box::new(OpenAiResponsesProvider::new(model)?)),
         _ => anyhow::bail!(
-            "unknown provider: '{}'. Use 'anthropic', 'openai', or 'openai-responses'",
+            "unknown provider: '{}'. Use 'anthropic', 'openai', or 'openresponses'",
             provider_name
         ),
     }

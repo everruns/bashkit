@@ -20,7 +20,7 @@ enum Commands {
         #[arg(long)]
         dataset: String,
 
-        /// Provider: "anthropic", "openai", or "openai-responses"
+        /// Provider: "anthropic", "openai", or "openresponses"
         #[arg(long)]
         provider: String,
 

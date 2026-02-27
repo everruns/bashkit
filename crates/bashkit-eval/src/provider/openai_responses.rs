@@ -268,7 +268,7 @@ impl Provider for OpenAiResponsesProvider {
     }
 
     fn name(&self) -> &str {
-        "openai-responses"
+        "openresponses"
     }
 
     fn model(&self) -> &str {
