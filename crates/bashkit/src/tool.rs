@@ -26,6 +26,7 @@
 //! // Execution
 //! let resp = tool.execute(ToolRequest {
 //!     commands: "echo hello".to_string(),
+//!     timeout_ms: None,
 //! }).await;
 //! assert_eq!(resp.stdout, "hello\n");
 //! # });
@@ -38,6 +39,7 @@ use async_trait::async_trait;
 use schemars::{schema_for, JsonSchema};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// Library version from Cargo.toml
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -136,6 +138,21 @@ SEE ALSO
 pub struct ToolRequest {
     /// Bash commands to execute (like `bash -c "commands"`)
     pub commands: String,
+    /// Optional per-call timeout in milliseconds.
+    /// When set, execution is aborted after this duration and a response
+    /// with `exit_code = 124` is returned (matching the bash `timeout` convention).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
+impl ToolRequest {
+    /// Create a request with just commands (no timeout).
+    pub fn new(commands: impl Into<String>) -> Self {
+        Self {
+            commands: commands.into(),
+            timeout_ms: None,
+        }
+    }
 }
 
 /// Response from executing a bash script
@@ -621,14 +638,26 @@ impl Tool for BashTool {
 
         let mut bash = self.create_bash();
 
-        match bash.exec(&req.commands).await {
-            Ok(result) => result.into(),
-            Err(e) => ToolResponse {
-                stdout: String::new(),
-                stderr: e.to_string(),
-                exit_code: 1,
-                error: Some(error_kind(&e)),
-            },
+        let fut = async {
+            match bash.exec(&req.commands).await {
+                Ok(result) => result.into(),
+                Err(e) => ToolResponse {
+                    stdout: String::new(),
+                    stderr: e.to_string(),
+                    exit_code: 1,
+                    error: Some(error_kind(&e)),
+                },
+            }
+        };
+
+        if let Some(ms) = req.timeout_ms {
+            let dur = Duration::from_millis(ms);
+            match tokio::time::timeout(dur, fut).await {
+                Ok(resp) => resp,
+                Err(_elapsed) => timeout_response(dur),
+            }
+        } else {
+            fut.await
         }
     }
 
@@ -669,21 +698,35 @@ impl Tool for BashTool {
             }
         });
 
-        let response = match bash.exec_streaming(&req.commands, output_cb).await {
-            Ok(result) => result.into(),
-            Err(e) => ToolResponse {
-                stdout: String::new(),
-                stderr: e.to_string(),
-                exit_code: 1,
-                error: Some(error_kind(&e)),
-            },
+        let timeout_ms = req.timeout_ms;
+
+        let fut = async {
+            let response = match bash.exec_streaming(&req.commands, output_cb).await {
+                Ok(result) => result.into(),
+                Err(e) => ToolResponse {
+                    stdout: String::new(),
+                    stderr: e.to_string(),
+                    exit_code: 1,
+                    error: Some(error_kind(&e)),
+                },
+            };
+
+            if let Ok(mut cb) = status_cb.lock() {
+                cb(ToolStatus::new("complete").with_percent(100.0));
+            }
+
+            response
         };
 
-        if let Ok(mut cb) = status_cb.lock() {
-            cb(ToolStatus::new("complete").with_percent(100.0));
+        if let Some(ms) = timeout_ms {
+            let dur = Duration::from_millis(ms);
+            match tokio::time::timeout(dur, fut).await {
+                Ok(resp) => resp,
+                Err(_elapsed) => timeout_response(dur),
+            }
+        } else {
+            fut.await
         }
-
-        response
     }
 }
 
@@ -701,7 +744,21 @@ fn error_kind(e: &Error) -> String {
     }
 }
 
+/// Build a ToolResponse for a timed-out execution (exit code 124, like bash `timeout`).
+fn timeout_response(dur: Duration) -> ToolResponse {
+    ToolResponse {
+        stdout: String::new(),
+        stderr: format!(
+            "bashkit: execution timed out after {:.1}s\n",
+            dur.as_secs_f64()
+        ),
+        exit_code: 124,
+        error: Some("timeout".to_string()),
+    }
+}
+
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -793,6 +850,7 @@ mod tests {
         let mut tool = BashTool::default();
         let req = ToolRequest {
             commands: String::new(),
+            timeout_ms: None,
         };
         let resp = tool.execute(req).await;
         assert_eq!(resp.exit_code, 0);
@@ -804,6 +862,7 @@ mod tests {
         let mut tool = BashTool::default();
         let req = ToolRequest {
             commands: "echo hello".to_string(),
+            timeout_ms: None,
         };
         let resp = tool.execute(req).await;
         assert_eq!(resp.stdout, "hello\n");
@@ -1019,6 +1078,7 @@ mod tests {
         let mut tool = BashTool::default();
         let req = ToolRequest {
             commands: "echo test".to_string(),
+            timeout_ms: None,
         };
 
         let phases = Arc::new(Mutex::new(Vec::new()));
@@ -1047,6 +1107,7 @@ mod tests {
         let mut tool = BashTool::default();
         let req = ToolRequest {
             commands: "for i in a b c; do echo $i; done".to_string(),
+            timeout_ms: None,
         };
 
         let events = Arc::new(Mutex::new(Vec::new()));
@@ -1083,6 +1144,7 @@ mod tests {
         let mut tool = BashTool::default();
         let req = ToolRequest {
             commands: "echo start; echo end".to_string(),
+            timeout_ms: None,
         };
 
         let events = Arc::new(Mutex::new(Vec::new()));
@@ -1116,6 +1178,7 @@ mod tests {
         // mix of list + loop: should get 5 distinct events, no duplicates
         let req = ToolRequest {
             commands: "echo start; for i in 1 2 3; do echo $i; done; echo end".to_string(),
+            timeout_ms: None,
         };
 
         let events = Arc::new(Mutex::new(Vec::new()));
@@ -1160,5 +1223,53 @@ mod tests {
         assert_eq!(status.phase, "output");
         assert_eq!(status.output.as_deref(), Some("error\n"));
         assert_eq!(status.stream.as_deref(), Some("stderr"));
+    }
+
+    #[tokio::test]
+    async fn test_tool_execute_timeout() {
+        let mut tool = BashTool::default();
+        let req = ToolRequest {
+            commands: "sleep 10".to_string(),
+            timeout_ms: Some(100),
+        };
+        let resp = tool.execute(req).await;
+        assert_eq!(resp.exit_code, 124);
+        assert!(resp.stderr.contains("timed out"));
+        assert_eq!(resp.error, Some("timeout".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_tool_execute_no_timeout() {
+        let mut tool = BashTool::default();
+        let req = ToolRequest {
+            commands: "echo fast".to_string(),
+            timeout_ms: Some(5000),
+        };
+        let resp = tool.execute(req).await;
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout, "fast\n");
+    }
+
+    #[test]
+    fn test_tool_request_new() {
+        let req = ToolRequest::new("echo test");
+        assert_eq!(req.commands, "echo test");
+        assert_eq!(req.timeout_ms, None);
+    }
+
+    #[test]
+    fn test_tool_request_deserialize_without_timeout() {
+        let json = r#"{"commands":"echo hello"}"#;
+        let req: ToolRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.commands, "echo hello");
+        assert_eq!(req.timeout_ms, None);
+    }
+
+    #[test]
+    fn test_tool_request_deserialize_with_timeout() {
+        let json = r#"{"commands":"echo hello","timeout_ms":5000}"#;
+        let req: ToolRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.commands, "echo hello");
+        assert_eq!(req.timeout_ms, Some(5000));
     }
 }

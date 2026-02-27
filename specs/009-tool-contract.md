@@ -157,7 +157,8 @@ CONFIGURATION
 
 ```rust
 pub struct ToolRequest {
-    pub commands: String,  // Like bash -c "commands"
+    pub commands: String,           // Like bash -c "commands"
+    pub timeout_ms: Option<u64>,    // Per-call timeout (exit 124 on expiry)
 }
 
 pub struct ToolResponse {
@@ -183,6 +184,7 @@ let mut tool = BashTool::builder()
 
 let response = tool.execute(ToolRequest {
     commands: "echo hello".to_string(),
+    timeout_ms: None,
 }).await;
 ```
 
@@ -254,9 +256,9 @@ Allows multiple tool implementations to share the same interface. Future tools (
 
 Aligns with `bash -c "commands"` semantics. Clearer that it's inline commands, not a script file.
 
-### Why no `timeout_ms`?
+### Why `timeout_ms` on `ToolRequest`?
 
-Use `timeout` builtin in commands: `timeout 5 long_running_cmd`. Keeps the API simple.
+Per-call timeouts let orchestrating systems (LangChain, CrewAI) enforce limits without wrapping every command in `timeout`. Returns exit code 124 (matching bash `timeout` convention). The `timeout` builtin still works for per-command granularity.
 
 ### Why man-page format for `help()`?
 
