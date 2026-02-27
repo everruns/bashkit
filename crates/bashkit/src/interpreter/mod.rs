@@ -663,12 +663,54 @@ impl Interpreter {
             CompoundCommand::While(while_cmd) => self.execute_while(while_cmd).await,
             CompoundCommand::Until(until_cmd) => self.execute_until(until_cmd).await,
             CompoundCommand::Subshell(commands) => {
-                // Subshells run in isolated variable scope
+                // Subshells run in fully isolated scope: variables, arrays,
+                // functions, cwd, traps, positional params, and options are
+                // all snapshot/restored so mutations don't leak to the parent.
                 let saved_vars = self.variables.clone();
+                let saved_arrays = self.arrays.clone();
+                let saved_assoc = self.assoc_arrays.clone();
+                let saved_functions = self.functions.clone();
+                let saved_cwd = self.cwd.clone();
+                let saved_traps = self.traps.clone();
+                let saved_call_stack = self.call_stack.clone();
                 let saved_exit = self.last_exit_code;
-                let result = self.execute_command_sequence(commands).await;
+                let saved_options = self.options.clone();
+
+                let mut result = self.execute_command_sequence(commands).await;
+
+                // Fire EXIT trap set inside the subshell before restoring parent state
+                if let Some(trap_cmd) = self.traps.get("EXIT").cloned() {
+                    // Only fire if the subshell set its own EXIT trap (different from parent)
+                    let parent_had_same = saved_traps.get("EXIT") == Some(&trap_cmd);
+                    if !parent_had_same {
+                        if let Ok(trap_script) = Parser::new(&trap_cmd).parse() {
+                            let emit_before = self.output_emit_count;
+                            if let Ok(ref mut res) = result {
+                                if let Ok(trap_result) =
+                                    self.execute_command_sequence(&trap_script.commands).await
+                                {
+                                    self.maybe_emit_output(
+                                        &trap_result.stdout,
+                                        &trap_result.stderr,
+                                        emit_before,
+                                    );
+                                    res.stdout.push_str(&trap_result.stdout);
+                                    res.stderr.push_str(&trap_result.stderr);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 self.variables = saved_vars;
+                self.arrays = saved_arrays;
+                self.assoc_arrays = saved_assoc;
+                self.functions = saved_functions;
+                self.cwd = saved_cwd;
+                self.traps = saved_traps;
+                self.call_stack = saved_call_stack;
                 self.last_exit_code = saved_exit;
+                self.options = saved_options;
                 result
             }
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
@@ -3583,6 +3625,28 @@ impl Interpreter {
                     } else {
                         frame.positional.clear();
                     }
+                }
+            }
+
+            // Post-process: `set --` replaces positional parameters
+            if let Some(positional_str) = self.variables.remove("_SET_POSITIONAL") {
+                let new_positional: Vec<String> = if positional_str.is_empty() {
+                    Vec::new()
+                } else {
+                    positional_str
+                        .split('\x1F')
+                        .map(|s| s.to_string())
+                        .collect()
+                };
+                if let Some(frame) = self.call_stack.last_mut() {
+                    frame.positional = new_positional;
+                } else {
+                    // No call frame yet (top-level script) — push one
+                    self.call_stack.push(CallFrame {
+                        name: String::new(),
+                        locals: HashMap::new(),
+                        positional: new_positional,
+                    });
                 }
             }
 

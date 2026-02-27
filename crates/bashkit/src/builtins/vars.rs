@@ -98,6 +98,12 @@ impl Builtin for Set {
         while i < ctx.args.len() {
             let arg = &ctx.args[i];
             if arg == "--" {
+                // Everything after `--` becomes positional parameters.
+                // Encode as unit-separator-delimited string for the interpreter
+                // to pick up (same pattern as _SHIFT_COUNT).
+                let positional: Vec<&str> = ctx.args[i + 1..].iter().map(|s| s.as_str()).collect();
+                ctx.variables
+                    .insert("_SET_POSITIONAL".to_string(), positional.join("\x1F"));
                 break;
             } else if (arg.starts_with('-') || arg.starts_with('+'))
                 && arg.len() > 1
