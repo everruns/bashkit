@@ -4,6 +4,12 @@ Process all open GitHub issues end-to-end. Do not stop until every issue is reso
 
 For each open issue (`gh issue list --state open`), in order by issue number:
 
+### 0. Filter — owner/approval gate
+- Only process issues that meet ONE of:
+  - Created by `chaliy` (`gh issue view N --json author --jq '.author.login'`)
+  - Has a comment from `chaliy` approving it (`gh api repos/{owner}/{repo}/issues/N/comments --jq '.[].author.login' | grep -q chaliy`)
+- Skip all other issues silently — do not comment, do not close, just move to next
+
 ### 1. Understand
 - Read the issue body and classify: bug, feat, test, chore, refactor, docs
 - Identify affected areas: parser, interpreter, builtins, vfs, network, git, python, tool, eval, security
