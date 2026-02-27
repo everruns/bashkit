@@ -163,7 +163,6 @@ a\tb
 
 ### quote_dollar_single_basic
 # $'' basic
-### skip: TODO $'' (dollar single quote) not implemented
 echo $'foo'
 ### expect
 foo
@@ -171,7 +170,6 @@ foo
 
 ### quote_dollar_single_quotes
 # $'' with quotes
-### skip: TODO $'' (dollar single quote) not implemented
 echo $'single \' double \"'
 ### expect
 single ' double "
@@ -179,7 +177,6 @@ single ' double "
 
 ### quote_dollar_single_newlines
 # $'' with newlines
-### skip: TODO $'' (dollar single quote) not implemented
 echo $'col1\ncol2\ncol3'
 ### expect
 col1
@@ -189,7 +186,6 @@ col3
 
 ### quote_dollar_double_synonym
 # $"" is a synonym for ""
-### skip: TODO $"" (dollar double quote) not implemented
 echo $"foo"
 x=x
 echo $"foo $x"
@@ -200,7 +196,6 @@ foo x
 
 ### quote_dollar_single_hex
 # $'' with hex escapes
-### skip: TODO $'' (dollar single quote) not implemented
 echo $'\x41\x42\x43'
 ### expect
 ABC
@@ -208,7 +203,6 @@ ABC
 
 ### quote_dollar_single_octal
 # $'' with octal escapes
-### skip: TODO $'' (dollar single quote) not implemented
 echo $'\101\102\103'
 ### expect
 ABC
@@ -216,7 +210,6 @@ ABC
 
 ### quote_dollar_single_unicode_u
 # $'' with \u unicode escape
-### skip: TODO $'' (dollar single quote) not implemented
 echo $'\u0041\u0042'
 ### expect
 AB
@@ -224,7 +217,6 @@ AB
 
 ### quote_dollar_single_unicode_U
 # $'' with \U unicode escape
-### skip: TODO $'' (dollar single quote) not implemented
 echo $'\U00000041\U00000042'
 ### expect
 AB
@@ -232,7 +224,6 @@ AB
 
 ### quote_dollar_single_special
 # $'' with special escapes
-### skip: TODO $'' (dollar single quote) not implemented
 printf '%s' $'\a' | od -A n -t x1 | tr -d ' \n'
 echo
 printf '%s' $'\b' | od -A n -t x1 | tr -d ' \n'
