@@ -12,7 +12,6 @@ status=255
 
 ### exit_truncation_256
 # exit 256 truncates to 0
-### skip: TODO exit status not truncated to 8-bit range
 bash -c 'exit 256'
 echo status=$?
 ### expect
@@ -21,7 +20,6 @@ status=0
 
 ### exit_truncation_257
 # exit 257 truncates to 1
-### skip: TODO exit status not truncated to 8-bit range
 bash -c 'exit 257'
 echo status=$?
 ### expect
@@ -30,7 +28,6 @@ status=1
 
 ### exit_negative_minus1
 # exit -1 wraps to 255
-### skip: TODO negative exit codes not wrapped to unsigned 8-bit
 bash -c 'exit -1' 2>/dev/null
 echo status=$?
 ### expect
@@ -39,7 +36,6 @@ status=255
 
 ### exit_negative_minus2
 # exit -2 wraps to 254
-### skip: TODO negative exit codes not wrapped to unsigned 8-bit
 bash -c 'exit -2' 2>/dev/null
 echo status=$?
 ### expect
@@ -56,7 +52,6 @@ status=255
 
 ### return_truncation_256
 # return 256 truncates to 0
-### skip: TODO return status not truncated to 8-bit range
 f() { return 256; }; f
 echo status=$?
 ### expect
@@ -65,7 +60,6 @@ status=0
 
 ### return_truncation_257
 # return 257 truncates to 1
-### skip: TODO return status not truncated to 8-bit range
 f() { return 257; }; f
 echo status=$?
 ### expect
@@ -74,7 +68,6 @@ status=1
 
 ### return_negative_minus1
 # return -1 wraps to 255
-### skip: TODO negative return codes not wrapped to unsigned 8-bit
 f() { return -1; }; f 2>/dev/null
 echo status=$?
 ### expect
@@ -83,7 +76,6 @@ status=255
 
 ### return_negative_minus2
 # return -2 wraps to 254
-### skip: TODO negative return codes not wrapped to unsigned 8-bit
 f() { return -2; }; f 2>/dev/null
 echo status=$?
 ### expect
@@ -92,7 +84,6 @@ status=254
 
 ### if_empty_command
 # If empty command string - '' as command should fail
-### skip: TODO empty string as command not treated as failed command
 if ''; then echo TRUE; else echo FALSE; fi
 ### exit_code: 0
 ### expect
