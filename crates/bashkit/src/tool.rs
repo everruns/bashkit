@@ -42,8 +42,21 @@ use std::sync::{Arc, Mutex};
 /// Library version from Cargo.toml
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// List of built-in commands
-const BUILTINS: &str = "echo cat grep sed awk jq curl head tail sort uniq cut tr wc date sleep mkdir rm cp mv touch chmod printf test [ true false exit cd pwd ls find xargs basename dirname env export read";
+/// List of built-in commands (organized by category)
+const BUILTINS: &str = "\
+echo printf cat read \
+grep sed awk jq head tail sort uniq cut tr wc nl paste column comm diff strings tac rev \
+cd pwd ls find mkdir mktemp rm rmdir cp mv touch chmod chown ln \
+file stat less tar gzip gunzip du df \
+test [ true false exit return break continue \
+export set unset local shift source eval declare typeset readonly shopt getopts \
+sleep date seq expr yes wait timeout xargs tee watch \
+basename dirname realpath \
+pushd popd dirs \
+whoami hostname uname id env printenv history \
+curl wget \
+od xxd hexdump base64 \
+kill";
 
 /// Base help documentation template (generic help format)
 const BASE_HELP: &str = r#"BASH(1)                          User Commands                         BASH(1)
@@ -62,10 +75,22 @@ DESCRIPTION
        loops, conditionals, functions, and arrays.
 
 BUILTINS
-       echo, cat, grep, sed, awk, jq, curl, head, tail, sort, uniq, cut, tr,
-       wc, date, sleep, mkdir, rm, cp, mv, touch, chmod, printf, test, [,
-       true, false, exit, cd, pwd, ls, find, xargs, basename, dirname, env,
-       export, read
+   Core I/O:        echo, printf, cat, read
+   Text Processing: grep, sed, awk, jq, head, tail, sort, uniq, cut, tr, wc,
+                     nl, paste, column, comm, diff, strings, tac, rev
+   File Operations: cd, pwd, ls, find, mkdir, mktemp, rm, rmdir, cp, mv,
+                     touch, chmod, chown, ln
+   File Inspection: file, stat, less, tar, gzip, gunzip, du, df
+   Flow Control:    test, [, true, false, exit, return, break, continue
+   Shell/Variables:  export, set, unset, local, shift, source, eval, declare,
+                     typeset, readonly, shopt, getopts
+   Utilities:       sleep, date, seq, expr, yes, wait, timeout, xargs, tee,
+                     watch, basename, dirname, realpath
+   Dir Stack:       pushd, popd, dirs
+   System Info:     whoami, hostname, uname, id, env, printenv, history
+   Network:         curl, wget
+   Binary/Hex:      od, xxd, hexdump, base64
+   Signals:         kill
 
 INPUT
        commands    Bash commands to execute (like bash -c "commands")
@@ -671,6 +696,7 @@ fn error_kind(e: &Error) -> String {
         Error::CommandNotFound(_) => "command_not_found".to_string(),
         Error::ResourceLimit(_) => "resource_limit".to_string(),
         Error::Network(_) => "network_error".to_string(),
+        Error::Regex(_) => "regex_error".to_string(),
         Error::Internal(_) => "internal_error".to_string(),
     }
 }
