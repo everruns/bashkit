@@ -19,6 +19,9 @@ pub struct Lexer<'a> {
     /// Current position in the input
     position: Position,
     chars: std::iter::Peekable<std::str::Chars<'a>>,
+    /// Rest-of-line text captured during heredoc parsing.
+    /// In `cat <<EOF > file`, this holds ` > file`.
+    pub heredoc_rest_of_line: String,
 }
 
 impl<'a> Lexer<'a> {
@@ -28,6 +31,7 @@ impl<'a> Lexer<'a> {
             input,
             position: Position::new(),
             chars: input.chars().peekable(),
+            heredoc_rest_of_line: String::new(),
         }
     }
 
@@ -1208,12 +1212,16 @@ impl<'a> Lexer<'a> {
         let mut content = String::new();
         let mut current_line = String::new();
 
-        // Skip to end of current line first (after the delimiter on command line)
+        // Collect the rest of the command line after the heredoc delimiter.
+        // In bash, `cat <<EOF > file` means `> file` is still part of
+        // the command and should be parsed for redirections.
+        self.heredoc_rest_of_line.clear();
         while let Some(ch) = self.peek_char() {
             self.advance();
             if ch == '\n' {
                 break;
             }
+            self.heredoc_rest_of_line.push(ch);
         }
 
         // Read lines until we find the delimiter
@@ -1362,6 +1370,7 @@ mod tests {
         let mut lexer = Lexer::new("\nhello\nworld\nEOF");
         let content = lexer.read_heredoc("EOF");
         assert_eq!(content, "hello\nworld\n");
+        assert_eq!(lexer.heredoc_rest_of_line.trim(), "");
     }
 
     #[test]
@@ -1369,6 +1378,7 @@ mod tests {
         let mut lexer = Lexer::new("\ntest\nEOF");
         let content = lexer.read_heredoc("EOF");
         assert_eq!(content, "test\n");
+        assert_eq!(lexer.heredoc_rest_of_line.trim(), "");
     }
 
     #[test]
@@ -1384,6 +1394,18 @@ mod tests {
         // Now read heredoc content
         let content = lexer.read_heredoc("EOF");
         assert_eq!(content, "hello\nworld\n");
+        assert_eq!(lexer.heredoc_rest_of_line.trim(), "");
+    }
+
+    #[test]
+    fn test_read_heredoc_with_redirect() {
+        let mut lexer = Lexer::new("cat <<EOF > file.txt\nhello\nEOF");
+        assert_eq!(lexer.next_token(), Some(Token::Word("cat".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::HereDoc));
+        assert_eq!(lexer.next_token(), Some(Token::Word("EOF".to_string())));
+        let content = lexer.read_heredoc("EOF");
+        assert_eq!(content, "hello\n");
+        assert_eq!(lexer.heredoc_rest_of_line.trim(), "> file.txt");
     }
 
     #[test]

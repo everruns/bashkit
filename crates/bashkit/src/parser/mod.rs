@@ -1768,15 +1768,18 @@ impl<'a> Parser<'a> {
                     };
                     // Don't advance - let read_heredoc consume directly from lexer position
 
-                    // Read the here document content (reads until delimiter line)
+                    // Read the here document content (reads until delimiter line).
+                    // Also captures rest-of-line text (e.g. `> file` in
+                    // `cat <<EOF > file`) into lexer.heredoc_rest_of_line.
                     let content = self.lexer.read_heredoc(&delimiter);
+                    let rest_of_line = std::mem::take(&mut self.lexer.heredoc_rest_of_line);
 
                     // Strip leading tabs for <<-
                     let content = if strip_tabs {
                         let had_trailing_newline = content.ends_with('\n');
                         let mut stripped: String = content
                             .lines()
-                            .map(|l| l.trim_start_matches('\t'))
+                            .map(|l: &str| l.trim_start_matches('\t'))
                             .collect::<Vec<_>>()
                             .join("\n");
                         if had_trailing_newline {
@@ -1786,9 +1789,6 @@ impl<'a> Parser<'a> {
                     } else {
                         content
                     };
-
-                    // Now advance to get the next token after the heredoc
-                    self.advance();
 
                     // If delimiter was quoted, content is literal (no expansion)
                     // Otherwise, parse for variable expansion
@@ -1809,6 +1809,18 @@ impl<'a> Parser<'a> {
                         kind,
                         target,
                     });
+
+                    // Parse rest-of-line for additional redirects
+                    // (e.g. `> file` in `cat <<EOF > file`).
+                    if !rest_of_line.trim().is_empty() {
+                        let mut sub = Parser::new(&rest_of_line);
+                        if let Ok(Some(sub_cmd)) = sub.parse_simple_command() {
+                            redirects.extend(sub_cmd.redirects);
+                        }
+                    }
+
+                    // Now advance past the heredoc body
+                    self.advance();
 
                     // Heredoc body consumed subsequent lines from input.
                     // Stop parsing this command - next tokens belong to new commands.
