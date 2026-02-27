@@ -571,3 +571,46 @@ printf 'foo\nfoo\n' | grep -m 0 foo
 ### exit_code: 1
 ### expect
 ### end
+
+### grep_files_without_match
+# -L prints files that have no matches
+printf 'foo\n' > /tmp/grep_l_a.txt && printf 'bar\n' > /tmp/grep_l_b.txt && grep -L foo /tmp/grep_l_a.txt /tmp/grep_l_b.txt
+### expect
+/tmp/grep_l_b.txt
+### end
+
+### grep_files_without_match_no_output
+# -L does not print files that match
+printf 'foo\n' > /tmp/grep_l2_a.txt && grep -L foo /tmp/grep_l2_a.txt
+### exit_code: 1
+### expect
+### end
+
+### grep_exclude_dir
+# --exclude-dir skips directories during recursive search
+mkdir -p /tmp/grepexd/src /tmp/grepexd/vendor && printf 'match\n' > /tmp/grepexd/src/a.txt && printf 'match\n' > /tmp/grepexd/vendor/b.txt && grep -r --exclude-dir=vendor match /tmp/grepexd
+### expect
+/tmp/grepexd/src/a.txt:match
+### end
+
+### grep_suppress_errors
+# -s suppresses error messages for nonexistent files
+grep -s foo /tmp/nonexistent_grep_file_xyz
+echo $?
+### expect
+1
+### end
+
+### grep_null_filename_l
+# -Z with -l uses null byte after filename
+printf 'foo\n' > /tmp/grep_z_a.txt && grep -lZ foo /tmp/grep_z_a.txt | tr '\0' '\n'
+### expect
+/tmp/grep_z_a.txt
+### end
+
+### grep_null_filename_big_l
+# -Z with -L uses null byte after filename
+printf 'bar\n' > /tmp/grep_zl_a.txt && grep -LZ foo /tmp/grep_zl_a.txt | tr '\0' '\n'
+### expect
+/tmp/grep_zl_a.txt
+### end

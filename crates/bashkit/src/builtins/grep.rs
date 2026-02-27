@@ -29,6 +29,10 @@
 //!   grep -a pattern file        # treat binary as text (filter null bytes)
 //!   grep -z pattern file        # null-terminated lines
 //!   grep -r pattern dir         # recursive search
+//!   grep -L pattern file        # list non-matching files
+//!   grep -s pattern file        # suppress error messages
+//!   grep -Z pattern file        # null byte after filenames
+//!   grep --exclude-dir=GLOB dir # skip directories matching GLOB
 //!   grep --color=always pattern # color output (no-op)
 //!   grep --line-buffered pattern # line-buffered (no-op)
 
@@ -59,15 +63,19 @@ struct GrepOptions {
     whole_line: bool,
     after_context: usize,
     before_context: usize,
-    show_filename: bool,           // -H: always show filename
-    no_filename: bool,             // -h: never show filename
-    byte_offset: bool,             // -b: show byte offset
-    pattern_file: Option<String>,  // -f: read patterns from file
-    null_terminated: bool,         // -z: null-terminated lines
-    recursive: bool,               // -r: recursive search
-    binary_as_text: bool,          // -a: treat binary as text
-    include_patterns: Vec<String>, // --include=GLOB
-    exclude_patterns: Vec<String>, // --exclude=GLOB
+    show_filename: bool,               // -H: always show filename
+    no_filename: bool,                 // -h: never show filename
+    byte_offset: bool,                 // -b: show byte offset
+    pattern_file: Option<String>,      // -f: read patterns from file
+    null_terminated: bool,             // -z: null-terminated lines
+    recursive: bool,                   // -r: recursive search
+    binary_as_text: bool,              // -a: treat binary as text
+    include_patterns: Vec<String>,     // --include=GLOB
+    exclude_patterns: Vec<String>,     // --exclude=GLOB
+    exclude_dir_patterns: Vec<String>, // --exclude-dir=GLOB
+    files_without_matches: bool,       // -L: list non-matching files
+    suppress_errors: bool,             // -s: suppress error messages
+    null_filename: bool,               // -Z: null byte after filenames
 }
 
 impl GrepOptions {
@@ -98,6 +106,10 @@ impl GrepOptions {
             binary_as_text: false,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
+            exclude_dir_patterns: Vec::new(),
+            files_without_matches: false,
+            suppress_errors: false,
+            null_filename: false,
         };
 
         let mut positional = Vec::new();
@@ -129,6 +141,9 @@ impl GrepOptions {
                         'b' => opts.byte_offset = true,
                         'a' => opts.binary_as_text = true,
                         'z' => opts.null_terminated = true,
+                        'L' => opts.files_without_matches = true,
+                        's' => opts.suppress_errors = true,
+                        'Z' => opts.null_filename = true,
                         'r' | 'R' => opts.recursive = true,
                         'e' => {
                             // -e pattern (remaining chars or next arg)
@@ -270,6 +285,14 @@ impl GrepOptions {
                     opts.include_patterns.push(strip_quotes(pat));
                 } else if let Some(pat) = opt.strip_prefix("exclude=") {
                     opts.exclude_patterns.push(strip_quotes(pat));
+                } else if let Some(pat) = opt.strip_prefix("exclude-dir=") {
+                    opts.exclude_dir_patterns.push(strip_quotes(pat));
+                } else if opt == "files-without-match" {
+                    opts.files_without_matches = true;
+                } else if opt == "no-messages" {
+                    opts.suppress_errors = true;
+                } else if opt == "null" {
+                    opts.null_filename = true;
                 }
                 // Ignore other unknown long options
             } else {
@@ -457,7 +480,7 @@ impl Builtin for Grep {
         // Use "(standard input)" for -H flag, "(stdin)" for -l flag
         let stdin_name = if opts.show_filename {
             "(standard input)"
-        } else if opts.files_with_matches {
+        } else if opts.files_with_matches || opts.files_without_matches {
             "(stdin)"
         } else {
             ""
@@ -500,6 +523,14 @@ impl Builtin for Grep {
                     for entry in entries {
                         let entry_path = path.join(&entry.name);
                         if entry.metadata.file_type.is_dir() {
+                            // Skip dirs matching --exclude-dir patterns
+                            if opts
+                                .exclude_dir_patterns
+                                .iter()
+                                .any(|p| glob_matches(&entry.name, p))
+                            {
+                                continue;
+                            }
                             dirs_to_process.push(entry_path);
                         } else if entry.metadata.file_type.is_file()
                             && should_include_file(
@@ -538,7 +569,7 @@ impl Builtin for Grep {
                     }
                     Err(e) => {
                         // Report error but continue with other files
-                        if !opts.quiet {
+                        if !opts.quiet && !opts.suppress_errors {
                             output.push_str(&format!("grep: {}: {}\n", file, e));
                         }
                     }
@@ -613,11 +644,13 @@ impl Builtin for Grep {
                     // -o mode: count each match separately
                     for _ in regex.find_iter(line) {
                         file_matched = true;
-                        any_match = true;
+                        if !opts.files_without_matches {
+                            any_match = true;
+                        }
                         match_count += 1;
                         total_matches += 1;
 
-                        if opts.files_with_matches || opts.quiet {
+                        if opts.files_with_matches || opts.files_without_matches || opts.quiet {
                             break;
                         }
 
@@ -628,7 +661,7 @@ impl Builtin for Grep {
                             }
                         }
                     }
-                    if opts.files_with_matches && file_matched {
+                    if (opts.files_with_matches || opts.files_without_matches) && file_matched {
                         break;
                     }
                     if opts.quiet && file_matched {
@@ -643,12 +676,14 @@ impl Builtin for Grep {
 
                     if should_match {
                         file_matched = true;
-                        any_match = true;
+                        if !opts.files_without_matches {
+                            any_match = true;
+                        }
                         match_count += 1;
                         total_matches += 1;
                         match_lines.push(line_num);
 
-                        if opts.files_with_matches {
+                        if opts.files_with_matches || opts.files_without_matches {
                             break;
                         }
                         if opts.quiet {
@@ -673,7 +708,12 @@ impl Builtin for Grep {
 
             // Now generate output
             // Binary file: just report "Binary file X matches" instead of lines
-            if is_binary && file_matched && !opts.count_only && !opts.files_with_matches {
+            if is_binary
+                && file_matched
+                && !opts.count_only
+                && !opts.files_with_matches
+                && !opts.files_without_matches
+            {
                 let display_name = if filename.is_empty() {
                     "(standard input)"
                 } else {
@@ -682,12 +722,23 @@ impl Builtin for Grep {
                 output.push_str(&format!("Binary file {} matches\n", display_name));
                 continue 'file_loop;
             }
+            // Filename terminator: \0 for -Z, \n otherwise
+            let fname_term = if opts.null_filename { '\0' } else { '\n' };
+            // Filename separator in line output: \0 for -Z, : otherwise
+            let fname_sep = if opts.null_filename { '\0' } else { ':' };
             if opts.files_with_matches && file_matched {
                 output.push_str(filename);
-                output.push('\n');
+                output.push(fname_term);
+            } else if opts.files_without_matches && !file_matched {
+                output.push_str(filename);
+                output.push(fname_term);
+                // -L means at least one file printed => success
+                any_match = true;
+            } else if opts.files_without_matches {
+                // -L mode but file matched: skip output for this file
             } else if opts.count_only {
                 if show_filename {
-                    output.push_str(&format!("{}:{}\n", filename, match_count));
+                    output.push_str(&format!("{}{}{}\n", filename, fname_sep, match_count));
                 } else {
                     output.push_str(&format!("{}\n", match_count));
                 }
@@ -704,7 +755,7 @@ impl Builtin for Grep {
                             }
                             if show_filename {
                                 output.push_str(filename);
-                                output.push(':');
+                                output.push(fname_sep);
                             }
                             if opts.byte_offset {
                                 output.push_str(&format!("{}:", byte_offsets[line_num]));
@@ -749,7 +800,7 @@ impl Builtin for Grep {
 
                         // Determine if this is a match line or context line
                         let is_match = match_lines.contains(&line_idx);
-                        let separator = if is_match { ':' } else { '-' };
+                        let separator = if is_match { fname_sep } else { '-' };
 
                         if show_filename {
                             output.push_str(filename);
@@ -774,7 +825,7 @@ impl Builtin for Grep {
                         }
                         if show_filename {
                             output.push_str(filename);
-                            output.push(':');
+                            output.push(fname_sep);
                         }
                         if opts.byte_offset {
                             output.push_str(&format!("{}:", byte_offsets[line_idx]));
@@ -1049,5 +1100,306 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("/dir/a.txt:hello"));
         assert!(!result.stdout.contains("b.log"));
+    }
+
+    // -L (--files-without-match) tests
+
+    #[tokio::test]
+    async fn test_grep_files_without_match_stdin() {
+        let result = run_grep(&["-L", "xyz"], Some("foo\nbar")).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "(stdin)\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_files_without_match_stdin_has_match() {
+        let result = run_grep(&["-L", "foo"], Some("foo\nbar")).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_grep_files_without_match_long_flag() {
+        let result = run_grep(&["--files-without-match", "xyz"], Some("foo\nbar"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "(stdin)\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_files_without_match_with_files() {
+        let grep = Grep;
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(&PathBuf::from("/dir"), true).await.unwrap();
+        fs.write_file(&PathBuf::from("/dir/a.txt"), b"hello\n")
+            .await
+            .unwrap();
+        fs.write_file(&PathBuf::from("/dir/b.txt"), b"world\n")
+            .await
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["-L", "hello", "/dir/a.txt", "/dir/b.txt"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "/dir/b.txt\n");
+    }
+
+    // --exclude-dir tests
+
+    #[tokio::test]
+    async fn test_grep_exclude_dir() {
+        let grep = Grep;
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(&PathBuf::from("/proj/src"), true).await.unwrap();
+        fs.mkdir(&PathBuf::from("/proj/vendor"), true)
+            .await
+            .unwrap();
+        fs.write_file(&PathBuf::from("/proj/src/main.rs"), b"hello\n")
+            .await
+            .unwrap();
+        fs.write_file(&PathBuf::from("/proj/vendor/lib.rs"), b"hello\n")
+            .await
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["-r", "--exclude-dir=vendor", "hello", "/proj"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("/proj/src/main.rs:hello"));
+        assert!(!result.stdout.contains("vendor"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_exclude_dir_glob() {
+        let grep = Grep;
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(&PathBuf::from("/proj/src"), true).await.unwrap();
+        fs.mkdir(&PathBuf::from("/proj/.git"), true).await.unwrap();
+        fs.write_file(&PathBuf::from("/proj/src/main.rs"), b"hello\n")
+            .await
+            .unwrap();
+        fs.write_file(&PathBuf::from("/proj/.git/config"), b"hello\n")
+            .await
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["-r", "--exclude-dir=.*", "hello", "/proj"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("/proj/src/main.rs:hello"));
+        assert!(!result.stdout.contains(".git"));
+    }
+
+    // -s (--no-messages) tests
+
+    #[tokio::test]
+    async fn test_grep_suppress_errors() {
+        let grep = Grep;
+        let fs = Arc::new(InMemoryFs::new());
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["-s", "hello", "/nonexistent"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        // -s suppresses error messages
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_grep_no_suppress_errors() {
+        let grep = Grep;
+        let fs = Arc::new(InMemoryFs::new());
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["hello", "/nonexistent"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        // Without -s, error message is shown
+        assert!(result.stdout.contains("grep: /nonexistent:"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_suppress_errors_long_flag() {
+        let grep = Grep;
+        let fs = Arc::new(InMemoryFs::new());
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["--no-messages", "hello", "/nonexistent"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stdout, "");
+    }
+
+    // -Z (--null) tests
+
+    #[tokio::test]
+    async fn test_grep_null_filename_with_l() {
+        let result = run_grep(&["-lZ", "foo"], Some("foo\nbar")).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "(stdin)\0");
+    }
+
+    #[tokio::test]
+    async fn test_grep_null_filename_with_big_l() {
+        let result = run_grep(&["-LZ", "xyz"], Some("foo\nbar")).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "(stdin)\0");
+    }
+
+    #[tokio::test]
+    async fn test_grep_null_filename_with_h() {
+        let grep = Grep;
+        let fs = Arc::new(InMemoryFs::new());
+        fs.write_file(&PathBuf::from("/a.txt"), b"hello\n")
+            .await
+            .unwrap();
+        fs.write_file(&PathBuf::from("/b.txt"), b"hello\n")
+            .await
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["-Z", "hello", "/a.txt", "/b.txt"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        // -Z uses \0 after filename instead of :
+        assert!(result.stdout.contains("/a.txt\0hello"));
+        assert!(result.stdout.contains("/b.txt\0hello"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_null_filename_long_flag() {
+        let result = run_grep(&["-l", "--null", "foo"], Some("foo\nbar"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "(stdin)\0");
     }
 }
