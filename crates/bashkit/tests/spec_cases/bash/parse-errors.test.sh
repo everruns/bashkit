@@ -134,7 +134,6 @@ status=2
 
 ### parse_unterminated_single_quote
 # Unterminated single quote is a parse error
-### skip: TODO unterminated quotes not detected as parse error
 bash -c "echo 'unterminated" 2>/dev/null
 echo status=$?
 ### expect
@@ -143,7 +142,6 @@ status=2
 
 ### parse_unterminated_double_quote
 # Unterminated double quote is a parse error
-### skip: TODO unterminated quotes not detected as parse error
 bash -c 'echo "unterminated' 2>/dev/null
 echo status=$?
 ### expect

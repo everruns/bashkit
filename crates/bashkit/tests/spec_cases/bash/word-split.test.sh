@@ -4,7 +4,7 @@
 
 ### ws_ifs_scoped
 # IFS is scoped with local
-### skip: TODO IFS-based word splitting not implemented
+### skip: TODO local IFS not checked during word splitting
 IFS=b
 word=abcd
 f() { local IFS=c; echo "$word" | tr "$IFS" '\n' | while read part; do printf '[%s]' "$part"; done; echo; }
@@ -21,7 +21,6 @@ echo "$#:$1:$2"
 
 ### ws_tilde_not_split
 # Tilde sub is not split, but var sub is
-### skip: TODO set -- with word splitting not implemented
 HOME="foo bar"
 set -- ~
 echo $#
@@ -143,7 +142,6 @@ echo "$*"
 
 ### ws_elision_space
 # Unquoted whitespace-only var is elided
-### skip: TODO word splitting does not elide whitespace-only expansions yet
 s1=' '
 set -- $s1
 echo $#
@@ -169,7 +167,6 @@ set -- $empty; echo $#
 
 ### ws_leading_trailing_nonwhitespace_ifs
 # Leading/trailing with non-whitespace IFS
-### skip: TODO IFS-based word splitting not implemented
 IFS=_
 s1='_a_b_'
 set -- $s1
@@ -180,7 +177,6 @@ echo "$#:$1:$2:$3"
 
 ### ws_mixed_ifs_whitespace_nonwhitespace
 # Mixed whitespace and non-whitespace IFS
-### skip: TODO IFS-based word splitting not implemented
 IFS='_ '
 s1='_ a  b _ '
 s2='  a  b _ '
@@ -193,7 +189,6 @@ set -- $s2; echo "$#:$1:$2"
 
 ### ws_multiple_nonwhitespace_ifs
 # Multiple non-whitespace IFS chars produce empty fields
-### skip: TODO IFS-based word splitting not implemented
 IFS=_-
 s1='a__b---c_d'
 set -- $s1
@@ -212,7 +207,6 @@ for arg in "$@"; do echo "[$arg]"; done
 
 ### ws_ifs_whitespace_and_nonwhitespace
 # IFS with whitespace and non-whitespace
-### skip: TODO IFS-based word splitting not implemented
 IFS='_ '
 s1='a_b _ _ _ c  _d e'
 set -- $s1
@@ -240,7 +234,6 @@ fun
 
 ### ws_unquoted_empty_elided
 # unquoted empty var is elided
-### skip: TODO word elision not implemented
 empty=""
 set -- 1 $empty 2
 echo $#
@@ -250,7 +243,6 @@ echo $#
 
 ### ws_unquoted_whitespace_elided
 # unquoted whitespace var is elided
-### skip: TODO word elision not implemented
 space=" "
 set -- 1 $space 2
 echo $#
@@ -270,7 +262,6 @@ echo $#
 
 ### ws_no_split_empty_ifs
 # no splitting when IFS is empty
-### skip: TODO IFS-based word splitting not implemented
 IFS=""
 foo="a b"
 set -- $foo
@@ -307,7 +298,6 @@ echo "$2"
 
 ### ws_ifs_empty_no_split
 # IFS empty prevents all splitting
-### skip: TODO IFS-based word splitting not implemented
 IFS=''
 x="a b	c"
 set -- $x
@@ -318,7 +308,6 @@ echo "$#:$1"
 
 ### ws_ifs_unset_default
 # IFS unset behaves like space/tab/newline
-### skip: TODO IFS-based word splitting not implemented
 unset IFS
 x="a b	c"
 set -- $x

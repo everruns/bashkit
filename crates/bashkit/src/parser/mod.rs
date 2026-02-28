@@ -104,6 +104,13 @@ impl<'a> Parser<'a> {
         self.current_span
     }
 
+    /// Parse a string as a word (handling $var, $((expr)), ${...}, etc.).
+    /// Used by the interpreter to expand operands in parameter expansions lazily.
+    pub fn parse_word_string(input: &str) -> Word {
+        let parser = Parser::new(input);
+        parser.parse_word(input.to_string())
+    }
+
     /// Create a parse error with the current position.
     fn error(&self, message: impl Into<String>) -> Error {
         Error::parse_at(
@@ -145,14 +152,26 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Check if current token is an error token and return the error if so
+    fn check_error_token(&self) -> Result<()> {
+        if let Some(tokens::Token::Error(msg)) = &self.current_token {
+            return Err(self.error(format!("syntax error: {}", msg)));
+        }
+        Ok(())
+    }
+
     /// Parse the input and return the AST.
     pub fn parse(mut self) -> Result<Script> {
+        // Check if the very first token is an error
+        self.check_error_token()?;
+
         let start_span = self.current_span;
         let mut commands = Vec::new();
 
         while self.current_token.is_some() {
             self.tick()?;
             self.skip_newlines()?;
+            self.check_error_token()?;
             if self.current_token.is_none() {
                 break;
             }
@@ -489,6 +508,7 @@ impl<'a> Parser<'a> {
     /// Parse a single command (simple or compound)
     fn parse_command(&mut self) -> Result<Option<Command>> {
         self.skip_newlines()?;
+        self.check_error_token()?;
 
         // Check for compound commands and function keyword
         if let Some(tokens::Token::Word(w)) = &self.current_token {
@@ -558,6 +578,12 @@ impl<'a> Parser<'a> {
         // Parse then branch
         let then_branch = self.parse_compound_list_until(&["elif", "else", "fi"])?;
 
+        // Bash requires at least one command in then branch
+        if then_branch.is_empty() {
+            self.pop_depth();
+            return Err(self.error("syntax error: empty then clause"));
+        }
+
         // Parse elif branches
         let mut elif_branches = Vec::new();
         while self.is_keyword("elif") {
@@ -569,6 +595,13 @@ impl<'a> Parser<'a> {
             self.skip_newlines()?;
 
             let elif_body = self.parse_compound_list_until(&["elif", "else", "fi"])?;
+
+            // Bash requires at least one command in elif branch
+            if elif_body.is_empty() {
+                self.pop_depth();
+                return Err(self.error("syntax error: empty elif clause"));
+            }
+
             elif_branches.push((elif_condition, elif_body));
         }
 
@@ -576,7 +609,15 @@ impl<'a> Parser<'a> {
         let else_branch = if self.is_keyword("else") {
             self.advance(); // consume 'else'
             self.skip_newlines()?;
-            Some(self.parse_compound_list("fi")?)
+            let branch = self.parse_compound_list("fi")?;
+
+            // Bash requires at least one command in else branch
+            if branch.is_empty() {
+                self.pop_depth();
+                return Err(self.error("syntax error: empty else clause"));
+            }
+
+            Some(branch)
         } else {
             None
         };
@@ -674,6 +715,12 @@ impl<'a> Parser<'a> {
         // Parse body
         let body = self.parse_compound_list("done")?;
 
+        // Bash requires at least one command in loop body
+        if body.is_empty() {
+            self.pop_depth();
+            return Err(self.error("syntax error: empty for loop body"));
+        }
+
         // Expect 'done'
         self.expect_keyword("done")?;
 
@@ -750,6 +797,12 @@ impl<'a> Parser<'a> {
 
         // Parse body
         let body = self.parse_compound_list("done")?;
+
+        // Bash requires at least one command in loop body
+        if body.is_empty() {
+            self.pop_depth();
+            return Err(self.error("syntax error: empty select loop body"));
+        }
 
         // Expect 'done'
         self.expect_keyword("done")?;
@@ -884,6 +937,11 @@ impl<'a> Parser<'a> {
         // Parse body
         let body = self.parse_compound_list("done")?;
 
+        // Bash requires at least one command in loop body
+        if body.is_empty() {
+            return Err(self.error("syntax error: empty for loop body"));
+        }
+
         // Expect 'done'
         self.expect_keyword("done")?;
 
@@ -913,6 +971,12 @@ impl<'a> Parser<'a> {
         // Parse body
         let body = self.parse_compound_list("done")?;
 
+        // Bash requires at least one command in loop body
+        if body.is_empty() {
+            self.pop_depth();
+            return Err(self.error("syntax error: empty while loop body"));
+        }
+
         // Expect 'done'
         self.expect_keyword("done")?;
 
@@ -940,6 +1004,12 @@ impl<'a> Parser<'a> {
 
         // Parse body
         let body = self.parse_compound_list("done")?;
+
+        // Bash requires at least one command in loop body
+        if body.is_empty() {
+            self.pop_depth();
+            return Err(self.error("syntax error: empty until loop body"));
+        }
 
         // Expect 'done'
         self.expect_keyword("done")?;
@@ -1157,6 +1227,13 @@ impl<'a> Parser<'a> {
                 "expected '}' to close brace group".to_string(),
             ));
         }
+
+        // Bash requires at least one command in a brace group
+        if commands.is_empty() {
+            self.pop_depth();
+            return Err(self.error("syntax error: empty brace group"));
+        }
+
         self.advance(); // consume '}'
 
         self.pop_depth();
@@ -1577,6 +1654,7 @@ impl<'a> Parser<'a> {
     fn parse_simple_command(&mut self) -> Result<Option<SimpleCommand>> {
         self.tick()?;
         self.skip_newlines()?;
+        self.check_error_token()?;
         let start_span = self.current_span;
 
         let mut assignments = Vec::new();
@@ -2279,6 +2357,15 @@ impl<'a> Parser<'a> {
                             }
                         }
 
+                        // Handle special parameters: ${@...}, ${*...}
+                        if var_name.is_empty() {
+                            if let Some(&c) = chars.peek() {
+                                if matches!(c, '@' | '*') {
+                                    var_name.push(chars.next().unwrap());
+                                }
+                            }
+                        }
+
                         // Check for array access ${arr[index]} or ${arr[@]:offset:length}
                         if chars.peek() == Some(&'[') {
                             chars.next(); // consume '['
@@ -2290,45 +2377,95 @@ impl<'a> Parser<'a> {
                                 }
                                 index.push(chars.next().unwrap());
                             }
-                            // Check for slice ${arr[@]:offset:length}
-                            if chars.peek() == Some(&':') && (index == "@" || index == "*") {
-                                chars.next(); // consume ':'
-                                              // Read offset (may include negative sign)
-                                let mut offset = String::new();
-                                while let Some(&c) = chars.peek() {
-                                    if c == ':' || c == '}' {
-                                        break;
-                                    }
-                                    offset.push(chars.next().unwrap());
-                                }
-                                // Check for length
-                                let length = if chars.peek() == Some(&':') {
-                                    chars.next(); // consume ':'
-                                    let mut len = String::new();
-                                    while let Some(&c) = chars.peek() {
-                                        if c == '}' {
-                                            break;
+                            // After ], check for operators on array subscripts
+                            if let Some(&next_c) = chars.peek() {
+                                if next_c == ':' && (index == "@" || index == "*") {
+                                    // Peek ahead to distinguish param ops (:- := :+ :?) from slice (:N)
+                                    let mut lookahead = chars.clone();
+                                    lookahead.next(); // skip ':'
+                                    let is_param_op = matches!(
+                                        lookahead.peek(),
+                                        Some(&'-') | Some(&'=') | Some(&'+') | Some(&'?')
+                                    );
+                                    if is_param_op {
+                                        chars.next(); // consume ':'
+                                        let arr_name = format!("{}[{}]", var_name, index);
+                                        let op_char = chars.next().unwrap();
+                                        let operand = self.read_brace_operand(&mut chars);
+                                        let operator = match op_char {
+                                            '-' => ParameterOp::UseDefault,
+                                            '=' => ParameterOp::AssignDefault,
+                                            '+' => ParameterOp::UseReplacement,
+                                            '?' => ParameterOp::Error,
+                                            _ => unreachable!(),
+                                        };
+                                        parts.push(WordPart::ParameterExpansion {
+                                            name: arr_name,
+                                            operator,
+                                            operand,
+                                            colon_variant: true,
+                                        });
+                                    } else {
+                                        // Array slice ${arr[@]:offset:length}
+                                        chars.next(); // consume ':'
+                                        let mut offset = String::new();
+                                        while let Some(&c) = chars.peek() {
+                                            if c == ':' || c == '}' {
+                                                break;
+                                            }
+                                            offset.push(chars.next().unwrap());
                                         }
-                                        len.push(chars.next().unwrap());
+                                        let length = if chars.peek() == Some(&':') {
+                                            chars.next();
+                                            let mut len = String::new();
+                                            while let Some(&c) = chars.peek() {
+                                                if c == '}' {
+                                                    break;
+                                                }
+                                                len.push(chars.next().unwrap());
+                                            }
+                                            Some(len)
+                                        } else {
+                                            None
+                                        };
+                                        if chars.peek() == Some(&'}') {
+                                            chars.next();
+                                        }
+                                        parts.push(WordPart::ArraySlice {
+                                            name: var_name,
+                                            offset,
+                                            length,
+                                        });
                                     }
-                                    Some(len)
+                                } else if matches!(next_c, '-' | '+' | '=' | '?') {
+                                    // Non-colon operators on array: ${arr[@]-default}
+                                    let arr_name = format!("{}[{}]", var_name, index);
+                                    let op_char = chars.next().unwrap();
+                                    let operand = self.read_brace_operand(&mut chars);
+                                    let operator = match op_char {
+                                        '-' => ParameterOp::UseDefault,
+                                        '=' => ParameterOp::AssignDefault,
+                                        '+' => ParameterOp::UseReplacement,
+                                        '?' => ParameterOp::Error,
+                                        _ => unreachable!(),
+                                    };
+                                    parts.push(WordPart::ParameterExpansion {
+                                        name: arr_name,
+                                        operator,
+                                        operand,
+                                        colon_variant: false,
+                                    });
                                 } else {
-                                    None
-                                };
-                                // Consume closing }
-                                if chars.peek() == Some(&'}') {
-                                    chars.next();
+                                    // Plain array access ${arr[index]}
+                                    if chars.peek() == Some(&'}') {
+                                        chars.next();
+                                    }
+                                    parts.push(WordPart::ArrayAccess {
+                                        name: var_name,
+                                        index,
+                                    });
                                 }
-                                parts.push(WordPart::ArraySlice {
-                                    name: var_name,
-                                    offset,
-                                    length,
-                                });
                             } else {
-                                // Consume closing }
-                                if chars.peek() == Some(&'}') {
-                                    chars.next();
-                                }
                                 parts.push(WordPart::ArrayAccess {
                                     name: var_name,
                                     index,
@@ -2340,40 +2477,21 @@ impl<'a> Parser<'a> {
                                 ':' => {
                                     chars.next(); // consume ':'
                                     match chars.peek() {
-                                        Some(&'-') => {
-                                            chars.next();
-                                            let op = self.read_brace_operand(&mut chars);
+                                        Some(&'-') | Some(&'=') | Some(&'+') | Some(&'?') => {
+                                            let op_char = chars.next().unwrap();
+                                            let operand = self.read_brace_operand(&mut chars);
+                                            let operator = match op_char {
+                                                '-' => ParameterOp::UseDefault,
+                                                '=' => ParameterOp::AssignDefault,
+                                                '+' => ParameterOp::UseReplacement,
+                                                '?' => ParameterOp::Error,
+                                                _ => unreachable!(),
+                                            };
                                             parts.push(WordPart::ParameterExpansion {
                                                 name: var_name,
-                                                operator: ParameterOp::UseDefault,
-                                                operand: op,
-                                            });
-                                        }
-                                        Some(&'=') => {
-                                            chars.next();
-                                            let op = self.read_brace_operand(&mut chars);
-                                            parts.push(WordPart::ParameterExpansion {
-                                                name: var_name,
-                                                operator: ParameterOp::AssignDefault,
-                                                operand: op,
-                                            });
-                                        }
-                                        Some(&'+') => {
-                                            chars.next();
-                                            let op = self.read_brace_operand(&mut chars);
-                                            parts.push(WordPart::ParameterExpansion {
-                                                name: var_name,
-                                                operator: ParameterOp::UseReplacement,
-                                                operand: op,
-                                            });
-                                        }
-                                        Some(&'?') => {
-                                            chars.next();
-                                            let op = self.read_brace_operand(&mut chars);
-                                            parts.push(WordPart::ParameterExpansion {
-                                                name: var_name,
-                                                operator: ParameterOp::Error,
-                                                operand: op,
+                                                operator,
+                                                operand,
+                                                colon_variant: true,
                                             });
                                         }
                                         _ => {
@@ -2398,7 +2516,6 @@ impl<'a> Parser<'a> {
                                             } else {
                                                 None
                                             };
-                                            // Consume closing }
                                             if chars.peek() == Some(&'}') {
                                                 chars.next();
                                             }
@@ -2410,6 +2527,24 @@ impl<'a> Parser<'a> {
                                         }
                                     }
                                 }
+                                // Non-colon test operators: ${var-default}, ${var+alt}, ${var=assign}, ${var?err}
+                                '-' | '=' | '+' | '?' => {
+                                    let op_char = chars.next().unwrap();
+                                    let operand = self.read_brace_operand(&mut chars);
+                                    let operator = match op_char {
+                                        '-' => ParameterOp::UseDefault,
+                                        '=' => ParameterOp::AssignDefault,
+                                        '+' => ParameterOp::UseReplacement,
+                                        '?' => ParameterOp::Error,
+                                        _ => unreachable!(),
+                                    };
+                                    parts.push(WordPart::ParameterExpansion {
+                                        name: var_name,
+                                        operator,
+                                        operand,
+                                        colon_variant: false,
+                                    });
+                                }
                                 '#' => {
                                     chars.next();
                                     if chars.peek() == Some(&'#') {
@@ -2419,6 +2554,7 @@ impl<'a> Parser<'a> {
                                             name: var_name,
                                             operator: ParameterOp::RemovePrefixLong,
                                             operand: op,
+                                            colon_variant: false,
                                         });
                                     } else {
                                         let op = self.read_brace_operand(&mut chars);
@@ -2426,6 +2562,7 @@ impl<'a> Parser<'a> {
                                             name: var_name,
                                             operator: ParameterOp::RemovePrefixShort,
                                             operand: op,
+                                            colon_variant: false,
                                         });
                                     }
                                 }
@@ -2438,6 +2575,7 @@ impl<'a> Parser<'a> {
                                             name: var_name,
                                             operator: ParameterOp::RemoveSuffixLong,
                                             operand: op,
+                                            colon_variant: false,
                                         });
                                     } else {
                                         let op = self.read_brace_operand(&mut chars);
@@ -2445,29 +2583,27 @@ impl<'a> Parser<'a> {
                                             name: var_name,
                                             operator: ParameterOp::RemoveSuffixShort,
                                             operand: op,
+                                            colon_variant: false,
                                         });
                                     }
                                 }
                                 '/' => {
-                                    // Pattern replacement ${var/pattern/replacement} or ${var//pattern/replacement}
-                                    chars.next(); // consume '/'
+                                    chars.next();
                                     let replace_all = if chars.peek() == Some(&'/') {
-                                        chars.next(); // consume second '/'
+                                        chars.next();
                                         true
                                     } else {
                                         false
                                     };
-                                    // Read pattern until / (handle \/ as escaped /)
                                     let mut pattern = String::new();
                                     while let Some(&ch) = chars.peek() {
                                         if ch == '/' || ch == '}' {
                                             break;
                                         }
                                         if ch == '\\' {
-                                            chars.next(); // consume backslash
+                                            chars.next();
                                             if let Some(&next) = chars.peek() {
                                                 if next == '/' {
-                                                    // \/ -> literal /
                                                     pattern.push(chars.next().unwrap());
                                                     continue;
                                                 }
@@ -2477,9 +2613,8 @@ impl<'a> Parser<'a> {
                                         }
                                         pattern.push(chars.next().unwrap());
                                     }
-                                    // Read replacement if present
                                     let replacement = if chars.peek() == Some(&'/') {
-                                        chars.next(); // consume '/'
+                                        chars.next();
                                         let mut repl = String::new();
                                         while let Some(&ch) = chars.peek() {
                                             if ch == '}' {
@@ -2491,7 +2626,6 @@ impl<'a> Parser<'a> {
                                     } else {
                                         String::new()
                                     };
-                                    // Consume closing }
                                     if chars.peek() == Some(&'}') {
                                         chars.next();
                                     }
@@ -2510,18 +2644,17 @@ impl<'a> Parser<'a> {
                                         name: var_name,
                                         operator: op,
                                         operand: String::new(),
+                                        colon_variant: false,
                                     });
                                 }
                                 '^' => {
-                                    // Case conversion uppercase ${var^} or ${var^^}
-                                    chars.next(); // consume '^'
+                                    chars.next();
                                     let op = if chars.peek() == Some(&'^') {
                                         chars.next();
                                         ParameterOp::UpperAll
                                     } else {
                                         ParameterOp::UpperFirst
                                     };
-                                    // Consume closing }
                                     if chars.peek() == Some(&'}') {
                                         chars.next();
                                     }
@@ -2529,18 +2662,17 @@ impl<'a> Parser<'a> {
                                         name: var_name,
                                         operator: op,
                                         operand: String::new(),
+                                        colon_variant: false,
                                     });
                                 }
                                 ',' => {
-                                    // Case conversion lowercase ${var,} or ${var,,}
-                                    chars.next(); // consume ','
+                                    chars.next();
                                     let op = if chars.peek() == Some(&',') {
                                         chars.next();
                                         ParameterOp::LowerAll
                                     } else {
                                         ParameterOp::LowerFirst
                                     };
-                                    // Consume closing }
                                     if chars.peek() == Some(&'}') {
                                         chars.next();
                                     }
@@ -2548,14 +2680,13 @@ impl<'a> Parser<'a> {
                                         name: var_name,
                                         operator: op,
                                         operand: String::new(),
+                                        colon_variant: false,
                                     });
                                 }
                                 '@' => {
-                                    // Parameter transformation ${var@op}
-                                    chars.next(); // consume '@'
+                                    chars.next();
                                     if let Some(&op) = chars.peek() {
-                                        chars.next(); // consume operator
-                                                      // Consume closing }
+                                        chars.next();
                                         if chars.peek() == Some(&'}') {
                                             chars.next();
                                         }
@@ -2564,7 +2695,6 @@ impl<'a> Parser<'a> {
                                             operator: op,
                                         });
                                     } else {
-                                        // No operator, treat as variable
                                         if chars.peek() == Some(&'}') {
                                             chars.next();
                                         }
@@ -2578,7 +2708,6 @@ impl<'a> Parser<'a> {
                                     }
                                 }
                                 _ => {
-                                    // Unknown, consume until }
                                     while let Some(&ch) = chars.peek() {
                                         if ch == '}' {
                                             chars.next();
@@ -2812,5 +2941,83 @@ mod tests {
         } else {
             panic!("expected Compound command");
         }
+    }
+
+    #[test]
+    fn test_empty_function_body_rejected() {
+        let parser = Parser::new("f() { }");
+        assert!(
+            parser.parse().is_err(),
+            "empty function body should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_empty_while_body_rejected() {
+        let parser = Parser::new("while true; do\ndone");
+        assert!(
+            parser.parse().is_err(),
+            "empty while body should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_empty_for_body_rejected() {
+        let parser = Parser::new("for i in 1 2 3; do\ndone");
+        assert!(parser.parse().is_err(), "empty for body should be rejected");
+    }
+
+    #[test]
+    fn test_empty_if_then_rejected() {
+        let parser = Parser::new("if true; then\nfi");
+        assert!(
+            parser.parse().is_err(),
+            "empty then clause should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_empty_else_rejected() {
+        let parser = Parser::new("if false; then echo yes; else\nfi");
+        assert!(
+            parser.parse().is_err(),
+            "empty else clause should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_unterminated_single_quote_rejected() {
+        let parser = Parser::new("echo 'unterminated");
+        assert!(
+            parser.parse().is_err(),
+            "unterminated single quote should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_unterminated_double_quote_rejected() {
+        let parser = Parser::new("echo \"unterminated");
+        assert!(
+            parser.parse().is_err(),
+            "unterminated double quote should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_nonempty_function_body_accepted() {
+        let parser = Parser::new("f() { echo hi; }");
+        assert!(
+            parser.parse().is_ok(),
+            "non-empty function body should be accepted"
+        );
+    }
+
+    #[test]
+    fn test_nonempty_while_body_accepted() {
+        let parser = Parser::new("while true; do echo hi; done");
+        assert!(
+            parser.parse().is_ok(),
+            "non-empty while body should be accepted"
+        );
     }
 }
