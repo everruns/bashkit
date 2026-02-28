@@ -180,3 +180,180 @@ impl Builtin for Seq {
         Ok(ExecResult::ok(output))
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use crate::fs::{FileSystem, InMemoryFs};
+
+    async fn setup() -> (Arc<InMemoryFs>, PathBuf, HashMap<String, String>) {
+        let fs = Arc::new(InMemoryFs::new());
+        let cwd = PathBuf::from("/home/user");
+        let variables = HashMap::new();
+        fs.mkdir(&cwd, true).await.unwrap();
+        (fs, cwd, variables)
+    }
+
+    // ==================== basic ranges ====================
+
+    #[tokio::test]
+    async fn seq_single_arg() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["5".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Seq.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "1\n2\n3\n4\n5\n");
+    }
+
+    #[tokio::test]
+    async fn seq_two_args() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["3".to_string(), "6".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Seq.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout, "3\n4\n5\n6\n");
+    }
+
+    #[tokio::test]
+    async fn seq_three_args_increment() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["1".to_string(), "2".to_string(), "9".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Seq.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout, "1\n3\n5\n7\n9\n");
+    }
+
+    #[tokio::test]
+    async fn seq_descending() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["5".to_string(), "-1".to_string(), "1".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Seq.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout, "5\n4\n3\n2\n1\n");
+    }
+
+    #[tokio::test]
+    async fn seq_single_element() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["1".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Seq.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout, "1\n");
+    }
+
+    #[tokio::test]
+    async fn seq_empty_range() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        // first > last with positive increment => empty output
+        let args = vec!["5".to_string(), "1".to_string(), "3".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Seq.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.is_empty());
+    }
+
+    // ==================== separator (-s) ====================
+
+    #[tokio::test]
+    async fn seq_custom_separator() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-s".to_string(), ",".to_string(), "3".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Seq.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout, "1,2,3\n");
+    }
+
+    #[tokio::test]
+    async fn seq_separator_no_space() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-s,".to_string(), "3".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Seq.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout, "1,2,3\n");
+    }
+
+    // ==================== zero-padding (-w) ====================
+
+    #[tokio::test]
+    async fn seq_zero_padding() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-w".to_string(), "8".to_string(), "10".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Seq.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout, "08\n09\n10\n");
+    }
+
+    #[tokio::test]
+    async fn seq_zero_padding_large() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-w".to_string(), "1".to_string(), "100".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Seq.execute(ctx).await.unwrap();
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        assert_eq!(lines[0], "001");
+        assert_eq!(lines[99], "100");
+    }
+
+    // ==================== error cases ====================
+
+    #[tokio::test]
+    async fn seq_missing_operand() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Seq.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("missing operand"));
+    }
+
+    #[tokio::test]
+    async fn seq_invalid_number() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["abc".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Seq.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid floating point"));
+    }
+
+    #[tokio::test]
+    async fn seq_zero_increment() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["1".to_string(), "0".to_string(), "5".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Seq.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("zero increment"));
+    }
+
+    // ==================== negative numbers ====================
+
+    #[tokio::test]
+    async fn seq_negative_range() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-3".to_string(), "0".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Seq.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout, "-3\n-2\n-1\n0\n");
+    }
+}
