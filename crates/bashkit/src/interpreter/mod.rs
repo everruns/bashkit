@@ -5727,7 +5727,8 @@ impl Interpreter {
         // Skip splitting for assignment-like words (e.g., result="$1") where
         // the lexer stripped quotes from a mixed-quoted word (produces Token::Word
         // with quoted: false even though the expansion was inside double quotes).
-        let is_assignment_word = matches!(word.parts.first(), Some(WordPart::Literal(s)) if s.contains('='));
+        let is_assignment_word =
+            matches!(word.parts.first(), Some(WordPart::Literal(s)) if s.contains('='));
         let has_expansion = !word.quoted
             && !is_assignment_word
             && word.parts.iter().any(|p| {

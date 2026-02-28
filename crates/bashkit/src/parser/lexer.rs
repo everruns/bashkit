@@ -708,14 +708,20 @@ impl<'a> Lexer<'a> {
     fn read_single_quoted_string(&mut self) -> Option<Token> {
         self.advance(); // consume opening '
         let mut content = String::new();
+        let mut closed = false;
 
         while let Some(ch) = self.peek_char() {
             if ch == '\'' {
                 self.advance(); // consume closing '
+                closed = true;
                 break;
             }
             content.push(ch);
             self.advance();
+        }
+
+        if !closed {
+            return Some(Token::Error("unterminated single quote".to_string()));
         }
 
         // If next char is another quote or word char, concatenate (e.g., 'EOF'"2" -> EOF2).
@@ -893,11 +899,13 @@ impl<'a> Lexer<'a> {
     fn read_double_quoted_string(&mut self) -> Option<Token> {
         self.advance(); // consume opening "
         let mut content = String::new();
+        let mut closed = false;
 
         while let Some(ch) = self.peek_char() {
             match ch {
                 '"' => {
                     self.advance(); // consume closing "
+                    closed = true;
                     break;
                 }
                 '\\' => {
@@ -964,6 +972,10 @@ impl<'a> Lexer<'a> {
                     self.advance();
                 }
             }
+        }
+
+        if !closed {
+            return Some(Token::Error("unterminated double quote".to_string()));
         }
 
         Some(Token::QuotedWord(content))

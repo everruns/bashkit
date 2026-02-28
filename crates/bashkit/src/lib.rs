@@ -3848,10 +3848,10 @@ echo missing fi"#,
         assert!(result.is_err());
         let err = result.unwrap_err();
         let err_msg = format!("{}", err);
-        // Error should mention the problem
+        // Error should mention the problem (either "expected" or "syntax error")
         assert!(
-            err_msg.contains("expected"),
-            "Error should mention what's expected: {}",
+            err_msg.contains("expected") || err_msg.contains("syntax error"),
+            "Error should be a parse error: {}",
             err_msg
         );
     }

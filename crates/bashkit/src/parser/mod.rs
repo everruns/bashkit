@@ -152,14 +152,26 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Check if current token is an error token and return the error if so
+    fn check_error_token(&self) -> Result<()> {
+        if let Some(tokens::Token::Error(msg)) = &self.current_token {
+            return Err(self.error(format!("syntax error: {}", msg)));
+        }
+        Ok(())
+    }
+
     /// Parse the input and return the AST.
     pub fn parse(mut self) -> Result<Script> {
+        // Check if the very first token is an error
+        self.check_error_token()?;
+
         let start_span = self.current_span;
         let mut commands = Vec::new();
 
         while self.current_token.is_some() {
             self.tick()?;
             self.skip_newlines()?;
+            self.check_error_token()?;
             if self.current_token.is_none() {
                 break;
             }
@@ -496,6 +508,7 @@ impl<'a> Parser<'a> {
     /// Parse a single command (simple or compound)
     fn parse_command(&mut self) -> Result<Option<Command>> {
         self.skip_newlines()?;
+        self.check_error_token()?;
 
         // Check for compound commands and function keyword
         if let Some(tokens::Token::Word(w)) = &self.current_token {
@@ -565,6 +578,12 @@ impl<'a> Parser<'a> {
         // Parse then branch
         let then_branch = self.parse_compound_list_until(&["elif", "else", "fi"])?;
 
+        // Bash requires at least one command in then branch
+        if then_branch.is_empty() {
+            self.pop_depth();
+            return Err(self.error("syntax error: empty then clause"));
+        }
+
         // Parse elif branches
         let mut elif_branches = Vec::new();
         while self.is_keyword("elif") {
@@ -576,6 +595,13 @@ impl<'a> Parser<'a> {
             self.skip_newlines()?;
 
             let elif_body = self.parse_compound_list_until(&["elif", "else", "fi"])?;
+
+            // Bash requires at least one command in elif branch
+            if elif_body.is_empty() {
+                self.pop_depth();
+                return Err(self.error("syntax error: empty elif clause"));
+            }
+
             elif_branches.push((elif_condition, elif_body));
         }
 
@@ -583,7 +609,15 @@ impl<'a> Parser<'a> {
         let else_branch = if self.is_keyword("else") {
             self.advance(); // consume 'else'
             self.skip_newlines()?;
-            Some(self.parse_compound_list("fi")?)
+            let branch = self.parse_compound_list("fi")?;
+
+            // Bash requires at least one command in else branch
+            if branch.is_empty() {
+                self.pop_depth();
+                return Err(self.error("syntax error: empty else clause"));
+            }
+
+            Some(branch)
         } else {
             None
         };
@@ -681,6 +715,12 @@ impl<'a> Parser<'a> {
         // Parse body
         let body = self.parse_compound_list("done")?;
 
+        // Bash requires at least one command in loop body
+        if body.is_empty() {
+            self.pop_depth();
+            return Err(self.error("syntax error: empty for loop body"));
+        }
+
         // Expect 'done'
         self.expect_keyword("done")?;
 
@@ -757,6 +797,12 @@ impl<'a> Parser<'a> {
 
         // Parse body
         let body = self.parse_compound_list("done")?;
+
+        // Bash requires at least one command in loop body
+        if body.is_empty() {
+            self.pop_depth();
+            return Err(self.error("syntax error: empty select loop body"));
+        }
 
         // Expect 'done'
         self.expect_keyword("done")?;
@@ -891,6 +937,11 @@ impl<'a> Parser<'a> {
         // Parse body
         let body = self.parse_compound_list("done")?;
 
+        // Bash requires at least one command in loop body
+        if body.is_empty() {
+            return Err(self.error("syntax error: empty for loop body"));
+        }
+
         // Expect 'done'
         self.expect_keyword("done")?;
 
@@ -920,6 +971,12 @@ impl<'a> Parser<'a> {
         // Parse body
         let body = self.parse_compound_list("done")?;
 
+        // Bash requires at least one command in loop body
+        if body.is_empty() {
+            self.pop_depth();
+            return Err(self.error("syntax error: empty while loop body"));
+        }
+
         // Expect 'done'
         self.expect_keyword("done")?;
 
@@ -947,6 +1004,12 @@ impl<'a> Parser<'a> {
 
         // Parse body
         let body = self.parse_compound_list("done")?;
+
+        // Bash requires at least one command in loop body
+        if body.is_empty() {
+            self.pop_depth();
+            return Err(self.error("syntax error: empty until loop body"));
+        }
 
         // Expect 'done'
         self.expect_keyword("done")?;
@@ -1164,6 +1227,13 @@ impl<'a> Parser<'a> {
                 "expected '}' to close brace group".to_string(),
             ));
         }
+
+        // Bash requires at least one command in a brace group
+        if commands.is_empty() {
+            self.pop_depth();
+            return Err(self.error("syntax error: empty brace group"));
+        }
+
         self.advance(); // consume '}'
 
         self.pop_depth();
@@ -1584,6 +1654,7 @@ impl<'a> Parser<'a> {
     fn parse_simple_command(&mut self) -> Result<Option<SimpleCommand>> {
         self.tick()?;
         self.skip_newlines()?;
+        self.check_error_token()?;
         let start_span = self.current_span;
 
         let mut assignments = Vec::new();
@@ -2870,5 +2941,83 @@ mod tests {
         } else {
             panic!("expected Compound command");
         }
+    }
+
+    #[test]
+    fn test_empty_function_body_rejected() {
+        let parser = Parser::new("f() { }");
+        assert!(
+            parser.parse().is_err(),
+            "empty function body should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_empty_while_body_rejected() {
+        let parser = Parser::new("while true; do\ndone");
+        assert!(
+            parser.parse().is_err(),
+            "empty while body should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_empty_for_body_rejected() {
+        let parser = Parser::new("for i in 1 2 3; do\ndone");
+        assert!(parser.parse().is_err(), "empty for body should be rejected");
+    }
+
+    #[test]
+    fn test_empty_if_then_rejected() {
+        let parser = Parser::new("if true; then\nfi");
+        assert!(
+            parser.parse().is_err(),
+            "empty then clause should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_empty_else_rejected() {
+        let parser = Parser::new("if false; then echo yes; else\nfi");
+        assert!(
+            parser.parse().is_err(),
+            "empty else clause should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_unterminated_single_quote_rejected() {
+        let parser = Parser::new("echo 'unterminated");
+        assert!(
+            parser.parse().is_err(),
+            "unterminated single quote should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_unterminated_double_quote_rejected() {
+        let parser = Parser::new("echo \"unterminated");
+        assert!(
+            parser.parse().is_err(),
+            "unterminated double quote should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_nonempty_function_body_accepted() {
+        let parser = Parser::new("f() { echo hi; }");
+        assert!(
+            parser.parse().is_ok(),
+            "non-empty function body should be accepted"
+        );
+    }
+
+    #[test]
+    fn test_nonempty_while_body_accepted() {
+        let parser = Parser::new("while true; do echo hi; done");
+        assert!(
+            parser.parse().is_ok(),
+            "non-empty while body should be accepted"
+        );
     }
 }
