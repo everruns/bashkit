@@ -485,3 +485,129 @@ def test_scripted_tool_dozen_tools():
     assert r.exit_code == 0
     lines = r.stdout.strip().splitlines()
     assert lines == [f"result-{i}" for i in range(12)]
+
+
+# ===========================================================================
+# BashTool: Resource limit enforcement
+# ===========================================================================
+
+
+def test_max_loop_iterations_prevents_infinite_loop():
+    """max_loop_iterations stops infinite loops."""
+    tool = BashTool(max_loop_iterations=10)
+    r = tool.execute_sync("i=0; while true; do i=$((i+1)); done; echo $i")
+    # Should stop before completing — either error or truncated output
+    assert r.exit_code != 0 or int(r.stdout.strip() or "0") <= 100
+
+
+def test_max_commands_limits_execution():
+    """max_commands stops after N commands."""
+    tool = BashTool(max_commands=5)
+    r = tool.execute_sync("echo 1; echo 2; echo 3; echo 4; echo 5; echo 6; echo 7; echo 8; echo 9; echo 10")
+    # Should stop before all 10 commands complete
+    lines = [l for l in r.stdout.strip().splitlines() if l]
+    assert len(lines) < 10 or r.exit_code != 0
+
+
+# ===========================================================================
+# BashTool: Error conditions
+# ===========================================================================
+
+
+def test_malformed_bash_syntax():
+    """Unclosed quotes produce an error."""
+    tool = BashTool()
+    r = tool.execute_sync('echo "unclosed')
+    # Should fail with parse error
+    assert r.exit_code != 0 or r.error is not None
+
+
+def test_nonexistent_command():
+    """Unknown commands return exit code 127."""
+    tool = BashTool()
+    r = tool.execute_sync("nonexistent_xyz_cmd_12345")
+    assert r.exit_code == 127
+
+
+def test_large_output():
+    """Large output is handled without crash."""
+    tool = BashTool()
+    r = tool.execute_sync("for i in $(seq 1 1000); do echo line$i; done")
+    assert r.exit_code == 0
+    lines = r.stdout.strip().splitlines()
+    assert len(lines) == 1000
+
+
+def test_empty_input():
+    """Empty script returns success."""
+    tool = BashTool()
+    r = tool.execute_sync("")
+    assert r.exit_code == 0
+    assert r.stdout == ""
+
+
+# ===========================================================================
+# ScriptedTool: Edge cases
+# ===========================================================================
+
+
+def test_scripted_tool_callback_runtime_error():
+    """RuntimeError in callback is caught."""
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "fail",
+        "Fails with RuntimeError",
+        callback=lambda p, s=None: (_ for _ in ()).throw(RuntimeError("runtime fail")),
+    )
+    r = tool.execute_sync("fail")
+    assert r.exit_code != 0
+    assert "runtime fail" in r.stderr
+
+
+def test_scripted_tool_callback_type_error():
+    """TypeError in callback is caught."""
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "bad",
+        "Fails with TypeError",
+        callback=lambda p, s=None: (_ for _ in ()).throw(TypeError("bad type")),
+    )
+    r = tool.execute_sync("bad")
+    assert r.exit_code != 0
+
+
+def test_scripted_tool_large_callback_output():
+    """Callbacks returning large output work."""
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "big",
+        "Returns large output",
+        callback=lambda p, s=None: "x" * 10000 + "\n",
+    )
+    r = tool.execute_sync("big")
+    assert r.exit_code == 0
+    assert len(r.stdout.strip()) == 10000
+
+
+def test_scripted_tool_callback_returns_empty():
+    """Callback returning empty string is ok."""
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "empty",
+        "Returns nothing",
+        callback=lambda p, s=None: "",
+    )
+    r = tool.execute_sync("empty")
+    assert r.exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_async_multiple_tools():
+    """Multiple async calls to different tools work."""
+    tool = ScriptedTool("api")
+    tool.add_tool("a", "Tool A", callback=lambda p, s=None: "A\n")
+    tool.add_tool("b", "Tool B", callback=lambda p, s=None: "B\n")
+    r = await tool.execute("a; b")
+    assert r.exit_code == 0
+    assert "A" in r.stdout
+    assert "B" in r.stdout
