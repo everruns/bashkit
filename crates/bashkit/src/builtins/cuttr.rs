@@ -9,11 +9,13 @@ use crate::interpreter::ExecResult;
 /// The cut builtin - remove sections from each line.
 ///
 /// Usage: cut -d DELIM -f FIELDS [FILE...]
+///        cut -b BYTES [FILE...]
 ///        cut -c CHARS [FILE...]
 ///
 /// Options:
 ///   -d DELIM            Use DELIM instead of TAB for field delimiter
 ///   -f FIELDS           Select only these fields (1-indexed)
+///   -b BYTES            Select only these bytes (1-indexed, same as -c for ASCII)
 ///   -c CHARS            Select only these characters (1-indexed)
 ///   -s                  Only print lines containing delimiter (with -f)
 ///   --complement        Complement the selection
@@ -58,7 +60,7 @@ impl Builtin for Cut {
             } else if let Some(f) = arg.strip_prefix("-f") {
                 spec = f.to_string();
                 mode = CutMode::Fields;
-            } else if arg == "-c" {
+            } else if arg == "-c" || arg == "-b" {
                 i += 1;
                 if i < ctx.args.len() {
                     spec = ctx.args[i].clone();
@@ -66,6 +68,9 @@ impl Builtin for Cut {
                 }
             } else if let Some(c) = arg.strip_prefix("-c") {
                 spec = c.to_string();
+                mode = CutMode::Chars;
+            } else if let Some(b) = arg.strip_prefix("-b") {
+                spec = b.to_string();
                 mode = CutMode::Chars;
             } else if arg == "-s" {
                 only_delimited = true;
@@ -273,15 +278,16 @@ fn resolve_positions(positions: &[Position], total: usize) -> Vec<usize> {
 
 /// The tr builtin - translate or delete characters.
 ///
-/// Usage: tr [-d] [-s] [-c] SET1 [SET2]
+/// Usage: tr [-d] [-s] [-c/-C] SET1 [SET2]
 ///
 /// Options:
-///   -d   Delete characters in SET1
-///   -s   Squeeze repeated output characters in SET2 (or SET1 if no SET2)
-///   -c   Complement SET1 (use all chars NOT in SET1)
+///   -d     Delete characters in SET1
+///   -s     Squeeze repeated output characters in SET2 (or SET1 if no SET2)
+///   -c/-C  Complement SET1 (use all chars NOT in SET1)
 ///
 /// SET1 and SET2 can contain character ranges like a-z, A-Z, 0-9
-/// and POSIX classes like [:lower:], [:upper:], [:digit:]
+/// and POSIX classes like [:lower:], [:upper:], [:digit:], [:alpha:],
+/// [:alnum:], [:space:], [:blank:], [:punct:], [:xdigit:], [:print:], [:graph:]
 pub struct Tr;
 
 #[async_trait]
@@ -296,13 +302,13 @@ impl Builtin for Tr {
         for arg in ctx.args.iter() {
             if arg.starts_with('-')
                 && arg.len() > 1
-                && arg.chars().skip(1).all(|c| "dsc".contains(c))
+                && arg.chars().skip(1).all(|ch| "dscC".contains(ch))
             {
-                for c in arg.chars().skip(1) {
-                    match c {
+                for ch in arg.chars().skip(1) {
+                    match ch {
                         'd' => delete = true,
                         's' => squeeze = true,
-                        'c' => complement = true,
+                        'c' | 'C' => complement = true,
                         _ => {}
                     }
                 }
@@ -418,10 +424,37 @@ fn expand_char_set(spec: &str) -> Vec<char> {
                     }
                     "space" => chars.extend([' ', '\t', '\n', '\r', '\x0b', '\x0c']),
                     "blank" => chars.extend([' ', '\t']),
-                    "print" | "graph" => {
+                    "punct" => {
+                        // ASCII punctuation: !"#$%&'()*+,-./:;<=>?@[\]^_`{|}~
+                        for code in 0x21u8..=0x7e {
+                            let c = code as char;
+                            if !c.is_ascii_alphanumeric() {
+                                chars.push(c);
+                            }
+                        }
+                    }
+                    "xdigit" => {
+                        chars.extend('0'..='9');
+                        chars.extend('A'..='F');
+                        chars.extend('a'..='f');
+                    }
+                    "print" => {
+                        // Printable characters: space + graph
                         for code in 0x20u8..=0x7e {
                             chars.push(code as char);
                         }
+                    }
+                    "graph" => {
+                        // Visible characters (no space)
+                        for code in 0x21u8..=0x7e {
+                            chars.push(code as char);
+                        }
+                    }
+                    "cntrl" => {
+                        for code in 0u8..=0x1f {
+                            chars.push(code as char);
+                        }
+                        chars.push(0x7f as char);
                     }
                     _ => {
                         // Unknown class, treat literally
@@ -664,5 +697,145 @@ mod tests {
         let result = run_tr(&["-cd", "0-9\n"], Some("hello123\n")).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "123\n");
+    }
+
+    #[tokio::test]
+    async fn test_tr_complement_uppercase_c() {
+        // -C is POSIX alias for -c (complement)
+        let result = run_tr(&["-Cd", "0-9\n"], Some("hello123\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "123\n");
+    }
+
+    #[tokio::test]
+    async fn test_tr_combined_flags_ds() {
+        // -ds: delete SET1 chars, then squeeze SET2 chars
+        let result = run_tr(&["-ds", "aeiou", " "], Some("the  quick  fox\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "th qck fx\n");
+    }
+
+    #[test]
+    fn test_expand_char_class_punct() {
+        let punct = expand_char_set("[:punct:]");
+        assert!(punct.contains(&'!'));
+        assert!(punct.contains(&'.'));
+        assert!(punct.contains(&','));
+        assert!(punct.contains(&'@'));
+        assert!(punct.contains(&'#'));
+        assert!(!punct.contains(&'a'));
+        assert!(!punct.contains(&'0'));
+        assert!(!punct.contains(&' '));
+    }
+
+    #[test]
+    fn test_expand_char_class_xdigit() {
+        let xdigit = expand_char_set("[:xdigit:]");
+        assert_eq!(xdigit.len(), 22); // 0-9 + A-F + a-f
+        assert!(xdigit.contains(&'0'));
+        assert!(xdigit.contains(&'9'));
+        assert!(xdigit.contains(&'A'));
+        assert!(xdigit.contains(&'F'));
+        assert!(xdigit.contains(&'a'));
+        assert!(xdigit.contains(&'f'));
+        assert!(!xdigit.contains(&'G'));
+        assert!(!xdigit.contains(&'g'));
+    }
+
+    #[test]
+    fn test_expand_char_class_digit() {
+        let digit = expand_char_set("[:digit:]");
+        assert_eq!(digit.len(), 10);
+        assert_eq!(digit[0], '0');
+        assert_eq!(digit[9], '9');
+    }
+
+    #[test]
+    fn test_expand_char_class_alpha() {
+        let alpha = expand_char_set("[:alpha:]");
+        assert_eq!(alpha.len(), 52);
+        assert!(alpha.contains(&'a'));
+        assert!(alpha.contains(&'z'));
+        assert!(alpha.contains(&'A'));
+        assert!(alpha.contains(&'Z'));
+    }
+
+    #[test]
+    fn test_expand_char_class_alnum() {
+        let alnum = expand_char_set("[:alnum:]");
+        assert_eq!(alnum.len(), 62);
+        assert!(alnum.contains(&'a'));
+        assert!(alnum.contains(&'0'));
+        assert!(alnum.contains(&'Z'));
+    }
+
+    #[test]
+    fn test_expand_char_class_space() {
+        let space = expand_char_set("[:space:]");
+        assert!(space.contains(&' '));
+        assert!(space.contains(&'\t'));
+        assert!(space.contains(&'\n'));
+        assert!(space.contains(&'\r'));
+    }
+
+    #[test]
+    fn test_expand_char_class_blank() {
+        let blank = expand_char_set("[:blank:]");
+        assert_eq!(blank.len(), 2);
+        assert!(blank.contains(&' '));
+        assert!(blank.contains(&'\t'));
+    }
+
+    #[test]
+    fn test_expand_char_class_cntrl() {
+        let cntrl = expand_char_set("[:cntrl:]");
+        assert!(cntrl.contains(&'\0'));
+        assert!(cntrl.contains(&'\x1f'));
+        assert!(cntrl.contains(&'\x7f'));
+        assert!(!cntrl.contains(&' '));
+    }
+
+    #[tokio::test]
+    async fn test_tr_delete_punct() {
+        let result = run_tr(&["-d", "[:punct:]"], Some("hello, world!\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "hello world\n");
+    }
+
+    #[tokio::test]
+    async fn test_tr_squeeze_spaces() {
+        let result = run_tr(&["-s", "[:space:]"], Some("hello   world\n\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "hello world\n");
+    }
+
+    #[tokio::test]
+    async fn test_tr_translate_with_squeeze() {
+        let result = run_tr(&["-s", "a-z", "A-Z"], Some("aabbcc\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "ABC\n");
+    }
+
+    #[tokio::test]
+    async fn test_cut_byte_mode() {
+        // -b is alias for -c
+        let result = run_cut(&["-b", "1-5"], Some("hello world\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_cut_byte_mode_inline() {
+        let result = run_cut(&["-b1,3,5"], Some("hello\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "hlo\n");
+    }
+
+    #[tokio::test]
+    async fn test_tr_complement_squeeze() {
+        // -cs: complement SET1, then squeeze result chars in SET2
+        let result = run_tr(&["-cs", "[:alpha:]", "\n"], Some("hello 123 world\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "hello\nworld\n");
     }
 }
