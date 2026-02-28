@@ -17,7 +17,7 @@ mod state;
 pub use jobs::{JobTable, SharedJobTable};
 pub use state::{ControlFlow, ExecResult};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -174,6 +174,11 @@ pub struct Interpreter {
     traps: HashMap<String, String>,
     /// PIPESTATUS: exit codes of the last pipeline's commands
     pipestatus: Vec<i32>,
+    /// Shell aliases: name -> expansion value
+    aliases: HashMap<String, String>,
+    /// Aliases currently being expanded (prevents infinite recursion).
+    /// When alias `foo` expands to `foo bar`, the inner `foo` is not re-expanded.
+    expanding_aliases: HashSet<String>,
 }
 
 impl Interpreter {
@@ -381,6 +386,8 @@ impl Interpreter {
             nounset_error: None,
             traps: HashMap::new(),
             pipestatus: Vec::new(),
+            aliases: HashMap::new(),
+            expanding_aliases: HashSet::new(),
         }
     }
 
@@ -675,6 +682,7 @@ impl Interpreter {
                 let saved_call_stack = self.call_stack.clone();
                 let saved_exit = self.last_exit_code;
                 let saved_options = self.options.clone();
+                let saved_aliases = self.aliases.clone();
 
                 let mut result = self.execute_command_sequence(commands).await;
 
@@ -711,6 +719,7 @@ impl Interpreter {
                 self.call_stack = saved_call_stack;
                 self.last_exit_code = saved_exit;
                 self.options = saved_options;
+                self.aliases = saved_aliases;
                 result
             }
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
@@ -3398,6 +3407,84 @@ impl Interpreter {
             });
         }
 
+        // Alias expansion: only for plain literal unquoted command names.
+        // Words from variable expansion ($cmd), command substitution, etc. are not
+        // alias-expanded (bash behavior). Also skip if currently expanding this alias
+        // to prevent infinite recursion (e.g., `alias echo='echo foo'`).
+        let is_plain_literal = !command.name.quoted
+            && command
+                .name
+                .parts
+                .iter()
+                .all(|p| matches!(p, WordPart::Literal(_)));
+        if is_plain_literal
+            && self.is_expand_aliases_enabled()
+            && !self.expanding_aliases.contains(&name)
+        {
+            if let Some(expansion) = self.aliases.get(&name).cloned() {
+                // Restore variable saves before re-executing (alias expansion
+                // replays the full command including assignments)
+                for (vname, old) in var_saves.into_iter().rev() {
+                    match old {
+                        Some(v) => {
+                            self.variables.insert(vname, v);
+                        }
+                        None => {
+                            self.variables.remove(&vname);
+                        }
+                    }
+                }
+
+                // Build expanded command: alias value + original args.
+                // If alias value ends with space, also expand the first arg
+                // as an alias (bash trailing-space alias chaining).
+                let mut expanded_cmd = expansion.clone();
+                let trailing_space = expanded_cmd.ends_with(' ');
+                let mut args_iter = command.args.iter();
+                if trailing_space {
+                    if let Some(first_arg) = args_iter.next() {
+                        let arg_str = format!("{}", first_arg);
+                        if let Some(arg_expansion) = self.aliases.get(&arg_str).cloned() {
+                            expanded_cmd.push_str(&arg_expansion);
+                        } else {
+                            expanded_cmd.push_str(&arg_str);
+                        }
+                    }
+                }
+                for word in args_iter {
+                    expanded_cmd.push(' ');
+                    expanded_cmd.push_str(&format!("{}", word));
+                }
+                // Append original redirections as text
+                for redir in &command.redirects {
+                    expanded_cmd.push(' ');
+                    expanded_cmd.push_str(&Self::format_redirect(redir));
+                }
+
+                // Mark this alias as being expanded to prevent recursion
+                self.expanding_aliases.insert(name.clone());
+
+                // Forward pipeline stdin so aliases work in pipelines
+                let prev_pipeline_stdin = self.pipeline_stdin.take();
+                if stdin.is_some() {
+                    self.pipeline_stdin = stdin;
+                }
+
+                let parser = Parser::new(&expanded_cmd);
+                let result = match parser.parse() {
+                    Ok(s) => self.execute(&s).await,
+                    Err(e) => Ok(ExecResult::err(
+                        format!("bash: alias expansion: parse error: {}\n", e),
+                        1,
+                    )),
+                };
+
+                self.pipeline_stdin = prev_pipeline_stdin;
+                self.expanding_aliases.remove(&name);
+                return result;
+            }
+        }
+
         // If name is empty after expansion, behavior depends on context:
         // - Quoted empty string ('', "", "$empty") -> "command not found" (exit 127)
         // - Unquoted expansion that vanished ($empty, $(true)) -> no-op, preserve $?
@@ -3935,6 +4022,18 @@ impl Interpreter {
             return self.execute_mapfile(&args, stdin.as_deref()).await;
         }
 
+        // Handle `alias` builtin - needs direct access to self.aliases
+        if name == "alias" {
+            return self.execute_alias_builtin(&args, &command.redirects).await;
+        }
+
+        // Handle `unalias` builtin - needs direct access to self.aliases
+        if name == "unalias" {
+            return self
+                .execute_unalias_builtin(&args, &command.redirects)
+                .await;
+        }
+
         // Check for builtins
         if let Some(builtin) = self.builtins.get(name) {
             let ctx = builtins::Context {
@@ -4364,6 +4463,124 @@ impl Interpreter {
 
         result = self.apply_redirections(result, redirects).await?;
         Ok(result)
+    }
+
+    /// Check if expand_aliases is enabled via shopt.
+    fn is_expand_aliases_enabled(&self) -> bool {
+        self.variables
+            .get("SHOPT_expand_aliases")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Format a Redirect back to its textual representation for alias expansion.
+    fn format_redirect(redir: &Redirect) -> String {
+        let fd_prefix = redir.fd.map(|fd| fd.to_string()).unwrap_or_default();
+        let op = match redir.kind {
+            RedirectKind::Output => ">",
+            RedirectKind::Append => ">>",
+            RedirectKind::Input => "<",
+            RedirectKind::HereDoc => "<<",
+            RedirectKind::HereDocStrip => "<<-",
+            RedirectKind::HereString => "<<<",
+            RedirectKind::DupOutput => ">&",
+            RedirectKind::DupInput => "<&",
+            RedirectKind::OutputBoth => "&>",
+        };
+        format!("{}{}{}", fd_prefix, op, redir.target)
+    }
+
+    /// Execute the `alias` builtin. Needs direct access to self.aliases.
+    ///
+    /// Usage:
+    /// - `alias` - list all aliases
+    /// - `alias name` - show alias for name (error if not defined)
+    /// - `alias name=value` - define alias
+    /// - `alias name=value name2=value2` - define multiple aliases
+    async fn execute_alias_builtin(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        if args.is_empty() {
+            // List all aliases
+            let mut output = String::new();
+            let mut sorted: Vec<_> = self.aliases.iter().collect();
+            sorted.sort_by_key(|(k, _)| (*k).clone());
+            for (name, value) in sorted {
+                output.push_str(&format!("alias {}='{}'\n", name, value));
+            }
+            let result = ExecResult::ok(output);
+            return self.apply_redirections(result, redirects).await;
+        }
+
+        let mut output = String::new();
+        let mut exit_code = 0;
+        let mut stderr = String::new();
+
+        for arg in args {
+            if let Some(eq_pos) = arg.find('=') {
+                // alias name=value
+                let name = &arg[..eq_pos];
+                let value = &arg[eq_pos + 1..];
+                self.aliases.insert(name.to_string(), value.to_string());
+            } else {
+                // alias name - show the alias
+                if let Some(value) = self.aliases.get(arg.as_str()) {
+                    output.push_str(&format!("alias {}='{}'\n", arg, value));
+                } else {
+                    stderr.push_str(&format!("bash: alias: {}: not found\n", arg));
+                    exit_code = 1;
+                }
+            }
+        }
+
+        let result = ExecResult {
+            stdout: output,
+            stderr,
+            exit_code,
+            control_flow: ControlFlow::None,
+        };
+        self.apply_redirections(result, redirects).await
+    }
+
+    /// Execute the `unalias` builtin. Needs direct access to self.aliases.
+    ///
+    /// Usage:
+    /// - `unalias name` - remove alias
+    /// - `unalias -a` - remove all aliases
+    async fn execute_unalias_builtin(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        if args.is_empty() {
+            let result = ExecResult::err(
+                "bash: unalias: usage: unalias [-a] name [name ...]\n".to_string(),
+                2,
+            );
+            return self.apply_redirections(result, redirects).await;
+        }
+
+        let mut exit_code = 0;
+        let mut stderr = String::new();
+
+        for arg in args {
+            if arg == "-a" {
+                self.aliases.clear();
+            } else if self.aliases.remove(arg.as_str()).is_none() {
+                stderr.push_str(&format!("bash: unalias: {}: not found\n", arg));
+                exit_code = 1;
+            }
+        }
+
+        let result = ExecResult {
+            stdout: String::new(),
+            stderr,
+            exit_code,
+            control_flow: ControlFlow::None,
+        };
+        self.apply_redirections(result, redirects).await
     }
 
     /// Execute the `getopts` builtin (POSIX option parsing).
