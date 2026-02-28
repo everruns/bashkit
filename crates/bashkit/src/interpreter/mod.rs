@@ -16,11 +16,16 @@ mod state;
 #[allow(unused_imports)]
 pub use jobs::{JobTable, SharedJobTable};
 pub use state::{ControlFlow, ExecResult};
+// Re-export snapshot type for public API
 
 use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+/// Monotonic counter for unique process substitution file paths
+static PROC_SUB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use futures::FutureExt;
 
@@ -80,6 +85,83 @@ fn is_keyword(name: &str) -> bool {
     )
 }
 
+/// Levenshtein edit distance between two strings.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let n = b.len();
+    let mut prev = (0..=n).collect::<Vec<_>>();
+    let mut curr = vec![0; n + 1];
+    for (i, ca) in a.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[n]
+}
+
+/// Hint for common commands that are unavailable in the sandbox.
+fn unavailable_command_hint(name: &str) -> Option<&'static str> {
+    match name {
+        "pip" | "pip3" | "pip2" => Some("Package managers are not available in the sandbox."),
+        "apt" | "apt-get" | "yum" | "dnf" | "pacman" | "brew" | "apk" => {
+            Some("Package managers are not available in the sandbox.")
+        }
+        "npm" | "yarn" | "pnpm" | "bun" => {
+            Some("Package managers are not available in the sandbox.")
+        }
+        "sudo" | "su" | "doas" => Some("All commands run without privilege restrictions."),
+        "ssh" | "scp" | "sftp" | "rsync" => Some("Network access is limited to curl/wget."),
+        "docker" | "podman" | "kubectl" | "systemctl" | "service" => {
+            Some("Container and service management is not available in the sandbox.")
+        }
+        "make" | "cmake" | "gcc" | "g++" | "clang" | "rustc" | "cargo" | "go" | "javac"
+        | "node" => Some("Compilers and build tools are not available in the sandbox."),
+        "vi" | "vim" | "nano" | "emacs" => {
+            Some("Interactive editors are not available. Use echo/printf/cat to write files.")
+        }
+        "man" | "info" => Some("Manual pages are not available in the sandbox."),
+        _ => None,
+    }
+}
+
+/// Build a "command not found" error with optional suggestions.
+fn command_not_found_message(name: &str, known_commands: &[&str]) -> String {
+    let mut msg = format!("bash: {}: command not found", name);
+
+    // Check for unavailable command hints first
+    if let Some(hint) = unavailable_command_hint(name) {
+        msg.push_str(&format!(". {}", hint));
+        return msg;
+    }
+
+    // Find close matches via Levenshtein distance
+    let max_dist = if name.len() <= 3 { 1 } else { 2 };
+    let mut suggestions: Vec<(&str, usize)> = known_commands
+        .iter()
+        .filter_map(|cmd| {
+            let d = levenshtein(name, cmd);
+            if d > 0 && d <= max_dist {
+                Some((*cmd, d))
+            } else {
+                None
+            }
+        })
+        .collect();
+    suggestions.sort_by_key(|(_, d)| *d);
+    suggestions.truncate(3);
+
+    if !suggestions.is_empty() {
+        let names: Vec<&str> = suggestions.iter().map(|(s, _)| *s).collect();
+        msg.push_str(&format!(". Did you mean: {}?", names.join(", ")));
+    }
+
+    msg
+}
+
 /// Check if a path refers to /dev/null after normalization.
 /// Handles attempts to bypass via paths like `/dev/../dev/null`.
 fn is_dev_null(path: &Path) -> bool {
@@ -121,6 +203,37 @@ pub struct ShellOptions {
     /// Print commands before execution (set -x)
     pub xtrace: bool,
     /// Return rightmost non-zero exit code from pipeline (set -o pipefail)
+    pub pipefail: bool,
+}
+
+/// A snapshot of shell state (variables, env, cwd, options).
+///
+/// Captures the serializable portions of the interpreter state.
+/// Combined with [`VfsSnapshot`](crate::VfsSnapshot) this provides
+/// full session snapshot/restore.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ShellState {
+    /// Environment variables
+    pub env: HashMap<String, String>,
+    /// Shell variables
+    pub variables: HashMap<String, String>,
+    /// Indexed arrays
+    pub arrays: HashMap<String, HashMap<usize, String>>,
+    /// Associative arrays
+    pub assoc_arrays: HashMap<String, HashMap<String, String>>,
+    /// Current working directory
+    pub cwd: PathBuf,
+    /// Last exit code
+    pub last_exit_code: i32,
+    /// Shell aliases
+    pub aliases: HashMap<String, String>,
+    /// Trap handlers
+    pub traps: HashMap<String, String>,
+    /// Shell options
+    pub errexit: bool,
+    /// Shell options
+    pub xtrace: bool,
+    /// Shell options
     pub pipefail: bool,
 }
 
@@ -272,6 +385,7 @@ impl Interpreter {
         builtins.insert("rev".to_string(), Box::new(builtins::Rev));
         builtins.insert("yes".to_string(), Box::new(builtins::Yes));
         builtins.insert("expr".to_string(), Box::new(builtins::Expr));
+        builtins.insert("bc".to_string(), Box::new(builtins::Bc));
         builtins.insert("pushd".to_string(), Box::new(builtins::Pushd));
         builtins.insert("popd".to_string(), Box::new(builtins::Popd));
         builtins.insert("dirs".to_string(), Box::new(builtins::Dirs));
@@ -443,6 +557,38 @@ impl Interpreter {
     /// Set the current working directory.
     pub fn set_cwd(&mut self, cwd: PathBuf) {
         self.cwd = cwd;
+    }
+
+    /// Capture the current shell state (variables, env, cwd, options).
+    pub fn shell_state(&self) -> ShellState {
+        ShellState {
+            env: self.env.clone(),
+            variables: self.variables.clone(),
+            arrays: self.arrays.clone(),
+            assoc_arrays: self.assoc_arrays.clone(),
+            cwd: self.cwd.clone(),
+            last_exit_code: self.last_exit_code,
+            aliases: self.aliases.clone(),
+            traps: self.traps.clone(),
+            errexit: self.options.errexit,
+            xtrace: self.options.xtrace,
+            pipefail: self.options.pipefail,
+        }
+    }
+
+    /// Restore shell state from a snapshot.
+    pub fn restore_shell_state(&mut self, state: &ShellState) {
+        self.env = state.env.clone();
+        self.variables = state.variables.clone();
+        self.arrays = state.arrays.clone();
+        self.assoc_arrays = state.assoc_arrays.clone();
+        self.cwd = state.cwd.clone();
+        self.last_exit_code = state.last_exit_code;
+        self.aliases = state.aliases.clone();
+        self.traps = state.traps.clone();
+        self.options.errexit = state.errexit;
+        self.options.xtrace = state.xtrace;
+        self.options.pipefail = state.pipefail;
     }
 
     /// Set an output callback for streaming output during execution.
@@ -4160,11 +4306,16 @@ impl Interpreter {
             return Ok(result);
         }
 
-        // Command not found - return error like bash does (exit code 127)
-        Ok(ExecResult::err(
-            format!("bash: {}: command not found", name),
-            127,
-        ))
+        // Command not found - build error with suggestions for LLM self-correction
+        let known: Vec<&str> = self
+            .builtins
+            .keys()
+            .map(|s| s.as_str())
+            .chain(self.functions.keys().map(|s| s.as_str()))
+            .chain(self.aliases.keys().map(|s| s.as_str()))
+            .collect();
+        let msg = command_not_found_message(name, &known);
+        Ok(ExecResult::err(msg, 127))
     }
 
     /// Execute a script file by resolved path.
@@ -5916,13 +6067,9 @@ impl Interpreter {
                     }
 
                     // Create a virtual file with the output
-                    // Use a unique path based on the timestamp
                     let path_str = format!(
                         "/dev/fd/proc_sub_{}",
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_nanos()
+                        PROC_SUB_COUNTER.fetch_add(1, Ordering::Relaxed)
                     );
                     let path = Path::new(&path_str);
 

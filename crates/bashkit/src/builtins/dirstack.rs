@@ -219,3 +219,249 @@ fn format_stack(ctx: &Context<'_>) -> String {
     }
     parts.join(" ")
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use crate::fs::{FileSystem, InMemoryFs};
+
+    async fn setup() -> (Arc<InMemoryFs>, PathBuf, HashMap<String, String>) {
+        let fs = Arc::new(InMemoryFs::new());
+        let cwd = PathBuf::from("/home/user");
+        let variables = HashMap::new();
+        fs.mkdir(&cwd, true).await.unwrap();
+        fs.mkdir(Path::new("/tmp"), true).await.unwrap();
+        fs.mkdir(Path::new("/var"), true).await.unwrap();
+        (fs, cwd, variables)
+    }
+
+    // ==================== pushd ====================
+
+    #[tokio::test]
+    async fn pushd_to_directory() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["/tmp".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Pushd.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(cwd, PathBuf::from("/tmp"));
+        // Stack should have old cwd
+        assert_eq!(variables.get("_DIRSTACK_0").unwrap(), "/home/user");
+    }
+
+    #[tokio::test]
+    async fn pushd_nonexistent_dir() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["/nonexistent".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Pushd.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("No such file or directory"));
+        // cwd unchanged
+        assert_eq!(cwd, PathBuf::from("/home/user"));
+    }
+
+    #[tokio::test]
+    async fn pushd_file_not_dir() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        fs.write_file(Path::new("/home/user/file.txt"), b"data")
+            .await
+            .unwrap();
+        let env = HashMap::new();
+        let args = vec!["file.txt".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Pushd.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("Not a directory"));
+    }
+
+    #[tokio::test]
+    async fn pushd_no_args_empty_stack() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Pushd.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("no other directory"));
+    }
+
+    #[tokio::test]
+    async fn pushd_no_args_swaps_top() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        // Push /tmp first so stack has an entry
+        let env = HashMap::new();
+        let args = vec!["/tmp".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        Pushd.execute(ctx).await.unwrap();
+        assert_eq!(cwd, PathBuf::from("/tmp"));
+
+        // Now pushd with no args should swap
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Pushd.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(cwd, PathBuf::from("/home/user"));
+    }
+
+    // ==================== popd ====================
+
+    #[tokio::test]
+    async fn popd_empty_stack() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Popd.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("directory stack empty"));
+    }
+
+    #[tokio::test]
+    async fn popd_after_pushd() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+
+        // pushd /tmp
+        let args = vec!["/tmp".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        Pushd.execute(ctx).await.unwrap();
+        assert_eq!(cwd, PathBuf::from("/tmp"));
+
+        // popd
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Popd.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(cwd, PathBuf::from("/home/user"));
+    }
+
+    #[tokio::test]
+    async fn pushd_popd_multiple() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+
+        // pushd /tmp
+        let args = vec!["/tmp".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        Pushd.execute(ctx).await.unwrap();
+
+        // pushd /var
+        let args = vec!["/var".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        Pushd.execute(ctx).await.unwrap();
+        assert_eq!(cwd, PathBuf::from("/var"));
+
+        // popd -> /tmp
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        Popd.execute(ctx).await.unwrap();
+        assert_eq!(cwd, PathBuf::from("/tmp"));
+
+        // popd -> /home/user
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        Popd.execute(ctx).await.unwrap();
+        assert_eq!(cwd, PathBuf::from("/home/user"));
+    }
+
+    // ==================== dirs ====================
+
+    #[tokio::test]
+    async fn dirs_empty_stack() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Dirs.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("/home/user"));
+    }
+
+    #[tokio::test]
+    async fn dirs_after_pushd() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+
+        // pushd /tmp
+        let args = vec!["/tmp".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        Pushd.execute(ctx).await.unwrap();
+
+        // dirs
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Dirs.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("/tmp"));
+        assert!(result.stdout.contains("/home/user"));
+    }
+
+    #[tokio::test]
+    async fn dirs_clear() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+
+        // pushd /tmp
+        let args = vec!["/tmp".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        Pushd.execute(ctx).await.unwrap();
+
+        // dirs -c
+        let args = vec!["-c".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Dirs.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(get_stack_size_from_vars(&variables), 0);
+    }
+
+    #[tokio::test]
+    async fn dirs_per_line() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+
+        // pushd /tmp
+        let args = vec!["/tmp".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        Pushd.execute(ctx).await.unwrap();
+
+        // dirs -p
+        let args = vec!["-p".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Dirs.execute(ctx).await.unwrap();
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        assert_eq!(lines.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn dirs_verbose() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+
+        // pushd /tmp
+        let args = vec!["/tmp".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        Pushd.execute(ctx).await.unwrap();
+
+        // dirs -v
+        let args = vec!["-v".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Dirs.execute(ctx).await.unwrap();
+        // Verbose format has numbered entries
+        assert!(result.stdout.contains(" 0  "));
+        assert!(result.stdout.contains(" 1  "));
+    }
+
+    fn get_stack_size_from_vars(vars: &HashMap<String, String>) -> usize {
+        vars.get("_DIRSTACK_SIZE")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0)
+    }
+}

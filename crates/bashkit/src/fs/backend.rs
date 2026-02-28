@@ -203,3 +203,119 @@ pub trait FsBackend: Send + Sync {
         FsLimits::unlimited()
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::error::Result;
+
+    /// Minimal FsBackend impl that uses all defaults for usage()/limits().
+    struct StubBackend;
+
+    #[async_trait]
+    impl FsBackend for StubBackend {
+        async fn read(&self, _path: &Path) -> Result<Vec<u8>> {
+            Err(std::io::Error::from(std::io::ErrorKind::NotFound).into())
+        }
+        async fn write(&self, _path: &Path, _content: &[u8]) -> Result<()> {
+            Ok(())
+        }
+        async fn append(&self, _path: &Path, _content: &[u8]) -> Result<()> {
+            Ok(())
+        }
+        async fn mkdir(&self, _path: &Path, _recursive: bool) -> Result<()> {
+            Ok(())
+        }
+        async fn remove(&self, _path: &Path, _recursive: bool) -> Result<()> {
+            Ok(())
+        }
+        async fn stat(&self, _path: &Path) -> Result<Metadata> {
+            Ok(Metadata::default())
+        }
+        async fn read_dir(&self, _path: &Path) -> Result<Vec<DirEntry>> {
+            Ok(vec![])
+        }
+        async fn exists(&self, _path: &Path) -> Result<bool> {
+            Ok(false)
+        }
+        async fn rename(&self, _from: &Path, _to: &Path) -> Result<()> {
+            Ok(())
+        }
+        async fn copy(&self, _from: &Path, _to: &Path) -> Result<()> {
+            Ok(())
+        }
+        async fn symlink(&self, _target: &Path, _link: &Path) -> Result<()> {
+            Ok(())
+        }
+        async fn read_link(&self, _path: &Path) -> Result<PathBuf> {
+            Ok(PathBuf::new())
+        }
+        async fn chmod(&self, _path: &Path, _mode: u32) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn default_usage_returns_zeros() {
+        let backend = StubBackend;
+        let usage = backend.usage();
+        assert_eq!(usage.total_bytes, 0);
+        assert_eq!(usage.file_count, 0);
+        assert_eq!(usage.dir_count, 0);
+    }
+
+    #[test]
+    fn default_limits_returns_unlimited() {
+        let backend = StubBackend;
+        let limits = backend.limits();
+        assert_eq!(limits.max_total_bytes, u64::MAX);
+        assert_eq!(limits.max_file_size, u64::MAX);
+        assert_eq!(limits.max_file_count, u64::MAX);
+    }
+
+    #[test]
+    fn fs_usage_new() {
+        let usage = FsUsage::new(1024, 5, 2);
+        assert_eq!(usage.total_bytes, 1024);
+        assert_eq!(usage.file_count, 5);
+        assert_eq!(usage.dir_count, 2);
+    }
+
+    #[test]
+    fn fs_usage_default() {
+        let usage = FsUsage::default();
+        assert_eq!(usage.total_bytes, 0);
+        assert_eq!(usage.file_count, 0);
+        assert_eq!(usage.dir_count, 0);
+    }
+
+    #[test]
+    fn fs_usage_debug() {
+        let usage = FsUsage::new(100, 3, 1);
+        let dbg = format!("{:?}", usage);
+        assert!(dbg.contains("100"));
+        assert!(dbg.contains("3"));
+    }
+
+    #[tokio::test]
+    async fn stub_backend_read_returns_not_found() {
+        let backend = StubBackend;
+        let result = backend.read(Path::new("/nonexistent")).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn stub_backend_exists_returns_false() {
+        let backend = StubBackend;
+        let exists = backend.exists(Path::new("/anything")).await.unwrap();
+        assert!(!exists);
+    }
+
+    #[tokio::test]
+    async fn stub_backend_read_dir_returns_empty() {
+        let backend = StubBackend;
+        let entries = backend.read_dir(Path::new("/")).await.unwrap();
+        assert!(entries.is_empty());
+    }
+}

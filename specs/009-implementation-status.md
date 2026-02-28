@@ -128,6 +128,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | background.test.sh | 2 | background job handling |
 | bash-command.test.sh | 25 | bash/sh re-invocation |
 | bash-flags.test.sh | 13 | bash `-e`, `-x`, `-u`, `-f`, `-o option` flags |
+| bc.test.sh | 15 | `bc` arbitrary-precision calculator, scale, arithmetic, sqrt |
 | brace-expansion.test.sh | 20 | {a,b,c}, {1..5}, for-loop brace expansion |
 | checksum.test.sh | 10 | md5sum, sha256sum, sha1sum |
 | chown-kill.test.sh | 7 | chown, kill builtins |
@@ -239,7 +240,7 @@ Features that may be added in the future (not intentionally excluded):
 `od`, `xxd`, `hexdump`, `strings`,
 `tar`, `gzip`, `gunzip`, `file`, `less`, `stat`, `watch`,
 `env`, `printenv`, `history`, `df`, `du`,
-`pushd`, `popd`, `dirs`,
+`pushd`, `popd`, `dirs`, `bc`,
 `git` (requires `git` feature, see [010-git-support.md](010-git-support.md)),
 `python`, `python3` (requires `python` feature, see [011-python-builtin.md](011-python-builtin.md))
 

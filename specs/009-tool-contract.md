@@ -278,6 +278,28 @@ cargo test tool::
 cargo run --example show_tool_output
 ```
 
+## Snapshot/Restore
+
+For multi-turn agent conversations, bashkit provides snapshot/restore:
+
+- **VFS Snapshot**: `InMemoryFs::snapshot()` / `InMemoryFs::restore(&snapshot)` — captures all files, dirs, symlinks
+- **Shell State**: `Bash::shell_state()` / `Bash::restore_shell_state(&state)` — captures variables, env, cwd, arrays, aliases, traps, options
+- Both types implement `serde::Serialize` + `serde::Deserialize` for persistence
+
+Usage pattern:
+```rust
+let fs = Arc::new(InMemoryFs::new());
+let mut bash = Bash::builder().fs(fs.clone()).build();
+
+// After turn N
+let vfs_snap = fs.snapshot();
+let shell_snap = bash.shell_state();
+
+// Before turn N+1 (or rollback)
+fs.restore(&vfs_snap);
+bash.restore_shell_state(&shell_snap);
+```
+
 ## See Also
 
 - [001-architecture.md](001-architecture.md) - Overall architecture

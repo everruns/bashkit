@@ -1,8 +1,5 @@
 //! echo builtin command
 
-// Escape parsing uses to_digit().unwrap() after is_ascii_hexdigit() check
-#![allow(clippy::unwrap_used)]
-
 use async_trait::async_trait;
 
 use super::{Builtin, Context};
@@ -74,6 +71,8 @@ impl Builtin for Echo {
     }
 }
 
+// to_digit().unwrap() is safe: only called after is_ascii_hexdigit() check
+#[allow(clippy::unwrap_used)]
 fn interpret_escape_sequences(s: &str) -> String {
     let mut result = String::new();
     let mut chars = s.chars().peekable();

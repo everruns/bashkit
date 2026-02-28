@@ -1,8 +1,5 @@
 //! File operation builtins - mkdir, rm, cp, mv, touch, chmod
 
-// Uses unwrap() after length checks (e.g., files.last() after files.len() >= 2)
-#![allow(clippy::unwrap_used)]
-
 use async_trait::async_trait;
 use std::path::Path;
 
@@ -152,6 +149,8 @@ pub struct Cp;
 
 #[async_trait]
 impl Builtin for Cp {
+    // files.last().unwrap() is safe: guarded by files.len() < 2 check above
+    #[allow(clippy::unwrap_used)]
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if ctx.args.len() < 2 {
             return Ok(ExecResult::err("cp: missing file operand\n".to_string(), 1));
@@ -218,6 +217,8 @@ pub struct Mv;
 
 #[async_trait]
 impl Builtin for Mv {
+    // files.last().unwrap() is safe: guarded by files.len() < 2 check above
+    #[allow(clippy::unwrap_used)]
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if ctx.args.len() < 2 {
             return Ok(ExecResult::err("mv: missing file operand\n".to_string(), 1));
@@ -424,6 +425,8 @@ fn apply_symbolic_mode(mode_str: &str, current_mode: u32) -> Option<u32> {
 
 #[async_trait]
 impl Builtin for Chmod {
+    // from_str_radix().unwrap() is safe: is_ok() check on same value above
+    #[allow(clippy::unwrap_used)]
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if ctx.args.len() < 2 {
             return Ok(ExecResult::err("chmod: missing operand\n".to_string(), 1));

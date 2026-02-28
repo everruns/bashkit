@@ -254,3 +254,388 @@ fn simple_match(s: &str, pattern: &str) -> String {
 fn char_matches(c: char, pattern: char) -> bool {
     pattern == '.' || c == pattern
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use crate::fs::{FileSystem, InMemoryFs};
+
+    async fn setup() -> (Arc<InMemoryFs>, PathBuf, HashMap<String, String>) {
+        let fs = Arc::new(InMemoryFs::new());
+        let cwd = PathBuf::from("/home/user");
+        let variables = HashMap::new();
+        fs.mkdir(&cwd, true).await.unwrap();
+        (fs, cwd, variables)
+    }
+
+    // ==================== missing operand ====================
+
+    #[tokio::test]
+    async fn expr_missing_operand() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("missing operand"));
+    }
+
+    // ==================== arithmetic ====================
+
+    #[tokio::test]
+    async fn expr_addition() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["3".to_string(), "+".to_string(), "4".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "7");
+    }
+
+    #[tokio::test]
+    async fn expr_subtraction() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["10".to_string(), "-".to_string(), "3".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "7");
+    }
+
+    #[tokio::test]
+    async fn expr_multiplication() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["6".to_string(), "*".to_string(), "7".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "42");
+    }
+
+    #[tokio::test]
+    async fn expr_division() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["15".to_string(), "/".to_string(), "3".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "5");
+    }
+
+    #[tokio::test]
+    async fn expr_modulo() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["17".to_string(), "%".to_string(), "5".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "2");
+    }
+
+    #[tokio::test]
+    async fn expr_division_by_zero() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["5".to_string(), "/".to_string(), "0".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("division by zero"));
+    }
+
+    #[tokio::test]
+    async fn expr_modulo_by_zero() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["5".to_string(), "%".to_string(), "0".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("division by zero"));
+    }
+
+    #[tokio::test]
+    async fn expr_non_integer_arithmetic() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["abc".to_string(), "+".to_string(), "1".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("non-integer"));
+    }
+
+    // ==================== zero result gives exit code 1 ====================
+
+    #[tokio::test]
+    async fn expr_zero_result_exit_code_1() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["5".to_string(), "-".to_string(), "5".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1); // "0" result => exit code 1
+        assert_eq!(result.stdout.trim(), "0");
+    }
+
+    // ==================== string comparison ====================
+
+    #[tokio::test]
+    async fn expr_string_equal() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["hello".to_string(), "=".to_string(), "hello".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "1");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn expr_string_not_equal() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["hello".to_string(), "!=".to_string(), "world".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "1");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn expr_string_equal_returns_zero_for_mismatch() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["a".to_string(), "=".to_string(), "b".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "0");
+        assert_eq!(result.exit_code, 1);
+    }
+
+    // ==================== comparison operators ====================
+
+    #[tokio::test]
+    async fn expr_less_than_numeric() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["3".to_string(), "<".to_string(), "10".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "1");
+    }
+
+    #[tokio::test]
+    async fn expr_greater_than_numeric() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["10".to_string(), ">".to_string(), "3".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "1");
+    }
+
+    #[tokio::test]
+    async fn expr_le_numeric() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["5".to_string(), "<=".to_string(), "5".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "1");
+    }
+
+    #[tokio::test]
+    async fn expr_ge_numeric() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["5".to_string(), ">=".to_string(), "3".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "1");
+    }
+
+    // ==================== string functions ====================
+
+    #[tokio::test]
+    async fn expr_length() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["length".to_string(), "hello".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "5");
+    }
+
+    #[tokio::test]
+    async fn expr_length_empty() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["length".to_string(), "".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "0");
+        assert_eq!(result.exit_code, 1); // "0" => exit 1
+    }
+
+    #[tokio::test]
+    async fn expr_substr() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec![
+            "substr".to_string(),
+            "hello".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+        ];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "ell");
+    }
+
+    #[tokio::test]
+    async fn expr_substr_out_of_range() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec![
+            "substr".to_string(),
+            "hi".to_string(),
+            "0".to_string(),
+            "1".to_string(),
+        ];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        // pos=0 is out of range (1-based)
+        assert!(result.stdout.trim().is_empty());
+    }
+
+    #[tokio::test]
+    async fn expr_index() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["index".to_string(), "hello".to_string(), "lo".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        // First occurrence of any char in "lo" in "hello" is 'l' at position 3 (1-based)
+        assert_eq!(result.stdout.trim(), "3");
+    }
+
+    #[tokio::test]
+    async fn expr_index_not_found() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["index".to_string(), "hello".to_string(), "xyz".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "0");
+    }
+
+    // ==================== pattern matching ====================
+
+    #[tokio::test]
+    async fn expr_match_literal() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["match".to_string(), "hello".to_string(), "hel".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "3"); // 3 chars matched
+    }
+
+    #[tokio::test]
+    async fn expr_colon_pattern() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["hello".to_string(), ":".to_string(), ".*".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "5"); // .* matches all 5 chars
+    }
+
+    #[tokio::test]
+    async fn expr_colon_no_match() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["hello".to_string(), ":".to_string(), "xyz".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "0");
+    }
+
+    // ==================== logical operators ====================
+
+    #[tokio::test]
+    async fn expr_or_left_nonzero() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["hello".to_string(), "|".to_string(), "world".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn expr_or_left_zero() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["0".to_string(), "|".to_string(), "fallback".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "fallback");
+    }
+
+    #[tokio::test]
+    async fn expr_and_both_nonzero() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["hello".to_string(), "&".to_string(), "world".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn expr_and_one_zero() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["0".to_string(), "&".to_string(), "world".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "0");
+    }
+
+    // ==================== single value ====================
+
+    #[tokio::test]
+    async fn expr_single_value() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["42".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "42");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn expr_single_zero_value() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["0".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "0");
+        assert_eq!(result.exit_code, 1); // "0" => falsy
+    }
+}

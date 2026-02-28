@@ -454,3 +454,226 @@ pub struct DirEntry {
     /// Metadata for this entry.
     pub metadata: Metadata,
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    // --- fs_errors ---
+
+    #[test]
+    fn fs_error_is_a_directory_message() {
+        let err = fs_errors::is_a_directory();
+        let msg = format!("{err}");
+        assert!(msg.contains("is a directory"), "got: {msg}");
+    }
+
+    #[test]
+    fn fs_error_already_exists_message() {
+        let err = fs_errors::already_exists("path /tmp exists");
+        let msg = format!("{err}");
+        assert!(msg.contains("path /tmp exists"), "got: {msg}");
+    }
+
+    #[test]
+    fn fs_error_parent_not_found_message() {
+        let err = fs_errors::parent_not_found();
+        let msg = format!("{err}");
+        assert!(msg.contains("parent directory not found"), "got: {msg}");
+    }
+
+    #[test]
+    fn fs_error_not_found_message() {
+        let err = fs_errors::not_found("no such file");
+        let msg = format!("{err}");
+        assert!(msg.contains("no such file"), "got: {msg}");
+    }
+
+    #[test]
+    fn fs_error_not_a_directory_message() {
+        let err = fs_errors::not_a_directory();
+        let msg = format!("{err}");
+        assert!(msg.contains("not a directory"), "got: {msg}");
+    }
+
+    #[test]
+    fn fs_error_directory_not_empty_message() {
+        let err = fs_errors::directory_not_empty();
+        let msg = format!("{err}");
+        assert!(msg.contains("directory not empty"), "got: {msg}");
+    }
+
+    // --- FileType ---
+
+    #[test]
+    fn file_type_is_file() {
+        assert!(FileType::File.is_file());
+        assert!(!FileType::Directory.is_file());
+        assert!(!FileType::Symlink.is_file());
+    }
+
+    #[test]
+    fn file_type_is_dir() {
+        assert!(FileType::Directory.is_dir());
+        assert!(!FileType::File.is_dir());
+        assert!(!FileType::Symlink.is_dir());
+    }
+
+    #[test]
+    fn file_type_is_symlink() {
+        assert!(FileType::Symlink.is_symlink());
+        assert!(!FileType::File.is_symlink());
+        assert!(!FileType::Directory.is_symlink());
+    }
+
+    #[test]
+    fn file_type_equality() {
+        assert_eq!(FileType::File, FileType::File);
+        assert_eq!(FileType::Directory, FileType::Directory);
+        assert_eq!(FileType::Symlink, FileType::Symlink);
+        assert_ne!(FileType::File, FileType::Directory);
+        assert_ne!(FileType::File, FileType::Symlink);
+        assert_ne!(FileType::Directory, FileType::Symlink);
+    }
+
+    #[test]
+    fn file_type_debug() {
+        let dbg = format!("{:?}", FileType::File);
+        assert_eq!(dbg, "File");
+    }
+
+    // --- Metadata ---
+
+    #[test]
+    fn metadata_default_is_file() {
+        let m = Metadata::default();
+        assert!(m.file_type.is_file());
+        assert_eq!(m.size, 0);
+        assert_eq!(m.mode, 0o644);
+    }
+
+    #[test]
+    fn metadata_custom_fields() {
+        let now = SystemTime::now();
+        let m = Metadata {
+            file_type: FileType::Directory,
+            size: 4096,
+            mode: 0o755,
+            modified: now,
+            created: now,
+        };
+        assert!(m.file_type.is_dir());
+        assert_eq!(m.size, 4096);
+        assert_eq!(m.mode, 0o755);
+    }
+
+    #[test]
+    fn metadata_clone() {
+        let m = Metadata::default();
+        let cloned = m.clone();
+        assert_eq!(cloned.size, m.size);
+        assert_eq!(cloned.mode, m.mode);
+        assert!(cloned.file_type.is_file());
+    }
+
+    // --- DirEntry ---
+
+    #[test]
+    fn dir_entry_construction() {
+        let entry = DirEntry {
+            name: "test.txt".into(),
+            metadata: Metadata::default(),
+        };
+        assert_eq!(entry.name, "test.txt");
+        assert!(entry.metadata.file_type.is_file());
+    }
+
+    #[test]
+    fn dir_entry_with_directory_type() {
+        let now = SystemTime::now();
+        let entry = DirEntry {
+            name: "subdir".into(),
+            metadata: Metadata {
+                file_type: FileType::Directory,
+                size: 0,
+                mode: 0o755,
+                modified: now,
+                created: now,
+            },
+        };
+        assert_eq!(entry.name, "subdir");
+        assert!(entry.metadata.file_type.is_dir());
+    }
+
+    #[test]
+    fn dir_entry_debug() {
+        let entry = DirEntry {
+            name: "f".into(),
+            metadata: Metadata::default(),
+        };
+        let dbg = format!("{:?}", entry);
+        assert!(dbg.contains("DirEntry"));
+        assert!(dbg.contains("\"f\""));
+    }
+
+    // --- FileSystem default methods ---
+
+    #[test]
+    fn filesystem_default_usage_returns_zeros() {
+        // Test via a minimal struct that only implements the defaults
+        struct Dummy;
+
+        #[async_trait]
+        impl FileSystem for Dummy {
+            async fn read_file(&self, _: &Path) -> crate::error::Result<Vec<u8>> {
+                unimplemented!()
+            }
+            async fn write_file(&self, _: &Path, _: &[u8]) -> crate::error::Result<()> {
+                unimplemented!()
+            }
+            async fn append_file(&self, _: &Path, _: &[u8]) -> crate::error::Result<()> {
+                unimplemented!()
+            }
+            async fn mkdir(&self, _: &Path, _: bool) -> crate::error::Result<()> {
+                unimplemented!()
+            }
+            async fn remove(&self, _: &Path, _: bool) -> crate::error::Result<()> {
+                unimplemented!()
+            }
+            async fn stat(&self, _: &Path) -> crate::error::Result<Metadata> {
+                unimplemented!()
+            }
+            async fn read_dir(&self, _: &Path) -> crate::error::Result<Vec<DirEntry>> {
+                unimplemented!()
+            }
+            async fn exists(&self, _: &Path) -> crate::error::Result<bool> {
+                unimplemented!()
+            }
+            async fn rename(&self, _: &Path, _: &Path) -> crate::error::Result<()> {
+                unimplemented!()
+            }
+            async fn copy(&self, _: &Path, _: &Path) -> crate::error::Result<()> {
+                unimplemented!()
+            }
+            async fn symlink(&self, _: &Path, _: &Path) -> crate::error::Result<()> {
+                unimplemented!()
+            }
+            async fn read_link(&self, _: &Path) -> crate::error::Result<std::path::PathBuf> {
+                unimplemented!()
+            }
+            async fn chmod(&self, _: &Path, _: u32) -> crate::error::Result<()> {
+                unimplemented!()
+            }
+        }
+
+        let d = Dummy;
+        let usage = d.usage();
+        assert_eq!(usage.total_bytes, 0);
+        assert_eq!(usage.file_count, 0);
+        assert_eq!(usage.dir_count, 0);
+
+        let limits = d.limits();
+        assert_eq!(limits.max_total_bytes, u64::MAX);
+    }
+}
