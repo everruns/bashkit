@@ -19,6 +19,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
 
@@ -37,7 +39,8 @@ jobs:
             --exclude-files "crates/bashkit-cli/*" \
             --exclude-files "crates/bashkit-python/*" \
             --timeout 300 \
-            --skip-clean
+            --skip-clean \
+            --engine llvm
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
