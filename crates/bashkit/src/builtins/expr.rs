@@ -524,11 +524,7 @@ mod tests {
     async fn expr_index() {
         let (fs, mut cwd, mut variables) = setup().await;
         let env = HashMap::new();
-        let args = vec![
-            "index".to_string(),
-            "hello".to_string(),
-            "lo".to_string(),
-        ];
+        let args = vec!["index".to_string(), "hello".to_string(), "lo".to_string()];
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
         let result = Expr.execute(ctx).await.unwrap();
         // First occurrence of any char in "lo" in "hello" is 'l' at position 3 (1-based)
@@ -539,11 +535,7 @@ mod tests {
     async fn expr_index_not_found() {
         let (fs, mut cwd, mut variables) = setup().await;
         let env = HashMap::new();
-        let args = vec![
-            "index".to_string(),
-            "hello".to_string(),
-            "xyz".to_string(),
-        ];
+        let args = vec!["index".to_string(), "hello".to_string(), "xyz".to_string()];
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
         let result = Expr.execute(ctx).await.unwrap();
         assert_eq!(result.stdout.trim(), "0");
@@ -555,11 +547,7 @@ mod tests {
     async fn expr_match_literal() {
         let (fs, mut cwd, mut variables) = setup().await;
         let env = HashMap::new();
-        let args = vec![
-            "match".to_string(),
-            "hello".to_string(),
-            "hel".to_string(),
-        ];
+        let args = vec!["match".to_string(), "hello".to_string(), "hel".to_string()];
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
         let result = Expr.execute(ctx).await.unwrap();
         assert_eq!(result.stdout.trim(), "3"); // 3 chars matched

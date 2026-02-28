@@ -475,16 +475,17 @@ impl<'a> ExprParser<'a> {
 
     fn call_function(&self, name: &str, arg: f64) -> std::result::Result<f64, String> {
         match name {
-            "s" => Ok(arg.sin()),          // sine
-            "c" => Ok(arg.cos()),          // cosine
-            "a" => Ok(arg.atan()),         // arctangent
-            "l" => {                       // natural log
+            "s" => Ok(arg.sin()),  // sine
+            "c" => Ok(arg.cos()),  // cosine
+            "a" => Ok(arg.atan()), // arctangent
+            "l" => {
+                // natural log
                 if arg <= 0.0 {
                     return Err("log of non-positive number".to_string());
                 }
                 Ok(arg.ln())
             }
-            "e" => Ok(arg.exp()),          // e^x
+            "e" => Ok(arg.exp()), // e^x
             "sqrt" => {
                 if arg < 0.0 {
                     return Err("square root of negative number".to_string());
@@ -518,7 +519,14 @@ mod tests {
         let (fs, mut cwd, mut variables) = setup().await;
         let env = HashMap::new();
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), Some(input));
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some(input),
+        );
         Bc.execute(ctx).await.unwrap()
     }
 

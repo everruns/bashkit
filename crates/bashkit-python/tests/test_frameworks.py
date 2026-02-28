@@ -6,8 +6,7 @@ by testing the import-guarding, factory functions, and mock behavior.
 
 import pytest
 
-from bashkit import BashTool, ScriptedTool
-
+from bashkit import ScriptedTool
 
 # ===========================================================================
 # langchain.py tests

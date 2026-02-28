@@ -78,10 +78,7 @@ async fn vfs_snapshot_preserves_directories() {
 
     fs.restore(&snapshot);
     assert!(fs.exists(Path::new("/data/sub")).await.unwrap());
-    let content = fs
-        .read_file(Path::new("/data/sub/file.txt"))
-        .await
-        .unwrap();
+    let content = fs.read_file(Path::new("/data/sub/file.txt")).await.unwrap();
     assert_eq!(content, b"content");
 }
 
@@ -190,13 +187,15 @@ async fn combined_snapshot_restore_multi_turn() {
     fs.restore(&vfs_snap);
     bash.restore_shell_state(&shell_snap);
 
-    let result = bash.exec("cat /tmp/config.txt && echo $count")
+    let result = bash
+        .exec("cat /tmp/config.txt && echo $count")
         .await
         .unwrap();
     assert_eq!(result.stdout, "config\n1\n");
 
     // New file should be gone
-    let result = bash.exec("test -f /tmp/new.txt && echo exists || echo gone")
+    let result = bash
+        .exec("test -f /tmp/new.txt && echo exists || echo gone")
         .await
         .unwrap();
     assert_eq!(result.stdout, "gone\n");

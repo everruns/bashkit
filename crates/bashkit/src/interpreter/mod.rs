@@ -96,9 +96,7 @@ fn levenshtein(a: &str, b: &str) -> usize {
         curr[0] = i + 1;
         for (j, cb) in b.iter().enumerate() {
             let cost = if ca == cb { 0 } else { 1 };
-            curr[j + 1] = (prev[j + 1] + 1)
-                .min(curr[j] + 1)
-                .min(prev[j] + cost);
+            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }
@@ -108,21 +106,15 @@ fn levenshtein(a: &str, b: &str) -> usize {
 /// Hint for common commands that are unavailable in the sandbox.
 fn unavailable_command_hint(name: &str) -> Option<&'static str> {
     match name {
-        "pip" | "pip3" | "pip2" => {
-            Some("Package managers are not available in the sandbox.")
-        }
+        "pip" | "pip3" | "pip2" => Some("Package managers are not available in the sandbox."),
         "apt" | "apt-get" | "yum" | "dnf" | "pacman" | "brew" | "apk" => {
             Some("Package managers are not available in the sandbox.")
         }
         "npm" | "yarn" | "pnpm" | "bun" => {
             Some("Package managers are not available in the sandbox.")
         }
-        "sudo" | "su" | "doas" => {
-            Some("All commands run without privilege restrictions.")
-        }
-        "ssh" | "scp" | "sftp" | "rsync" => {
-            Some("Network access is limited to curl/wget.")
-        }
+        "sudo" | "su" | "doas" => Some("All commands run without privilege restrictions."),
+        "ssh" | "scp" | "sftp" | "rsync" => Some("Network access is limited to curl/wget."),
         "docker" | "podman" | "kubectl" | "systemctl" | "service" => {
             Some("Container and service management is not available in the sandbox.")
         }
@@ -131,9 +123,7 @@ fn unavailable_command_hint(name: &str) -> Option<&'static str> {
         "vi" | "vim" | "nano" | "emacs" => {
             Some("Interactive editors are not available. Use echo/printf/cat to write files.")
         }
-        "man" | "info" => {
-            Some("Manual pages are not available in the sandbox.")
-        }
+        "man" | "info" => Some("Manual pages are not available in the sandbox."),
         _ => None,
     }
 }

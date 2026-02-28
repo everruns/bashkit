@@ -505,7 +505,7 @@ def test_max_commands_limits_execution():
     tool = BashTool(max_commands=5)
     r = tool.execute_sync("echo 1; echo 2; echo 3; echo 4; echo 5; echo 6; echo 7; echo 8; echo 9; echo 10")
     # Should stop before all 10 commands complete
-    lines = [l for l in r.stdout.strip().splitlines() if l]
+    lines = [line for line in r.stdout.strip().splitlines() if line]
     assert len(lines) < 10 or r.exit_code != 0
 
 
