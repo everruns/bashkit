@@ -33,7 +33,7 @@ echo $#
 
 ### ws_word_joining
 # Word splitting with quoted and unquoted parts
-### skip: TODO set -- with word splitting not implemented
+### skip: TODO quoted/unquoted word joining at split boundaries not implemented
 a="1 2"
 b="3 4"
 set -- $a"$b"
@@ -48,7 +48,7 @@ echo "$2"
 
 ### ws_word_joining_complex
 # Complex word splitting with multiple parts
-### skip: TODO set -- with word splitting not implemented
+### skip: TODO quoted/unquoted word joining at split boundaries not implemented
 a="1 2"
 b="3 4"
 c="5 6"
@@ -67,7 +67,6 @@ echo "$3"
 
 ### ws_dollar_star
 # $* splits arguments
-### skip: TODO $@/$* splitting/joining not implemented
 fun() { set -- $*; echo "$#:$1:$2:$3"; }
 fun "a 1" "b 2"
 ### expect
@@ -84,7 +83,6 @@ a 1 b 2 c 3
 
 ### ws_dollar_at
 # $@ splits arguments
-### skip: TODO $@/$* splitting/joining not implemented
 fun() { set -- $@; echo "$#:$1:$2:$3"; }
 fun "a 1" "b 2"
 ### expect
@@ -93,7 +91,6 @@ fun "a 1" "b 2"
 
 ### ws_quoted_dollar_at
 # "$@" preserves arguments
-### skip: TODO $@/$* splitting/joining not implemented
 fun() { echo $#; for a in "$@"; do echo "[$a]"; done; }
 fun "a 1" "b 2" "c 3"
 ### expect
@@ -105,7 +102,6 @@ fun "a 1" "b 2" "c 3"
 
 ### ws_empty_argv
 # empty $@ and $* are elided
-### skip: TODO $@/$* splitting/joining not implemented
 set --
 set -- 1 "$@" 2 $@ 3 "$*" 4 $* 5
 echo "$#"
@@ -117,7 +113,6 @@ echo "$1 $2 $3 $4 $5"
 
 ### ws_star_empty_ifs
 # $* with empty IFS
-### skip: TODO $@/$* splitting/joining not implemented
 set -- "1 2" "3  4"
 IFS=
 set -- $*
@@ -132,7 +127,6 @@ echo "$2"
 
 ### ws_star_empty_ifs_quoted
 # "$*" with empty IFS joins without separator
-### skip: TODO $@/$* splitting/joining not implemented
 set -- "1 2" "3  4"
 IFS=
 echo "$*"
@@ -151,7 +145,7 @@ echo $#
 
 ### ws_elision_nonwhitespace_ifs
 # Non-whitespace IFS char produces empty field
-### skip: TODO IFS-based word splitting not implemented
+### skip: TODO non-IFS whitespace in $space not elided correctly with custom IFS
 IFS='_'
 char='_'
 space=' '
@@ -225,7 +219,6 @@ for arg in "$@"; do echo "[$arg]"; done
 
 ### ws_empty_at_star_elided
 # empty $@ and $* are elided in argument list
-### skip: TODO $@/$* splitting/joining not implemented
 fun() { set -- 1 $@ $* 2; echo $#; }
 fun
 ### expect
@@ -318,7 +311,6 @@ echo "$#:$1:$2:$3"
 
 ### ws_ifs_backslash
 # IFS=backslash splits on backslash
-### skip: TODO IFS-based word splitting not implemented
 IFS='\'
 s='a\b'
 set -- $s
@@ -329,7 +321,6 @@ echo "$#:$1:$2"
 
 ### ws_ifs_glob_metachar_star
 # IFS characters that are glob metacharacters
-### skip: TODO IFS-based word splitting not implemented
 IFS='* '
 s='a*b c'
 set -f
@@ -342,7 +333,6 @@ set +f
 
 ### ws_ifs_glob_metachar_question
 # IFS with ? glob metacharacter
-### skip: TODO IFS-based word splitting not implemented
 IFS='?'
 s='?x?y?z?'
 set -f
@@ -360,7 +350,6 @@ set +f
 
 ### ws_empty_ifs_star_join
 # Empty IFS and $* join
-### skip: TODO $@/$* splitting/joining not implemented
 IFS=
 echo ["$*"]
 set a b c
@@ -372,7 +361,6 @@ echo ["$*"]
 
 ### ws_unset_ifs_star_join
 # Unset IFS and $* join with space
-### skip: TODO $@/$* splitting/joining not implemented
 set a b c
 unset IFS
 echo ["$*"]
@@ -390,7 +378,6 @@ hi
 
 ### ws_ifs_custom_at_join
 # IFS and joining $@ vs $*
-### skip: TODO $@/$* splitting/joining not implemented
 IFS=:
 set -- x 'y z'
 for a in "$@"; do echo "[@$a]"; done
@@ -403,7 +390,6 @@ for a in "$*"; do echo "[*$a]"; done
 
 ### ws_ifs_custom_at_assignment
 # IFS and $@ / $* in assignments
-### skip: TODO $@/$* splitting/joining not implemented
 IFS=:
 set -- x 'y z'
 s="$@"
@@ -417,7 +403,6 @@ star=x:y z
 
 ### ws_ifs_empty_at_preserved
 # IFS='' with $@ preserves args
-### skip: TODO $@/$* splitting/joining not implemented
 set -- a 'b c'
 IFS=''
 set -- $@
@@ -432,7 +417,6 @@ b c
 
 ### ws_ifs_empty_array_preserved
 # IFS='' with ${a[@]} preserves elements
-### skip: TODO $@/$* splitting/joining not implemented
 myarray=(a 'b c')
 IFS=''
 set -- ${myarray[@]}
@@ -447,7 +431,7 @@ b c
 
 ### ws_unicode_in_ifs
 # Unicode in IFS
-### skip: TODO IFS-based word splitting not implemented
+### skip: TODO bash does byte-level IFS splitting for multibyte chars; bashkit uses char-level
 x=çx IFS=ç
 set -- $x
 echo "$#"
@@ -478,7 +462,7 @@ for a in "$@"; do echo "[$a]"; done
 
 ### ws_empty_string_both_sides
 # ""$A"" - empty string on both sides
-### skip: TODO set -- with word splitting not implemented
+### skip: TODO quoted empty string prevents elision at word split boundaries
 A="   abc   def   "
 set -- ""$A""
 echo "$#"

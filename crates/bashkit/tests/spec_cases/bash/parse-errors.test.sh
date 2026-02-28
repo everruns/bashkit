@@ -11,10 +11,8 @@ $%
 
 ### parse_bad_braced_var
 # Bad braced var sub is an error
-### skip: TODO ${%} not rejected as parse error
-echo ${%} 2>/dev/null
+bash -c 'echo ${%}' 2>/dev/null
 echo status=$?
-### exit_code: 1
 ### expect
 status=1
 ### end
@@ -55,7 +53,7 @@ status=2
 
 ### parse_invalid_for_var
 # Invalid for loop variable name
-### skip: TODO parser does not reject invalid for-loop variable names
+### skip: TODO bashkit returns exit 2 (parse error) but real bash returns exit 1 (runtime error)
 bash -c 'for i.j in a b c; do echo hi; done' 2>/dev/null
 echo status=$?
 ### expect
@@ -72,7 +70,6 @@ status=127
 
 ### parse_bad_var_name_export
 # bad var name in export
-### skip: TODO export does not reject invalid variable names
 bash -c 'export FOO-BAR=foo' 2>/dev/null
 test $? -ne 0 && echo error
 ### expect
@@ -81,7 +78,6 @@ error
 
 ### parse_bad_var_name_local
 # bad var name in local
-### skip: TODO local does not reject invalid variable names
 bash -c 'f() { local FOO-BAR=foo; }; f' 2>/dev/null
 test $? -ne 0 && echo error
 ### expect
@@ -99,7 +95,6 @@ status=2
 
 ### parse_incomplete_command_sub
 # incomplete command sub
-### skip: TODO parser does not reject incomplete command substitution
 bash -c '$(x' 2>/dev/null
 echo status=$?
 ### expect
@@ -108,7 +103,6 @@ status=2
 
 ### parse_incomplete_backticks
 # incomplete backticks
-### skip: TODO parser does not reject incomplete backticks
 bash -c '`x' 2>/dev/null
 echo status=$?
 ### expect
