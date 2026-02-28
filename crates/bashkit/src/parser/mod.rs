@@ -1759,7 +1759,9 @@ impl<'a> Parser<'a> {
                                 {
                                     // Double-quoted: strip quotes but allow variable expansion
                                     let inner = Self::strip_quotes(&value_str);
-                                    self.parse_word(inner.to_string())
+                                    let mut w = self.parse_word(inner.to_string());
+                                    w.quoted = true;
+                                    w
                                 } else if value_str.starts_with('\'') && value_str.ends_with('\'') {
                                     // Single-quoted: literal, no expansion
                                     let inner = Self::strip_quotes(&value_str);

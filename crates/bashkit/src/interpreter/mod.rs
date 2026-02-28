@@ -760,6 +760,14 @@ impl Interpreter {
 
     /// Execute a for loop
     async fn execute_for(&mut self, for_cmd: &ForCommand) -> Result<ExecResult> {
+        // Validate for-loop variable name (bash rejects invalid names at runtime, exit 1)
+        if !Self::is_valid_var_name(&for_cmd.variable) {
+            return Ok(ExecResult::err(
+                format!("bash: `{}': not a valid identifier\n", for_cmd.variable),
+                1,
+            ));
+        }
+
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
@@ -3744,6 +3752,14 @@ impl Interpreter {
                     if let Some(eq_pos) = arg.find('=') {
                         let var_name = &arg[..eq_pos];
                         let value = &arg[eq_pos + 1..];
+                        // Validate variable name
+                        if !Self::is_valid_var_name(var_name) {
+                            let result = ExecResult::err(
+                                format!("local: `{}': not a valid identifier\n", arg),
+                                1,
+                            );
+                            return self.apply_redirections(result, &command.redirects).await;
+                        }
                         if is_nameref {
                             // local -n ref=target: create nameref, declare in local scope
                             frame.locals.insert(var_name.to_string(), String::new());
@@ -5610,7 +5626,25 @@ impl Interpreter {
                     if self.is_nounset() && !self.is_variable_set(name) {
                         self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
                     }
-                    result.push_str(&self.expand_variable(name));
+                    // "$*" in word context joins with IFS first char
+                    if name == "*" && word.quoted {
+                        let positional = self
+                            .call_stack
+                            .last()
+                            .map(|f| f.positional.clone())
+                            .unwrap_or_default();
+                        let sep = match self.variables.get("IFS") {
+                            Some(ifs) => ifs
+                                .chars()
+                                .next()
+                                .map(|c| c.to_string())
+                                .unwrap_or_default(),
+                            None => " ".to_string(),
+                        };
+                        result.push_str(&positional.join(&sep));
+                    } else {
+                        result.push_str(&self.expand_variable(name));
+                    }
                 }
                 WordPart::CommandSubstitution(commands) => {
                     // Execute the commands and capture stdout
@@ -5657,6 +5691,21 @@ impl Interpreter {
                     operand,
                     colon_variant,
                 } => {
+                    // Reject bad substitution: operator on empty/invalid name
+                    // e.g. ${%} parses as RemoveSuffix with empty name
+                    if name.is_empty()
+                        && !matches!(
+                            operator,
+                            ParameterOp::UseDefault
+                                | ParameterOp::AssignDefault
+                                | ParameterOp::UseReplacement
+                                | ParameterOp::Error
+                        )
+                    {
+                        self.nounset_error = Some("bash: ${}: bad substitution\n".to_string());
+                        continue;
+                    }
+
                     // Under set -u, operators like :-, :=, :+, :? suppress nounset errors
                     // because the script is explicitly handling unset variables.
                     let suppress_nounset = matches!(
@@ -5986,18 +6035,24 @@ impl Interpreter {
                         .map(|f| f.positional.clone())
                         .unwrap_or_default();
                     if word.quoted {
-                        // "$*" joins with first char of IFS
-                        let ifs = self
-                            .variables
-                            .get("IFS")
-                            .cloned()
-                            .unwrap_or_else(|| " \t\n".to_string());
-                        let sep = ifs.chars().next().unwrap_or(' ');
-                        return Ok(vec![positional.join(&sep.to_string())]);
+                        // "$*" joins with first char of IFS.
+                        // IFS unset → space; IFS="" → no separator.
+                        let sep = match self.variables.get("IFS") {
+                            Some(ifs) => ifs
+                                .chars()
+                                .next()
+                                .map(|c| c.to_string())
+                                .unwrap_or_default(),
+                            None => " ".to_string(),
+                        };
+                        return Ok(vec![positional.join(&sep)]);
                     }
-                    // $* unquoted: join with space, then IFS split
-                    let joined = positional.join(" ");
-                    return Ok(self.ifs_split(&joined));
+                    // $* unquoted: each param is subject to IFS splitting
+                    let mut fields = Vec::new();
+                    for p in &positional {
+                        fields.extend(self.ifs_split(p));
+                    }
+                    return Ok(fields);
                 }
             }
             if let WordPart::ArrayAccess { name, index } = &word.parts[0] {
@@ -7386,10 +7441,25 @@ impl Interpreter {
                 }
                 return "0".to_string();
             }
-            "@" | "*" => {
-                // All positional parameters
+            "@" => {
+                // All positional parameters (space-separated as string)
                 if let Some(frame) = self.call_stack.last() {
                     return frame.positional.join(" ");
+                }
+                return String::new();
+            }
+            "*" => {
+                // All positional parameters joined by IFS first char
+                if let Some(frame) = self.call_stack.last() {
+                    let sep = match self.variables.get("IFS") {
+                        Some(ifs) => ifs
+                            .chars()
+                            .next()
+                            .map(|c| c.to_string())
+                            .unwrap_or_default(),
+                        None => " ".to_string(),
+                    };
+                    return frame.positional.join(&sep);
                 }
                 return String::new();
             }
@@ -9078,5 +9148,23 @@ mod tests {
 
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "/src/test.txt /src/test.txt");
+    }
+
+    #[tokio::test]
+    async fn test_star_join_with_ifs() {
+        // "$*" joins with IFS first char; empty IFS = no separator
+        let result = run_script("set -- x y z\nIFS=:\necho \"$*\"").await;
+        assert_eq!(result.stdout, "x:y:z\n");
+        let result = run_script("set -- x y z\nIFS=\necho \"$*\"").await;
+        assert_eq!(result.stdout, "xyz\n");
+        // echo ["$*"] — brackets are literal, quotes are stripped
+        let result = run_script("set -- x y z\necho [\"$*\"]").await;
+        assert_eq!(result.stdout, "[x y z]\n");
+        // "$*" in assignment
+        let result = run_script("IFS=:\nset -- x 'y z'\ns=\"$*\"\necho \"star=$s\"").await;
+        assert_eq!(result.stdout, "star=x:y z\n");
+        // set a b c (without --)
+        let result = run_script("set a b c\necho $#\necho $1 $2 $3").await;
+        assert_eq!(result.stdout, "3\na b c\n");
     }
 }

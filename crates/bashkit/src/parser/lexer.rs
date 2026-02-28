@@ -207,10 +207,16 @@ impl<'a> Lexer<'a> {
                     // [ could be the test command OR a glob bracket expression
                     // If followed by non-whitespace, treat as start of bracket expression
                     // e.g., [abc] is a glob pattern, [ -f file ] is test command
+                    // But ["$*"] or ['text'] are NOT glob — they are literal [ + quoted word
                     match self.peek_char() {
                         Some(' ') | Some('\t') | Some('\n') | None => {
                             // Followed by whitespace or EOF - it's the test command
                             Some(Token::Word("[".to_string()))
+                        }
+                        Some('"') | Some('\'') | Some('$') => {
+                            // [ followed by quote/expansion — treat as part of a regular word.
+                            // Push [ back and read the entire word normally.
+                            self.read_word_starting_with("[")
                         }
                         _ => {
                             // Part of a glob bracket expression [abc], read the whole thing
@@ -337,6 +343,94 @@ impl<'a> Lexer<'a> {
 
         // Not a fd redirect pattern, read as regular word
         self.read_word()
+    }
+
+    fn read_word_starting_with(&mut self, prefix: &str) -> Option<Token> {
+        let mut word = prefix.to_string();
+        // Use the same logic as read_word but with pre-seeded content
+        while let Some(ch) = self.peek_char() {
+            if ch == '"' || ch == '\'' {
+                // Word already has content (the prefix) — concatenate the quoted segment
+                let quote_char = ch;
+                self.advance();
+                while let Some(c) = self.peek_char() {
+                    if c == quote_char {
+                        self.advance();
+                        break;
+                    }
+                    if c == '\\' && quote_char == '"' {
+                        self.advance();
+                        if let Some(next) = self.peek_char() {
+                            match next {
+                                '\n' => {
+                                    self.advance();
+                                }
+                                '"' | '\\' | '$' | '`' => {
+                                    word.push(next);
+                                    self.advance();
+                                }
+                                _ => {
+                                    word.push('\\');
+                                    word.push(next);
+                                    self.advance();
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                    word.push(c);
+                    self.advance();
+                }
+                continue;
+            } else if ch == '$' {
+                word.push(ch);
+                self.advance();
+                // Read variable/expansion following $
+                if let Some(nc) = self.peek_char() {
+                    if nc == '{' || nc == '(' {
+                        word.push(nc);
+                        self.advance();
+                        let (open, close) = if nc == '{' { ('{', '}') } else { ('(', ')') };
+                        let mut depth = 1;
+                        while let Some(bc) = self.peek_char() {
+                            word.push(bc);
+                            self.advance();
+                            if bc == open {
+                                depth += 1;
+                            } else if bc == close {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                        }
+                    } else if nc.is_ascii_alphanumeric()
+                        || nc == '_'
+                        || matches!(nc, '?' | '#' | '@' | '*' | '!' | '$' | '-')
+                    {
+                        word.push(nc);
+                        self.advance();
+                        if nc.is_ascii_alphabetic() || nc == '_' {
+                            while let Some(vc) = self.peek_char() {
+                                if vc.is_ascii_alphanumeric() || vc == '_' {
+                                    word.push(vc);
+                                    self.advance();
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                continue;
+            } else if self.is_word_char(ch) || ch == ']' {
+                word.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        Some(Token::Word(word))
     }
 
     fn read_word(&mut self) -> Option<Token> {
@@ -519,6 +613,11 @@ impl<'a> Lexer<'a> {
                                 }
                             }
                         }
+                        if depth > 0 {
+                            return Some(Token::Error(
+                                "unterminated command substitution".to_string(),
+                            ));
+                        }
                     }
                 } else if self.peek_char() == Some('{') {
                     // ${VAR} format
@@ -574,9 +673,11 @@ impl<'a> Lexer<'a> {
                 // Backtick command substitution: convert `cmd` to $(cmd)
                 self.advance(); // consume opening `
                 word.push_str("$(");
+                let mut closed = false;
                 while let Some(c) = self.peek_char() {
                     if c == '`' {
                         self.advance(); // consume closing `
+                        closed = true;
                         break;
                     }
                     if c == '\\' {
@@ -596,6 +697,11 @@ impl<'a> Lexer<'a> {
                         word.push(c);
                         self.advance();
                     }
+                }
+                if !closed {
+                    return Some(Token::Error(
+                        "unterminated backtick substitution".to_string(),
+                    ));
                 }
                 word.push(')');
             } else if ch == '\\' {
