@@ -954,3 +954,21 @@ echo '42' | jq -e '.'
 ### expect
 42
 ### end
+
+### jq_raw_input
+# -R flag: each line treated as string
+printf 'hello\nworld\n' | jq -R '.'
+### expect
+"hello"
+"world"
+### end
+
+### jq_raw_input_slurp
+# -Rs flag: entire input as one string, then split
+printf 'a,b\n1,2\n' | jq -Rs 'split("\n") | map(select(length>0))'
+### expect
+[
+  "a,b",
+  "1,2"
+]
+### end
