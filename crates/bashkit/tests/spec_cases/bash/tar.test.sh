@@ -1,4 +1,5 @@
 ### tar_create_and_list
+### bash_diff: VFS tar stores absolute paths differently than real tar
 # Create a tar archive and list its contents
 mkdir -p /tmp/tartest
 echo "hello" > /tmp/tartest/file1.txt
@@ -21,6 +22,7 @@ data
 ### end
 
 ### tar_verbose_create
+### bash_diff: VFS tar verbose output goes to stderr differently
 # Verbose output when creating
 mkdir -p /tmp/vtest
 echo "x" > /tmp/vtest/f.txt
@@ -47,6 +49,7 @@ tar
 ### end
 
 ### tar_directory_recursive
+### bash_diff: VFS tar stores absolute paths differently
 # tar handles directories recursively
 mkdir -p /tmp/tdeep/sub
 echo "a" > /tmp/tdeep/top.txt

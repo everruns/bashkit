@@ -44,6 +44,7 @@ a b c
 ### end
 
 ### xargs_empty_input
+### bash_diff: VFS xargs echo -n behavior differs
 # xargs with empty input
 echo -n "" | xargs
 ### expect

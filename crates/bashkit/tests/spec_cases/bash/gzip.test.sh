@@ -9,6 +9,7 @@ gzip content
 ### end
 
 ### gzip_large_file
+### bash_diff: VFS tar stores absolute paths differently
 # gzip handles larger content
 mkdir -p /tmp/gzlarge
 seq 1 100 > /tmp/gzlarge/nums.txt

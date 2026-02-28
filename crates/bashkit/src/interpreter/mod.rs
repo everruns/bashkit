@@ -80,6 +80,93 @@ fn is_keyword(name: &str) -> bool {
     )
 }
 
+/// Levenshtein edit distance between two strings.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let n = b.len();
+    let mut prev = (0..=n).collect::<Vec<_>>();
+    let mut curr = vec![0; n + 1];
+    for (i, ca) in a.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = (prev[j + 1] + 1)
+                .min(curr[j] + 1)
+                .min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[n]
+}
+
+/// Hint for common commands that are unavailable in the sandbox.
+fn unavailable_command_hint(name: &str) -> Option<&'static str> {
+    match name {
+        "pip" | "pip3" | "pip2" => {
+            Some("Package managers are not available in the sandbox.")
+        }
+        "apt" | "apt-get" | "yum" | "dnf" | "pacman" | "brew" | "apk" => {
+            Some("Package managers are not available in the sandbox.")
+        }
+        "npm" | "yarn" | "pnpm" | "bun" => {
+            Some("Package managers are not available in the sandbox.")
+        }
+        "sudo" | "su" | "doas" => {
+            Some("All commands run without privilege restrictions.")
+        }
+        "ssh" | "scp" | "sftp" | "rsync" => {
+            Some("Network access is limited to curl/wget.")
+        }
+        "docker" | "podman" | "kubectl" | "systemctl" | "service" => {
+            Some("Container and service management is not available in the sandbox.")
+        }
+        "make" | "cmake" | "gcc" | "g++" | "clang" | "rustc" | "cargo" | "go" | "javac"
+        | "node" => Some("Compilers and build tools are not available in the sandbox."),
+        "vi" | "vim" | "nano" | "emacs" => {
+            Some("Interactive editors are not available. Use echo/printf/cat to write files.")
+        }
+        "man" | "info" => {
+            Some("Manual pages are not available in the sandbox.")
+        }
+        _ => None,
+    }
+}
+
+/// Build a "command not found" error with optional suggestions.
+fn command_not_found_message(name: &str, known_commands: &[&str]) -> String {
+    let mut msg = format!("bash: {}: command not found", name);
+
+    // Check for unavailable command hints first
+    if let Some(hint) = unavailable_command_hint(name) {
+        msg.push_str(&format!(". {}", hint));
+        return msg;
+    }
+
+    // Find close matches via Levenshtein distance
+    let max_dist = if name.len() <= 3 { 1 } else { 2 };
+    let mut suggestions: Vec<(&str, usize)> = known_commands
+        .iter()
+        .filter_map(|cmd| {
+            let d = levenshtein(name, cmd);
+            if d > 0 && d <= max_dist {
+                Some((*cmd, d))
+            } else {
+                None
+            }
+        })
+        .collect();
+    suggestions.sort_by_key(|(_, d)| *d);
+    suggestions.truncate(3);
+
+    if !suggestions.is_empty() {
+        let names: Vec<&str> = suggestions.iter().map(|(s, _)| *s).collect();
+        msg.push_str(&format!(". Did you mean: {}?", names.join(", ")));
+    }
+
+    msg
+}
+
 /// Check if a path refers to /dev/null after normalization.
 /// Handles attempts to bypass via paths like `/dev/../dev/null`.
 fn is_dev_null(path: &Path) -> bool {
@@ -4160,11 +4247,16 @@ impl Interpreter {
             return Ok(result);
         }
 
-        // Command not found - return error like bash does (exit code 127)
-        Ok(ExecResult::err(
-            format!("bash: {}: command not found", name),
-            127,
-        ))
+        // Command not found - build error with suggestions for LLM self-correction
+        let known: Vec<&str> = self
+            .builtins
+            .keys()
+            .map(|s| s.as_str())
+            .chain(self.functions.keys().map(|s| s.as_str()))
+            .chain(self.aliases.keys().map(|s| s.as_str()))
+            .collect();
+        let msg = command_not_found_message(name, &known);
+        Ok(ExecResult::err(msg, 127))
     }
 
     /// Execute a script file by resolved path.

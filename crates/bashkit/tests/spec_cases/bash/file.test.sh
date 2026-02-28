@@ -23,6 +23,7 @@ file /tmp/filedir
 ### end
 
 ### file_script_bash
+### bash_diff: VFS file outputs different format than real file
 # file detects bash scripts
 printf '#!/bin/bash\necho hi\n' > /tmp/script.sh
 file /tmp/script.sh
@@ -31,6 +32,7 @@ file /tmp/script.sh
 ### end
 
 ### file_script_python
+### bash_diff: VFS file outputs different format than real file
 # file detects python scripts
 printf '#!/usr/bin/env python3\nprint("hi")\n' > /tmp/script.py
 file /tmp/script.py
@@ -39,6 +41,7 @@ file /tmp/script.py
 ### end
 
 ### file_json
+### bash_diff: VFS file outputs different format than real file
 # file detects JSON
 echo '{"key":"value"}' > /tmp/data.json
 file /tmp/data.json
@@ -55,6 +58,7 @@ error shown
 ### end
 
 ### file_multiple
+### bash_diff: VFS file outputs different format than real file
 # file handles multiple files
 echo "text" > /tmp/multi1.txt
 mkdir -p /tmp/multi2

@@ -18,6 +18,7 @@ from stdin
 ### end
 
 ### less_nonexistent
+### bash_diff: VFS less error behavior differs from real less
 ### exit_code: 1
 # less on nonexistent file
 less /tmp/nonexistent_less_file
