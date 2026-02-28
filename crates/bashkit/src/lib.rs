@@ -403,6 +403,11 @@ pub use git::GitClient;
 
 #[cfg(feature = "python")]
 pub use builtins::PythonLimits;
+#[cfg(feature = "python")]
+pub use builtins::python::{PythonExternalFnHandler, PythonExternalFns};
+// Re-export monty types needed by external handler consumers
+#[cfg(feature = "python")]
+pub use monty::{ExcType, ExternalResult, MontyException, MontyObject};
 
 /// Logging utilities module
 ///
@@ -966,6 +971,32 @@ impl BashBuilder {
             Box::new(builtins::Python::with_limits(limits.clone())),
         )
         .builtin("python3", Box::new(builtins::Python::with_limits(limits)))
+    }
+
+    /// Enable embedded Python with external function handlers.
+    ///
+    /// See [`PythonExternalFnHandler`] for handler details.
+    #[cfg(feature = "python")]
+    pub fn python_with_external_handler(
+        self,
+        limits: builtins::PythonLimits,
+        external_fns: Vec<String>,
+        handler: builtins::python::PythonExternalFnHandler,
+    ) -> Self {
+        self.builtin(
+            "python",
+            Box::new(
+                builtins::Python::with_limits(limits.clone())
+                    .with_external_handler(external_fns.clone(), handler.clone()),
+            ),
+        )
+        .builtin(
+            "python3",
+            Box::new(
+                builtins::Python::with_limits(limits)
+                    .with_external_handler(external_fns, handler),
+            ),
+        )
     }
 
     /// Register a custom builtin command.
