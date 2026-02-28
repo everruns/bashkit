@@ -359,6 +359,7 @@ impl Interpreter {
         builtins.insert("rev".to_string(), Box::new(builtins::Rev));
         builtins.insert("yes".to_string(), Box::new(builtins::Yes));
         builtins.insert("expr".to_string(), Box::new(builtins::Expr));
+        builtins.insert("bc".to_string(), Box::new(builtins::Bc));
         builtins.insert("pushd".to_string(), Box::new(builtins::Pushd));
         builtins.insert("popd".to_string(), Box::new(builtins::Popd));
         builtins.insert("dirs".to_string(), Box::new(builtins::Dirs));
