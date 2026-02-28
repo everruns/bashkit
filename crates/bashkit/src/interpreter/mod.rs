@@ -20,7 +20,11 @@ pub use state::{ControlFlow, ExecResult};
 use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+/// Monotonic counter for unique process substitution file paths
+static PROC_SUB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use futures::FutureExt;
 
@@ -6009,13 +6013,9 @@ impl Interpreter {
                     }
 
                     // Create a virtual file with the output
-                    // Use a unique path based on the timestamp
                     let path_str = format!(
                         "/dev/fd/proc_sub_{}",
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_nanos()
+                        PROC_SUB_COUNTER.fetch_add(1, Ordering::Relaxed)
                     );
                     let path = Path::new(&path_str);
 
