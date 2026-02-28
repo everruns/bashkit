@@ -113,3 +113,232 @@ impl Builtin for Return {
         )))
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use crate::fs::{FileSystem, InMemoryFs};
+
+    async fn setup() -> (Arc<InMemoryFs>, PathBuf, HashMap<String, String>) {
+        let fs = Arc::new(InMemoryFs::new());
+        let cwd = PathBuf::from("/home/user");
+        let variables = HashMap::new();
+        fs.mkdir(&cwd, true).await.unwrap();
+        (fs, cwd, variables)
+    }
+
+    // ==================== colon ====================
+
+    #[tokio::test]
+    async fn colon_returns_success() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Colon.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.is_empty());
+    }
+
+    #[tokio::test]
+    async fn colon_ignores_args() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["ignored".to_string(), "stuff".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Colon.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    // ==================== true ====================
+
+    #[tokio::test]
+    async fn true_returns_zero() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = True.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.is_empty());
+        assert!(result.stderr.is_empty());
+    }
+
+    // ==================== false ====================
+
+    #[tokio::test]
+    async fn false_returns_one() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = False.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stdout.is_empty());
+    }
+
+    // ==================== exit ====================
+
+    #[tokio::test]
+    async fn exit_default_zero() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Exit.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn exit_with_code() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["42".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Exit.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 42);
+    }
+
+    #[tokio::test]
+    async fn exit_truncates_to_8bit() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["256".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Exit.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0); // 256 & 0xFF = 0
+    }
+
+    #[tokio::test]
+    async fn exit_truncates_large_code() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["300".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Exit.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 44); // 300 & 0xFF = 44
+    }
+
+    #[tokio::test]
+    async fn exit_negative_code() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-1".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Exit.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 255); // -1 & 0xFF = 255
+    }
+
+    #[tokio::test]
+    async fn exit_non_numeric_defaults_zero() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["abc".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Exit.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    // ==================== break ====================
+
+    #[tokio::test]
+    async fn break_default_one_level() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Break.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(matches!(result.control_flow, ControlFlow::Break(1)));
+    }
+
+    #[tokio::test]
+    async fn break_multiple_levels() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["3".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Break.execute(ctx).await.unwrap();
+        assert!(matches!(result.control_flow, ControlFlow::Break(3)));
+    }
+
+    #[tokio::test]
+    async fn break_non_numeric_defaults_one() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["abc".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Break.execute(ctx).await.unwrap();
+        assert!(matches!(result.control_flow, ControlFlow::Break(1)));
+    }
+
+    // ==================== continue ====================
+
+    #[tokio::test]
+    async fn continue_default_one_level() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Continue.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(matches!(result.control_flow, ControlFlow::Continue(1)));
+    }
+
+    #[tokio::test]
+    async fn continue_multiple_levels() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["2".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Continue.execute(ctx).await.unwrap();
+        assert!(matches!(result.control_flow, ControlFlow::Continue(2)));
+    }
+
+    // ==================== return ====================
+
+    #[tokio::test]
+    async fn return_default_zero() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Return.execute(ctx).await.unwrap();
+        assert!(matches!(result.control_flow, ControlFlow::Return(0)));
+    }
+
+    #[tokio::test]
+    async fn return_with_code() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["42".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Return.execute(ctx).await.unwrap();
+        assert!(matches!(result.control_flow, ControlFlow::Return(42)));
+    }
+
+    #[tokio::test]
+    async fn return_truncates_to_8bit() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["256".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Return.execute(ctx).await.unwrap();
+        assert!(matches!(result.control_flow, ControlFlow::Return(0)));
+    }
+
+    #[tokio::test]
+    async fn return_negative_wraps() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-1".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Return.execute(ctx).await.unwrap();
+        assert!(matches!(result.control_flow, ControlFlow::Return(255)));
+    }
+}

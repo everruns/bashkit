@@ -25,6 +25,7 @@
 mod archive;
 mod awk;
 mod base64;
+mod bc;
 mod cat;
 mod checksum;
 mod column;
@@ -78,6 +79,7 @@ mod python;
 pub use archive::{Gunzip, Gzip, Tar};
 pub use awk::Awk;
 pub use base64::Base64;
+pub use bc::Bc;
 pub use cat::Cat;
 pub use checksum::{Md5sum, Sha1sum, Sha256sum};
 pub use column::Column;

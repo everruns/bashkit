@@ -212,6 +212,47 @@ async fn path_search_command_not_found() {
     assert_eq!(result.exit_code, 127);
 }
 
+/// Command-not-found suggests similar builtins (typo detection)
+#[tokio::test]
+async fn command_not_found_typo_suggestion() {
+    let mut bash = Bash::new();
+
+    // "grpe" is close to "grep" (distance=2)
+    let result = bash.exec("grpe test").await.unwrap();
+    assert_eq!(result.exit_code, 127);
+    assert!(result.stderr.contains("Did you mean"));
+    assert!(result.stderr.contains("grep"));
+}
+
+/// Command-not-found hints for unavailable sandbox commands
+#[tokio::test]
+async fn command_not_found_sandbox_hint() {
+    let mut bash = Bash::new();
+
+    let result = bash.exec("pip install foo").await.unwrap();
+    assert_eq!(result.exit_code, 127);
+    assert!(result.stderr.contains("Package managers"));
+
+    let result = bash.exec("sudo ls").await.unwrap();
+    assert_eq!(result.exit_code, 127);
+    assert!(result.stderr.contains("privilege"));
+
+    let result = bash.exec("ssh user@host").await.unwrap();
+    assert_eq!(result.exit_code, 127);
+    assert!(result.stderr.contains("curl/wget"));
+}
+
+/// Completely unknown command has no suggestion
+#[tokio::test]
+async fn command_not_found_no_suggestion() {
+    let mut bash = Bash::new();
+
+    let result = bash.exec("zzzznonexistent").await.unwrap();
+    assert_eq!(result.exit_code, 127);
+    assert!(result.stderr.contains("command not found"));
+    assert!(!result.stderr.contains("Did you mean"));
+}
+
 /// Script with relative path (contains /)
 #[tokio::test]
 async fn exec_script_relative_path() {

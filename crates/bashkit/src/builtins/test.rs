@@ -269,3 +269,530 @@ async fn evaluate_binary(
 fn parse_int(s: &str) -> i64 {
     s.trim().parse().unwrap_or(0)
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use crate::fs::{FileSystem, InMemoryFs};
+
+    async fn setup() -> (Arc<InMemoryFs>, PathBuf, HashMap<String, String>) {
+        let fs = Arc::new(InMemoryFs::new());
+        let cwd = PathBuf::from("/home/user");
+        let variables = HashMap::new();
+        fs.mkdir(&cwd, true).await.unwrap();
+        (fs, cwd, variables)
+    }
+
+    // ==================== test builtin ====================
+
+    #[tokio::test]
+    async fn test_empty_args_returns_false() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_nonempty_string_is_true() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["hello".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_z_empty_string() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-z".to_string(), "".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_z_nonempty_string() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-z".to_string(), "abc".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_n_nonempty_string() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-n".to_string(), "abc".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_n_empty_string() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-n".to_string(), "".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_string_equality() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["abc".to_string(), "=".to_string(), "abc".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_string_inequality() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["abc".to_string(), "!=".to_string(), "def".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_string_equality_fails() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["abc".to_string(), "=".to_string(), "xyz".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_eq_numeric() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["42".to_string(), "-eq".to_string(), "42".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_eq_numeric_fails() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["42".to_string(), "-eq".to_string(), "99".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_lt_numeric() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["5".to_string(), "-lt".to_string(), "10".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_lt_numeric_fails() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["10".to_string(), "-lt".to_string(), "5".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_gt_numeric() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["10".to_string(), "-gt".to_string(), "5".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_e_file_exists() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        fs.write_file(Path::new("/home/user/file.txt"), b"hello")
+            .await
+            .unwrap();
+        let env = HashMap::new();
+        let args = vec!["-e".to_string(), "file.txt".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_e_file_not_exists() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-e".to_string(), "nope.txt".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_f_regular_file() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        fs.write_file(Path::new("/home/user/file.txt"), b"data")
+            .await
+            .unwrap();
+        let env = HashMap::new();
+        let args = vec!["-f".to_string(), "file.txt".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_f_directory_is_not_file() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        fs.mkdir(Path::new("/home/user/subdir"), true)
+            .await
+            .unwrap();
+        let env = HashMap::new();
+        let args = vec!["-f".to_string(), "subdir".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_d_directory() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        fs.mkdir(Path::new("/home/user/subdir"), true)
+            .await
+            .unwrap();
+        let env = HashMap::new();
+        let args = vec!["-d".to_string(), "subdir".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_d_file_is_not_dir() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        fs.write_file(Path::new("/home/user/file.txt"), b"data")
+            .await
+            .unwrap();
+        let env = HashMap::new();
+        let args = vec!["-d".to_string(), "file.txt".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_negation() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["!".to_string(), "-z".to_string(), "abc".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0); // ! -z "abc" => ! false => true
+    }
+
+    #[tokio::test]
+    async fn test_negation_true_becomes_false() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["!".to_string(), "-n".to_string(), "abc".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1); // ! -n "abc" => ! true => false
+    }
+
+    // ==================== bracket builtin ====================
+
+    #[tokio::test]
+    async fn bracket_missing_closing() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-z".to_string(), "".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Bracket.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("missing ]"));
+    }
+
+    #[tokio::test]
+    async fn bracket_with_closing() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-z".to_string(), "".to_string(), "]".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Bracket.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn bracket_empty_expression() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["]".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Bracket.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1); // empty expression => false
+    }
+
+    #[tokio::test]
+    async fn bracket_empty_args() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Bracket.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 2);
+    }
+
+    // ==================== additional numeric operators ====================
+
+    #[tokio::test]
+    async fn test_ne_numeric() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["1".to_string(), "-ne".to_string(), "2".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_ne_numeric_equal() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["5".to_string(), "-ne".to_string(), "5".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_le_numeric() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["5".to_string(), "-le".to_string(), "5".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_le_numeric_greater() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["10".to_string(), "-le".to_string(), "5".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_ge_numeric() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["5".to_string(), "-ge".to_string(), "5".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_ge_numeric_less() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["3".to_string(), "-ge".to_string(), "5".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    // ==================== string comparison operators ====================
+
+    #[tokio::test]
+    async fn test_double_eq_string() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["foo".to_string(), "==".to_string(), "foo".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_string_less_than() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["abc".to_string(), "<".to_string(), "def".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_string_greater_than() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["xyz".to_string(), ">".to_string(), "abc".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    // ==================== file tests: -s, -r, -w, -x ====================
+
+    #[tokio::test]
+    async fn test_s_file_has_size() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        fs.write_file(Path::new("/home/user/nonempty.txt"), b"data")
+            .await
+            .unwrap();
+        let env = HashMap::new();
+        let args = vec!["-s".to_string(), "nonempty.txt".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_s_empty_file() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        fs.write_file(Path::new("/home/user/empty.txt"), b"")
+            .await
+            .unwrap();
+        let env = HashMap::new();
+        let args = vec!["-s".to_string(), "empty.txt".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_r_readable_file() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        fs.write_file(Path::new("/home/user/readable.txt"), b"x")
+            .await
+            .unwrap();
+        let env = HashMap::new();
+        let args = vec!["-r".to_string(), "readable.txt".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_w_writable_file() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        fs.write_file(Path::new("/home/user/writable.txt"), b"x")
+            .await
+            .unwrap();
+        let env = HashMap::new();
+        let args = vec!["-w".to_string(), "writable.txt".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_r_nonexistent() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-r".to_string(), "nope".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    // ==================== absolute path handling ====================
+
+    #[tokio::test]
+    async fn test_e_absolute_path() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        fs.write_file(Path::new("/tmp/abs.txt"), b"hi")
+            .await
+            .unwrap();
+        let env = HashMap::new();
+        let args = vec!["-e".to_string(), "/tmp/abs.txt".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    // ==================== numeric parse edge cases ====================
+
+    #[tokio::test]
+    async fn test_eq_non_numeric_treated_as_zero() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        // Non-numeric values parse as 0
+        let args = vec!["abc".to_string(), "-eq".to_string(), "0".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_negative_numbers() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-5".to_string(), "-lt".to_string(), "0".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    // ==================== bracket with binary ops ====================
+
+    #[tokio::test]
+    async fn bracket_numeric_eq() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec![
+            "3".to_string(),
+            "-eq".to_string(),
+            "3".to_string(),
+            "]".to_string(),
+        ];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Bracket.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn bracket_string_neq() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec![
+            "a".to_string(),
+            "!=".to_string(),
+            "b".to_string(),
+            "]".to_string(),
+        ];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Bracket.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+}

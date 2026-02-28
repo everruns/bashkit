@@ -47,5 +47,11 @@ select = ["E", "F", "W", "I", "UP"]
 [tool.ruff.lint.isort]
 known-first-party = ["bashkit"]
 
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

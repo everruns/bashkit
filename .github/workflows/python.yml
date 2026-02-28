@@ -45,6 +45,15 @@ jobs:
       - name: Ruff format
         run: uvx ruff format --check crates/bashkit-python
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Mypy type check
+        run: |
+          pip install mypy
+          mypy crates/bashkit-python/bashkit/ --ignore-missing-imports
+
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

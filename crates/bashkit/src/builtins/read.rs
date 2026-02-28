@@ -154,3 +154,336 @@ impl Builtin for Read {
         Ok(ExecResult::ok(String::new()))
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use crate::fs::{FileSystem, InMemoryFs};
+
+    async fn setup() -> (Arc<InMemoryFs>, PathBuf, HashMap<String, String>) {
+        let fs = Arc::new(InMemoryFs::new());
+        let cwd = PathBuf::from("/home/user");
+        let variables = HashMap::new();
+        fs.mkdir(&cwd, true).await.unwrap();
+        (fs, cwd, variables)
+    }
+
+    // ==================== no stdin ====================
+
+    #[tokio::test]
+    async fn read_no_stdin_returns_error() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    // ==================== basic read into REPLY ====================
+
+    #[tokio::test]
+    async fn read_into_reply() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("hello world"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(variables.get("REPLY").unwrap(), "hello world");
+    }
+
+    // ==================== read into named variable ====================
+
+    #[tokio::test]
+    async fn read_into_named_var() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["MY_VAR".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("test_value"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(variables.get("MY_VAR").unwrap(), "test_value");
+    }
+
+    // ==================== read into multiple variables ====================
+
+    #[tokio::test]
+    async fn read_multiple_vars() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("one two three four"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(variables.get("A").unwrap(), "one");
+        assert_eq!(variables.get("B").unwrap(), "two");
+        // Last var gets remaining words
+        assert_eq!(variables.get("C").unwrap(), "three four");
+    }
+
+    #[tokio::test]
+    async fn read_more_vars_than_words() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("one"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(variables.get("A").unwrap(), "one");
+        assert_eq!(variables.get("B").unwrap(), "");
+        assert_eq!(variables.get("C").unwrap(), "");
+    }
+
+    // ==================== -r flag (raw mode) ====================
+
+    #[tokio::test]
+    async fn read_raw_mode_preserves_backslash() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-r".to_string(), "LINE".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("hello\\world"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(variables.get("LINE").unwrap(), "hello\\world");
+    }
+
+    #[tokio::test]
+    async fn read_without_raw_handles_line_continuation() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["LINE".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("hello\\\nworld"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        // Without -r, backslash-newline is line continuation
+        assert_eq!(variables.get("LINE").unwrap(), "helloworld");
+    }
+
+    // ==================== -n flag (read N chars) ====================
+
+    #[tokio::test]
+    async fn read_n_chars() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-n".to_string(), "3".to_string(), "CHUNK".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("abcdefgh"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(variables.get("CHUNK").unwrap(), "abc");
+    }
+
+    #[tokio::test]
+    async fn read_n_more_than_input() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-n".to_string(), "100".to_string(), "CHUNK".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("hi"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(variables.get("CHUNK").unwrap(), "hi");
+    }
+
+    // ==================== -d flag (delimiter) ====================
+
+    #[tokio::test]
+    async fn read_custom_delimiter() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-d".to_string(), ",".to_string(), "FIELD".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("first,second,third"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(variables.get("FIELD").unwrap(), "first");
+    }
+
+    // ==================== -a flag (array mode) ====================
+
+    #[tokio::test]
+    async fn read_array_mode() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-a".to_string(), "ARR".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("one two three"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let stored = variables.get("_ARRAY_READ_ARR").unwrap();
+        let parts: Vec<&str> = stored.split('\x1F').collect();
+        assert_eq!(parts, vec!["one", "two", "three"]);
+    }
+
+    #[tokio::test]
+    async fn read_array_mode_default_name() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-a".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("a b"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(variables.contains_key("_ARRAY_READ_REPLY"));
+    }
+
+    // ==================== combined flags ====================
+
+    #[tokio::test]
+    async fn read_combined_r_flag() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        // -r combined in single arg
+        let args = vec!["-r".to_string(), "V".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("path\\to\\file"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(variables.get("V").unwrap(), "path\\to\\file");
+    }
+
+    // ==================== multiline input ====================
+
+    #[tokio::test]
+    async fn read_only_first_line() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["-r".to_string(), "LINE".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("first\nsecond\nthird"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(variables.get("LINE").unwrap(), "first");
+    }
+
+    // ==================== custom IFS ====================
+
+    #[tokio::test]
+    async fn read_custom_ifs() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let mut env = HashMap::new();
+        env.insert("IFS".to_string(), ":".to_string());
+        let args = vec!["A".to_string(), "B".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("foo:bar:baz"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(variables.get("A").unwrap(), "foo");
+        assert_eq!(variables.get("B").unwrap(), "bar baz");
+    }
+
+    #[tokio::test]
+    async fn read_empty_ifs_no_splitting() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let mut env = HashMap::new();
+        env.insert("IFS".to_string(), String::new());
+        let args = vec!["LINE".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("no splitting here"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(variables.get("LINE").unwrap(), "no splitting here");
+    }
+}
