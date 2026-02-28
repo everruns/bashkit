@@ -799,9 +799,8 @@ impl Interpreter {
             // Check loop iteration limit
             self.counters.tick_loop(&self.limits)?;
 
-            // Set loop variable
-            self.variables
-                .insert(for_cmd.variable.clone(), value.clone());
+            // Set loop variable (respects nameref)
+            self.set_variable(for_cmd.variable.clone(), value.clone());
 
             // Execute body
             let emit_before = self.output_emit_count;
@@ -3291,13 +3290,12 @@ impl Interpreter {
                 AssignmentValue::Scalar(word) => {
                     let value = self.expand_word(word).await?;
                     if let Some(index_str) = &assignment.index {
-                        if self.assoc_arrays.contains_key(&assignment.name) {
+                        // Resolve nameref for array name
+                        let resolved_name = self.resolve_nameref(&assignment.name).to_string();
+                        if self.assoc_arrays.contains_key(&resolved_name) {
                             // Associative array: use string key
                             let key = self.expand_variable_or_literal(index_str);
-                            let arr = self
-                                .assoc_arrays
-                                .entry(assignment.name.clone())
-                                .or_default();
+                            let arr = self.assoc_arrays.entry(resolved_name).or_default();
                             if assignment.append {
                                 let existing = arr.get(&key).cloned().unwrap_or_default();
                                 arr.insert(key, existing + &value);
@@ -3310,14 +3308,14 @@ impl Interpreter {
                             let index = if raw_idx < 0 {
                                 let len = self
                                     .arrays
-                                    .get(&assignment.name)
+                                    .get(&resolved_name)
                                     .and_then(|a| a.keys().max().map(|m| m + 1))
                                     .unwrap_or(0) as i64;
                                 (len + raw_idx).max(0) as usize
                             } else {
                                 raw_idx as usize
                             };
-                            let arr = self.arrays.entry(assignment.name.clone()).or_default();
+                            let arr = self.arrays.entry(resolved_name).or_default();
                             if assignment.append {
                                 let existing = arr.get(&index).cloned().unwrap_or_default();
                                 arr.insert(index, existing + &value);
@@ -3638,26 +3636,64 @@ impl Interpreter {
 
         // Handle `local` specially - must set in call frame locals
         if name == "local" {
+            // Parse flags: -n for nameref
+            let mut is_nameref = false;
+            let mut var_args: Vec<&String> = Vec::new();
+            for arg in &args {
+                if arg.starts_with('-') && !arg.contains('=') {
+                    for c in arg[1..].chars() {
+                        if c == 'n' {
+                            is_nameref = true;
+                        }
+                    }
+                } else {
+                    var_args.push(arg);
+                }
+            }
+
             if let Some(frame) = self.call_stack.last_mut() {
                 // In a function - set in locals
-                for arg in &args {
+                for arg in &var_args {
                     if let Some(eq_pos) = arg.find('=') {
                         let var_name = &arg[..eq_pos];
                         let value = &arg[eq_pos + 1..];
-                        frame.locals.insert(var_name.to_string(), value.to_string());
+                        if is_nameref {
+                            // local -n ref=target: create nameref, declare in local scope
+                            frame.locals.insert(var_name.to_string(), String::new());
+                            // Store nameref mapping in global variables (markers)
+                            // Need to drop frame borrow first
+                        } else {
+                            frame.locals.insert(var_name.to_string(), value.to_string());
+                        }
                     } else {
                         // Just declare without value — empty string (bash behavior)
                         frame.locals.insert(arg.to_string(), String::new());
                     }
                 }
+                // Now set nameref markers (after frame borrow is released)
+                if is_nameref {
+                    for arg in &var_args {
+                        if let Some(eq_pos) = arg.find('=') {
+                            let var_name = &arg[..eq_pos];
+                            let value = &arg[eq_pos + 1..];
+                            self.variables
+                                .insert(format!("_NAMEREF_{}", var_name), value.to_string());
+                        }
+                    }
+                }
             } else {
                 // Not in a function - set in global variables (bash behavior)
-                for arg in &args {
+                for arg in &var_args {
                     if let Some(eq_pos) = arg.find('=') {
                         let var_name = &arg[..eq_pos];
                         let value = &arg[eq_pos + 1..];
-                        self.variables
-                            .insert(var_name.to_string(), value.to_string());
+                        if is_nameref {
+                            self.variables
+                                .insert(format!("_NAMEREF_{}", var_name), value.to_string());
+                        } else {
+                            self.variables
+                                .insert(var_name.to_string(), value.to_string());
+                        }
                     } else {
                         self.variables.insert(arg.to_string(), String::new());
                     }
@@ -3801,17 +3837,32 @@ impl Interpreter {
             return Ok(result);
         }
 
-        // Handle `unset` with array element syntax: unset 'arr[key]'
+        // Handle `unset` with array element syntax and nameref support
         if name == "unset" {
+            // Parse -n flag: unset -n removes the nameref itself
+            let mut unset_nameref = false;
+            let mut var_args: Vec<&String> = Vec::new();
             for arg in &args {
+                if arg == "-n" {
+                    unset_nameref = true;
+                } else if arg == "-v" || arg == "-f" {
+                    // -v (variable, default) and -f (function) flags - skip
+                } else {
+                    var_args.push(arg);
+                }
+            }
+
+            for arg in &var_args {
                 if let Some(bracket) = arg.find('[') {
                     if arg.ends_with(']') {
                         let arr_name = &arg[..bracket];
                         let key = &arg[bracket + 1..arg.len() - 1];
                         let expanded_key = self.expand_variable_or_literal(key);
-                        if let Some(arr) = self.assoc_arrays.get_mut(arr_name) {
+                        // Resolve nameref for array name
+                        let resolved_name = self.resolve_nameref(arr_name).to_string();
+                        if let Some(arr) = self.assoc_arrays.get_mut(&resolved_name) {
                             arr.remove(&expanded_key);
-                        } else if let Some(arr) = self.arrays.get_mut(arr_name) {
+                        } else if let Some(arr) = self.arrays.get_mut(&resolved_name) {
                             if let Ok(idx) = key.parse::<usize>() {
                                 arr.remove(&idx);
                             }
@@ -3819,10 +3870,20 @@ impl Interpreter {
                         continue;
                     }
                 }
-                // Regular unset
-                self.variables.remove(arg.as_str());
-                self.arrays.remove(arg.as_str());
-                self.assoc_arrays.remove(arg.as_str());
+                if unset_nameref {
+                    // unset -n: remove the nameref marker itself
+                    self.variables.remove(&format!("_NAMEREF_{}", arg));
+                } else {
+                    // Regular unset: resolve nameref to unset the target
+                    let resolved = self.resolve_nameref(arg).to_string();
+                    self.variables.remove(&resolved);
+                    self.arrays.remove(&resolved);
+                    self.assoc_arrays.remove(&resolved);
+                    // Also remove from local frames
+                    for frame in self.call_stack.iter_mut().rev() {
+                        frame.locals.remove(&resolved);
+                    }
+                }
             }
             let mut result = ExecResult::ok(String::new());
             result = self.apply_redirections(result, &command.redirects).await?;
@@ -4834,6 +4895,7 @@ impl Interpreter {
         let mut is_assoc = false;
         let mut is_integer = false;
         let mut is_nameref = false;
+        let mut remove_nameref = false;
         let mut is_lowercase = false;
         let mut is_uppercase = false;
         let mut names: Vec<&str> = Vec::new();
@@ -4853,6 +4915,13 @@ impl Interpreter {
                         'u' => is_uppercase = true,
                         'g' | 't' | 'f' | 'F' => {} // ignored
                         _ => {}
+                    }
+                }
+            } else if arg.starts_with('+') && !arg.contains('=') {
+                // +n removes nameref attribute
+                for c in arg[1..].chars() {
+                    if c == 'n' {
+                        remove_nameref = true;
                     }
                 }
             } else {
@@ -5039,9 +5108,17 @@ impl Interpreter {
                 }
             } else {
                 // Declare without value
-                if is_nameref {
-                    // declare -n ref (without value) - just mark as nameref
-                    // The target will be set later via assignment
+                if remove_nameref {
+                    // typeset +n ref: remove nameref attribute
+                    self.variables.remove(&format!("_NAMEREF_{}", name));
+                } else if is_nameref {
+                    // typeset -n ref (without =value): use existing variable value as target
+                    if let Some(existing) = self.variables.get(name.as_str()).cloned() {
+                        if !existing.is_empty() {
+                            self.variables
+                                .insert(format!("_NAMEREF_{}", name), existing);
+                        }
+                    }
                 } else if is_assoc {
                     // Initialize empty associative array
                     self.assoc_arrays.entry(name.to_string()).or_default();
@@ -5390,15 +5467,24 @@ impl Interpreter {
                     result.push_str(&expanded);
                 }
                 WordPart::ArrayAccess { name, index } => {
+                    // Resolve nameref: array name may be a nameref to the real array
+                    let resolved_name = self.resolve_nameref(name);
+                    // Check if resolved_name itself contains an array index (e.g., "a[2]")
+                    let (arr_name, extra_index) = if let Some(bracket) = resolved_name.find('[') {
+                        let idx_part = &resolved_name[bracket + 1..resolved_name.len() - 1];
+                        (&resolved_name[..bracket], Some(idx_part.to_string()))
+                    } else {
+                        (resolved_name, None)
+                    };
                     if index == "@" || index == "*" {
                         // ${arr[@]} or ${arr[*]} - expand to all elements
-                        if let Some(arr) = self.assoc_arrays.get(name) {
+                        if let Some(arr) = self.assoc_arrays.get(arr_name) {
                             let mut keys: Vec<_> = arr.keys().collect();
                             keys.sort();
                             let values: Vec<String> =
                                 keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
                             result.push_str(&values.join(" "));
-                        } else if let Some(arr) = self.arrays.get(name) {
+                        } else if let Some(arr) = self.arrays.get(arr_name) {
                             let mut indices: Vec<_> = arr.keys().collect();
                             indices.sort();
                             let values: Vec<_> =
@@ -5407,7 +5493,22 @@ impl Interpreter {
                                 &values.into_iter().cloned().collect::<Vec<_>>().join(" "),
                             );
                         }
-                    } else if let Some(arr) = self.assoc_arrays.get(name) {
+                    } else if let Some(extra_idx) = extra_index {
+                        // Nameref resolved to "a[2]" form - use the embedded index
+                        if let Some(arr) = self.assoc_arrays.get(arr_name) {
+                            if let Some(value) = arr.get(&extra_idx) {
+                                result.push_str(value);
+                            }
+                        } else {
+                            let idx: usize =
+                                self.evaluate_arithmetic(&extra_idx).try_into().unwrap_or(0);
+                            if let Some(arr) = self.arrays.get(arr_name) {
+                                if let Some(value) = arr.get(&idx) {
+                                    result.push_str(value);
+                                }
+                            }
+                        }
+                    } else if let Some(arr) = self.assoc_arrays.get(arr_name) {
                         // ${assoc[key]} - get by string key
                         let key = self.expand_variable_or_literal(index);
                         if let Some(value) = arr.get(&key) {
@@ -5420,14 +5521,14 @@ impl Interpreter {
                             // Negative index: count from end
                             let len = self
                                 .arrays
-                                .get(name)
+                                .get(arr_name)
                                 .map(|a| a.keys().max().map(|m| m + 1).unwrap_or(0))
                                 .unwrap_or(0) as i64;
                             (len + raw_idx).max(0) as usize
                         } else {
                             raw_idx as usize
                         };
-                        if let Some(arr) = self.arrays.get(name) {
+                        if let Some(arr) = self.arrays.get(arr_name) {
                             if let Some(value) = arr.get(&idx) {
                                 result.push_str(value);
                             }
@@ -5500,10 +5601,18 @@ impl Interpreter {
                     }
                 }
                 WordPart::IndirectExpansion(name) => {
-                    // ${!var} - indirect expansion
-                    let var_name = self.expand_variable(name);
-                    let value = self.expand_variable(&var_name);
-                    result.push_str(&value);
+                    // ${!var} - for namerefs, returns the nameref target name (inverted)
+                    // For non-namerefs, does normal indirect expansion
+                    let nameref_key = format!("_NAMEREF_{}", name);
+                    if let Some(target) = self.variables.get(&nameref_key).cloned() {
+                        // var is a nameref: ${!ref} returns the target variable name
+                        result.push_str(&target);
+                    } else {
+                        // Normal indirect expansion
+                        let var_name = self.expand_variable(name);
+                        let value = self.expand_variable(&var_name);
+                        result.push_str(&value);
+                    }
                 }
                 WordPart::PrefixMatch(prefix) => {
                     // ${!prefix*} - names of variables with given prefix
@@ -7034,6 +7143,21 @@ impl Interpreter {
     fn expand_variable(&self, name: &str) -> String {
         // Resolve nameref before expansion
         let name = self.resolve_nameref(name);
+
+        // If resolved name is an array element ref like "a[2]", expand as array access
+        if let Some(bracket) = name.find('[') {
+            if name.ends_with(']') {
+                let arr_name = &name[..bracket];
+                let idx_str = &name[bracket + 1..name.len() - 1];
+                if let Some(arr) = self.assoc_arrays.get(arr_name) {
+                    return arr.get(idx_str).cloned().unwrap_or_default();
+                } else if let Some(arr) = self.arrays.get(arr_name) {
+                    let idx: usize = self.evaluate_arithmetic(idx_str).try_into().unwrap_or(0);
+                    return arr.get(&idx).cloned().unwrap_or_default();
+                }
+                return String::new();
+            }
+        }
 
         // Check for special parameters (POSIX required)
         match name {
