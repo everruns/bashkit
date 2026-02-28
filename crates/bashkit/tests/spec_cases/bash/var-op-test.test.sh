@@ -4,7 +4,6 @@
 
 ### vop_lazy_eval_alternative
 # Lazy Evaluation of Alternative
-### skip: TODO lazy evaluation of ${x:-expr} not implemented (expr always evaluated)
 i=0
 x=x
 echo ${x:-$((i++))}
@@ -28,7 +27,6 @@ is empty
 
 ### vop_default_when_unset
 # Default value when unset
-### skip: TODO ${var-value} (without colon) not implemented
 echo ${unset_var_xyz-is unset}
 ### expect
 is unset
@@ -45,7 +43,6 @@ is empty
 
 ### vop_assign_default_unset
 # Assign default value when unset
-### skip: TODO ${var=value} (without colon) not implemented
 : ${vop_unset_var=is unset}
 echo $vop_unset_var
 ### expect
@@ -54,21 +51,19 @@ is unset
 
 ### vop_alternative_when_set
 # ${v:+foo} Alternative value when set
-### skip: TODO ${v:+foo} outputs trailing space
 v=foo
 empty=''
 echo "${v:+v is not empty}" "${empty:+is not empty}"
 ### expect
-v is not empty
+v is not empty 
 ### end
 
 ### vop_alternative_when_unset
 # ${v+foo} Alternative value when unset
-### skip: TODO ${v+foo} (without colon) not implemented correctly
 v=foo
 echo "${v+v is not unset}" "${vop_unset2:+is not unset}"
 ### expect
-v is not unset
+v is not unset 
 ### end
 
 ### vop_quoted_alternative_regression
@@ -80,7 +75,6 @@ echo "${vop_with_icc+set}" = set
 
 ### vop_plus_with_set_u
 # ${s+foo} and ${s:+foo} when set -u
-### skip: TODO ${v+foo} and set -u interaction not implemented
 set -u
 v=v
 echo v=${v:+foo}
@@ -98,7 +92,6 @@ v=
 
 ### vop_minus_with_set_u
 # ${v-foo} and ${v:-foo} when set -u
-### skip: TODO ${v-foo} and set -u interaction not implemented
 set -u
 v=v
 echo v=${v:-foo}
@@ -125,7 +118,7 @@ status=1
 
 ### vop_error_when_unset
 # Error when unset
-### skip: TODO ${var?msg} (without colon) not implemented
+### bash_diff: bash -c exit code differs in sandbox (127 vs 1)
 bash -c 'echo ${vop_unset3?"is unset"}' 2>/dev/null
 echo status=$?
 ### expect
@@ -156,7 +149,6 @@ echo ${#arr[@]}
 
 ### vop_backslash_in_default
 # "\z" as default value arg
-### skip: TODO backslash escapes in ${undef-value} not implemented
 echo "${undef_bs1-\$}"
 echo "${undef_bs2-\(}"
 echo "${undef_bs3-\z}"
@@ -174,7 +166,6 @@ $
 
 ### vop_at_empty_minus_plus
 # $@ (empty) and - and +
-### skip: TODO ${@-value} and ${@+value} operators on $@ not implemented
 set --
 echo "argv=${@-minus}"
 echo "argv=${@+plus}"
@@ -189,7 +180,6 @@ argv=
 
 ### vop_at_one_empty_minus_plus
 # $@ ("") and - and +
-### skip: TODO ${@-value} and ${@+value} operators on $@ not implemented
 set -- ""
 echo "argv=${@-minus}"
 echo "argv=${@+plus}"
@@ -204,22 +194,20 @@ argv=
 
 ### vop_at_two_empty_minus_plus
 # $@ ("" "") and - and +
-### skip: TODO ${@-value} and ${@+value} operators on $@ not implemented
 set -- "" ""
 echo "argv=${@-minus}"
 echo "argv=${@+plus}"
 echo "argv=${@:-minus}"
 echo "argv=${@:+plus}"
 ### expect
-argv=
+argv= 
 argv=plus
-argv=
+argv= 
 argv=plus
 ### end
 
 ### vop_array_empty_minus
 # array and - operator
-### skip: TODO ${arr[@]-value} operator on arrays not implemented
 arr=()
 echo ${arr[@]-minus}
 arr=('')
@@ -234,7 +222,6 @@ minus
 
 ### vop_array_empty_plus
 # array and + operator
-### skip: TODO ${arr[@]+value} operator on arrays not implemented
 arr=()
 echo ${arr[@]+plus}
 arr=('')
@@ -249,7 +236,6 @@ plus
 
 ### vop_assoc_array_minus_plus
 # assoc array and - and +
-### skip: TODO ${arr[@]-value} and ${arr[@]+value} on assoc arrays not implemented
 declare -A empty_assoc=()
 declare -A assoc=(['k']=v)
 echo empty=${empty_assoc[@]-minus}

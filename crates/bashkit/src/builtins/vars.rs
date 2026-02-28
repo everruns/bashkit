@@ -95,15 +95,19 @@ impl Builtin for Set {
         }
 
         let mut i = 0;
+        let saw_dashdash = false;
         while i < ctx.args.len() {
             let arg = &ctx.args[i];
             if arg == "--" {
                 // Everything after `--` becomes positional parameters.
-                // Encode as unit-separator-delimited string for the interpreter
-                // to pick up (same pattern as _SHIFT_COUNT).
+                // Encode as count\x1Farg1\x1Farg2... so empty args are preserved.
                 let positional: Vec<&str> = ctx.args[i + 1..].iter().map(|s| s.as_str()).collect();
-                ctx.variables
-                    .insert("_SET_POSITIONAL".to_string(), positional.join("\x1F"));
+                let mut encoded = positional.len().to_string();
+                for p in &positional {
+                    encoded.push('\x1F');
+                    encoded.push_str(p);
+                }
+                ctx.variables.insert("_SET_POSITIONAL".to_string(), encoded);
                 break;
             } else if (arg.starts_with('-') || arg.starts_with('+'))
                 && arg.len() > 1
@@ -136,6 +140,18 @@ impl Builtin for Set {
                 }
             }
             i += 1;
+        }
+
+        // After --, remaining args become positional parameters.
+        // Encode with unit separator for the interpreter to decode.
+        if saw_dashdash {
+            let positional: Vec<&str> = ctx.args[i..].iter().map(|s| s.as_str()).collect();
+            let count = positional.len();
+            let encoded = positional.join("\x1f");
+            ctx.variables.insert(
+                "_SET_POSITIONAL".to_string(),
+                format!("{}\x1f{}", count, encoded),
+            );
         }
 
         Ok(ExecResult::ok(String::new()))

@@ -4,7 +4,6 @@
 
 ### nameref_pass_array_by_ref
 # pass array by reference
-### skip: TODO nameref (local -n / typeset -n) not implemented
 show_value() {
   local -n array_name=$1
   local idx=$2
@@ -18,7 +17,6 @@ zo
 
 ### nameref_mutate_array
 # mutate array by reference
-### skip: TODO nameref (local -n / typeset -n) not implemented
 set1() {
   local -n array_name=$1
   local val=$2
@@ -33,7 +31,6 @@ a ZZZ c d
 
 ### nameref_assoc_array
 # pass assoc array by reference
-### skip: TODO nameref (local -n / typeset -n) not implemented
 show_value() {
   local -n array_name=$1
   local idx=$2
@@ -47,7 +44,7 @@ jam
 
 ### nameref_local_dynamic_scope
 # pass local array by reference via dynamic scoping
-### skip: TODO nameref (local -n / typeset -n) not implemented
+### skip: TODO parser does not handle local arr=(...) syntax (indexed array after command name)
 show_value() {
   local -n array_name=$1
   local idx=$2
@@ -64,7 +61,6 @@ zo
 
 ### nameref_flag_n_plus_n
 # flag -n and +n for typeset
-### skip: TODO nameref (local -n / typeset -n) not implemented
 x=foo
 ref=x
 echo ref=$ref
@@ -83,7 +79,6 @@ ref=x
 
 ### nameref_mutate_through
 # mutating through nameref: ref=
-### skip: TODO nameref (local -n / typeset -n) not implemented
 x=XX
 y=YY
 ref=y
@@ -100,7 +95,6 @@ y=XXXX
 
 ### nameref_bang_inverts
 # flag -n combined ${!ref} -- bash INVERTS
-### skip: TODO nameref (local -n / typeset -n) not implemented
 foo=FOO
 x=foo
 ref=x
@@ -116,7 +110,6 @@ ref=foo
 
 ### nameref_unset
 # unset through nameref unsets the target
-### skip: TODO nameref (local -n / typeset -n) not implemented
 x=X
 typeset -n ref=x
 echo ref=$ref
@@ -131,7 +124,6 @@ x=
 
 ### nameref_chain
 # Chain of namerefs
-### skip: TODO nameref (local -n / typeset -n) not implemented
 x=foo
 typeset -n ref=x
 typeset -n ref_to_ref=ref
@@ -144,7 +136,6 @@ ref=foo
 
 ### nameref_dynamic_scope
 # Dynamic scope with namerefs
-### skip: TODO nameref (local -n / typeset -n) not implemented
 f3() {
   local -n ref=$1
   ref=x
@@ -166,7 +157,6 @@ F1=x
 
 ### nameref_change_reference
 # change reference itself
-### skip: TODO nameref (local -n / typeset -n) not implemented
 x=XX
 y=YY
 typeset -n ref=x
@@ -185,7 +175,6 @@ y=z
 
 ### nameref_array_element
 # a[2] in nameref
-### skip: TODO nameref (local -n / typeset -n) not implemented
 typeset -n ref='a[2]'
 a=(zero one two three)
 echo ref=$ref
@@ -195,7 +184,6 @@ ref=two
 
 ### nameref_mutate_array_element
 # mutate through nameref: ref[0]=
-### skip: TODO nameref (local -n / typeset -n) not implemented
 array=(X Y Z)
 typeset -n ref=array
 ref[0]=xx
@@ -206,7 +194,6 @@ xx Y Z
 
 ### nameref_local_basic
 # local -n basic usage
-### skip: TODO nameref (local -n / typeset -n) not implemented
 x=hello
 f() {
   local -n r=x

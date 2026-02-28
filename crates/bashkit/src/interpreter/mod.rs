@@ -17,7 +17,7 @@ mod state;
 pub use jobs::{JobTable, SharedJobTable};
 pub use state::{ControlFlow, ExecResult};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -174,6 +174,11 @@ pub struct Interpreter {
     traps: HashMap<String, String>,
     /// PIPESTATUS: exit codes of the last pipeline's commands
     pipestatus: Vec<i32>,
+    /// Shell aliases: name -> expansion value
+    aliases: HashMap<String, String>,
+    /// Aliases currently being expanded (prevents infinite recursion).
+    /// When alias `foo` expands to `foo bar`, the inner `foo` is not re-expanded.
+    expanding_aliases: HashSet<String>,
 }
 
 impl Interpreter {
@@ -381,6 +386,8 @@ impl Interpreter {
             nounset_error: None,
             traps: HashMap::new(),
             pipestatus: Vec::new(),
+            aliases: HashMap::new(),
+            expanding_aliases: HashSet::new(),
         }
     }
 
@@ -675,6 +682,7 @@ impl Interpreter {
                 let saved_call_stack = self.call_stack.clone();
                 let saved_exit = self.last_exit_code;
                 let saved_options = self.options.clone();
+                let saved_aliases = self.aliases.clone();
 
                 let mut result = self.execute_command_sequence(commands).await;
 
@@ -711,6 +719,7 @@ impl Interpreter {
                 self.call_stack = saved_call_stack;
                 self.last_exit_code = saved_exit;
                 self.options = saved_options;
+                self.aliases = saved_aliases;
                 result
             }
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
@@ -799,9 +808,8 @@ impl Interpreter {
             // Check loop iteration limit
             self.counters.tick_loop(&self.limits)?;
 
-            // Set loop variable
-            self.variables
-                .insert(for_cmd.variable.clone(), value.clone());
+            // Set loop variable (respects nameref)
+            self.set_variable(for_cmd.variable.clone(), value.clone());
 
             // Execute body
             let emit_before = self.output_emit_count;
@@ -3291,13 +3299,12 @@ impl Interpreter {
                 AssignmentValue::Scalar(word) => {
                     let value = self.expand_word(word).await?;
                     if let Some(index_str) = &assignment.index {
-                        if self.assoc_arrays.contains_key(&assignment.name) {
+                        // Resolve nameref for array name
+                        let resolved_name = self.resolve_nameref(&assignment.name).to_string();
+                        if self.assoc_arrays.contains_key(&resolved_name) {
                             // Associative array: use string key
                             let key = self.expand_variable_or_literal(index_str);
-                            let arr = self
-                                .assoc_arrays
-                                .entry(assignment.name.clone())
-                                .or_default();
+                            let arr = self.assoc_arrays.entry(resolved_name).or_default();
                             if assignment.append {
                                 let existing = arr.get(&key).cloned().unwrap_or_default();
                                 arr.insert(key, existing + &value);
@@ -3310,14 +3317,14 @@ impl Interpreter {
                             let index = if raw_idx < 0 {
                                 let len = self
                                     .arrays
-                                    .get(&assignment.name)
+                                    .get(&resolved_name)
                                     .and_then(|a| a.keys().max().map(|m| m + 1))
                                     .unwrap_or(0) as i64;
                                 (len + raw_idx).max(0) as usize
                             } else {
                                 raw_idx as usize
                             };
-                            let arr = self.arrays.entry(assignment.name.clone()).or_default();
+                            let arr = self.arrays.entry(resolved_name).or_default();
                             if assignment.append {
                                 let existing = arr.get(&index).cloned().unwrap_or_default();
                                 arr.insert(index, existing + &value);
@@ -3398,6 +3405,84 @@ impl Interpreter {
                 exit_code: 1,
                 control_flow: ControlFlow::Return(1),
             });
+        }
+
+        // Alias expansion: only for plain literal unquoted command names.
+        // Words from variable expansion ($cmd), command substitution, etc. are not
+        // alias-expanded (bash behavior). Also skip if currently expanding this alias
+        // to prevent infinite recursion (e.g., `alias echo='echo foo'`).
+        let is_plain_literal = !command.name.quoted
+            && command
+                .name
+                .parts
+                .iter()
+                .all(|p| matches!(p, WordPart::Literal(_)));
+        if is_plain_literal
+            && self.is_expand_aliases_enabled()
+            && !self.expanding_aliases.contains(&name)
+        {
+            if let Some(expansion) = self.aliases.get(&name).cloned() {
+                // Restore variable saves before re-executing (alias expansion
+                // replays the full command including assignments)
+                for (vname, old) in var_saves.into_iter().rev() {
+                    match old {
+                        Some(v) => {
+                            self.variables.insert(vname, v);
+                        }
+                        None => {
+                            self.variables.remove(&vname);
+                        }
+                    }
+                }
+
+                // Build expanded command: alias value + original args.
+                // If alias value ends with space, also expand the first arg
+                // as an alias (bash trailing-space alias chaining).
+                let mut expanded_cmd = expansion.clone();
+                let trailing_space = expanded_cmd.ends_with(' ');
+                let mut args_iter = command.args.iter();
+                if trailing_space {
+                    if let Some(first_arg) = args_iter.next() {
+                        let arg_str = format!("{}", first_arg);
+                        if let Some(arg_expansion) = self.aliases.get(&arg_str).cloned() {
+                            expanded_cmd.push_str(&arg_expansion);
+                        } else {
+                            expanded_cmd.push_str(&arg_str);
+                        }
+                    }
+                }
+                for word in args_iter {
+                    expanded_cmd.push(' ');
+                    expanded_cmd.push_str(&format!("{}", word));
+                }
+                // Append original redirections as text
+                for redir in &command.redirects {
+                    expanded_cmd.push(' ');
+                    expanded_cmd.push_str(&Self::format_redirect(redir));
+                }
+
+                // Mark this alias as being expanded to prevent recursion
+                self.expanding_aliases.insert(name.clone());
+
+                // Forward pipeline stdin so aliases work in pipelines
+                let prev_pipeline_stdin = self.pipeline_stdin.take();
+                if stdin.is_some() {
+                    self.pipeline_stdin = stdin;
+                }
+
+                let parser = Parser::new(&expanded_cmd);
+                let result = match parser.parse() {
+                    Ok(s) => self.execute(&s).await,
+                    Err(e) => Ok(ExecResult::err(
+                        format!("bash: alias expansion: parse error: {}\n", e),
+                        1,
+                    )),
+                };
+
+                self.pipeline_stdin = prev_pipeline_stdin;
+                self.expanding_aliases.remove(&name);
+                return result;
+            }
         }
 
         // If name is empty after expansion, behavior depends on context:
@@ -3638,26 +3723,64 @@ impl Interpreter {
 
         // Handle `local` specially - must set in call frame locals
         if name == "local" {
+            // Parse flags: -n for nameref
+            let mut is_nameref = false;
+            let mut var_args: Vec<&String> = Vec::new();
+            for arg in &args {
+                if arg.starts_with('-') && !arg.contains('=') {
+                    for c in arg[1..].chars() {
+                        if c == 'n' {
+                            is_nameref = true;
+                        }
+                    }
+                } else {
+                    var_args.push(arg);
+                }
+            }
+
             if let Some(frame) = self.call_stack.last_mut() {
                 // In a function - set in locals
-                for arg in &args {
+                for arg in &var_args {
                     if let Some(eq_pos) = arg.find('=') {
                         let var_name = &arg[..eq_pos];
                         let value = &arg[eq_pos + 1..];
-                        frame.locals.insert(var_name.to_string(), value.to_string());
+                        if is_nameref {
+                            // local -n ref=target: create nameref, declare in local scope
+                            frame.locals.insert(var_name.to_string(), String::new());
+                            // Store nameref mapping in global variables (markers)
+                            // Need to drop frame borrow first
+                        } else {
+                            frame.locals.insert(var_name.to_string(), value.to_string());
+                        }
                     } else {
                         // Just declare without value — empty string (bash behavior)
                         frame.locals.insert(arg.to_string(), String::new());
                     }
                 }
+                // Now set nameref markers (after frame borrow is released)
+                if is_nameref {
+                    for arg in &var_args {
+                        if let Some(eq_pos) = arg.find('=') {
+                            let var_name = &arg[..eq_pos];
+                            let value = &arg[eq_pos + 1..];
+                            self.variables
+                                .insert(format!("_NAMEREF_{}", var_name), value.to_string());
+                        }
+                    }
+                }
             } else {
                 // Not in a function - set in global variables (bash behavior)
-                for arg in &args {
+                for arg in &var_args {
                     if let Some(eq_pos) = arg.find('=') {
                         let var_name = &arg[..eq_pos];
                         let value = &arg[eq_pos + 1..];
-                        self.variables
-                            .insert(var_name.to_string(), value.to_string());
+                        if is_nameref {
+                            self.variables
+                                .insert(format!("_NAMEREF_{}", var_name), value.to_string());
+                        } else {
+                            self.variables
+                                .insert(var_name.to_string(), value.to_string());
+                        }
                     } else {
                         self.variables.insert(arg.to_string(), String::new());
                     }
@@ -3801,17 +3924,32 @@ impl Interpreter {
             return Ok(result);
         }
 
-        // Handle `unset` with array element syntax: unset 'arr[key]'
+        // Handle `unset` with array element syntax and nameref support
         if name == "unset" {
+            // Parse -n flag: unset -n removes the nameref itself
+            let mut unset_nameref = false;
+            let mut var_args: Vec<&String> = Vec::new();
             for arg in &args {
+                if arg == "-n" {
+                    unset_nameref = true;
+                } else if arg == "-v" || arg == "-f" {
+                    // -v (variable, default) and -f (function) flags - skip
+                } else {
+                    var_args.push(arg);
+                }
+            }
+
+            for arg in &var_args {
                 if let Some(bracket) = arg.find('[') {
                     if arg.ends_with(']') {
                         let arr_name = &arg[..bracket];
                         let key = &arg[bracket + 1..arg.len() - 1];
                         let expanded_key = self.expand_variable_or_literal(key);
-                        if let Some(arr) = self.assoc_arrays.get_mut(arr_name) {
+                        // Resolve nameref for array name
+                        let resolved_name = self.resolve_nameref(arr_name).to_string();
+                        if let Some(arr) = self.assoc_arrays.get_mut(&resolved_name) {
                             arr.remove(&expanded_key);
-                        } else if let Some(arr) = self.arrays.get_mut(arr_name) {
+                        } else if let Some(arr) = self.arrays.get_mut(&resolved_name) {
                             if let Ok(idx) = key.parse::<usize>() {
                                 arr.remove(&idx);
                             }
@@ -3819,10 +3957,20 @@ impl Interpreter {
                         continue;
                     }
                 }
-                // Regular unset
-                self.variables.remove(arg.as_str());
-                self.arrays.remove(arg.as_str());
-                self.assoc_arrays.remove(arg.as_str());
+                if unset_nameref {
+                    // unset -n: remove the nameref marker itself
+                    self.variables.remove(&format!("_NAMEREF_{}", arg));
+                } else {
+                    // Regular unset: resolve nameref to unset the target
+                    let resolved = self.resolve_nameref(arg).to_string();
+                    self.variables.remove(&resolved);
+                    self.arrays.remove(&resolved);
+                    self.assoc_arrays.remove(&resolved);
+                    // Also remove from local frames
+                    for frame in self.call_stack.iter_mut().rev() {
+                        frame.locals.remove(&resolved);
+                    }
+                }
             }
             let mut result = ExecResult::ok(String::new());
             result = self.apply_redirections(result, &command.redirects).await?;
@@ -3872,6 +4020,18 @@ impl Interpreter {
         // Handle `mapfile`/`readarray` - needs direct access to arrays
         if name == "mapfile" || name == "readarray" {
             return self.execute_mapfile(&args, stdin.as_deref()).await;
+        }
+
+        // Handle `alias` builtin - needs direct access to self.aliases
+        if name == "alias" {
+            return self.execute_alias_builtin(&args, &command.redirects).await;
+        }
+
+        // Handle `unalias` builtin - needs direct access to self.aliases
+        if name == "unalias" {
+            return self
+                .execute_unalias_builtin(&args, &command.redirects)
+                .await;
         }
 
         // Check for builtins
@@ -3942,19 +4102,20 @@ impl Interpreter {
             }
 
             // Post-process: `set --` replaces positional parameters
-            if let Some(positional_str) = self.variables.remove("_SET_POSITIONAL") {
-                let new_positional: Vec<String> = if positional_str.is_empty() {
+            // Encoded as count\x1Farg1\x1Farg2... to preserve empty args.
+            if let Some(encoded) = self.variables.remove("_SET_POSITIONAL") {
+                let parts: Vec<&str> = encoded.splitn(2, '\x1F').collect();
+                let count: usize = parts[0].parse().unwrap_or(0);
+                let new_positional: Vec<String> = if count == 0 {
                     Vec::new()
+                } else if parts.len() > 1 {
+                    parts[1].split('\x1F').map(|s| s.to_string()).collect()
                 } else {
-                    positional_str
-                        .split('\x1F')
-                        .map(|s| s.to_string())
-                        .collect()
+                    Vec::new()
                 };
                 if let Some(frame) = self.call_stack.last_mut() {
                     frame.positional = new_positional;
                 } else {
-                    // No call frame yet (top-level script) — push one
                     self.call_stack.push(CallFrame {
                         name: String::new(),
                         locals: HashMap::new(),
@@ -4302,6 +4463,124 @@ impl Interpreter {
 
         result = self.apply_redirections(result, redirects).await?;
         Ok(result)
+    }
+
+    /// Check if expand_aliases is enabled via shopt.
+    fn is_expand_aliases_enabled(&self) -> bool {
+        self.variables
+            .get("SHOPT_expand_aliases")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Format a Redirect back to its textual representation for alias expansion.
+    fn format_redirect(redir: &Redirect) -> String {
+        let fd_prefix = redir.fd.map(|fd| fd.to_string()).unwrap_or_default();
+        let op = match redir.kind {
+            RedirectKind::Output => ">",
+            RedirectKind::Append => ">>",
+            RedirectKind::Input => "<",
+            RedirectKind::HereDoc => "<<",
+            RedirectKind::HereDocStrip => "<<-",
+            RedirectKind::HereString => "<<<",
+            RedirectKind::DupOutput => ">&",
+            RedirectKind::DupInput => "<&",
+            RedirectKind::OutputBoth => "&>",
+        };
+        format!("{}{}{}", fd_prefix, op, redir.target)
+    }
+
+    /// Execute the `alias` builtin. Needs direct access to self.aliases.
+    ///
+    /// Usage:
+    /// - `alias` - list all aliases
+    /// - `alias name` - show alias for name (error if not defined)
+    /// - `alias name=value` - define alias
+    /// - `alias name=value name2=value2` - define multiple aliases
+    async fn execute_alias_builtin(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        if args.is_empty() {
+            // List all aliases
+            let mut output = String::new();
+            let mut sorted: Vec<_> = self.aliases.iter().collect();
+            sorted.sort_by_key(|(k, _)| (*k).clone());
+            for (name, value) in sorted {
+                output.push_str(&format!("alias {}='{}'\n", name, value));
+            }
+            let result = ExecResult::ok(output);
+            return self.apply_redirections(result, redirects).await;
+        }
+
+        let mut output = String::new();
+        let mut exit_code = 0;
+        let mut stderr = String::new();
+
+        for arg in args {
+            if let Some(eq_pos) = arg.find('=') {
+                // alias name=value
+                let name = &arg[..eq_pos];
+                let value = &arg[eq_pos + 1..];
+                self.aliases.insert(name.to_string(), value.to_string());
+            } else {
+                // alias name - show the alias
+                if let Some(value) = self.aliases.get(arg.as_str()) {
+                    output.push_str(&format!("alias {}='{}'\n", arg, value));
+                } else {
+                    stderr.push_str(&format!("bash: alias: {}: not found\n", arg));
+                    exit_code = 1;
+                }
+            }
+        }
+
+        let result = ExecResult {
+            stdout: output,
+            stderr,
+            exit_code,
+            control_flow: ControlFlow::None,
+        };
+        self.apply_redirections(result, redirects).await
+    }
+
+    /// Execute the `unalias` builtin. Needs direct access to self.aliases.
+    ///
+    /// Usage:
+    /// - `unalias name` - remove alias
+    /// - `unalias -a` - remove all aliases
+    async fn execute_unalias_builtin(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        if args.is_empty() {
+            let result = ExecResult::err(
+                "bash: unalias: usage: unalias [-a] name [name ...]\n".to_string(),
+                2,
+            );
+            return self.apply_redirections(result, redirects).await;
+        }
+
+        let mut exit_code = 0;
+        let mut stderr = String::new();
+
+        for arg in args {
+            if arg == "-a" {
+                self.aliases.clear();
+            } else if self.aliases.remove(arg.as_str()).is_none() {
+                stderr.push_str(&format!("bash: unalias: {}: not found\n", arg));
+                exit_code = 1;
+            }
+        }
+
+        let result = ExecResult {
+            stdout: String::new(),
+            stderr,
+            exit_code,
+            control_flow: ControlFlow::None,
+        };
+        self.apply_redirections(result, redirects).await
     }
 
     /// Execute the `getopts` builtin (POSIX option parsing).
@@ -4833,6 +5112,7 @@ impl Interpreter {
         let mut is_assoc = false;
         let mut is_integer = false;
         let mut is_nameref = false;
+        let mut remove_nameref = false;
         let mut is_lowercase = false;
         let mut is_uppercase = false;
         let mut names: Vec<&str> = Vec::new();
@@ -4852,6 +5132,13 @@ impl Interpreter {
                         'u' => is_uppercase = true,
                         'g' | 't' | 'f' | 'F' => {} // ignored
                         _ => {}
+                    }
+                }
+            } else if arg.starts_with('+') && !arg.contains('=') {
+                // +n removes nameref attribute
+                for c in arg[1..].chars() {
+                    if c == 'n' {
+                        remove_nameref = true;
                     }
                 }
             } else {
@@ -5038,9 +5325,17 @@ impl Interpreter {
                 }
             } else {
                 // Declare without value
-                if is_nameref {
-                    // declare -n ref (without value) - just mark as nameref
-                    // The target will be set later via assignment
+                if remove_nameref {
+                    // typeset +n ref: remove nameref attribute
+                    self.variables.remove(&format!("_NAMEREF_{}", name));
+                } else if is_nameref {
+                    // typeset -n ref (without =value): use existing variable value as target
+                    if let Some(existing) = self.variables.get(name.as_str()).cloned() {
+                        if !existing.is_empty() {
+                            self.variables
+                                .insert(format!("_NAMEREF_{}", name), existing);
+                        }
+                    }
                 } else if is_assoc {
                     // Initialize empty associative array
                     self.assoc_arrays.entry(name.to_string()).or_default();
@@ -5360,6 +5655,7 @@ impl Interpreter {
                     name,
                     operator,
                     operand,
+                    colon_variant,
                 } => {
                     // Under set -u, operators like :-, :=, :+, :? suppress nounset errors
                     // because the script is explicitly handling unset variables.
@@ -5370,23 +5666,42 @@ impl Interpreter {
                             | ParameterOp::UseReplacement
                             | ParameterOp::Error
                     );
-                    if self.is_nounset() && !suppress_nounset && !self.is_variable_set(name) {
+
+                    // Resolve name (handles arr[@], @, *, and regular vars)
+                    let (is_set, value) = self.resolve_param_expansion_name(name);
+
+                    if self.is_nounset() && !suppress_nounset && !is_set {
                         self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
                     }
-                    let value = self.expand_variable(name);
-                    let expanded = self.apply_parameter_op(&value, name, operator, operand);
+                    let expanded = self.apply_parameter_op(
+                        &value,
+                        name,
+                        operator,
+                        operand,
+                        *colon_variant,
+                        is_set,
+                    );
                     result.push_str(&expanded);
                 }
                 WordPart::ArrayAccess { name, index } => {
+                    // Resolve nameref: array name may be a nameref to the real array
+                    let resolved_name = self.resolve_nameref(name);
+                    // Check if resolved_name itself contains an array index (e.g., "a[2]")
+                    let (arr_name, extra_index) = if let Some(bracket) = resolved_name.find('[') {
+                        let idx_part = &resolved_name[bracket + 1..resolved_name.len() - 1];
+                        (&resolved_name[..bracket], Some(idx_part.to_string()))
+                    } else {
+                        (resolved_name, None)
+                    };
                     if index == "@" || index == "*" {
                         // ${arr[@]} or ${arr[*]} - expand to all elements
-                        if let Some(arr) = self.assoc_arrays.get(name) {
+                        if let Some(arr) = self.assoc_arrays.get(arr_name) {
                             let mut keys: Vec<_> = arr.keys().collect();
                             keys.sort();
                             let values: Vec<String> =
                                 keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
                             result.push_str(&values.join(" "));
-                        } else if let Some(arr) = self.arrays.get(name) {
+                        } else if let Some(arr) = self.arrays.get(arr_name) {
                             let mut indices: Vec<_> = arr.keys().collect();
                             indices.sort();
                             let values: Vec<_> =
@@ -5395,7 +5710,22 @@ impl Interpreter {
                                 &values.into_iter().cloned().collect::<Vec<_>>().join(" "),
                             );
                         }
-                    } else if let Some(arr) = self.assoc_arrays.get(name) {
+                    } else if let Some(extra_idx) = extra_index {
+                        // Nameref resolved to "a[2]" form - use the embedded index
+                        if let Some(arr) = self.assoc_arrays.get(arr_name) {
+                            if let Some(value) = arr.get(&extra_idx) {
+                                result.push_str(value);
+                            }
+                        } else {
+                            let idx: usize =
+                                self.evaluate_arithmetic(&extra_idx).try_into().unwrap_or(0);
+                            if let Some(arr) = self.arrays.get(arr_name) {
+                                if let Some(value) = arr.get(&idx) {
+                                    result.push_str(value);
+                                }
+                            }
+                        }
+                    } else if let Some(arr) = self.assoc_arrays.get(arr_name) {
                         // ${assoc[key]} - get by string key
                         let key = self.expand_variable_or_literal(index);
                         if let Some(value) = arr.get(&key) {
@@ -5408,14 +5738,14 @@ impl Interpreter {
                             // Negative index: count from end
                             let len = self
                                 .arrays
-                                .get(name)
+                                .get(arr_name)
                                 .map(|a| a.keys().max().map(|m| m + 1).unwrap_or(0))
                                 .unwrap_or(0) as i64;
                             (len + raw_idx).max(0) as usize
                         } else {
                             raw_idx as usize
                         };
-                        if let Some(arr) = self.arrays.get(name) {
+                        if let Some(arr) = self.arrays.get(arr_name) {
                             if let Some(value) = arr.get(&idx) {
                                 result.push_str(value);
                             }
@@ -5488,10 +5818,18 @@ impl Interpreter {
                     }
                 }
                 WordPart::IndirectExpansion(name) => {
-                    // ${!var} - indirect expansion
-                    let var_name = self.expand_variable(name);
-                    let value = self.expand_variable(&var_name);
-                    result.push_str(&value);
+                    // ${!var} - for namerefs, returns the nameref target name (inverted)
+                    // For non-namerefs, does normal indirect expansion
+                    let nameref_key = format!("_NAMEREF_{}", name);
+                    if let Some(target) = self.variables.get(&nameref_key).cloned() {
+                        // var is a nameref: ${!ref} returns the target variable name
+                        result.push_str(&target);
+                    } else {
+                        // Normal indirect expansion
+                        let var_name = self.expand_variable(name);
+                        let value = self.expand_variable(&var_name);
+                        result.push_str(&value);
+                    }
                 }
                 WordPart::PrefixMatch(prefix) => {
                     // ${!prefix*} - names of variables with given prefix
@@ -5620,8 +5958,48 @@ impl Interpreter {
     /// Returns Vec<String> where array expansions like "${arr[@]}" produce multiple fields.
     /// "${arr[*]}" in quoted context joins elements into a single field (bash behavior).
     async fn expand_word_to_fields(&mut self, word: &Word) -> Result<Vec<String>> {
-        // Check if the word contains only an array expansion
+        // Check if the word contains only an array expansion or $@/$*
         if word.parts.len() == 1 {
+            // Handle $@ and $* as special parameters
+            if let WordPart::Variable(name) = &word.parts[0] {
+                if name == "@" {
+                    let positional = self
+                        .call_stack
+                        .last()
+                        .map(|f| f.positional.clone())
+                        .unwrap_or_default();
+                    if word.quoted {
+                        // "$@" preserves individual positional params
+                        return Ok(positional);
+                    }
+                    // $@ unquoted: each param is subject to further IFS splitting
+                    let mut fields = Vec::new();
+                    for p in &positional {
+                        fields.extend(self.ifs_split(p));
+                    }
+                    return Ok(fields);
+                }
+                if name == "*" {
+                    let positional = self
+                        .call_stack
+                        .last()
+                        .map(|f| f.positional.clone())
+                        .unwrap_or_default();
+                    if word.quoted {
+                        // "$*" joins with first char of IFS
+                        let ifs = self
+                            .variables
+                            .get("IFS")
+                            .cloned()
+                            .unwrap_or_else(|| " \t\n".to_string());
+                        let sep = ifs.chars().next().unwrap_or(' ');
+                        return Ok(vec![positional.join(&sep.to_string())]);
+                    }
+                    // $* unquoted: join with space, then IFS split
+                    let joined = positional.join(" ");
+                    return Ok(self.ifs_split(&joined));
+                }
+            }
             if let WordPart::ArrayAccess { name, index } = &word.parts[0] {
                 if index == "@" || index == "*" {
                     // Check assoc arrays first
@@ -5666,87 +6044,274 @@ impl Interpreter {
         }
 
         // For other words, expand to a single field then apply IFS word splitting
-        // when the word is unquoted and contains a command substitution.
-        // Per POSIX, unquoted $() results undergo field splitting on IFS.
+        // when the word is unquoted and contains an expansion.
+        // Per POSIX, unquoted variable/command/arithmetic expansion results undergo
+        // field splitting on IFS.
         let expanded = self.expand_word(word).await?;
 
-        let has_command_subst = !word.quoted
-            && word
-                .parts
-                .iter()
-                .any(|p| matches!(p, WordPart::CommandSubstitution(_)));
+        // IFS splitting applies to unquoted expansions only.
+        // Skip splitting for assignment-like words (e.g., result="$1") where
+        // the lexer stripped quotes from a mixed-quoted word (produces Token::Word
+        // with quoted: false even though the expansion was inside double quotes).
+        let is_assignment_word =
+            matches!(word.parts.first(), Some(WordPart::Literal(s)) if s.contains('='));
+        let has_expansion = !word.quoted
+            && !is_assignment_word
+            && word.parts.iter().any(|p| {
+                matches!(
+                    p,
+                    WordPart::Variable(_)
+                        | WordPart::CommandSubstitution(_)
+                        | WordPart::ArithmeticExpansion(_)
+                        | WordPart::ParameterExpansion { .. }
+                        | WordPart::ArrayAccess { .. }
+                )
+            });
 
-        if has_command_subst {
-            // Split on IFS characters (default: space, tab, newline).
-            // Consecutive IFS-whitespace characters are collapsed (no empty fields).
-            let ifs = self
-                .variables
-                .get("IFS")
-                .cloned()
-                .unwrap_or_else(|| " \t\n".to_string());
-
-            if ifs.is_empty() {
-                // Empty IFS: no splitting
-                return Ok(vec![expanded]);
-            }
-
-            let fields: Vec<String> = expanded
-                .split(|c: char| ifs.contains(c))
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-                .collect();
-
-            if fields.is_empty() {
-                // All-whitespace expansion produces zero fields (elision)
-                return Ok(Vec::new());
-            }
-            Ok(fields)
+        if has_expansion {
+            Ok(self.ifs_split(&expanded))
         } else {
             Ok(vec![expanded])
         }
     }
 
-    /// Apply parameter expansion operator
+    /// Resolve name for parameter expansion, handling array subscripts and special params.
+    /// Returns (is_set, expanded_value).
+    fn resolve_param_expansion_name(&self, name: &str) -> (bool, String) {
+        // Check for array subscript pattern: name[@] or name[*]
+        if let Some(arr_name) = name
+            .strip_suffix("[@]")
+            .or_else(|| name.strip_suffix("[*]"))
+        {
+            if let Some(arr) = self.assoc_arrays.get(arr_name) {
+                let is_set = !arr.is_empty();
+                let mut keys: Vec<_> = arr.keys().collect();
+                keys.sort();
+                let values: Vec<String> =
+                    keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
+                return (is_set, values.join(" "));
+            }
+            if let Some(arr) = self.arrays.get(arr_name) {
+                let is_set = !arr.is_empty();
+                let mut indices: Vec<_> = arr.keys().collect();
+                indices.sort();
+                let values: Vec<_> = indices.iter().filter_map(|i| arr.get(i)).collect();
+                return (
+                    is_set,
+                    values.into_iter().cloned().collect::<Vec<_>>().join(" "),
+                );
+            }
+            return (false, String::new());
+        }
+
+        // Special parameters @ and *
+        if name == "@" || name == "*" {
+            if let Some(frame) = self.call_stack.last() {
+                let is_set = !frame.positional.is_empty();
+                return (is_set, frame.positional.join(" "));
+            }
+            return (false, String::new());
+        }
+
+        // Regular variable
+        let is_set = self.is_variable_set(name);
+        let value = self.expand_variable(name);
+        (is_set, value)
+    }
+
+    /// Split a string on IFS characters according to POSIX rules.
+    ///
+    /// - IFS whitespace (space, tab, newline) collapses; leading/trailing stripped.
+    /// - IFS non-whitespace chars are significant delimiters. Two adjacent produce
+    ///   an empty field between them.
+    /// - `<ws><nws><ws>` = single delimiter (ws absorbed into the nws delimiter).
+    /// - Empty IFS → no splitting. Unset IFS → default " \t\n".
+    fn ifs_split(&self, s: &str) -> Vec<String> {
+        let ifs = self
+            .variables
+            .get("IFS")
+            .cloned()
+            .unwrap_or_else(|| " \t\n".to_string());
+
+        if ifs.is_empty() {
+            return vec![s.to_string()];
+        }
+
+        let is_ifs = |c: char| ifs.contains(c);
+        let is_ifs_ws = |c: char| ifs.contains(c) && " \t\n".contains(c);
+        let is_ifs_nws = |c: char| ifs.contains(c) && !" \t\n".contains(c);
+        let all_whitespace_ifs = ifs.chars().all(|c| " \t\n".contains(c));
+
+        if all_whitespace_ifs {
+            // IFS is only whitespace: split on runs, elide empties
+            return s
+                .split(|c: char| is_ifs(c))
+                .filter(|f| !f.is_empty())
+                .map(|f| f.to_string())
+                .collect();
+        }
+
+        // Mixed or pure non-whitespace IFS.
+        let mut fields: Vec<String> = Vec::new();
+        let mut current = String::new();
+        let chars: Vec<char> = s.chars().collect();
+        let mut i = 0;
+
+        // Skip leading IFS whitespace
+        while i < chars.len() && is_ifs_ws(chars[i]) {
+            i += 1;
+        }
+        // Leading non-whitespace IFS produces an empty first field
+        if i < chars.len() && is_ifs_nws(chars[i]) {
+            fields.push(String::new());
+            i += 1;
+            while i < chars.len() && is_ifs_ws(chars[i]) {
+                i += 1;
+            }
+        }
+
+        while i < chars.len() {
+            let c = chars[i];
+            if is_ifs_nws(c) {
+                // Non-whitespace IFS delimiter: finalize current field
+                fields.push(std::mem::take(&mut current));
+                i += 1;
+                // Consume trailing IFS whitespace
+                while i < chars.len() && is_ifs_ws(chars[i]) {
+                    i += 1;
+                }
+            } else if is_ifs_ws(c) {
+                // IFS whitespace: skip it, then check for non-ws delimiter
+                while i < chars.len() && is_ifs_ws(chars[i]) {
+                    i += 1;
+                }
+                if i < chars.len() && is_ifs_nws(chars[i]) {
+                    // <ws><nws> = single delimiter. Push current field.
+                    fields.push(std::mem::take(&mut current));
+                    i += 1; // consume the nws char
+                    while i < chars.len() && is_ifs_ws(chars[i]) {
+                        i += 1;
+                    }
+                } else if i < chars.len() {
+                    // ws alone as delimiter (no nws follows)
+                    fields.push(std::mem::take(&mut current));
+                }
+                // trailing ws at end → ignore (don't push empty field)
+            } else {
+                current.push(c);
+                i += 1;
+            }
+        }
+
+        if !current.is_empty() {
+            fields.push(current);
+        }
+
+        fields
+    }
+
+    /// Expand an operand string from a parameter expansion (sync, lazy).
+    /// Only called when the operand is actually needed, providing lazy evaluation.
+    fn expand_operand(&mut self, operand: &str) -> String {
+        if operand.is_empty() {
+            return String::new();
+        }
+        let word = Parser::parse_word_string(operand);
+        let mut result = String::new();
+        for part in &word.parts {
+            match part {
+                WordPart::Literal(s) => result.push_str(s),
+                WordPart::Variable(name) => {
+                    result.push_str(&self.expand_variable(name));
+                }
+                WordPart::ArithmeticExpansion(expr) => {
+                    let val = self.evaluate_arithmetic_with_assign(expr);
+                    result.push_str(&val.to_string());
+                }
+                WordPart::ParameterExpansion {
+                    name,
+                    operator,
+                    operand: inner_operand,
+                    colon_variant,
+                } => {
+                    let (is_set, value) = self.resolve_param_expansion_name(name);
+                    let expanded = self.apply_parameter_op(
+                        &value,
+                        name,
+                        operator,
+                        inner_operand,
+                        *colon_variant,
+                        is_set,
+                    );
+                    result.push_str(&expanded);
+                }
+                WordPart::Length(name) => {
+                    let value = self.expand_variable(name);
+                    result.push_str(&value.len().to_string());
+                }
+                // TODO: handle CommandSubstitution etc. in sync operand expansion
+                _ => {}
+            }
+        }
+        result
+    }
+
+    /// Apply parameter expansion operator.
+    /// `colon_variant`: true = check unset-or-empty, false = check unset-only.
+    /// `is_set`: whether the variable is defined (distinct from being empty).
     fn apply_parameter_op(
         &mut self,
         value: &str,
         name: &str,
         operator: &ParameterOp,
         operand: &str,
+        colon_variant: bool,
+        is_set: bool,
     ) -> String {
+        // colon (:-) => trigger when unset OR empty
+        // no-colon (-) => trigger only when unset
+        let use_default = if colon_variant {
+            !is_set || value.is_empty()
+        } else {
+            !is_set
+        };
+        let use_replacement = if colon_variant {
+            is_set && !value.is_empty()
+        } else {
+            is_set
+        };
+
         match operator {
             ParameterOp::UseDefault => {
-                // ${var:-default} - use default if unset/empty
-                if value.is_empty() {
-                    operand.to_string()
+                if use_default {
+                    self.expand_operand(operand)
                 } else {
                     value.to_string()
                 }
             }
             ParameterOp::AssignDefault => {
-                // ${var:=default} - assign default if unset/empty
-                if value.is_empty() {
-                    self.set_variable(name.to_string(), operand.to_string());
-                    operand.to_string()
+                if use_default {
+                    let expanded = self.expand_operand(operand);
+                    self.set_variable(name.to_string(), expanded.clone());
+                    expanded
                 } else {
                     value.to_string()
                 }
             }
             ParameterOp::UseReplacement => {
-                // ${var:+replacement} - use replacement if set
-                if !value.is_empty() {
-                    operand.to_string()
+                if use_replacement {
+                    self.expand_operand(operand)
                 } else {
                     String::new()
                 }
             }
             ParameterOp::Error => {
-                // ${var:?error} - error if unset/empty
-                if value.is_empty() {
-                    let msg = if operand.is_empty() {
+                if use_default {
+                    let expanded = self.expand_operand(operand);
+                    let msg = if expanded.is_empty() {
                         format!("bash: {}: parameter null or not set\n", name)
                     } else {
-                        format!("bash: {}: {}\n", name, operand)
+                        format!("bash: {}: {}\n", name, expanded)
                     };
                     self.nounset_error = Some(msg);
                     String::new()
@@ -6795,6 +7360,21 @@ impl Interpreter {
     fn expand_variable(&self, name: &str) -> String {
         // Resolve nameref before expansion
         let name = self.resolve_nameref(name);
+
+        // If resolved name is an array element ref like "a[2]", expand as array access
+        if let Some(bracket) = name.find('[') {
+            if name.ends_with(']') {
+                let arr_name = &name[..bracket];
+                let idx_str = &name[bracket + 1..name.len() - 1];
+                if let Some(arr) = self.assoc_arrays.get(arr_name) {
+                    return arr.get(idx_str).cloned().unwrap_or_default();
+                } else if let Some(arr) = self.arrays.get(arr_name) {
+                    let idx: usize = self.evaluate_arithmetic(idx_str).try_into().unwrap_or(0);
+                    return arr.get(&idx).cloned().unwrap_or_default();
+                }
+                return String::new();
+            }
+        }
 
         // Check for special parameters (POSIX required)
         match name {

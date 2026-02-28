@@ -269,11 +269,24 @@ impl fmt::Display for Word {
                     name,
                     operator,
                     operand,
+                    colon_variant,
                 } => match operator {
-                    ParameterOp::UseDefault => write!(f, "${{{}:-{}}}", name, operand)?,
-                    ParameterOp::AssignDefault => write!(f, "${{{}:={}}}", name, operand)?,
-                    ParameterOp::UseReplacement => write!(f, "${{{}:+{}}}", name, operand)?,
-                    ParameterOp::Error => write!(f, "${{{}:?{}}}", name, operand)?,
+                    ParameterOp::UseDefault => {
+                        let c = if *colon_variant { ":" } else { "" };
+                        write!(f, "${{{}{}-{}}}", name, c, operand)?
+                    }
+                    ParameterOp::AssignDefault => {
+                        let c = if *colon_variant { ":" } else { "" };
+                        write!(f, "${{{}{}={}}}", name, c, operand)?
+                    }
+                    ParameterOp::UseReplacement => {
+                        let c = if *colon_variant { ":" } else { "" };
+                        write!(f, "${{{}{}+{}}}", name, c, operand)?
+                    }
+                    ParameterOp::Error => {
+                        let c = if *colon_variant { ":" } else { "" };
+                        write!(f, "${{{}{}?{}}}", name, c, operand)?
+                    }
                     ParameterOp::RemovePrefixShort => write!(f, "${{{}#{}}}", name, operand)?,
                     ParameterOp::RemovePrefixLong => write!(f, "${{{}##{}}}", name, operand)?,
                     ParameterOp::RemoveSuffixShort => write!(f, "${{{}%{}}}", name, operand)?,
@@ -344,10 +357,12 @@ pub enum WordPart {
     /// Arithmetic expansion ($((...)))
     ArithmeticExpansion(String),
     /// Parameter expansion with operator ${var:-default}, ${var:=default}, etc.
+    /// `colon_variant` distinguishes `:-` (unset-or-empty) from `-` (unset-only).
     ParameterExpansion {
         name: String,
         operator: ParameterOp,
         operand: String,
+        colon_variant: bool,
     },
     /// Length expansion ${#var}
     Length(String),

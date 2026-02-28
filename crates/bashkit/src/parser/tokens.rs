@@ -109,4 +109,7 @@ pub enum Token {
 
     /// Duplicate fd to another (e.g., 2>&1)
     DupFd(i32, i32),
+
+    /// Lexer error (e.g., unterminated string)
+    Error(String),
 }
