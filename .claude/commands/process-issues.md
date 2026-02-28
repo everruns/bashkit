@@ -50,6 +50,7 @@ For each open issue (`gh issue list --state open`), in order by issue number:
 ### 9. Merge & close
 - Squash-merge the PR (`gh pr merge --squash --delete-branch`)
 - Add resolution comment on the issue if helpful
+- Rebase on latest main before starting next issue: `git checkout main && git pull origin main`
 - Move to next issue
 
 ### 10. Review ignored tests
