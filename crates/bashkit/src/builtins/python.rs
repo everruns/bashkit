@@ -20,7 +20,9 @@ use monty::{
     MontyObject, MontyRun, OsFunction, PrintWriter, ResourceLimits, RunProgress,
 };
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -107,6 +109,27 @@ impl PythonLimits {
     }
 }
 
+/// Async handler for external Python function calls.
+///
+/// Receives `(function_name, positional_args, keyword_args)` directly from monty.
+/// Return `ExternalResult::Return(value)` for success or `ExternalResult::Error(exc)` for failure.
+pub type PythonExternalFnHandler = Arc<
+    dyn Fn(String, Vec<MontyObject>, Vec<(MontyObject, MontyObject)>)
+        -> Pin<Box<dyn Future<Output = ExternalResult> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// External function configuration for the Python builtin.
+///
+/// Groups function names and their async handler together.
+pub struct PythonExternalFns {
+    /// Function names callable from Python (e.g., `"call_tool"`).
+    pub names: Vec<String>,
+    /// Async handler invoked when Python calls one of these functions.
+    pub handler: PythonExternalFnHandler,
+}
+
 /// The python/python3 builtin command.
 ///
 /// Executes Python code using the embedded Monty interpreter (pydantic/monty).
@@ -126,6 +149,8 @@ impl PythonLimits {
 pub struct Python {
     /// Resource limits for the Monty interpreter.
     pub limits: PythonLimits,
+    /// Optional external function configuration.
+    external_fns: Option<PythonExternalFns>,
 }
 
 impl Python {
@@ -133,12 +158,29 @@ impl Python {
     pub fn new() -> Self {
         Self {
             limits: PythonLimits::default(),
+            external_fns: None,
         }
     }
 
     /// Create with custom limits.
     pub fn with_limits(limits: PythonLimits) -> Self {
-        Self { limits }
+        Self {
+            limits,
+            external_fns: None,
+        }
+    }
+
+    /// Set external function names and handler.
+    ///
+    /// External functions are callable from Python by name.
+    /// When called, execution pauses and the handler is invoked with the raw monty arguments.
+    pub fn with_external_handler(
+        mut self,
+        names: Vec<String>,
+        handler: PythonExternalFnHandler,
+    ) -> Self {
+        self.external_fns = Some(PythonExternalFns { names, handler });
+        self
     }
 }
 
@@ -263,6 +305,7 @@ impl Builtin for Python {
             ctx.cwd,
             ctx.env,
             &self.limits,
+            self.external_fns.as_ref(),
         )
         .await
     }
@@ -279,6 +322,7 @@ async fn run_python(
     cwd: &Path,
     env: &HashMap<String, String>,
     py_limits: &PythonLimits,
+    external_fns: Option<&PythonExternalFns>,
 ) -> Result<ExecResult> {
     // Strip shebang if present
     let code = if code.starts_with("#!") {
@@ -290,7 +334,10 @@ async fn run_python(
         code
     };
 
-    let runner = match MontyRun::new(code.to_owned(), filename, vec![], vec![]) {
+    let ext_fn_names = external_fns
+        .map(|ef| ef.names.clone())
+        .unwrap_or_default();
+    let runner = match MontyRun::new(code.to_owned(), filename, vec![], ext_fn_names) {
         Ok(r) => r,
         Err(e) => return Ok(format_exception(e)),
     };
@@ -338,14 +385,25 @@ async fn run_python(
                     }
                 }
             }
-            RunProgress::FunctionCall { state, .. } => {
-                // No external functions registered; return error
-                let err = MontyException::new(
-                    ExcType::RuntimeError,
-                    Some("external function not available in virtual mode".into()),
-                );
+            RunProgress::FunctionCall {
+                function_name,
+                args,
+                kwargs,
+                state,
+                ..
+            } => {
+                let result = if let Some(ef) = external_fns {
+                    (ef.handler)(function_name, args, kwargs).await
+                } else {
+                    // No external functions registered; return error
+                    ExternalResult::Error(MontyException::new(
+                        ExcType::RuntimeError,
+                        Some("external function not available in virtual mode".into()),
+                    ))
+                };
+
                 let mut printer = PrintWriter::Collect(buf);
-                match state.run(ExternalResult::Error(err), &mut printer) {
+                match state.run(result, &mut printer) {
                     Ok(next) => {
                         buf = take_collected(&mut printer);
                         progress = next;
@@ -1105,5 +1163,173 @@ mod tests {
         assert_eq!(limits.max_duration, Duration::from_secs(30));
         assert_eq!(limits.max_memory, 64 * 1024 * 1024);
         assert_eq!(limits.max_recursion, 200);
+    }
+
+    // --- External function tests ---
+
+    /// Helper: run Python with an external function handler.
+    async fn run_with_external(
+        code: &str,
+        fn_names: &[&str],
+        handler: PythonExternalFnHandler,
+    ) -> ExecResult {
+        let args = vec!["-c".to_string(), code.to_string()];
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+        let mut cwd = PathBuf::from("/home/user");
+        let fs = Arc::new(InMemoryFs::new());
+        let py = Python::with_limits(PythonLimits::default()).with_external_handler(
+            fn_names.iter().map(|s| s.to_string()).collect(),
+            handler,
+        );
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
+        py.execute(ctx).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_external_fn_return_value() {
+        let handler: PythonExternalFnHandler = Arc::new(|_name, _args, _kwargs| {
+            Box::pin(async { ExternalResult::Return(MontyObject::Int(42)) })
+        });
+        let r = run_with_external("print(get_answer())", &["get_answer"], handler).await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "42\n");
+    }
+
+    #[tokio::test]
+    async fn test_external_fn_with_args() {
+        let handler: PythonExternalFnHandler = Arc::new(|_name, args, _kwargs| {
+            Box::pin(async move {
+                let a = match &args[0] {
+                    MontyObject::Int(i) => *i,
+                    _ => 0,
+                };
+                let b = match &args[1] {
+                    MontyObject::Int(i) => *i,
+                    _ => 0,
+                };
+                ExternalResult::Return(MontyObject::Int(a + b))
+            })
+        });
+        let r = run_with_external("print(add(3, 4))", &["add"], handler).await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "7\n");
+    }
+
+    #[tokio::test]
+    async fn test_external_fn_with_kwargs() {
+        let handler: PythonExternalFnHandler = Arc::new(|_name, _args, kwargs| {
+            Box::pin(async move {
+                for (k, v) in &kwargs {
+                    if let (MontyObject::String(key), MontyObject::String(val)) = (k, v) {
+                        if key == "name" {
+                            return ExternalResult::Return(MontyObject::String(format!(
+                                "hello {val}"
+                            )));
+                        }
+                    }
+                }
+                ExternalResult::Return(MontyObject::String("hello unknown".into()))
+            })
+        });
+        let r = run_with_external("print(greet(name='world'))", &["greet"], handler).await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "hello world\n");
+    }
+
+    #[tokio::test]
+    async fn test_external_fn_error() {
+        let handler: PythonExternalFnHandler = Arc::new(|_name, _args, _kwargs| {
+            Box::pin(async {
+                ExternalResult::Error(MontyException::new(
+                    ExcType::RuntimeError,
+                    Some("something went wrong".into()),
+                ))
+            })
+        });
+        let r = run_with_external("fail()", &["fail"], handler).await;
+        assert_eq!(r.exit_code, 1);
+        assert!(r.stderr.contains("RuntimeError"));
+        assert!(r.stderr.contains("something went wrong"));
+    }
+
+    #[tokio::test]
+    async fn test_external_fn_caught_error() {
+        let handler: PythonExternalFnHandler = Arc::new(|_name, _args, _kwargs| {
+            Box::pin(async {
+                ExternalResult::Error(MontyException::new(
+                    ExcType::ValueError,
+                    Some("bad value".into()),
+                ))
+            })
+        });
+        let r = run_with_external(
+            "try:\n    fail()\nexcept ValueError as e:\n    print(f'caught: {e}')",
+            &["fail"],
+            handler,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert!(r.stdout.contains("caught:"));
+        assert!(r.stdout.contains("bad value"));
+    }
+
+    #[tokio::test]
+    async fn test_external_fn_multiple_calls() {
+        let counter = Arc::new(std::sync::atomic::AtomicI64::new(0));
+        let counter_clone = counter.clone();
+        let handler: PythonExternalFnHandler = Arc::new(move |_name, _args, _kwargs| {
+            let c = counter_clone.clone();
+            Box::pin(async move {
+                let val = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                ExternalResult::Return(MontyObject::Int(val))
+            })
+        });
+        let r = run_with_external(
+            "a = next_id()\nb = next_id()\nc = next_id()\nprint(a, b, c)",
+            &["next_id"],
+            handler,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "0 1 2\n");
+    }
+
+    #[tokio::test]
+    async fn test_external_fn_returns_string() {
+        let handler: PythonExternalFnHandler = Arc::new(|_name, args, _kwargs| {
+            Box::pin(async move {
+                let input = match &args[0] {
+                    MontyObject::String(s) => s.clone(),
+                    _ => String::new(),
+                };
+                ExternalResult::Return(MontyObject::String(input.to_uppercase()))
+            })
+        });
+        let r = run_with_external("print(upper('hello'))", &["upper"], handler).await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "HELLO\n");
+    }
+
+    #[tokio::test]
+    async fn test_external_fn_dispatches_by_name() {
+        let handler: PythonExternalFnHandler = Arc::new(|name, _args, _kwargs| {
+            Box::pin(async move {
+                let result = match name.as_str() {
+                    "get_x" => MontyObject::Int(10),
+                    "get_y" => MontyObject::Int(20),
+                    _ => MontyObject::None,
+                };
+                ExternalResult::Return(result)
+            })
+        });
+        let r = run_with_external(
+            "print(get_x() + get_y())",
+            &["get_x", "get_y"],
+            handler,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "30\n");
     }
 }

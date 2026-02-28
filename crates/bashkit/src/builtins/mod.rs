@@ -74,7 +74,7 @@ mod yes;
 mod git;
 
 #[cfg(feature = "python")]
-mod python;
+pub mod python;
 
 pub use archive::{Gunzip, Gzip, Tar};
 pub use awk::Awk;
