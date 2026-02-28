@@ -650,3 +650,17 @@ printf '10\n2\n' | awk '{if ($1 > 5) print $1}'
 ### expect
 10
 ### end
+
+### awk_printf_parens
+# printf with parenthesized form
+printf 'x\n' | awk '{printf("[%s]", $1); print ""}'
+### expect
+[x]
+### end
+
+### awk_printf_parens_begin
+# printf with parens in BEGIN block
+echo x | awk 'BEGIN{printf("["); printf("%s", "hi"); printf("]"); print ""}'
+### expect
+[hi]
+### end
