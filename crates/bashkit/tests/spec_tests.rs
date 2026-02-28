@@ -8,9 +8,12 @@
 //! - `### skip: reason` - Skip test entirely (not run in any test)
 //! - `### bash_diff: reason` - Known difference from real bash (runs in spec tests, excluded from comparison)
 //!
-//! ## Skipped Tests (14 total)
+//! ## Skipped Tests (33 total)
 //!
 //! Actual `### skip:` markers across spec test files:
+//!
+//! ### alias.test.sh (1 skipped)
+//! - [ ] lexer loses single-quote context in mid-word tokens
 //!
 //! ### date.test.sh (2 skipped)
 //! - [ ] date -s (set time) not implemented and requires privileges
@@ -20,6 +23,29 @@
 //! - [ ] xxd output format varies across platforms
 //! - [ ] od output format varies
 //! - [ ] hexdump -C output format varies
+//!
+//! ### nameref.test.sh (1 skipped)
+//! - [ ] parser does not handle local arr=(...) syntax
+//!
+//! ### parse-errors.test.sh (6 skipped)
+//! - [ ] parser does not reject unexpected 'do' keyword
+//! - [ ] parser does not reject unexpected '}' at top level
+//! - [ ] parser does not require space after '{'
+//! - [ ] bashkit returns exit 2 (parse error) but real bash returns exit 1 (runtime error)
+//! - [ ] parser does not reject misplaced parentheses
+//! - [ ] [[ || true ]] not rejected as parse error
+//!
+//! ### var-op-test.test.sh (1 skipped)
+//! - [ ] ${arr[0]=x} array element default assignment not implemented
+//!
+//! ### word-split.test.sh (10 skipped)
+//! - [ ] local IFS not checked during word splitting
+//! - [ ] quoted/unquoted word joining at split boundaries (x2)
+//! - [ ] non-IFS whitespace not elided correctly with custom IFS
+//! - [ ] word elision not implemented
+//! - [ ] word splitting in default values (x3)
+//! - [ ] byte-level IFS splitting for multibyte chars
+//! - [ ] quoted empty string prevents elision at word split boundaries
 //!
 //! ### jq.test.sh (1 skipped)
 //! - [ ] jaq errors on .foo applied to null instead of returning null for //

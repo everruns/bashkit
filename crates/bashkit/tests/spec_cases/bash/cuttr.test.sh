@@ -230,3 +230,52 @@ printf 'a,b\0x,y\0' | cut -d, -f2 -z | tr '\0' '\n'
 b
 y
 ### end
+
+### cut_byte_mode
+# -b is alias for -c
+printf 'hello world\n' | cut -b1-5
+### expect
+hello
+### end
+
+### tr_complement_uppercase_C
+# -C is POSIX alias for -c (complement)
+printf 'hello123\n' | tr -Cd '0-9\n'
+### expect
+123
+### end
+
+### tr_delete_punct
+# Delete punctuation using [:punct:]
+printf 'hello, world!\n' | tr -d '[:punct:]'
+### expect
+hello world
+### end
+
+### tr_class_alnum
+# Delete non-alnum chars using complement
+printf 'a1!b2@c3#\n' | tr -cd '[:alnum:]\n'
+### expect
+a1b2c3
+### end
+
+### tr_class_space
+# Squeeze spaces using [:space:]
+printf 'hello   world\n' | tr -s '[:space:]'
+### expect
+hello world
+### end
+
+### tr_squeeze_translate
+# Translate and squeeze
+printf 'aabbcc\n' | tr -s 'a-z' 'A-Z'
+### expect
+ABC
+### end
+
+### tr_class_blank
+# Delete blanks using [:blank:]
+printf 'a\tb c\n' | tr -d '[:blank:]'
+### expect
+abc
+### end

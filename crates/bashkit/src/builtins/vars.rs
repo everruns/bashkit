@@ -8,6 +8,16 @@ use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
+/// Check if a variable name is valid: [a-zA-Z_][a-zA-Z0-9_]*
+fn is_valid_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// unset builtin - remove variables
 pub struct Unset;
 
@@ -82,6 +92,21 @@ fn format_set_plus_o(variables: &std::collections::HashMap<String, String>) -> S
     output
 }
 
+impl Set {
+    /// Encode positional parameters as count\x1Farg1\x1Farg2... for the interpreter.
+    fn encode_positional(
+        variables: &mut std::collections::HashMap<String, String>,
+        positional: &[&str],
+    ) {
+        let mut encoded = positional.len().to_string();
+        for p in positional {
+            encoded.push('\x1F');
+            encoded.push_str(p);
+        }
+        variables.insert("_SET_POSITIONAL".to_string(), encoded);
+    }
+}
+
 #[async_trait]
 impl Builtin for Set {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -95,19 +120,12 @@ impl Builtin for Set {
         }
 
         let mut i = 0;
-        let saw_dashdash = false;
         while i < ctx.args.len() {
             let arg = &ctx.args[i];
             if arg == "--" {
                 // Everything after `--` becomes positional parameters.
-                // Encode as count\x1Farg1\x1Farg2... so empty args are preserved.
                 let positional: Vec<&str> = ctx.args[i + 1..].iter().map(|s| s.as_str()).collect();
-                let mut encoded = positional.len().to_string();
-                for p in &positional {
-                    encoded.push('\x1F');
-                    encoded.push_str(p);
-                }
-                ctx.variables.insert("_SET_POSITIONAL".to_string(), encoded);
+                Self::encode_positional(ctx.variables, &positional);
                 break;
             } else if (arg.starts_with('-') || arg.starts_with('+'))
                 && arg.len() > 1
@@ -133,25 +151,31 @@ impl Builtin for Set {
                 }
             } else if arg.starts_with('-') || arg.starts_with('+') {
                 let enable = arg.starts_with('-');
+                let mut need_o_arg = false;
                 for opt in arg.chars().skip(1) {
-                    let opt_name = format!("SHOPT_{}", opt);
-                    ctx.variables
-                        .insert(opt_name, if enable { "1" } else { "0" }.to_string());
+                    if opt == 'o' {
+                        // -o within a combined flag (e.g. -euo): next arg is option name
+                        need_o_arg = true;
+                    } else {
+                        let opt_name = format!("SHOPT_{}", opt);
+                        ctx.variables
+                            .insert(opt_name, if enable { "1" } else { "0" }.to_string());
+                    }
                 }
+                if need_o_arg && i + 1 < ctx.args.len() {
+                    i += 1;
+                    if let Some(var) = option_name_to_var(&ctx.args[i]) {
+                        ctx.variables
+                            .insert(var.to_string(), if enable { "1" } else { "0" }.to_string());
+                    }
+                }
+            } else {
+                // Non-flag arg: this and everything after become positional params
+                let positional: Vec<&str> = ctx.args[i..].iter().map(|s| s.as_str()).collect();
+                Self::encode_positional(ctx.variables, &positional);
+                break;
             }
             i += 1;
-        }
-
-        // After --, remaining args become positional parameters.
-        // Encode with unit separator for the interpreter to decode.
-        if saw_dashdash {
-            let positional: Vec<&str> = ctx.args[i..].iter().map(|s| s.as_str()).collect();
-            let count = positional.len();
-            let encoded = positional.join("\x1f");
-            ctx.variables.insert(
-                "_SET_POSITIONAL".to_string(),
-                format!("{}\x1f{}", count, encoded),
-            );
         }
 
         Ok(ExecResult::ok(String::new()))
@@ -188,6 +212,13 @@ impl Builtin for Local {
             if let Some(eq_pos) = arg.find('=') {
                 let name = &arg[..eq_pos];
                 let value = &arg[eq_pos + 1..];
+                // Validate variable name
+                if !is_valid_var_name(name) {
+                    return Ok(ExecResult::err(
+                        format!("local: `{}': not a valid identifier\n", arg),
+                        1,
+                    ));
+                }
                 // Mark as local by setting it
                 ctx.variables.insert(name.to_string(), value.to_string());
             } else {

@@ -18,7 +18,6 @@ single   quoted
 
 ### quote_two_single_parts
 # Two single-quoted parts join
-### skip: TODO adjacent single-quoted strings not joined correctly
 echo 'two single-quoted pa''rts in one token'
 ### expect
 two single-quoted parts in one token
@@ -241,7 +240,6 @@ echo
 
 ### quote_empty_string_preserved
 # Empty string as argument is preserved when quoted
-### skip: TODO set -- with quoted empty args not preserving count
 set -- "" "a" ""
 echo $#
 ### expect
