@@ -3942,19 +3942,20 @@ impl Interpreter {
             }
 
             // Post-process: `set --` replaces positional parameters
-            if let Some(positional_str) = self.variables.remove("_SET_POSITIONAL") {
-                let new_positional: Vec<String> = if positional_str.is_empty() {
+            // Encoded as count\x1Farg1\x1Farg2... to preserve empty args.
+            if let Some(encoded) = self.variables.remove("_SET_POSITIONAL") {
+                let parts: Vec<&str> = encoded.splitn(2, '\x1F').collect();
+                let count: usize = parts[0].parse().unwrap_or(0);
+                let new_positional: Vec<String> = if count == 0 {
                     Vec::new()
+                } else if parts.len() > 1 {
+                    parts[1].split('\x1F').map(|s| s.to_string()).collect()
                 } else {
-                    positional_str
-                        .split('\x1F')
-                        .map(|s| s.to_string())
-                        .collect()
+                    Vec::new()
                 };
                 if let Some(frame) = self.call_stack.last_mut() {
                     frame.positional = new_positional;
                 } else {
-                    // No call frame yet (top-level script) — push one
                     self.call_stack.push(CallFrame {
                         name: String::new(),
                         locals: HashMap::new(),
@@ -5360,6 +5361,7 @@ impl Interpreter {
                     name,
                     operator,
                     operand,
+                    colon_variant,
                 } => {
                     // Under set -u, operators like :-, :=, :+, :? suppress nounset errors
                     // because the script is explicitly handling unset variables.
@@ -5370,11 +5372,21 @@ impl Interpreter {
                             | ParameterOp::UseReplacement
                             | ParameterOp::Error
                     );
-                    if self.is_nounset() && !suppress_nounset && !self.is_variable_set(name) {
+
+                    // Resolve name (handles arr[@], @, *, and regular vars)
+                    let (is_set, value) = self.resolve_param_expansion_name(name);
+
+                    if self.is_nounset() && !suppress_nounset && !is_set {
                         self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
                     }
-                    let value = self.expand_variable(name);
-                    let expanded = self.apply_parameter_op(&value, name, operator, operand);
+                    let expanded = self.apply_parameter_op(
+                        &value,
+                        name,
+                        operator,
+                        operand,
+                        *colon_variant,
+                        is_set,
+                    );
                     result.push_str(&expanded);
                 }
                 WordPart::ArrayAccess { name, index } => {
@@ -5706,47 +5718,152 @@ impl Interpreter {
         }
     }
 
-    /// Apply parameter expansion operator
+    /// Resolve name for parameter expansion, handling array subscripts and special params.
+    /// Returns (is_set, expanded_value).
+    fn resolve_param_expansion_name(&self, name: &str) -> (bool, String) {
+        // Check for array subscript pattern: name[@] or name[*]
+        if let Some(arr_name) = name
+            .strip_suffix("[@]")
+            .or_else(|| name.strip_suffix("[*]"))
+        {
+            if let Some(arr) = self.assoc_arrays.get(arr_name) {
+                let is_set = !arr.is_empty();
+                let mut keys: Vec<_> = arr.keys().collect();
+                keys.sort();
+                let values: Vec<String> =
+                    keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
+                return (is_set, values.join(" "));
+            }
+            if let Some(arr) = self.arrays.get(arr_name) {
+                let is_set = !arr.is_empty();
+                let mut indices: Vec<_> = arr.keys().collect();
+                indices.sort();
+                let values: Vec<_> = indices.iter().filter_map(|i| arr.get(i)).collect();
+                return (
+                    is_set,
+                    values.into_iter().cloned().collect::<Vec<_>>().join(" "),
+                );
+            }
+            return (false, String::new());
+        }
+
+        // Special parameters @ and *
+        if name == "@" || name == "*" {
+            if let Some(frame) = self.call_stack.last() {
+                let is_set = !frame.positional.is_empty();
+                return (is_set, frame.positional.join(" "));
+            }
+            return (false, String::new());
+        }
+
+        // Regular variable
+        let is_set = self.is_variable_set(name);
+        let value = self.expand_variable(name);
+        (is_set, value)
+    }
+
+    /// Expand an operand string from a parameter expansion (sync, lazy).
+    /// Only called when the operand is actually needed, providing lazy evaluation.
+    fn expand_operand(&mut self, operand: &str) -> String {
+        if operand.is_empty() {
+            return String::new();
+        }
+        let word = Parser::parse_word_string(operand);
+        let mut result = String::new();
+        for part in &word.parts {
+            match part {
+                WordPart::Literal(s) => result.push_str(s),
+                WordPart::Variable(name) => {
+                    result.push_str(&self.expand_variable(name));
+                }
+                WordPart::ArithmeticExpansion(expr) => {
+                    let val = self.evaluate_arithmetic_with_assign(expr);
+                    result.push_str(&val.to_string());
+                }
+                WordPart::ParameterExpansion {
+                    name,
+                    operator,
+                    operand: inner_operand,
+                    colon_variant,
+                } => {
+                    let (is_set, value) = self.resolve_param_expansion_name(name);
+                    let expanded = self.apply_parameter_op(
+                        &value,
+                        name,
+                        operator,
+                        inner_operand,
+                        *colon_variant,
+                        is_set,
+                    );
+                    result.push_str(&expanded);
+                }
+                WordPart::Length(name) => {
+                    let value = self.expand_variable(name);
+                    result.push_str(&value.len().to_string());
+                }
+                // TODO: handle CommandSubstitution etc. in sync operand expansion
+                _ => {}
+            }
+        }
+        result
+    }
+
+    /// Apply parameter expansion operator.
+    /// `colon_variant`: true = check unset-or-empty, false = check unset-only.
+    /// `is_set`: whether the variable is defined (distinct from being empty).
     fn apply_parameter_op(
         &mut self,
         value: &str,
         name: &str,
         operator: &ParameterOp,
         operand: &str,
+        colon_variant: bool,
+        is_set: bool,
     ) -> String {
+        // colon (:-) => trigger when unset OR empty
+        // no-colon (-) => trigger only when unset
+        let use_default = if colon_variant {
+            !is_set || value.is_empty()
+        } else {
+            !is_set
+        };
+        let use_replacement = if colon_variant {
+            is_set && !value.is_empty()
+        } else {
+            is_set
+        };
+
         match operator {
             ParameterOp::UseDefault => {
-                // ${var:-default} - use default if unset/empty
-                if value.is_empty() {
-                    operand.to_string()
+                if use_default {
+                    self.expand_operand(operand)
                 } else {
                     value.to_string()
                 }
             }
             ParameterOp::AssignDefault => {
-                // ${var:=default} - assign default if unset/empty
-                if value.is_empty() {
-                    self.set_variable(name.to_string(), operand.to_string());
-                    operand.to_string()
+                if use_default {
+                    let expanded = self.expand_operand(operand);
+                    self.set_variable(name.to_string(), expanded.clone());
+                    expanded
                 } else {
                     value.to_string()
                 }
             }
             ParameterOp::UseReplacement => {
-                // ${var:+replacement} - use replacement if set
-                if !value.is_empty() {
-                    operand.to_string()
+                if use_replacement {
+                    self.expand_operand(operand)
                 } else {
                     String::new()
                 }
             }
             ParameterOp::Error => {
-                // ${var:?error} - error if unset/empty
-                if value.is_empty() {
-                    let msg = if operand.is_empty() {
+                if use_default {
+                    let expanded = self.expand_operand(operand);
+                    let msg = if expanded.is_empty() {
                         format!("bash: {}: parameter null or not set\n", name)
                     } else {
-                        format!("bash: {}: {}\n", name, operand)
+                        format!("bash: {}: {}\n", name, expanded)
                     };
                     self.nounset_error = Some(msg);
                     String::new()
