@@ -173,6 +173,7 @@ impl Builtin for Jq {
         // Parse arguments for flags using index-based loop to support
         // multi-arg flags like --arg name value and --argjson name value.
         let mut raw_output = false;
+        let mut raw_input = false;
         let mut compact_output = false;
         let mut null_input = false;
         let mut sort_keys = false;
@@ -210,6 +211,8 @@ impl Builtin for Jq {
 
             if arg == "--raw-output" {
                 raw_output = true;
+            } else if arg == "--raw-input" {
+                raw_input = true;
             } else if arg == "--compact-output" {
                 compact_output = true;
             } else if arg == "--null-input" {
@@ -269,6 +272,7 @@ impl Builtin for Jq {
                 for ch in arg[1..].chars() {
                     match ch {
                         'r' => raw_output = true,
+                        'R' => raw_input = true,
                         'c' => compact_output = true,
                         'n' => null_input = true,
                         'S' => sort_keys = true,
@@ -377,6 +381,15 @@ impl Builtin for Jq {
         let inputs_to_process: Vec<Val> = if null_input {
             // -n flag: use null as input
             vec![Val::from(serde_json::Value::Null)]
+        } else if raw_input && slurp {
+            // -Rs flag: read entire input as single string
+            vec![Val::from(serde_json::Value::String(input.to_string()))]
+        } else if raw_input {
+            // -R flag: each line becomes a JSON string value
+            input
+                .lines()
+                .map(|line| Val::from(serde_json::Value::String(line.to_string())))
+                .collect()
         } else if slurp {
             // -s flag: read all inputs into a single array
             match Self::parse_json_values(input) {
@@ -1188,5 +1201,36 @@ mod tests {
         // -snr: slurp + null-input + raw-output
         let result = run_jq_with_args(&["-snr", r#""hello""#], "").await.unwrap();
         assert_eq!(result.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_jq_raw_input() {
+        // -R: each line becomes a JSON string
+        let result = run_jq_with_args(&["-R", "."], "hello\nworld\n")
+            .await
+            .unwrap();
+        assert_eq!(result.trim(), "\"hello\"\n\"world\"");
+    }
+
+    #[tokio::test]
+    async fn test_jq_raw_input_slurp() {
+        // -Rs: entire input as one string
+        let result = run_jq_with_args(&["-Rs", "."], "hello\nworld\n")
+            .await
+            .unwrap();
+        assert_eq!(result.trim(), "\"hello\\nworld\\n\"");
+    }
+
+    #[tokio::test]
+    async fn test_jq_raw_input_split() {
+        // -R -s then split: CSV-like processing
+        let result = run_jq_with_args(
+            &["-Rs", r#"split("\n") | map(select(length>0))"#],
+            "a,b,c\n1,2,3\n",
+        )
+        .await
+        .unwrap();
+        assert!(result.contains("a,b,c"));
+        assert!(result.contains("1,2,3"));
     }
 }

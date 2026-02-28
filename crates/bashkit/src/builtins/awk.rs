@@ -682,6 +682,14 @@ impl<'a> AwkParser<'a> {
     fn parse_printf(&mut self) -> Result<AwkAction> {
         self.skip_whitespace();
 
+        // Handle optional parenthesized form: printf("format", args)
+        let has_parens =
+            self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '(';
+        if has_parens {
+            self.pos += 1;
+            self.skip_whitespace();
+        }
+
         // Parse format string
         if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != '"' {
             return Err(Error::Execution(
@@ -699,6 +707,13 @@ impl<'a> AwkParser<'a> {
             let expr = self.parse_expression()?;
             args.push(expr);
             self.skip_whitespace();
+        }
+
+        if has_parens
+            && self.pos < self.input.len()
+            && self.input.chars().nth(self.pos).unwrap() == ')'
+        {
+            self.pos += 1;
         }
 
         Ok(AwkAction::Printf(format, args))
@@ -3268,5 +3283,33 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result.stdout, "329\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_printf_parens() {
+        // printf with parenthesized syntax: printf("format", args)
+        let result = run_awk(
+            &[r#"BEGIN{printf("["); printf("%s", "x"); printf("]"); print ""}"#],
+            Some(""),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "[x]\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_printf_parens_csv() {
+        // CSV to JSON pattern using printf with parens
+        let result = run_awk(
+            &[
+                "-F,",
+                r#"NR==1{for(i=1;i<=NF;i++) h[i]=$i; next} {printf("%s{", (NR>2?",":"")); for(i=1;i<=NF;i++){printf("%s\"%s\":\"%s\"", (i>1?",":""), h[i], $i)}; printf("}")} END{print ""}"#,
+            ],
+            Some("name,age\nalice,30\nbob,25\n"),
+        )
+        .await
+        .unwrap();
+        assert!(result.stdout.contains("alice"));
+        assert!(result.stdout.contains("bob"));
     }
 }
