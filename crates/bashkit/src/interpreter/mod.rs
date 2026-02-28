@@ -5632,8 +5632,48 @@ impl Interpreter {
     /// Returns Vec<String> where array expansions like "${arr[@]}" produce multiple fields.
     /// "${arr[*]}" in quoted context joins elements into a single field (bash behavior).
     async fn expand_word_to_fields(&mut self, word: &Word) -> Result<Vec<String>> {
-        // Check if the word contains only an array expansion
+        // Check if the word contains only an array expansion or $@/$*
         if word.parts.len() == 1 {
+            // Handle $@ and $* as special parameters
+            if let WordPart::Variable(name) = &word.parts[0] {
+                if name == "@" {
+                    let positional = self
+                        .call_stack
+                        .last()
+                        .map(|f| f.positional.clone())
+                        .unwrap_or_default();
+                    if word.quoted {
+                        // "$@" preserves individual positional params
+                        return Ok(positional);
+                    }
+                    // $@ unquoted: each param is subject to further IFS splitting
+                    let mut fields = Vec::new();
+                    for p in &positional {
+                        fields.extend(self.ifs_split(p));
+                    }
+                    return Ok(fields);
+                }
+                if name == "*" {
+                    let positional = self
+                        .call_stack
+                        .last()
+                        .map(|f| f.positional.clone())
+                        .unwrap_or_default();
+                    if word.quoted {
+                        // "$*" joins with first char of IFS
+                        let ifs = self
+                            .variables
+                            .get("IFS")
+                            .cloned()
+                            .unwrap_or_else(|| " \t\n".to_string());
+                        let sep = ifs.chars().next().unwrap_or(' ');
+                        return Ok(vec![positional.join(&sep.to_string())]);
+                    }
+                    // $* unquoted: join with space, then IFS split
+                    let joined = positional.join(" ");
+                    return Ok(self.ifs_split(&joined));
+                }
+            }
             if let WordPart::ArrayAccess { name, index } = &word.parts[0] {
                 if index == "@" || index == "*" {
                     // Check assoc arrays first
@@ -5678,41 +5718,31 @@ impl Interpreter {
         }
 
         // For other words, expand to a single field then apply IFS word splitting
-        // when the word is unquoted and contains a command substitution.
-        // Per POSIX, unquoted $() results undergo field splitting on IFS.
+        // when the word is unquoted and contains an expansion.
+        // Per POSIX, unquoted variable/command/arithmetic expansion results undergo
+        // field splitting on IFS.
         let expanded = self.expand_word(word).await?;
 
-        let has_command_subst = !word.quoted
-            && word
-                .parts
-                .iter()
-                .any(|p| matches!(p, WordPart::CommandSubstitution(_)));
+        // IFS splitting applies to unquoted expansions only.
+        // Skip splitting for assignment-like words (e.g., result="$1") where
+        // the lexer stripped quotes from a mixed-quoted word (produces Token::Word
+        // with quoted: false even though the expansion was inside double quotes).
+        let is_assignment_word = matches!(word.parts.first(), Some(WordPart::Literal(s)) if s.contains('='));
+        let has_expansion = !word.quoted
+            && !is_assignment_word
+            && word.parts.iter().any(|p| {
+                matches!(
+                    p,
+                    WordPart::Variable(_)
+                        | WordPart::CommandSubstitution(_)
+                        | WordPart::ArithmeticExpansion(_)
+                        | WordPart::ParameterExpansion { .. }
+                        | WordPart::ArrayAccess { .. }
+                )
+            });
 
-        if has_command_subst {
-            // Split on IFS characters (default: space, tab, newline).
-            // Consecutive IFS-whitespace characters are collapsed (no empty fields).
-            let ifs = self
-                .variables
-                .get("IFS")
-                .cloned()
-                .unwrap_or_else(|| " \t\n".to_string());
-
-            if ifs.is_empty() {
-                // Empty IFS: no splitting
-                return Ok(vec![expanded]);
-            }
-
-            let fields: Vec<String> = expanded
-                .split(|c: char| ifs.contains(c))
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-                .collect();
-
-            if fields.is_empty() {
-                // All-whitespace expansion produces zero fields (elision)
-                return Ok(Vec::new());
-            }
-            Ok(fields)
+        if has_expansion {
+            Ok(self.ifs_split(&expanded))
         } else {
             Ok(vec![expanded])
         }
@@ -5760,6 +5790,97 @@ impl Interpreter {
         let is_set = self.is_variable_set(name);
         let value = self.expand_variable(name);
         (is_set, value)
+    }
+
+    /// Split a string on IFS characters according to POSIX rules.
+    ///
+    /// - IFS whitespace (space, tab, newline) collapses; leading/trailing stripped.
+    /// - IFS non-whitespace chars are significant delimiters. Two adjacent produce
+    ///   an empty field between them.
+    /// - `<ws><nws><ws>` = single delimiter (ws absorbed into the nws delimiter).
+    /// - Empty IFS → no splitting. Unset IFS → default " \t\n".
+    fn ifs_split(&self, s: &str) -> Vec<String> {
+        let ifs = self
+            .variables
+            .get("IFS")
+            .cloned()
+            .unwrap_or_else(|| " \t\n".to_string());
+
+        if ifs.is_empty() {
+            return vec![s.to_string()];
+        }
+
+        let is_ifs = |c: char| ifs.contains(c);
+        let is_ifs_ws = |c: char| ifs.contains(c) && " \t\n".contains(c);
+        let is_ifs_nws = |c: char| ifs.contains(c) && !" \t\n".contains(c);
+        let all_whitespace_ifs = ifs.chars().all(|c| " \t\n".contains(c));
+
+        if all_whitespace_ifs {
+            // IFS is only whitespace: split on runs, elide empties
+            return s
+                .split(|c: char| is_ifs(c))
+                .filter(|f| !f.is_empty())
+                .map(|f| f.to_string())
+                .collect();
+        }
+
+        // Mixed or pure non-whitespace IFS.
+        let mut fields: Vec<String> = Vec::new();
+        let mut current = String::new();
+        let chars: Vec<char> = s.chars().collect();
+        let mut i = 0;
+
+        // Skip leading IFS whitespace
+        while i < chars.len() && is_ifs_ws(chars[i]) {
+            i += 1;
+        }
+        // Leading non-whitespace IFS produces an empty first field
+        if i < chars.len() && is_ifs_nws(chars[i]) {
+            fields.push(String::new());
+            i += 1;
+            while i < chars.len() && is_ifs_ws(chars[i]) {
+                i += 1;
+            }
+        }
+
+        while i < chars.len() {
+            let c = chars[i];
+            if is_ifs_nws(c) {
+                // Non-whitespace IFS delimiter: finalize current field
+                fields.push(std::mem::take(&mut current));
+                i += 1;
+                // Consume trailing IFS whitespace
+                while i < chars.len() && is_ifs_ws(chars[i]) {
+                    i += 1;
+                }
+            } else if is_ifs_ws(c) {
+                // IFS whitespace: skip it, then check for non-ws delimiter
+                while i < chars.len() && is_ifs_ws(chars[i]) {
+                    i += 1;
+                }
+                if i < chars.len() && is_ifs_nws(chars[i]) {
+                    // <ws><nws> = single delimiter. Push current field.
+                    fields.push(std::mem::take(&mut current));
+                    i += 1; // consume the nws char
+                    while i < chars.len() && is_ifs_ws(chars[i]) {
+                        i += 1;
+                    }
+                } else if i < chars.len() {
+                    // ws alone as delimiter (no nws follows)
+                    fields.push(std::mem::take(&mut current));
+                }
+                // trailing ws at end → ignore (don't push empty field)
+            } else {
+                current.push(c);
+                i += 1;
+            }
+        }
+
+        if !current.is_empty() {
+            fields.push(current);
+        }
+
+        fields
     }
 
     /// Expand an operand string from a parameter expansion (sync, lazy).
