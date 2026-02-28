@@ -185,6 +185,56 @@ enum FsEntry {
     },
 }
 
+/// A snapshot of the virtual filesystem state.
+///
+/// Captures all files, directories, and symlinks. Can be serialized with serde
+/// for persistence across sessions.
+///
+/// # Example
+///
+/// ```rust
+/// use bashkit::{FileSystem, InMemoryFs};
+/// use std::path::Path;
+///
+/// # #[tokio::main]
+/// # async fn main() -> bashkit::Result<()> {
+/// let fs = InMemoryFs::new();
+/// fs.write_file(Path::new("/tmp/test.txt"), b"hello").await?;
+///
+/// let snapshot = fs.snapshot();
+///
+/// // Serialize to JSON
+/// let json = serde_json::to_string(&snapshot).unwrap();
+///
+/// // Deserialize and restore
+/// let restored: bashkit::VfsSnapshot = serde_json::from_str(&json).unwrap();
+/// let fs2 = InMemoryFs::new();
+/// fs2.restore(&restored);
+///
+/// let content = fs2.read_file(Path::new("/tmp/test.txt")).await?;
+/// assert_eq!(content, b"hello");
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VfsSnapshot {
+    entries: Vec<VfsEntry>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct VfsEntry {
+    path: PathBuf,
+    kind: VfsEntryKind,
+    mode: u32,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+enum VfsEntryKind {
+    File { content: Vec<u8> },
+    Directory,
+    Symlink { target: PathBuf },
+}
+
 impl Default for InMemoryFs {
     fn default() -> Self {
         Self::new()
@@ -391,6 +441,165 @@ impl InMemoryFs {
         }
 
         Ok(())
+    }
+
+    /// Create a snapshot of the current filesystem state.
+    ///
+    /// Returns a `VfsSnapshot` that captures all files, directories, and symlinks.
+    /// The snapshot can be restored later with [`restore`](InMemoryFs::restore).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{FileSystem, InMemoryFs};
+    /// use std::path::Path;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let fs = InMemoryFs::new();
+    /// fs.write_file(Path::new("/tmp/test.txt"), b"hello").await?;
+    ///
+    /// // Take a snapshot
+    /// let snapshot = fs.snapshot();
+    ///
+    /// // Modify the filesystem
+    /// fs.write_file(Path::new("/tmp/test.txt"), b"modified").await?;
+    ///
+    /// // Restore to the snapshot
+    /// fs.restore(&snapshot);
+    ///
+    /// let content = fs.read_file(Path::new("/tmp/test.txt")).await?;
+    /// assert_eq!(content, b"hello");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn snapshot(&self) -> VfsSnapshot {
+        let entries = self.entries.read().unwrap();
+        let mut files = Vec::new();
+
+        for (path, entry) in entries.iter() {
+            match entry {
+                FsEntry::File { content, metadata } => {
+                    files.push(VfsEntry {
+                        path: path.clone(),
+                        kind: VfsEntryKind::File {
+                            content: content.clone(),
+                        },
+                        mode: metadata.mode,
+                    });
+                }
+                FsEntry::Directory { metadata } => {
+                    files.push(VfsEntry {
+                        path: path.clone(),
+                        kind: VfsEntryKind::Directory,
+                        mode: metadata.mode,
+                    });
+                }
+                FsEntry::Symlink {
+                    target, metadata, ..
+                } => {
+                    files.push(VfsEntry {
+                        path: path.clone(),
+                        kind: VfsEntryKind::Symlink {
+                            target: target.clone(),
+                        },
+                        mode: metadata.mode,
+                    });
+                }
+            }
+        }
+
+        VfsSnapshot { entries: files }
+    }
+
+    /// Restore the filesystem to a previously captured snapshot.
+    ///
+    /// This replaces all current filesystem contents with the snapshot's state.
+    /// Any files created after the snapshot was taken will be removed.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{FileSystem, InMemoryFs};
+    /// use std::path::Path;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let fs = InMemoryFs::new();
+    /// fs.write_file(Path::new("/tmp/data.txt"), b"original").await?;
+    ///
+    /// let snapshot = fs.snapshot();
+    ///
+    /// // Make changes
+    /// fs.write_file(Path::new("/tmp/data.txt"), b"changed").await?;
+    /// fs.write_file(Path::new("/tmp/new.txt"), b"new file").await?;
+    ///
+    /// // Restore
+    /// fs.restore(&snapshot);
+    ///
+    /// // Original state is back
+    /// let content = fs.read_file(Path::new("/tmp/data.txt")).await?;
+    /// assert_eq!(content, b"original");
+    ///
+    /// // New file is gone
+    /// assert!(!fs.exists(Path::new("/tmp/new.txt")).await?);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn restore(&self, snapshot: &VfsSnapshot) {
+        let mut entries = self.entries.write().unwrap();
+        entries.clear();
+
+        let now = SystemTime::now();
+
+        for entry in &snapshot.entries {
+            match &entry.kind {
+                VfsEntryKind::File { content } => {
+                    entries.insert(
+                        entry.path.clone(),
+                        FsEntry::File {
+                            content: content.clone(),
+                            metadata: Metadata {
+                                file_type: FileType::File,
+                                size: content.len() as u64,
+                                mode: entry.mode,
+                                modified: now,
+                                created: now,
+                            },
+                        },
+                    );
+                }
+                VfsEntryKind::Directory => {
+                    entries.insert(
+                        entry.path.clone(),
+                        FsEntry::Directory {
+                            metadata: Metadata {
+                                file_type: FileType::Directory,
+                                size: 0,
+                                mode: entry.mode,
+                                modified: now,
+                                created: now,
+                            },
+                        },
+                    );
+                }
+                VfsEntryKind::Symlink { target } => {
+                    entries.insert(
+                        entry.path.clone(),
+                        FsEntry::Symlink {
+                            target: target.clone(),
+                            metadata: Metadata {
+                                file_type: FileType::Symlink,
+                                size: 0,
+                                mode: entry.mode,
+                                modified: now,
+                                created: now,
+                            },
+                        },
+                    );
+                }
+            }
+        }
     }
 
     fn normalize_path(path: &Path) -> PathBuf {

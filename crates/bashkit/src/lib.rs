@@ -384,10 +384,10 @@ pub use builtins::{Builtin, Context as BuiltinContext};
 pub use error::{Error, Result};
 pub use fs::{
     verify_filesystem_requirements, DirEntry, FileSystem, FileType, FsBackend, FsLimitExceeded,
-    FsLimits, FsUsage, InMemoryFs, Metadata, MountableFs, OverlayFs, PosixFs,
+    FsLimits, FsUsage, InMemoryFs, Metadata, MountableFs, OverlayFs, PosixFs, VfsSnapshot,
 };
 pub use git::GitConfig;
-pub use interpreter::{ControlFlow, ExecResult, OutputCallback};
+pub use interpreter::{ControlFlow, ExecResult, OutputCallback, ShellState};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
 pub use tool::{BashTool, BashToolBuilder, Tool, ToolRequest, ToolResponse, ToolStatus, VERSION};
@@ -667,6 +667,43 @@ impl Bash {
     /// ```
     pub fn fs(&self) -> Arc<dyn FileSystem> {
         Arc::clone(&self.fs)
+    }
+
+    /// Capture the current shell state (variables, env, cwd, options).
+    ///
+    /// Returns a serializable snapshot of the interpreter state. Combine with
+    /// [`InMemoryFs::snapshot()`] for full session persistence.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::Bash;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::new();
+    /// bash.exec("x=42").await?;
+    ///
+    /// let state = bash.shell_state();
+    ///
+    /// bash.exec("x=99").await?;
+    /// bash.restore_shell_state(&state);
+    ///
+    /// let result = bash.exec("echo $x").await?;
+    /// assert_eq!(result.stdout, "42\n");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn shell_state(&self) -> ShellState {
+        self.interpreter.shell_state()
+    }
+
+    /// Restore shell state from a previous snapshot.
+    ///
+    /// Restores variables, env, cwd, arrays, aliases, traps, and options.
+    /// Does not restore functions or builtins — those remain as-is.
+    pub fn restore_shell_state(&mut self, state: &ShellState) {
+        self.interpreter.restore_shell_state(state);
     }
 }
 

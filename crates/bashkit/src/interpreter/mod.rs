@@ -16,6 +16,7 @@ mod state;
 #[allow(unused_imports)]
 pub use jobs::{JobTable, SharedJobTable};
 pub use state::{ControlFlow, ExecResult};
+// Re-export snapshot type for public API
 
 use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
@@ -212,6 +213,37 @@ pub struct ShellOptions {
     /// Print commands before execution (set -x)
     pub xtrace: bool,
     /// Return rightmost non-zero exit code from pipeline (set -o pipefail)
+    pub pipefail: bool,
+}
+
+/// A snapshot of shell state (variables, env, cwd, options).
+///
+/// Captures the serializable portions of the interpreter state.
+/// Combined with [`VfsSnapshot`](crate::VfsSnapshot) this provides
+/// full session snapshot/restore.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ShellState {
+    /// Environment variables
+    pub env: HashMap<String, String>,
+    /// Shell variables
+    pub variables: HashMap<String, String>,
+    /// Indexed arrays
+    pub arrays: HashMap<String, HashMap<usize, String>>,
+    /// Associative arrays
+    pub assoc_arrays: HashMap<String, HashMap<String, String>>,
+    /// Current working directory
+    pub cwd: PathBuf,
+    /// Last exit code
+    pub last_exit_code: i32,
+    /// Shell aliases
+    pub aliases: HashMap<String, String>,
+    /// Trap handlers
+    pub traps: HashMap<String, String>,
+    /// Shell options
+    pub errexit: bool,
+    /// Shell options
+    pub xtrace: bool,
+    /// Shell options
     pub pipefail: bool,
 }
 
@@ -535,6 +567,38 @@ impl Interpreter {
     /// Set the current working directory.
     pub fn set_cwd(&mut self, cwd: PathBuf) {
         self.cwd = cwd;
+    }
+
+    /// Capture the current shell state (variables, env, cwd, options).
+    pub fn shell_state(&self) -> ShellState {
+        ShellState {
+            env: self.env.clone(),
+            variables: self.variables.clone(),
+            arrays: self.arrays.clone(),
+            assoc_arrays: self.assoc_arrays.clone(),
+            cwd: self.cwd.clone(),
+            last_exit_code: self.last_exit_code,
+            aliases: self.aliases.clone(),
+            traps: self.traps.clone(),
+            errexit: self.options.errexit,
+            xtrace: self.options.xtrace,
+            pipefail: self.options.pipefail,
+        }
+    }
+
+    /// Restore shell state from a snapshot.
+    pub fn restore_shell_state(&mut self, state: &ShellState) {
+        self.env = state.env.clone();
+        self.variables = state.variables.clone();
+        self.arrays = state.arrays.clone();
+        self.assoc_arrays = state.assoc_arrays.clone();
+        self.cwd = state.cwd.clone();
+        self.last_exit_code = state.last_exit_code;
+        self.aliases = state.aliases.clone();
+        self.traps = state.traps.clone();
+        self.options.errexit = state.errexit;
+        self.options.xtrace = state.xtrace;
+        self.options.pipefail = state.pipefail;
     }
 
     /// Set an output callback for streaming output during execution.
