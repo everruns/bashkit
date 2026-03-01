@@ -295,6 +295,8 @@ pub struct Interpreter {
 }
 
 impl Interpreter {
+    const MAX_GLOB_DEPTH: usize = 50;
+
     /// Create a new interpreter with the given filesystem.
     pub fn new(fs: Arc<dyn FileSystem>) -> Self {
         Self::with_config(fs, None, None, HashMap::new())
@@ -2849,7 +2851,7 @@ impl Interpreter {
 
     /// Simple glob pattern matching with support for *, ?, and [...]
     fn glob_match(&self, value: &str, pattern: &str) -> bool {
-        self.glob_match_impl(value, pattern, false)
+        self.glob_match_impl(value, pattern, false, 0)
     }
 
     /// Parse an extglob pattern-list from pattern string starting after '('.
@@ -2902,7 +2904,12 @@ impl Interpreter {
     }
 
     /// Glob match with optional case-insensitive mode
-    fn glob_match_impl(&self, value: &str, pattern: &str, nocase: bool) -> bool {
+    fn glob_match_impl(&self, value: &str, pattern: &str, nocase: bool, depth: usize) -> bool {
+        // THREAT[TM-DOS-031]: Bail on excessive recursion depth
+        if depth >= Self::MAX_GLOB_DEPTH {
+            return false;
+        }
+
         let extglob = self.is_extglob();
 
         // Check for extglob at the start of pattern
@@ -2911,7 +2918,7 @@ impl Interpreter {
             if matches!(bytes[0], b'@' | b'?' | b'*' | b'+' | b'!') && bytes[1] == b'(' {
                 let op = bytes[0];
                 if let Some((alts, rest)) = Self::parse_extglob_pattern_list(&pattern[2..]) {
-                    return self.match_extglob(op, &alts, &rest, value, nocase);
+                    return self.match_extglob(op, &alts, &rest, value, nocase, depth + 1);
                 }
             }
         }
@@ -2931,7 +2938,12 @@ impl Interpreter {
                         // Extglob *(pattern-list) — collect remaining pattern
                         let remaining_pattern: String = pattern_chars.collect();
                         let remaining_value: String = value_chars.collect();
-                        return self.glob_match_impl(&remaining_value, &remaining_pattern, nocase);
+                        return self.glob_match_impl(
+                            &remaining_value,
+                            &remaining_pattern,
+                            nocase,
+                            depth + 1,
+                        );
                     }
                     pattern_chars.next();
                     // * matches zero or more characters
@@ -2942,14 +2954,19 @@ impl Interpreter {
                     while value_chars.peek().is_some() {
                         let remaining_value: String = value_chars.clone().collect();
                         let remaining_pattern: String = pattern_chars.clone().collect();
-                        if self.glob_match_impl(&remaining_value, &remaining_pattern, nocase) {
+                        if self.glob_match_impl(
+                            &remaining_value,
+                            &remaining_pattern,
+                            nocase,
+                            depth + 1,
+                        ) {
                             return true;
                         }
                         value_chars.next();
                     }
                     // Also try with empty match
                     let remaining_pattern: String = pattern_chars.collect();
-                    return self.glob_match_impl("", &remaining_pattern, nocase);
+                    return self.glob_match_impl("", &remaining_pattern, nocase, depth + 1);
                 }
                 (Some('?'), _) => {
                     // Check for extglob ?(...)
@@ -2958,7 +2975,12 @@ impl Interpreter {
                     if extglob && pc_clone.peek() == Some(&'(') {
                         let remaining_pattern: String = pattern_chars.collect();
                         let remaining_value: String = value_chars.collect();
-                        return self.glob_match_impl(&remaining_value, &remaining_pattern, nocase);
+                        return self.glob_match_impl(
+                            &remaining_value,
+                            &remaining_pattern,
+                            nocase,
+                            depth + 1,
+                        );
                     }
                     if value_chars.peek().is_some() {
                         pattern_chars.next();
@@ -2996,6 +3018,7 @@ impl Interpreter {
                                 &remaining_value,
                                 &remaining_pattern,
                                 nocase,
+                                depth + 1,
                             );
                         }
                     }
@@ -3027,13 +3050,19 @@ impl Interpreter {
         rest: &str,
         value: &str,
         nocase: bool,
+        depth: usize,
     ) -> bool {
+        // THREAT[TM-DOS-031]: Bail on excessive recursion depth
+        if depth >= Self::MAX_GLOB_DEPTH {
+            return false;
+        }
+
         match op {
             b'@' => {
                 // @(a|b) — exactly one of the alternatives
                 for alt in alts {
                     let full = format!("{}{}", alt, rest);
-                    if self.glob_match_impl(value, &full, nocase) {
+                    if self.glob_match_impl(value, &full, nocase, depth + 1) {
                         return true;
                     }
                 }
@@ -3042,13 +3071,13 @@ impl Interpreter {
             b'?' => {
                 // ?(a|b) — zero or one of the alternatives
                 // Try zero: skip the extglob entirely
-                if self.glob_match_impl(value, rest, nocase) {
+                if self.glob_match_impl(value, rest, nocase, depth + 1) {
                     return true;
                 }
                 // Try one
                 for alt in alts {
                     let full = format!("{}{}", alt, rest);
-                    if self.glob_match_impl(value, &full, nocase) {
+                    if self.glob_match_impl(value, &full, nocase, depth + 1) {
                         return true;
                     }
                 }
@@ -3058,7 +3087,7 @@ impl Interpreter {
                 // +(a|b) — one or more of the alternatives
                 for alt in alts {
                     let full = format!("{}{}", alt, rest);
-                    if self.glob_match_impl(value, &full, nocase) {
+                    if self.glob_match_impl(value, &full, nocase, depth + 1) {
                         return true;
                     }
                     // Try alt followed by more +(a|b)rest
@@ -3066,11 +3095,11 @@ impl Interpreter {
                     for split in 1..=value.len() {
                         let prefix = &value[..split];
                         let suffix = &value[split..];
-                        if self.glob_match_impl(prefix, alt, nocase) {
+                        if self.glob_match_impl(prefix, alt, nocase, depth + 1) {
                             // Rebuild the extglob for the suffix
                             let inner = alts.join("|");
                             let re_pattern = format!("+({}){}", inner, rest);
-                            if self.glob_match_impl(suffix, &re_pattern, nocase) {
+                            if self.glob_match_impl(suffix, &re_pattern, nocase, depth + 1) {
                                 return true;
                             }
                         }
@@ -3081,22 +3110,22 @@ impl Interpreter {
             b'*' => {
                 // *(a|b) — zero or more of the alternatives
                 // Try zero
-                if self.glob_match_impl(value, rest, nocase) {
+                if self.glob_match_impl(value, rest, nocase, depth + 1) {
                     return true;
                 }
                 // Try one or more (same as +(...))
                 for alt in alts {
                     let full = format!("{}{}", alt, rest);
-                    if self.glob_match_impl(value, &full, nocase) {
+                    if self.glob_match_impl(value, &full, nocase, depth + 1) {
                         return true;
                     }
                     for split in 1..=value.len() {
                         let prefix = &value[..split];
                         let suffix = &value[split..];
-                        if self.glob_match_impl(prefix, alt, nocase) {
+                        if self.glob_match_impl(prefix, alt, nocase, depth + 1) {
                             let inner = alts.join("|");
                             let re_pattern = format!("*({}){}", inner, rest);
-                            if self.glob_match_impl(suffix, &re_pattern, nocase) {
+                            if self.glob_match_impl(suffix, &re_pattern, nocase, depth + 1) {
                                 return true;
                             }
                         }
@@ -3110,17 +3139,20 @@ impl Interpreter {
                 // Actually: !(pat) matches anything that doesn't match @(pat)
                 let inner = alts.join("|");
                 let positive = format!("@({}){}", inner, rest);
-                !self.glob_match_impl(value, &positive, nocase)
-                    && self.glob_match_impl(value, rest, nocase)
+                !self.glob_match_impl(value, &positive, nocase, depth + 1)
+                    && self.glob_match_impl(value, rest, nocase, depth + 1)
                     || {
                         // !(pat) can also consume characters — try each split
                         for split in 1..=value.len() {
                             let prefix = &value[..split];
                             let suffix = &value[split..];
                             // prefix must not match any alt
-                            let prefix_matches_any =
-                                alts.iter().any(|a| self.glob_match_impl(prefix, a, nocase));
-                            if !prefix_matches_any && self.glob_match_impl(suffix, rest, nocase) {
+                            let prefix_matches_any = alts
+                                .iter()
+                                .any(|a| self.glob_match_impl(prefix, a, nocase, depth + 1));
+                            if !prefix_matches_any
+                                && self.glob_match_impl(suffix, rest, nocase, depth + 1)
+                            {
                                 return true;
                             }
                         }
@@ -8171,7 +8203,7 @@ impl Interpreter {
                 continue;
             }
 
-            if self.glob_match_impl(&entry.name, &file_pattern, nocase) {
+            if self.glob_match_impl(&entry.name, &file_pattern, nocase, 0) {
                 // Construct the full path
                 let full_path = if path.is_absolute() {
                     dir.join(&entry.name).to_string_lossy().to_string()
@@ -8255,7 +8287,7 @@ impl Interpreter {
                         if entry.name.starts_with('.') && !dotglob && !pattern_starts_with_dot {
                             continue;
                         }
-                        if self.glob_match_impl(&entry.name, pat, nocase) {
+                        if self.glob_match_impl(&entry.name, pat, nocase, 0) {
                             matches.push(dir.join(&entry.name).to_string_lossy().to_string());
                         }
                     }
@@ -9482,5 +9514,22 @@ mod tests {
         // Should not be able to fake readonly
         let result = run_script("_READONLY_myvar=1; myvar=hello; echo $myvar").await;
         assert_eq!(result.stdout.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_extglob_no_hang() {
+        use std::time::{Duration, Instant};
+        let start = Instant::now();
+        let result = run_script(
+            r#"shopt -s extglob; [[ "aaaaaaaaaaaa" == +(a|aa) ]] && echo yes || echo no"#,
+        )
+        .await;
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "extglob took too long: {:?}",
+            elapsed
+        );
+        assert_eq!(result.exit_code, 0);
     }
 }
