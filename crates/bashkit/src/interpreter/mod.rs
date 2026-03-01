@@ -7340,7 +7340,9 @@ impl Interpreter {
                 {
                     let left = self.parse_arithmetic_impl(&expr[..i - 1], arith_depth + 1);
                     let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
-                    return left << right;
+                    // THREAT[TM-DOS-029]: clamp shift to 0..=63 to prevent panic
+                    let shift = right.clamp(0, 63) as u32;
+                    return left.wrapping_shl(shift);
                 }
                 '>' if depth == 0
                     && i > 0
@@ -7350,7 +7352,9 @@ impl Interpreter {
                 {
                     let left = self.parse_arithmetic_impl(&expr[..i - 1], arith_depth + 1);
                     let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
-                    return left >> right;
+                    // THREAT[TM-DOS-029]: clamp shift to 0..=63 to prevent panic
+                    let shift = right.clamp(0, 63) as u32;
+                    return left.wrapping_shr(shift);
                 }
                 _ => {}
             }
@@ -7378,10 +7382,11 @@ impl Interpreter {
                     }
                     let left = self.parse_arithmetic_impl(&expr[..i], arith_depth + 1);
                     let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
+                    // THREAT[TM-DOS-029]: wrapping to prevent overflow panic
                     return if chars[i] == '+' {
-                        left + right
+                        left.wrapping_add(right)
                     } else {
-                        left - right
+                        left.wrapping_sub(right)
                     };
                 }
                 _ => {}
@@ -7404,22 +7409,24 @@ impl Interpreter {
                     }
                     let left = self.parse_arithmetic_impl(&expr[..i], arith_depth + 1);
                     let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
-                    return left * right;
+                    // THREAT[TM-DOS-029]: wrapping to prevent overflow panic
+                    return left.wrapping_mul(right);
                 }
                 '/' | '%' if depth == 0 => {
                     let left = self.parse_arithmetic_impl(&expr[..i], arith_depth + 1);
                     let right = self.parse_arithmetic_impl(&expr[i + 1..], arith_depth + 1);
+                    // THREAT[TM-DOS-029]: wrapping to prevent i64::MIN / -1 panic
                     return match chars[i] {
                         '/' => {
                             if right != 0 {
-                                left / right
+                                left.wrapping_div(right)
                             } else {
                                 0
                             }
                         }
                         '%' => {
                             if right != 0 {
-                                left % right
+                                left.wrapping_rem(right)
                             } else {
                                 0
                             }
@@ -7441,7 +7448,9 @@ impl Interpreter {
                     let left = self.parse_arithmetic_impl(&expr[..i], arith_depth + 1);
                     // Right-associative: parse from i+2 onward (may contain more **)
                     let right = self.parse_arithmetic_impl(&expr[i + 2..], arith_depth + 1);
-                    return left.pow(right as u32);
+                    // THREAT[TM-DOS-029]: clamp exponent to 0..=63 to prevent panic/hang
+                    let exp = right.clamp(0, 63) as u32;
+                    return left.wrapping_pow(exp);
                 }
                 _ => {}
             }
@@ -7451,7 +7460,10 @@ impl Interpreter {
         if let Some(rest) = expr.strip_prefix('-') {
             let rest = rest.trim();
             if !rest.is_empty() {
-                return -self.parse_arithmetic_impl(rest, arith_depth + 1);
+                // THREAT[TM-DOS-029]: wrapping to prevent i64::MIN negation panic
+                return self
+                    .parse_arithmetic_impl(rest, arith_depth + 1)
+                    .wrapping_neg();
             }
         }
         if let Some(rest) = expr.strip_prefix('~') {
@@ -9313,5 +9325,53 @@ mod tests {
         // set a b c (without --)
         let result = run_script("set a b c\necho $#\necho $1 $2 $3").await;
         assert_eq!(result.stdout, "3\na b c\n");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_exponent_negative_no_panic() {
+        let result = run_script("echo $(( 2 ** -1 ))").await;
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_exponent_large_no_panic() {
+        let result = run_script("echo $(( 2 ** 100 ))").await;
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_shift_large_no_panic() {
+        let result = run_script("echo $(( 1 << 64 ))").await;
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_shift_negative_no_panic() {
+        let result = run_script("echo $(( 1 << -1 ))").await;
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_div_min_neg1_no_panic() {
+        let result = run_script("echo $(( -9223372036854775808 / -1 ))").await;
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_mod_min_neg1_no_panic() {
+        let result = run_script("echo $(( -9223372036854775808 % -1 ))").await;
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_overflow_add_no_panic() {
+        let result = run_script("echo $(( 9223372036854775807 + 1 ))").await;
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_overflow_mul_no_panic() {
+        let result = run_script("echo $(( 9223372036854775807 * 2 ))").await;
+        assert_eq!(result.exit_code, 0);
     }
 }
