@@ -233,41 +233,47 @@ impl PyBash {
     }
 
     /// Execute commands synchronously (blocking).
-    fn execute_sync(&self, commands: String) -> PyResult<ExecResult> {
+    /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
+    fn execute_sync(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
         let inner = self.inner.clone();
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-        rt.block_on(async move {
-            let mut bash = inner.lock().await;
-            match bash.exec(&commands).await {
-                Ok(result) => Ok(ExecResult {
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    exit_code: result.exit_code,
-                    error: None,
-                }),
-                Err(e) => Ok(ExecResult {
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    exit_code: 1,
-                    error: Some(e.to_string()),
-                }),
-            }
+        py.detach(|| {
+            rt.block_on(async move {
+                let mut bash = inner.lock().await;
+                match bash.exec(&commands).await {
+                    Ok(result) => Ok(ExecResult {
+                        stdout: result.stdout,
+                        stderr: result.stderr,
+                        exit_code: result.exit_code,
+                        error: None,
+                    }),
+                    Err(e) => Ok(ExecResult {
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        exit_code: 1,
+                        error: Some(e.to_string()),
+                    }),
+                }
+            })
         })
     }
 
     /// Reset interpreter to fresh state.
-    fn reset(&self) -> PyResult<()> {
+    /// Releases GIL before blocking on tokio to prevent deadlock.
+    fn reset(&self, py: Python<'_>) -> PyResult<()> {
         let inner = self.inner.clone();
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-        rt.block_on(async move {
-            let mut bash = inner.lock().await;
-            let builder = Bash::builder();
-            *bash = builder.build();
-            Ok(())
+        py.detach(|| {
+            rt.block_on(async move {
+                let mut bash = inner.lock().await;
+                let builder = Bash::builder();
+                *bash = builder.build();
+                Ok(())
+            })
         })
     }
 
@@ -378,40 +384,46 @@ impl BashTool {
         })
     }
 
-    fn execute_sync(&self, commands: String) -> PyResult<ExecResult> {
+    /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
+    fn execute_sync(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
         let inner = self.inner.clone();
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-        rt.block_on(async move {
-            let mut bash = inner.lock().await;
-            match bash.exec(&commands).await {
-                Ok(result) => Ok(ExecResult {
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    exit_code: result.exit_code,
-                    error: None,
-                }),
-                Err(e) => Ok(ExecResult {
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    exit_code: 1,
-                    error: Some(e.to_string()),
-                }),
-            }
+        py.detach(|| {
+            rt.block_on(async move {
+                let mut bash = inner.lock().await;
+                match bash.exec(&commands).await {
+                    Ok(result) => Ok(ExecResult {
+                        stdout: result.stdout,
+                        stderr: result.stderr,
+                        exit_code: result.exit_code,
+                        error: None,
+                    }),
+                    Err(e) => Ok(ExecResult {
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        exit_code: 1,
+                        error: Some(e.to_string()),
+                    }),
+                }
+            })
         })
     }
 
-    fn reset(&self) -> PyResult<()> {
+    /// Releases GIL before blocking on tokio to prevent deadlock.
+    fn reset(&self, py: Python<'_>) -> PyResult<()> {
         let inner = self.inner.clone();
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-        rt.block_on(async move {
-            let mut bash = inner.lock().await;
-            let builder = Bash::builder();
-            *bash = builder.build();
-            Ok(())
+        py.detach(|| {
+            rt.block_on(async move {
+                let mut bash = inner.lock().await;
+                let builder = Bash::builder();
+                *bash = builder.build();
+                Ok(())
+            })
         })
     }
 
@@ -652,17 +664,20 @@ impl ScriptedTool {
     }
 
     /// Execute a bash script synchronously (blocking).
-    fn execute_sync(&self, commands: String) -> PyResult<ExecResult> {
+    /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
+    fn execute_sync(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
         let mut tool = self.build_rust_tool();
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-        let resp = rt.block_on(async move {
-            tool.execute(ToolRequest {
-                commands,
-                timeout_ms: None,
+        let resp = py.detach(|| {
+            rt.block_on(async move {
+                tool.execute(ToolRequest {
+                    commands,
+                    timeout_ms: None,
+                })
+                .await
             })
-            .await
         });
         Ok(ExecResult {
             stdout: resp.stdout,
