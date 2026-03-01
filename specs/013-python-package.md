@@ -19,6 +19,9 @@ crates/bashkit-python/
 │   ├── langchain.py         # LangChain integration
 │   ├── deepagents.py        # Deep Agents integration
 │   └── pydantic_ai.py       # PydanticAI integration
+├── examples/
+│   ├── bash_basics.py       # Bash interface walkthrough (runs in CI)
+│   └── k8s_orchestrator.py  # ScriptedTool multi-tool demo
 └── tests/
     └── test_bashkit.py      # Pytest suite
 ```
@@ -164,6 +167,7 @@ Runs on push to main and PRs (path-filtered to `crates/bashkit-python/`, `crates
 PR / push to main
     ├── lint          (ruff check + ruff format --check)
     ├── test          (maturin develop + pytest, Python 3.9/3.12/3.13)
+    ├── examples      (build wheel + run crates/bashkit-python/examples/)
     ├── build-wheel   (maturin build + twine check)
     └── python-check  (gate job for branch protection)
 ```

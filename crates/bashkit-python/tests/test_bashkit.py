@@ -4,7 +4,124 @@ import json
 
 import pytest
 
-from bashkit import BashTool, ScriptedTool, create_langchain_tool_spec
+from bashkit import Bash, BashTool, ScriptedTool, create_langchain_tool_spec
+
+# ===========================================================================
+# Bash: Core interpreter
+# ===========================================================================
+
+
+# -- Bash: Construction ----------------------------------------------------
+
+
+def test_bash_default_construction():
+    bash = Bash()
+    assert bash is not None
+
+
+def test_bash_custom_construction():
+    bash = Bash(username="alice", hostname="box", max_commands=100, max_loop_iterations=500)
+    assert bash is not None
+
+
+# -- Bash: Sync execution --------------------------------------------------
+
+
+def test_bash_echo():
+    bash = Bash()
+    r = bash.execute_sync("echo hello")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "hello"
+    assert r.success is True
+
+
+def test_bash_exit_code():
+    bash = Bash()
+    r = bash.execute_sync("exit 42")
+    assert r.exit_code == 42
+    assert r.success is False
+
+
+def test_bash_stderr():
+    bash = Bash()
+    r = bash.execute_sync("echo err >&2")
+    assert "err" in r.stderr
+
+
+def test_bash_pipeline():
+    bash = Bash()
+    r = bash.execute_sync("echo -e 'banana\\napple\\ncherry' | sort")
+    assert r.stdout.strip() == "apple\nbanana\ncherry"
+
+
+def test_bash_state_persists():
+    """Variables persist across calls."""
+    bash = Bash()
+    bash.execute_sync("export FOO=bar")
+    r = bash.execute_sync("echo $FOO")
+    assert r.stdout.strip() == "bar"
+
+
+def test_bash_file_persistence():
+    """Files created in one call are visible in the next."""
+    bash = Bash()
+    bash.execute_sync("echo content > /tmp/test.txt")
+    r = bash.execute_sync("cat /tmp/test.txt")
+    assert r.stdout.strip() == "content"
+
+
+def test_bash_reset():
+    bash = Bash()
+    bash.execute_sync("export KEEP=1")
+    bash.reset()
+    r = bash.execute_sync("echo ${KEEP:-empty}")
+    assert r.stdout.strip() == "empty"
+
+
+# -- Bash: Async execution -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bash_async_execute():
+    bash = Bash()
+    r = await bash.execute("echo async_hello")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "async_hello"
+
+
+@pytest.mark.asyncio
+async def test_bash_async_state_persists():
+    bash = Bash()
+    await bash.execute("X=123")
+    r = await bash.execute("echo $X")
+    assert r.stdout.strip() == "123"
+
+
+# -- Bash: Resource limits -------------------------------------------------
+
+
+def test_bash_max_loop_iterations():
+    bash = Bash(max_loop_iterations=10)
+    r = bash.execute_sync("i=0; while true; do i=$((i+1)); done; echo $i")
+    assert r.exit_code != 0 or int(r.stdout.strip() or "0") <= 100
+
+
+def test_bash_empty_input():
+    bash = Bash()
+    r = bash.execute_sync("")
+    assert r.exit_code == 0
+    assert r.stdout == ""
+
+
+def test_bash_nonexistent_command():
+    bash = Bash()
+    r = bash.execute_sync("nonexistent_xyz_cmd_12345")
+    assert r.exit_code == 127
+
+
+# ===========================================================================
+# BashTool tests
+# ===========================================================================
 
 # -- BashTool: Construction -------------------------------------------------
 
