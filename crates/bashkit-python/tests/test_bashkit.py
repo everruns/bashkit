@@ -728,3 +728,123 @@ async def test_async_multiple_tools():
     assert r.exit_code == 0
     assert "A" in r.stdout
     assert "B" in r.stdout
+
+
+# ===========================================================================
+# GIL deadlock prevention tests
+# ===========================================================================
+
+
+def test_execute_sync_releases_gil_for_callback():
+    """execute_sync must release GIL before blocking on tokio runtime.
+
+    Without py.allow_threads(), a tool callback calling Python::attach()
+    inside rt.block_on() can deadlock when another thread holds the GIL.
+    This test validates the fix by running execute_sync with a callback
+    from a background thread while the main thread also holds the GIL.
+    """
+    import threading
+    import time
+
+    tool = ScriptedTool("api")
+
+    def slow_callback(params, stdin=None):
+        """Callback that briefly sleeps, requiring GIL reacquisition."""
+        time.sleep(0.01)
+        return f"ok-{params.get('id', 0)}\n"
+
+    tool.add_tool(
+        "slow",
+        "Slow command",
+        callback=slow_callback,
+        schema={"type": "object", "properties": {"id": {"type": "integer"}}},
+    )
+
+    results = [None, None]
+    errors = [None, None]
+
+    def run_in_thread(idx):
+        try:
+            r = tool.execute_sync(f"slow --id {idx}")
+            results[idx] = r
+        except Exception as e:
+            errors[idx] = e
+
+    t0 = threading.Thread(target=run_in_thread, args=(0,))
+    t1 = threading.Thread(target=run_in_thread, args=(1,))
+
+    t0.start()
+    t1.start()
+
+    # Timeout guards against deadlock — if GIL isn't released, threads block forever
+    t0.join(timeout=10)
+    t1.join(timeout=10)
+
+    assert not t0.is_alive(), "Thread 0 deadlocked (GIL not released in execute_sync)"
+    assert not t1.is_alive(), "Thread 1 deadlocked (GIL not released in execute_sync)"
+    assert errors[0] is None, f"Thread 0 error: {errors[0]}"
+    assert errors[1] is None, f"Thread 1 error: {errors[1]}"
+    assert results[0].exit_code == 0
+    assert results[1].exit_code == 0
+    assert "ok-0" in results[0].stdout
+    assert "ok-1" in results[1].stdout
+
+
+def test_bash_execute_sync_releases_gil():
+    """Bash.execute_sync must release GIL before blocking on tokio runtime."""
+    import threading
+
+    bash = Bash()
+    results = [None, None]
+    errors = [None, None]
+
+    def run_in_thread(idx):
+        try:
+            r = bash.execute_sync(f"echo thread-{idx}")
+            results[idx] = r
+        except Exception as e:
+            errors[idx] = e
+
+    t0 = threading.Thread(target=run_in_thread, args=(0,))
+    t1 = threading.Thread(target=run_in_thread, args=(1,))
+
+    t0.start()
+    t1.start()
+
+    t0.join(timeout=10)
+    t1.join(timeout=10)
+
+    assert not t0.is_alive(), "Thread 0 deadlocked (GIL not released)"
+    assert not t1.is_alive(), "Thread 1 deadlocked (GIL not released)"
+    assert errors[0] is None, f"Thread 0 error: {errors[0]}"
+    assert errors[1] is None, f"Thread 1 error: {errors[1]}"
+
+
+def test_bashtool_execute_sync_releases_gil():
+    """BashTool.execute_sync must release GIL before blocking on tokio runtime."""
+    import threading
+
+    tool = BashTool()
+    results = [None, None]
+    errors = [None, None]
+
+    def run_in_thread(idx):
+        try:
+            r = tool.execute_sync(f"echo thread-{idx}")
+            results[idx] = r
+        except Exception as e:
+            errors[idx] = e
+
+    t0 = threading.Thread(target=run_in_thread, args=(0,))
+    t1 = threading.Thread(target=run_in_thread, args=(1,))
+
+    t0.start()
+    t1.start()
+
+    t0.join(timeout=10)
+    t1.join(timeout=10)
+
+    assert not t0.is_alive(), "Thread 0 deadlocked (GIL not released)"
+    assert not t1.is_alive(), "Thread 1 deadlocked (GIL not released)"
+    assert errors[0] is None, f"Thread 0 error: {errors[0]}"
+    assert errors[1] is None, f"Thread 1 error: {errors[1]}"
