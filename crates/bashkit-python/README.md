@@ -1,5 +1,7 @@
 # Bashkit
 
+[![PyPI](https://img.shields.io/pypi/v/bashkit)](https://pypi.org/project/bashkit/)
+
 A sandboxed bash interpreter for AI agents.
 
 ```python
