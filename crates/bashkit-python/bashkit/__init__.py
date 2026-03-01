@@ -1,12 +1,10 @@
 """
-Bashkit Python Bindings
-
-A sandboxed bash interpreter for AI agents with virtual filesystem.
+Bashkit — a sandboxed bash interpreter for AI agents.
 
 Example:
     >>> from bashkit import BashTool
     >>> tool = BashTool()
-    >>> result = await tool.execute("echo 'Hello, World!'")
+    >>> result = tool.execute_sync("echo 'Hello, World!'")
     >>> print(result.stdout)
     Hello, World!
 
