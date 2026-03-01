@@ -205,15 +205,17 @@ just pre-pr       # Pre-PR checks
 
 ## LLM Eval Results
 
-Bashkit includes an [eval harness](crates/bashkit-eval/) that measures how well LLMs use bashkit as a bash tool in agentic workloads — 25 tasks across 10 categories.
+Bashkit includes an [eval harness](crates/bashkit-eval/) that measures how well LLMs use bashkit as a bash tool in agentic workloads — 58 tasks across 15 categories.
 
 | Model | Score | Tasks Passed | Tool Call Success | Duration |
 |-------|-------|-------------|-------------------|----------|
-| Claude Haiku 4.5 | **98%** | 23/25 | 87% | 2.9 min |
-| Claude Opus 4.6 | 93% | 21/25 | 87% | 8.7 min |
-| GPT-5.2 | 81% | 18/25 | 78% | 3.4 min |
+| Claude Haiku 4.5 | **97%** | **54/58** | 88% | 8.6 min |
+| Claude Sonnet 4.6 | 93% | 48/58 | 85% | 20.5 min |
+| Claude Opus 4.6 | 91% | 50/58 | 88% | 20.1 min |
+| GPT-5.3-Codex | 91% | 51/58 | 83% | 19.6 min |
+| GPT-5.2 | 77% | 41/58 | 67% | 7.0 min |
 
-Tool call success improved +8–19% after recent interpreter fixes. See the [detailed analysis](crates/bashkit-eval/README.md#results) for category breakdown, remaining gaps, and model behavior differences.
+**Delta from v0.1.7** (on shared 37 tasks): Haiku 98%→100%, Opus 93%→96%, GPT-5.2 86%→86% (3 more tasks). Interpreter fixes unblocked `json_to_csv_export` and `script_function_lib` across models. See the [detailed analysis](crates/bashkit-eval/README.md#results).
 
 ```bash
 just eval                    # Run eval with default model

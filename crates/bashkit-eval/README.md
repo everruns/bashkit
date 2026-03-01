@@ -45,13 +45,97 @@ just eval-save
 
 ## Dataset
 
-52 hand-curated tasks in JSONL format across 12 categories: file_operations, text_processing, pipelines, scripting, data_transformation, error_recovery, system_info, archive_operations, json_processing, complex_tasks, code_search, environment.
+58 hand-curated tasks in JSONL format across 15 categories: file_operations, text_processing, pipelines, scripting, data_transformation, error_recovery, system_info, archive_operations, json_processing, complex_tasks, code_search, environment, database_operations, config_management, build_simulation.
 
 Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 
 ## Results
 
-### 2026-02-27 — Expanded Dataset (52 tasks, latest)
+### 2026-02-28 — Post v0.1.7 Interpreter Fixes (58 tasks, latest)
+
+Dataset expanded from 52 to 58 tasks with 3 new categories (database_operations, config_management,
+build_simulation). 20+ interpreter fixes since v0.1.7 release: heredoc redirects (#370), xargs
+execution (#364), IFS splitting (#374), ANSI-C quoting (#371), stderr redirects (#377), subshell
+isolation (#376), find -exec (#386), tr/cut features (#391), and more.
+
+All 5 models ran the full 58-task dataset.
+
+| Metric | Haiku 4.5 | Sonnet 4.6 | Opus 4.6 | GPT-5.3-Codex | GPT-5.2 |
+|--------|-----------|------------|----------|---------------|---------|
+| Tasks passed | **54/58** | 48/58 | 50/58 | 51/58 | 41/58 |
+| Score | **97%** | 93% | 91% | 91% | 77% |
+| Tool calls | 238 (209 ok, 29 err) | 261 (222 ok, 39 err) | 269 (236 ok, 33 err) | 186 (154 ok, 32 err) | 156 (105 ok, 51 err) |
+| Tool call success | **88%** | 85% | **88%** | 83% | 67% |
+| Tokens | 547K in / 69K out | 561K in / 67K out | 518K in / 61K out | 239K in / 69K out | 201K in / 29K out |
+| Duration | 8.6 min | 20.5 min | 20.1 min | 19.6 min | 7.0 min |
+
+#### Delta from v0.1.7 Release
+
+Comparison on the shared 37-task subset from the v0.1.7 release (2026-02-25). Interpreter fixes
+unblocked `json_to_csv_export` (jq `@csv`) and `script_function_lib` (tr character classes) across
+models.
+
+| Model | v0.1.7 (37 tasks) | Current (37 tasks) | Delta | Newly Passing |
+|-------|-------------------|--------------------|-------|---------------|
+| Haiku 4.5 | 35/37 (98%) | **37/37 (100%)** | +2pp | json_to_csv_export, script_function_lib |
+| Opus 4.6 | 33/37 (93%) | 34/37 (96%) | +3pp | script_function_lib, script_health_check |
+| GPT-5.2 | 27/37 (86%) | 30/37 (86%) | +0pp | archive_create_extract, complex_todo_app, data_log_summarize, pipe_dedup_merge |
+| Sonnet 4→4.6 | 34/37 (97%) | 33/37 (95%) | -2pp | json_to_csv_export, script_health_check |
+| GPT-5.3-Codex | — | 35/37 (97%) | NEW | — |
+
+Note: Sonnet upgraded from 4 to 4.6 between releases; delta reflects both interpreter and model changes.
+GPT-5.2 gained 3 more tasks despite unchanged percentage due to rounding.
+
+#### Per-Category Comparison
+
+| Category | Haiku 4.5 | Sonnet 4.6 | Opus 4.6 | GPT-5.3-Codex | GPT-5.2 |
+|----------|-----------|------------|----------|---------------|---------|
+| archive_operations | **100%** | 50% | **100%** | **100%** | 50% |
+| build_simulation | **100%** | 50% | 50% | 50% | 0% |
+| code_search | **100%** | **100%** | **100%** | **100%** | **100%** |
+| complex_tasks | **100%** | **100%** | 67% | **100%** | 50% |
+| config_management | 50% | 50% | 50% | 0% | 0% |
+| data_transformation | **100%** | **100%** | **100%** | 67% | 83% |
+| database_operations | 50% | **100%** | 50% | **100%** | **100%** |
+| environment | **100%** | **100%** | **100%** | **100%** | **100%** |
+| error_recovery | **100%** | **100%** | **100%** | **100%** | **100%** |
+| file_operations | 75% | 50% | 75% | 75% | 75% |
+| json_processing | **100%** | **100%** | 88% | **100%** | 88% |
+| pipelines | **100%** | 80% | **100%** | **100%** | 80% |
+| scripting | 86% | 57% | 86% | 86% | 43% |
+| system_info | **100%** | 50% | **100%** | **100%** | **100%** |
+| text_processing | **100%** | **100%** | **100%** | **100%** | 83% |
+
+#### Failure Analysis
+
+| Task | Haiku 4.5 | Sonnet 4.6 | Opus 4.6 | GPT-5.3-Codex | GPT-5.2 | Root Cause |
+|------|-----------|------------|----------|---------------|---------|------------|
+| config_ini_merge | FAIL | FAIL | FAIL | FAIL | FAIL | INI merging requires complex awk — models struggle with section-aware logic |
+| file_path_organizer | FAIL | FAIL | FAIL | FAIL | FAIL | Models burn turns on edge cases, delete own work |
+| build_script_generator | PASS | FAIL | FAIL | FAIL | FAIL | Complex Makefile-like dependency graph generation |
+| script_getopts_parser | FAIL | FAIL | FAIL | PASS | FAIL | getopts/wc interaction produces wrong output |
+| archive_selective | PASS | FAIL | PASS | PASS | FAIL | tar extraction content mismatch |
+| complex_release_notes | PASS | PASS | FAIL | PASS | FAIL | Model exhausts turn budget |
+| complex_todo_app | PASS | PASS | FAIL | PASS | PASS | Opus exit code issue |
+| json_to_csv_export | PASS | PASS | FAIL | PASS | FAIL | jq `@csv` quoting edge case |
+| sysinfo_env_report | PASS | FAIL | PASS | PASS | PASS | Sonnet env output format |
+| pipe_process_sub | PASS | FAIL | PASS | PASS | PASS | Sonnet process substitution approach |
+| data_column_transform | PASS | PASS | PASS | FAIL | PASS | Codex awk column formatting |
+| data_regex_extract | PASS | PASS | PASS | FAIL | FAIL | BASH_REMATCH extraction approach |
+| config_env_template | PASS | PASS | PASS | FAIL | FAIL | Template variable substitution |
+
+#### Model Behavior
+
+- **Haiku 4.5** leads at 54/58 (97%) — perfect 37/37 on the v0.1.7 task subset, strong across all categories
+- **GPT-5.3-Codex** impressive 51/58 (91%) — matches Opus despite using fewer tool calls; excels at complex tasks and JSON
+- **Opus 4.6** solid 50/58 (91%) — highest tool call success rate tied with Haiku; struggles with turn-budget-intensive tasks
+- **Sonnet 4.6** at 48/58 (93%) — weakest on scripting (57%) and system_info (50%); triggers bashkit awk Unicode panic on some tasks
+- **GPT-5.2** at 41/58 (77%) — lowest tool call success (67%), weakest on build_simulation (0%), config_management (0%), scripting (43%)
+
+### Previous Results
+
+<details>
+<summary>2026-02-27 — Expanded Dataset (52 tasks)</summary>
 
 Dataset expanded from 37 to 52 tasks with 2 new categories (code_search, environment) and new
 tasks in existing categories (heredoc, getopts, associative arrays, process substitution, xargs,
@@ -72,62 +156,7 @@ Haiku 4.5 and GPT-5.2 ran on full 52-task dataset. Sonnet 4.6 and Opus 4.6 ran p
 
 † Partial run — API credits exhausted. Covers original 37-task core subset.
 
-#### Per-Category Comparison
-
-Categories with `-` indicate the model did not run those tasks.
-
-| Category | Haiku 4.5 | Sonnet 4.6 | Opus 4.6 | GPT-5.2 |
-|----------|-----------|------------|----------|---------|
-| archive_operations | **100%** | 50% | **100%** | 50% |
-| code_search | 50% | - | - | 0% |
-| complex_tasks | **100%** | 67% | 100% | 67% |
-| data_transformation | 83% | **100%** | **100%** | 67% |
-| environment | 50% | - | - | 50% |
-| error_recovery | **100%** | **100%** | **100%** | **100%** |
-| file_operations | 75% | **100%** | **100%** | 50% |
-| json_processing | **100%** | **100%** | **100%** | 75% |
-| pipelines | 80% | **100%** | **100%** | 40% |
-| scripting | 57% | **100%** | **100%** | 43% |
-| system_info | **100%** | 50% | **100%** | **100%** |
-| text_processing | 83% | **100%** | **100%** | 83% |
-
-#### Failure Analysis
-
-| Task | Haiku 4.5 | Sonnet 4.6 | Opus 4.6 | GPT-5.2 | Root Cause |
-|------|-----------|------------|----------|---------|------------|
-| text_heredoc_config | FAIL | - | - | FAIL | bashkit heredoc redirect bug — `cat <<EOF > file` outputs to stdout (#345) |
-| pipe_xargs_batch | FAIL | - | - | FAIL | bashkit xargs doesn't execute commands (#346) |
-| search_find_replace | FAIL | - | - | FAIL | bashkit `$()` word splitting broken in for-loops (#347) |
-| script_function_lib | FAIL | - | - | FAIL | bashkit `tr` character class bug |
-| file_path_organizer | FAIL | - | - | FAIL | Model burns turns on edge cases, deletes own work |
-| script_getopts_parser | FAIL | - | - | FAIL | getopts/wc interaction — wrong output |
-| script_assoc_array | FAIL | - | - | FAIL | Associative array iteration format mismatch |
-| env_source_export | FAIL | - | - | FAIL | Source/export propagation incomplete |
-| data_regex_extract | FAIL | - | - | PASS | Haiku BASH_REMATCH extraction off-by-one |
-| archive_selective | PASS | FAIL | - | FAIL | tar extraction content mismatch |
-| sysinfo_env_report | PASS | FAIL | - | PASS | Sonnet env output format |
-| complex_diff_report | PASS | FAIL | - | PASS | Sonnet diff report format |
-| pipe_process_sub | PASS | - | - | FAIL | GPT process substitution approach |
-| pipe_dedup_merge | PASS | - | - | FAIL | GPT misses entries from second file |
-| complex_todo_app | PASS | - | - | FAIL | GPT exit code 2 on final call |
-| complex_release_notes | PASS | - | - | FAIL | GPT exhausts turn budget |
-
-#### New Interpreter Bugs Surfaced
-
-| Bug | Issue | Affected Tasks |
-|-----|-------|---------------|
-| Heredoc redirect to file (`cat <<EOF > file`) | #345 | text_heredoc_config |
-| xargs doesn't execute commands | #346 | pipe_xargs_batch |
-| Word splitting on `$()` in for-loops | #347 | search_find_replace |
-
-#### Model Behavior
-
-- **Opus 4.6** perfect 23/23 (100%) on the tasks it ran — strong across all original categories
-- **Sonnet 4.6** first eval for this model, 23/26 (94%) — new failures on archive_selective and sysinfo_env_report
-- **Haiku 4.5** best on full dataset at 43/52 (92%) — new tasks expose bashkit interpreter gaps more than model gaps
-- **GPT-5.2** 32/52 (79%) — weakest on pipelines (40%) and scripting (43%), struggles with bash-specific patterns
-
-### Previous Results
+</details>
 
 <details>
 <summary>2026-02-27 — GPT-5.3-Codex via Responses API (37 tasks)</summary>
