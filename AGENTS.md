@@ -94,6 +94,12 @@ just pre-pr       # Pre-PR checks
 - Tests: `pytest crates/bashkit-python/tests/ -v` (requires `maturin develop` first)
 - CI: `.github/workflows/python.yml` (lint, test on 3.9/3.12/3.13, build wheel)
 
+### Shipping
+
+"Ship" means: implement with extensive test coverage (positive and negative paths), then complete the full Pre-PR Checklist (especially smoke testing impacted functionality), create PR, and merge when CI is green.
+
+Use the `/ship` command (`.claude/commands/ship.md`) to execute the complete shipping workflow. For "fix and ship" requests: implement the fix first, then run `/ship`.
+
 ### Pre-PR Checklist
 
 1. `just pre-pr` (runs 2-4 automatically)
