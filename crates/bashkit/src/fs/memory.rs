@@ -694,7 +694,10 @@ impl InMemoryFs {
         let mut entries = self.entries.write().unwrap();
 
         // Check write limits (file size, file count, total bytes)
-        if self.check_write_limits(&entries, &path, content.len()).is_err() {
+        if self
+            .check_write_limits(&entries, &path, content.len())
+            .is_err()
+        {
             return;
         }
 
