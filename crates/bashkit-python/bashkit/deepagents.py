@@ -13,6 +13,7 @@ Use together for shared VFS:
 
 from __future__ import annotations
 
+import secrets
 import shlex
 import uuid
 from datetime import datetime, timezone
@@ -47,6 +48,17 @@ except ImportError:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _build_write_cmd(file_path: str, content: str) -> str:
+    """Build a heredoc command with a randomized delimiter to prevent injection.
+
+    A fixed delimiter like BASHKIT_EOF can be terminated early by content
+    containing that literal string on its own line. Using a random suffix
+    makes it infeasible for content to match the delimiter.
+    """
+    delimiter = f"BASHKIT_EOF_{secrets.token_hex(8)}"
+    return f"cat > {shlex.quote(file_path)} << '{delimiter}'\n{content}\n{delimiter}"
 
 
 def _make_bash_tool(bash_instance: NativeBashTool):
@@ -196,7 +208,7 @@ if DEEPAGENTS_AVAILABLE:
             return self.read(file_path, offset, limit)
 
         def write(self, file_path: str, content: str) -> WriteResult:
-            cmd = f"cat > {shlex.quote(file_path)} << 'BASHKIT_EOF'\n{content}\nBASHKIT_EOF"
+            cmd = _build_write_cmd(file_path, content)
             result = self._bash.execute_sync(cmd)
             return WriteResult(error=result.stderr if result.exit_code != 0 else None, path=file_path)
 
