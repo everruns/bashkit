@@ -34,24 +34,22 @@ pip install 'bashkit[pydantic-ai]'
 
 ```python
 import asyncio
-from bashkit import BashTool
+from bashkit import Bash
 
 async def main():
-    tool = BashTool()
+    bash = Bash()
 
     # Simple command
-    result = await tool.execute("echo 'Hello, World!'")
+    result = await bash.execute("echo 'Hello, World!'")
     print(result.stdout)  # Hello, World!
 
     # Pipeline
-    result = await tool.execute("echo -e 'banana\\napple\\ncherry' | sort")
+    result = await bash.execute("echo -e 'banana\\napple\\ncherry' | sort")
     print(result.stdout)  # apple\nbanana\ncherry
 
-    # Virtual filesystem
-    result = await tool.execute("""
-        echo 'data' > /tmp/file.txt
-        cat /tmp/file.txt
-    """)
+    # Virtual filesystem persists between calls
+    await bash.execute("echo 'data' > /tmp/file.txt")
+    result = await bash.execute("cat /tmp/file.txt")
     print(result.stdout)  # data
 
 asyncio.run(main())
@@ -70,7 +68,7 @@ print(result.stdout)
 ### Configuration
 
 ```python
-tool = BashTool(
+bash = Bash(
     username="agent",           # Custom username (whoami)
     hostname="sandbox",         # Custom hostname
     max_commands=1000,          # Limit total commands
@@ -109,9 +107,35 @@ bash_tool = create_bash_tool()
 # Use with any PydanticAI agent
 ```
 
+## ScriptedTool — Multi-Tool Orchestration
+
+Compose Python callbacks as bash builtins. An LLM writes a single bash script that pipes, loops, and branches across all registered tools.
+
+```python
+from bashkit import ScriptedTool
+
+def get_user(params, stdin=None):
+    return '{"id": 1, "name": "Alice"}'
+
+tool = ScriptedTool("api")
+tool.add_tool("get_user", "Fetch user by ID",
+    callback=get_user,
+    schema={"type": "object", "properties": {"id": {"type": "integer"}}})
+
+result = tool.execute_sync("get_user --id 1 | jq -r '.name'")
+print(result.stdout)  # Alice
+```
+
+## Features
+
+- **Sandboxed, in-process execution**: All commands run in isolation with a virtual filesystem
+- **68+ built-in commands**: echo, cat, grep, sed, awk, jq, curl, find, and more
+- **Full bash syntax**: Variables, pipelines, redirects, loops, functions, arrays
+- **Resource limits**: Protect against infinite loops and runaway scripts
+
 ## API Reference
 
-### BashTool
+### Bash
 
 - `execute(commands: str) -> ExecResult` — execute commands asynchronously
 - `execute_sync(commands: str) -> ExecResult` — execute commands synchronously
