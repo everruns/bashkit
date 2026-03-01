@@ -570,6 +570,7 @@ fn guess_mime(path: &str) -> String {
 }
 
 /// Resolve a redirect URL which may be relative.
+#[cfg(feature = "http_client")]
 fn resolve_redirect_url(base: &str, location: &str) -> String {
     if location.starts_with("http://") || location.starts_with("https://") {
         location.to_string()
