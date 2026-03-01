@@ -848,3 +848,47 @@ def test_bashtool_execute_sync_releases_gil():
     assert not t1.is_alive(), "Thread 1 deadlocked (GIL not released)"
     assert errors[0] is None, f"Thread 0 error: {errors[0]}"
     assert errors[1] is None, f"Thread 1 error: {errors[1]}"
+
+
+# ===========================================================================
+# Runtime reuse (issue #414)
+# ===========================================================================
+
+
+def test_bash_rapid_sync_calls_no_resource_exhaustion():
+    """Rapid execute_sync calls reuse a single runtime (no thread/fd leak)."""
+    bash = Bash()
+    for i in range(200):
+        r = bash.execute_sync(f"echo {i}")
+        assert r.exit_code == 0
+        assert r.stdout.strip() == str(i)
+
+
+def test_bashtool_rapid_sync_calls_no_resource_exhaustion():
+    """Rapid execute_sync calls reuse a single runtime (no thread/fd leak)."""
+    tool = BashTool()
+    for i in range(200):
+        r = tool.execute_sync(f"echo {i}")
+        assert r.exit_code == 0
+        assert r.stdout.strip() == str(i)
+
+
+def test_bashtool_rapid_reset_no_resource_exhaustion():
+    """Rapid reset calls reuse a single runtime (no thread/fd leak)."""
+    tool = BashTool()
+    for _ in range(200):
+        tool.reset()
+    # After many resets, tool still works
+    r = tool.execute_sync("echo ok")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "ok"
+
+
+def test_scripted_tool_rapid_sync_calls_no_resource_exhaustion():
+    """Rapid execute_sync calls on ScriptedTool reuse a single runtime."""
+    tool = ScriptedTool("api")
+    tool.add_tool("ping", "Ping", callback=lambda p, s=None: "pong\n")
+    for i in range(200):
+        r = tool.execute_sync("ping")
+        assert r.exit_code == 0
+        assert r.stdout.strip() == "pong"

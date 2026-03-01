@@ -165,6 +165,9 @@ impl ExecResult {
 #[allow(dead_code)]
 pub struct PyBash {
     inner: Arc<Mutex<Bash>>,
+    /// Shared tokio runtime — reused across all sync calls to avoid
+    /// per-call OS thread/fd exhaustion (issue #414).
+    rt: tokio::runtime::Runtime,
     username: Option<String>,
     hostname: Option<String>,
     max_commands: Option<u64>,
@@ -201,8 +204,14 @@ impl PyBash {
 
         let bash = builder.build();
 
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))?;
+
         Ok(Self {
             inner: Arc::new(Mutex::new(bash)),
+            rt,
             username,
             hostname,
             max_commands,
@@ -236,11 +245,9 @@ impl PyBash {
     /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
     fn execute_sync(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
         let inner = self.inner.clone();
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
         py.detach(|| {
-            rt.block_on(async move {
+            self.rt.block_on(async move {
                 let mut bash = inner.lock().await;
                 match bash.exec(&commands).await {
                     Ok(result) => Ok(ExecResult {
@@ -264,11 +271,9 @@ impl PyBash {
     /// Releases GIL before blocking on tokio to prevent deadlock.
     fn reset(&self, py: Python<'_>) -> PyResult<()> {
         let inner = self.inner.clone();
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
         py.detach(|| {
-            rt.block_on(async move {
+            self.rt.block_on(async move {
                 let mut bash = inner.lock().await;
                 let builder = Bash::builder();
                 *bash = builder.build();
@@ -318,6 +323,9 @@ impl PyBash {
 #[allow(dead_code)]
 pub struct BashTool {
     inner: Arc<Mutex<Bash>>,
+    /// Shared tokio runtime — reused across all sync calls to avoid
+    /// per-call OS thread/fd exhaustion (issue #414).
+    rt: tokio::runtime::Runtime,
     username: Option<String>,
     hostname: Option<String>,
     max_commands: Option<u64>,
@@ -354,8 +362,14 @@ impl BashTool {
 
         let bash = builder.build();
 
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))?;
+
         Ok(Self {
             inner: Arc::new(Mutex::new(bash)),
+            rt,
             username,
             hostname,
             max_commands,
@@ -387,11 +401,9 @@ impl BashTool {
     /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
     fn execute_sync(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
         let inner = self.inner.clone();
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
         py.detach(|| {
-            rt.block_on(async move {
+            self.rt.block_on(async move {
                 let mut bash = inner.lock().await;
                 match bash.exec(&commands).await {
                     Ok(result) => Ok(ExecResult {
@@ -414,11 +426,9 @@ impl BashTool {
     /// Releases GIL before blocking on tokio to prevent deadlock.
     fn reset(&self, py: Python<'_>) -> PyResult<()> {
         let inner = self.inner.clone();
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
         py.detach(|| {
-            rt.block_on(async move {
+            self.rt.block_on(async move {
                 let mut bash = inner.lock().await;
                 let builder = Bash::builder();
                 *bash = builder.build();
@@ -521,6 +531,9 @@ pub struct ScriptedTool {
     short_desc: Option<String>,
     tools: Vec<PyToolEntry>,
     env_vars: Vec<(String, String)>,
+    /// Shared tokio runtime — reused across all sync calls to avoid
+    /// per-call OS thread/fd exhaustion (issue #414).
+    rt: tokio::runtime::Runtime,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
 }
@@ -594,15 +607,21 @@ impl ScriptedTool {
         short_description: Option<String>,
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
-    ) -> Self {
-        Self {
+    ) -> PyResult<Self> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))?;
+
+        Ok(Self {
             name,
             short_desc: short_description,
             tools: Vec::new(),
             env_vars: Vec::new(),
+            rt,
             max_commands,
             max_loop_iterations,
-        }
+        })
     }
 
     /// Register a tool command.
@@ -667,11 +686,9 @@ impl ScriptedTool {
     /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
     fn execute_sync(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
         let mut tool = self.build_rust_tool();
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
         let resp = py.detach(|| {
-            rt.block_on(async move {
+            self.rt.block_on(async move {
                 tool.execute(ToolRequest {
                     commands,
                     timeout_ms: None,
