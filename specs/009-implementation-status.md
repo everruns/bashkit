@@ -390,6 +390,28 @@ Default limits (configurable):
 
 ## Testing
 
+### Security Tests
+
+**Unicode byte-boundary tests:** 68 tests in `unicode_security_tests.rs`
+
+| Section | Tests | Component | Verified |
+|---------|-------|-----------|----------|
+| Awk byte-boundary | 15 | `awk.rs` | Panics caught by catch_unwind |
+| Sed byte-boundary | 8 | `sed.rs` | Panics caught by catch_unwind |
+| Expr byte-boundary | 6 | `expr.rs` | Panics caught by catch_unwind |
+| Printf byte-boundary | 5 | `printf.rs` | Panics caught by catch_unwind |
+| Cut/tr byte-boundary | 6 | `cuttr.rs` | Silent data loss |
+| Interpreter byte-boundary | 2 | `interpreter/mod.rs` | Wrong result, no panic |
+| Sed extended | 7 | `sed.rs` | Panics caught |
+| Zero-width chars | 5 | VFS path validation | Correct rejection |
+| Homoglyph confusion | 4 | VFS | Accepted risk |
+| Normalization | 3 | VFS | Matches Linux behavior |
+| Combining marks | 4 | Builtins | Length limits bound damage |
+| Bidi/tag/annotation | 3 | Various | Detection gaps documented |
+| Cross-component E2E | 5 | Pipeline | End-to-end multi-byte flows |
+
+See [006-threat-model.md](006-threat-model.md) TM-UNI-001 through TM-UNI-019.
+
 ### Comparison with Real Bash
 
 ```bash
