@@ -546,7 +546,33 @@ impl InMemoryFs {
     /// # Ok(())
     /// # }
     /// ```
+    // THREAT[TM-ESC-012]: Enforce VFS limits to prevent bypass via restore()
     pub fn restore(&self, snapshot: &VfsSnapshot) {
+        // Validate ALL snapshot entries before clearing existing state.
+        // If any validation fails, return early WITHOUT clearing.
+        let mut total_bytes = 0u64;
+        let mut file_count = 0u64;
+
+        for entry in &snapshot.entries {
+            if self.limits.validate_path(&entry.path).is_err() {
+                return;
+            }
+            if let VfsEntryKind::File { content } = &entry.kind {
+                if self.limits.check_file_size(content.len() as u64).is_err() {
+                    return;
+                }
+                total_bytes += content.len() as u64;
+                file_count += 1;
+            }
+        }
+
+        if total_bytes > self.limits.max_total_bytes {
+            return;
+        }
+        if self.limits.check_file_count(file_count).is_err() {
+            return;
+        }
+
         let mut entries = self.entries.write().unwrap();
         entries.clear();
 
@@ -655,10 +681,25 @@ impl InMemoryFs {
     /// // Add a readonly file
     /// fs.add_file("/etc/version", "1.0.0", 0o444);
     /// ```
+    // THREAT[TM-ESC-012]: Enforce VFS limits to prevent bypass via add_file()
     pub fn add_file(&self, path: impl AsRef<Path>, content: impl AsRef<[u8]>, mode: u32) {
         let path = Self::normalize_path(path.as_ref());
         let content = content.as_ref();
+
+        // Validate path before acquiring write lock
+        if self.limits.validate_path(&path).is_err() {
+            return;
+        }
+
         let mut entries = self.entries.write().unwrap();
+
+        // Check write limits (file size, file count, total bytes)
+        if self
+            .check_write_limits(&entries, &path, content.len())
+            .is_err()
+        {
+            return;
+        }
 
         // Ensure parent directories exist
         if let Some(parent) = path.parent() {
@@ -1517,5 +1558,43 @@ mod tests {
 
         let content = fs.read_file(Path::new("/tmp/file.txt")).await.unwrap();
         assert_eq!(content, b"updated");
+    }
+
+    // --- #406: VFS limit bypass tests (TM-ESC-012) ---
+
+    #[tokio::test]
+    async fn test_add_file_respects_file_size_limit() {
+        let limits = FsLimits {
+            max_file_size: 100,
+            ..FsLimits::default()
+        };
+        let fs = InMemoryFs::with_limits(limits);
+        fs.add_file("/tmp/huge.bin", vec![0u8; 200], 0o644);
+        assert!(!fs.exists(Path::new("/tmp/huge.bin")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_add_file_respects_total_bytes_limit() {
+        let limits = FsLimits {
+            max_total_bytes: 50,
+            ..FsLimits::default()
+        };
+        let fs = InMemoryFs::with_limits(limits);
+        fs.add_file("/tmp/big.bin", vec![0u8; 60], 0o644);
+        assert!(!fs.exists(Path::new("/tmp/big.bin")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_restore_respects_file_size_limit() {
+        let unlimited = InMemoryFs::with_limits(FsLimits::unlimited());
+        unlimited.add_file("/tmp/huge.bin", vec![0u8; 200], 0o644);
+        let snapshot = unlimited.snapshot();
+
+        let limited = InMemoryFs::with_limits(FsLimits {
+            max_file_size: 100,
+            ..FsLimits::default()
+        });
+        limited.restore(&snapshot);
+        assert!(!limited.exists(Path::new("/tmp/huge.bin")).await.unwrap());
     }
 }
