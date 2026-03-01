@@ -29,6 +29,7 @@ All threats use a stable ID format: `TM-<CATEGORY>-<NUMBER>`
 | TM-GIT | Git Security | Repository access, identity leak, remote operations |
 | TM-LOG | Logging Security | Sensitive data in logs, log injection, log volume attacks |
 | TM-PY | Python Security | Embedded Python sandbox escape, VFS isolation, resource limits |
+| TM-UNI | Unicode Security | Byte-boundary panics, invisible chars, homoglyphs, normalization |
 
 ### Adding New Threats
 
@@ -1018,6 +1019,15 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-INJ-011 | Cyclic nameref silent resolution | Read/write unintended variables | Detect cycles, error |
 | TM-PY-027 | py_to_json unbounded recursion | Stack overflow | Add depth counter |
 | TM-DOS-040 | Integer truncation on 32-bit | Size check bypass | Use try_from() |
+| TM-UNI-001 | Awk parser byte-boundary panic on Unicode | Silent builtin failure on valid input | Fix awk parser to use char-boundary-safe indexing |
+| TM-UNI-002 | Sed parser byte-boundary issues | Silent builtin failure on valid input | Audit and fix sed byte-indexing |
+| TM-UNI-003 | Zero-width chars in filenames | Invisible/confusable filenames | Extend `find_unsafe_path_char()` |
+| TM-UNI-011 | Tag characters in filenames | Invisible content in filenames | Extend `find_unsafe_path_char()` |
+| TM-UNI-015 | Expr `substr` byte-boundary panic | Silent failure on multi-byte substr | Fix to use char-boundary-safe indexing (issue #434) |
+| TM-UNI-016 | Printf precision mid-char panic | Silent failure on multi-byte precision truncation | Use `is_char_boundary()` before slicing (issue #435) |
+| TM-UNI-017 | Cut/tr byte-level char set parsing | Multi-byte chars silently dropped in tr specs | Switch from `as_bytes()` to char iteration (issue #436) |
+| TM-UNI-018 | Interpreter arithmetic byte/char confusion | Wrong operator detection on multi-byte expressions | Use `char_indices()` instead of `.find()` + `.chars().nth()` (issue #437) |
+| TM-UNI-019 | Network allowlist byte/char confusion | Wrong path boundary check on multi-byte URLs | Use byte offset consistently in URL matching (issue #438) |
 
 ### Accepted (Low Priority)
 
@@ -1026,6 +1036,10 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-011 | Symlinks not followed | Functionality gap | By design - prevents symlink attacks |
 | TM-DOS-025 | Regex backtracking | CPU exhaustion | Regex crate has internal limits |
 | TM-DOS-033 | AWK unbounded loops | CPU exhaustion | 30s timeout backstop |
+| TM-UNI-004 | Zero-width chars in variable names | Variable confusion | Matches Bash behavior |
+| TM-UNI-006 | Homoglyph filenames | Visual confusion | Impractical to fully detect |
+| TM-UNI-008 | Normalization bypass | Duplicate filenames | Matches Linux FS behavior |
+| TM-UNI-014 | Bidi overrides in script source | Trojan Source | Scripts are untrusted by design |
 
 ---
 
@@ -1069,6 +1083,8 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Log injection prevention | TM-LOG-005, TM-LOG-006 | `logging.rs` | Yes |
 | Log value truncation | TM-LOG-007, TM-LOG-008 | `logging.rs` | Yes |
 | Python resource limits | TM-PY-001 to TM-PY-003 | `builtins/python.rs` | Yes |
+| Path char validation (bidi) | TM-DOS-015, TM-UNI-003, TM-UNI-011 | `fs/limits.rs` | Partial (bidi yes, zero-width/tags no) |
+| Builtin panic catching | TM-INT-001, TM-UNI-001, TM-UNI-002, TM-UNI-015, TM-UNI-016, TM-UNI-017 | `interpreter/mod.rs` | Yes (catch_unwind) |
 
 ### Open Controls (From 2026-03 Security Audit)
 
@@ -1136,6 +1152,8 @@ FsLimits::new()
 | Use network allowlist | TM-INF-010, TM-NET-* | Default denies all network access |
 | Sanitize output | TM-INJ-008 | Filter terminal escapes if displaying output |
 | Set appropriate limits | TM-DOS-* | Tune limits for your use case |
+| Sanitize displayed filenames | TM-UNI-003, TM-UNI-006, TM-UNI-011 | Strip zero-width/invisible/confusable chars before showing to users |
+| Bidi sanitize script display | TM-UNI-014 | Strip bidi overrides if displaying script source to code reviewers |
 
 ---
 
@@ -1153,15 +1171,21 @@ FsLimits::new()
 | Parser edge cases | ✅ | ❌ | ✅ | ✅ | ✅ |
 | Custom builtin errors | ✅ | ✅ | ✅ | - | - |
 | Logging security | ✅ | ❌ | ✅ | - | ✅ |
+| Unicode security | ✅ | ❌ | ✅ | ❌ | ❌ |
 
 **Test Files**:
 - `tests/threat_model_tests.rs` - 117 threat-based security tests
+- `tests/unicode_security_tests.rs` - Unicode security tests (TM-UNI-*)
 - `tests/security_failpoint_tests.rs` - Fail-point injection tests
 - `tests/builtin_error_security_tests.rs` - Custom builtin error handling tests (39 tests)
 - `tests/network_security_tests.rs` - HTTP security tests (53 tests: allowlist, size limits, timeouts)
 - `tests/logging_security_tests.rs` - Logging security tests (redaction, injection)
 
-**Recommendation**: Add cargo-fuzz for parser and input handling.
+**Recommendations**:
+- Add cargo-fuzz for parser and input handling
+- Add proptest for Unicode string generation against builtin parsers (TM-UNI-001, TM-UNI-002, TM-UNI-015, TM-UNI-016, TM-UNI-017)
+- Add fuzz target for awk/sed/expr/printf/cut/tr with multi-byte Unicode input
+- Add property tests for network allowlist with multi-byte URL paths (TM-UNI-019)
 
 ---
 
@@ -1370,6 +1394,301 @@ filesystem.
 
 ---
 
+## Unicode Security (TM-UNI)
+
+Unicode handling presents a broad attack surface in any interpreter that processes
+untrusted text input. Bashkit processes Unicode in script source, variable values,
+filenames, and builtin arguments (awk/sed/grep patterns). This section catalogs
+Unicode-specific threats beyond the path-level protections in TM-DOS-015.
+
+**Context**: AI agents (Bashkit's primary users) frequently generate Unicode content —
+LLMs produce box-drawing characters, emoji, CJK, accented text, and other multi-byte
+sequences in comments, strings, and data. Issue #395 demonstrated that the awk parser
+panics on multi-byte Unicode because it conflates character positions with byte offsets.
+
+### 11.1 Builtin Parser Byte-Boundary Safety
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-UNI-001 | Byte-boundary panic in awk | `awk '{print}' <<< "─ comment"` — multi-byte char causes `self.input[self.pos..]` panic | `catch_unwind` (TM-INT-001) catches the panic; root fix requires char-boundary-safe indexing | **PARTIAL** |
+| TM-UNI-002 | Byte-boundary panic in sed | `sed 's/─/x/' file` — similar byte-offset slicing | `catch_unwind` catches; needs audit of `&s[start..i]` patterns | **PARTIAL** |
+| TM-UNI-015 | Byte-boundary panic in expr | `expr substr "café" 4 1` — char position used as byte index in string slice | `catch_unwind` catches; `.len()` returns bytes but used as char count | **PARTIAL** |
+| TM-UNI-016 | Byte-boundary panic in printf | `printf "%.1s" "é"` — precision truncation slices mid-character | `catch_unwind` catches; `&s[..prec]` without boundary check | **PARTIAL** |
+| TM-UNI-017 | Byte-level char set in cut/tr | `echo "café" \| tr 'é' 'x'` — `as_bytes()` iteration drops multi-byte chars | `catch_unwind` catches; `.find()` byte offsets mixed with string slicing | **PARTIAL** |
+| TM-UNI-018 | Byte/char confusion in arithmetic | `((α=1))` — `find('=')` byte offset used as char index in `.chars().nth()` | Wrong character inspection; no panic but incorrect operator detection | **PARTIAL** |
+| TM-UNI-019 | Byte/char confusion in URL matching | Allowlist path with multi-byte chars — `pattern_path.len()` bytes used as char index | Wrong path boundary check; no panic but incorrect allow/deny decision | **PARTIAL** |
+
+**Current Risk**: MEDIUM — `catch_unwind` (TM-INT-001) prevents process crash for all
+builtins, but they silently fail instead of processing the input correctly. Scripts get
+unexpected "builtin failed unexpectedly" errors on valid Unicode input. Interpreter-level
+issues (TM-UNI-018) produce wrong results without panic. Network allowlist issues
+(TM-UNI-019) may produce incorrect allow/deny decisions on multi-byte URL paths.
+
+**Root Cause**: A pervasive pattern across multiple components: code uses `.find()`,
+`.len()`, or manual counters that return **byte offsets** but then passes these values
+to APIs expecting **character indices** (`.chars().nth()`) or uses them where char-based
+counting is needed. For ASCII this is coincidentally correct. For multi-byte UTF-8 (2–4
+bytes per char), character position N does not equal byte offset N.
+
+**Affected Code**:
+
+*awk.rs (50+ instances — CRITICAL):*
+```
+Line 449:  self.input[start..self.pos].to_string()     // read_identifier
+Line 453:  self.input[self.pos..].starts_with(keyword)  // matches_keyword
+Line 1532: self.input[start..self.pos].to_string()      // parse_primary
+Line 1596: self.input[start..self.pos]                   // parse_number
+Lines 397-1564: 69 instances of .chars().nth(pos) where pos is byte offset
+Lines 1006-1430: ~10 operator checks using self.input[self.pos..]
+```
+
+*sed.rs (14 instances):*
+```
+Lines 293-299: split_sed_commands() — chars().enumerate() index as byte offset
+Lines 376-382: parse_address() — byte offset arithmetic
+Lines 455, 458: parse_sed_command() — .nth(1) + [2..] assumes single-byte
+Lines 547-566: commands a/i/c — .len() > 1 checked but .chars().nth(1) may fail
+Lines 574-609: rest[1..] assumes single-byte first char
+```
+
+*expr.rs (3 instances):*
+```
+Line 46:  args[1].len() — returns bytes, used as character count for `length`
+Line 57:  pos > s.len() — byte length used as character position bound
+Line 62:  s[start..end] — char positions (1-based user input) used as byte indices
+```
+
+*printf.rs (1 instance):*
+```
+Line 165: &s[..s.len().min(prec)] — prec may land mid-character
+```
+
+*cuttr.rs (expand_char_set):*
+```
+Lines 405-410: as_bytes() iteration — all non-ASCII chars treated as individual bytes
+Line 410: spec[i + 2..].find(":]") byte offset mixed with byte-based slicing (safe for ASCII class names but fragile)
+```
+
+*interpreter/mod.rs:*
+```
+Lines 1520, 1524: expr.chars().nth(eq_pos ± 1) where eq_pos from .find('=') is byte offset
+```
+
+*network/allowlist.rs:*
+```
+Line 194: url_path.chars().nth(pattern_path.len()) — byte count used as char index
+```
+
+**Fix Pattern**: Convert all byte/char-confused code to use one of:
+1. `char_indices()` iteration — returns `(byte_offset, char)` pairs
+2. `is_char_boundary()` checks before slicing
+3. Consistent byte-only offsets from `.find()` for slicing
+
+The `logging_impl.rs:truncate()` function demonstrates the correct pattern using
+`is_char_boundary()`.
+
+### 11.2 Zero-Width Character Injection
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-UNI-003 | Zero-width chars in filenames | `touch "/tmp/file\u{200B}name"` — invisible ZWSP creates confusable filenames | `find_unsafe_path_char()` does NOT detect zero-width chars | **UNMITIGATED** |
+| TM-UNI-004 | Zero-width chars in variable names | `\u{200B}PATH=malicious` — invisible char makes variable look like PATH | Not detected; Bash itself allows this | **ACCEPTED** |
+| TM-UNI-005 | Zero-width chars in script source | `echo "pass\u{200B}word"` — invisible char in string literal | Not detected; pass-through is correct Bash behavior | **ACCEPTED** |
+
+**Current Risk**: LOW for filenames (path validation gap), MINIMAL for variables/scripts
+(correct pass-through behavior matches Bash)
+
+**Zero-width characters of concern**:
+- U+200B Zero Width Space (ZWSP)
+- U+200C Zero Width Non-Joiner (ZWNJ)
+- U+200D Zero Width Joiner (ZWJ)
+- U+FEFF Byte Order Mark / Zero Width No-Break Space
+- U+2060 Word Joiner
+- U+180E Mongolian Vowel Separator
+
+**Recommendation**: Extend `find_unsafe_path_char()` to reject zero-width characters in
+filenames (TM-UNI-003). Variable names and script content should pass through as-is to
+match Bash behavior.
+
+### 11.3 Homoglyph / Confusable Characters
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-UNI-006 | Homoglyph filename confusion | `/tmp/tеst.sh` (Cyrillic е U+0435 vs Latin e U+0065) — visually identical filenames with different content | Not detected; full homoglyph detection is impractical | **ACCEPTED** |
+| TM-UNI-007 | Homoglyph variable confusion | `pаth=/evil` (Cyrillic а) vs `path=/safe` (Latin a) | Not detected; matches Bash behavior | **ACCEPTED** |
+
+**Current Risk**: LOW — Bashkit runs untrusted scripts in isolation. Homoglyph confusion
+primarily threatens humans reading code, not automated execution. Full Unicode confusable
+detection (UTS #39) would require large lookup tables and produce false positives on
+legitimate CJK/accented text.
+
+**Decision**: Accept risk. Document that callers displaying filenames or variable names
+to users should apply their own confusable-character detection if needed.
+
+### 11.4 Unicode Normalization
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-UNI-008 | Normalization-based filename bypass | NFC "café" vs NFD "café" (composed é vs e+combining acute) create two distinct files with the same visual name | No normalization applied; matches real filesystem behavior | **ACCEPTED** |
+
+**Current Risk**: LOW — This matches POSIX/Linux filesystem behavior (filenames are opaque
+byte sequences). macOS normalizes to NFD, Linux does not. Bashkit's VFS treats filenames
+as byte-exact strings, consistent with Linux behavior.
+
+**Decision**: Accept risk. Normalization would break round-trip fidelity and is not done by
+real Bash on Linux.
+
+### 11.5 Combining Character Abuse
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-UNI-009 | Excessive combining marks | Filename with 1000 combining diacritical marks on one base char — visual DoS / potential rendering hang | `max_filename_length` (255 bytes) limits total size | **MITIGATED** |
+| TM-UNI-010 | Combining marks in builtin input | `awk` / `grep` pattern with excessive combiners | Execution timeout + builtin parser depth limit | **MITIGATED** |
+
+**Current Risk**: LOW — Existing length limits bound the damage.
+
+### 11.6 Tag Characters and Other Invisibles
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-UNI-011 | Tag character hiding | U+E0001-U+E007F (Tags block) — invisible chars that can conceal content in filenames | `find_unsafe_path_char()` does NOT detect tag chars | **UNMITIGATED** |
+| TM-UNI-012 | Interlinear annotation hiding | U+FFF9-U+FFFB (Interlinear Annotations) — can hide text in filenames | Not detected in paths | **UNMITIGATED** |
+| TM-UNI-013 | Deprecated format chars | U+206A-U+206F (Deprecated formatting) — can cause display confusion | Not detected in paths | **UNMITIGATED** |
+
+**Current Risk**: LOW — These are extremely obscure. Tag characters were deprecated in
+Unicode 5.0. Practical exploitation likelihood is minimal.
+
+**Recommendation**: Extend `find_unsafe_path_char()` to also reject:
+- U+200B-U+200D, U+2060, U+FEFF (zero-width chars, per TM-UNI-003)
+- U+E0001-U+E007F (tag characters)
+- U+FFF9-U+FFFB (interlinear annotations)
+- U+206A-U+206F (deprecated format characters)
+
+### 11.7 Bidi in Script Source
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-UNI-014 | Bidi override in script source | [Trojan Source](https://trojansource.codes/) — RTL overrides in script comments/strings reorder displayed code, hiding malicious logic | Not detected in script input; paths are protected (TM-DOS-015) | **ACCEPTED** |
+
+**Current Risk**: LOW — Bashkit executes untrusted scripts by design. The Trojan Source
+attack targets human code reviewers, not automated execution. Scripts are treated as
+untrusted regardless of visual appearance.
+
+**Decision**: Accept risk. Bidi detection in script source would be defense-in-depth for
+callers who display scripts to users, but is out of scope for Bashkit's core execution
+model. Document as caller responsibility.
+
+### 11.8 Additional Builtin and Component Byte-Boundary Issues
+
+Codebase-wide audit (beyond awk/sed covered in 11.1) found byte/char confusion in
+5 additional components. All share the same root cause: using byte offsets where
+character indices are expected, or vice versa.
+
+| ID | Component | Attack Vector | Root Cause | Status |
+|----|-----------|--------------|------------|--------|
+| TM-UNI-015 | `expr` builtin | `expr substr "café" 4 1` — user-provided char positions used as byte indices; `expr length "café"` returns 5 (bytes) not 4 (chars) | `s[start..end]` with char-position args; `.len()` returns bytes | **PARTIAL** |
+| TM-UNI-016 | `printf` builtin | `printf "%.1s" "é"` — precision 1 slices at byte 1, mid-char | `&s[..s.len().min(prec)]` without `is_char_boundary()` | **PARTIAL** |
+| TM-UNI-017 | `cut`/`tr` builtins | `echo "café" \| tr 'é' 'x'` — multi-byte chars in char set specs broken | `as_bytes()` iteration in `expand_char_set()` treats all input as single-byte | **PARTIAL** |
+| TM-UNI-018 | Interpreter arithmetic | `((αβγ=1))` — `find('=')` byte offset passed to `.chars().nth()` | Byte offset from `.find()` used as char index; wrong char inspected | **PARTIAL** |
+| TM-UNI-019 | Network allowlist | `allow("https://example.com/données/")` — byte length as char index | `pattern_path.len()` (bytes) → `url_path.chars().nth(bytes)` | **PARTIAL** |
+
+**Affected Code (expr.rs)**:
+```
+Line 46:  args[1].len().to_string()      // bytes, not char count
+Line 57:  pos > s.len()                   // byte length as char position bound
+Line 62:  s[start..end].to_string()       // char positions used as byte indices → PANIC
+```
+
+**Affected Code (printf.rs)**:
+```
+Line 165: &s[..s.len().min(prec)]         // prec may land mid-char → PANIC
+```
+
+**Affected Code (cuttr.rs)**:
+```
+Lines 405-410: as_bytes() iteration        // multi-byte chars split into individual bytes
+Line 410: spec[i + 2..].find(":]")         // byte offset (safe for ASCII class names)
+```
+
+**Affected Code (interpreter/mod.rs)**:
+```
+Line 1517: expr.find('=')                  // returns byte offset
+Line 1520: expr.chars().nth(eq_pos - 1)    // byte offset treated as char index
+Line 1524: expr.chars().nth(eq_pos + 1)    // same confusion
+```
+
+**Affected Code (network/allowlist.rs)**:
+```
+Line 194: url_path.chars().nth(pattern_path.len())  // byte count as char index
+```
+
+**Risk Assessment**: MEDIUM for expr/printf (panic risk on valid input, caught by
+`catch_unwind`). LOW-MEDIUM for allowlist (incorrect allow/deny on multi-byte URL paths,
+no panic). LOW for interpreter arithmetic and cut/tr (multi-byte variable names and tr
+specs are rare in practice).
+
+**Safe Components** (confirmed by audit):
+- **Lexer** (`parser/lexer.rs`): Uses `Chars` iterator; `Position::advance()` correctly
+  uses `ch.len_utf8()` for byte offset tracking
+- **wc** (`builtins/wc.rs`): Correctly uses `.len()` for bytes and `.chars().count()`
+  for characters
+- **grep** (`builtins/grep.rs`): Delegates to regex crate which handles Unicode correctly
+- **jq** (`builtins/jq.rs`): Delegates to jaq crate
+- **sort/uniq** (`builtins/sort_uniq.rs`): String comparison-based, no byte indexing
+- **logging** (`logging_impl.rs`): Uses `is_char_boundary()` correctly
+- **python** (`builtins/python.rs`): Shebang strip uses `find('\n')` — newline is ASCII,
+  byte offset safe. No other byte/char manipulation.
+- **Python bindings** (`bashkit-python/src/lib.rs`): PyO3 `String` extraction handles
+  UTF-8 correctly. No manual byte/char manipulation patterns.
+- **eval harness** (`bashkit-eval/src/`): Only uses `Iterator::find` (not `str::find`),
+  `chars().take()` for display truncation, `from_utf8_lossy()` for file content. All safe.
+- **curl** (`builtins/curl.rs`): All `.find()` calls use ASCII delimiters (`:`, `=`).
+  Byte offsets are safe because delimiters are single-byte.
+- **bc** (`builtins/bc.rs`): `find('=')` with ASCII delimiter. Safe.
+- **export** (`builtins/export.rs`): `find('=')` with ASCII delimiter. Safe.
+- **date** (`builtins/date.rs`): `&fmt[1..]` strips ASCII `+`. Safe.
+- **comm** (`builtins/comm.rs`): `arg[1..]` strips ASCII `-`. Safe.
+- **echo** (`builtins/echo.rs`): `arg_str[1..]` strips ASCII `-`. Safe.
+- **archive** (`builtins/archive.rs`): `arg[1..]` strips ASCII `-`. Safe.
+- **base64** (`builtins/base64.rs`): `s[7..]` after `starts_with("--wrap=")` — 7 ASCII bytes. Safe.
+- **scripted_tool** (`scripted_tool/`): No byte/char patterns found.
+
+### Unicode Security Summary
+
+| ID | Threat | Risk | Status | Action |
+|----|--------|------|--------|--------|
+| TM-UNI-001 | Awk parser byte-boundary panic | MEDIUM | PARTIAL | Fix awk parser indexing (issue #395) |
+| TM-UNI-002 | Sed parser byte-boundary panic | MEDIUM | PARTIAL | Fix sed byte-indexing patterns |
+| TM-UNI-003 | Zero-width chars in filenames | LOW | UNMITIGATED | Extend `find_unsafe_path_char()` |
+| TM-UNI-004 | Zero-width chars in variables | MINIMAL | ACCEPTED | Matches Bash behavior |
+| TM-UNI-005 | Zero-width chars in scripts | MINIMAL | ACCEPTED | Correct pass-through |
+| TM-UNI-006 | Homoglyph filenames | LOW | ACCEPTED | Impractical to fully detect |
+| TM-UNI-007 | Homoglyph variables | LOW | ACCEPTED | Matches Bash behavior |
+| TM-UNI-008 | Normalization bypass | LOW | ACCEPTED | Matches Linux FS behavior |
+| TM-UNI-009 | Excessive combining marks (filenames) | LOW | MITIGATED | Length limits bound damage |
+| TM-UNI-010 | Excessive combining marks (builtins) | LOW | MITIGATED | Timeout + depth limits |
+| TM-UNI-011 | Tag character hiding | LOW | UNMITIGATED | Extend path validation |
+| TM-UNI-012 | Interlinear annotation hiding | LOW | UNMITIGATED | Extend path validation |
+| TM-UNI-013 | Deprecated format chars | LOW | UNMITIGATED | Extend path validation |
+| TM-UNI-014 | Bidi in script source | LOW | ACCEPTED | Caller responsibility |
+| TM-UNI-015 | Expr substr byte-boundary panic | MEDIUM | PARTIAL | Fix expr to use char-safe indexing (issue #434) |
+| TM-UNI-016 | Printf precision mid-char panic | MEDIUM | PARTIAL | Use `is_char_boundary()` (issue #435) |
+| TM-UNI-017 | Cut/tr byte-level char set parsing | MEDIUM | PARTIAL | Switch to char-aware iteration (issue #436) |
+| TM-UNI-018 | Interpreter arithmetic byte/char confusion | LOW | PARTIAL | Use `char_indices()` in arithmetic (issue #437) |
+| TM-UNI-019 | Network allowlist byte/char confusion | MEDIUM | PARTIAL | Fix URL path matching to use byte offsets (issue #438) |
+
+### Caller Responsibilities (Unicode)
+
+| Responsibility | Related Threats | Description |
+|---------------|-----------------|-------------|
+| Sanitize displayed filenames | TM-UNI-003, TM-UNI-006, TM-UNI-011 | Strip zero-width/invisible chars before showing filenames to users |
+| Homoglyph detection | TM-UNI-006, TM-UNI-007 | Apply UTS #39 confusable detection if showing script content to users |
+| Bidi sanitization | TM-UNI-014 | Strip bidi overrides from script source before displaying to code reviewers |
+| Validate multi-byte builtin args | TM-UNI-015, TM-UNI-016, TM-UNI-017 | Be aware that expr/printf/cut/tr may fail on non-ASCII input until byte-boundary fixes land |
+| Use ASCII in network allowlist patterns | TM-UNI-019 | Avoid multi-byte chars in allowlist URL patterns until byte/char fix lands |
+
+---
+
 ## References
 
 - `specs/001-architecture.md` - System design
@@ -1377,5 +1696,6 @@ filesystem.
 - `specs/005-security-testing.md` - Fail-point testing
 - `specs/011-python-builtin.md` - Python builtin specification
 - `src/builtins/system.rs` - Hardcoded system builtins
-- `tests/threat_model_tests.rs` - Threat model test suite (117 tests)
+- `tests/threat_model_tests.rs` - Threat model test suite
 - `tests/security_failpoint_tests.rs` - Fail-point security tests
+- `tests/unicode_security_tests.rs` - Unicode security tests (TM-UNI-*)

@@ -390,11 +390,71 @@ let bash = Bash::builder()
 // Commits use virtual identity, never host ~/.gitconfig
 ```
 
+### Unicode Security (TM-UNI-*)
+
+Unicode input from untrusted scripts creates attack surface across the parser, builtins,
+and virtual filesystem. AI agents frequently generate multi-byte Unicode (box-drawing,
+emoji, CJK) that exercises these code paths.
+
+**Byte-Boundary Safety (TM-UNI-001/002/015/016/017):**
+
+Multiple builtins mix byte offsets with character indices, causing panics on multi-byte
+input. All are caught by `catch_unwind` (TM-INT-001) preventing process crash, but the
+builtin silently fails.
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| Awk byte-boundary panic (TM-UNI-001) | Multi-byte chars in awk input | `catch_unwind` catches panic | PARTIAL |
+| Sed byte-boundary panic (TM-UNI-002) | Box-drawing chars in sed pattern | `catch_unwind` catches panic | PARTIAL |
+| Expr substr panic (TM-UNI-015) | `expr substr "café" 4 1` | `catch_unwind` catches panic | PARTIAL |
+| Printf precision panic (TM-UNI-016) | `printf "%.1s" "é"` | `catch_unwind` catches panic | PARTIAL |
+| Cut/tr byte-level parsing (TM-UNI-017) | `tr 'é' 'e'` — multi-byte in char set | `catch_unwind` catches; silent data loss | PARTIAL |
+
+**Additional Byte/Char Confusion:**
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| Interpreter arithmetic (TM-UNI-018) | Multi-byte before `=` in arithmetic | Wrong operator detection; no panic | PARTIAL |
+| Network allowlist (TM-UNI-019) | Multi-byte in allowlist URL path | Wrong path boundary check | PARTIAL |
+| Zero-width in filenames (TM-UNI-003) | Invisible chars create confusable names | Path validation (planned) | UNMITIGATED |
+| Homoglyph confusion (TM-UNI-006) | Cyrillic 'а' vs Latin 'a' in filenames | Accepted risk | ACCEPTED |
+| Normalization bypass (TM-UNI-008) | NFC vs NFD create distinct files | Matches Linux FS behavior | ACCEPTED |
+| Bidi in script source (TM-UNI-014) | RTL overrides hide malicious code | Scripts untrusted by design | ACCEPTED |
+
+**Safe Components (confirmed by full codebase audit):**
+- Lexer: `Chars` iterator with `ch.len_utf8()` tracking
+- wc: Correct `.len()` vs `.chars().count()` usage
+- grep/jq: Delegate to Unicode-aware regex/jaq crates
+- sort/uniq: String comparison, no byte indexing
+- logging: Uses `is_char_boundary()` correctly
+- python: Shebang strip via `find('\n')` — ASCII delimiter, safe
+- Python bindings (bashkit-python): PyO3 `String` extraction, no manual byte/char ops
+- eval harness: `chars().take()`, `from_utf8_lossy()` — all safe patterns
+- curl/bc/export/date/comm/echo/archive/base64: All `.find()` use ASCII delimiters only
+- scripted_tool: No byte/char patterns
+
+**Path Validation:**
+
+Filenames are validated by `find_unsafe_path_char()` which rejects:
+- ASCII control characters (U+0000-U+001F, U+007F)
+- C1 control characters (U+0080-U+009F)
+- Bidi override characters (U+202A-U+202E, U+2066-U+2069)
+
+Normal Unicode (accented, CJK, emoji) is allowed in filenames and script content.
+
+**Caller Responsibility:**
+- Strip zero-width/invisible characters from filenames before displaying to users
+- Apply confusable-character detection (UTS #39) if showing filenames to humans
+- Strip bidi overrides from script source before displaying to code reviewers
+- Be aware that expr/printf/cut/tr may fail on non-ASCII input until fixes land
+- Use ASCII in network allowlist URL patterns until byte/char fix lands
+
 ## Security Testing
 
 Bashkit includes comprehensive security tests:
 
 - **Threat Model Tests**: [`tests/threat_model_tests.rs`][threat_tests] - 117 tests
+- **Unicode Security Tests**: `tests/unicode_security_tests.rs` - TM-UNI-* tests
 - **Nesting Depth Tests**: 18 tests covering positive, negative, misconfiguration,
   and regression scenarios for parser depth attacks
 - **Fail-Point Tests**: [`tests/security_failpoint_tests.rs`][failpoint_tests] - 14 tests
@@ -425,6 +485,7 @@ All threats use stable IDs in the format `TM-<CATEGORY>-<NUMBER>`:
 | TM-LOG | Logging Security |
 | TM-GIT | Git Security |
 | TM-PY | Python/Monty Security |
+| TM-UNI | Unicode Security |
 
 Full threat analysis: [`specs/006-threat-model.md`][spec]
 
