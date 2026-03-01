@@ -19,6 +19,26 @@ Virtual bash interpreter for multi-tenant environments. Written in Rust.
 - **Experimental: Git support** - Virtual git operations on the virtual filesystem (`git` feature)
 - **Experimental: Python support** - Embedded Python interpreter via [Monty](https://github.com/pydantic/monty) (`python` feature)
 
+## Install
+
+```bash
+cargo add bashkit
+```
+
+Or add to `Cargo.toml`:
+
+```toml
+[dependencies]
+bashkit = "0.1"
+```
+
+Optional features:
+
+```bash
+cargo add bashkit --features git      # Virtual git operations
+cargo add bashkit --features python   # Embedded Python interpreter
+```
+
 ## Quick Start
 
 ```rust
