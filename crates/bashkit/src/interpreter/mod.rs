@@ -694,7 +694,14 @@ impl Interpreter {
 
         // Run EXIT trap if registered
         if let Some(trap_cmd) = self.traps.get("EXIT").cloned() {
-            if let Ok(trap_script) = Parser::new(&trap_cmd).parse() {
+            // THREAT[TM-DOS-030]: Propagate interpreter parser limits
+            if let Ok(trap_script) = Parser::with_limits(
+                &trap_cmd,
+                self.limits.max_ast_depth,
+                self.limits.max_parser_operations,
+            )
+            .parse()
+            {
                 let emit_before = self.output_emit_count;
                 if let Ok(trap_result) = self.execute_command_sequence(&trap_script.commands).await
                 {
@@ -837,7 +844,14 @@ impl Interpreter {
                     // Only fire if the subshell set its own EXIT trap (different from parent)
                     let parent_had_same = saved_traps.get("EXIT") == Some(&trap_cmd);
                     if !parent_had_same {
-                        if let Ok(trap_script) = Parser::new(&trap_cmd).parse() {
+                        // THREAT[TM-DOS-030]: Propagate interpreter parser limits
+                        if let Ok(trap_script) = Parser::with_limits(
+                            &trap_cmd,
+                            self.limits.max_ast_depth,
+                            self.limits.max_parser_operations,
+                        )
+                        .parse()
+                        {
                             let emit_before = self.output_emit_count;
                             if let Ok(ref mut res) = result {
                                 if let Ok(trap_result) =
@@ -3624,7 +3638,12 @@ impl Interpreter {
                     self.pipeline_stdin = stdin;
                 }
 
-                let parser = Parser::new(&expanded_cmd);
+                // THREAT[TM-DOS-030]: Propagate interpreter parser limits
+                let parser = Parser::with_limits(
+                    &expanded_cmd,
+                    self.limits.max_ast_depth,
+                    self.limits.max_parser_operations,
+                );
                 let result = match parser.parse() {
                     Ok(s) => self.execute(&s).await,
                     Err(e) => Ok(ExecResult::err(
@@ -4545,7 +4564,12 @@ impl Interpreter {
             }
         };
 
-        let parser = Parser::new(&content);
+        // THREAT[TM-DOS-030]: Propagate interpreter parser limits
+        let parser = Parser::with_limits(
+            &content,
+            self.limits.max_ast_depth,
+            self.limits.max_parser_operations,
+        );
         let script = match parser.parse() {
             Ok(s) => s,
             Err(e) => {
@@ -4610,7 +4634,12 @@ impl Interpreter {
         }
 
         let cmd = args.join(" ");
-        let parser = Parser::new(&cmd);
+        // THREAT[TM-DOS-030]: Propagate interpreter parser limits
+        let parser = Parser::with_limits(
+            &cmd,
+            self.limits.max_ast_depth,
+            self.limits.max_parser_operations,
+        );
         let script = match parser.parse() {
             Ok(s) => s,
             Err(e) => {
@@ -7804,7 +7833,14 @@ impl Interpreter {
     /// Run ERR trap if registered. Appends trap output to stdout/stderr.
     async fn run_err_trap(&mut self, stdout: &mut String, stderr: &mut String) {
         if let Some(trap_cmd) = self.traps.get("ERR").cloned() {
-            if let Ok(trap_script) = Parser::new(&trap_cmd).parse() {
+            // THREAT[TM-DOS-030]: Propagate interpreter parser limits
+            if let Ok(trap_script) = Parser::with_limits(
+                &trap_cmd,
+                self.limits.max_ast_depth,
+                self.limits.max_parser_operations,
+            )
+            .parse()
+            {
                 let emit_before = self.output_emit_count;
                 if let Ok(trap_result) = self.execute_command_sequence(&trap_script.commands).await
                 {
@@ -9373,5 +9409,31 @@ mod tests {
     async fn test_arithmetic_overflow_mul_no_panic() {
         let result = run_script("echo $(( 9223372036854775807 * 2 ))").await;
         assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_eval_respects_parser_limits() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.limits.max_ast_depth = 5;
+        let parser = Parser::new("eval 'echo hello'");
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_source_respects_parser_limits() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        fs.write_file(std::path::Path::new("/tmp/test.sh"), b"echo sourced")
+            .await
+            .unwrap();
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.limits.max_ast_depth = 5;
+        let parser = Parser::new("source /tmp/test.sh");
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "sourced");
     }
 }
