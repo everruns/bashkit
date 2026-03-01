@@ -1,5 +1,74 @@
 # Changelog
 
+## [0.1.8] - 2026-03-01
+
+### Highlights
+
+- Stderr and combined redirects (`2>`, `2>&1`, `&>`) for real-world script compatibility
+- ANSI-C quoting (`$'...'`) and `$"..."` syntax support
+- New builtins: `base64`, `md5sum`/`sha1sum`/`sha256sum`, `find -exec`, `grep -L/--exclude-dir`
+- `jq` enhancements: `setpath`, `leaf_paths`, improved `match`/`scan`
+- Recursive variable deref and array access in arithmetic expressions
+- `awk` user-defined functions, `curl -F` multipart form data
+- `tar -C/-O` flags, `xargs` command execution
+- Per-tool-call `timeout_ms` in ToolRequest
+- 244 new Oils-inspired spec tests
+- 20+ interpreter/parser bug fixes: heredoc pipes, IFS splitting, subshell isolation, exit code truncation, unicode `${#x}`, shift builtin, and more
+
+### What's Changed
+
+* fix(ci): trigger Python publish workflow on release ([#403](https://github.com/everruns/bashkit/pull/403))
+* chore(eval): 2026-02-28 eval run across 5 models with v0.1.7 analysis ([#402](https://github.com/everruns/bashkit/pull/402))
+* feat: process remaining issues (#308, #310, #311, #312, #321, #327, #329, #331, #332, #333, #334) ([#393](https://github.com/everruns/bashkit/pull/393))
+* chore: add rebase hint to process-issues step 9 ([#392](https://github.com/everruns/bashkit/pull/392))
+* fix: reduce skipped spec tests, implement cut/tr features (#309, #314) ([#391](https://github.com/everruns/bashkit/pull/391))
+* fix(ci): switch tarpaulin to LLVM engine to fix coverage failures ([#390](https://github.com/everruns/bashkit/pull/390))
+* fix: implement var operators, IFS splitting, parser errors, nameref, alias ([#389](https://github.com/everruns/bashkit/pull/389))
+* fix(builtins): add jq -R raw input and awk printf parens ([#388](https://github.com/everruns/bashkit/pull/388))
+* chore: update pin-project-lite cargo-vet exemption to 0.2.17 ([#387](https://github.com/everruns/bashkit/pull/387))
+* feat(builtins): implement find -exec command execution ([#386](https://github.com/everruns/bashkit/pull/386))
+* feat(builtins): add grep -L, --exclude-dir, -s, -Z flags ([#385](https://github.com/everruns/bashkit/pull/385))
+* feat(builtins): implement jq setpath, leaf_paths, fix match/scan ([#384](https://github.com/everruns/bashkit/pull/384))
+* fix(parser): handle heredoc pipe ordering and edge cases ([#379](https://github.com/everruns/bashkit/pull/379))
+* fix(interpreter): count unicode chars in ${#x} and add printf \u/\U escapes ([#378](https://github.com/everruns/bashkit/pull/378))
+* feat(interpreter): implement stderr and combined redirects (2>, 2>&1, &>) ([#377](https://github.com/everruns/bashkit/pull/377))
+* fix(interpreter): isolate subshell state for functions, cwd, traps, positional params ([#376](https://github.com/everruns/bashkit/pull/376))
+* chore(specs): document sort/uniq flags, update spec test counts ([#375](https://github.com/everruns/bashkit/pull/375))
+* fix(interpreter): split command substitution output on IFS in list context ([#374](https://github.com/everruns/bashkit/pull/374))
+* feat(interpreter): implement recursive variable deref and array access in arithmetic ([#373](https://github.com/everruns/bashkit/pull/373))
+* feat(parser): implement $'...' ANSI-C quoting and $"..." syntax ([#371](https://github.com/everruns/bashkit/pull/371))
+* fix(interpreter): write heredoc content when redirected to file ([#370](https://github.com/everruns/bashkit/pull/370))
+* feat(eval): add OpenAI Responses API provider ([#366](https://github.com/everruns/bashkit/pull/366))
+* fix(interpreter): truncate exit codes to 8-bit range ([#365](https://github.com/everruns/bashkit/pull/365))
+* fix(builtins): make xargs execute commands instead of echoing ([#364](https://github.com/everruns/bashkit/pull/364))
+* chore: add ignored-test review step to process-issues ([#363](https://github.com/everruns/bashkit/pull/363))
+* test: add 14 Oils-inspired spec test files (244 tests) ([#351](https://github.com/everruns/bashkit/pull/351))
+* feat(tool): add per-tool-call timeout_ms to ToolRequest ([#350](https://github.com/everruns/bashkit/pull/350))
+* chore(eval): expand eval suite to 52 tasks, add multi-model results ([#349](https://github.com/everruns/bashkit/pull/349))
+* feat(eval): add database, config, and build simulation eval categories ([#344](https://github.com/everruns/bashkit/pull/344))
+* feat(tool): list all 80+ builtins in help text ([#343](https://github.com/everruns/bashkit/pull/343))
+* fix(wc): match real bash output padding behavior ([#342](https://github.com/everruns/bashkit/pull/342))
+* chore(tests): update spec_tests.rs skip count from 66 to 18 ([#341](https://github.com/everruns/bashkit/pull/341))
+* refactor(error): add From<regex::Error> impl for Error ([#340](https://github.com/everruns/bashkit/pull/340))
+* chore: add /process-issues claude command ([#339](https://github.com/everruns/bashkit/pull/339))
+* chore: close verified-not-reproducible issues #279, #282 ([#307](https://github.com/everruns/bashkit/pull/307))
+* test: verify issues #275, #279, #282 are not reproducible ([#306](https://github.com/everruns/bashkit/pull/306))
+* feat(curl): add -F multipart form data support ([#305](https://github.com/everruns/bashkit/pull/305))
+* feat(find): parse -exec flag without erroring ([#304](https://github.com/everruns/bashkit/pull/304))
+* feat(awk): add user-defined function support ([#303](https://github.com/everruns/bashkit/pull/303))
+* feat(tar): add -C (change directory) and -O (stdout) flags ([#302](https://github.com/everruns/bashkit/pull/302))
+* feat(base64): add base64 encode/decode builtin command ([#301](https://github.com/everruns/bashkit/pull/301))
+* fix(eval): add /var/log to script_health_check task files ([#300](https://github.com/everruns/bashkit/pull/300))
+* fix(eval): accept both quoted and unquoted CSV in json_to_csv_export ([#299](https://github.com/everruns/bashkit/pull/299))
+* fix(jq): return ExecResult::err instead of Error::Execution for stderr suppression ([#298](https://github.com/everruns/bashkit/pull/298))
+* fix(test): resolve relative paths against cwd in file test operators ([#297](https://github.com/everruns/bashkit/pull/297))
+* fix(interpreter): shift builtin now updates positional parameters ([#296](https://github.com/everruns/bashkit/pull/296))
+* fix(lexer): handle backslash-newline line continuation between tokens ([#295](https://github.com/everruns/bashkit/pull/295))
+* fix(interpreter): forward pipeline stdin to user-defined functions ([#294](https://github.com/everruns/bashkit/pull/294))
+* fix(test): trim whitespace in parse_int for integer comparisons ([#293](https://github.com/everruns/bashkit/pull/293))
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.7...v0.1.8
+
 ## [0.1.7] - 2026-02-26
 
 ### Highlights
