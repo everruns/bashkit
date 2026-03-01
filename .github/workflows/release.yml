@@ -72,7 +72,9 @@ jobs:
           draft: false
           prerelease: false
 
-      - name: Trigger publish workflow
-        run: gh workflow run publish.yml
+      - name: Trigger publish workflows
+        run: |
+          gh workflow run publish.yml
+          gh workflow run publish-python.yml
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
