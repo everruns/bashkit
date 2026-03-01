@@ -40,6 +40,31 @@ Review the changes and update project artifacts where applicable. Skip items tha
 4. **Implementation status** (`specs/009-implementation-status.md`): if feature status changed, update the status table
 5. **Documentation** (`crates/bashkit/docs/`): if the change affects public APIs, tools, or features — update the relevant guide markdown files
 
+### Phase 3b: Code Simplification
+
+Review all changed code for opportunities to simplify:
+
+1. **Identify duplication** — look for repeated patterns that could share a helper or be consolidated
+2. **Reduce complexity** — simplify nested logic, long match arms, deeply indented blocks
+3. **Remove dead code** — unused functions, unreachable branches, commented-out code
+4. **Check naming** — ensure functions, variables, and types have clear, descriptive names
+5. **Verify no over-engineering** — remove unnecessary abstractions, feature flags, or indirection that don't serve the current change
+
+If simplification changes are made, loop back to Phase 2 to verify tests still pass.
+
+### Phase 3c: Security Review
+
+Analyze all changed code for security vulnerabilities:
+
+1. **Input validation** — check that user-supplied data (script input, file paths, environment variables, command arguments) is validated before use
+2. **Injection risks** — look for command injection, path traversal, environment variable injection, or shell metacharacter issues
+3. **Sandbox escapes** — if changes touch VFS, builtins, or process execution, verify they cannot escape the sandbox (see `specs/006-threat-model.md`)
+4. **Resource exhaustion** — check for unbounded loops, unbounded allocations, or missing limits on user-controlled sizes
+5. **Error handling** — ensure errors don't leak internal state, file paths, or sensitive information
+6. **Unsafe code** — review any `unsafe` blocks for soundness; prefer safe alternatives
+
+If security issues are found, fix them, add regression tests, and update `specs/006-threat-model.md` if a new threat category is identified.
+
 ### Phase 4: Smoke Testing
 
 Smoke test impacted functionality to verify it works end-to-end:
@@ -103,6 +128,6 @@ After successful merge:
 ## Notes
 
 - This is the canonical shipping workflow. It implements the full "Shipping" definition and Pre-PR Checklist from AGENTS.md.
-- Phases 2-4 (tests, artifacts, smoke testing) are the quality core — do NOT skip them.
+- Phases 2-4 (tests, artifacts, simplification, security review, smoke testing) are the quality core — do NOT skip them.
 - The `$ARGUMENTS` context helps scope which tests, specs, and smoke tests are relevant.
 - For "fix and ship" requests: implement the fix first, then run `/ship` to validate and merge.
