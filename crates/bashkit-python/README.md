@@ -76,6 +76,20 @@ bash = Bash(
 )
 ```
 
+### BashTool — Convenience Wrapper for AI Agents
+
+`BashTool` is a convenience wrapper specifically designed for AI agents. It wraps `Bash` and adds LLM tool metadata (schema, description, system prompt) needed by tool-use protocols. Use this when integrating with LangChain, PydanticAI, or similar agent frameworks.
+
+```python
+from bashkit import BashTool
+
+tool = BashTool()
+print(tool.input_schema())    # JSON schema for LLM tool-use
+print(tool.system_prompt())   # Token-efficient prompt
+
+result = await tool.execute("echo 'Hello!'")
+```
+
 ### Scripted Tool Orchestration
 
 Compose multiple tools into a single bash-scriptable interface:
@@ -144,6 +158,12 @@ print(result.stdout)  # Alice
 - `help() -> str` — detailed documentation
 - `input_schema() -> str` — JSON input schema
 - `output_schema() -> str` — JSON output schema
+
+### BashTool
+
+Convenience wrapper for AI agents. Inherits all execution methods from `Bash`, plus:
+
+- `system_prompt() -> str` — token-efficient system prompt for LLM integration
 
 ### ExecResult
 
