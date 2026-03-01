@@ -1,6 +1,30 @@
-"""Type stubs for bashkit_py native module."""
+"""Type stubs for bashkit native module."""
 
 from typing import Any, Callable
+
+class Bash:
+    """Core bash interpreter with virtual filesystem.
+
+    State persists between calls — files created in one execute() are
+    available in subsequent calls.
+
+    Example:
+        >>> bash = Bash()
+        >>> result = await bash.execute("echo 'Hello!'")
+        >>> print(result.stdout)
+        Hello!
+    """
+
+    def __init__(
+        self,
+        username: str | None = None,
+        hostname: str | None = None,
+        max_commands: int | None = None,
+        max_loop_iterations: int | None = None,
+    ) -> None: ...
+    async def execute(self, commands: str) -> ExecResult: ...
+    def execute_sync(self, commands: str) -> ExecResult: ...
+    def reset(self) -> None: ...
 
 class ExecResult:
     """Result from executing bash commands."""

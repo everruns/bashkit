@@ -1,9 +1,8 @@
 //! Bashkit Python package
 //!
-//! Exposes the Bash interpreter and ScriptedTool as Python classes for use in
-//! AI agent frameworks. BashTool provides stateful execution (filesystem persists
-//! between calls). ScriptedTool composes Python callbacks as bash builtins for
-//! multi-tool orchestration in a single script.
+//! Primary interface: `Bash` — the core interpreter with virtual filesystem.
+//! Convenience wrapper: `BashTool` — adds LLM tool metadata (schema, description, system_prompt).
+//! Orchestration: `ScriptedTool` — composes Python callbacks as bash builtins.
 
 use bashkit::tool::VERSION;
 use bashkit::{
@@ -146,12 +145,158 @@ impl ExecResult {
 }
 
 // ============================================================================
-// BashTool — stateful interpreter
+// Bash — core interpreter
 // ============================================================================
 
-/// Virtual bash interpreter for AI agents
+/// Core bash interpreter with virtual filesystem.
 ///
-/// BashTool provides a safe execution environment for running bash commands
+/// State persists between calls — files created in one `execute()` are
+/// available in subsequent calls. This is the primary interface.
+///
+/// Example:
+///     ```python
+///     from bashkit import Bash
+///
+///     bash = Bash()
+///     result = await bash.execute("echo 'Hello, World!'")
+///     print(result.stdout)  # Hello, World!
+///     ```
+#[pyclass(name = "Bash")]
+#[allow(dead_code)]
+pub struct PyBash {
+    inner: Arc<Mutex<Bash>>,
+    username: Option<String>,
+    hostname: Option<String>,
+    max_commands: Option<u64>,
+    max_loop_iterations: Option<u64>,
+}
+
+#[pymethods]
+impl PyBash {
+    #[new]
+    #[pyo3(signature = (username=None, hostname=None, max_commands=None, max_loop_iterations=None))]
+    fn new(
+        username: Option<String>,
+        hostname: Option<String>,
+        max_commands: Option<u64>,
+        max_loop_iterations: Option<u64>,
+    ) -> PyResult<Self> {
+        let mut builder = Bash::builder();
+
+        if let Some(ref u) = username {
+            builder = builder.username(u);
+        }
+        if let Some(ref h) = hostname {
+            builder = builder.hostname(h);
+        }
+
+        let mut limits = ExecutionLimits::new();
+        if let Some(mc) = max_commands {
+            limits = limits.max_commands(mc as usize);
+        }
+        if let Some(mli) = max_loop_iterations {
+            limits = limits.max_loop_iterations(mli as usize);
+        }
+        builder = builder.limits(limits);
+
+        let bash = builder.build();
+
+        Ok(Self {
+            inner: Arc::new(Mutex::new(bash)),
+            username,
+            hostname,
+            max_commands,
+            max_loop_iterations,
+        })
+    }
+
+    /// Execute commands asynchronously.
+    fn execute<'py>(&self, py: Python<'py>, commands: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let mut bash = inner.lock().await;
+            match bash.exec(&commands).await {
+                Ok(result) => Ok(ExecResult {
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    exit_code: result.exit_code,
+                    error: None,
+                }),
+                Err(e) => Ok(ExecResult {
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    exit_code: 1,
+                    error: Some(e.to_string()),
+                }),
+            }
+        })
+    }
+
+    /// Execute commands synchronously (blocking).
+    fn execute_sync(&self, commands: String) -> PyResult<ExecResult> {
+        let inner = self.inner.clone();
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
+
+        rt.block_on(async move {
+            let mut bash = inner.lock().await;
+            match bash.exec(&commands).await {
+                Ok(result) => Ok(ExecResult {
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    exit_code: result.exit_code,
+                    error: None,
+                }),
+                Err(e) => Ok(ExecResult {
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    exit_code: 1,
+                    error: Some(e.to_string()),
+                }),
+            }
+        })
+    }
+
+    /// Reset interpreter to fresh state.
+    fn reset(&self) -> PyResult<()> {
+        let inner = self.inner.clone();
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
+
+        rt.block_on(async move {
+            let mut bash = inner.lock().await;
+            let builder = Bash::builder();
+            *bash = builder.build();
+            Ok(())
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Bash(username={:?}, hostname={:?})",
+            self.username.as_deref().unwrap_or("user"),
+            self.hostname.as_deref().unwrap_or("sandbox")
+        )
+    }
+}
+
+// ============================================================================
+// BashTool — interpreter + LLM tool metadata
+// ============================================================================
+
+/// Bash interpreter with LLM tool metadata (schema, description, system_prompt).
+///
+/// Extends `Bash` with methods required by LLM tool-use protocols.
+/// Use this when integrating with LangChain, PydanticAI, or similar frameworks.
+///
+/// Example:
+///     ```python
+///     from bashkit import BashTool
+///
+///     tool = BashTool()
+///     print(tool.input_schema())  # JSON schema for LLM
+///     result = await tool.execute("echo 'Hello!'")
+///     ```
 /// with a virtual filesystem. State persists between calls - files created
 /// in one call are available in subsequent calls.
 ///
@@ -621,6 +766,7 @@ fn create_langchain_tool_spec() -> PyResult<pyo3::Py<PyDict>> {
 
 #[pymodule]
 fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyBash>()?;
     m.add_class::<BashTool>()?;
     m.add_class::<ScriptedTool>()?;
     m.add_class::<ExecResult>()?;
