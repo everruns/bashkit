@@ -402,10 +402,10 @@ pub use network::HttpClient;
 pub use git::GitClient;
 
 #[cfg(feature = "python")]
-pub use builtins::PythonLimits;
-#[cfg(feature = "python")]
-pub use builtins::python::{PythonExternalFnHandler, PythonExternalFns};
-// Re-export monty types needed by external handler consumers
+pub use builtins::{PythonExternalFnHandler, PythonExternalFns, PythonLimits};
+// Re-export monty types needed by external handler consumers.
+// **Unstable:** These types come from monty (git-pinned, not on crates.io).
+// They may change in breaking ways between bashkit releases.
 #[cfg(feature = "python")]
 pub use monty::{ExcType, ExternalResult, MontyException, MontyObject};
 
@@ -981,7 +981,7 @@ impl BashBuilder {
         self,
         limits: builtins::PythonLimits,
         external_fns: Vec<String>,
-        handler: builtins::python::PythonExternalFnHandler,
+        handler: builtins::PythonExternalFnHandler,
     ) -> Self {
         self.builtin(
             "python",
@@ -993,8 +993,7 @@ impl BashBuilder {
         .builtin(
             "python3",
             Box::new(
-                builtins::Python::with_limits(limits)
-                    .with_external_handler(external_fns, handler),
+                builtins::Python::with_limits(limits).with_external_handler(external_fns, handler),
             ),
         )
     }

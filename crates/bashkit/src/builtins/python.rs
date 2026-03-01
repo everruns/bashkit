@@ -114,8 +114,11 @@ impl PythonLimits {
 /// Receives `(function_name, positional_args, keyword_args)` directly from monty.
 /// Return `ExternalResult::Return(value)` for success or `ExternalResult::Error(exc)` for failure.
 pub type PythonExternalFnHandler = Arc<
-    dyn Fn(String, Vec<MontyObject>, Vec<(MontyObject, MontyObject)>)
-        -> Pin<Box<dyn Future<Output = ExternalResult> + Send>>
+    dyn Fn(
+            String,
+            Vec<MontyObject>,
+            Vec<(MontyObject, MontyObject)>,
+        ) -> Pin<Box<dyn Future<Output = ExternalResult> + Send>>
         + Send
         + Sync,
 >;
@@ -123,11 +126,22 @@ pub type PythonExternalFnHandler = Arc<
 /// External function configuration for the Python builtin.
 ///
 /// Groups function names and their async handler together.
+/// Constructed internally via [`Python::with_external_handler`].
+#[derive(Clone)]
 pub struct PythonExternalFns {
     /// Function names callable from Python (e.g., `"call_tool"`).
-    pub names: Vec<String>,
+    names: Vec<String>,
     /// Async handler invoked when Python calls one of these functions.
-    pub handler: PythonExternalFnHandler,
+    handler: PythonExternalFnHandler,
+}
+
+impl std::fmt::Debug for PythonExternalFns {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PythonExternalFns")
+            .field("names", &self.names)
+            .field("handler", &"<fn>")
+            .finish()
+    }
 }
 
 /// The python/python3 builtin command.
@@ -334,9 +348,7 @@ async fn run_python(
         code
     };
 
-    let ext_fn_names = external_fns
-        .map(|ef| ef.names.clone())
-        .unwrap_or_default();
+    let ext_fn_names = external_fns.map(|ef| ef.names.clone()).unwrap_or_default();
     let runner = match MontyRun::new(code.to_owned(), filename, vec![], ext_fn_names) {
         Ok(r) => r,
         Err(e) => return Ok(format_exception(e)),
@@ -398,7 +410,9 @@ async fn run_python(
                     // No external functions registered; return error
                     ExternalResult::Error(MontyException::new(
                         ExcType::RuntimeError,
-                        Some("external function not available in virtual mode".into()),
+                        Some(
+                            "no external function handler configured (external functions not enabled)".into(),
+                        ),
                     ))
                 };
 
@@ -1178,10 +1192,8 @@ mod tests {
         let mut variables = HashMap::new();
         let mut cwd = PathBuf::from("/home/user");
         let fs = Arc::new(InMemoryFs::new());
-        let py = Python::with_limits(PythonLimits::default()).with_external_handler(
-            fn_names.iter().map(|s| s.to_string()).collect(),
-            handler,
-        );
+        let py = Python::with_limits(PythonLimits::default())
+            .with_external_handler(fn_names.iter().map(|s| s.to_string()).collect(), handler);
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
         py.execute(ctx).await.unwrap()
     }
@@ -1323,12 +1335,7 @@ mod tests {
                 ExternalResult::Return(result)
             })
         });
-        let r = run_with_external(
-            "print(get_x() + get_y())",
-            &["get_x", "get_y"],
-            handler,
-        )
-        .await;
+        let r = run_with_external("print(get_x() + get_y())", &["get_x", "get_y"], handler).await;
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.stdout, "30\n");
     }

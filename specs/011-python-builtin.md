@@ -194,6 +194,52 @@ let bash = Bash::builder()
     .build();
 ```
 
+### External Functions
+
+Host applications can register async external function handlers that Python code
+can call by name. This enables Python scripts to invoke host-provided capabilities
+(e.g., tool calls, data lookups) without serialization overhead — arguments arrive
+as raw `MontyObject` values.
+
+**Builder API:**
+
+```rust
+use bashkit::{Bash, PythonLimits, PythonExternalFnHandler};
+use bashkit::{MontyObject, ExternalResult};
+use std::sync::Arc;
+
+let handler: PythonExternalFnHandler = Arc::new(|name, args, kwargs| {
+    Box::pin(async move {
+        ExternalResult::Return(MontyObject::Int(42))
+    })
+});
+
+let bash = Bash::builder()
+    .python_with_external_handler(
+        PythonLimits::default(),
+        vec!["get_answer".into()],
+        handler,
+    )
+    .build();
+```
+
+**Handler signature:** `(function_name: String, positional_args: Vec<MontyObject>, keyword_args: Vec<(MontyObject, MontyObject)>) -> Pin<Box<dyn Future<Output = ExternalResult> + Send>>`
+
+**Return values:**
+- `ExternalResult::Return(MontyObject)` — success, value returned to Python
+- `ExternalResult::Error(MontyException)` — raises a Python exception
+
+**Dispatch:** A single handler receives all registered function names; dispatch by
+`function_name` inside the handler.
+
+**Trust model:** External function handlers follow the same trust model as
+`BashBuilder::builtin()` and `ScriptedTool` callbacks — the host application
+registers trusted Rust code, untrusted scripts invoke it by name.
+
+**Unstable re-exports:** `MontyObject`, `ExternalResult`, `MontyException`, and
+`ExcType` are re-exported from the `monty` crate (git-pinned, not on crates.io).
+These types may change in breaking ways between bashkit releases.
+
 ### Security
 
 See `specs/006-threat-model.md` section "Python / Monty Security (TM-PY)"
