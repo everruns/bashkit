@@ -6066,11 +6066,17 @@ impl Interpreter {
                         .variables
                         .keys()
                         .filter(|k| k.starts_with(prefix.as_str()))
+                        // THREAT[TM-INJ-009]: Hide internal marker variables
+                        .filter(|k| !Self::is_internal_variable(k))
                         .cloned()
                         .collect();
                     // Also check env
                     for k in self.env.keys() {
-                        if k.starts_with(prefix.as_str()) && !names.contains(k) {
+                        if k.starts_with(prefix.as_str())
+                            && !names.contains(k)
+                            // THREAT[TM-INJ-009]: Hide internal marker variables
+                            && !Self::is_internal_variable(k)
+                        {
                             names.push(k.clone());
                         }
                     }
@@ -7548,10 +7554,24 @@ impl Interpreter {
         s.to_string()
     }
 
+    /// THREAT[TM-INJ-009]: Check if a variable name is an internal marker.
+    fn is_internal_variable(name: &str) -> bool {
+        name.starts_with("_NAMEREF_")
+            || name.starts_with("_READONLY_")
+            || name.starts_with("_UPPER_")
+            || name.starts_with("_LOWER_")
+            || name == "_SHIFT_COUNT"
+            || name == "_SET_POSITIONAL"
+    }
+
     /// Set a variable, respecting dynamic scoping.
     /// If the variable is declared `local` in any active call frame, update that frame.
     /// Otherwise, set in global variables.
     fn set_variable(&mut self, name: String, value: String) {
+        // THREAT[TM-INJ-009]: Block user assignment to internal marker variables
+        if Self::is_internal_variable(&name) {
+            return;
+        }
         // Resolve nameref: if `name` is a nameref, assign to the target instead
         let resolved = self.resolve_nameref(&name).to_string();
         // Apply case conversion attributes (declare -l / declare -u)
@@ -9435,5 +9455,32 @@ mod tests {
         let result = interp.execute(&ast).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "sourced");
+    }
+
+    #[tokio::test]
+    async fn test_internal_var_prefix_not_exposed() {
+        // ${!_NAMEREF*} must not expose internal markers
+        let result = run_script("echo \"${!_NAMEREF*}\"").await;
+        assert_eq!(result.stdout.trim(), "");
+    }
+
+    #[tokio::test]
+    async fn test_internal_var_readonly_not_exposed() {
+        let result = run_script("echo \"${!_READONLY*}\"").await;
+        assert_eq!(result.stdout.trim(), "");
+    }
+
+    #[tokio::test]
+    async fn test_internal_var_assignment_blocked() {
+        // Direct assignment to _NAMEREF_ prefix should be silently ignored
+        let result = run_script("_NAMEREF_x=PATH; echo ${!x}").await;
+        assert!(!result.stdout.contains("/usr"));
+    }
+
+    #[tokio::test]
+    async fn test_internal_var_readonly_injection_blocked() {
+        // Should not be able to fake readonly
+        let result = run_script("_READONLY_myvar=1; myvar=hello; echo $myvar").await;
+        assert_eq!(result.stdout.trim(), "hello");
     }
 }
