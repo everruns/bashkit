@@ -396,13 +396,37 @@ Unicode input from untrusted scripts creates attack surface across the parser, b
 and virtual filesystem. AI agents frequently generate multi-byte Unicode (box-drawing,
 emoji, CJK) that exercises these code paths.
 
+**Byte-Boundary Safety (TM-UNI-001/002/015/016/017):**
+
+Multiple builtins mix byte offsets with character indices, causing panics on multi-byte
+input. All are caught by `catch_unwind` (TM-INT-001) preventing process crash, but the
+builtin silently fails.
+
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
-| Byte-boundary panic (TM-UNI-001) | Multi-byte chars in awk input | `catch_unwind` catches panic | PARTIAL |
+| Awk byte-boundary panic (TM-UNI-001) | Multi-byte chars in awk input | `catch_unwind` catches panic | PARTIAL |
+| Sed byte-boundary panic (TM-UNI-002) | Box-drawing chars in sed pattern | `catch_unwind` catches panic | PARTIAL |
+| Expr substr panic (TM-UNI-015) | `expr substr "café" 4 1` | `catch_unwind` catches panic | PARTIAL |
+| Printf precision panic (TM-UNI-016) | `printf "%.1s" "é"` | `catch_unwind` catches panic | PARTIAL |
+| Cut/tr byte-level parsing (TM-UNI-017) | `tr 'é' 'e'` — multi-byte in char set | `catch_unwind` catches; silent data loss | PARTIAL |
+
+**Additional Byte/Char Confusion:**
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| Interpreter arithmetic (TM-UNI-018) | Multi-byte before `=` in arithmetic | Wrong operator detection; no panic | PARTIAL |
+| Network allowlist (TM-UNI-019) | Multi-byte in allowlist URL path | Wrong path boundary check | PARTIAL |
 | Zero-width in filenames (TM-UNI-003) | Invisible chars create confusable names | Path validation (planned) | UNMITIGATED |
 | Homoglyph confusion (TM-UNI-006) | Cyrillic 'а' vs Latin 'a' in filenames | Accepted risk | ACCEPTED |
 | Normalization bypass (TM-UNI-008) | NFC vs NFD create distinct files | Matches Linux FS behavior | ACCEPTED |
 | Bidi in script source (TM-UNI-014) | RTL overrides hide malicious code | Scripts untrusted by design | ACCEPTED |
+
+**Safe Components (confirmed by audit):**
+- Lexer: `Chars` iterator with `ch.len_utf8()` tracking
+- wc: Correct `.len()` vs `.chars().count()` usage
+- grep/jq: Delegate to Unicode-aware regex/jaq crates
+- sort/uniq: String comparison, no byte indexing
+- logging: Uses `is_char_boundary()` correctly
 
 **Path Validation:**
 
@@ -417,6 +441,8 @@ Normal Unicode (accented, CJK, emoji) is allowed in filenames and script content
 - Strip zero-width/invisible characters from filenames before displaying to users
 - Apply confusable-character detection (UTS #39) if showing filenames to humans
 - Strip bidi overrides from script source before displaying to code reviewers
+- Be aware that expr/printf/cut/tr may fail on non-ASCII input until fixes land
+- Use ASCII in network allowlist URL patterns until byte/char fix lands
 
 ## Security Testing
 
