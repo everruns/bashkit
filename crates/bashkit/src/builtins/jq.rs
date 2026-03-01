@@ -48,20 +48,11 @@ def scan(re; flags): matches(re; "g" + flags)[] | .[0].string;
 def scan(re): scan(re; "");
 "#;
 
-/// RAII guard that restores process env vars when dropped.
-/// Ensures cleanup even on early-return error paths.
-struct EnvRestoreGuard(Vec<(String, Option<String>)>);
-
-impl Drop for EnvRestoreGuard {
-    fn drop(&mut self) {
-        for (k, old) in &self.0 {
-            match old {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
-        }
-    }
-}
+/// Internal global variable name used to pass shell env to jq's `env` filter.
+/// SECURITY: Replaces std::env::set_var() which was thread-unsafe and leaked
+/// host process env vars. Shell variables are now passed as a jaq global
+/// variable, and `def env:` is overridden to read from it.
+const ENV_VAR_NAME: &str = "$__bashkit_env__";
 
 /// jq command - JSON processor
 pub struct Jq;
@@ -327,9 +318,26 @@ impl Builtin for Jq {
         let loader = load::Loader::new(jaq_std::defs().chain(jaq_json::defs()));
         let arena = load::Arena::default();
 
+        // Build shell env as a JSON object for the custom `env` filter.
+        // SECURITY: This avoids calling std::env::set_var() which is
+        // thread-unsafe and leaks host process env vars (TM-INF-013).
+        // ctx.env takes precedence over ctx.variables (prefix assignments
+        // like FOO=bar jq ... shadow exported variables).
+        let env_obj = {
+            let mut map = serde_json::Map::new();
+            // variables first, then env overrides (last write wins)
+            for (k, v) in ctx.variables.iter().chain(ctx.env.iter()) {
+                map.insert(k.clone(), serde_json::Value::String(v.clone()));
+            }
+            serde_json::Value::Object(map)
+        };
+
         // Prepend compatibility definitions (setpath, leaf_paths, match, scan)
         // to override jaq's defaults with jq-compatible behavior.
-        let compat_filter = format!("{}{}", JQ_COMPAT_DEFS, filter);
+        // Also override `env` to read from our injected variable instead of
+        // the process environment.
+        let env_def = format!("def env: {};", ENV_VAR_NAME);
+        let compat_filter = format!("{}\n{}\n{}", JQ_COMPAT_DEFS, env_def, filter);
         let filter = compat_filter.as_str();
 
         // Parse the filter
@@ -353,13 +361,17 @@ impl Builtin for Jq {
         };
 
         // Compile the filter, registering any --arg/--argjson variable names
-        let var_names: Vec<&str> = var_bindings.iter().map(|(n, _)| n.as_str()).collect();
-        let compiler = Compiler::default().with_funs(jaq_std::funs().chain(jaq_json::funs()));
-        let compiler = if var_names.is_empty() {
-            compiler
-        } else {
-            compiler.with_global_vars(var_names.iter().copied())
-        };
+        // plus the internal $__bashkit_env__ variable.
+        // Filter out jaq-std's native `env` filter since we override it with
+        // a def that reads from our injected global variable.
+        let mut var_names: Vec<&str> = var_bindings.iter().map(|(n, _)| n.as_str()).collect();
+        var_names.push(ENV_VAR_NAME);
+        let native_funs = jaq_std::funs()
+            .filter(|(name, _, _)| *name != "env")
+            .chain(jaq_json::funs());
+        let compiler = Compiler::default()
+            .with_funs(native_funs)
+            .with_global_vars(var_names.iter().copied());
         let filter = match compiler.compile(modules) {
             Ok(f) => f,
             Err(errs) => {
@@ -404,22 +416,6 @@ impl Builtin for Jq {
             }
         };
 
-        // Expose bashkit's shell env/variables to the process environment so
-        // jaq's built-in `env` function (which reads std::env::vars()) works.
-        // Include both ctx.env (prefix assignments like FOO=bar jq ...)
-        // and ctx.variables (set via export builtin).
-        // Uses a drop guard to ensure cleanup on all return paths.
-        let mut seen = std::collections::HashSet::new();
-        let mut env_backup: Vec<(String, Option<String>)> = Vec::new();
-        for (k, v) in ctx.env.iter().chain(ctx.variables.iter()) {
-            if seen.insert(k.clone()) {
-                let old = std::env::var(k).ok();
-                std::env::set_var(k, v);
-                env_backup.push((k.clone(), old));
-            }
-        }
-        let _env_guard = EnvRestoreGuard(env_backup);
-
         // Track for -e exit status
         let mut has_output = false;
         let mut all_null_or_false = true;
@@ -427,6 +423,9 @@ impl Builtin for Jq {
         // Shared input iterator: main loop pops one value per filter run,
         // and jaq's input/inputs functions consume from the same source.
         let shared_inputs = RcIter::new(inputs_to_process.into_iter().map(Ok::<Val, String>));
+
+        // Pre-convert env object to jaq Val once (reused for each input)
+        let env_val = Val::from(env_obj);
 
         for jaq_input in &shared_inputs {
             let jaq_input: Val = match jaq_input {
@@ -436,11 +435,13 @@ impl Builtin for Jq {
                 }
             };
 
-            // Run the filter, passing any --arg/--argjson variable values
-            let var_vals: Vec<Val> = var_bindings
+            // Run the filter, passing --arg/--argjson variable values
+            // plus the env object as the last global variable.
+            let mut var_vals: Vec<Val> = var_bindings
                 .iter()
                 .map(|(_, v)| Val::from(v.clone()))
                 .collect();
+            var_vals.push(env_val.clone());
             let ctx = Ctx::new(var_vals, &shared_inputs);
             for result in filter.run((ctx, jaq_input)) {
                 match result {
@@ -1232,5 +1233,95 @@ mod tests {
         .unwrap();
         assert!(result.contains("a,b,c"));
         assert!(result.contains("1,2,3"));
+    }
+
+    // --- Process env pollution tests (issue #410) ---
+
+    #[tokio::test]
+    async fn test_jq_env_no_process_pollution() {
+        // Shell variables passed via ctx.env must NOT leak into the process
+        // environment. This is a security issue: std::env::set_var() is
+        // thread-unsafe and exposes host env vars to jaq's `env` function.
+        let unique_key = "BASHKIT_TEST_ENV_POLLUTION_410";
+
+        // Ensure the var is not already in the process env
+        assert!(
+            std::env::var(unique_key).is_err(),
+            "precondition: {} must not exist in process env",
+            unique_key
+        );
+
+        let jq = Jq;
+        let fs = Arc::new(InMemoryFs::new());
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let mut env = HashMap::new();
+        env.insert(unique_key.to_string(), "leaked".to_string());
+        let args = vec!["-n".to_string(), format!("env.{}", unique_key)];
+
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = jq.execute(ctx).await.unwrap();
+        // The jq filter should still see the variable via our custom env
+        assert_eq!(result.stdout.trim(), "\"leaked\"");
+
+        // CRITICAL: The process environment must NOT have been modified
+        assert!(
+            std::env::var(unique_key).is_err(),
+            "process env was polluted with shell variable {}",
+            unique_key
+        );
+    }
+
+    #[tokio::test]
+    async fn test_jq_env_no_host_leak() {
+        // Host process env vars should NOT be visible to jq's env filter.
+        // Only shell variables from ctx.env/ctx.variables should be exposed.
+        let unique_key = "BASHKIT_TEST_HOST_LEAK_410";
+
+        // Set a host process env var that should NOT be visible to jq
+        std::env::set_var(unique_key, "host_secret");
+
+        let jq = Jq;
+        let fs = Arc::new(InMemoryFs::new());
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args = vec!["-n".to_string(), format!("env.{}", unique_key)];
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = jq.execute(ctx).await.unwrap();
+        // Host env var should NOT be visible - should return null
+        assert_eq!(
+            result.stdout.trim(),
+            "null",
+            "host env var {} leaked into jq env",
+            unique_key
+        );
+
+        // Cleanup
+        std::env::remove_var(unique_key);
     }
 }
