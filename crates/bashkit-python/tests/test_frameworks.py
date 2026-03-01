@@ -95,6 +95,50 @@ def test_deepagents_now_iso():
     assert "T" in ts  # ISO format has T separator
 
 
+def test_deepagents_write_heredoc_injection():
+    """Content containing the heredoc delimiter must not cause injection."""
+    from bashkit import BashTool
+    from bashkit.deepagents import _build_write_cmd
+
+    # Content that would terminate a fixed BASHKIT_EOF heredoc early
+    malicious = "line1\nBASHKIT_EOF\necho INJECTED\nmore"
+    cmd = _build_write_cmd("/tmp/test_inject.txt", malicious)
+
+    # The generated delimiter must not be the plain "BASHKIT_EOF"
+    # so content containing that literal cannot terminate it early
+    tool = BashTool()
+    tool.execute_sync(cmd)
+    r = tool.execute_sync("cat /tmp/test_inject.txt")
+    assert r.exit_code == 0
+    # The file must contain the literal BASHKIT_EOF line, not execute it
+    assert "BASHKIT_EOF" in r.stdout
+    assert "INJECTED" not in r.stdout or "echo INJECTED" in r.stdout
+    # All original lines present
+    assert "line1" in r.stdout
+    assert "more" in r.stdout
+
+
+def test_deepagents_write_cmd_uses_shlex_quote():
+    """_build_write_cmd must quote file paths with special characters."""
+    from bashkit.deepagents import _build_write_cmd
+
+    cmd = _build_write_cmd("/tmp/my file.txt", "hello")
+    # shlex.quote wraps in single quotes for paths with spaces
+    assert "'/tmp/my file.txt'" in cmd
+
+
+def test_deepagents_write_cmd_unique_delimiters():
+    """Each call should produce a unique delimiter."""
+    from bashkit.deepagents import _build_write_cmd
+
+    cmd1 = _build_write_cmd("/tmp/a.txt", "x")
+    cmd2 = _build_write_cmd("/tmp/b.txt", "y")
+    # Extract delimiter from first line: cat > path << 'DELIM'
+    delim1 = cmd1.split("'")[-2]
+    delim2 = cmd2.split("'")[-2]
+    assert delim1 != delim2
+
+
 # ===========================================================================
 # pydantic_ai.py tests
 # ===========================================================================
