@@ -39,7 +39,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | 011-python-builtin | Embedded Python via Monty, security, resource limits |
 | 012-eval | LLM evaluation harness, dataset format, scoring |
 | 012-maintenance | Pre-release maintenance checklist |
-| 013-python-package | Python bindings, PyPI wheels, platform matrix |
+| 013-python-package | Python package, PyPI wheels, platform matrix |
 | 014-scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |
 
 ### Documentation
@@ -88,7 +88,7 @@ just pre-pr       # Pre-PR checks
 
 ### Python
 
-- Python bindings in `crates/bashkit-python/`
+- Python package in `crates/bashkit-python/`
 - Linter/formatter: `ruff` (config in `pyproject.toml`)
 - `ruff check crates/bashkit-python` and `ruff format --check crates/bashkit-python`
 - Tests: `pytest crates/bashkit-python/tests/ -v` (requires `maturin develop` first)

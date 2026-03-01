@@ -1,4 +1,4 @@
-//! Python bindings for Bashkit
+//! Bashkit Python package
 //!
 //! Exposes the Bash interpreter and ScriptedTool as Python classes for use in
 //! AI agent frameworks. BashTool provides stateful execution (filesystem persists

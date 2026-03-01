@@ -1,30 +1,36 @@
-# Bashkit Python Bindings
+# Bashkit
 
-Python bindings for [Bashkit](https://github.com/everruns/bashkit) - a virtual bash interpreter for AI agents.
+A sandboxed bash interpreter for AI agents.
+
+```python
+from bashkit import BashTool
+
+tool = BashTool()
+result = tool.execute_sync("echo 'Hello, World!'")
+print(result.stdout)  # Hello, World!
+```
 
 ## Features
 
-- **Sandboxed, in-process execution**: All commands run in isolation with a virtual filesystem
-- **68+ built-in commands**: echo, cat, grep, sed, awk, jq, curl, find, and more
-- **Full bash syntax**: Variables, pipelines, redirects, loops, functions, arrays
-- **Resource limits**: Protect against infinite loops and runaway scripts
-- **LangChain integration**: Ready-to-use tool for LangChain agents
+- **Sandboxed execution** — all commands run in-process with a virtual filesystem, no containers needed
+- **68+ built-in commands** — echo, cat, grep, sed, awk, jq, curl, find, and more
+- **Full bash syntax** — variables, pipelines, redirects, loops, functions, arrays
+- **Resource limits** — protect against infinite loops and runaway scripts
+- **Framework integrations** — LangChain, PydanticAI, and Deep Agents
 
 ## Installation
 
 ```bash
-# From PyPI (when published)
 pip install bashkit
 
-# With LangChain support
+# With framework support
 pip install 'bashkit[langchain]'
-
-# From source
-pip install maturin
-maturin develop
+pip install 'bashkit[pydantic-ai]'
 ```
 
-## Quick Start
+## Usage
+
+### Async
 
 ```python
 import asyncio
@@ -51,29 +57,17 @@ async def main():
 asyncio.run(main())
 ```
 
-## LangChain Integration
+### Sync
 
 ```python
-from bashkit.langchain import create_bash_tool
-from langchain.agents import create_agent
+from bashkit import BashTool
 
-# Create tool
-bash_tool = create_bash_tool()
-
-# Create agent
-agent = create_agent(
-    model="claude-sonnet-4-20250514",
-    tools=[bash_tool],
-    system_prompt="You are a helpful assistant with bash skills."
-)
-
-# Run
-result = agent.invoke({
-    "messages": [{"role": "user", "content": "Create a file with today's date"}]
-})
+tool = BashTool()
+result = tool.execute_sync("echo 'Hello!'")
+print(result.stdout)
 ```
 
-## Configuration
+### Configuration
 
 ```python
 tool = BashTool(
@@ -84,35 +78,68 @@ tool = BashTool(
 )
 ```
 
-## Synchronous API
+### Scripted Tool Orchestration
+
+Compose multiple tools into a single bash-scriptable interface:
 
 ```python
-from bashkit import BashTool
+from bashkit import ScriptedTool
 
-tool = BashTool()
-result = tool.execute_sync("echo 'Hello!'")
-print(result.stdout)
+tool = ScriptedTool("api")
+tool.add_tool("greet", "Greet a user", callback=lambda p, s=None: f"hello {p.get('name', 'world')}")
+result = tool.execute_sync("greet --name Alice")
+print(result.stdout)  # hello Alice
+```
+
+### LangChain
+
+```python
+from bashkit.langchain import create_bash_tool
+
+bash_tool = create_bash_tool()
+# Use with any LangChain agent
+```
+
+### PydanticAI
+
+```python
+from bashkit.pydantic_ai import create_bash_tool
+
+bash_tool = create_bash_tool()
+# Use with any PydanticAI agent
 ```
 
 ## API Reference
 
 ### BashTool
 
-- `execute(commands: str) -> ExecResult`: Execute commands asynchronously
-- `execute_sync(commands: str) -> ExecResult`: Execute commands synchronously
-- `description() -> str`: Get tool description
-- `help() -> str`: Get LLM documentation
-- `input_schema() -> str`: Get JSON input schema
-- `output_schema() -> str`: Get JSON output schema
+- `execute(commands: str) -> ExecResult` — execute commands asynchronously
+- `execute_sync(commands: str) -> ExecResult` — execute commands synchronously
+- `reset()` — reset interpreter state
+- `description() -> str` — tool description for LLM integration
+- `help() -> str` — detailed documentation
+- `input_schema() -> str` — JSON input schema
+- `output_schema() -> str` — JSON output schema
 
 ### ExecResult
 
-- `stdout: str`: Standard output
-- `stderr: str`: Standard error
-- `exit_code: int`: Exit code (0 = success)
-- `error: Optional[str]`: Error message if execution failed
-- `success: bool`: True if exit_code == 0
-- `to_dict() -> dict`: Convert to dictionary
+- `stdout: str` — standard output
+- `stderr: str` — standard error
+- `exit_code: int` — exit code (0 = success)
+- `error: Optional[str]` — error message if execution failed
+- `success: bool` — True if exit_code == 0
+- `to_dict() -> dict` — convert to dictionary
+
+### ScriptedTool
+
+- `add_tool(name, description, callback, schema=None)` — register a tool
+- `execute(script: str) -> ExecResult` — execute script asynchronously
+- `execute_sync(script: str) -> ExecResult` — execute script synchronously
+- `env(key: str, value: str)` — set environment variable
+
+## How it works
+
+Bashkit is built on top of [Bashkit core](https://github.com/everruns/bashkit), a bash interpreter written in Rust. The Python package provides a native extension for fast, sandboxed execution without spawning subprocesses or containers.
 
 ## License
 

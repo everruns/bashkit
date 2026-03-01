@@ -2,7 +2,7 @@
 
 ## Abstract
 
-Bashkit ships Python bindings as pre-built binary wheels on PyPI. Users install with
+Bashkit ships a Python package as pre-built binary wheels on PyPI. Users install with
 `pip install bashkit` and get a native extension — no Rust toolchain needed.
 
 ## Package Layout
@@ -11,7 +11,7 @@ Bashkit ships Python bindings as pre-built binary wheels on PyPI. Users install 
 crates/bashkit-python/
 ├── Cargo.toml              # Rust crate (cdylib via PyO3)
 ├── pyproject.toml           # Python package metadata (maturin build backend)
-├── src/lib.rs               # PyO3 bindings (BashTool, ExecResult)
+├── src/lib.rs               # PyO3 native module (BashTool, ExecResult)
 ├── bashkit/
 │   ├── __init__.py          # Re-exports from native module
 │   ├── _bashkit.pyi         # Type stubs (PEP 561)
@@ -20,13 +20,13 @@ crates/bashkit-python/
 │   ├── deepagents.py        # Deep Agents integration
 │   └── pydantic_ai.py       # PydanticAI integration
 └── tests/
-    └── test_bashkit.py      # Pytest suite for bindings
+    └── test_bashkit.py      # Pytest suite
 ```
 
 ## Build System
 
 - **Build backend**: [maturin](https://github.com/PyO3/maturin) (1.4–2.0)
-- **Rust bindings**: [PyO3](https://pyo3.rs/) 0.24 with `extension-module` feature
+- **Rust extension**: [PyO3](https://pyo3.rs/) 0.24 with `extension-module` feature
 - **Async bridge**: `pyo3-async-runtimes` (tokio runtime)
 - **Module name**: `bashkit._bashkit` (native), re-exported as `bashkit`
 
@@ -196,7 +196,7 @@ ruff format .            # format
 ## Design Decisions
 
 - **No PGO**: Profile-guided optimization adds build complexity for minimal gain.
-  Bashkit is a thin PyO3 wrapper — hot paths are in Rust, not Python dispatch.
+  Bashkit is a thin PyO3 extension — hot paths are in Rust, not Python dispatch.
   Can revisit if profiling shows benefit.
 - **No exotic architectures**: armv7, ppc64le, s390x, i686 omitted. Target audience
   is AI agent developers on standard server/desktop platforms.

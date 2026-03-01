@@ -127,7 +127,7 @@ the session-level backstop.
 | TM-DOS-037 | OverlayFs chmod CoW bypass | `chmod` copy-on-write writes to unlimited upper layer, bypassing overlay limits | — | **OPEN** |
 | TM-DOS-038 | OverlayFs incomplete recursive whiteout | `rm -r /dir` only whiteouts directory, not children; lower layer files remain visible | — | **OPEN** |
 | TM-DOS-039 | Missing validate_path in VFS methods | `remove`, `stat`, `read_dir`, `copy`, `rename`, `symlink`, `chmod` skip `validate_path()` | — | **OPEN** |
-| TM-DOS-040 | Integer truncation on 32-bit | `u64 as usize` casts in network/Python bindings silently truncate on 32-bit, bypassing size checks | — | **OPEN** |
+| TM-DOS-040 | Integer truncation on 32-bit | `u64 as usize` casts in network/Python extension silently truncate on 32-bit, bypassing size checks | — | **OPEN** |
 
 **TM-DOS-034**: `InMemoryFs::append_file()` (line 816-896) reads under a read lock, drops it,
 checks limits with stale data, then acquires write lock. Fix: single write lock for whole operation.
