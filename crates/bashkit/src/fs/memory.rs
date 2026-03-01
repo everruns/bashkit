@@ -867,40 +867,67 @@ impl FileSystem for InMemoryFs {
             return Ok(());
         }
 
-        // Check if file exists and get the info we need
-        let (should_create, current_size) = {
-            let entries = self.entries.read().unwrap();
-            match entries.get(&path) {
-                Some(FsEntry::File {
-                    content: existing, ..
-                }) => (false, Some(existing.len())),
-                Some(FsEntry::Directory { .. }) => {
-                    return Err(IoError::other("is a directory").into());
-                }
-                Some(FsEntry::Symlink { .. }) => {
-                    return Err(IoError::new(ErrorKind::NotFound, "file not found").into());
-                }
-                None => (true, None),
-            }
-        };
-
-        if should_create {
-            return self.write_file(&path, content).await;
-        }
-
-        // File exists, need to append
-        let current_file_size = current_size.unwrap();
-        let new_size = current_file_size + content.len();
-
-        // Check file size limit
-        self.limits
-            .check_file_size(new_size as u64)
-            .map_err(|e| IoError::other(e.to_string()))?;
-
-        // Now do the actual append with write lock
+        // THREAT[TM-DOS-034]: Single write lock for entire read-check-write to
+        // prevent TOCTOU race where file size changes between lock acquisitions.
         let mut entries = self.entries.write().unwrap();
 
-        // Calculate current total for limit check
+        match entries.get(&path) {
+            Some(FsEntry::Directory { .. }) => {
+                return Err(IoError::other("is a directory").into());
+            }
+            Some(FsEntry::Symlink { .. }) => {
+                return Err(IoError::new(ErrorKind::NotFound, "file not found").into());
+            }
+            None => {
+                // File doesn't exist - create via check_write_limits + insert
+                // (inline instead of calling write_file to avoid deadlock on entries lock)
+                self.check_write_limits(&entries, &path, content.len())?;
+                if let Some(parent) = path.parent() {
+                    if !entries.contains_key(parent) && parent != Path::new("/") {
+                        return Err(IoError::new(
+                            ErrorKind::NotFound,
+                            "parent directory not found",
+                        )
+                        .into());
+                    }
+                }
+                entries.insert(
+                    path,
+                    FsEntry::File {
+                        content: content.to_vec(),
+                        metadata: Metadata {
+                            file_type: FileType::File,
+                            size: content.len() as u64,
+                            mode: 0o644,
+                            modified: SystemTime::now(),
+                            created: SystemTime::now(),
+                        },
+                    },
+                );
+                return Ok(());
+            }
+            Some(FsEntry::File { .. }) => {
+                // Fall through to append logic below
+            }
+        }
+
+        // File exists - check limits with fresh data under the same write lock
+        let current_file_size = if let Some(FsEntry::File {
+            content: existing, ..
+        }) = entries.get(&path)
+        {
+            existing.len()
+        } else {
+            0
+        };
+        let new_file_size = current_file_size + content.len();
+
+        // Check per-file size limit
+        self.limits
+            .check_file_size(new_file_size as u64)
+            .map_err(|e| IoError::other(e.to_string()))?;
+
+        // Check total bytes limit
         let mut current_total = 0u64;
         for entry in entries.values() {
             if let FsEntry::File {
@@ -911,8 +938,6 @@ impl FileSystem for InMemoryFs {
                 current_total += file_content.len() as u64;
             }
         }
-
-        // Check total bytes limit
         let new_total = current_total + content.len() as u64;
         if new_total > self.limits.max_total_bytes {
             return Err(IoError::other(format!(
@@ -1596,5 +1621,69 @@ mod tests {
         });
         limited.restore(&snapshot);
         assert!(!limited.exists(Path::new("/tmp/huge.bin")).await.unwrap());
+    }
+
+    /// THREAT[TM-DOS-034]: Verify append_file uses single write lock,
+    /// preventing TOCTOU race where size checks use stale data.
+    #[tokio::test]
+    async fn test_append_file_no_toctou_race() {
+        use std::sync::Arc;
+
+        // Set up fs with tight file size limit: 100 bytes max
+        let limits = FsLimits::new().max_file_size(100);
+        let fs = Arc::new(InMemoryFs::with_limits(limits));
+
+        // Create initial file with 80 bytes
+        fs.write_file(Path::new("/tmp/race.txt"), &[b'A'; 80])
+            .await
+            .unwrap();
+
+        // Spawn multiple concurrent appends that would each push past the limit
+        let mut handles = vec![];
+        for _ in 0..10 {
+            let fs_clone = fs.clone();
+            handles.push(tokio::spawn(async move {
+                fs_clone
+                    .append_file(Path::new("/tmp/race.txt"), &[b'B'; 25])
+                    .await
+            }));
+        }
+
+        let mut success_count = 0;
+        for handle in handles {
+            if handle.await.unwrap().is_ok() {
+                success_count += 1;
+            }
+        }
+
+        // No appends should succeed (80 + 25 = 105 > 100 byte file limit)
+        assert_eq!(
+            success_count, 0,
+            "no appends should succeed: 80+25=105 exceeds 100 byte file limit"
+        );
+
+        // Verify file unchanged
+        let content = fs.read_file(Path::new("/tmp/race.txt")).await.unwrap();
+        assert_eq!(content.len(), 80);
+    }
+
+    /// Verify append_file creates file when it doesn't exist (under write lock)
+    #[tokio::test]
+    async fn test_append_creates_new_file_atomic() {
+        let fs = InMemoryFs::new();
+        fs.append_file(Path::new("/tmp/new.txt"), b"hello")
+            .await
+            .unwrap();
+        let content = fs.read_file(Path::new("/tmp/new.txt")).await.unwrap();
+        assert_eq!(content, b"hello");
+    }
+
+    /// Verify append_file rejects append to directory
+    #[tokio::test]
+    async fn test_append_to_directory_fails() {
+        let fs = InMemoryFs::new();
+        fs.mkdir(Path::new("/tmp/dir"), false).await.unwrap();
+        let result = fs.append_file(Path::new("/tmp/dir"), b"data").await;
+        assert!(result.is_err());
     }
 }
