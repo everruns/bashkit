@@ -36,7 +36,6 @@ Optional features:
 
 ```bash
 cargo add bashkit --features git      # Virtual git operations
-cargo add bashkit --features python   # Embedded Python interpreter
 ```
 
 ## Quick Start
