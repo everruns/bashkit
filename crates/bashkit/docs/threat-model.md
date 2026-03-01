@@ -421,12 +421,17 @@ builtin silently fails.
 | Normalization bypass (TM-UNI-008) | NFC vs NFD create distinct files | Matches Linux FS behavior | ACCEPTED |
 | Bidi in script source (TM-UNI-014) | RTL overrides hide malicious code | Scripts untrusted by design | ACCEPTED |
 
-**Safe Components (confirmed by audit):**
+**Safe Components (confirmed by full codebase audit):**
 - Lexer: `Chars` iterator with `ch.len_utf8()` tracking
 - wc: Correct `.len()` vs `.chars().count()` usage
 - grep/jq: Delegate to Unicode-aware regex/jaq crates
 - sort/uniq: String comparison, no byte indexing
 - logging: Uses `is_char_boundary()` correctly
+- python: Shebang strip via `find('\n')` — ASCII delimiter, safe
+- Python bindings (bashkit-python): PyO3 `String` extraction, no manual byte/char ops
+- eval harness: `chars().take()`, `from_utf8_lossy()` — all safe patterns
+- curl/bc/export/date/comm/echo/archive/base64: All `.find()` use ASCII delimiters only
+- scripted_tool: No byte/char patterns
 
 **Path Validation:**
 

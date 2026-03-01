@@ -1023,11 +1023,11 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-UNI-002 | Sed parser byte-boundary issues | Silent builtin failure on valid input | Audit and fix sed byte-indexing |
 | TM-UNI-003 | Zero-width chars in filenames | Invisible/confusable filenames | Extend `find_unsafe_path_char()` |
 | TM-UNI-011 | Tag characters in filenames | Invisible content in filenames | Extend `find_unsafe_path_char()` |
-| TM-UNI-015 | Expr `substr` byte-boundary panic | Silent failure on multi-byte substr | Fix to use char-boundary-safe indexing |
-| TM-UNI-016 | Printf precision mid-char panic | Silent failure on multi-byte precision truncation | Use `is_char_boundary()` before slicing |
-| TM-UNI-017 | Cut/tr byte-level char set parsing | Multi-byte chars silently dropped in tr specs | Switch from `as_bytes()` to char iteration |
-| TM-UNI-018 | Interpreter arithmetic byte/char confusion | Wrong operator detection on multi-byte expressions | Use `char_indices()` instead of `.find()` + `.chars().nth()` |
-| TM-UNI-019 | Network allowlist byte/char confusion | Wrong path boundary check on multi-byte URLs | Use byte offset consistently in URL matching |
+| TM-UNI-015 | Expr `substr` byte-boundary panic | Silent failure on multi-byte substr | Fix to use char-boundary-safe indexing (issue #434) |
+| TM-UNI-016 | Printf precision mid-char panic | Silent failure on multi-byte precision truncation | Use `is_char_boundary()` before slicing (issue #435) |
+| TM-UNI-017 | Cut/tr byte-level char set parsing | Multi-byte chars silently dropped in tr specs | Switch from `as_bytes()` to char iteration (issue #436) |
+| TM-UNI-018 | Interpreter arithmetic byte/char confusion | Wrong operator detection on multi-byte expressions | Use `char_indices()` instead of `.find()` + `.chars().nth()` (issue #437) |
+| TM-UNI-019 | Network allowlist byte/char confusion | Wrong path boundary check on multi-byte URLs | Use byte offset consistently in URL matching (issue #438) |
 
 ### Accepted (Low Priority)
 
@@ -1636,6 +1636,22 @@ specs are rare in practice).
 - **jq** (`builtins/jq.rs`): Delegates to jaq crate
 - **sort/uniq** (`builtins/sort_uniq.rs`): String comparison-based, no byte indexing
 - **logging** (`logging_impl.rs`): Uses `is_char_boundary()` correctly
+- **python** (`builtins/python.rs`): Shebang strip uses `find('\n')` — newline is ASCII,
+  byte offset safe. No other byte/char manipulation.
+- **Python bindings** (`bashkit-python/src/lib.rs`): PyO3 `String` extraction handles
+  UTF-8 correctly. No manual byte/char manipulation patterns.
+- **eval harness** (`bashkit-eval/src/`): Only uses `Iterator::find` (not `str::find`),
+  `chars().take()` for display truncation, `from_utf8_lossy()` for file content. All safe.
+- **curl** (`builtins/curl.rs`): All `.find()` calls use ASCII delimiters (`:`, `=`).
+  Byte offsets are safe because delimiters are single-byte.
+- **bc** (`builtins/bc.rs`): `find('=')` with ASCII delimiter. Safe.
+- **export** (`builtins/export.rs`): `find('=')` with ASCII delimiter. Safe.
+- **date** (`builtins/date.rs`): `&fmt[1..]` strips ASCII `+`. Safe.
+- **comm** (`builtins/comm.rs`): `arg[1..]` strips ASCII `-`. Safe.
+- **echo** (`builtins/echo.rs`): `arg_str[1..]` strips ASCII `-`. Safe.
+- **archive** (`builtins/archive.rs`): `arg[1..]` strips ASCII `-`. Safe.
+- **base64** (`builtins/base64.rs`): `s[7..]` after `starts_with("--wrap=")` — 7 ASCII bytes. Safe.
+- **scripted_tool** (`scripted_tool/`): No byte/char patterns found.
 
 ### Unicode Security Summary
 
@@ -1655,11 +1671,11 @@ specs are rare in practice).
 | TM-UNI-012 | Interlinear annotation hiding | LOW | UNMITIGATED | Extend path validation |
 | TM-UNI-013 | Deprecated format chars | LOW | UNMITIGATED | Extend path validation |
 | TM-UNI-014 | Bidi in script source | LOW | ACCEPTED | Caller responsibility |
-| TM-UNI-015 | Expr substr byte-boundary panic | MEDIUM | PARTIAL | Fix expr to use char-safe indexing |
-| TM-UNI-016 | Printf precision mid-char panic | MEDIUM | PARTIAL | Use `is_char_boundary()` |
-| TM-UNI-017 | Cut/tr byte-level char set parsing | MEDIUM | PARTIAL | Switch to char-aware iteration |
-| TM-UNI-018 | Interpreter arithmetic byte/char confusion | LOW | PARTIAL | Use `char_indices()` in arithmetic |
-| TM-UNI-019 | Network allowlist byte/char confusion | MEDIUM | PARTIAL | Fix URL path matching to use byte offsets |
+| TM-UNI-015 | Expr substr byte-boundary panic | MEDIUM | PARTIAL | Fix expr to use char-safe indexing (issue #434) |
+| TM-UNI-016 | Printf precision mid-char panic | MEDIUM | PARTIAL | Use `is_char_boundary()` (issue #435) |
+| TM-UNI-017 | Cut/tr byte-level char set parsing | MEDIUM | PARTIAL | Switch to char-aware iteration (issue #436) |
+| TM-UNI-018 | Interpreter arithmetic byte/char confusion | LOW | PARTIAL | Use `char_indices()` in arithmetic (issue #437) |
+| TM-UNI-019 | Network allowlist byte/char confusion | MEDIUM | PARTIAL | Fix URL path matching to use byte offsets (issue #438) |
 
 ### Caller Responsibilities (Unicode)
 
