@@ -118,7 +118,7 @@ impl BashTool {
 ### Single crate vs workspace
 Rejected single crate because:
 - CLI binary would bloat the library
-- Future Python bindings need separate crate
+- Python package needs separate crate
 - Cleaner separation of concerns
 
 ### Sync vs async filesystem

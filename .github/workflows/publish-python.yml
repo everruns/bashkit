@@ -1,4 +1,4 @@
-# PyPI publishing workflow for bashkit Python bindings
+# PyPI publishing workflow for bashkit Python package
 # Builds pre-compiled wheels for all major platforms and publishes to PyPI.
 # Triggered alongside publish.yml on GitHub Release or manual dispatch.
 # Adapted from https://github.com/pydantic/monty CI wheel-building pattern.

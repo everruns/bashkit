@@ -1,4 +1,4 @@
-"""Tests for bashkit Python bindings."""
+"""Tests for bashkit Python package."""
 
 import json
 

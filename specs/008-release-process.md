@@ -145,7 +145,7 @@ Example:
 
 - `bashkit` on crates.io (core library)
 - `bashkit-cli` on crates.io (CLI tool)
-- `bashkit` on PyPI (Python bindings, pre-built wheels)
+- `bashkit` on PyPI (Python package, pre-built wheels)
 
 ## Publishing Order
 

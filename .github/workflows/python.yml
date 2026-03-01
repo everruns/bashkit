@@ -1,4 +1,4 @@
-# CI for bashkit Python bindings
+# CI for bashkit Python package
 # Builds the native extension via maturin and runs pytest on each PR.
 # Complements publish-python.yml (release-only) with per-PR validation.
 
