@@ -272,6 +272,19 @@ impl OverlayFs {
         FsUsage::new(total_bytes, file_count, dir_count)
     }
 
+    /// Record a lower-layer file as hidden (overridden or whited out).
+    fn hide_lower_file(&self, size: u64) {
+        let mut h = self.lower_hidden.write().unwrap();
+        h.total_bytes = h.total_bytes.saturating_add(size);
+        h.file_count = h.file_count.saturating_add(1);
+    }
+
+    /// Record a lower-layer directory as hidden.
+    fn hide_lower_dir(&self) {
+        let mut h = self.lower_hidden.write().unwrap();
+        h.dir_count = h.dir_count.saturating_add(1);
+    }
+
     /// Check limits before writing.
     fn check_write_limits(&self, content_size: usize) -> Result<()> {
         // Check file size limit
@@ -352,19 +365,6 @@ impl OverlayFs {
         let path = Self::normalize_path(path);
         let mut whiteouts = self.whiteouts.write().unwrap();
         whiteouts.remove(&path);
-    }
-
-    /// Record that a lower-layer file is now hidden (overridden or whited out).
-    fn hide_lower_file(&self, size: u64) {
-        let mut hidden = self.lower_hidden.write().unwrap();
-        hidden.total_bytes = hidden.total_bytes.saturating_add(size);
-        hidden.file_count = hidden.file_count.saturating_add(1);
-    }
-
-    /// Record that a lower-layer directory is now hidden.
-    fn hide_lower_dir(&self) {
-        let mut hidden = self.lower_hidden.write().unwrap();
-        hidden.dir_count = hidden.dir_count.saturating_add(1);
     }
 }
 
@@ -1019,5 +1019,61 @@ mod tests {
 
         assert!(names.contains(&&"lower.txt".to_string()));
         assert!(names.contains(&&"upper.txt".to_string()));
+    }
+
+    // Issue #418: usage should deduct whited-out files
+    #[tokio::test]
+    async fn test_usage_deducts_whiteouts() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .write_file(Path::new("/tmp/deleted.txt"), &[b'X'; 50])
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+        let before = overlay.usage();
+
+        overlay
+            .remove(Path::new("/tmp/deleted.txt"), false)
+            .await
+            .unwrap();
+
+        let after = overlay.usage();
+        assert_eq!(
+            after.total_bytes,
+            before.total_bytes - 50,
+            "whited-out file bytes should be deducted"
+        );
+        assert_eq!(
+            after.file_count,
+            before.file_count - 1,
+            "whited-out file should be deducted from count"
+        );
+    }
+
+    // Issue #418: append CoW should not double-count lower file
+    #[tokio::test]
+    async fn test_usage_no_double_count_append_cow() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .write_file(Path::new("/tmp/log.txt"), &[b'A'; 100])
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+        let before = overlay.usage();
+
+        overlay
+            .append_file(Path::new("/tmp/log.txt"), &[b'B'; 10])
+            .await
+            .unwrap();
+
+        let after = overlay.usage();
+        assert_eq!(
+            after.total_bytes,
+            before.total_bytes + 10,
+            "CoW append should add only new content bytes"
+        );
+        assert_eq!(after.file_count, before.file_count);
     }
 }
