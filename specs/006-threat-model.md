@@ -120,8 +120,39 @@ the session-level backstop.
 | TM-DOS-008 | Tar bomb | `tar -xf bomb.tar` (many files / large files) | FS limits | **MITIGATED** |
 | TM-DOS-009 | Recursive copy | `cp -r /tmp /tmp/copy` | FS limits | **MITIGATED** |
 | TM-DOS-010 | Append flood | `while true; do echo x >> file; done` | FS limits + loop limit | **MITIGATED** |
+| TM-DOS-034 | TOCTOU in append_file | Concurrent appends between read-lock and write-lock bypass size checks | — | **OPEN** |
+| TM-DOS-035 | OverlayFs limit check upper-only | `check_write_limits()` ignores lower layer usage, allowing combined usage to exceed limits | — | **OPEN** |
+| TM-DOS-036 | OverlayFs usage double-count | `compute_usage()` double-counts overwritten/whited-out files | — | **OPEN** |
+| TM-DOS-037 | OverlayFs chmod CoW bypass | `chmod` copy-on-write writes to unlimited upper layer, bypassing overlay limits | — | **OPEN** |
+| TM-DOS-038 | OverlayFs incomplete recursive whiteout | `rm -r /dir` only whiteouts directory, not children; lower layer files remain visible | — | **OPEN** |
+| TM-DOS-039 | Missing validate_path in VFS methods | `remove`, `stat`, `read_dir`, `copy`, `rename`, `symlink`, `chmod` skip `validate_path()` | — | **OPEN** |
+| TM-DOS-040 | Integer truncation on 32-bit | `u64 as usize` casts in network/Python bindings silently truncate on 32-bit, bypassing size checks | — | **OPEN** |
 
-**Current Risk**: LOW - Filesystem limits prevent unbounded memory consumption
+**TM-DOS-034**: `InMemoryFs::append_file()` (line 816-896) reads under a read lock, drops it,
+checks limits with stale data, then acquires write lock. Fix: single write lock for whole operation.
+
+**TM-DOS-035**: `OverlayFs::check_write_limits()` (line 263-293) checks only upper layer bytes.
+With 80MB in lower and 100MB limit, upper gets another full 100MB (180MB total). Fix: use
+`compute_usage()` for combined accounting.
+
+**TM-DOS-036**: `OverlayFs::compute_usage()` (line 246-259) sums upper + lower without deducting
+overwritten or whited-out files. Causes premature limit rejections. Fix: subtract overrides.
+
+**TM-DOS-037**: `OverlayFs::chmod()` (line 610-638) triggers copy-on-write directly to `self.upper`
+which has `FsLimits::unlimited()`. Fix: route through `check_write_limits()`.
+
+**TM-DOS-038**: `OverlayFs::remove()` (line 456-484) whiteouts directory path only.
+`is_whiteout()` uses exact match so `/dir/file.txt` stays visible from lower layer. Fix: check
+ancestor whiteouts in `is_whiteout()`.
+
+**TM-DOS-039**: `validate_path()` only called in `read_file`, `write_file`, `append_file`, `mkdir`.
+Missing from `remove`, `stat`, `read_dir`, `exists`, `rename`, `copy`, `symlink`, `read_link`,
+`chmod`. `copy()` also skips `check_write_limits()`. Fix: add validation to all path-accepting methods.
+
+**TM-DOS-040**: `network/client.rs:236,419` and `bashkit-python/src/lib.rs:197,200` cast `u64` to
+`usize`. On 32-bit, `Content-Length: 5GB` truncates to ~1GB. Fix: use `usize::try_from()`.
+
+**Current Risk**: MEDIUM - OverlayFs limit accounting has multiple gaps (TM-DOS-034 to TM-DOS-039)
 
 **Implementation**: `FsLimits` struct in `fs/limits.rs`:
 ```rust
@@ -273,6 +304,7 @@ max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
 
 | TM-ESC-012 | VFS limit bypass via public API | `add_file()` / `restore()` skip `validate_path()` and `check_write_limits()` | — | **OPEN** |
 | TM-ESC-013 | OverlayFs upper() exposes unlimited FS | `OverlayFs::upper()` returns `InMemoryFs` with `FsLimits::unlimited()` | — | **OPEN** |
+| TM-ESC-014 | BashTool custom builtins lost after first call | `std::mem::take` empties builtins on first `execute()`, removing security wrappers | — | **OPEN** |
 
 **TM-ESC-012**: `InMemoryFs::add_file()` is `pub` and does not call `validate_path()` or
 `check_write_limits()`. `restore()` deserializes without validation. Any code with `InMemoryFs`
@@ -281,6 +313,10 @@ access can bypass all limits. Fix: add limit checks or restrict visibility to `p
 **TM-ESC-013**: `OverlayFs::upper()` returns `&InMemoryFs` with unlimited limits. Callers can
 write unlimited data via `overlay.upper().write_file()`. Fix: don't expose `upper()` publicly,
 or return a view that enforces the overlay's limits.
+
+**TM-ESC-014**: `BashTool::create_bash()` (`tool.rs:456`) uses `std::mem::take(&mut self.builtins)`,
+emptying the builtin map on first `execute()`. Subsequent calls get no custom builtins. If custom
+builtins enforce security wrappers, those are silently removed. Fix: clone or use `Arc`.
 
 #### 2.2 Process Escape
 
@@ -343,6 +379,7 @@ All execution stays within the virtual interpreter — no OS subprocess is spawn
 | TM-INF-013 | Host env leak via jq | jq builtin calls `std::env::set_var()`, exposing host process env vars | — | **OPEN** |
 | TM-INF-014 | Real PID leak via $$ | `$$` returns `std::process::id()` instead of virtual value | — | **OPEN** |
 | TM-INF-015 | URL credentials in errors | Allowlist "blocked" error echoes full URL including credentials | — | **OPEN** |
+| TM-INF-016 | Internal state in error messages | `std::io::Error`, reqwest errors, Debug-formatted errors leak host paths/IPs/TLS info | — | **OPEN** |
 
 **TM-INF-013**: The jq builtin (`builtins/jq.rs:414-421`) calls `std::env::set_var()` to expose
 shell variables to jaq's `env` function. This also makes host process env vars (API keys, tokens)
@@ -354,6 +391,12 @@ host PID. All other system builtins return virtual values. Fix: return fixed or 
 
 **TM-INF-015**: `network/allowlist.rs:144` echoes full URL in error messages, potentially including
 `user:pass@` in the authority. Fix: apply `LogConfig::redact_url()` to URLs in errors.
+
+**TM-INF-016**: Multiple error paths leak internal details: `error.rs:38` wraps `std::io::Error`
+(may include host paths), `network/client.rs:224` wraps reqwest errors (resolved IPs, TLS info),
+`git/client.rs` includes VFS paths and remote URLs, `scripted_tool/execute.rs:323` uses `{:?}`
+(Debug format) while `BashTool` uses `error_kind()` — inconsistent. Fix: use Display format
+consistently, wrap external errors with sanitized messages.
 
 **Current Risk**: MEDIUM - Caller must sanitize environment variables; jq leaks host env
 
@@ -421,6 +464,12 @@ Bash::builder()
 **Current Risk**: MEDIUM - Internal variable namespace injection (TM-INJ-009) needs remediation
 
 | TM-INJ-009 | Internal variable namespace injection | Set `_NAMEREF_`, `_READONLY_`, etc. directly | — | **OPEN** |
+
+| TM-INJ-011 | Cyclic nameref silent resolution | Cyclic namerefs (a→b→a) silently resolve after 10 iterations instead of erroring | — | **OPEN** |
+
+**TM-INJ-011**: `interpreter/mod.rs:7547-7560` — cyclic namerefs silently resolve to whatever
+variable is current after 10 iterations. Real bash errors with `circular name reference`. Can
+be exploited to read/write unintended variables. Fix: detect cycles (track visited names), error.
 
 **TM-INJ-009**: The interpreter uses magic variable prefixes as internal control signals:
 `_NAMEREF_<name>` (nameref), `_READONLY_<name>` (readonly), `_SHIFT_COUNT`, `_SET_POSITIONAL`,
@@ -957,6 +1006,18 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-GIT-014 | Git branch name path injection | VFS git repo corruption | Validate branch names |
 | TM-INF-014 | Real PID leak via $$ | Host information disclosure | Return virtual PID |
 | TM-INF-015 | URL credentials in error messages | Credential leak | Apply URL redaction |
+| TM-INF-016 | Internal state in error messages | Info leak (paths, IPs, TLS) | Consistent Display format |
+| TM-DOS-034 | TOCTOU in append_file | VFS size limit bypass | Single write lock |
+| TM-DOS-035 | OverlayFs limit check upper-only | Combined size limit bypass | Use compute_usage() |
+| TM-DOS-036 | OverlayFs usage double-count | Premature limit rejections | Subtract overrides |
+| TM-DOS-037 | OverlayFs chmod CoW bypass | Limit bypass via chmod | Route through check_write_limits |
+| TM-DOS-038 | OverlayFs incomplete whiteout | Deleted files remain visible | Check ancestor whiteouts |
+| TM-DOS-039 | Missing validate_path in VFS | Path validation gaps | Add to all methods |
+| TM-ESC-014 | Custom builtins lost after first call | Security wrappers silently removed | Clone or Arc builtins |
+| TM-PY-026 | reset() discards security config | DoS protections removed | Preserve config on reset |
+| TM-INJ-011 | Cyclic nameref silent resolution | Read/write unintended variables | Detect cycles, error |
+| TM-PY-027 | py_to_json unbounded recursion | Stack overflow | Add depth counter |
+| TM-DOS-040 | Integer truncation on 32-bit | Size check bypass | Use try_from() |
 
 ### Accepted (Low Priority)
 
@@ -1023,6 +1084,17 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Tar path validation | TM-INJ-010 | Check resolved path starts with extract_base | **NEEDED** |
 | Git branch name validation | TM-GIT-014 | Reject `..`, control chars, trailing `.lock` | **NEEDED** |
 | GIL release in execute_sync | TM-PY-025 | `py.allow_threads()` wrapper | **NEEDED** |
+| TOCTOU fix in append_file | TM-DOS-034 | Single write lock for read-check-write | **NEEDED** |
+| OverlayFs combined limit accounting | TM-DOS-035, TM-DOS-036 | Use combined usage for limit checks, subtract overrides | **NEEDED** |
+| OverlayFs chmod CoW limits | TM-DOS-037 | Route copy-on-write through `check_write_limits()` | **NEEDED** |
+| OverlayFs recursive whiteout | TM-DOS-038 | Check ancestor whiteouts in `is_whiteout()` | **NEEDED** |
+| VFS-wide path validation | TM-DOS-039 | `validate_path()` in all path-accepting methods | **NEEDED** |
+| Custom builtin preservation | TM-ESC-014 | Clone builtins instead of `std::mem::take` | **NEEDED** |
+| Python config preservation on reset | TM-PY-026 | Store and reapply builder config | **NEEDED** |
+| JSON conversion depth limit | TM-PY-027 | Depth counter in `py_to_json`/`json_to_py` | **NEEDED** |
+| Cyclic nameref detection | TM-INJ-011 | Track visited names, emit error on cycle | **NEEDED** |
+| Error message sanitization gaps | TM-INF-016 | Consistent Display format, wrap external errors | **NEEDED** |
+| 32-bit integer safety | TM-DOS-040 | `usize::try_from()` for `u64` casts | **NEEDED** |
 
 ---
 
@@ -1241,6 +1313,17 @@ text as shell commands. Fix: random delimiter suffix or direct write API.
 **TM-PY-025**: `crates/bashkit-python/src/lib.rs:510-527` calls `rt.block_on()` while holding the
 GIL. Tool callbacks call `Python::attach()` to reacquire. Can deadlock in multi-threaded Python.
 Fix: wrap with `py.allow_threads(|| { ... })`.
+
+| TM-PY-026 | reset() discards security config | `BashTool.reset()` creates new `Bash` with bare builder, dropping all configured limits | — | **OPEN** |
+| TM-PY-027 | Unbounded recursion in JSON conversion | `py_to_json`/`json_to_py` recurse without depth limit on nested dicts/lists | — | **OPEN** |
+
+**TM-PY-026**: `crates/bashkit-python/src/lib.rs:260-271` — `reset()` creates `Bash::builder().build()`
+without reapplying `max_commands`, `max_loop_iterations`, `username`, `hostname`. After reset,
+DoS protections are silently removed. Fix: store original config and reapply.
+
+**TM-PY-027**: `crates/bashkit-python/src/lib.rs:58-92` — `py_to_json` and `json_to_py` recurse
+on nested Python dicts/lists with no depth counter. Deeply nested structures cause stack overflow.
+Fix: add depth counter, fail beyond 64 levels.
 
 ### VFS Bridge Security Properties
 

