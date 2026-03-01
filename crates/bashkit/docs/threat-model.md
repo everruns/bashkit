@@ -390,11 +390,40 @@ let bash = Bash::builder()
 // Commits use virtual identity, never host ~/.gitconfig
 ```
 
+### Unicode Security (TM-UNI-*)
+
+Unicode input from untrusted scripts creates attack surface across the parser, builtins,
+and virtual filesystem. AI agents frequently generate multi-byte Unicode (box-drawing,
+emoji, CJK) that exercises these code paths.
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| Byte-boundary panic (TM-UNI-001) | Multi-byte chars in awk input | `catch_unwind` catches panic | PARTIAL |
+| Zero-width in filenames (TM-UNI-003) | Invisible chars create confusable names | Path validation (planned) | UNMITIGATED |
+| Homoglyph confusion (TM-UNI-006) | Cyrillic 'а' vs Latin 'a' in filenames | Accepted risk | ACCEPTED |
+| Normalization bypass (TM-UNI-008) | NFC vs NFD create distinct files | Matches Linux FS behavior | ACCEPTED |
+| Bidi in script source (TM-UNI-014) | RTL overrides hide malicious code | Scripts untrusted by design | ACCEPTED |
+
+**Path Validation:**
+
+Filenames are validated by `find_unsafe_path_char()` which rejects:
+- ASCII control characters (U+0000-U+001F, U+007F)
+- C1 control characters (U+0080-U+009F)
+- Bidi override characters (U+202A-U+202E, U+2066-U+2069)
+
+Normal Unicode (accented, CJK, emoji) is allowed in filenames and script content.
+
+**Caller Responsibility:**
+- Strip zero-width/invisible characters from filenames before displaying to users
+- Apply confusable-character detection (UTS #39) if showing filenames to humans
+- Strip bidi overrides from script source before displaying to code reviewers
+
 ## Security Testing
 
 Bashkit includes comprehensive security tests:
 
 - **Threat Model Tests**: [`tests/threat_model_tests.rs`][threat_tests] - 117 tests
+- **Unicode Security Tests**: `tests/unicode_security_tests.rs` - TM-UNI-* tests
 - **Nesting Depth Tests**: 18 tests covering positive, negative, misconfiguration,
   and regression scenarios for parser depth attacks
 - **Fail-Point Tests**: [`tests/security_failpoint_tests.rs`][failpoint_tests] - 14 tests
@@ -425,6 +454,7 @@ All threats use stable IDs in the format `TM-<CATEGORY>-<NUMBER>`:
 | TM-LOG | Logging Security |
 | TM-GIT | Git Security |
 | TM-PY | Python/Monty Security |
+| TM-UNI | Unicode Security |
 
 Full threat analysis: [`specs/006-threat-model.md`][spec]
 

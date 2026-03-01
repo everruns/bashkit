@@ -29,6 +29,7 @@ All threats use a stable ID format: `TM-<CATEGORY>-<NUMBER>`
 | TM-GIT | Git Security | Repository access, identity leak, remote operations |
 | TM-LOG | Logging Security | Sensitive data in logs, log injection, log volume attacks |
 | TM-PY | Python Security | Embedded Python sandbox escape, VFS isolation, resource limits |
+| TM-UNI | Unicode Security | Byte-boundary panics, invisible chars, homoglyphs, normalization |
 
 ### Adding New Threats
 
@@ -1018,6 +1019,10 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-INJ-011 | Cyclic nameref silent resolution | Read/write unintended variables | Detect cycles, error |
 | TM-PY-027 | py_to_json unbounded recursion | Stack overflow | Add depth counter |
 | TM-DOS-040 | Integer truncation on 32-bit | Size check bypass | Use try_from() |
+| TM-UNI-001 | Awk parser byte-boundary panic on Unicode | Silent builtin failure on valid input | Fix awk parser to use char-boundary-safe indexing |
+| TM-UNI-002 | Sed parser byte-boundary issues | Silent builtin failure on valid input | Audit and fix sed byte-indexing |
+| TM-UNI-003 | Zero-width chars in filenames | Invisible/confusable filenames | Extend `find_unsafe_path_char()` |
+| TM-UNI-011 | Tag characters in filenames | Invisible content in filenames | Extend `find_unsafe_path_char()` |
 
 ### Accepted (Low Priority)
 
@@ -1026,6 +1031,10 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-011 | Symlinks not followed | Functionality gap | By design - prevents symlink attacks |
 | TM-DOS-025 | Regex backtracking | CPU exhaustion | Regex crate has internal limits |
 | TM-DOS-033 | AWK unbounded loops | CPU exhaustion | 30s timeout backstop |
+| TM-UNI-004 | Zero-width chars in variable names | Variable confusion | Matches Bash behavior |
+| TM-UNI-006 | Homoglyph filenames | Visual confusion | Impractical to fully detect |
+| TM-UNI-008 | Normalization bypass | Duplicate filenames | Matches Linux FS behavior |
+| TM-UNI-014 | Bidi overrides in script source | Trojan Source | Scripts are untrusted by design |
 
 ---
 
@@ -1069,6 +1078,8 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Log injection prevention | TM-LOG-005, TM-LOG-006 | `logging.rs` | Yes |
 | Log value truncation | TM-LOG-007, TM-LOG-008 | `logging.rs` | Yes |
 | Python resource limits | TM-PY-001 to TM-PY-003 | `builtins/python.rs` | Yes |
+| Path char validation (bidi) | TM-DOS-015, TM-UNI-003, TM-UNI-011 | `fs/limits.rs` | Partial (bidi yes, zero-width/tags no) |
+| Builtin panic catching | TM-INT-001, TM-UNI-001, TM-UNI-002 | `interpreter/mod.rs` | Yes (catch_unwind) |
 
 ### Open Controls (From 2026-03 Security Audit)
 
@@ -1136,6 +1147,8 @@ FsLimits::new()
 | Use network allowlist | TM-INF-010, TM-NET-* | Default denies all network access |
 | Sanitize output | TM-INJ-008 | Filter terminal escapes if displaying output |
 | Set appropriate limits | TM-DOS-* | Tune limits for your use case |
+| Sanitize displayed filenames | TM-UNI-003, TM-UNI-006, TM-UNI-011 | Strip zero-width/invisible/confusable chars before showing to users |
+| Bidi sanitize script display | TM-UNI-014 | Strip bidi overrides if displaying script source to code reviewers |
 
 ---
 
@@ -1153,15 +1166,20 @@ FsLimits::new()
 | Parser edge cases | ✅ | ❌ | ✅ | ✅ | ✅ |
 | Custom builtin errors | ✅ | ✅ | ✅ | - | - |
 | Logging security | ✅ | ❌ | ✅ | - | ✅ |
+| Unicode security | ✅ | ❌ | ✅ | ❌ | ❌ |
 
 **Test Files**:
 - `tests/threat_model_tests.rs` - 117 threat-based security tests
+- `tests/unicode_security_tests.rs` - Unicode security tests (TM-UNI-*)
 - `tests/security_failpoint_tests.rs` - Fail-point injection tests
 - `tests/builtin_error_security_tests.rs` - Custom builtin error handling tests (39 tests)
 - `tests/network_security_tests.rs` - HTTP security tests (53 tests: allowlist, size limits, timeouts)
 - `tests/logging_security_tests.rs` - Logging security tests (redaction, injection)
 
-**Recommendation**: Add cargo-fuzz for parser and input handling.
+**Recommendations**:
+- Add cargo-fuzz for parser and input handling
+- Add proptest for Unicode string generation against builtin parsers (TM-UNI-001, TM-UNI-002)
+- Add fuzz target for awk/sed with multi-byte Unicode input
 
 ---
 
@@ -1370,6 +1388,168 @@ filesystem.
 
 ---
 
+## Unicode Security (TM-UNI)
+
+Unicode handling presents a broad attack surface in any interpreter that processes
+untrusted text input. Bashkit processes Unicode in script source, variable values,
+filenames, and builtin arguments (awk/sed/grep patterns). This section catalogs
+Unicode-specific threats beyond the path-level protections in TM-DOS-015.
+
+**Context**: AI agents (Bashkit's primary users) frequently generate Unicode content —
+LLMs produce box-drawing characters, emoji, CJK, accented text, and other multi-byte
+sequences in comments, strings, and data. Issue #395 demonstrated that the awk parser
+panics on multi-byte Unicode because it conflates character positions with byte offsets.
+
+### 11.1 Builtin Parser Byte-Boundary Safety
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-UNI-001 | Byte-boundary panic in awk | `awk '{print}' <<< "─ comment"` — multi-byte char causes `self.input[self.pos..]` panic | `catch_unwind` (TM-INT-001) catches the panic; root fix requires char-boundary-safe indexing | **PARTIAL** |
+| TM-UNI-002 | Byte-boundary panic in sed | `sed 's/─/x/' file` — similar byte-offset slicing | `catch_unwind` catches; needs audit of `&s[start..i]` patterns | **PARTIAL** |
+
+**Current Risk**: MEDIUM — `catch_unwind` (TM-INT-001) prevents process crash, but the
+builtin silently fails instead of processing the input correctly. Scripts get unexpected
+"builtin failed unexpectedly" errors on valid Unicode input.
+
+**Root Cause**: The awk parser uses `self.pos` as both a character count (incremented by
+`+= 1` per `chars().nth()` call) and a byte offset (used in `self.input[self.pos..]`
+slicing). For ASCII this is coincidentally correct. For multi-byte UTF-8 (2–4 bytes per
+char), character position N does not equal byte offset N, causing panics at char
+boundaries.
+
+**Affected Code** (awk.rs):
+```
+Line 449:  self.input[start..self.pos].to_string()     // read_identifier
+Line 453:  self.input[self.pos..].starts_with(keyword)  // matches_keyword
+Line 1532: self.input[start..self.pos].to_string()      // parse_primary
+Line 1596: self.input[start..self.pos]                   // parse_number
+Lines 1006-1430: ~10 operator checks using self.input[self.pos..]
+```
+
+**Fix**: Convert awk parser to use `char_indices()` iteration or maintain a separate
+byte offset alongside the char position. The `logging_impl.rs:truncate()` function
+demonstrates the correct pattern using `is_char_boundary()`.
+
+### 11.2 Zero-Width Character Injection
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-UNI-003 | Zero-width chars in filenames | `touch "/tmp/file\u{200B}name"` — invisible ZWSP creates confusable filenames | `find_unsafe_path_char()` does NOT detect zero-width chars | **UNMITIGATED** |
+| TM-UNI-004 | Zero-width chars in variable names | `\u{200B}PATH=malicious` — invisible char makes variable look like PATH | Not detected; Bash itself allows this | **ACCEPTED** |
+| TM-UNI-005 | Zero-width chars in script source | `echo "pass\u{200B}word"` — invisible char in string literal | Not detected; pass-through is correct Bash behavior | **ACCEPTED** |
+
+**Current Risk**: LOW for filenames (path validation gap), MINIMAL for variables/scripts
+(correct pass-through behavior matches Bash)
+
+**Zero-width characters of concern**:
+- U+200B Zero Width Space (ZWSP)
+- U+200C Zero Width Non-Joiner (ZWNJ)
+- U+200D Zero Width Joiner (ZWJ)
+- U+FEFF Byte Order Mark / Zero Width No-Break Space
+- U+2060 Word Joiner
+- U+180E Mongolian Vowel Separator
+
+**Recommendation**: Extend `find_unsafe_path_char()` to reject zero-width characters in
+filenames (TM-UNI-003). Variable names and script content should pass through as-is to
+match Bash behavior.
+
+### 11.3 Homoglyph / Confusable Characters
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-UNI-006 | Homoglyph filename confusion | `/tmp/tеst.sh` (Cyrillic е U+0435 vs Latin e U+0065) — visually identical filenames with different content | Not detected; full homoglyph detection is impractical | **ACCEPTED** |
+| TM-UNI-007 | Homoglyph variable confusion | `pаth=/evil` (Cyrillic а) vs `path=/safe` (Latin a) | Not detected; matches Bash behavior | **ACCEPTED** |
+
+**Current Risk**: LOW — Bashkit runs untrusted scripts in isolation. Homoglyph confusion
+primarily threatens humans reading code, not automated execution. Full Unicode confusable
+detection (UTS #39) would require large lookup tables and produce false positives on
+legitimate CJK/accented text.
+
+**Decision**: Accept risk. Document that callers displaying filenames or variable names
+to users should apply their own confusable-character detection if needed.
+
+### 11.4 Unicode Normalization
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-UNI-008 | Normalization-based filename bypass | NFC "café" vs NFD "café" (composed é vs e+combining acute) create two distinct files with the same visual name | No normalization applied; matches real filesystem behavior | **ACCEPTED** |
+
+**Current Risk**: LOW — This matches POSIX/Linux filesystem behavior (filenames are opaque
+byte sequences). macOS normalizes to NFD, Linux does not. Bashkit's VFS treats filenames
+as byte-exact strings, consistent with Linux behavior.
+
+**Decision**: Accept risk. Normalization would break round-trip fidelity and is not done by
+real Bash on Linux.
+
+### 11.5 Combining Character Abuse
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-UNI-009 | Excessive combining marks | Filename with 1000 combining diacritical marks on one base char — visual DoS / potential rendering hang | `max_filename_length` (255 bytes) limits total size | **MITIGATED** |
+| TM-UNI-010 | Combining marks in builtin input | `awk` / `grep` pattern with excessive combiners | Execution timeout + builtin parser depth limit | **MITIGATED** |
+
+**Current Risk**: LOW — Existing length limits bound the damage.
+
+### 11.6 Tag Characters and Other Invisibles
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-UNI-011 | Tag character hiding | U+E0001-U+E007F (Tags block) — invisible chars that can conceal content in filenames | `find_unsafe_path_char()` does NOT detect tag chars | **UNMITIGATED** |
+| TM-UNI-012 | Interlinear annotation hiding | U+FFF9-U+FFFB (Interlinear Annotations) — can hide text in filenames | Not detected in paths | **UNMITIGATED** |
+| TM-UNI-013 | Deprecated format chars | U+206A-U+206F (Deprecated formatting) — can cause display confusion | Not detected in paths | **UNMITIGATED** |
+
+**Current Risk**: LOW — These are extremely obscure. Tag characters were deprecated in
+Unicode 5.0. Practical exploitation likelihood is minimal.
+
+**Recommendation**: Extend `find_unsafe_path_char()` to also reject:
+- U+200B-U+200D, U+2060, U+FEFF (zero-width chars, per TM-UNI-003)
+- U+E0001-U+E007F (tag characters)
+- U+FFF9-U+FFFB (interlinear annotations)
+- U+206A-U+206F (deprecated format characters)
+
+### 11.7 Bidi in Script Source
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-UNI-014 | Bidi override in script source | [Trojan Source](https://trojansource.codes/) — RTL overrides in script comments/strings reorder displayed code, hiding malicious logic | Not detected in script input; paths are protected (TM-DOS-015) | **ACCEPTED** |
+
+**Current Risk**: LOW — Bashkit executes untrusted scripts by design. The Trojan Source
+attack targets human code reviewers, not automated execution. Scripts are treated as
+untrusted regardless of visual appearance.
+
+**Decision**: Accept risk. Bidi detection in script source would be defense-in-depth for
+callers who display scripts to users, but is out of scope for Bashkit's core execution
+model. Document as caller responsibility.
+
+### Unicode Security Summary
+
+| ID | Threat | Risk | Status | Action |
+|----|--------|------|--------|--------|
+| TM-UNI-001 | Awk parser byte-boundary panic | MEDIUM | PARTIAL | Fix awk parser indexing (issue #395) |
+| TM-UNI-002 | Sed parser byte-boundary panic | MEDIUM | PARTIAL | Audit sed byte-indexing patterns |
+| TM-UNI-003 | Zero-width chars in filenames | LOW | UNMITIGATED | Extend `find_unsafe_path_char()` |
+| TM-UNI-004 | Zero-width chars in variables | MINIMAL | ACCEPTED | Matches Bash behavior |
+| TM-UNI-005 | Zero-width chars in scripts | MINIMAL | ACCEPTED | Correct pass-through |
+| TM-UNI-006 | Homoglyph filenames | LOW | ACCEPTED | Impractical to fully detect |
+| TM-UNI-007 | Homoglyph variables | LOW | ACCEPTED | Matches Bash behavior |
+| TM-UNI-008 | Normalization bypass | LOW | ACCEPTED | Matches Linux FS behavior |
+| TM-UNI-009 | Excessive combining marks (filenames) | LOW | MITIGATED | Length limits bound damage |
+| TM-UNI-010 | Excessive combining marks (builtins) | LOW | MITIGATED | Timeout + depth limits |
+| TM-UNI-011 | Tag character hiding | LOW | UNMITIGATED | Extend path validation |
+| TM-UNI-012 | Interlinear annotation hiding | LOW | UNMITIGATED | Extend path validation |
+| TM-UNI-013 | Deprecated format chars | LOW | UNMITIGATED | Extend path validation |
+| TM-UNI-014 | Bidi in script source | LOW | ACCEPTED | Caller responsibility |
+
+### Caller Responsibilities (Unicode)
+
+| Responsibility | Related Threats | Description |
+|---------------|-----------------|-------------|
+| Sanitize displayed filenames | TM-UNI-003, TM-UNI-006, TM-UNI-011 | Strip zero-width/invisible chars before showing filenames to users |
+| Homoglyph detection | TM-UNI-006, TM-UNI-007 | Apply UTS #39 confusable detection if showing script content to users |
+| Bidi sanitization | TM-UNI-014 | Strip bidi overrides from script source before displaying to code reviewers |
+
+---
+
 ## References
 
 - `specs/001-architecture.md` - System design
@@ -1377,5 +1557,6 @@ filesystem.
 - `specs/005-security-testing.md` - Fail-point testing
 - `specs/011-python-builtin.md` - Python builtin specification
 - `src/builtins/system.rs` - Hardcoded system builtins
-- `tests/threat_model_tests.rs` - Threat model test suite (117 tests)
+- `tests/threat_model_tests.rs` - Threat model test suite
 - `tests/security_failpoint_tests.rs` - Fail-point security tests
+- `tests/unicode_security_tests.rs` - Unicode security tests (TM-UNI-*)
