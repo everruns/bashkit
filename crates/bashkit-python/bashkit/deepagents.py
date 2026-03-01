@@ -13,6 +13,7 @@ Use together for shared VFS:
 
 from __future__ import annotations
 
+import shlex
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -184,7 +185,7 @@ if DEEPAGENTS_AVAILABLE:
         # === File Operations ===
 
         def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> str:
-            result = self._bash.execute_sync(f"cat {file_path}")
+            result = self._bash.execute_sync(f"cat {shlex.quote(file_path)}")
             if result.exit_code != 0:
                 return f"Error: {result.stderr or 'File not found'}"
             lines = result.stdout.splitlines()
@@ -195,7 +196,7 @@ if DEEPAGENTS_AVAILABLE:
             return self.read(file_path, offset, limit)
 
         def write(self, file_path: str, content: str) -> WriteResult:
-            cmd = f"cat > {file_path} << 'BASHKIT_EOF'\n{content}\nBASHKIT_EOF"
+            cmd = f"cat > {shlex.quote(file_path)} << 'BASHKIT_EOF'\n{content}\nBASHKIT_EOF"
             result = self._bash.execute_sync(cmd)
             return WriteResult(error=result.stderr if result.exit_code != 0 else None, path=file_path)
 
@@ -203,7 +204,7 @@ if DEEPAGENTS_AVAILABLE:
             return self.write(file_path, content)
 
         def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
-            result = self._bash.execute_sync(f"cat {file_path}")
+            result = self._bash.execute_sync(f"cat {shlex.quote(file_path)}")
             if result.exit_code != 0:
                 return EditResult(error=f"File not found: {file_path}")
             content = result.stdout
@@ -227,7 +228,7 @@ if DEEPAGENTS_AVAILABLE:
         # === File Discovery ===
 
         def ls_info(self, path: str) -> list[FileInfo]:
-            result = self._bash.execute_sync(f"ls -la {path}")
+            result = self._bash.execute_sync(f"ls -la {shlex.quote(path)}")
             if result.exit_code != 0:
                 return []
             files = []
@@ -255,7 +256,7 @@ if DEEPAGENTS_AVAILABLE:
 
         def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
             name_pattern = pattern.replace("**/", "").replace("**", "*") if "**" in pattern else pattern
-            result = self._bash.execute_sync(f"find {path} -name '{name_pattern}' -type f")
+            result = self._bash.execute_sync(f"find {shlex.quote(path)} -name {shlex.quote(name_pattern)} -type f")
             if result.exit_code != 0:
                 return []
             return [
@@ -275,7 +276,9 @@ if DEEPAGENTS_AVAILABLE:
             return self.glob_info(pattern, path)
 
         def grep_raw(self, pattern: str, path: str | None = None, glob: str | None = None) -> list[GrepMatch] | str:
-            cmd = f"grep -rn '{pattern}' {path}" if path else f"grep -rn '{pattern}' /home"
+            quoted_pattern = shlex.quote(pattern)
+            search_path = shlex.quote(path) if path else "/home"
+            cmd = f"grep -rn {quoted_pattern} {search_path}"
             result = self._bash.execute_sync(cmd)
             matches = []
             for line in result.stdout.splitlines():
@@ -299,7 +302,7 @@ if DEEPAGENTS_AVAILABLE:
         def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
             responses = []
             for p in paths:
-                result = self._bash.execute_sync(f"cat {p}")
+                result = self._bash.execute_sync(f"cat {shlex.quote(p)}")
                 if result.exit_code == 0:
                     responses.append(FileDownloadResponse(path=p, content=result.stdout.encode(), error=None))
                 else:
