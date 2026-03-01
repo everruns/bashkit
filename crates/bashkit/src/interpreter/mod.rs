@@ -2938,7 +2938,12 @@ impl Interpreter {
                         // Extglob *(pattern-list) — collect remaining pattern
                         let remaining_pattern: String = pattern_chars.collect();
                         let remaining_value: String = value_chars.collect();
-                        return self.glob_match_impl(&remaining_value, &remaining_pattern, nocase, depth + 1);
+                        return self.glob_match_impl(
+                            &remaining_value,
+                            &remaining_pattern,
+                            nocase,
+                            depth + 1,
+                        );
                     }
                     pattern_chars.next();
                     // * matches zero or more characters
@@ -2949,7 +2954,12 @@ impl Interpreter {
                     while value_chars.peek().is_some() {
                         let remaining_value: String = value_chars.clone().collect();
                         let remaining_pattern: String = pattern_chars.clone().collect();
-                        if self.glob_match_impl(&remaining_value, &remaining_pattern, nocase, depth + 1) {
+                        if self.glob_match_impl(
+                            &remaining_value,
+                            &remaining_pattern,
+                            nocase,
+                            depth + 1,
+                        ) {
                             return true;
                         }
                         value_chars.next();
@@ -2965,7 +2975,12 @@ impl Interpreter {
                     if extglob && pc_clone.peek() == Some(&'(') {
                         let remaining_pattern: String = pattern_chars.collect();
                         let remaining_value: String = value_chars.collect();
-                        return self.glob_match_impl(&remaining_value, &remaining_pattern, nocase, depth + 1);
+                        return self.glob_match_impl(
+                            &remaining_value,
+                            &remaining_pattern,
+                            nocase,
+                            depth + 1,
+                        );
                     }
                     if value_chars.peek().is_some() {
                         pattern_chars.next();
@@ -3132,9 +3147,12 @@ impl Interpreter {
                             let prefix = &value[..split];
                             let suffix = &value[split..];
                             // prefix must not match any alt
-                            let prefix_matches_any =
-                                alts.iter().any(|a| self.glob_match_impl(prefix, a, nocase, depth + 1));
-                            if !prefix_matches_any && self.glob_match_impl(suffix, rest, nocase, depth + 1) {
+                            let prefix_matches_any = alts
+                                .iter()
+                                .any(|a| self.glob_match_impl(prefix, a, nocase, depth + 1));
+                            if !prefix_matches_any
+                                && self.glob_match_impl(suffix, rest, nocase, depth + 1)
+                            {
                                 return true;
                             }
                         }
