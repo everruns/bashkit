@@ -401,14 +401,24 @@ fn squeeze_chars(s: &str, set: &[char]) -> String {
 /// Supports POSIX character classes: [:lower:], [:upper:], [:digit:], [:alpha:], [:alnum:], [:space:]
 fn expand_char_set(spec: &str) -> Vec<char> {
     let mut chars = Vec::new();
+    let char_vec: Vec<char> = spec.chars().collect();
+    let len = char_vec.len();
     let mut i = 0;
-    let bytes = spec.as_bytes();
 
-    while i < bytes.len() {
+    while i < len {
         // Check for POSIX character class [:class:]
-        if bytes[i] == b'[' && i + 1 < bytes.len() && bytes[i + 1] == b':' {
-            if let Some(end) = spec[i + 2..].find(":]") {
-                let class_name = &spec[i + 2..i + 2 + end];
+        if char_vec[i] == '[' && i + 1 < len && char_vec[i + 1] == ':' {
+            if let Some(end) = spec[spec
+                .char_indices()
+                .nth(i + 2)
+                .map_or(spec.len(), |(pos, _)| pos)..]
+                .find(":]")
+            {
+                let class_start = spec
+                    .char_indices()
+                    .nth(i + 2)
+                    .map_or(spec.len(), |(pos, _)| pos);
+                let class_name = &spec[class_start..class_start + end];
                 match class_name {
                     "lower" => chars.extend('a'..='z'),
                     "upper" => chars.extend('A'..='Z'),
@@ -425,7 +435,6 @@ fn expand_char_set(spec: &str) -> Vec<char> {
                     "space" => chars.extend([' ', '\t', '\n', '\r', '\x0b', '\x0c']),
                     "blank" => chars.extend([' ', '\t']),
                     "punct" => {
-                        // ASCII punctuation: !"#$%&'()*+,-./:;<=>?@[\]^_`{|}~
                         for code in 0x21u8..=0x7e {
                             let c = code as char;
                             if !c.is_ascii_alphanumeric() {
@@ -439,13 +448,11 @@ fn expand_char_set(spec: &str) -> Vec<char> {
                         chars.extend('a'..='f');
                     }
                     "print" => {
-                        // Printable characters: space + graph
                         for code in 0x20u8..=0x7e {
                             chars.push(code as char);
                         }
                     }
                     "graph" => {
-                        // Visible characters (no space)
                         for code in 0x21u8..=0x7e {
                             chars.push(code as char);
                         }
@@ -457,54 +464,55 @@ fn expand_char_set(spec: &str) -> Vec<char> {
                         chars.push(0x7f as char);
                     }
                     _ => {
-                        // Unknown class, treat literally
                         chars.push('[');
                         i += 1;
                         continue;
                     }
                 }
-                i += 2 + end + 2; // skip past [: + class + :]
+                // Count chars in the class spec to advance properly
+                let class_char_count = class_name.chars().count();
+                i += 2 + class_char_count + 2; // skip past [: + class + :]
                 continue;
             }
         }
 
-        let c = bytes[i] as char;
+        let c = char_vec[i];
         // Check for range like a-z
-        if i + 2 < bytes.len() && bytes[i + 1] == b'-' {
-            let end = bytes[i + 2] as char;
+        if i + 2 < len && char_vec[i + 1] == '-' {
+            let end_char = char_vec[i + 2];
             let start = c as u32;
-            let end = end as u32;
+            let end = end_char as u32;
             for code in start..=end {
                 if let Some(ch) = char::from_u32(code) {
                     chars.push(ch);
                 }
             }
             i += 3;
-        } else if i + 1 == bytes.len() - 1 && bytes[i + 1] == b'-' {
+        } else if i + 1 == len - 1 && char_vec[i + 1] == '-' {
             // Trailing dash
             chars.push(c);
             chars.push('-');
             i += 2;
         } else {
             // Handle escape sequences
-            if c == '\\' && i + 1 < bytes.len() {
-                match bytes[i + 1] {
-                    b'n' => {
+            if c == '\\' && i + 1 < len {
+                match char_vec[i + 1] {
+                    'n' => {
                         chars.push('\n');
                         i += 2;
                         continue;
                     }
-                    b't' => {
+                    't' => {
                         chars.push('\t');
                         i += 2;
                         continue;
                     }
-                    b'0' => {
+                    '0' => {
                         chars.push('\0');
                         i += 2;
                         continue;
                     }
-                    b'\\' => {
+                    '\\' => {
                         chars.push('\\');
                         i += 2;
                         continue;
@@ -837,5 +845,35 @@ mod tests {
         let result = run_tr(&["-cs", "[:alpha:]", "\n"], Some("hello 123 world\n")).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "hello\nworld\n");
+    }
+
+    #[tokio::test]
+    async fn test_tr_multibyte_utf8() {
+        // Translate multi-byte chars: ä -> x
+        let result = run_tr(&["ä", "x"], Some("hällo\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "hxllo\n");
+    }
+
+    #[tokio::test]
+    async fn test_tr_multibyte_utf8_range() {
+        // Multi-byte char in set preserved (not corrupted)
+        let result = run_tr(&["über", "UBER"], Some("über\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "UBER\n");
+    }
+
+    #[tokio::test]
+    async fn test_cut_multibyte_utf8_chars() {
+        // cut -c with multi-byte input selects chars not bytes
+        let result = run_cut(&["-c", "1-3"], Some("äöü\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "äöü\n");
+    }
+
+    #[test]
+    fn test_expand_char_set_multibyte() {
+        let chars = expand_char_set("äöü");
+        assert_eq!(chars, vec!['ä', 'ö', 'ü']);
     }
 }
