@@ -17,6 +17,21 @@
 use std::collections::HashSet;
 use url::Url;
 
+/// Redact credentials from a URL for safe inclusion in error messages.
+/// Replaces `user:pass@` in the authority with `***@`.
+fn redact_url(url: &str) -> String {
+    match Url::parse(url) {
+        Ok(mut parsed) => {
+            if !parsed.username().is_empty() || parsed.password().is_some() {
+                let _ = parsed.set_username("***");
+                let _ = parsed.set_password(None);
+            }
+            parsed.to_string()
+        }
+        Err(_) => "[invalid URL]".to_string(),
+    }
+}
+
 /// Network allowlist configuration for controlling HTTP access.
 ///
 /// URLs must match an entry in the allowlist to be accessed.
@@ -141,7 +156,7 @@ impl NetworkAllowlist {
         }
 
         UrlMatch::Blocked {
-            reason: format!("URL not in allowlist: {}", url),
+            reason: format!("URL not in allowlist: {}", redact_url(url)),
         }
     }
 
@@ -367,5 +382,35 @@ mod tests {
 
         let allow_all = NetworkAllowlist::allow_all();
         assert!(allow_all.is_enabled());
+    }
+
+    #[test]
+    fn test_redact_url_strips_credentials() {
+        let redacted = redact_url("https://user:secret@example.com/path");
+        assert!(
+            !redacted.contains("secret"),
+            "password leaked: {}",
+            redacted
+        );
+        assert!(!redacted.contains("user"), "username leaked: {}", redacted);
+        assert!(redacted.contains("example.com/path"));
+    }
+
+    #[test]
+    fn test_redact_url_preserves_clean_url() {
+        let clean = "https://example.com/path?q=1";
+        assert_eq!(redact_url(clean), clean);
+    }
+
+    #[test]
+    fn test_blocked_message_no_credentials() {
+        let allowlist = NetworkAllowlist::new().allow("https://allowed.com");
+        let result = allowlist.check("https://user:pass@blocked.com/api");
+        match result {
+            UrlMatch::Blocked { reason } => {
+                assert!(!reason.contains("pass"), "credentials leaked: {}", reason);
+            }
+            _ => panic!("expected Blocked"),
+        }
     }
 }
