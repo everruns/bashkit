@@ -327,8 +327,8 @@ pub struct BashToolBuilder {
     limits: Option<ExecutionLimits>,
     /// Environment variables to set
     env_vars: Vec<(String, String)>,
-    /// Custom builtins (name, implementation)
-    builtins: Vec<(String, Box<dyn Builtin>)>,
+    /// Custom builtins (name, implementation). Arc enables reuse across create_bash calls.
+    builtins: Vec<(String, Arc<dyn Builtin>)>,
 }
 
 impl BashToolBuilder {
@@ -368,7 +368,7 @@ impl BashToolBuilder {
     /// If the builtin implements [`Builtin::llm_hint`], its hint will be
     /// included in `help()` and `system_prompt()`.
     pub fn builtin(mut self, name: impl Into<String>, builtin: Box<dyn Builtin>) -> Self {
-        self.builtins.push((name.into(), builtin));
+        self.builtins.push((name.into(), Arc::from(builtin)));
         self
     }
 
@@ -423,7 +423,7 @@ pub struct BashTool {
     hostname: Option<String>,
     limits: Option<ExecutionLimits>,
     env_vars: Vec<(String, String)>,
-    builtins: Vec<(String, Box<dyn Builtin>)>,
+    builtins: Vec<(String, Arc<dyn Builtin>)>,
     /// Names of custom builtins (for documentation)
     builtin_names: Vec<String>,
     /// LLM hints from registered builtins
@@ -452,9 +452,9 @@ impl BashTool {
         for (key, value) in &self.env_vars {
             builder = builder.env(key, value);
         }
-        // Move builtins out to avoid borrow issues
-        for (name, builtin) in std::mem::take(&mut self.builtins) {
-            builder = builder.builtin(name, builtin);
+        // Clone Arc builtins so they survive across multiple create_bash calls
+        for (name, builtin) in &self.builtins {
+            builder = builder.builtin(name.clone(), Box::new(Arc::clone(builtin)));
         }
 
         builder.build()
@@ -1271,5 +1271,42 @@ mod tests {
         let req: ToolRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.commands, "echo hello");
         assert_eq!(req.timeout_ms, Some(5000));
+    }
+
+    // Issue #422: create_bash should not empty builtins after first call
+    #[tokio::test]
+    async fn test_create_bash_preserves_builtins() {
+        use crate::builtins::{Builtin, Context};
+        use crate::ExecResult;
+        use async_trait::async_trait;
+
+        struct TestBuiltin;
+
+        #[async_trait]
+        impl Builtin for TestBuiltin {
+            async fn execute(&self, _ctx: Context<'_>) -> crate::Result<ExecResult> {
+                Ok(ExecResult::ok("test_output\n"))
+            }
+        }
+
+        let mut tool = BashToolBuilder::new()
+            .builtin("testcmd", Box::new(TestBuiltin))
+            .build();
+
+        // First call
+        let mut bash1 = tool.create_bash();
+        let result1 = bash1.exec("testcmd").await.unwrap();
+        assert!(
+            result1.stdout.contains("test_output"),
+            "first call should have custom builtin"
+        );
+
+        // Second call should still have the builtin
+        let mut bash2 = tool.create_bash();
+        let result2 = bash2.exec("testcmd").await.unwrap();
+        assert!(
+            result2.stdout.contains("test_output"),
+            "second call should still have custom builtin"
+        );
     }
 }

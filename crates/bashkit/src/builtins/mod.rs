@@ -387,6 +387,17 @@ pub trait Builtin: Send + Sync {
     }
 }
 
+#[async_trait]
+impl Builtin for std::sync::Arc<dyn Builtin> {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        (**self).execute(ctx).await
+    }
+
+    fn llm_hint(&self) -> Option<&'static str> {
+        (**self).llm_hint()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
