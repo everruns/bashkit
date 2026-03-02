@@ -531,6 +531,18 @@ async fn extract_tar(
 
         offset += TAR_BLOCK_SIZE;
 
+        // Path traversal protection: reject entries with ".." components or absolute paths
+        if !to_stdout
+            && (name.contains("..")
+                || name.starts_with('/')
+                || !resolve_path(&extract_base, &name).starts_with(&extract_base))
+        {
+            return Ok(ExecResult::err(
+                format!("tar: {}: path traversal blocked\n", name),
+                2,
+            ));
+        }
+
         match type_flag {
             b'5' | b'\0' if name.ends_with('/') => {
                 // Directory
@@ -1461,5 +1473,164 @@ mod tests {
         fs.write_file(&cwd.join("large.txt"), &large_content)
             .await
             .expect_err("Should fail due to file size limit");
+    }
+
+    // ==================== path traversal tests ====================
+
+    /// Build a minimal tar archive with a single file entry.
+    /// Used to craft malicious archives for security testing.
+    fn build_tar_with_entry(name: &str, content: &[u8]) -> Vec<u8> {
+        let mut output = Vec::new();
+        let mut header = [0u8; 512];
+
+        // Name
+        let name_bytes = name.as_bytes();
+        let name_len = name_bytes.len().min(100);
+        header[..name_len].copy_from_slice(&name_bytes[..name_len]);
+
+        // Mode
+        let mode = b"0000644\0";
+        header[100..108].copy_from_slice(mode);
+
+        // UID/GID
+        header[108..116].copy_from_slice(b"0001000\0");
+        header[116..124].copy_from_slice(b"0001000\0");
+
+        // Size (octal)
+        let size_str = format!("{:011o}\0", content.len());
+        header[124..136].copy_from_slice(size_str.as_bytes());
+
+        // Mtime
+        header[136..148].copy_from_slice(b"00000000000\0");
+
+        // Checksum placeholder (spaces)
+        header[148..156].copy_from_slice(b"        ");
+
+        // Type flag: regular file
+        header[156] = b'0';
+
+        // Magic
+        header[257..263].copy_from_slice(b"ustar ");
+        header[263..265].copy_from_slice(b" \0");
+
+        // Calculate checksum
+        let checksum: u32 = header.iter().map(|&b| b as u32).sum();
+        let cksum_str = format!("{:06o}\0 ", checksum);
+        header[148..156].copy_from_slice(cksum_str.as_bytes());
+
+        output.extend_from_slice(&header);
+        output.extend_from_slice(content);
+        let padding = (512 - (content.len() % 512)) % 512;
+        output.extend(std::iter::repeat_n(0u8, padding));
+        // End-of-archive marker (two zero blocks)
+        output.extend_from_slice(&[0u8; 1024]);
+        output
+    }
+
+    #[tokio::test]
+    async fn test_tar_extract_path_traversal_dotdot_blocked() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        // Craft a malicious tar with ../../../etc/passwd entry
+        let malicious_tar = build_tar_with_entry("../../../etc/passwd", b"root:x:0:0");
+        fs.write_file(&cwd.join("evil.tar"), &malicious_tar)
+            .await
+            .unwrap();
+
+        let args = vec!["-xf".to_string(), "evil.tar".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+
+        let result = Tar.execute(ctx).await.unwrap();
+
+        // Should be blocked
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("path traversal blocked"));
+
+        // /etc/passwd must NOT exist
+        assert!(!fs.exists(&PathBuf::from("/etc/passwd")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_tar_extract_path_traversal_absolute_blocked() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        // Craft a malicious tar with absolute path entry
+        let malicious_tar = build_tar_with_entry("/etc/shadow", b"root:!:19000");
+        fs.write_file(&cwd.join("evil.tar"), &malicious_tar)
+            .await
+            .unwrap();
+
+        let args = vec!["-xf".to_string(), "evil.tar".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+
+        let result = Tar.execute(ctx).await.unwrap();
+
+        // Should be blocked
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("path traversal blocked"));
+
+        // /etc/shadow must NOT exist
+        assert!(!fs.exists(&PathBuf::from("/etc/shadow")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_tar_extract_path_traversal_dir_dotdot_blocked() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        // Craft malicious tar with directory entry using ..
+        let mut output = Vec::new();
+        let mut header = [0u8; 512];
+        let name = b"../../etc/";
+        header[..name.len()].copy_from_slice(name);
+        header[100..108].copy_from_slice(b"0000755\0");
+        header[108..116].copy_from_slice(b"0001000\0");
+        header[116..124].copy_from_slice(b"0001000\0");
+        header[124..136].copy_from_slice(b"00000000000\0");
+        header[136..148].copy_from_slice(b"00000000000\0");
+        header[148..156].copy_from_slice(b"        ");
+        header[156] = b'5'; // directory
+        header[257..263].copy_from_slice(b"ustar ");
+        header[263..265].copy_from_slice(b" \0");
+        let checksum: u32 = header.iter().map(|&b| b as u32).sum();
+        let cksum_str = format!("{:06o}\0 ", checksum);
+        header[148..156].copy_from_slice(cksum_str.as_bytes());
+        output.extend_from_slice(&header);
+        output.extend_from_slice(&[0u8; 1024]);
+
+        fs.write_file(&cwd.join("evil_dir.tar"), &output)
+            .await
+            .unwrap();
+
+        let args = vec!["-xf".to_string(), "evil_dir.tar".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+
+        let result = Tar.execute(ctx).await.unwrap();
+
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("path traversal blocked"));
+    }
+
+    #[tokio::test]
+    async fn test_tar_extract_safe_paths_still_work() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        // Normal tar with safe relative path should still work
+        let safe_tar = build_tar_with_entry("subdir/file.txt", b"safe content");
+        fs.write_file(&cwd.join("safe.tar"), &safe_tar)
+            .await
+            .unwrap();
+
+        let args = vec!["-xf".to_string(), "safe.tar".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+
+        let result = Tar.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+
+        let content = fs.read_file(&cwd.join("subdir/file.txt")).await.unwrap();
+        assert_eq!(content, b"safe content");
     }
 }
