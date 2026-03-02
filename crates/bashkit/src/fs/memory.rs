@@ -1031,6 +1031,9 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn remove(&self, path: &Path, recursive: bool) -> Result<()> {
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let path = Self::normalize_path(path);
         let mut entries = self.entries.write().unwrap();
 
@@ -1072,6 +1075,9 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn stat(&self, path: &Path) -> Result<Metadata> {
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let path = Self::normalize_path(path);
         let entries = self.entries.read().unwrap();
 
@@ -1084,6 +1090,9 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let path = Self::normalize_path(path);
         let entries = self.entries.read().unwrap();
 
@@ -1116,12 +1125,21 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let path = Self::normalize_path(path);
         let entries = self.entries.read().unwrap();
         Ok(entries.contains_key(&path))
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+        self.limits
+            .validate_path(from)
+            .map_err(|e| IoError::other(e.to_string()))?;
+        self.limits
+            .validate_path(to)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let from = Self::normalize_path(from);
         let to = Self::normalize_path(to);
         let mut entries = self.entries.write().unwrap();
@@ -1135,6 +1153,12 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
+        self.limits
+            .validate_path(from)
+            .map_err(|e| IoError::other(e.to_string()))?;
+        self.limits
+            .validate_path(to)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let from = Self::normalize_path(from);
         let to = Self::normalize_path(to);
         let mut entries = self.entries.write().unwrap();
@@ -1144,11 +1168,24 @@ impl FileSystem for InMemoryFs {
             .cloned()
             .ok_or_else(|| IoError::new(ErrorKind::NotFound, "not found"))?;
 
+        // Check write limits before creating the copy
+        let entry_size = match &entry {
+            FsEntry::File { content, .. } => content.len() as u64,
+            _ => 0,
+        };
+        let is_new = !entries.contains_key(&to);
+        if is_new {
+            self.check_write_limits(&entries, &to, entry_size as usize)?;
+        }
+
         entries.insert(to, entry);
         Ok(())
     }
 
     async fn symlink(&self, target: &Path, link: &Path) -> Result<()> {
+        self.limits
+            .validate_path(link)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let link = Self::normalize_path(link);
         let mut entries = self.entries.write().unwrap();
 
@@ -1170,6 +1207,9 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let path = Self::normalize_path(path);
         let entries = self.entries.read().unwrap();
 
@@ -1181,6 +1221,9 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let path = Self::normalize_path(path);
         let mut entries = self.entries.write().unwrap();
 
@@ -1685,5 +1728,64 @@ mod tests {
         fs.mkdir(Path::new("/tmp/dir"), false).await.unwrap();
         let result = fs.append_file(Path::new("/tmp/dir"), b"data").await;
         assert!(result.is_err());
+    }
+
+    // Issue #421: validate_path should be called on all methods
+    #[tokio::test]
+    async fn test_validate_path_on_copy() {
+        let limits = FsLimits::new().max_path_depth(3);
+        let fs = InMemoryFs::with_limits(limits);
+        fs.write_file(Path::new("/tmp/src.txt"), b"data")
+            .await
+            .unwrap();
+
+        let deep = Path::new("/a/b/c/d/e/f.txt");
+        let result = fs.copy(Path::new("/tmp/src.txt"), deep).await;
+        assert!(result.is_err(), "copy to deep path should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_validate_path_on_rename() {
+        let limits = FsLimits::new().max_path_depth(3);
+        let fs = InMemoryFs::with_limits(limits);
+        fs.write_file(Path::new("/tmp/src.txt"), b"data")
+            .await
+            .unwrap();
+
+        let deep = Path::new("/a/b/c/d/e/f.txt");
+        let result = fs.rename(Path::new("/tmp/src.txt"), deep).await;
+        assert!(result.is_err(), "rename to deep path should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_copy_respects_write_limits() {
+        let limits = FsLimits::new().max_file_count(10);
+        let fs = InMemoryFs::with_limits(limits);
+
+        // Fill up to limit
+        for i in 0..10 {
+            let _ = fs
+                .write_file(Path::new(&format!("/tmp/f{i}.txt")), b"x")
+                .await;
+        }
+
+        // Copy should fail - at file count limit
+        let result = fs
+            .copy(Path::new("/tmp/f0.txt"), Path::new("/tmp/copy.txt"))
+            .await;
+        assert!(
+            result.is_err(),
+            "copy should respect file count write limits"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_path_on_chmod() {
+        let limits = FsLimits::new().max_path_depth(3);
+        let fs = InMemoryFs::with_limits(limits);
+
+        let deep = Path::new("/a/b/c/d/e/f.txt");
+        let result = fs.chmod(deep, 0o755).await;
+        assert!(result.is_err(), "chmod on deep path should be rejected");
     }
 }
