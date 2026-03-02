@@ -296,8 +296,9 @@ impl OverlayFs {
             .into());
         }
 
-        // Check total size limit (upper layer only, since lower is read-only)
-        let usage = self.upper.usage();
+        // THREAT[TM-DOS-035]: Check total size against combined usage, not just upper.
+        // Using upper-only would allow exceeding limits when lower has existing data.
+        let usage = self.compute_usage();
         let new_total = usage.total_bytes + content_size as u64;
         if new_total > self.limits.max_total_bytes {
             return Err(IoError::other(format!(
@@ -1075,5 +1076,72 @@ mod tests {
             "CoW append should add only new content bytes"
         );
         assert_eq!(after.file_count, before.file_count);
+    }
+
+    /// THREAT[TM-DOS-035]: Verify check_write_limits uses combined usage.
+    #[tokio::test]
+    async fn test_write_limits_include_lower_layer() {
+        use super::super::limits::FsLimits;
+
+        let lower = Arc::new(InMemoryFs::new());
+        // Write 80 bytes to lower
+        lower
+            .write_file(Path::new("/tmp/big.txt"), &[b'A'; 80])
+            .await
+            .unwrap();
+
+        // Create overlay with 100 byte total limit
+        let limits = FsLimits::new().max_total_bytes(100);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        // Writing 30 bytes should fail: 80 (lower) + 30 (new) = 110 > 100
+        let result = overlay
+            .write_file(Path::new("/tmp/extra.txt"), &[b'B'; 30])
+            .await;
+        assert!(
+            result.is_err(),
+            "should reject write that exceeds combined limit"
+        );
+
+        // Writing 15 bytes should succeed: 80 + 15 = 95 < 100
+        let result = overlay
+            .write_file(Path::new("/tmp/small.txt"), &[b'C'; 15])
+            .await;
+        assert!(result.is_ok(), "should allow write within combined limit");
+    }
+
+    /// THREAT[TM-DOS-035]: Verify file count limit includes lower files.
+    #[tokio::test]
+    async fn test_file_count_limit_includes_lower() {
+        use super::super::limits::FsLimits;
+
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .write_file(Path::new("/tmp/existing.txt"), b"data")
+            .await
+            .unwrap();
+
+        // Get actual combined count (includes default entries from both layers)
+        let temp_overlay = OverlayFs::new(lower.clone());
+        let base_count = temp_overlay.usage().file_count;
+
+        // Set file count limit to base_count + 1
+        let limits = FsLimits::new().max_file_count(base_count + 1);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        // First new file should succeed (base_count + 1 <= limit)
+        overlay
+            .write_file(Path::new("/tmp/new1.txt"), b"ok")
+            .await
+            .unwrap();
+
+        // Second new file should fail (base_count + 2 > limit)
+        let result = overlay
+            .write_file(Path::new("/tmp/new2.txt"), b"fail")
+            .await;
+        assert!(
+            result.is_err(),
+            "should reject when combined file count exceeds limit"
+        );
     }
 }
