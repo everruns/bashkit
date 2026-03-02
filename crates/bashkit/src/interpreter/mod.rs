@@ -3890,131 +3890,14 @@ impl Interpreter {
 
         // Check for functions first
         if let Some(func_def) = self.functions.get(name).cloned() {
-            // Check function depth limit
-            self.counters.push_function(&self.limits)?;
-
-            // Push call frame with positional parameters
-            self.call_stack.push(CallFrame {
-                name: name.to_string(),
-                locals: HashMap::new(),
-                positional: args.clone(),
-            });
-
-            // Set FUNCNAME array from call stack (index 0 = current, 1 = caller, ...)
-            let funcname_arr: HashMap<usize, String> = self
-                .call_stack
-                .iter()
-                .rev()
-                .enumerate()
-                .map(|(i, f)| (i, f.name.clone()))
-                .collect();
-            let prev_funcname = self.arrays.insert("FUNCNAME".to_string(), funcname_arr);
-
-            // Forward pipeline stdin to function body
-            let prev_pipeline_stdin = self.pipeline_stdin.take();
-            self.pipeline_stdin = stdin;
-
-            // Execute function body
-            let mut result = self.execute_command(&func_def.body).await?;
-
-            // Restore previous pipeline stdin
-            self.pipeline_stdin = prev_pipeline_stdin;
-
-            // Pop call frame and function counter
-            self.call_stack.pop();
-            self.counters.pop_function();
-
-            // Restore previous FUNCNAME (or set from remaining stack)
-            if self.call_stack.is_empty() {
-                self.arrays.remove("FUNCNAME");
-            } else if let Some(prev) = prev_funcname {
-                self.arrays.insert("FUNCNAME".to_string(), prev);
-            }
-
-            // Handle return - convert Return control flow to exit code
-            if let ControlFlow::Return(code) = result.control_flow {
-                result.exit_code = code;
-                result.control_flow = ControlFlow::None;
-            }
-
-            // Handle output redirections
-            return self.apply_redirections(result, &command.redirects).await;
+            return self
+                .execute_function_call(name, &func_def, args, stdin, &command.redirects)
+                .await;
         }
 
         // Handle `local` specially - must set in call frame locals
         if name == "local" {
-            // Parse flags: -n for nameref
-            let mut is_nameref = false;
-            let mut var_args: Vec<&String> = Vec::new();
-            for arg in &args {
-                if arg.starts_with('-') && !arg.contains('=') {
-                    for c in arg[1..].chars() {
-                        if c == 'n' {
-                            is_nameref = true;
-                        }
-                    }
-                } else {
-                    var_args.push(arg);
-                }
-            }
-
-            if let Some(frame) = self.call_stack.last_mut() {
-                // In a function - set in locals
-                for arg in &var_args {
-                    if let Some(eq_pos) = arg.find('=') {
-                        let var_name = &arg[..eq_pos];
-                        let value = &arg[eq_pos + 1..];
-                        // Validate variable name
-                        if !Self::is_valid_var_name(var_name) {
-                            let result = ExecResult::err(
-                                format!("local: `{}': not a valid identifier\n", arg),
-                                1,
-                            );
-                            return self.apply_redirections(result, &command.redirects).await;
-                        }
-                        if is_nameref {
-                            // local -n ref=target: create nameref, declare in local scope
-                            frame.locals.insert(var_name.to_string(), String::new());
-                            // Store nameref mapping in global variables (markers)
-                            // Need to drop frame borrow first
-                        } else {
-                            frame.locals.insert(var_name.to_string(), value.to_string());
-                        }
-                    } else {
-                        // Just declare without value — empty string (bash behavior)
-                        frame.locals.insert(arg.to_string(), String::new());
-                    }
-                }
-                // Now set nameref markers (after frame borrow is released)
-                if is_nameref {
-                    for arg in &var_args {
-                        if let Some(eq_pos) = arg.find('=') {
-                            let var_name = &arg[..eq_pos];
-                            let value = &arg[eq_pos + 1..];
-                            self.variables
-                                .insert(format!("_NAMEREF_{}", var_name), value.to_string());
-                        }
-                    }
-                }
-            } else {
-                // Not in a function - set in global variables (bash behavior)
-                for arg in &var_args {
-                    if let Some(eq_pos) = arg.find('=') {
-                        let var_name = &arg[..eq_pos];
-                        let value = &arg[eq_pos + 1..];
-                        if is_nameref {
-                            self.variables
-                                .insert(format!("_NAMEREF_{}", var_name), value.to_string());
-                        } else {
-                            self.variables
-                                .insert(var_name.to_string(), value.to_string());
-                        }
-                    } else {
-                        self.variables.insert(arg.to_string(), String::new());
-                    }
-                }
-            }
-            return Ok(ExecResult::ok(String::new()));
+            return self.execute_local_builtin(&args, &command.redirects).await;
         }
 
         // Handle `timeout` specially - needs interpreter-level command execution
@@ -4072,59 +3955,7 @@ impl Interpreter {
 
         // Handle `trap` - register signal/event handlers
         if name == "trap" {
-            if args.is_empty() {
-                // List all traps
-                let mut output = String::new();
-                let mut sorted: Vec<_> = self.traps.iter().collect();
-                sorted.sort_by_key(|(sig, _)| (*sig).clone());
-                for (sig, cmd) in sorted {
-                    output.push_str(&format!("trap -- '{}' {}\n", cmd, sig));
-                }
-                let mut result = ExecResult::ok(output);
-                result = self.apply_redirections(result, &command.redirects).await?;
-                return Ok(result);
-            }
-            // Handle -p flag (print traps)
-            if args[0] == "-p" {
-                let mut output = String::new();
-                if args.len() == 1 {
-                    // trap -p: print all traps
-                    let mut sorted: Vec<_> = self.traps.iter().collect();
-                    sorted.sort_by_key(|(sig, _)| (*sig).clone());
-                    for (sig, cmd) in sorted {
-                        output.push_str(&format!("trap -- '{}' {}\n", cmd, sig));
-                    }
-                } else {
-                    // trap -p SIG ...: print specific traps
-                    for sig in &args[1..] {
-                        let sig_upper = sig.to_uppercase();
-                        if let Some(cmd) = self.traps.get(&sig_upper) {
-                            output.push_str(&format!("trap -- '{}' {}\n", cmd, sig_upper));
-                        }
-                    }
-                }
-                let mut result = ExecResult::ok(output);
-                result = self.apply_redirections(result, &command.redirects).await?;
-                return Ok(result);
-            }
-            if args.len() == 1 {
-                // trap '' or trap - : reset signal
-                let sig = args[0].to_uppercase();
-                self.traps.remove(&sig);
-            } else {
-                let cmd = args[0].clone();
-                for sig in &args[1..] {
-                    let sig_upper = sig.to_uppercase();
-                    if cmd == "-" {
-                        self.traps.remove(&sig_upper);
-                    } else {
-                        self.traps.insert(sig_upper, cmd.clone());
-                    }
-                }
-            }
-            let mut result = ExecResult::ok(String::new());
-            result = self.apply_redirections(result, &command.redirects).await?;
-            return Ok(result);
+            return self.execute_trap_builtin(&args, &command.redirects).await;
         }
 
         // Handle `declare`/`typeset` - needs interpreter-level access to arrays
@@ -4136,73 +3967,12 @@ impl Interpreter {
 
         // Handle `let` - evaluate arithmetic expressions with assignment
         if name == "let" {
-            let mut last_val = 0i64;
-            for arg in &args {
-                last_val = self.evaluate_arithmetic_with_assign(arg);
-            }
-            // let returns 1 if last expression is 0, 0 otherwise
-            let exit_code = if last_val == 0 { 1 } else { 0 };
-            let mut result = ExecResult {
-                stdout: String::new(),
-                stderr: String::new(),
-                exit_code,
-                control_flow: ControlFlow::None,
-            };
-            result = self.apply_redirections(result, &command.redirects).await?;
-            return Ok(result);
+            return self.execute_let_builtin(&args, &command.redirects).await;
         }
 
         // Handle `unset` with array element syntax and nameref support
         if name == "unset" {
-            // Parse -n flag: unset -n removes the nameref itself
-            let mut unset_nameref = false;
-            let mut var_args: Vec<&String> = Vec::new();
-            for arg in &args {
-                if arg == "-n" {
-                    unset_nameref = true;
-                } else if arg == "-v" || arg == "-f" {
-                    // -v (variable, default) and -f (function) flags - skip
-                } else {
-                    var_args.push(arg);
-                }
-            }
-
-            for arg in &var_args {
-                if let Some(bracket) = arg.find('[') {
-                    if arg.ends_with(']') {
-                        let arr_name = &arg[..bracket];
-                        let key = &arg[bracket + 1..arg.len() - 1];
-                        let expanded_key = self.expand_variable_or_literal(key);
-                        // Resolve nameref for array name
-                        let resolved_name = self.resolve_nameref(arr_name).to_string();
-                        if let Some(arr) = self.assoc_arrays.get_mut(&resolved_name) {
-                            arr.remove(&expanded_key);
-                        } else if let Some(arr) = self.arrays.get_mut(&resolved_name) {
-                            if let Ok(idx) = key.parse::<usize>() {
-                                arr.remove(&idx);
-                            }
-                        }
-                        continue;
-                    }
-                }
-                if unset_nameref {
-                    // unset -n: remove the nameref marker itself
-                    self.variables.remove(&format!("_NAMEREF_{}", arg));
-                } else {
-                    // Regular unset: resolve nameref to unset the target
-                    let resolved = self.resolve_nameref(arg).to_string();
-                    self.variables.remove(&resolved);
-                    self.arrays.remove(&resolved);
-                    self.assoc_arrays.remove(&resolved);
-                    // Also remove from local frames
-                    for frame in self.call_stack.iter_mut().rev() {
-                        frame.locals.remove(&resolved);
-                    }
-                }
-            }
-            let mut result = ExecResult::ok(String::new());
-            result = self.apply_redirections(result, &command.redirects).await?;
-            return Ok(result);
+            return self.execute_unset_builtin(&args, &command.redirects).await;
         }
 
         // Handle `getopts` builtin - needs to read/write shell variables (OPTIND, OPTARG)
@@ -4212,37 +3982,7 @@ impl Interpreter {
 
         // Handle `caller` - needs direct access to call stack
         if name == "caller" {
-            let frame_num: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(0);
-            if self.call_stack.is_empty() {
-                // Outside any function
-                let mut result = ExecResult::err(String::new(), 1);
-                result = self.apply_redirections(result, &command.redirects).await?;
-                return Ok(result);
-            }
-            // caller 0 = immediate caller context
-            // call_stack includes current function; top-level is implicit
-            let source = "main";
-            let line = 1;
-            let output = if frame_num == 0 && self.call_stack.len() == 1 {
-                // Called from a function invoked at top level
-                format!("{} main {}\n", line, source)
-            } else if frame_num + 1 < self.call_stack.len() {
-                // Caller frame exists in stack
-                let idx = self.call_stack.len() - 2 - frame_num;
-                let frame = &self.call_stack[idx];
-                format!("{} {} {}\n", line, frame.name, source)
-            } else if frame_num + 1 == self.call_stack.len() {
-                // Frame is the top-level caller
-                format!("{} main {}\n", line, source)
-            } else {
-                // Frame out of range
-                let mut result = ExecResult::err(String::new(), 1);
-                result = self.apply_redirections(result, &command.redirects).await?;
-                return Ok(result);
-            };
-            let mut result = ExecResult::ok(output);
-            result = self.apply_redirections(result, &command.redirects).await?;
-            return Ok(result);
+            return self.execute_caller_builtin(&args, &command.redirects).await;
         }
 
         // Handle `mapfile`/`readarray` - needs direct access to arrays
@@ -4731,6 +4471,295 @@ impl Interpreter {
             RedirectKind::OutputBoth => "&>",
         };
         format!("{}{}{}", fd_prefix, op, redir.target)
+    }
+
+    /// Execute a shell function call with call frame management.
+    async fn execute_function_call(
+        &mut self,
+        name: &str,
+        func_def: &FunctionDef,
+        args: Vec<String>,
+        stdin: Option<String>,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        // Check function depth limit
+        self.counters.push_function(&self.limits)?;
+
+        // Push call frame with positional parameters
+        self.call_stack.push(CallFrame {
+            name: name.to_string(),
+            locals: HashMap::new(),
+            positional: args,
+        });
+
+        // Set FUNCNAME array from call stack (index 0 = current, 1 = caller, ...)
+        let funcname_arr: HashMap<usize, String> = self
+            .call_stack
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(i, f)| (i, f.name.clone()))
+            .collect();
+        let prev_funcname = self.arrays.insert("FUNCNAME".to_string(), funcname_arr);
+
+        // Forward pipeline stdin to function body
+        let prev_pipeline_stdin = self.pipeline_stdin.take();
+        self.pipeline_stdin = stdin;
+
+        // Execute function body
+        let mut result = self.execute_command(&func_def.body).await?;
+
+        // Restore previous pipeline stdin
+        self.pipeline_stdin = prev_pipeline_stdin;
+
+        // Pop call frame and function counter
+        self.call_stack.pop();
+        self.counters.pop_function();
+
+        // Restore previous FUNCNAME (or set from remaining stack)
+        if self.call_stack.is_empty() {
+            self.arrays.remove("FUNCNAME");
+        } else if let Some(prev) = prev_funcname {
+            self.arrays.insert("FUNCNAME".to_string(), prev);
+        }
+
+        // Handle return - convert Return control flow to exit code
+        if let ControlFlow::Return(code) = result.control_flow {
+            result.exit_code = code;
+            result.control_flow = ControlFlow::None;
+        }
+
+        self.apply_redirections(result, redirects).await
+    }
+
+    /// Execute the `local` builtin — set variables in function call frame.
+    async fn execute_local_builtin(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        // Parse flags: -n for nameref
+        let mut is_nameref = false;
+        let mut var_args: Vec<&String> = Vec::new();
+        for arg in args {
+            if arg.starts_with('-') && !arg.contains('=') {
+                for c in arg[1..].chars() {
+                    if c == 'n' {
+                        is_nameref = true;
+                    }
+                }
+            } else {
+                var_args.push(arg);
+            }
+        }
+
+        if let Some(frame) = self.call_stack.last_mut() {
+            // In a function - set in locals
+            for arg in &var_args {
+                if let Some(eq_pos) = arg.find('=') {
+                    let var_name = &arg[..eq_pos];
+                    let value = &arg[eq_pos + 1..];
+                    if !Self::is_valid_var_name(var_name) {
+                        let result = ExecResult::err(
+                            format!("local: `{}': not a valid identifier\n", arg),
+                            1,
+                        );
+                        return self.apply_redirections(result, redirects).await;
+                    }
+                    if is_nameref {
+                        frame.locals.insert(var_name.to_string(), String::new());
+                    } else {
+                        frame.locals.insert(var_name.to_string(), value.to_string());
+                    }
+                } else {
+                    frame.locals.insert(arg.to_string(), String::new());
+                }
+            }
+            // Set nameref markers (after frame borrow is released)
+            if is_nameref {
+                for arg in &var_args {
+                    if let Some(eq_pos) = arg.find('=') {
+                        let var_name = &arg[..eq_pos];
+                        let value = &arg[eq_pos + 1..];
+                        self.variables
+                            .insert(format!("_NAMEREF_{}", var_name), value.to_string());
+                    }
+                }
+            }
+        } else {
+            // Not in a function - set in global variables (bash behavior)
+            for arg in &var_args {
+                if let Some(eq_pos) = arg.find('=') {
+                    let var_name = &arg[..eq_pos];
+                    let value = &arg[eq_pos + 1..];
+                    if is_nameref {
+                        self.variables
+                            .insert(format!("_NAMEREF_{}", var_name), value.to_string());
+                    } else {
+                        self.variables
+                            .insert(var_name.to_string(), value.to_string());
+                    }
+                } else {
+                    self.variables.insert(arg.to_string(), String::new());
+                }
+            }
+        }
+        Ok(ExecResult::ok(String::new()))
+    }
+
+    /// Execute the `trap` builtin — register/list signal handlers.
+    async fn execute_trap_builtin(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        if args.is_empty() {
+            // List all traps
+            let mut output = String::new();
+            let mut sorted: Vec<_> = self.traps.iter().collect();
+            sorted.sort_by_key(|(sig, _)| (*sig).clone());
+            for (sig, cmd) in sorted {
+                output.push_str(&format!("trap -- '{}' {}\n", cmd, sig));
+            }
+            let result = ExecResult::ok(output);
+            return self.apply_redirections(result, redirects).await;
+        }
+        // Handle -p flag (print traps)
+        if args[0] == "-p" {
+            let mut output = String::new();
+            if args.len() == 1 {
+                let mut sorted: Vec<_> = self.traps.iter().collect();
+                sorted.sort_by_key(|(sig, _)| (*sig).clone());
+                for (sig, cmd) in sorted {
+                    output.push_str(&format!("trap -- '{}' {}\n", cmd, sig));
+                }
+            } else {
+                for sig in &args[1..] {
+                    let sig_upper = sig.to_uppercase();
+                    if let Some(cmd) = self.traps.get(&sig_upper) {
+                        output.push_str(&format!("trap -- '{}' {}\n", cmd, sig_upper));
+                    }
+                }
+            }
+            let result = ExecResult::ok(output);
+            return self.apply_redirections(result, redirects).await;
+        }
+        if args.len() == 1 {
+            let sig = args[0].to_uppercase();
+            self.traps.remove(&sig);
+        } else {
+            let cmd = args[0].clone();
+            for sig in &args[1..] {
+                let sig_upper = sig.to_uppercase();
+                if cmd == "-" {
+                    self.traps.remove(&sig_upper);
+                } else {
+                    self.traps.insert(sig_upper, cmd.clone());
+                }
+            }
+        }
+        let result = ExecResult::ok(String::new());
+        self.apply_redirections(result, redirects).await
+    }
+
+    /// Execute the `let` builtin — evaluate arithmetic expressions.
+    async fn execute_let_builtin(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let mut last_val = 0i64;
+        for arg in args {
+            last_val = self.evaluate_arithmetic_with_assign(arg);
+        }
+        let exit_code = if last_val == 0 { 1 } else { 0 };
+        let result = ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code,
+            control_flow: ControlFlow::None,
+        };
+        self.apply_redirections(result, redirects).await
+    }
+
+    /// Execute the `unset` builtin — remove variables, array elements, and namerefs.
+    async fn execute_unset_builtin(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let mut unset_nameref = false;
+        let mut var_args: Vec<&String> = Vec::new();
+        for arg in args {
+            if arg == "-n" {
+                unset_nameref = true;
+            } else if arg == "-v" || arg == "-f" {
+                // -v (variable, default) and -f (function) flags - skip
+            } else {
+                var_args.push(arg);
+            }
+        }
+
+        for arg in &var_args {
+            if let Some(bracket) = arg.find('[') {
+                if arg.ends_with(']') {
+                    let arr_name = &arg[..bracket];
+                    let key = &arg[bracket + 1..arg.len() - 1];
+                    let expanded_key = self.expand_variable_or_literal(key);
+                    let resolved_name = self.resolve_nameref(arr_name).to_string();
+                    if let Some(arr) = self.assoc_arrays.get_mut(&resolved_name) {
+                        arr.remove(&expanded_key);
+                    } else if let Some(arr) = self.arrays.get_mut(&resolved_name) {
+                        if let Ok(idx) = key.parse::<usize>() {
+                            arr.remove(&idx);
+                        }
+                    }
+                    continue;
+                }
+            }
+            if unset_nameref {
+                self.variables.remove(&format!("_NAMEREF_{}", arg));
+            } else {
+                let resolved = self.resolve_nameref(arg).to_string();
+                self.variables.remove(&resolved);
+                self.arrays.remove(&resolved);
+                self.assoc_arrays.remove(&resolved);
+                for frame in self.call_stack.iter_mut().rev() {
+                    frame.locals.remove(&resolved);
+                }
+            }
+        }
+        let result = ExecResult::ok(String::new());
+        self.apply_redirections(result, redirects).await
+    }
+
+    /// Execute the `caller` builtin — show call stack frame info.
+    async fn execute_caller_builtin(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let frame_num: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+        if self.call_stack.is_empty() {
+            let result = ExecResult::err(String::new(), 1);
+            return self.apply_redirections(result, redirects).await;
+        }
+        let source = "main";
+        let line = 1;
+        let output = if frame_num == 0 && self.call_stack.len() == 1 {
+            format!("{} main {}\n", line, source)
+        } else if frame_num + 1 < self.call_stack.len() {
+            let idx = self.call_stack.len() - 2 - frame_num;
+            let frame = &self.call_stack[idx];
+            format!("{} {} {}\n", line, frame.name, source)
+        } else if frame_num + 1 == self.call_stack.len() {
+            format!("{} main {}\n", line, source)
+        } else {
+            let result = ExecResult::err(String::new(), 1);
+            return self.apply_redirections(result, redirects).await;
+        };
+        let result = ExecResult::ok(output);
+        self.apply_redirections(result, redirects).await
     }
 
     /// Execute the `alias` builtin. Needs direct access to self.aliases.
