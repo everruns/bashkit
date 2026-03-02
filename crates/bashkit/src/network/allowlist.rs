@@ -205,8 +205,13 @@ impl NetworkAllowlist {
         }
 
         // If pattern path doesn't end with /, ensure we're at a path boundary
+        // Use byte indexing consistently since url_path.len() and pattern_path.len()
+        // are both byte counts, and starts_with already confirmed the prefix matches.
         if !pattern_path.ends_with('/') && url_path.len() > pattern_path.len() {
-            let next_char = url_path.chars().nth(pattern_path.len());
+            let next_char = url_path
+                .as_bytes()
+                .get(pattern_path.len())
+                .map(|&b| b as char);
             if next_char != Some('/') && next_char != Some('?') && next_char != Some('#') {
                 return false;
             }
@@ -412,5 +417,21 @@ mod tests {
             }
             _ => panic!("expected Blocked"),
         }
+    }
+
+    #[test]
+    fn test_path_boundary_check_byte_safe() {
+        // Ensure path boundary check uses byte-safe indexing
+        let allowlist = NetworkAllowlist::new().allow("https://example.com/api");
+        // /api/v1 should be allowed (starts with /api and next char is /)
+        assert!(matches!(
+            allowlist.check("https://example.com/api/v1"),
+            UrlMatch::Allowed
+        ));
+        // /apix should be blocked (not at path boundary)
+        assert!(matches!(
+            allowlist.check("https://example.com/apix"),
+            UrlMatch::Blocked { .. }
+        ));
     }
 }
