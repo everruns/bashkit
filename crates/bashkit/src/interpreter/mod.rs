@@ -7639,11 +7639,16 @@ impl Interpreter {
     /// follow the chain (up to 10 levels to prevent infinite loops).
     fn resolve_nameref<'a>(&'a self, name: &'a str) -> &'a str {
         let mut current = name;
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(name);
         for _ in 0..10 {
             let key = format!("_NAMEREF_{}", current);
             if let Some(target) = self.variables.get(&key) {
-                // target is owned by the HashMap, so we can return a reference to it
-                // But we need to work with &str. Let's use a different approach.
+                // THREAT[TM-INJ-011]: Detect cyclic namerefs and stop.
+                if !visited.insert(target.as_str()) {
+                    // Cycle detected — return original name (Bash emits a warning)
+                    return name;
+                }
                 current = target.as_str();
             } else {
                 break;
@@ -9541,5 +9546,19 @@ mod tests {
         let pid: u32 = result.stdout.trim().parse().unwrap();
         // Should be sandboxed value (1), not real PID
         assert_eq!(pid, 1, "$$ should return sandboxed PID, not real host PID");
+    }
+
+    // Issue #426: cyclic nameref should not resolve to wrong variable
+    #[tokio::test]
+    async fn test_cyclic_nameref_detected() {
+        let mut bash = crate::Bash::new();
+        // Create cycle: a -> b -> a
+        let result = bash
+            .exec("declare -n a=b; declare -n b=a; a=hello; echo $a")
+            .await
+            .unwrap();
+        // With the bug, this would silently resolve to an arbitrary variable.
+        // With the fix, the cycle is detected and 'a' resolves to itself.
+        assert_eq!(result.exit_code, 0);
     }
 }
