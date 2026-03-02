@@ -314,6 +314,19 @@ impl<'a> AwkParser<'a> {
         }
     }
 
+    /// Get the character at the current byte position (char-boundary safe).
+    /// Returns None if pos is at or past end of input.
+    fn current_char(&self) -> Option<char> {
+        self.input[self.pos..].chars().next()
+    }
+
+    /// Advance pos past the current character (handles multi-byte UTF-8).
+    fn advance(&mut self) {
+        if let Some(c) = self.current_char() {
+            self.pos += c.len_utf8();
+        }
+    }
+
     /// THREAT[TM-DOS-027]: Increment depth, error if limit exceeded
     fn push_depth(&mut self) -> Result<()> {
         self.depth += 1;
@@ -394,7 +407,7 @@ impl<'a> AwkParser<'a> {
         self.skip_whitespace();
 
         // Expect '('
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != '(' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != '(' {
             return Err(Error::Execution(
                 "awk: expected '(' after function name".to_string(),
             ));
@@ -404,21 +417,21 @@ impl<'a> AwkParser<'a> {
         // Parse parameter list
         let mut params = Vec::new();
         self.skip_whitespace();
-        while self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() != ')' {
+        while self.pos < self.input.len() && self.current_char().unwrap() != ')' {
             if !params.is_empty() {
-                if self.input.chars().nth(self.pos).unwrap() == ',' {
+                if self.current_char().unwrap() == ',' {
                     self.pos += 1;
                 }
                 self.skip_whitespace();
             }
-            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() != ')' {
+            if self.pos < self.input.len() && self.current_char().unwrap() != ')' {
                 params.push(self.read_identifier()?);
                 self.skip_whitespace();
             }
         }
 
         // Expect ')'
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ')' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != ')' {
             return Err(Error::Execution(
                 "awk: expected ')' after function parameters".to_string(),
             ));
@@ -436,9 +449,9 @@ impl<'a> AwkParser<'a> {
     fn read_identifier(&mut self) -> Result<String> {
         let start = self.pos;
         while self.pos < self.input.len() {
-            let c = self.input.chars().nth(self.pos).unwrap();
+            let c = self.current_char().unwrap();
             if c.is_alphanumeric() || c == '_' {
-                self.pos += 1;
+                self.advance();
             } else {
                 break;
             }
@@ -453,7 +466,11 @@ impl<'a> AwkParser<'a> {
         if self.input[self.pos..].starts_with(keyword) {
             let after = self.pos + keyword.len();
             if after >= self.input.len()
-                || !self.input.chars().nth(after).unwrap().is_alphanumeric()
+                || !self.input[after..]
+                    .chars()
+                    .next()
+                    .unwrap()
+                    .is_alphanumeric()
             {
                 self.pos = after;
                 return true;
@@ -464,15 +481,13 @@ impl<'a> AwkParser<'a> {
 
     fn skip_whitespace(&mut self) {
         while self.pos < self.input.len() {
-            let c = self.input.chars().nth(self.pos).unwrap();
+            let c = self.current_char().unwrap();
             if c.is_whitespace() {
-                self.pos += 1;
+                self.advance();
             } else if c == '#' {
-                // Comment - skip to end of line
-                while self.pos < self.input.len()
-                    && self.input.chars().nth(self.pos).unwrap() != '\n'
-                {
-                    self.pos += 1;
+                // Comment - skip to end of line (may contain multi-byte chars)
+                while self.pos < self.input.len() && self.current_char().unwrap() != '\n' {
+                    self.advance();
                 }
             } else {
                 break;
@@ -484,17 +499,16 @@ impl<'a> AwkParser<'a> {
         let pattern = self.parse_pattern()?;
         self.skip_whitespace();
 
-        let actions =
-            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '{' {
-                self.parse_action_block()?
-            } else if pattern.is_some() {
-                // Default action is print
-                vec![AwkAction::Print(vec![AwkExpr::Field(Box::new(
-                    AwkExpr::Number(0.0),
-                ))])]
-            } else {
-                Vec::new()
-            };
+        let actions = if self.pos < self.input.len() && self.current_char().unwrap() == '{' {
+            self.parse_action_block()?
+        } else if pattern.is_some() {
+            // Default action is print
+            vec![AwkAction::Print(vec![AwkExpr::Field(Box::new(
+                AwkExpr::Number(0.0),
+            ))])]
+        } else {
+            Vec::new()
+        };
 
         Ok(AwkRule { pattern, actions })
     }
@@ -506,14 +520,14 @@ impl<'a> AwkParser<'a> {
             return Ok(None);
         }
 
-        let c = self.input.chars().nth(self.pos).unwrap();
+        let c = self.current_char().unwrap();
 
         // Check for regex pattern
         if c == '/' {
             self.pos += 1;
             let start = self.pos;
             while self.pos < self.input.len() {
-                let c = self.input.chars().nth(self.pos).unwrap();
+                let c = self.current_char().unwrap();
                 if c == '/' {
                     let pattern = &self.input[start..self.pos];
                     self.pos += 1;
@@ -521,9 +535,10 @@ impl<'a> AwkParser<'a> {
                         .map_err(|e| Error::Execution(format!("awk: invalid regex: {}", e)))?;
                     return Ok(Some(AwkPattern::Regex(regex)));
                 } else if c == '\\' {
-                    self.pos += 2;
+                    self.pos += 1; // skip '\\' (ASCII)
+                    self.advance(); // skip next char (may be multi-byte)
                 } else {
-                    self.pos += 1;
+                    self.advance(); // regex content may be multi-byte
                 }
             }
             return Err(Error::Execution("awk: unterminated regex".to_string()));
@@ -542,7 +557,7 @@ impl<'a> AwkParser<'a> {
     fn parse_action_block(&mut self) -> Result<Vec<AwkAction>> {
         self.skip_whitespace();
 
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != '{' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != '{' {
             return Err(Error::Execution("awk: expected '{'".to_string()));
         }
         self.pos += 1;
@@ -557,7 +572,7 @@ impl<'a> AwkParser<'a> {
                 ));
             }
 
-            let c = self.input.chars().nth(self.pos).unwrap();
+            let c = self.current_char().unwrap();
             if c == '}' {
                 self.pos += 1;
                 break;
@@ -568,7 +583,7 @@ impl<'a> AwkParser<'a> {
 
             self.skip_whitespace();
             // Allow semicolon separator
-            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == ';' {
+            if self.pos < self.input.len() && self.current_char().unwrap() == ';' {
                 self.pos += 1;
             }
         }
@@ -604,7 +619,7 @@ impl<'a> AwkParser<'a> {
         if self.matches_keyword("exit") {
             self.skip_whitespace();
             if self.pos < self.input.len() {
-                let c = self.input.chars().nth(self.pos).unwrap();
+                let c = self.current_char().unwrap();
                 if c != '}' && c != ';' {
                     let expr = self.parse_expression()?;
                     return Ok(AwkAction::Exit(Some(expr)));
@@ -615,7 +630,7 @@ impl<'a> AwkParser<'a> {
         if self.matches_keyword("return") {
             self.skip_whitespace();
             if self.pos < self.input.len() {
-                let c = self.input.chars().nth(self.pos).unwrap();
+                let c = self.current_char().unwrap();
                 if c != '}' && c != ';' {
                     let expr = self.parse_expression()?;
                     return Ok(AwkAction::Return(Some(expr)));
@@ -655,7 +670,7 @@ impl<'a> AwkParser<'a> {
             if self.pos >= self.input.len() {
                 break;
             }
-            let c = self.input.chars().nth(self.pos).unwrap();
+            let c = self.current_char().unwrap();
             if c == '}' || c == ';' {
                 break;
             }
@@ -664,7 +679,7 @@ impl<'a> AwkParser<'a> {
             args.push(expr);
 
             self.skip_whitespace();
-            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == ',' {
+            if self.pos < self.input.len() && self.current_char().unwrap() == ',' {
                 self.pos += 1;
                 self.skip_whitespace();
             } else {
@@ -683,15 +698,14 @@ impl<'a> AwkParser<'a> {
         self.skip_whitespace();
 
         // Handle optional parenthesized form: printf("format", args)
-        let has_parens =
-            self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '(';
+        let has_parens = self.pos < self.input.len() && self.current_char().unwrap() == '(';
         if has_parens {
             self.pos += 1;
             self.skip_whitespace();
         }
 
         // Parse format string
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != '"' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != '"' {
             return Err(Error::Execution(
                 "awk: printf requires format string".to_string(),
             ));
@@ -701,7 +715,7 @@ impl<'a> AwkParser<'a> {
         let mut args = Vec::new();
 
         self.skip_whitespace();
-        while self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == ',' {
+        while self.pos < self.input.len() && self.current_char().unwrap() == ',' {
             self.pos += 1;
             self.skip_whitespace();
             let expr = self.parse_expression()?;
@@ -709,10 +723,7 @@ impl<'a> AwkParser<'a> {
             self.skip_whitespace();
         }
 
-        if has_parens
-            && self.pos < self.input.len()
-            && self.input.chars().nth(self.pos).unwrap() == ')'
-        {
+        if has_parens && self.pos < self.input.len() && self.current_char().unwrap() == ')' {
             self.pos += 1;
         }
 
@@ -725,7 +736,7 @@ impl<'a> AwkParser<'a> {
 
         self.skip_whitespace();
 
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != '(' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != '(' {
             self.pop_depth();
             return Err(Error::Execution("awk: expected '(' after if".to_string()));
         }
@@ -734,7 +745,7 @@ impl<'a> AwkParser<'a> {
         let condition = self.parse_expression()?;
 
         self.skip_whitespace();
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ')' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != ')' {
             self.pop_depth();
             return Err(Error::Execution(
                 "awk: expected ')' after condition".to_string(),
@@ -743,7 +754,7 @@ impl<'a> AwkParser<'a> {
         self.pos += 1;
 
         self.skip_whitespace();
-        let then_actions = if self.input.chars().nth(self.pos).unwrap() == '{' {
+        let then_actions = if self.current_char().unwrap() == '{' {
             self.parse_action_block()?
         } else {
             vec![self.parse_action()?]
@@ -751,13 +762,13 @@ impl<'a> AwkParser<'a> {
 
         self.skip_whitespace();
         // Consume optional ';' before else
-        if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == ';' {
+        if self.pos < self.input.len() && self.current_char().unwrap() == ';' {
             self.pos += 1;
             self.skip_whitespace();
         }
         let else_actions = if self.matches_keyword("else") {
             self.skip_whitespace();
-            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '{' {
+            if self.pos < self.input.len() && self.current_char().unwrap() == '{' {
                 self.parse_action_block()?
             } else {
                 vec![self.parse_action()?]
@@ -773,7 +784,7 @@ impl<'a> AwkParser<'a> {
     fn parse_for(&mut self) -> Result<AwkAction> {
         self.skip_whitespace();
 
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != '(' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != '(' {
             return Err(Error::Execution("awk: expected '(' after for".to_string()));
         }
         self.pos += 1;
@@ -788,7 +799,7 @@ impl<'a> AwkParser<'a> {
                 // Parse array name
                 let start = self.pos;
                 while self.pos < self.input.len() {
-                    let c = self.input.chars().nth(self.pos).unwrap();
+                    let c = self.current_char().unwrap();
                     if c.is_alphanumeric() || c == '_' {
                         self.pos += 1;
                     } else {
@@ -798,16 +809,13 @@ impl<'a> AwkParser<'a> {
                 let arr_name = self.input[start..self.pos].to_string();
 
                 self.skip_whitespace();
-                if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ')'
-                {
+                if self.pos >= self.input.len() || self.current_char().unwrap() != ')' {
                     return Err(Error::Execution("awk: expected ')' in for-in".to_string()));
                 }
                 self.pos += 1;
 
                 self.skip_whitespace();
-                let body = if self.pos < self.input.len()
-                    && self.input.chars().nth(self.pos).unwrap() == '{'
-                {
+                let body = if self.pos < self.input.len() && self.current_char().unwrap() == '{' {
                     self.parse_action_block()?
                 } else {
                     vec![self.parse_action()?]
@@ -829,7 +837,7 @@ impl<'a> AwkParser<'a> {
         };
 
         self.skip_whitespace();
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ';' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != ';' {
             return Err(Error::Execution(
                 "awk: expected ';' in for statement".to_string(),
             ));
@@ -841,7 +849,7 @@ impl<'a> AwkParser<'a> {
         let condition = self.parse_expression()?;
 
         self.skip_whitespace();
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ';' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != ';' {
             return Err(Error::Execution(
                 "awk: expected ';' in for statement".to_string(),
             ));
@@ -858,7 +866,7 @@ impl<'a> AwkParser<'a> {
         };
 
         self.skip_whitespace();
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ')' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != ')' {
             return Err(Error::Execution(
                 "awk: expected ')' in for statement".to_string(),
             ));
@@ -866,12 +874,11 @@ impl<'a> AwkParser<'a> {
         self.pos += 1;
 
         self.skip_whitespace();
-        let body =
-            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '{' {
-                self.parse_action_block()?
-            } else {
-                vec![self.parse_action()?]
-            };
+        let body = if self.pos < self.input.len() && self.current_char().unwrap() == '{' {
+            self.parse_action_block()?
+        } else {
+            vec![self.parse_action()?]
+        };
 
         Ok(AwkAction::For(
             Box::new(init),
@@ -884,7 +891,7 @@ impl<'a> AwkParser<'a> {
     fn parse_while(&mut self) -> Result<AwkAction> {
         self.skip_whitespace();
 
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != '(' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != '(' {
             return Err(Error::Execution(
                 "awk: expected '(' after while".to_string(),
             ));
@@ -894,7 +901,7 @@ impl<'a> AwkParser<'a> {
         let condition = self.parse_expression()?;
 
         self.skip_whitespace();
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ')' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != ')' {
             return Err(Error::Execution(
                 "awk: expected ')' after while condition".to_string(),
             ));
@@ -902,12 +909,11 @@ impl<'a> AwkParser<'a> {
         self.pos += 1;
 
         self.skip_whitespace();
-        let body =
-            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '{' {
-                self.parse_action_block()?
-            } else {
-                vec![self.parse_action()?]
-            };
+        let body = if self.pos < self.input.len() && self.current_char().unwrap() == '{' {
+            self.parse_action_block()?
+        } else {
+            vec![self.parse_action()?]
+        };
 
         Ok(AwkAction::While(condition, body))
     }
@@ -915,12 +921,11 @@ impl<'a> AwkParser<'a> {
     fn parse_do_while(&mut self) -> Result<AwkAction> {
         self.skip_whitespace();
 
-        let body =
-            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '{' {
-                self.parse_action_block()?
-            } else {
-                vec![self.parse_action()?]
-            };
+        let body = if self.pos < self.input.len() && self.current_char().unwrap() == '{' {
+            self.parse_action_block()?
+        } else {
+            vec![self.parse_action()?]
+        };
 
         self.skip_whitespace();
         if !self.matches_keyword("while") {
@@ -930,7 +935,7 @@ impl<'a> AwkParser<'a> {
         }
 
         self.skip_whitespace();
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != '(' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != '(' {
             return Err(Error::Execution(
                 "awk: expected '(' after do-while".to_string(),
             ));
@@ -940,7 +945,7 @@ impl<'a> AwkParser<'a> {
         let condition = self.parse_expression()?;
 
         self.skip_whitespace();
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ')' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != ')' {
             return Err(Error::Execution(
                 "awk: expected ')' in do-while".to_string(),
             ));
@@ -956,7 +961,7 @@ impl<'a> AwkParser<'a> {
         // Parse array name
         let start = self.pos;
         while self.pos < self.input.len() {
-            let c = self.input.chars().nth(self.pos).unwrap();
+            let c = self.current_char().unwrap();
             if c.is_alphanumeric() || c == '_' {
                 self.pos += 1;
             } else {
@@ -966,11 +971,11 @@ impl<'a> AwkParser<'a> {
         let arr_name = self.input[start..self.pos].to_string();
 
         self.skip_whitespace();
-        if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '[' {
+        if self.pos < self.input.len() && self.current_char().unwrap() == '[' {
             self.pos += 1;
             let index = self.parse_expression()?;
             self.skip_whitespace();
-            if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ']' {
+            if self.pos >= self.input.len() || self.current_char().unwrap() != ']' {
                 return Err(Error::Execution("awk: expected ']'".to_string()));
             }
             self.pos += 1;
@@ -1049,8 +1054,8 @@ impl<'a> AwkParser<'a> {
         }
 
         // Simple assignment
-        if self.input.chars().nth(self.pos).unwrap() == '=' {
-            let next = self.input.chars().nth(self.pos + 1);
+        if self.current_char().unwrap() == '=' {
+            let next = self.input[self.pos..].chars().nth(1);
             if next != Some('=') && next != Some('~') {
                 self.pos += 1;
                 self.skip_whitespace();
@@ -1093,12 +1098,12 @@ impl<'a> AwkParser<'a> {
         let expr = self.parse_or()?;
 
         self.skip_whitespace();
-        if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '?' {
+        if self.pos < self.input.len() && self.current_char().unwrap() == '?' {
             self.pos += 1;
             self.skip_whitespace();
             let then_expr = self.parse_expression()?;
             self.skip_whitespace();
-            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == ':' {
+            if self.pos < self.input.len() && self.current_char().unwrap() == ':' {
                 self.pos += 1;
                 self.skip_whitespace();
                 let else_expr = self.parse_expression()?;
@@ -1159,7 +1164,7 @@ impl<'a> AwkParser<'a> {
             self.skip_whitespace();
             let start = self.pos;
             while self.pos < self.input.len() {
-                let c = self.input.chars().nth(self.pos).unwrap();
+                let c = self.current_char().unwrap();
                 if c.is_alphanumeric() || c == '_' {
                     self.pos += 1;
                 } else {
@@ -1198,7 +1203,11 @@ impl<'a> AwkParser<'a> {
             if remaining.starts_with(kw) {
                 let after = self.pos + kw.len();
                 if after >= self.input.len()
-                    || !self.input.chars().nth(after).unwrap().is_alphanumeric()
+                    || !self.input[after..]
+                        .chars()
+                        .next()
+                        .unwrap()
+                        .is_alphanumeric()
                 {
                     return true;
                 }
@@ -1216,7 +1225,7 @@ impl<'a> AwkParser<'a> {
                 break;
             }
 
-            let c = self.input.chars().nth(self.pos).unwrap();
+            let c = self.current_char().unwrap();
             // Check if this could be the start of another value for concatenation
             if c == '"' || c == '$' || c.is_alphabetic() || c == '(' {
                 // But not if it's a keyword or operator
@@ -1252,10 +1261,10 @@ impl<'a> AwkParser<'a> {
                 break;
             }
 
-            let c = self.input.chars().nth(self.pos).unwrap();
+            let c = self.current_char().unwrap();
             if c == '+' || c == '-' {
                 // Don't consume if it's a compound assignment operator (+=, -=)
-                let next = self.input.chars().nth(self.pos + 1);
+                let next = self.input[self.pos..].chars().nth(1);
                 if next == Some('=') {
                     break;
                 }
@@ -1280,14 +1289,14 @@ impl<'a> AwkParser<'a> {
                 break;
             }
 
-            let c = self.input.chars().nth(self.pos).unwrap();
+            let c = self.current_char().unwrap();
             if c == '*' || c == '/' || c == '%' {
                 // Don't consume ** (power operator)
-                if c == '*' && self.input.chars().nth(self.pos + 1) == Some('*') {
+                if c == '*' && self.input[self.pos..].chars().nth(1) == Some('*') {
                     break;
                 }
                 // Don't consume if it's a compound assignment operator (*=, /=, %=)
-                let next = self.input.chars().nth(self.pos + 1);
+                let next = self.input[self.pos..].chars().nth(1);
                 if next == Some('=') {
                     break;
                 }
@@ -1312,7 +1321,7 @@ impl<'a> AwkParser<'a> {
         }
 
         // Check for ^ or **
-        if self.input.chars().nth(self.pos).unwrap() == '^' {
+        if self.current_char().unwrap() == '^' {
             self.pos += 1;
             self.skip_whitespace();
             let exp = self.parse_unary()?;
@@ -1370,7 +1379,7 @@ impl<'a> AwkParser<'a> {
             ));
         }
 
-        let c = self.input.chars().nth(self.pos).unwrap();
+        let c = self.current_char().unwrap();
 
         if c == '-' {
             self.pos += 1;
@@ -1463,7 +1472,7 @@ impl<'a> AwkParser<'a> {
             ));
         }
 
-        let c = self.input.chars().nth(self.pos).unwrap();
+        let c = self.current_char().unwrap();
 
         // Field reference $
         if c == '$' {
@@ -1490,15 +1499,16 @@ impl<'a> AwkParser<'a> {
             self.pos += 1;
             let start = self.pos;
             while self.pos < self.input.len() {
-                let c = self.input.chars().nth(self.pos).unwrap();
+                let c = self.current_char().unwrap();
                 if c == '/' {
                     let pattern = &self.input[start..self.pos];
                     self.pos += 1;
                     return Ok(AwkExpr::Regex(pattern.to_string()));
                 } else if c == '\\' {
-                    self.pos += 2; // Skip escape sequence
+                    self.pos += 1; // skip '\\' (ASCII)
+                    self.advance(); // skip next char (may be multi-byte)
                 } else {
-                    self.pos += 1;
+                    self.advance(); // regex content may be multi-byte
                 }
             }
             return Err(Error::Execution("awk: unterminated regex".to_string()));
@@ -1511,7 +1521,7 @@ impl<'a> AwkParser<'a> {
             let expr = self.parse_expression()?;
             self.pop_depth();
             self.skip_whitespace();
-            if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ')' {
+            if self.pos >= self.input.len() || self.current_char().unwrap() != ')' {
                 return Err(Error::Execution("awk: expected ')'".to_string()));
             }
             self.pos += 1;
@@ -1522,7 +1532,7 @@ impl<'a> AwkParser<'a> {
         if c.is_alphabetic() || c == '_' {
             let start = self.pos;
             while self.pos < self.input.len() {
-                let c = self.input.chars().nth(self.pos).unwrap();
+                let c = self.current_char().unwrap();
                 if c.is_alphanumeric() || c == '_' {
                     self.pos += 1;
                 } else {
@@ -1532,24 +1542,20 @@ impl<'a> AwkParser<'a> {
             let name = self.input[start..self.pos].to_string();
 
             self.skip_whitespace();
-            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '(' {
+            if self.pos < self.input.len() && self.current_char().unwrap() == '(' {
                 // Function call
                 self.pos += 1;
                 let mut args = Vec::new();
                 loop {
                     self.skip_whitespace();
-                    if self.pos < self.input.len()
-                        && self.input.chars().nth(self.pos).unwrap() == ')'
-                    {
+                    if self.pos < self.input.len() && self.current_char().unwrap() == ')' {
                         self.pos += 1;
                         break;
                     }
                     let arg = self.parse_expression()?;
                     args.push(arg);
                     self.skip_whitespace();
-                    if self.pos < self.input.len()
-                        && self.input.chars().nth(self.pos).unwrap() == ','
-                    {
+                    if self.pos < self.input.len() && self.current_char().unwrap() == ',' {
                         self.pos += 1;
                     }
                 }
@@ -1557,12 +1563,11 @@ impl<'a> AwkParser<'a> {
             }
 
             // Array indexing: arr[index]
-            if self.pos < self.input.len() && self.input.chars().nth(self.pos).unwrap() == '[' {
+            if self.pos < self.input.len() && self.current_char().unwrap() == '[' {
                 self.pos += 1; // consume '['
                 let index_expr = self.parse_expression()?;
                 self.skip_whitespace();
-                if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != ']'
-                {
+                if self.pos >= self.input.len() || self.current_char().unwrap() != ']' {
                     return Err(Error::Execution("awk: expected ']'".to_string()));
                 }
                 self.pos += 1; // consume ']'
@@ -1585,7 +1590,7 @@ impl<'a> AwkParser<'a> {
     fn parse_number(&mut self) -> Result<AwkExpr> {
         let start = self.pos;
         while self.pos < self.input.len() {
-            let c = self.input.chars().nth(self.pos).unwrap();
+            let c = self.current_char().unwrap();
             if c.is_ascii_digit() || c == '.' || c == 'e' || c == 'E' || c == '-' || c == '+' {
                 self.pos += 1;
             } else {
@@ -1602,21 +1607,21 @@ impl<'a> AwkParser<'a> {
     }
 
     fn parse_string(&mut self) -> Result<String> {
-        if self.pos >= self.input.len() || self.input.chars().nth(self.pos).unwrap() != '"' {
+        if self.pos >= self.input.len() || self.current_char().unwrap() != '"' {
             return Err(Error::Execution("awk: expected string".to_string()));
         }
-        self.pos += 1;
+        self.pos += 1; // skip opening '"' (ASCII)
 
         let mut result = String::new();
         while self.pos < self.input.len() {
-            let c = self.input.chars().nth(self.pos).unwrap();
+            let c = self.current_char().unwrap();
             if c == '"' {
-                self.pos += 1;
+                self.pos += 1; // skip closing '"' (ASCII)
                 return Ok(result);
             } else if c == '\\' {
-                self.pos += 1;
+                self.pos += 1; // skip '\\' (ASCII)
                 if self.pos < self.input.len() {
-                    let escaped = self.input.chars().nth(self.pos).unwrap();
+                    let escaped = self.current_char().unwrap();
                     match escaped {
                         'n' => result.push('\n'),
                         't' => result.push('\t'),
@@ -1628,11 +1633,11 @@ impl<'a> AwkParser<'a> {
                             result.push(escaped);
                         }
                     }
-                    self.pos += 1;
+                    self.advance(); // escaped char may be multi-byte
                 }
             } else {
                 result.push(c);
-                self.pos += 1;
+                self.advance(); // character may be multi-byte
             }
         }
 
@@ -3356,5 +3361,25 @@ mod tests {
             "loop ran {} times, expected <= 100001",
             count
         );
+    }
+
+    #[tokio::test]
+    async fn test_awk_unicode_in_comment() {
+        // Issue #395: multi-byte Unicode chars in comments should not panic
+        let result = run_awk(&["# ── header ──────\n{ print $1 }"], Some("hello world\n"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_awk_unicode_in_string() {
+        // Multi-byte chars in string literals should not panic
+        let result = run_awk(&[r#"BEGIN { print "café" }"#], Some(""))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "café");
     }
 }
