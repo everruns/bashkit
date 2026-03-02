@@ -2784,15 +2784,32 @@ impl Interpreter {
         });
 
         // Save and apply shell options (-e, -x, -u, -o pipefail, etc.)
+        // Also save/restore OPTIND so getopts state doesn't leak between scripts
         let mut saved_opts: Vec<(String, Option<String>)> = Vec::new();
         for (var, val) in &shell_opts {
             let prev = self.variables.get(*var).cloned();
             saved_opts.push((var.to_string(), prev));
             self.variables.insert(var.to_string(), val.to_string());
         }
+        let saved_optind = self.variables.get("OPTIND").cloned();
+        let saved_optchar = self.variables.get("_OPTCHAR_IDX").cloned();
+        self.variables.insert("OPTIND".to_string(), "1".to_string());
+        self.variables.remove("_OPTCHAR_IDX");
 
         // Execute the script
         let result = self.execute(&script).await;
+
+        // Restore OPTIND and internal getopts state
+        if let Some(val) = saved_optind {
+            self.variables.insert("OPTIND".to_string(), val);
+        } else {
+            self.variables.remove("OPTIND");
+        }
+        if let Some(val) = saved_optchar {
+            self.variables.insert("_OPTCHAR_IDX".to_string(), val);
+        } else {
+            self.variables.remove("_OPTCHAR_IDX");
+        }
 
         // Restore shell options
         for (var, prev) in saved_opts {
@@ -9566,5 +9583,107 @@ mod tests {
         let mut bash = crate::Bash::new();
         let result = bash.exec("x=10; (( x += 5 )); echo $x").await.unwrap();
         assert_eq!(result.stdout.trim(), "15");
+    }
+
+    #[tokio::test]
+    async fn test_getopts_while_loop() {
+        // Issue #397: getopts in while loop should iterate over all options
+        let mut bash = crate::Bash::new();
+        let result = bash
+            .exec(
+                r#"
+set -- -f json -v
+while getopts "f:vh" opt; do
+  case "$opt" in
+    f) FORMAT="$OPTARG" ;;
+    v) VERBOSE=1 ;;
+  esac
+done
+echo "FORMAT=$FORMAT VERBOSE=$VERBOSE"
+"#,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "FORMAT=json VERBOSE=1");
+    }
+
+    #[tokio::test]
+    async fn test_getopts_script_with_args() {
+        // Issue #397: getopts via bash -c with script args
+        let mut bash = crate::Bash::new();
+        // Write a script that uses getopts, then invoke it with arguments
+        let result = bash
+            .exec(
+                r#"
+cat > /tmp/test_getopts.sh << 'SCRIPT'
+while getopts "f:vh" opt; do
+  case "$opt" in
+    f) FORMAT="$OPTARG" ;;
+    v) VERBOSE=1 ;;
+  esac
+done
+echo "FORMAT=$FORMAT VERBOSE=$VERBOSE"
+SCRIPT
+bash /tmp/test_getopts.sh -f json -v
+"#,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.stdout.trim(), "FORMAT=json VERBOSE=1");
+    }
+
+    #[tokio::test]
+    async fn test_getopts_bash_c_with_args() {
+        // Issue #397: getopts via bash -c 'script' -- args
+        let mut bash = crate::Bash::new();
+        let result = bash
+            .exec(
+                r#"bash -c '
+FORMAT="csv"
+VERBOSE=0
+while getopts "f:vh" opt; do
+    case "$opt" in
+        f) FORMAT="$OPTARG" ;;
+        v) VERBOSE=1 ;;
+    esac
+done
+echo "FORMAT=$FORMAT VERBOSE=$VERBOSE"
+' -- -f json -v"#,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.stdout.trim(), "FORMAT=json VERBOSE=1");
+    }
+
+    #[tokio::test]
+    async fn test_getopts_optind_reset_between_scripts() {
+        // Issue #397: OPTIND persists across bash script invocations, causing
+        // getopts to skip all options on the second run
+        let mut bash = crate::Bash::new();
+        let result = bash
+            .exec(
+                r#"
+cat > /tmp/opts.sh << 'SCRIPT'
+FORMAT="csv"
+VERBOSE=0
+while getopts "f:vh" opt; do
+    case "$opt" in
+        f) FORMAT="$OPTARG" ;;
+        v) VERBOSE=1 ;;
+    esac
+done
+echo "FORMAT=$FORMAT VERBOSE=$VERBOSE"
+SCRIPT
+bash /tmp/opts.sh -f json -v
+bash /tmp/opts.sh -f xml -v
+"#,
+            )
+            .await
+            .unwrap();
+        let lines: Vec<&str> = result.stdout.trim().lines().collect();
+        assert_eq!(lines.len(), 2, "expected 2 lines: {}", result.stdout);
+        assert_eq!(lines[0], "FORMAT=json VERBOSE=1");
+        assert_eq!(lines[1], "FORMAT=xml VERBOSE=1");
     }
 }
