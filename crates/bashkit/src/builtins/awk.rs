@@ -1651,6 +1651,9 @@ enum AwkFlow {
     Return(AwkValue),  // Return from user-defined function
 }
 
+/// THREAT[TM-DOS-027]: Maximum recursion depth for awk user-defined function calls.
+const MAX_AWK_CALL_DEPTH: usize = 64;
+
 struct AwkInterpreter {
     state: AwkState,
     output: String,
@@ -1660,6 +1663,8 @@ struct AwkInterpreter {
     line_index: usize,
     /// User-defined functions
     functions: HashMap<String, AwkFunctionDef>,
+    /// Current function call depth for recursion limiting
+    call_depth: usize,
 }
 
 impl AwkInterpreter {
@@ -1670,6 +1675,7 @@ impl AwkInterpreter {
             input_lines: Vec::new(),
             line_index: 0,
             functions: HashMap::new(),
+            call_depth: 0,
         }
     }
 
@@ -2159,6 +2165,12 @@ impl AwkInterpreter {
     }
 
     fn call_user_function(&mut self, func: &AwkFunctionDef, args: &[AwkExpr]) -> AwkValue {
+        // THREAT[TM-DOS-027]: Limit recursion depth to prevent stack overflow
+        if self.call_depth >= MAX_AWK_CALL_DEPTH {
+            return AwkValue::Uninitialized;
+        }
+        self.call_depth += 1;
+
         // Save current local variables that will be shadowed
         let mut saved: Vec<(String, AwkValue)> = Vec::new();
         for param in &func.params {
@@ -2193,6 +2205,7 @@ impl AwkInterpreter {
             self.state.set_variable(&name, val);
         }
 
+        self.call_depth -= 1;
         return_value
     }
 
@@ -3311,5 +3324,37 @@ mod tests {
         .unwrap();
         assert!(result.stdout.contains("alice"));
         assert!(result.stdout.contains("bob"));
+    }
+
+    #[tokio::test]
+    async fn test_awk_recursive_function_depth_limit() {
+        // Recursive function should be limited, not stack overflow
+        let result = run_awk(
+            &[r#"function r(n) { return r(n+1) } BEGIN { print r(0) }"#],
+            Some(""),
+        )
+        .await
+        .unwrap();
+        // Should complete without crashing (returns Uninitialized -> empty string)
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_awk_while_loop_limited() {
+        // Infinite while loop should terminate via MAX_LOOP_ITERS
+        let result = run_awk(
+            &[r#"BEGIN { i=0; while(1) { i++; if(i>200000) break } print i }"#],
+            Some(""),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.exit_code, 0);
+        let count: usize = result.stdout.trim().parse().unwrap();
+        // Should be capped at MAX_LOOP_ITERS (100_000), not 200_000
+        assert!(
+            count <= 100_001,
+            "loop ran {} times, expected <= 100001",
+            count
+        );
     }
 }
