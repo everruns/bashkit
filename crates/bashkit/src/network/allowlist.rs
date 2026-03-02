@@ -387,7 +387,11 @@ mod tests {
     #[test]
     fn test_redact_url_strips_credentials() {
         let redacted = redact_url("https://user:secret@example.com/path");
-        assert!(!redacted.contains("secret"), "password leaked: {}", redacted);
+        assert!(
+            !redacted.contains("secret"),
+            "password leaked: {}",
+            redacted
+        );
         assert!(!redacted.contains("user"), "username leaked: {}", redacted);
         assert!(redacted.contains("example.com/path"));
     }
