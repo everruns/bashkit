@@ -43,7 +43,8 @@ fn evaluate(args: &[&str]) -> std::result::Result<String, String> {
 
     // Handle keyword operations first
     if args.len() >= 2 && args[0] == "length" {
-        return Ok(args[1].len().to_string());
+        // TM-UNI-015: Use char count, not byte count
+        return Ok(args[1].chars().count().to_string());
     }
 
     if args.len() >= 4 && args[0] == "substr" {
@@ -54,12 +55,13 @@ fn evaluate(args: &[&str]) -> std::result::Result<String, String> {
         let len: usize = args[3]
             .parse()
             .map_err(|_| "non-integer argument".to_string())?;
-        if pos == 0 || pos > s.len() {
+        let char_count = s.chars().count();
+        if pos == 0 || pos > char_count {
             return Ok(String::new());
         }
-        let start = pos - 1; // 1-based to 0-based
-        let end = (start + len).min(s.len());
-        return Ok(s[start..end].to_string());
+        // TM-UNI-015: Use char-based slicing, not byte-based
+        let result: String = s.chars().skip(pos - 1).take(len).collect();
+        return Ok(result);
     }
 
     if args.len() >= 3 && args[0] == "index" {
@@ -637,5 +639,42 @@ mod tests {
         let result = Expr.execute(ctx).await.unwrap();
         assert_eq!(result.stdout.trim(), "0");
         assert_eq!(result.exit_code, 1); // "0" => falsy
+    }
+
+    // Issue #434: length should count chars, not bytes
+    #[tokio::test]
+    async fn test_length_multibyte_utf8() {
+        let fs = Arc::new(crate::fs::InMemoryFs::new());
+        let mut variables = HashMap::new();
+        let mut cwd = std::path::PathBuf::from("/");
+        let env = HashMap::new();
+        // "café" = 4 chars but 5 bytes (é is 2 bytes)
+        let args = vec!["length".to_string(), "café".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "4", "should count chars, not bytes");
+    }
+
+    // Issue #434: substr should use char-based slicing
+    #[tokio::test]
+    async fn test_substr_multibyte_utf8() {
+        let fs = Arc::new(crate::fs::InMemoryFs::new());
+        let mut variables = HashMap::new();
+        let mut cwd = std::path::PathBuf::from("/");
+        let env = HashMap::new();
+        // "日本語" - extract first 2 chars
+        let args = vec![
+            "substr".to_string(),
+            "日本語".to_string(),
+            "1".to_string(),
+            "2".to_string(),
+        ];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(
+            result.stdout.trim(),
+            "日本",
+            "should extract chars, not bytes"
+        );
     }
 }
