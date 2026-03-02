@@ -161,8 +161,12 @@ impl FormatSpec {
 
     /// Format a string with the parsed spec
     fn format_str(&self, s: &str) -> String {
+        // TM-UNI-016: Use char-based truncation, not byte-based, to avoid
+        // panics when precision falls inside a multi-byte UTF-8 character.
+        let truncated;
         let s = if let Some(prec) = self.precision {
-            &s[..s.len().min(prec)]
+            truncated = s.chars().take(prec).collect::<String>();
+            truncated.as_str()
         } else {
             s
         };
@@ -619,5 +623,30 @@ mod tests {
         // %b format also handles \u escapes
         assert_eq!(expand_escapes("\\u03bc"), "\u{03bc}");
         assert_eq!(expand_escapes("\\U000003bc"), "\u{03bc}");
+    }
+
+    // Issue #435: precision should use char count, not byte count
+    #[test]
+    fn test_precision_multibyte_utf8() {
+        // "café" = 4 chars, 5 bytes. %.3s should give "caf", not panic.
+        let args = vec!["café".to_string()];
+        let mut idx = 0;
+        assert_eq!(
+            format_string("%.3s", &args, &mut idx),
+            "caf",
+            "precision should truncate by chars"
+        );
+    }
+
+    #[test]
+    fn test_precision_cjk() {
+        // "日本語" = 3 chars, 9 bytes. %.2s should give "日本"
+        let args = vec!["日本語".to_string()];
+        let mut idx = 0;
+        assert_eq!(
+            format_string("%.2s", &args, &mut idx),
+            "日本",
+            "should handle CJK chars"
+        );
     }
 }
