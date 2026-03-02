@@ -914,3 +914,15 @@ def test_scripted_tool_rapid_sync_calls_no_resource_exhaustion():
         r = tool.execute_sync("ping")
         assert r.exit_code == 0
         assert r.stdout.strip() == "pong"
+
+
+def test_deeply_nested_schema_rejected():
+    """py_to_json rejects nesting deeper than 64 levels."""
+    # Build a dict nested 70 levels deep
+    nested = {"value": "leaf"}
+    for _ in range(70):
+        nested = {"child": nested}
+
+    tool = ScriptedTool("deep")
+    with pytest.raises(ValueError, match="nesting depth"):
+        tool.add_tool("deep", "Deep", callback=lambda p, s=None: "", schema=nested)
