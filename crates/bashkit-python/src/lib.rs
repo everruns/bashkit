@@ -72,6 +72,7 @@ fn py_to_json(py: Python<'_>, obj: &Bound<'_, pyo3::PyAny>) -> PyResult<serde_js
     py_to_json_inner(py, obj, 0)
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn py_to_json_inner(
     py: Python<'_>,
     obj: &Bound<'_, pyo3::PyAny>,
