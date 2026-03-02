@@ -171,10 +171,7 @@ mod internal_variable_injection {
         // Marker injection must be blocked — the var assignment should succeed
         // and _READONLY_ marker should not appear in `set` output
         assert_eq!(result.stdout.trim(), "changed");
-        let leak = bash
-            .exec("set | grep _READONLY_myvar")
-            .await
-            .unwrap();
+        let leak = bash.exec("set | grep _READONLY_myvar").await.unwrap();
         assert!(
             leak.stdout.trim().is_empty(),
             "_READONLY_ marker must not be injectable via export"
@@ -292,9 +289,7 @@ mod arithmetic_overflow {
         let mut bash = Bash::builder().limits(limits).build();
 
         // This must not panic — should wrap or return error
-        let result = bash
-            .exec("x=9223372036854775807; ((x+=1)); echo $x")
-            .await;
+        let result = bash.exec("x=9223372036854775807; ((x+=1)); echo $x").await;
 
         assert!(
             result.is_ok(),
@@ -377,10 +372,7 @@ mod vfs_limit_bypass {
 
         // rename(file, dir) must fail
         let result = fs.rename(Path::new("/myfile"), Path::new("/mydir")).await;
-        assert!(
-            result.is_err(),
-            "rename(file, dir) must fail per POSIX"
-        );
+        assert!(result.is_err(), "rename(file, dir) must fail per POSIX");
     }
 }
 
