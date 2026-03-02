@@ -1263,10 +1263,20 @@ impl<'a> Parser<'a> {
                     let is_literal =
                         matches!(self.current_token, Some(tokens::Token::LiteralWord(_)));
 
-                    // After =~, collect the regex pattern (may contain parens)
+                    // After =~, handle regex pattern.
+                    // If the pattern contains $ (variable reference), parse it as a
+                    // normal word so variables expand. Otherwise collect as literal
+                    // regex to preserve parens, backslashes, etc.
                     if saw_regex_op {
-                        let pattern = self.collect_conditional_regex_pattern(&w_clone);
-                        words.push(Word::literal(&pattern));
+                        if w_clone.contains('$') && !is_quoted {
+                            // Variable reference — parse normally for expansion
+                            let parsed = self.parse_word(w_clone);
+                            words.push(parsed);
+                            self.advance();
+                        } else {
+                            let pattern = self.collect_conditional_regex_pattern(&w_clone);
+                            words.push(Word::literal(&pattern));
+                        }
                         saw_regex_op = false;
                         continue;
                     }
