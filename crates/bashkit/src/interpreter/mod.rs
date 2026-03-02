@@ -1532,12 +1532,10 @@ impl Interpreter {
         // Handle assignment: var = expr or var op= expr
         if let Some(eq_pos) = expr.find('=') {
             // Check it's not ==, !=, <=, >=
-            let before = if eq_pos > 0 {
-                expr.chars().nth(eq_pos - 1)
-            } else {
-                None
-            };
-            let after = expr.chars().nth(eq_pos + 1);
+            // eq_pos is a byte offset from find(), so use byte-safe slicing
+            let before_eq = &expr[..eq_pos];
+            let before = before_eq.chars().last();
+            let after = expr[eq_pos + 1..].chars().next();
 
             if after != Some('=') && !matches!(before, Some('!' | '<' | '>' | '=')) {
                 // This is an assignment
@@ -9560,5 +9558,13 @@ mod tests {
         // With the bug, this would silently resolve to an arbitrary variable.
         // With the fix, the cycle is detected and 'a' resolves to itself.
         assert_eq!(result.exit_code, 0);
+    }
+
+    // Issue #437: arithmetic expansion byte/char index mismatch
+    #[tokio::test]
+    async fn test_arithmetic_compound_assign_ascii() {
+        let mut bash = crate::Bash::new();
+        let result = bash.exec("x=10; (( x += 5 )); echo $x").await.unwrap();
+        assert_eq!(result.stdout.trim(), "15");
     }
 }
