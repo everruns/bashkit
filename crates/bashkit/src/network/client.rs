@@ -233,7 +233,7 @@ impl HttpClient {
 
         // Check Content-Length header to fail fast on large responses
         if let Some(content_length) = response.content_length() {
-            if content_length as usize > self.max_response_bytes {
+            if usize::try_from(content_length).unwrap_or(usize::MAX) > self.max_response_bytes {
                 return Err(Error::Network(format!(
                     "response too large: {} bytes (max: {} bytes)",
                     content_length, self.max_response_bytes
@@ -416,7 +416,7 @@ impl HttpClient {
 
         // Check Content-Length header to fail fast on large responses
         if let Some(content_length) = response.content_length() {
-            if content_length as usize > self.max_response_bytes {
+            if usize::try_from(content_length).unwrap_or(usize::MAX) > self.max_response_bytes {
                 return Err(Error::Network(format!(
                     "response too large: {} bytes (max: {} bytes)",
                     content_length, self.max_response_bytes
@@ -526,6 +526,15 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("access denied"));
+    }
+
+    #[test]
+    fn test_u64_to_usize_no_truncation() {
+        // On 64-bit: fits fine. On 32-bit: saturates to usize::MAX rather than truncating.
+        let large: u64 = 5_368_709_120; // 5GB
+        let result = usize::try_from(large).unwrap_or(usize::MAX);
+        // Should never silently become a smaller value
+        assert!(result >= large.min(usize::MAX as u64) as usize);
     }
 
     // Note: Integration tests that actually make network requests

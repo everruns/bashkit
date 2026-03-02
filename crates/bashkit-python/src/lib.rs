@@ -219,10 +219,10 @@ impl PyBash {
 
         let mut limits = ExecutionLimits::new();
         if let Some(mc) = max_commands {
-            limits = limits.max_commands(mc as usize);
+            limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
         }
         if let Some(mli) = max_loop_iterations {
-            limits = limits.max_loop_iterations(mli as usize);
+            limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
         }
         builder = builder.limits(limits);
 
@@ -313,10 +313,10 @@ impl PyBash {
                 }
                 let mut limits = ExecutionLimits::new();
                 if let Some(mc) = max_commands {
-                    limits = limits.max_commands(mc as usize);
+                    limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
                 }
                 if let Some(mli) = max_loop_iterations {
-                    limits = limits.max_loop_iterations(mli as usize);
+                    limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
                 }
                 builder = builder.limits(limits);
                 *bash = builder.build();
@@ -396,10 +396,10 @@ impl BashTool {
 
         let mut limits = ExecutionLimits::new();
         if let Some(mc) = max_commands {
-            limits = limits.max_commands(mc as usize);
+            limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
         }
         if let Some(mli) = max_loop_iterations {
-            limits = limits.max_loop_iterations(mli as usize);
+            limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
         }
         builder = builder.limits(limits);
 
@@ -622,10 +622,10 @@ impl ScriptedTool {
         if self.max_commands.is_some() || self.max_loop_iterations.is_some() {
             let mut limits = ExecutionLimits::new();
             if let Some(mc) = self.max_commands {
-                limits = limits.max_commands(mc as usize);
+                limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
             }
             if let Some(mli) = self.max_loop_iterations {
-                limits = limits.max_loop_iterations(mli as usize);
+                limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
             }
             builder = builder.limits(limits);
         }
