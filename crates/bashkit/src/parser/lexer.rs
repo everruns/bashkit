@@ -1043,6 +1043,12 @@ impl<'a> Lexer<'a> {
                         content.push('(');
                         self.advance();
                         self.read_command_subst_into(&mut content);
+                    } else if self.peek_char() == Some('{') {
+                        // ${...} parameter expansion — track brace depth so
+                        // inner quotes (e.g. ${arr["key"]}) don't end the string
+                        content.push('{');
+                        self.advance();
+                        self.read_param_expansion_into(&mut content);
                     }
                 }
                 '`' => {
@@ -1160,6 +1166,82 @@ impl<'a> Lexer<'a> {
                     if let Some(esc) = self.peek_char() {
                         content.push(esc);
                         self.advance();
+                    }
+                }
+                _ => {
+                    content.push(c);
+                    self.advance();
+                }
+            }
+        }
+    }
+
+    /// Read parameter expansion content after `${`, handling nested braces and quotes.
+    /// In bash, quotes inside `${...}` (e.g. `${arr["key"]}`) don't terminate the
+    /// outer double-quoted string. Appends chars including closing `}` to `content`.
+    fn read_param_expansion_into(&mut self, content: &mut String) {
+        let mut depth = 1;
+        while let Some(c) = self.peek_char() {
+            match c {
+                '{' => {
+                    depth += 1;
+                    content.push(c);
+                    self.advance();
+                }
+                '}' => {
+                    depth -= 1;
+                    self.advance();
+                    content.push('}');
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                '"' => {
+                    // Quotes inside ${...} are part of the expansion, not string delimiters
+                    content.push('"');
+                    self.advance();
+                }
+                '\'' => {
+                    content.push('\'');
+                    self.advance();
+                }
+                '\\' => {
+                    // Inside ${...} within double quotes, same escape rules apply:
+                    // \", \\, \$, \` produce the escaped char; others keep backslash
+                    self.advance();
+                    if let Some(esc) = self.peek_char() {
+                        match esc {
+                            '"' | '\\' | '$' | '`' => {
+                                content.push(esc);
+                                self.advance();
+                            }
+                            '}' => {
+                                // \} should be a literal } without closing the expansion
+                                content.push('\\');
+                                content.push('}');
+                                self.advance();
+                            }
+                            _ => {
+                                content.push('\\');
+                                content.push(esc);
+                                self.advance();
+                            }
+                        }
+                    } else {
+                        content.push('\\');
+                    }
+                }
+                '$' => {
+                    content.push('$');
+                    self.advance();
+                    if self.peek_char() == Some('(') {
+                        content.push('(');
+                        self.advance();
+                        self.read_command_subst_into(content);
+                    } else if self.peek_char() == Some('{') {
+                        content.push('{');
+                        self.advance();
+                        self.read_param_expansion_into(content);
                     }
                 }
                 _ => {

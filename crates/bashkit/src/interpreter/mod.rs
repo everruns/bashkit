@@ -9749,4 +9749,30 @@ echo "count=$COUNT"
             .unwrap();
         assert_eq!(result.stdout.trim(), "match");
     }
+
+    #[tokio::test]
+    async fn test_assoc_array_in_double_quotes() {
+        // Issue #399: ${arr["key"]} inside double quotes misparsed
+        let mut bash = crate::Bash::new();
+        let result = bash
+            .exec(r#"declare -A arr; arr["foo"]="bar"; echo "value: ${arr["foo"]}""#)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout.trim(), "value: bar");
+    }
+
+    #[tokio::test]
+    async fn test_assoc_array_keys_in_quotes() {
+        // Issue #399: ${!arr[@]} in string context
+        let mut bash = crate::Bash::new();
+        let result = bash
+            .exec(r#"declare -A arr; arr["a"]=1; arr["b"]=2; echo "keys: ${!arr[@]}""#)
+            .await
+            .unwrap();
+        let output = result.stdout.trim();
+        // Keys may be in any order
+        assert!(output.starts_with("keys: "), "got: {}", output);
+        assert!(output.contains("a"), "got: {}", output);
+        assert!(output.contains("b"), "got: {}", output);
+    }
 }
