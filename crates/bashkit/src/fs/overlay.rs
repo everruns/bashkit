@@ -285,6 +285,27 @@ impl OverlayFs {
         h.dir_count = h.dir_count.saturating_add(1);
     }
 
+    /// Recursively enumerate lower-layer children and record them as hidden.
+    /// Called during recursive directory delete so usage stays accurate.
+    async fn hide_lower_children_recursive(&self, dir: &Path) {
+        if let Ok(entries) = self.lower.read_dir(dir).await {
+            for entry in entries {
+                let child = dir.join(&entry.name);
+                if let Ok(meta) = self.lower.stat(&child).await {
+                    match meta.file_type {
+                        FileType::File => self.hide_lower_file(meta.size),
+                        FileType::Directory => {
+                            self.hide_lower_dir();
+                            // Recurse into subdirectories
+                            Box::pin(self.hide_lower_children_recursive(&child)).await;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
     /// Check limits before writing.
     fn check_write_limits(&self, content_size: usize) -> Result<()> {
         // Check file size limit
@@ -351,7 +372,19 @@ impl OverlayFs {
     fn is_whiteout(&self, path: &Path) -> bool {
         let path = Self::normalize_path(path);
         let whiteouts = self.whiteouts.read().unwrap();
-        whiteouts.contains(&path)
+        // THREAT[TM-DOS-038]: Check path itself and all ancestors.
+        // Recursive delete whiteouts the directory; children inherit invisibility.
+        let mut check = path.as_path();
+        loop {
+            if whiteouts.contains(check) {
+                return true;
+            }
+            match check.parent() {
+                Some(p) if p != check => check = p,
+                _ => break,
+            }
+        }
+        false
     }
 
     /// Mark a path as deleted (add whiteout)
@@ -532,7 +565,14 @@ impl FileSystem for OverlayFs {
                 if let Ok(meta) = self.lower.stat(&path).await {
                     match meta.file_type {
                         FileType::File => self.hide_lower_file(meta.size),
-                        FileType::Directory => self.hide_lower_dir(),
+                        FileType::Directory => {
+                            self.hide_lower_dir();
+                            // THREAT[TM-DOS-038]: Recursive delete must track all
+                            // lower children for accurate usage deduction.
+                            if recursive {
+                                self.hide_lower_children_recursive(&path).await;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -1142,6 +1182,80 @@ mod tests {
         assert!(
             result.is_err(),
             "should reject when combined file count exceeds limit"
+        );
+    }
+
+    // Issue #420: recursive delete should whiteout child paths from lower layer
+    #[tokio::test]
+    async fn test_recursive_delete_whiteouts_children() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower.mkdir(Path::new("/data"), true).await.unwrap();
+        lower
+            .write_file(Path::new("/data/a.txt"), b"aaa")
+            .await
+            .unwrap();
+        lower
+            .write_file(Path::new("/data/b.txt"), b"bbb")
+            .await
+            .unwrap();
+        lower.mkdir(Path::new("/data/sub"), true).await.unwrap();
+        lower
+            .write_file(Path::new("/data/sub/c.txt"), b"ccc")
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+
+        // rm -r /data
+        overlay.remove(Path::new("/data"), true).await.unwrap();
+
+        // All children should be invisible
+        assert!(
+            !overlay.exists(Path::new("/data/a.txt")).await.unwrap(),
+            "child file should be hidden after recursive delete"
+        );
+        assert!(
+            !overlay.exists(Path::new("/data/sub/c.txt")).await.unwrap(),
+            "nested child should be hidden after recursive delete"
+        );
+        assert!(
+            !overlay.exists(Path::new("/data")).await.unwrap(),
+            "directory itself should be hidden"
+        );
+
+        // read_file should fail
+        assert!(overlay.read_file(Path::new("/data/a.txt")).await.is_err());
+    }
+
+    // Issue #420: usage should account for all recursively deleted lower files
+    #[tokio::test]
+    async fn test_recursive_delete_deducts_all_children() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower.mkdir(Path::new("/stuff"), true).await.unwrap();
+        lower
+            .write_file(Path::new("/stuff/x.txt"), &[b'X'; 100])
+            .await
+            .unwrap();
+        lower
+            .write_file(Path::new("/stuff/y.txt"), &[b'Y'; 200])
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+        let before = overlay.usage();
+
+        overlay.remove(Path::new("/stuff"), true).await.unwrap();
+
+        let after = overlay.usage();
+        assert_eq!(
+            after.total_bytes,
+            before.total_bytes - 300,
+            "should deduct all child file bytes"
+        );
+        assert_eq!(
+            after.file_count,
+            before.file_count - 2,
+            "should deduct all child file counts"
         );
     }
 }
