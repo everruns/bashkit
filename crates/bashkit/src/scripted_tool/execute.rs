@@ -456,8 +456,8 @@ mod tests {
     #[tokio::test]
     async fn test_error_uses_display_not_debug() {
         use super::ScriptedTool;
-        use crate::ToolDef;
         use crate::tool::Tool;
+        use crate::ToolDef;
 
         let mut tool = ScriptedTool::builder("test")
             .short_description("test")
