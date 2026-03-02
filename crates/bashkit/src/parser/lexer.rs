@@ -1090,6 +1090,17 @@ impl<'a> Lexer<'a> {
             return Some(Token::Error("unterminated double quote".to_string()));
         }
 
+        // Check for continuation after closing quote: "foo"bar or "foo"/* etc.
+        // If there's adjacent unquoted content (word chars, globs, more quotes),
+        // concatenate and return as Word (not QuotedWord) so glob expansion works
+        // on the unquoted portion.
+        if let Some(ch) = self.peek_char() {
+            if self.is_word_char(ch) || ch == '\'' || ch == '"' || ch == '$' {
+                self.read_continuation_into(&mut content);
+                return Some(Token::Word(content));
+            }
+        }
+
         Some(Token::QuotedWord(content))
     }
 
