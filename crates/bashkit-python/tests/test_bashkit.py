@@ -249,6 +249,28 @@ def test_reset():
     assert r.stdout.strip() == "empty"
 
 
+# Issue #424: reset() should preserve security configuration
+def test_reset_preserves_config():
+    bash = Bash(max_commands=5, username="testuser", hostname="testhost")
+    # Verify config works before reset
+    r = bash.execute_sync("whoami")
+    assert r.stdout.strip() == "testuser"
+
+    bash.reset()
+
+    # Config should survive reset
+    r = bash.execute_sync("whoami")
+    assert r.stdout.strip() == "testuser", "username lost after reset"
+
+    r = bash.execute_sync("hostname")
+    assert r.stdout.strip() == "testhost", "hostname lost after reset"
+
+    # Max commands limit should still be enforced
+    # Run enough commands to hit the limit
+    r = bash.execute_sync("echo 1; echo 2; echo 3; echo 4; echo 5; echo 6")
+    assert r.exit_code != 0 or "limit" in r.stderr.lower() or r.stdout.count("\n") <= 5
+
+
 # -- BashTool: LLM metadata ------------------------------------------------
 
 
