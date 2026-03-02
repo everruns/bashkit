@@ -197,8 +197,11 @@ impl AwkValue {
 
 impl Default for AwkState {
     fn default() -> Self {
+        let mut variables = HashMap::new();
+        // POSIX SUBSEP: subscript separator for multi-dimensional arrays
+        variables.insert("SUBSEP".to_string(), AwkValue::String("\x1c".to_string()));
         Self {
-            variables: HashMap::new(),
+            variables,
             fields: Vec::new(),
             fs: " ".to_string(),
             ofs: " ".to_string(),
@@ -1355,28 +1358,62 @@ impl<'a> AwkParser<'a> {
             ));
         }
 
-        // Pre-increment: ++var
+        // Pre-increment: ++var or ++arr[key]
         if self.input[self.pos..].starts_with("++") {
             self.pos += 2;
             self.skip_whitespace();
-            if let Ok(AwkExpr::Variable(name)) = self.parse_primary() {
-                return Ok(AwkExpr::PreIncrement(name));
+            match self.parse_primary()? {
+                AwkExpr::Variable(name) => return Ok(AwkExpr::PreIncrement(name)),
+                AwkExpr::FuncCall(ref fname, ref args)
+                    if fname == "__array_access" && args.len() == 2 =>
+                {
+                    if let AwkExpr::Variable(arr_name) = &args[0] {
+                        return Ok(AwkExpr::CompoundArrayAssign(
+                            arr_name.clone(),
+                            Box::new(args[1].clone()),
+                            "+".to_string(),
+                            Box::new(AwkExpr::Number(1.0)),
+                        ));
+                    }
+                    return Err(Error::Execution(
+                        "awk: expected variable after ++".to_string(),
+                    ));
+                }
+                _ => {
+                    return Err(Error::Execution(
+                        "awk: expected variable after ++".to_string(),
+                    ))
+                }
             }
-            return Err(Error::Execution(
-                "awk: expected variable after ++".to_string(),
-            ));
         }
 
-        // Pre-decrement: --var
+        // Pre-decrement: --var or --arr[key]
         if self.input[self.pos..].starts_with("--") {
             self.pos += 2;
             self.skip_whitespace();
-            if let Ok(AwkExpr::Variable(name)) = self.parse_primary() {
-                return Ok(AwkExpr::PreDecrement(name));
+            match self.parse_primary()? {
+                AwkExpr::Variable(name) => return Ok(AwkExpr::PreDecrement(name)),
+                AwkExpr::FuncCall(ref fname, ref args)
+                    if fname == "__array_access" && args.len() == 2 =>
+                {
+                    if let AwkExpr::Variable(arr_name) = &args[0] {
+                        return Ok(AwkExpr::CompoundArrayAssign(
+                            arr_name.clone(),
+                            Box::new(args[1].clone()),
+                            "-".to_string(),
+                            Box::new(AwkExpr::Number(1.0)),
+                        ));
+                    }
+                    return Err(Error::Execution(
+                        "awk: expected variable after --".to_string(),
+                    ));
+                }
+                _ => {
+                    return Err(Error::Execution(
+                        "awk: expected variable after --".to_string(),
+                    ))
+                }
             }
-            return Err(Error::Execution(
-                "awk: expected variable after --".to_string(),
-            ));
         }
 
         let c = self.current_char().unwrap();
@@ -1562,16 +1599,36 @@ impl<'a> AwkParser<'a> {
                 return Ok(AwkExpr::FuncCall(name, args));
             }
 
-            // Array indexing: arr[index]
+            // Array indexing: arr[index] or arr[e1,e2,...] (multi-subscript with SUBSEP)
             if self.pos < self.input.len() && self.current_char().unwrap() == '[' {
                 self.pos += 1; // consume '['
-                let index_expr = self.parse_expression()?;
+                let mut subscripts = vec![self.parse_expression()?];
                 self.skip_whitespace();
+                // Handle multi-subscript: arr[e1, e2, ...] joined by SUBSEP
+                while self.pos < self.input.len() && self.current_char().unwrap() == ',' {
+                    self.pos += 1; // consume ','
+                    self.skip_whitespace();
+                    subscripts.push(self.parse_expression()?);
+                    self.skip_whitespace();
+                }
                 if self.pos >= self.input.len() || self.current_char().unwrap() != ']' {
                     return Err(Error::Execution("awk: expected ']'".to_string()));
                 }
                 self.pos += 1; // consume ']'
-                               // Store as arr[index] where index is evaluated at runtime
+                let index_expr = if subscripts.len() == 1 {
+                    subscripts.remove(0)
+                } else {
+                    // Join multiple subscripts with SUBSEP
+                    let mut result = subscripts.remove(0);
+                    for sub in subscripts {
+                        result = AwkExpr::BinOp(
+                            Box::new(result),
+                            "SUBSEP_CONCAT".to_string(),
+                            Box::new(sub),
+                        );
+                    }
+                    result
+                };
                 return Ok(AwkExpr::FuncCall(
                     "__array_access".to_string(),
                     vec![AwkExpr::Variable(name), index_expr],
@@ -1762,6 +1819,10 @@ impl AwkInterpreter {
                         } else {
                             AwkValue::Number(1.0)
                         }
+                    }
+                    "SUBSEP_CONCAT" => {
+                        let subsep = self.state.get_variable("SUBSEP").as_string();
+                        AwkValue::String(format!("{}{}{}", l.as_string(), subsep, r.as_string()))
                     }
                     _ => AwkValue::Uninitialized,
                 }
@@ -3381,5 +3442,52 @@ mod tests {
             .unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "café");
+    }
+
+    #[tokio::test]
+    async fn test_awk_array_assign_field_ref_subscript() {
+        // Issue #396.1: arr[$1] = $3 should work with field refs as subscripts
+        let result = run_awk(
+            &["{ arr[$1] = $2 } END { print arr[\"hello\"] }"],
+            Some("hello world\n"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "world");
+    }
+
+    #[tokio::test]
+    async fn test_awk_multi_subscript() {
+        // Issue #396.2: a["x","y"] multi-subscript with SUBSEP
+        let result = run_awk(&[r#"BEGIN { a["x","y"] = 1; print a["x","y"] }"#], Some(""))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "1");
+    }
+
+    #[tokio::test]
+    async fn test_awk_subsep_defined() {
+        // Issue #396.3: SUBSEP should be defined as \034
+        let result = run_awk(&[r#"BEGIN { print length(SUBSEP) }"#], Some(""))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "1");
+    }
+
+    #[tokio::test]
+    async fn test_awk_preincrement_array() {
+        // Issue #396.4: ++arr[key] should work
+        let result = run_awk(
+            &["{ ++count[$1] } END { for (k in count) print k, count[k] }"],
+            Some("a\nb\na\n"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("a 2"));
+        assert!(result.stdout.contains("b 1"));
     }
 }
