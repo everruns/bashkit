@@ -1023,6 +1023,40 @@ impl GitClient {
         Ok("master".to_string())
     }
 
+    /// THREAT[TM-GIT-014]: Validate git ref name to prevent path injection.
+    /// Rejects `..`, control chars, trailing `.lock`, leading/trailing dots,
+    /// and other patterns that could escape refs/heads/.
+    fn validate_ref_name(name: &str) -> Result<()> {
+        if name.is_empty() {
+            return Err(Error::Internal(
+                "fatal: invalid ref name: empty".to_string(),
+            ));
+        }
+        if name.contains("..") || name.contains("//") || name.starts_with('/') {
+            return Err(Error::Internal(format!(
+                "fatal: '{name}' is not a valid branch name (path traversal)"
+            )));
+        }
+        if name.starts_with('.') || name.ends_with('.') || name.ends_with(".lock") {
+            return Err(Error::Internal(format!(
+                "fatal: '{name}' is not a valid branch name"
+            )));
+        }
+        if name.starts_with('-') {
+            return Err(Error::Internal(format!(
+                "fatal: '{name}' is not a valid branch name (starts with dash)"
+            )));
+        }
+        for ch in name.chars() {
+            if ch.is_ascii_control() || ch == ' ' || ch == '~' || ch == '^' || ch == ':' {
+                return Err(Error::Internal(format!(
+                    "fatal: '{name}' is not a valid branch name (invalid character)"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Create a new branch.
     pub async fn branch_create(
         &self,
@@ -1030,6 +1064,7 @@ impl GitClient {
         repo_path: &Path,
         name: &str,
     ) -> Result<()> {
+        Self::validate_ref_name(name)?;
         let git_dir = repo_path.join(".git");
         let refs_heads = git_dir.join("refs/heads");
         let branch_path = refs_heads.join(name);
@@ -1076,6 +1111,7 @@ impl GitClient {
         repo_path: &Path,
         name: &str,
     ) -> Result<()> {
+        Self::validate_ref_name(name)?;
         let git_dir = repo_path.join(".git");
         let branch_path = git_dir.join("refs/heads").join(name);
 
@@ -1114,6 +1150,7 @@ impl GitClient {
         repo_path: &Path,
         target: &str,
     ) -> Result<String> {
+        Self::validate_ref_name(target)?;
         let git_dir = repo_path.join(".git");
         let head_path = git_dir.join("HEAD");
         let branch_path = git_dir.join("refs/heads").join(target);
@@ -1362,5 +1399,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(email, Some("custom@example.com".to_string()));
+    }
+
+    // Issue #423: branch name path injection
+    #[test]
+    fn test_validate_ref_name_blocks_traversal() {
+        assert!(GitClient::validate_ref_name("../../config").is_err());
+        assert!(GitClient::validate_ref_name("..").is_err());
+        assert!(GitClient::validate_ref_name("foo/../bar").is_err());
+    }
+
+    #[test]
+    fn test_validate_ref_name_blocks_invalid() {
+        assert!(GitClient::validate_ref_name("").is_err());
+        assert!(GitClient::validate_ref_name(".hidden").is_err());
+        assert!(GitClient::validate_ref_name("branch.lock").is_err());
+        assert!(GitClient::validate_ref_name("-dash").is_err());
+        assert!(GitClient::validate_ref_name("has space").is_err());
+        assert!(GitClient::validate_ref_name("has\x00null").is_err());
+    }
+
+    #[test]
+    fn test_validate_ref_name_allows_valid() {
+        assert!(GitClient::validate_ref_name("main").is_ok());
+        assert!(GitClient::validate_ref_name("feature/branch").is_ok());
+        assert!(GitClient::validate_ref_name("fix-123").is_ok());
+        assert!(GitClient::validate_ref_name("v1.0").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_branch_create_rejects_traversal() {
+        let fs: Arc<dyn crate::fs::FileSystem> = Arc::new(crate::fs::InMemoryFs::new());
+        let client = GitClient::new(GitConfig::new());
+
+        // Validation happens before any repo checks, so no init needed
+        let result = client
+            .branch_create(&fs, Path::new("/repo"), "../../config")
+            .await;
+        assert!(result.is_err(), "path traversal branch name should fail");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("path traversal"),
+            "error should mention path traversal, got: {err}"
+        );
     }
 }
