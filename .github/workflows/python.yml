@@ -143,7 +143,7 @@ jobs:
           pip install twine
           twine check crates/bashkit-python/dist/*
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: python-wheel
           path: crates/bashkit-python/dist
