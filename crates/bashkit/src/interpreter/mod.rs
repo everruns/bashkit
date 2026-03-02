@@ -7704,8 +7704,8 @@ impl Interpreter {
                 return String::new();
             }
             "$" => {
-                // $$ - current process ID (simulated)
-                return std::process::id().to_string();
+                // THREAT[TM-INF-014]: Return sandboxed PID, not real host PID.
+                return "1".to_string();
             }
             "!" => {
                 // $! - PID of most recent background command
@@ -9531,5 +9531,15 @@ mod tests {
             elapsed
         );
         assert_eq!(result.exit_code, 0);
+    }
+
+    // Issue #425: $$ should not leak real host PID
+    #[tokio::test]
+    async fn test_dollar_dollar_no_host_pid_leak() {
+        let mut bash = crate::Bash::new();
+        let result = bash.exec("echo $$").await.unwrap();
+        let pid: u32 = result.stdout.trim().parse().unwrap();
+        // Should be sandboxed value (1), not real PID
+        assert_eq!(pid, 1, "$$ should return sandboxed PID, not real host PID");
     }
 }
