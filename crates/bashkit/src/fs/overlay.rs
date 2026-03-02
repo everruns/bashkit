@@ -148,6 +148,9 @@ pub struct OverlayFs {
     whiteouts: RwLock<HashSet<PathBuf>>,
     /// Combined limits for the overlay view
     limits: FsLimits,
+    // Tracks lower-layer usage that is hidden by upper overrides or whiteouts.
+    // Updated incrementally in async methods so compute_usage (sync) stays accurate.
+    lower_hidden: RwLock<FsUsage>,
 }
 
 impl OverlayFs {
@@ -218,6 +221,7 @@ impl OverlayFs {
             upper: InMemoryFs::with_limits(FsLimits::unlimited()),
             whiteouts: RwLock::new(HashSet::new()),
             limits,
+            lower_hidden: RwLock::new(FsUsage::default()),
         }
     }
 
@@ -243,18 +247,27 @@ impl OverlayFs {
     }
 
     /// Compute combined usage (upper + visible lower).
+    ///
+    /// Deducts lower-layer entries that are hidden by upper overrides or whiteouts
+    /// to avoid double-counting. The `lower_hidden` accumulator is maintained
+    /// incrementally by write_file, remove, chmod, and related async methods.
     fn compute_usage(&self) -> FsUsage {
-        // Get upper layer usage
         let upper_usage = self.upper.usage();
-
-        // Lower layer usage is counted but we don't double-count
-        // files that are overwritten in upper or whited out
         let lower_usage = self.lower.usage();
+        let hidden = self.lower_hidden.read().unwrap();
 
-        // Combine both layers
-        let total_bytes = upper_usage.total_bytes + lower_usage.total_bytes;
-        let file_count = upper_usage.file_count + lower_usage.file_count;
-        let dir_count = upper_usage.dir_count + lower_usage.dir_count;
+        let total_bytes = upper_usage
+            .total_bytes
+            .saturating_add(lower_usage.total_bytes)
+            .saturating_sub(hidden.total_bytes);
+        let file_count = upper_usage
+            .file_count
+            .saturating_add(lower_usage.file_count)
+            .saturating_sub(hidden.file_count);
+        let dir_count = upper_usage
+            .dir_count
+            .saturating_add(lower_usage.dir_count)
+            .saturating_sub(hidden.dir_count);
 
         FsUsage::new(total_bytes, file_count, dir_count)
     }
@@ -340,6 +353,19 @@ impl OverlayFs {
         let mut whiteouts = self.whiteouts.write().unwrap();
         whiteouts.remove(&path);
     }
+
+    /// Record that a lower-layer file is now hidden (overridden or whited out).
+    fn hide_lower_file(&self, size: u64) {
+        let mut hidden = self.lower_hidden.write().unwrap();
+        hidden.total_bytes = hidden.total_bytes.saturating_add(size);
+        hidden.file_count = hidden.file_count.saturating_add(1);
+    }
+
+    /// Record that a lower-layer directory is now hidden.
+    fn hide_lower_dir(&self) {
+        let mut hidden = self.lower_hidden.write().unwrap();
+        hidden.dir_count = hidden.dir_count.saturating_add(1);
+    }
 }
 
 #[async_trait]
@@ -372,7 +398,14 @@ impl FileSystem for OverlayFs {
         // Check limits before writing
         self.check_write_limits(content.len())?;
 
-        // Remove any whiteout for this path
+        // Track whether lower file becomes newly hidden by this write.
+        // If the path is not already in upper AND not already whited out,
+        // then writing to upper will newly shadow the lower entry.
+        let already_in_upper = self.upper.exists(&path).await.unwrap_or(false);
+        let already_whited = self.is_whiteout(&path);
+        let lower_exists = self.lower.exists(&path).await.unwrap_or(false);
+
+        // Remove any whiteout for this path (upper override takes over hiding)
         self.remove_whiteout(&path);
 
         // Ensure parent directory exists in upper
@@ -390,7 +423,21 @@ impl FileSystem for OverlayFs {
         }
 
         // Write to upper
-        self.upper.write_file(&path, content).await
+        self.upper.write_file(&path, content).await?;
+
+        // If this write newly hides a lower file (not previously hidden by
+        // upper override or whiteout), record the hidden lower contribution.
+        if lower_exists && !already_in_upper && !already_whited {
+            if let Ok(meta) = self.lower.stat(&path).await {
+                match meta.file_type {
+                    FileType::File => self.hide_lower_file(meta.size),
+                    FileType::Directory => self.hide_lower_dir(),
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(())
     }
 
     async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()> {
@@ -415,6 +462,7 @@ impl FileSystem for OverlayFs {
 
         // If file exists in lower, copy-on-write
         if self.lower.exists(&path).await.unwrap_or(false) {
+            let lower_meta = self.lower.stat(&path).await?;
             let existing = self.lower.read_file(&path).await?;
 
             // Check limits for combined content
@@ -430,7 +478,11 @@ impl FileSystem for OverlayFs {
             // Copy existing content and append new content
             let mut combined = existing;
             combined.extend_from_slice(content);
-            return self.upper.write_file(&path, &combined).await;
+            self.upper.write_file(&path, &combined).await?;
+
+            // Lower file is now hidden by the upper copy
+            self.hide_lower_file(lower_meta.size);
+            return Ok(());
         }
 
         // Create new file in upper
@@ -469,15 +521,22 @@ impl FileSystem for OverlayFs {
             self.upper.remove(&path, recursive).await?;
         }
 
-        // If was in lower, add whiteout
+        // If was in lower, add whiteout and track hiding.
+        // If in_upper was also true, the lower was already hidden (by the upper
+        // override). The whiteout replaces the override as the hiding mechanism,
+        // so no additional deduction needed.
         if in_lower {
-            if recursive {
-                // Add whiteouts for all paths under this directory
-                // This is a simplification - real overlayfs uses opaque dirs
-                self.add_whiteout(&path);
-            } else {
-                self.add_whiteout(&path);
+            // Newly hiding the lower entry only if there was no upper override
+            if !in_upper {
+                if let Ok(meta) = self.lower.stat(&path).await {
+                    match meta.file_type {
+                        FileType::File => self.hide_lower_file(meta.size),
+                        FileType::Directory => self.hide_lower_dir(),
+                        _ => {}
+                    }
+                }
             }
+            self.add_whiteout(&path);
         }
 
         Ok(())
@@ -627,9 +686,20 @@ impl FileSystem for OverlayFs {
             // Create in upper with same content (for files)
             if stat.file_type == FileType::File {
                 let content = self.lower.read_file(&path).await?;
+                self.check_write_limits(content.len())?;
+
+                // Ensure parent dir exists in upper before write
+                if let Some(parent) = path.parent() {
+                    if !self.upper.exists(parent).await.unwrap_or(false) {
+                        self.upper.mkdir(parent, true).await?;
+                    }
+                }
+
                 self.upper.write_file(&path, &content).await?;
+                self.hide_lower_file(stat.size);
             } else if stat.file_type == FileType::Directory {
                 self.upper.mkdir(&path, true).await?;
+                self.hide_lower_dir();
             }
 
             return self.upper.chmod(&path, mode).await;
@@ -758,6 +828,176 @@ mod tests {
         assert!(overlay.exists(Path::new("/tmp/test.txt")).await.unwrap());
         let content = overlay.read_file(Path::new("/tmp/test.txt")).await.unwrap();
         assert_eq!(content, b"new content");
+    }
+
+    #[tokio::test]
+    async fn test_chmod_cow_enforces_write_limits() {
+        // Issue #417: chmod copy-on-write must check limits before writing to upper
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .write_file(Path::new("/tmp/big.txt"), &vec![b'x'; 5000])
+            .await
+            .unwrap();
+
+        // Limit upper layer to 1000 bytes total - the 5000 byte file shouldn't fit
+        let limits = FsLimits::new().max_total_bytes(1000);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        // chmod triggers CoW from lower -> upper; must be rejected
+        let result = overlay.chmod(Path::new("/tmp/big.txt"), 0o755).await;
+        assert!(
+            result.is_err(),
+            "chmod CoW should fail when content exceeds write limits"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("filesystem full"),
+            "expected 'filesystem full' error, got: {err}"
+        );
+
+        // File should NOT exist in upper layer
+        assert!(
+            !overlay
+                .upper
+                .exists(Path::new("/tmp/big.txt"))
+                .await
+                .unwrap(),
+            "file should not have been copied to upper layer"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_usage_no_double_count_override() {
+        // Issue #418: overwriting a lower file in upper should not double-count
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .write_file(Path::new("/tmp/file.txt"), b"lower data") // 10 bytes
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+
+        // Snapshot before override
+        let usage_before = overlay.usage();
+
+        // Override in upper with smaller content
+        overlay
+            .write_file(Path::new("/tmp/file.txt"), b"upper!") // 6 bytes
+            .await
+            .unwrap();
+
+        let usage_after = overlay.usage();
+        // File count should not change: same file, just overridden
+        assert_eq!(
+            usage_after.file_count, usage_before.file_count,
+            "overridden file should not increase file_count"
+        );
+        // Bytes should decrease by (10 - 6) = 4 because lower's 10 bytes are
+        // replaced by upper's 6 bytes
+        assert_eq!(
+            usage_after.total_bytes,
+            usage_before.total_bytes - 4,
+            "overridden file bytes should reflect upper size, not sum"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_usage_no_double_count_whiteout() {
+        // Issue #418: deleting a lower file should deduct it from usage
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .write_file(Path::new("/tmp/gone.txt"), b"12345") // 5 bytes
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower.clone());
+        let usage_before = overlay.usage();
+
+        // Delete through overlay (creates whiteout)
+        overlay
+            .remove(Path::new("/tmp/gone.txt"), false)
+            .await
+            .unwrap();
+
+        let usage_after = overlay.usage();
+        assert_eq!(
+            usage_after.file_count,
+            usage_before.file_count - 1,
+            "whited-out file should not be counted"
+        );
+        assert_eq!(
+            usage_after.total_bytes,
+            usage_before.total_bytes - 5,
+            "whited-out file bytes should be deducted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_usage_unique_files_both_layers() {
+        // Files unique to each layer should each count once
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .write_file(Path::new("/tmp/lower.txt"), b"aaa") // 3 bytes
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+        let usage_before = overlay.usage();
+
+        overlay
+            .write_file(Path::new("/tmp/upper.txt"), b"bbbbb") // 5 bytes
+            .await
+            .unwrap();
+
+        let usage_after = overlay.usage();
+        // Adding a unique upper file: +1 file, +5 bytes
+        assert_eq!(
+            usage_after.file_count,
+            usage_before.file_count + 1,
+            "unique upper file adds one to count"
+        );
+        assert_eq!(
+            usage_after.total_bytes,
+            usage_before.total_bytes + 5,
+            "unique upper file adds its bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_usage_recreate_after_whiteout() {
+        // Delete then recreate: file should count once with new size
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .write_file(Path::new("/tmp/file.txt"), b"old data 10") // 11 bytes
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+        let usage_before = overlay.usage();
+
+        // Delete
+        overlay
+            .remove(Path::new("/tmp/file.txt"), false)
+            .await
+            .unwrap();
+
+        // Recreate with different size
+        overlay
+            .write_file(Path::new("/tmp/file.txt"), b"new") // 3 bytes
+            .await
+            .unwrap();
+
+        let usage_after = overlay.usage();
+        // Net effect: replaced 11-byte file with 3-byte file => -8 bytes, same count
+        assert_eq!(
+            usage_after.file_count, usage_before.file_count,
+            "recreated file counted once"
+        );
+        assert_eq!(
+            usage_after.total_bytes,
+            usage_before.total_bytes - 8,
+            "recreated file uses new size"
+        );
     }
 
     #[tokio::test]
