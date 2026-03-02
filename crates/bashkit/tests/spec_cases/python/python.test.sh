@@ -409,7 +409,6 @@ print(a, b, c)"
 ### end
 
 ### python3_nested_dict_access
-### skip: Monty dict literal in bash quoting needs single-quote support
 # Nested data structures
 python3 -c "data = {'users': [{'name': 'Alice'}]}
 print(data['users'][0]['name'])"
@@ -511,7 +510,6 @@ print(count)"
 ### end
 
 ### python3_vfs_getenv
-### skip: export propagation to ctx.env may not work in spec test runner
 # Read environment variables from Python
 export MY_TEST_VAR=hello_from_env
 python3 -c "import os
