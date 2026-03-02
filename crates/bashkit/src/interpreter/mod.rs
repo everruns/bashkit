@@ -9686,4 +9686,45 @@ bash /tmp/opts.sh -f xml -v
         assert_eq!(lines[0], "FORMAT=json VERBOSE=1");
         assert_eq!(lines[1], "FORMAT=xml VERBOSE=1");
     }
+
+    #[tokio::test]
+    async fn test_wc_l_in_pipe() {
+        // Issue #401: wc -l in pipe returns -1 instead of actual count
+        let mut bash = crate::Bash::new();
+        let result = bash.exec(r#"echo -e "a\nb\nc" | wc -l"#).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "3");
+    }
+
+    #[tokio::test]
+    async fn test_wc_l_in_pipe_subst() {
+        // Issue #401: wc -l in command substitution with pipe
+        let mut bash = crate::Bash::new();
+        let result = bash
+            .exec(
+                r#"
+cat > /tmp/data.csv << 'EOF'
+name,score
+alice,95
+bob,87
+carol,92
+EOF
+COUNT=$(tail -n +2 /tmp/data.csv | wc -l)
+echo "count=$COUNT"
+"#,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "count=3");
+    }
+
+    #[tokio::test]
+    async fn test_wc_l_counts_newlines() {
+        // Issue #401: wc -l counts newline characters, not logical lines
+        let mut bash = crate::Bash::new();
+        // printf without trailing newline: 2 newlines = 2 lines per wc -l
+        let result = bash.exec(r#"printf "a\nb\nc" | wc -l"#).await.unwrap();
+        assert_eq!(result.stdout.trim(), "2");
+    }
 }

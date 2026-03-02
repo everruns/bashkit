@@ -185,7 +185,8 @@ struct TextCounts {
 
 /// Count lines, words, bytes, characters, and max line length in text
 fn count_text(text: &str) -> TextCounts {
-    let lines = text.lines().count();
+    // wc -l counts newline characters, not logical lines
+    let lines = text.chars().filter(|&c| c == '\n').count();
     let words = text.split_whitespace().count();
     let bytes = text.len();
     let chars = text.chars().count();
