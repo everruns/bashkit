@@ -27,11 +27,7 @@ fn json_to_py(py: Python<'_>, val: &serde_json::Value) -> PyResult<Py<PyAny>> {
     json_to_py_inner(py, val, 0)
 }
 
-fn json_to_py_inner(
-    py: Python<'_>,
-    val: &serde_json::Value,
-    depth: usize,
-) -> PyResult<Py<PyAny>> {
+fn json_to_py_inner(py: Python<'_>, val: &serde_json::Value, depth: usize) -> PyResult<Py<PyAny>> {
     if depth > MAX_NESTING_DEPTH {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "JSON nesting depth exceeds maximum of 64",
