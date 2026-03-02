@@ -9727,4 +9727,26 @@ echo "count=$COUNT"
         let result = bash.exec(r#"printf "a\nb\nc" | wc -l"#).await.unwrap();
         assert_eq!(result.stdout.trim(), "2");
     }
+
+    #[tokio::test]
+    async fn test_regex_match_from_variable() {
+        // Issue #400: [[ =~ $var ]] should work with regex from variable
+        let mut bash = crate::Bash::new();
+        let result = bash
+            .exec(r#"re="200"; line="hello 200 world"; [[ $line =~ $re ]] && echo "match" || echo "no""#)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout.trim(), "match");
+    }
+
+    #[tokio::test]
+    async fn test_regex_match_literal() {
+        // Issue #400: literal regex should still work
+        let mut bash = crate::Bash::new();
+        let result = bash
+            .exec(r#"line="hello 200 world"; [[ $line =~ 200 ]] && echo "match" || echo "no""#)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout.trim(), "match");
+    }
 }
