@@ -320,7 +320,7 @@ impl Tool for ScriptedTool {
                 stdout: String::new(),
                 stderr: e.to_string(),
                 exit_code: 1,
-                error: Some(format!("{:?}", e)),
+                error: Some(e.to_string()),
             },
         }
     }
@@ -352,7 +352,7 @@ impl Tool for ScriptedTool {
                 stdout: String::new(),
                 stderr: e.to_string(),
                 exit_code: 1,
-                error: Some(format!("{:?}", e)),
+                error: Some(e.to_string()),
             },
         };
 
@@ -451,5 +451,32 @@ mod tests {
         assert!(
             usage_from_schema(&serde_json::json!({"type": "object", "properties": {}})).is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn test_error_uses_display_not_debug() {
+        use super::ScriptedTool;
+        use crate::ToolDef;
+        use crate::tool::Tool;
+
+        let mut tool = ScriptedTool::builder("test")
+            .short_description("test")
+            .tool(
+                ToolDef::new("fail", "Always fails"),
+                |_args: &super::ToolArgs| Err("service error".to_string()),
+            )
+            .build();
+        let req = ToolRequest {
+            commands: "fail".into(),
+            timeout_ms: None,
+        };
+        let resp = tool.execute(req).await;
+        // Error messages use Display format, not Debug, to avoid leaking internals
+        if let Some(ref err) = resp.error {
+            assert!(
+                !err.contains("Execution("),
+                "error should use Display not Debug: {err}",
+            );
+        }
     }
 }
