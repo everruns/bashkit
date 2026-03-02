@@ -408,8 +408,16 @@ fn expand_char_set(spec: &str) -> Vec<char> {
     while i < len {
         // Check for POSIX character class [:class:]
         if char_vec[i] == '[' && i + 1 < len && char_vec[i + 1] == ':' {
-            if let Some(end) = spec[spec.char_indices().nth(i + 2).map_or(spec.len(), |(pos, _)| pos)..].find(":]") {
-                let class_start = spec.char_indices().nth(i + 2).map_or(spec.len(), |(pos, _)| pos);
+            if let Some(end) = spec[spec
+                .char_indices()
+                .nth(i + 2)
+                .map_or(spec.len(), |(pos, _)| pos)..]
+                .find(":]")
+            {
+                let class_start = spec
+                    .char_indices()
+                    .nth(i + 2)
+                    .map_or(spec.len(), |(pos, _)| pos);
                 let class_name = &spec[class_start..class_start + end];
                 match class_name {
                     "lower" => chars.extend('a'..='z'),
