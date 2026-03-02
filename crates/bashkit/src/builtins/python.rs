@@ -256,12 +256,17 @@ impl Builtin for Python {
             ));
         };
 
+        // Merge env and variables so exported vars (set via `export`) are visible
+        // to Python's os.getenv(). Variables override env (bash semantics).
+        let mut merged_env = ctx.env.clone();
+        merged_env.extend(ctx.variables.iter().map(|(k, v)| (k.clone(), v.clone())));
+
         run_python(
             &code,
             &filename,
             ctx.fs.clone(),
             ctx.cwd,
-            ctx.env,
+            &merged_env,
             &self.limits,
         )
         .await
