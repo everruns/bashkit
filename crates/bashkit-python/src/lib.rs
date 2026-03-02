@@ -21,7 +21,18 @@ use tokio::sync::Mutex;
 // ============================================================================
 
 /// Convert serde_json::Value → Py<PyAny>
+const MAX_NESTING_DEPTH: usize = 64;
+
 fn json_to_py(py: Python<'_>, val: &serde_json::Value) -> PyResult<Py<PyAny>> {
+    json_to_py_inner(py, val, 0)
+}
+
+fn json_to_py_inner(py: Python<'_>, val: &serde_json::Value, depth: usize) -> PyResult<Py<PyAny>> {
+    if depth > MAX_NESTING_DEPTH {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "JSON nesting depth exceeds maximum of 64",
+        ));
+    }
     match val {
         serde_json::Value::Null => Ok(py.None()),
         serde_json::Value::Bool(b) => Ok(b.into_pyobject(py)?.to_owned().into_any().unbind()),
@@ -38,14 +49,14 @@ fn json_to_py(py: Python<'_>, val: &serde_json::Value) -> PyResult<Py<PyAny>> {
         serde_json::Value::Array(arr) => {
             let items: Vec<Py<PyAny>> = arr
                 .iter()
-                .map(|v| json_to_py(py, v))
+                .map(|v| json_to_py_inner(py, v, depth + 1))
                 .collect::<PyResult<_>>()?;
             Ok(PyList::new(py, &items)?.into_any().unbind())
         }
         serde_json::Value::Object(map) => {
             let dict = PyDict::new(py);
             for (k, v) in map {
-                dict.set_item(k, json_to_py(py, v)?)?;
+                dict.set_item(k, json_to_py_inner(py, v, depth + 1)?)?;
             }
             Ok(dict.into_any().unbind())
         }
@@ -53,8 +64,21 @@ fn json_to_py(py: Python<'_>, val: &serde_json::Value) -> PyResult<Py<PyAny>> {
 }
 
 /// Convert Py<PyAny> → serde_json::Value (for schema dicts)
-#[allow(clippy::only_used_in_recursion)]
 fn py_to_json(py: Python<'_>, obj: &Bound<'_, pyo3::PyAny>) -> PyResult<serde_json::Value> {
+    py_to_json_inner(py, obj, 0)
+}
+
+#[allow(clippy::only_used_in_recursion)]
+fn py_to_json_inner(
+    py: Python<'_>,
+    obj: &Bound<'_, pyo3::PyAny>,
+    depth: usize,
+) -> PyResult<serde_json::Value> {
+    if depth > MAX_NESTING_DEPTH {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Python object nesting depth exceeds maximum of 64",
+        ));
+    }
     if obj.is_none() {
         return Ok(serde_json::Value::Null);
     }
@@ -73,7 +97,7 @@ fn py_to_json(py: Python<'_>, obj: &Bound<'_, pyo3::PyAny>) -> PyResult<serde_js
     if let Ok(list) = obj.cast::<PyList>() {
         let arr: Vec<serde_json::Value> = list
             .iter()
-            .map(|item| py_to_json(py, &item))
+            .map(|item| py_to_json_inner(py, &item, depth + 1))
             .collect::<PyResult<_>>()?;
         return Ok(serde_json::Value::Array(arr));
     }
@@ -81,7 +105,7 @@ fn py_to_json(py: Python<'_>, obj: &Bound<'_, pyo3::PyAny>) -> PyResult<serde_js
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             let key: String = k.extract()?;
-            map.insert(key, py_to_json(py, &v)?);
+            map.insert(key, py_to_json_inner(py, &v, depth + 1)?);
         }
         return Ok(serde_json::Value::Object(map));
     }
