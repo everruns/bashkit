@@ -9689,7 +9689,6 @@ bash /tmp/opts.sh -f xml -v
 
     #[tokio::test]
     async fn test_wc_l_in_pipe() {
-        // Issue #401: wc -l in pipe returns -1 instead of actual count
         let mut bash = crate::Bash::new();
         let result = bash.exec(r#"echo -e "a\nb\nc" | wc -l"#).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -9698,7 +9697,6 @@ bash /tmp/opts.sh -f xml -v
 
     #[tokio::test]
     async fn test_wc_l_in_pipe_subst() {
-        // Issue #401: wc -l in command substitution with pipe
         let mut bash = crate::Bash::new();
         let result = bash
             .exec(
@@ -9721,16 +9719,13 @@ echo "count=$COUNT"
 
     #[tokio::test]
     async fn test_wc_l_counts_newlines() {
-        // Issue #401: wc -l counts newline characters, not logical lines
         let mut bash = crate::Bash::new();
-        // printf without trailing newline: 2 newlines = 2 lines per wc -l
         let result = bash.exec(r#"printf "a\nb\nc" | wc -l"#).await.unwrap();
         assert_eq!(result.stdout.trim(), "2");
     }
 
     #[tokio::test]
     async fn test_regex_match_from_variable() {
-        // Issue #400: [[ =~ $var ]] should work with regex from variable
         let mut bash = crate::Bash::new();
         let result = bash
             .exec(r#"re="200"; line="hello 200 world"; [[ $line =~ $re ]] && echo "match" || echo "no""#)
@@ -9741,7 +9736,6 @@ echo "count=$COUNT"
 
     #[tokio::test]
     async fn test_regex_match_literal() {
-        // Issue #400: literal regex should still work
         let mut bash = crate::Bash::new();
         let result = bash
             .exec(r#"line="hello 200 world"; [[ $line =~ 200 ]] && echo "match" || echo "no""#)
@@ -9752,7 +9746,6 @@ echo "count=$COUNT"
 
     #[tokio::test]
     async fn test_assoc_array_in_double_quotes() {
-        // Issue #399: ${arr["key"]} inside double quotes misparsed
         let mut bash = crate::Bash::new();
         let result = bash
             .exec(r#"declare -A arr; arr["foo"]="bar"; echo "value: ${arr["foo"]}""#)
@@ -9763,16 +9756,38 @@ echo "count=$COUNT"
 
     #[tokio::test]
     async fn test_assoc_array_keys_in_quotes() {
-        // Issue #399: ${!arr[@]} in string context
         let mut bash = crate::Bash::new();
         let result = bash
             .exec(r#"declare -A arr; arr["a"]=1; arr["b"]=2; echo "keys: ${!arr[@]}""#)
             .await
             .unwrap();
         let output = result.stdout.trim();
-        // Keys may be in any order
         assert!(output.starts_with("keys: "), "got: {}", output);
         assert!(output.contains("a"), "got: {}", output);
         assert!(output.contains("b"), "got: {}", output);
+    }
+
+    #[tokio::test]
+    async fn test_glob_with_quoted_prefix() {
+        let mut bash = crate::Bash::new();
+        bash.fs()
+            .mkdir(std::path::Path::new("/testdir"), true)
+            .await
+            .unwrap();
+        bash.fs()
+            .write_file(std::path::Path::new("/testdir/a.txt"), b"a")
+            .await
+            .unwrap();
+        bash.fs()
+            .write_file(std::path::Path::new("/testdir/b.txt"), b"b")
+            .await
+            .unwrap();
+        let result = bash
+            .exec(r#"DIR="/testdir"; for f in "$DIR"/*; do echo "$f"; done"#)
+            .await
+            .unwrap();
+        let mut lines: Vec<&str> = result.stdout.trim().lines().collect();
+        lines.sort();
+        assert_eq!(lines, vec!["/testdir/a.txt", "/testdir/b.txt"]);
     }
 }
