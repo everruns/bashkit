@@ -40,7 +40,7 @@ jobs:
           rust-toolchain: stable
           working-directory: crates/bashkit-python
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: pypi_files-sdist
           path: crates/bashkit-python/dist
@@ -101,7 +101,7 @@ jobs:
           docker-options: -e CI
           working-directory: crates/bashkit-python
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: pypi_files-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux || 'manylinux' }}
           path: crates/bashkit-python/dist
@@ -112,7 +112,7 @@ jobs:
     needs: [build, build-sdist]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: pypi_files-*
           merge-multiple: true
@@ -147,7 +147,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: pypi_files-${{ matrix.os }}-*
           merge-multiple: true
@@ -173,7 +173,7 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: pypi_files-*
           merge-multiple: true
