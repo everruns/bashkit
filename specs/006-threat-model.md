@@ -251,7 +251,7 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 | TM-DOS-027 | Builtin parser recursion | Deeply nested awk/jq expressions | `MAX_AWK_PARSER_DEPTH` (100) + `MAX_JQ_JSON_DEPTH` (100) | **MITIGATED** |
 | TM-DOS-028 | Diff algorithm DoS | `diff` on two large unrelated files | LCS matrix capped at 10M cells; falls back to simple line-by-line output | **MITIGATED** |
 | TM-DOS-029 | Arithmetic overflow/panic | `$(( 2 ** -1 ))`, `$(( 1 << 64 ))`, `i64::MIN / -1` | — | **OPEN** |
-| TM-DOS-030 | Parser limit bypass via eval/source/trap | `eval`, `source`, trap handlers, alias expansion create `Parser::new()` ignoring configured limits | — | **OPEN** |
+| TM-DOS-030 | Parser limit bypass via eval/source/trap | `eval`, `source`, trap handlers now use `Parser::with_limits()` | — | **FIXED** (2026-03 audit verified) |
 | TM-DOS-031 | ExtGlob exponential blowup | `+(a\|aa)` against long string causes O(n!) recursion in `glob_match_impl` | — | **OPEN** |
 | TM-DOS-032 | Tokio runtime exhaustion (Python) | Rapid `execute_sync()` calls each create new tokio runtime, exhausting OS threads | — | **OPEN** |
 | TM-DOS-033 | AWK unbounded loops | `BEGIN { while(1){} }` has no iteration limit in AWK interpreter | Timeout (30s) backstop | **PARTIAL** |
@@ -377,8 +377,8 @@ All execution stays within the virtual interpreter — no OS subprocess is spawn
 | TM-INF-003 | Proc secrets | `/proc/self/environ` | No /proc filesystem | **MITIGATED** |
 | TM-INF-004 | Memory dump | Core dumps | No crash dumps | **MITIGATED** |
 
-| TM-INF-013 | Host env leak via jq | jq builtin calls `std::env::set_var()`, exposing host process env vars | — | **OPEN** |
-| TM-INF-014 | Real PID leak via $$ | `$$` returns `std::process::id()` instead of virtual value | — | **OPEN** |
+| TM-INF-013 | Host env leak via jq | jq now uses custom `$__bashkit_env__` variable, not `std::env` | — | **FIXED** (2026-03 audit verified) |
+| TM-INF-014 | Real PID leak via $$ | `$$` now returns virtual PID (1) instead of real process ID | — | **FIXED** (2026-03 audit verified) |
 | TM-INF-015 | URL credentials in errors | Allowlist "blocked" error echoes full URL including credentials | — | **OPEN** |
 | TM-INF-016 | Internal state in error messages | `std::io::Error`, reqwest errors, Debug-formatted errors leak host paths/IPs/TLS info | — | **OPEN** |
 
@@ -981,15 +981,17 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 |-----------|---------------|--------|----------------|
 | TM-DOS-029 | Arithmetic overflow/panic | Interpreter crash/hang | Use wrapping arithmetic, clamp shift/exponent |
 | TM-ESC-012 | VFS limit bypass via add_file()/restore() | Unlimited VFS writes | Add limit checks or restrict visibility |
-| TM-INF-013 | Host env leak + thread-unsafe set_var in jq | Info leak + data race | Custom env impl for jaq |
 | TM-INJ-009 | Internal variable namespace injection | Bypass readonly, manipulate interpreter | Separate internal state HashMap |
+| TM-INJ-012–015 | Builtin bypass of is_internal_variable() | Unauthorized nameref/case attr injection via declare/readonly/local/export | Add is_internal_variable() check to all builtin insert paths |
+| TM-DOS-043 | Arithmetic panic in compound assignment | Process crash (DoS) in debug mode | wrapping_* ops in execute_arithmetic_with_side_effects |
+| TM-DOS-044 | Lexer stack overflow on nested $() | Process crash (SIGABRT) | Depth tracking in read_command_subst_into |
 
 ### Open (High Priority)
 
 | Threat ID | Vulnerability | Impact | Recommendation |
 |-----------|---------------|--------|----------------|
-| TM-DOS-030 | Parser limit bypass via eval/source/trap | Unlimited parser depth/operations | Use `Parser::with_limits()` everywhere |
-| TM-DOS-031 | ExtGlob exponential blowup | CPU exhaustion / stack overflow | Add depth limit to glob_match_impl |
+| TM-DOS-031 | ExtGlob exponential blowup | CPU exhaustion / stack overflow | Add fuel counter to glob_match_impl |
+| TM-DOS-041 | Brace expansion unbounded range | OOM DoS | Cap range size in try_expand_range() |
 | TM-DOS-032 | Tokio runtime per sync call (Python) | OS thread/fd exhaustion | Shared runtime |
 | TM-PY-023 | Shell injection in deepagents.py | Command injection within VFS | Use shlex.quote() or direct API |
 | TM-PY-024 | Heredoc content injection in write() | Command injection within VFS | Random delimiter or direct API |
@@ -1028,6 +1030,29 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-UNI-017 | Cut/tr byte-level char set parsing | Multi-byte chars silently dropped in tr specs | Switch from `as_bytes()` to char iteration (issue #436) |
 | TM-UNI-018 | Interpreter arithmetic byte/char confusion | Wrong operator detection on multi-byte expressions | Use `char_indices()` instead of `.find()` + `.chars().nth()` (issue #437) |
 | TM-UNI-019 | Network allowlist byte/char confusion | Wrong path boundary check on multi-byte URLs | Use byte offset consistently in URL matching (issue #438) |
+
+### Open (From 2026-03 Deep Audit — New Findings)
+
+| Threat ID | Vulnerability | Impact | Recommendation |
+|-----------|---------------|--------|----------------|
+| TM-INJ-012 | `declare` bypasses `is_internal_variable()` | Unauthorized nameref creation, case conversion injection | Route declare assignments through `set_variable()` or add `is_internal_variable()` check at `interpreter/mod.rs:5574` |
+| TM-INJ-013 | `readonly` bypasses `is_internal_variable()` | Unauthorized nameref creation via `readonly _NAMEREF_x=target` | Add `is_internal_variable()` check at `builtins/vars.rs:265` |
+| TM-INJ-014 | `local` bypasses `is_internal_variable()` | Internal prefix injection in function scope | Add `is_internal_variable()` check at `builtins/vars.rs:223` |
+| TM-INJ-015 | `export` bypasses `is_internal_variable()` | Internal prefix injection via export | Add `is_internal_variable()` check at `builtins/export.rs:41` |
+| TM-INJ-016 | `_ARRAY_READ_` prefix not in `is_internal_variable()` | Arbitrary array creation/overwrite via marker injection | Add `_ARRAY_READ_` prefix to `is_internal_variable()` at `interpreter/mod.rs:7634` |
+| TM-INF-017 | `set` and `declare -p` leak internal markers | Internal state disclosure (_NAMEREF_, _READONLY_, _UPPER_, _LOWER_) | Filter `is_internal_variable()` names from output |
+| TM-INF-018 | `date` builtin returns real host time | Timezone fingerprinting, timing correlation | Configurable time source (fixed or offset) |
+| TM-DOS-041 | Brace expansion `{N..M}` unbounded range | OOM via `{1..999999999}` allocating billions of strings | Cap range size (e.g., 10,000 elements) in `try_expand_range()` at `interpreter/mod.rs:8049` |
+| TM-DOS-042 | Brace expansion combinatorial explosion | OOM via `{1..100}{1..100}{1..100}` = 1M strings | Cap total expansion count in `expand_braces()` at `interpreter/mod.rs:7967` |
+| TM-DOS-043 | Arithmetic overflow in `execute_arithmetic_with_side_effects` | Panic (DoS) in debug mode via `((x+=1))` with x=i64::MAX | Use `wrapping_add/sub/mul` at `interpreter/mod.rs:1563-1565` |
+| TM-DOS-044 | Lexer `read_command_subst_into` stack overflow | Process crash (SIGABRT) via ~50 nested `$()` in double-quotes | Add depth parameter to `read_command_subst_into()` at `parser/lexer.rs:1109` |
+| TM-DOS-045 | OverlayFs `symlink()` bypasses all limits | Unlimited symlink creation despite `max_file_count` | Add `check_write_limits()` + `validate_path()` to `fs/overlay.rs:683` |
+| TM-DOS-046 | MountableFs has zero `validate_path()` calls | Path validation completely bypassed for mounted filesystems | Add `validate_path()` to all FileSystem methods in `fs/mountable.rs:348-491` |
+| TM-DOS-047 | InMemoryFs `copy()` skips limit check when dest exists | Total VFS bytes can exceed `max_total_bytes` | Always call `check_write_limits()` in `fs/memory.rs:1176`, accounting for size delta |
+| TM-DOS-048 | InMemoryFs `rename()` overwrites dirs, orphans children | VFS corruption — orphaned entries consume memory but are unreachable | Check dest type in `rename()`, reject file-over-directory per POSIX |
+| TM-DOS-049 | `collect_dirs_recursive` has no depth limit | Deep recursion on VFS trees (mitigated by `max_path_depth`) | Add explicit depth parameter at `interpreter/mod.rs:8352` |
+| TM-DOS-050 | `parse_word_string` uses default parser limits | Caller-configured tighter limits ignored for parameter expansion | Propagate limits through `parse_word_string()` at `parser/mod.rs:109` |
+| TM-PY-028 | BashTool.reset() in Python drops security config | Resource limits silently removed after reset | Preserve limits like `PyBash.reset()` does (see `bashkit-python/src/lib.rs:470`) |
 
 ### Accepted (Low Priority)
 
@@ -1111,6 +1136,22 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Cyclic nameref detection | TM-INJ-011 | Track visited names, emit error on cycle | **NEEDED** |
 | Error message sanitization gaps | TM-INF-016 | Consistent Display format, wrap external errors | **NEEDED** |
 | 32-bit integer safety | TM-DOS-040 | `usize::try_from()` for `u64` casts | **NEEDED** |
+
+### Open Controls (From 2026-03 Deep Audit)
+
+| Finding | Threat IDs | Required Control | Status |
+|---------|------------|------------------|--------|
+| Internal prefix injection via builtins | TM-INJ-012 to TM-INJ-015 | Add `is_internal_variable()` check to `declare`, `readonly`, `local`, `export` | **NEEDED** |
+| Missing `_ARRAY_READ_` in prefix guard | TM-INJ-016 | Add prefix to `is_internal_variable()` | **NEEDED** |
+| Internal marker info leak | TM-INF-017 | Filter internal vars from `set` and `declare -p` output | **NEEDED** |
+| Brace expansion DoS | TM-DOS-041, TM-DOS-042 | Cap range size and total expansion count | **NEEDED** |
+| Arithmetic overflow in compound assignment | TM-DOS-043 | Use `wrapping_*` ops in `execute_arithmetic_with_side_effects` | **NEEDED** |
+| Lexer stack overflow | TM-DOS-044 | Depth tracking in `read_command_subst_into` | **NEEDED** |
+| OverlayFs symlink limit bypass | TM-DOS-045 | `check_write_limits()` + `validate_path()` in `symlink()` | **NEEDED** |
+| MountableFs path validation gap | TM-DOS-046 | `validate_path()` in all MountableFs methods | **NEEDED** |
+| VFS copy/rename semantic bugs | TM-DOS-047, TM-DOS-048 | Fix limit check in copy(), type check in rename() | **NEEDED** |
+| Date time info leak | TM-INF-018 | Configurable time source | **NEEDED** |
+| Python BashTool.reset() drops limits | TM-PY-028 | Preserve config on reset (match PyBash.reset()) | **NEEDED** |
 
 ---
 
@@ -1699,3 +1740,4 @@ specs are rare in practice).
 - `tests/threat_model_tests.rs` - Threat model test suite
 - `tests/security_failpoint_tests.rs` - Fail-point security tests
 - `tests/unicode_security_tests.rs` - Unicode security tests (TM-UNI-*)
+- `tests/security_audit_pocs.rs` - PoC tests for 2026-03 deep audit (TM-INJ-012–016, TM-INF-017–018, TM-DOS-041–050, TM-PY-028)
