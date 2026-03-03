@@ -906,6 +906,27 @@ def test_bashtool_rapid_reset_no_resource_exhaustion():
     assert r.stdout.strip() == "ok"
 
 
+# TM-PY-028: BashTool.reset() must preserve security config
+def test_bashtool_reset_preserves_config():
+    tool = BashTool(
+        username="secuser",
+        hostname="sechost",
+        max_commands=5,
+    )
+    # Verify config before reset
+    r = tool.execute_sync("whoami")
+    assert r.stdout.strip() == "secuser"
+
+    tool.reset()
+
+    # Config must survive reset
+    r = tool.execute_sync("whoami")
+    assert r.stdout.strip() == "secuser", "BashTool username lost after reset"
+
+    r = tool.execute_sync("hostname")
+    assert r.stdout.strip() == "sechost", "BashTool hostname lost after reset"
+
+
 def test_scripted_tool_rapid_sync_calls_no_resource_exhaustion():
     """Rapid execute_sync calls on ScriptedTool reuse a single runtime."""
     tool = ScriptedTool("api")

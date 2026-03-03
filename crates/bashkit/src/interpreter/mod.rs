@@ -6576,7 +6576,12 @@ impl Interpreter {
         if operand.is_empty() {
             return String::new();
         }
-        let word = Parser::parse_word_string(operand);
+        // THREAT[TM-DOS-050]: Propagate caller-configured limits to word parsing
+        let word = Parser::parse_word_string_with_limits(
+            operand,
+            self.limits.max_ast_depth,
+            self.limits.max_parser_operations,
+        );
         let mut result = String::new();
         for part in &word.parts {
             match part {
@@ -8380,7 +8385,10 @@ impl Interpreter {
 
         // Collect all directories recursively (including the base)
         let mut all_dirs = vec![base_dir.clone()];
-        self.collect_dirs_recursive(&base_dir, &mut all_dirs).await;
+        // THREAT[TM-DOS-049]: Cap recursion depth using filesystem path depth limit
+        let max_depth = self.fs.limits().max_path_depth;
+        self.collect_dirs_recursive(&base_dir, &mut all_dirs, max_depth)
+            .await;
 
         let mut matches = Vec::new();
 
@@ -8419,18 +8427,24 @@ impl Interpreter {
     }
 
     /// Recursively collect all subdirectories starting from dir.
+    /// THREAT[TM-DOS-049]: `max_depth` caps recursion to prevent stack exhaustion.
     fn collect_dirs_recursive<'a>(
         &'a self,
         dir: &'a Path,
         result: &'a mut Vec<PathBuf>,
+        max_depth: usize,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
+            if max_depth == 0 {
+                return;
+            }
             if let Ok(entries) = self.fs.read_dir(dir).await {
                 for entry in entries {
                     if entry.metadata.file_type.is_dir() {
                         let subdir = dir.join(&entry.name);
                         result.push(subdir.clone());
-                        self.collect_dirs_recursive(&subdir, result).await;
+                        self.collect_dirs_recursive(&subdir, result, max_depth - 1)
+                            .await;
                     }
                 }
             }

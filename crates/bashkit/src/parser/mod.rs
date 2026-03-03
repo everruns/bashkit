@@ -111,6 +111,13 @@ impl<'a> Parser<'a> {
         parser.parse_word(input.to_string())
     }
 
+    /// THREAT[TM-DOS-050]: Parse a word string with caller-configured limits.
+    /// Prevents bypass of parser limits in parameter expansion contexts.
+    pub fn parse_word_string_with_limits(input: &str, max_depth: usize, max_fuel: usize) -> Word {
+        let parser = Parser::with_limits(input, max_depth, max_fuel);
+        parser.parse_word(input.to_string())
+    }
+
     /// Create a parse error with the current position.
     fn error(&self, message: impl Into<String>) -> Error {
         Error::parse_at(

@@ -467,13 +467,32 @@ impl BashTool {
     }
 
     /// Releases GIL before blocking on tokio to prevent deadlock.
+    /// THREAT[TM-PY-028]: Rebuild with same config to preserve security limits.
     fn reset(&self, py: Python<'_>) -> PyResult<()> {
         let inner = self.inner.clone();
+        let username = self.username.clone();
+        let hostname = self.hostname.clone();
+        let max_commands = self.max_commands;
+        let max_loop_iterations = self.max_loop_iterations;
 
         py.detach(|| {
             self.rt.block_on(async move {
                 let mut bash = inner.lock().await;
-                let builder = Bash::builder();
+                let mut builder = Bash::builder();
+                if let Some(ref u) = username {
+                    builder = builder.username(u);
+                }
+                if let Some(ref h) = hostname {
+                    builder = builder.hostname(h);
+                }
+                let mut limits = ExecutionLimits::new();
+                if let Some(mc) = max_commands {
+                    limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
+                }
+                if let Some(mli) = max_loop_iterations {
+                    limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
+                }
+                builder = builder.limits(limits);
                 *bash = builder.build();
                 Ok(())
             })
