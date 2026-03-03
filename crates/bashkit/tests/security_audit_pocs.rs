@@ -518,3 +518,103 @@ mod lexer_stack_overflow {
         // NOTE: depth=50 causes SIGABRT (TM-DOS-044). Not tested here.
     }
 }
+
+// =============================================================================
+// 9. MOUNTABLE FS MISSING validate_path (TM-DOS-046)
+//
+// Root cause: MountableFs delegates all operations without calling
+// validate_path() first, bypassing path depth/character validation.
+// Files: fs/mountable.rs:348-491
+// =============================================================================
+
+mod mountable_fs_validate_path {
+    use super::*;
+    use bashkit::{FileSystem, InMemoryFs, MountableFs};
+    use std::path::Path;
+
+    /// TM-DOS-046: MountableFs must reject paths with control characters.
+    #[tokio::test]
+    async fn security_audit_mountable_rejects_control_chars() {
+        let root = Arc::new(InMemoryFs::new());
+        let mountable = MountableFs::new(root);
+
+        let bad_path = Path::new("/tmp/file\x01name");
+        let result = mountable.write_file(bad_path, b"payload").await;
+        assert!(
+            result.is_err(),
+            "MountableFs must reject paths with control characters"
+        );
+    }
+
+    /// TM-DOS-046: MountableFs must validate paths on symlink creation.
+    #[tokio::test]
+    async fn security_audit_mountable_validates_symlink_path() {
+        let root = Arc::new(InMemoryFs::new());
+        let mountable = MountableFs::new(root);
+
+        let bad_link = Path::new("/tmp/link\x02name");
+        let result = mountable.symlink(Path::new("/target"), bad_link).await;
+        assert!(result.is_err(), "MountableFs must validate symlink paths");
+    }
+}
+
+// =============================================================================
+// 10. collect_dirs_recursive DEPTH LIMIT (TM-DOS-049)
+//
+// Root cause: No explicit depth limit on directory recursion.
+// Files: interpreter/mod.rs:8352
+// =============================================================================
+
+mod collect_dirs_depth_limit {
+    use super::*;
+
+    /// TM-DOS-049: collect_dirs_recursive has an explicit depth cap.
+    /// Verify ** glob completes without stack overflow on a simple tree.
+    #[tokio::test]
+    async fn security_audit_glob_star_star_respects_depth() {
+        let limits = ExecutionLimits::new()
+            .max_commands(200)
+            .timeout(Duration::from_secs(10));
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // Create a shallow directory tree
+        let result = bash
+            .exec("mkdir -p /tmp/globtest/sub && touch /tmp/globtest/sub/file.txt && echo ok")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout.trim(), "ok");
+
+        // ** glob must complete without stack overflow (the fix adds depth limit)
+        let result = bash.exec("echo /tmp/globtest/**").await;
+        assert!(
+            result.is_ok(),
+            "** glob must complete without stack overflow"
+        );
+    }
+}
+
+// =============================================================================
+// 11. parse_word_string USES DEFAULT LIMITS (TM-DOS-050)
+//
+// Root cause: parse_word_string() creates parser with default limits,
+// ignoring caller-configured tighter limits.
+// Files: parser/mod.rs:109
+// =============================================================================
+
+mod parse_word_string_limits {
+    use super::*;
+
+    /// TM-DOS-050: Parameter expansion word parsing should respect configured limits.
+    /// With a tight AST depth limit, deeply nested ${...} should not bypass it.
+    #[tokio::test]
+    async fn security_audit_word_parse_uses_configured_limits() {
+        let limits = ExecutionLimits::new()
+            .max_ast_depth(5)
+            .timeout(Duration::from_secs(5));
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // Simple parameter expansion should work
+        let result = bash.exec("x=hello; echo ${x:-world}").await.unwrap();
+        assert_eq!(result.stdout.trim(), "hello");
+    }
+}

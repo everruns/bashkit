@@ -16,6 +16,7 @@ use std::sync::{Arc, RwLock};
 use super::limits::{FsLimits, FsUsage};
 use super::traits::{DirEntry, FileSystem, FileType, Metadata};
 use crate::error::Result;
+use std::io::ErrorKind;
 
 /// Filesystem with Unix-style mount points.
 ///
@@ -295,6 +296,15 @@ impl MountableFs {
         result
     }
 
+    /// THREAT[TM-DOS-046]: Validate path using root filesystem limits before delegation.
+    fn validate_path(&self, path: &Path) -> Result<()> {
+        self.root
+            .limits()
+            .validate_path(path)
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
+        Ok(())
+    }
+
     /// Resolve a path to the appropriate filesystem and relative path.
     ///
     /// Returns (filesystem, path_within_mount).
@@ -353,21 +363,26 @@ impl FileSystem for MountableFs {
     }
 
     async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+        // THREAT[TM-DOS-046]: Validate path before delegation
+        self.validate_path(path)?;
         let (fs, resolved) = self.resolve(path);
         fs.write_file(&resolved, content).await
     }
 
     async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+        self.validate_path(path)?;
         let (fs, resolved) = self.resolve(path);
         fs.append_file(&resolved, content).await
     }
 
     async fn mkdir(&self, path: &Path, recursive: bool) -> Result<()> {
+        self.validate_path(path)?;
         let (fs, resolved) = self.resolve(path);
         fs.mkdir(&resolved, recursive).await
     }
 
     async fn remove(&self, path: &Path, recursive: bool) -> Result<()> {
+        self.validate_path(path)?;
         let (fs, resolved) = self.resolve(path);
         fs.remove(&resolved, recursive).await
     }
@@ -425,6 +440,8 @@ impl FileSystem for MountableFs {
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+        self.validate_path(from)?;
+        self.validate_path(to)?;
         let (from_fs, from_resolved) = self.resolve(from);
         let (to_fs, to_resolved) = self.resolve(to);
 
@@ -442,6 +459,8 @@ impl FileSystem for MountableFs {
     }
 
     async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
+        self.validate_path(from)?;
+        self.validate_path(to)?;
         let (from_fs, from_resolved) = self.resolve(from);
         let (to_fs, to_resolved) = self.resolve(to);
 
@@ -455,6 +474,7 @@ impl FileSystem for MountableFs {
     }
 
     async fn symlink(&self, target: &Path, link: &Path) -> Result<()> {
+        self.validate_path(link)?;
         let (fs, resolved) = self.resolve(link);
         fs.symlink(target, &resolved).await
     }
@@ -465,6 +485,7 @@ impl FileSystem for MountableFs {
     }
 
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
+        self.validate_path(path)?;
         let (fs, resolved) = self.resolve(path);
         fs.chmod(&resolved, mode).await
     }
