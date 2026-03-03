@@ -15,20 +15,23 @@
 //! - **Experimental: Git** - Virtual git operations on the VFS (`git` feature)
 //! - **Experimental: Python** - Embedded Python via [Monty](https://github.com/pydantic/monty) (`python` feature)
 //!
-//! # Built-in Commands (68+)
+//! # Built-in Commands (100+)
 //!
 //! | Category | Commands |
 //! |----------|----------|
-//! | Core | `echo`, `printf`, `cat`, `read` |
-//! | Navigation | `cd`, `pwd`, `ls`, `find` |
+//! | Core | `echo`, `printf`, `cat`, `nl`, `read` |
+//! | Navigation | `cd`, `pwd`, `ls`, `find`, `pushd`, `popd`, `dirs` |
 //! | Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[` |
-//! | Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.` |
-//! | Text processing | `grep`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc` |
-//! | File operations | `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `rmdir` |
+//! | Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times`, `declare`, `typeset`, `let` |
+//! | Shell | `bash`, `sh` (virtual re-invocation), `:`, `trap`, `caller`, `getopts`, `shopt` |
+//! | Text processing | `grep`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr` |
+//! | File operations | `mkdir`, `mktemp`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath` |
 //! | File inspection | `file`, `stat`, `less` |
 //! | Archives | `tar`, `gzip`, `gunzip` |
-//! | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `xargs`, `tee` |
-//! | Shell | `bash`, `sh` (virtual re-invocation), `eval`, `:` |
+//! | Byte tools | `od`, `xxd`, `hexdump` |
+//! | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill` |
+//! | Disk | `df`, `du` |
+//! | Pipeline | `xargs`, `tee` |
 //! | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
 //! | Network | `curl`, `wget` (requires [`NetworkAllowlist`])
 //! | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature)
@@ -349,6 +352,7 @@
 //! - [`custom_builtins_guide`] - Creating custom builtins
 //! - `python_guide` - Embedded Python (Monty) guide (requires `python` feature)
 //! - [`compatibility_scorecard`] - Feature parity tracking
+//! - `logging_guide` - Structured logging with security (requires `logging` feature)
 //!
 //! # Resources
 //!

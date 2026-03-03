@@ -46,11 +46,30 @@ regressions, stale docs, dependency rot, and security gaps.
 
 ### 4. Documentation
 
-- [ ] `README.md` feature list matches implemented builtins
+#### Rust Docs (crate-level + guides)
+
+- [ ] `lib.rs` crate-level docs command count matches reality
+- [ ] `lib.rs` command table categories and entries match `README.md`
+- [ ] `lib.rs` Guides section lists all doc modules (custom_builtins, python, compatibility, threat_model, logging)
+- [ ] `lib.rs` feature list matches `README.md` feature list
+- [ ] `lib.rs` code examples compile: `cargo test --doc --all-features`
 - [ ] `crates/bashkit/docs/compatibility.md` scorecard up to date
 - [ ] `crates/bashkit/docs/threat-model.md` matches `specs/006-threat-model.md`
-- [ ] `crates/bashkit/docs/python.md` matches current python feature status
+- [ ] `crates/bashkit/docs/custom_builtins.md` API examples match current trait signatures
+- [ ] `crates/bashkit/docs/logging.md` matches current logging feature behavior
 - [ ] Rustdoc builds clean: `cargo doc --all-features` (no warnings)
+
+#### Python Docs
+
+- [ ] `crates/bashkit-python/README.md` command count matches reality
+- [ ] `crates/bashkit-python/README.md` feature list matches current Python bindings
+- [ ] `crates/bashkit-python/README.md` API reference matches actual Python exports
+- [ ] `crates/bashkit/docs/python.md` matches current python feature status
+- [ ] Python docstrings match behavior (spot-check `Bash`, `BashTool`, `ScriptedTool`)
+
+#### General
+
+- [ ] `README.md` feature list matches implemented builtins
 - [ ] `CONTRIBUTING.md` instructions still accurate
 - [ ] `CHANGELOG.md` has entries for all changes since last release
 
