@@ -312,7 +312,7 @@ impl Interpreter {
 
     /// Create a new interpreter with the given filesystem.
     pub fn new(fs: Arc<dyn FileSystem>) -> Self {
-        Self::with_config(fs, None, None, HashMap::new())
+        Self::with_config(fs, None, None, None, HashMap::new())
     }
 
     /// Create a new interpreter with custom username, hostname, and builtins.
@@ -327,6 +327,7 @@ impl Interpreter {
         fs: Arc<dyn FileSystem>,
         username: Option<String>,
         hostname: Option<String>,
+        fixed_epoch: Option<i64>,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
     ) -> Self {
         let mut builtins: HashMap<String, Box<dyn Builtin>> = HashMap::new();
@@ -408,7 +409,18 @@ impl Interpreter {
         builtins.insert("uniq".to_string(), Box::new(builtins::Uniq));
         builtins.insert("cut".to_string(), Box::new(builtins::Cut));
         builtins.insert("tr".to_string(), Box::new(builtins::Tr));
-        builtins.insert("date".to_string(), Box::new(builtins::Date));
+        // THREAT[TM-INF-018]: Use fixed epoch if configured, else real clock
+        builtins.insert(
+            "date".to_string(),
+            Box::new(if let Some(epoch) = fixed_epoch {
+                use chrono::DateTime;
+                builtins::Date::with_fixed_epoch(
+                    DateTime::from_timestamp(epoch, 0).unwrap_or_default(),
+                )
+            } else {
+                builtins::Date::new()
+            }),
+        );
         builtins.insert("wait".to_string(), Box::new(builtins::Wait));
         builtins.insert("curl".to_string(), Box::new(builtins::Curl));
         builtins.insert("wget".to_string(), Box::new(builtins::Wget));
@@ -7995,7 +8007,18 @@ impl Interpreter {
     /// Check if a string contains glob characters
     /// Expand brace patterns like {a,b,c} or {1..5}
     /// Returns a Vec of expanded strings, or a single-element Vec if no braces
+    /// THREAT[TM-DOS-042]: Cap total expansion count to prevent combinatorial OOM.
     fn expand_braces(&self, s: &str) -> Vec<String> {
+        const MAX_BRACE_EXPANSION_TOTAL: usize = 100_000;
+        let mut count = 0;
+        self.expand_braces_capped(s, &mut count, MAX_BRACE_EXPANSION_TOTAL)
+    }
+
+    fn expand_braces_capped(&self, s: &str, count: &mut usize, max: usize) -> Vec<String> {
+        if *count >= max {
+            return vec![s.to_string()];
+        }
+
         // Find the first brace that has a matching close brace
         let mut depth = 0;
         let mut brace_start = None;
@@ -8040,9 +8063,13 @@ impl Interpreter {
         if let Some(range_result) = self.try_expand_range(&brace_content) {
             let mut results = Vec::new();
             for item in range_result {
+                if *count >= max {
+                    break;
+                }
                 let expanded = format!("{}{}{}", prefix, item, suffix);
-                // Recursively expand any remaining braces
-                results.extend(self.expand_braces(&expanded));
+                let sub = self.expand_braces_capped(&expanded, count, max);
+                *count += sub.len();
+                results.extend(sub);
             }
             return results;
         }
@@ -8057,16 +8084,24 @@ impl Interpreter {
 
         let mut results = Vec::new();
         for item in items {
+            if *count >= max {
+                break;
+            }
             let expanded = format!("{}{}{}", prefix, item, suffix);
-            // Recursively expand any remaining braces
-            results.extend(self.expand_braces(&expanded));
+            let sub = self.expand_braces_capped(&expanded, count, max);
+            *count += sub.len();
+            results.extend(sub);
         }
 
         results
     }
 
     /// Try to expand a range like 1..5 or a..z
+    /// THREAT[TM-DOS-041]: Cap range size to prevent OOM from {1..999999999}
     fn try_expand_range(&self, content: &str) -> Option<Vec<String>> {
+        /// Maximum number of elements in a brace range expansion
+        const MAX_BRACE_RANGE: u64 = 10_000;
+
         // Check for .. separator
         let parts: Vec<&str> = content.split("..").collect();
         if parts.len() != 2 {
@@ -8078,6 +8113,10 @@ impl Interpreter {
 
         // Try numeric range
         if let (Ok(start_num), Ok(end_num)) = (start.parse::<i64>(), end.parse::<i64>()) {
+            let range_size = (end_num as i128 - start_num as i128).unsigned_abs() + 1;
+            if range_size > MAX_BRACE_RANGE as u128 {
+                return None; // Treat as literal — too large
+            }
             let mut results = Vec::new();
             if start_num <= end_num {
                 for i in start_num..=end_num {

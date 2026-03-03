@@ -681,7 +681,15 @@ impl FileSystem for OverlayFs {
     }
 
     async fn symlink(&self, target: &Path, link: &Path) -> Result<()> {
+        // THREAT[TM-DOS-045]: Validate path and enforce limits like other write methods
+        self.limits
+            .validate_path(link)
+            .map_err(|e| IoError::other(e.to_string()))?;
+
         let link = Self::normalize_path(link);
+
+        // Check write limits (symlinks count toward file count)
+        self.check_write_limits(0)?;
 
         // Remove any whiteout
         self.remove_whiteout(&link);

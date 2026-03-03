@@ -45,7 +45,28 @@ use crate::interpreter::ExecResult;
 ///   %n  Newline
 ///   %t  Tab
 ///   %%  Literal %
-pub struct Date;
+/// THREAT[TM-INF-018]: Supports a fixed epoch to prevent leaking real host time.
+pub struct Date {
+    /// Fixed UTC epoch for virtualized time. None = use real system clock.
+    fixed_epoch: Option<DateTime<Utc>>,
+}
+
+impl Date {
+    pub fn new() -> Self {
+        Self { fixed_epoch: None }
+    }
+
+    /// Create a Date builtin with a fixed epoch (for sandboxing).
+    pub fn with_fixed_epoch(epoch: DateTime<Utc>) -> Self {
+        Self {
+            fixed_epoch: Some(epoch),
+        }
+    }
+
+    fn now(&self) -> DateTime<Utc> {
+        self.fixed_epoch.unwrap_or_else(Utc::now)
+    }
+}
 
 /// Validate a strftime format string.
 /// Returns Ok(()) if valid, or an error message describing the issue.
@@ -74,8 +95,7 @@ fn strip_surrounding_quotes(s: &str) -> &str {
 }
 
 /// Parse a base date expression (no compound modifiers).
-fn parse_base_date(s: &str) -> std::result::Result<DateTime<Utc>, String> {
-    let now = Utc::now();
+fn parse_base_date(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTime<Utc>, String> {
     let lower = s.to_lowercase();
 
     // Epoch timestamp: @1234567890
@@ -135,7 +155,7 @@ fn parse_base_date(s: &str) -> std::result::Result<DateTime<Utc>, String> {
 /// Supports compound expressions (base ± modifier):
 ///   "2024-01-15 + 30 days", "yesterday - 2 hours",
 ///   "@1700000000 + 1 week", "2024-01-15 - 1 month"
-fn parse_date_string(s: &str) -> std::result::Result<DateTime<Utc>, String> {
+fn parse_date_string(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTime<Utc>, String> {
     let s = strip_surrounding_quotes(s.trim());
 
     // Try compound expression: <base> [+-] <N unit(s)>
@@ -156,7 +176,7 @@ fn parse_date_string(s: &str) -> std::result::Result<DateTime<Utc>, String> {
                 // Use original case for base string to handle epoch (@N)
                 // and ISO dates correctly.
                 let orig_base = s[..base_match.end()].trim();
-                if let Ok(base_dt) = parse_base_date(orig_base) {
+                if let Ok(base_dt) = parse_base_date(orig_base, now) {
                     let offset = unit_duration(unit, sign * n);
                     return Ok(base_dt + offset);
                 }
@@ -164,7 +184,7 @@ fn parse_date_string(s: &str) -> std::result::Result<DateTime<Utc>, String> {
         }
     }
 
-    parse_base_date(s)
+    parse_base_date(s, now)
 }
 
 /// Parse relative date expressions like "30 days ago", "+2 weeks", "-1 month"
@@ -321,13 +341,15 @@ impl Builtin for Date {
         }
 
         // Get the datetime to format
+        // THREAT[TM-INF-018]: Use virtual time if configured
+        let now = self.now();
         let dt_utc = if let Some(ref ds) = date_str {
-            match parse_date_string(ds) {
+            match parse_date_string(ds, now) {
                 Ok(dt) => dt,
                 Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),
             }
         } else {
-            Utc::now()
+            now
         };
 
         // Handle -R (RFC 2822) output
@@ -417,7 +439,7 @@ mod tests {
             git_client: None,
         };
 
-        Date.execute(ctx).await.unwrap()
+        Date::new().execute(ctx).await.unwrap()
     }
 
     #[tokio::test]

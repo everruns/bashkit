@@ -320,7 +320,6 @@ mod vfs_limit_bypass {
 
     /// TM-DOS-047: copy() must enforce limits even when destination exists.
     #[tokio::test]
-    #[ignore = "TM-DOS-047: copy() skips check_write_limits on existing dest"]
     async fn security_audit_copy_enforces_limit_on_overwrite() {
         let limits = FsLimits::new()
             .max_total_bytes(600)
@@ -347,7 +346,6 @@ mod vfs_limit_bypass {
 
     /// TM-DOS-048: rename(file, dir) must fail per POSIX, not silently overwrite.
     #[tokio::test]
-    #[ignore = "TM-DOS-048: rename(file, dir) silently overwrites, orphans children"]
     async fn security_audit_rename_rejects_file_over_dir() {
         let fs = InMemoryFs::new();
 
@@ -379,10 +377,11 @@ mod overlay_symlink_bypass {
 
     /// TM-DOS-045: OverlayFs::symlink() must enforce file count limits.
     #[tokio::test]
-    #[ignore = "TM-DOS-045: OverlayFs::symlink() bypasses file count limit"]
     async fn security_audit_overlay_symlink_enforces_limit() {
         let lower: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
-        let limits = FsLimits::new().max_file_count(5);
+        // Both lower and upper InMemoryFs have /dev/null (1 file each = 2 base).
+        // limit=7 allows 5 new symlinks (2 + 5 = 7).
+        let limits = FsLimits::new().max_file_count(7);
         let overlay = OverlayFs::with_limits(lower, limits);
 
         for i in 0..5 {
@@ -393,7 +392,7 @@ mod overlay_symlink_bypass {
                 .unwrap();
         }
 
-        // 6th must fail
+        // 6th must fail (7 total = 2 existing + 5 symlinks = at limit)
         let result = overlay
             .symlink(Path::new("/target"), Path::new("/link_overflow"))
             .await;
@@ -416,11 +415,13 @@ mod information_disclosure {
 
     /// TM-INF-018: `date` should use a configurable/virtual time source.
     #[tokio::test]
-    #[ignore = "TM-INF-018: date uses real host clock, not virtualized"]
     async fn security_audit_date_uses_virtual_time() {
+        // Fixed epoch: 2020-01-01 00:00:00 UTC
+        let fixed = 1577836800i64;
         let mut bash = Bash::builder()
             .username("sandboxuser")
             .hostname("sandbox.local")
+            .fixed_epoch(fixed)
             .build();
 
         // hostname and whoami are virtualized
@@ -429,17 +430,12 @@ mod information_disclosure {
 
         let result = bash.exec("date +%s").await.unwrap();
         let script_epoch: i64 = result.stdout.trim().parse().unwrap_or(0);
-        let real_epoch = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
 
-        // date must NOT return real host time
-        assert!(
-            (script_epoch - real_epoch).abs() >= 10,
-            "date must use virtual time, not real host epoch (script={} real={})",
-            script_epoch,
-            real_epoch
+        // date must return the fixed epoch, not real host time
+        assert_eq!(
+            script_epoch, fixed,
+            "date must use fixed epoch, not real host clock (got={})",
+            script_epoch
         );
     }
 }
@@ -455,20 +451,25 @@ mod brace_expansion_dos {
     use super::*;
 
     /// TM-DOS-041: Brace expansion {1..N} must cap range size.
+    /// Ranges exceeding 10,000 elements are treated as literals.
     #[tokio::test]
-    #[ignore = "TM-DOS-041: brace expansion {N..M} has no upper bound"]
     async fn security_audit_brace_expansion_capped() {
         let limits = ExecutionLimits::new()
             .max_commands(100)
             .timeout(Duration::from_secs(10));
         let mut bash = Bash::builder().limits(limits).build();
 
-        // {1..1000000} should be rejected or capped, not expand to 1M strings
-        let result = bash.exec("echo {1..1000000} > /dev/null").await;
-        assert!(
-            result.is_err(),
-            "Brace expansion with 1M elements must be rejected"
+        // {1..1000000} exceeds cap — treated as literal, not expanded to 1M strings
+        let result = bash.exec("echo {1..1000000}").await.unwrap();
+        assert_eq!(
+            result.stdout.trim(),
+            "{1..1000000}",
+            "Brace expansion with 1M elements must be treated as literal"
         );
+
+        // {1..100} is within cap — should expand normally
+        let result = bash.exec("echo {1..3}").await.unwrap();
+        assert_eq!(result.stdout.trim(), "1 2 3");
     }
 }
 
