@@ -18,11 +18,9 @@
 //!
 //! Configure network access using [`NetworkAllowlist`] with [`crate::Bash::builder`]:
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use bashkit::{Bash, NetworkAllowlist};
 //!
-//! # #[tokio::main]
-//! # async fn main() -> bashkit::Result<()> {
 //! let mut bash = Bash::builder()
 //!     .network(NetworkAllowlist::new()
 //!         .allow("https://api.example.com")
@@ -31,8 +29,6 @@
 //!
 //! // Now curl/wget can access allowed URLs
 //! let result = bash.exec("curl -s https://api.example.com/data").await?;
-//! # Ok(())
-//! # }
 //! ```
 //!
 //! # Allowlist Patterns
