@@ -1155,9 +1155,7 @@ impl FileSystem for InMemoryFs {
         {
             // Put back the source entry
             entries.insert(from, entry);
-            return Err(
-                IoError::other("cannot rename file over directory").into(),
-            );
+            return Err(IoError::other("cannot rename file over directory").into());
         }
 
         entries.insert(to, entry);
