@@ -757,6 +757,8 @@ pub struct BashBuilder {
     limits: ExecutionLimits,
     username: Option<String>,
     hostname: Option<String>,
+    /// Fixed epoch for virtualizing the `date` builtin (TM-INF-018)
+    fixed_epoch: Option<i64>,
     custom_builtins: HashMap<String, Box<dyn Builtin>>,
     /// Files to mount in the virtual filesystem
     mounted_files: Vec<MountedFile>,
@@ -810,6 +812,15 @@ impl BashBuilder {
     /// This configures `hostname` and `uname -n` builtins to return this hostname.
     pub fn hostname(mut self, hostname: impl Into<String>) -> Self {
         self.hostname = Some(hostname.into());
+        self
+    }
+
+    /// Set a fixed Unix epoch for the `date` builtin.
+    ///
+    /// THREAT[TM-INF-018]: Prevents `date` from leaking real host time.
+    /// When set, `date` returns this fixed time instead of the real clock.
+    pub fn fixed_epoch(mut self, epoch: i64) -> Self {
+        self.fixed_epoch = Some(epoch);
         self
     }
 
@@ -1151,6 +1162,7 @@ impl BashBuilder {
             self.env,
             self.username,
             self.hostname,
+            self.fixed_epoch,
             self.cwd,
             self.limits,
             self.custom_builtins,
@@ -1170,6 +1182,7 @@ impl BashBuilder {
         env: HashMap<String, String>,
         username: Option<String>,
         hostname: Option<String>,
+        fixed_epoch: Option<i64>,
         cwd: Option<PathBuf>,
         limits: ExecutionLimits,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
@@ -1188,8 +1201,13 @@ impl BashBuilder {
             "Bash instance configured"
         );
 
-        let mut interpreter =
-            Interpreter::with_config(Arc::clone(&fs), username.clone(), hostname, custom_builtins);
+        let mut interpreter = Interpreter::with_config(
+            Arc::clone(&fs),
+            username.clone(),
+            hostname,
+            fixed_epoch,
+            custom_builtins,
+        );
 
         // Set environment variables (also override shell variable defaults)
         for (key, value) in &env {

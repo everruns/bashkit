@@ -385,7 +385,8 @@ impl InMemoryFs {
                     dir_count += 1;
                 }
                 FsEntry::Symlink { .. } => {
-                    // Symlinks don't count toward file count or size
+                    // THREAT[TM-DOS-045]: Symlinks count toward file count
+                    file_count += 1;
                 }
             }
         }
@@ -1148,6 +1149,17 @@ impl FileSystem for InMemoryFs {
             .remove(&from)
             .ok_or_else(|| IoError::new(ErrorKind::NotFound, "not found"))?;
 
+        // THREAT[TM-DOS-048]: Reject renaming a file over a directory (POSIX requirement)
+        if matches!(&entry, FsEntry::File { .. } | FsEntry::Symlink { .. })
+            && matches!(entries.get(&to), Some(FsEntry::Directory { .. }))
+        {
+            // Put back the source entry
+            entries.insert(from, entry);
+            return Err(
+                IoError::other("cannot rename file over directory").into(),
+            );
+        }
+
         entries.insert(to, entry);
         Ok(())
     }
@@ -1168,15 +1180,13 @@ impl FileSystem for InMemoryFs {
             .cloned()
             .ok_or_else(|| IoError::new(ErrorKind::NotFound, "not found"))?;
 
-        // Check write limits before creating the copy
+        // THREAT[TM-DOS-047]: Always check write limits, even on overwrite.
+        // check_write_limits handles the delta calculation for existing files.
         let entry_size = match &entry {
             FsEntry::File { content, .. } => content.len() as u64,
             _ => 0,
         };
-        let is_new = !entries.contains_key(&to);
-        if is_new {
-            self.check_write_limits(&entries, &to, entry_size as usize)?;
-        }
+        self.check_write_limits(&entries, &to, entry_size as usize)?;
 
         entries.insert(to, entry);
         Ok(())
