@@ -184,6 +184,19 @@ fn is_dev_null(path: &Path) -> bool {
     normalized == Path::new(DEV_NULL)
 }
 
+/// THREAT[TM-INJ-009,TM-INJ-016]: Check if a variable name is an internal marker.
+/// Used by builtins and interpreter to block user assignment to internal prefixes.
+pub(crate) fn is_internal_variable(name: &str) -> bool {
+    name.starts_with("_NAMEREF_")
+        || name.starts_with("_READONLY_")
+        || name.starts_with("_UPPER_")
+        || name.starts_with("_LOWER_")
+        || name.starts_with("_ARRAY_READ_")
+        || name == "_EVAL_CMD"
+        || name == "_SHIFT_COUNT"
+        || name == "_SET_POSITIONAL"
+}
+
 /// A frame in the call stack for local variable scoping
 #[derive(Debug, Clone)]
 struct CallFrame {
@@ -1559,19 +1572,20 @@ impl Interpreter {
                 let rhs_value = self.execute_arithmetic_with_side_effects(effective_rhs);
                 let final_value = if let Some(op) = op {
                     let current = self.evaluate_arithmetic(var_name);
+                    // THREAT[TM-DOS-043]: wrapping to prevent overflow panic
                     match op {
-                        '+' => current + rhs_value,
-                        '-' => current - rhs_value,
-                        '*' => current * rhs_value,
+                        '+' => current.wrapping_add(rhs_value),
+                        '-' => current.wrapping_sub(rhs_value),
+                        '*' => current.wrapping_mul(rhs_value),
                         '/' => {
-                            if rhs_value != 0 {
+                            if rhs_value != 0 && !(current == i64::MIN && rhs_value == -1) {
                                 current / rhs_value
                             } else {
                                 0
                             }
                         }
                         '%' => {
-                            if rhs_value != 0 {
+                            if rhs_value != 0 && !(current == i64::MIN && rhs_value == -1) {
                                 current % rhs_value
                             } else {
                                 0
@@ -4566,12 +4580,16 @@ impl Interpreter {
                         );
                         return self.apply_redirections(result, redirects).await;
                     }
+                    // THREAT[TM-INJ-014]: Block internal variable prefix injection via local
+                    if is_internal_variable(var_name) {
+                        continue;
+                    }
                     if is_nameref {
                         frame.locals.insert(var_name.to_string(), String::new());
                     } else {
                         frame.locals.insert(var_name.to_string(), value.to_string());
                     }
-                } else {
+                } else if !is_internal_variable(arg) {
                     frame.locals.insert(arg.to_string(), String::new());
                 }
             }
@@ -4581,8 +4599,10 @@ impl Interpreter {
                     if let Some(eq_pos) = arg.find('=') {
                         let var_name = &arg[..eq_pos];
                         let value = &arg[eq_pos + 1..];
-                        self.variables
-                            .insert(format!("_NAMEREF_{}", var_name), value.to_string());
+                        if !is_internal_variable(var_name) {
+                            self.variables
+                                .insert(format!("_NAMEREF_{}", var_name), value.to_string());
+                        }
                     }
                 }
             }
@@ -4592,6 +4612,10 @@ impl Interpreter {
                 if let Some(eq_pos) = arg.find('=') {
                     let var_name = &arg[..eq_pos];
                     let value = &arg[eq_pos + 1..];
+                    // THREAT[TM-INJ-014]: Block internal variable prefix injection via local
+                    if is_internal_variable(var_name) {
+                        continue;
+                    }
                     if is_nameref {
                         self.variables
                             .insert(format!("_NAMEREF_{}", var_name), value.to_string());
@@ -4599,7 +4623,7 @@ impl Interpreter {
                         self.variables
                             .insert(var_name.to_string(), value.to_string());
                     }
-                } else {
+                } else if !is_internal_variable(arg) {
                     self.variables.insert(arg.to_string(), String::new());
                 }
             }
@@ -5365,11 +5389,14 @@ impl Interpreter {
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         if args.is_empty() {
-            // declare with no args: print all variables (like set)
+            // declare with no args: print all variables, filtering internal markers (TM-INF-017)
             let mut output = String::new();
             let mut entries: Vec<_> = self.variables.iter().collect();
             entries.sort_by_key(|(k, _)| (*k).clone());
             for (name, value) in entries {
+                if is_internal_variable(name) {
+                    continue;
+                }
                 output.push_str(&format!("declare -- {}=\"{}\"\n", name, value));
             }
             let mut result = ExecResult::ok(output);
@@ -5421,10 +5448,13 @@ impl Interpreter {
         if print_mode {
             let mut output = String::new();
             if names.is_empty() {
-                // Print all variables
+                // Print all variables, filtering internal markers (TM-INF-017)
                 let mut entries: Vec<_> = self.variables.iter().collect();
                 entries.sort_by_key(|(k, _)| (*k).clone());
                 for (name, value) in entries {
+                    if is_internal_variable(name) {
+                        continue;
+                    }
                     output.push_str(&format!("declare -- {}=\"{}\"\n", name, value));
                 }
             } else {
@@ -5503,6 +5533,11 @@ impl Interpreter {
             if let Some(eq_pos) = name.find('=') {
                 let var_name = &name[..eq_pos];
                 let value = &name[eq_pos + 1..];
+
+                // THREAT[TM-INJ-012]: Block internal variable prefix injection via declare
+                if is_internal_variable(var_name) {
+                    continue;
+                }
 
                 // Handle compound array assignment: declare -A m=([k]="v" ...)
                 if (is_assoc || is_array) && value.starts_with('(') && value.ends_with(')') {
@@ -7018,19 +7053,20 @@ impl Interpreter {
                         rhs_val
                     } else {
                         let lhs_val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0);
+                        // THREAT[TM-DOS-043]: wrapping to prevent overflow panic
                         match op {
-                            "+" => lhs_val + rhs_val,
-                            "-" => lhs_val - rhs_val,
-                            "*" => lhs_val * rhs_val,
+                            "+" => lhs_val.wrapping_add(rhs_val),
+                            "-" => lhs_val.wrapping_sub(rhs_val),
+                            "*" => lhs_val.wrapping_mul(rhs_val),
                             "/" => {
-                                if rhs_val != 0 {
+                                if rhs_val != 0 && !(lhs_val == i64::MIN && rhs_val == -1) {
                                     lhs_val / rhs_val
                                 } else {
                                     0
                                 }
                             }
                             "%" => {
-                                if rhs_val != 0 {
+                                if rhs_val != 0 && !(lhs_val == i64::MIN && rhs_val == -1) {
                                     lhs_val % rhs_val
                                 } else {
                                     0
@@ -7039,8 +7075,8 @@ impl Interpreter {
                             "&" => lhs_val & rhs_val,
                             "|" => lhs_val | rhs_val,
                             "^" => lhs_val ^ rhs_val,
-                            "<<" => lhs_val << rhs_val,
-                            ">>" => lhs_val >> rhs_val,
+                            "<<" => lhs_val.wrapping_shl((rhs_val & 63) as u32),
+                            ">>" => lhs_val.wrapping_shr((rhs_val & 63) as u32),
                             _ => rhs_val,
                         }
                     };
@@ -7632,12 +7668,7 @@ impl Interpreter {
 
     /// THREAT[TM-INJ-009]: Check if a variable name is an internal marker.
     fn is_internal_variable(name: &str) -> bool {
-        name.starts_with("_NAMEREF_")
-            || name.starts_with("_READONLY_")
-            || name.starts_with("_UPPER_")
-            || name.starts_with("_LOWER_")
-            || name == "_SHIFT_COUNT"
-            || name == "_SET_POSITIONAL"
+        is_internal_variable(name)
     }
 
     /// Set a variable, respecting dynamic scoping.

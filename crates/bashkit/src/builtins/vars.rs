@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context};
 use crate::error::Result;
-use crate::interpreter::ExecResult;
+use crate::interpreter::{is_internal_variable, ExecResult};
 
 /// Check if a variable name is valid: [a-zA-Z_][a-zA-Z0-9_]*
 fn is_valid_var_name(name: &str) -> bool {
@@ -111,10 +111,12 @@ impl Set {
 impl Builtin for Set {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if ctx.args.is_empty() {
-            // Display all variables
+            // Display all variables, filtering internal markers (TM-INF-017)
             let mut output = String::new();
             for (name, value) in ctx.variables.iter() {
-                output.push_str(&format!("{}={}\n", name, value));
+                if !is_internal_variable(name) {
+                    output.push_str(&format!("{}={}\n", name, value));
+                }
             }
             return Ok(ExecResult::ok(output));
         }
@@ -261,12 +263,20 @@ impl Builtin for Readonly {
             if let Some(eq_pos) = arg.find('=') {
                 let name = &arg[..eq_pos];
                 let value = &arg[eq_pos + 1..];
+                // THREAT[TM-INJ-013]: Block internal variable prefix injection via readonly
+                if is_internal_variable(name) {
+                    continue;
+                }
                 // Set the variable
                 ctx.variables.insert(name.to_string(), value.to_string());
                 // Mark as readonly
                 ctx.variables
                     .insert(format!("_READONLY_{}", name), "1".to_string());
             } else {
+                // THREAT[TM-INJ-013]: Block internal variable prefix injection via readonly
+                if is_internal_variable(arg) {
+                    continue;
+                }
                 // Just mark existing variable as readonly
                 ctx.variables
                     .insert(format!("_READONLY_{}", arg), "1".to_string());

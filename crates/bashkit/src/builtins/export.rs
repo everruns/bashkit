@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context};
 use crate::error::Result;
-use crate::interpreter::ExecResult;
+use crate::interpreter::{is_internal_variable, ExecResult};
 
 /// Check if a variable name is valid: [a-zA-Z_][a-zA-Z0-9_]*
 fn is_valid_var_name(name: &str) -> bool {
@@ -38,7 +38,10 @@ impl Builtin for Export {
                         1,
                     ));
                 }
-                ctx.variables.insert(name.to_string(), value.to_string());
+                // THREAT[TM-INJ-015]: Block internal variable prefix injection via export
+                if !is_internal_variable(name) {
+                    ctx.variables.insert(name.to_string(), value.to_string());
+                }
             } else {
                 // Just marking for export - in our model this is a no-op
                 // unless the variable exists, in which case we keep it
