@@ -12,7 +12,7 @@ virtual filesystem.
 
 ## Quick Start
 
-```rust,ignore
+```rust
 use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, async_trait};
 
 struct MyCommand;
@@ -144,12 +144,13 @@ pub struct ExecResult {
 
 Helper constructors:
 
-```rust,ignore
+```rust
+# use bashkit::ExecResult;
 // Success with output
-ExecResult::ok("output\n".to_string())
+ExecResult::ok("output\n".to_string());
 
 // Error with message and exit code
-ExecResult::err("error message\n".to_string(), 1)
+ExecResult::err("error message\n".to_string(), 1);
 ```
 
 ## Examples
@@ -221,7 +222,9 @@ impl Builtin for HttpGet {
 
 Custom builtins can override default builtins by using the same name:
 
-```rust,ignore
+```rust,no_run
+use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, async_trait};
+
 struct SecureEcho;
 
 #[async_trait]
@@ -235,9 +238,11 @@ impl Builtin for SecureEcho {
     }
 }
 
+# fn main() {
 let bash = Bash::builder()
     .builtin("echo", Box::new(SecureEcho))  // Overrides default echo
     .build();
+# }
 ```
 
 ## Best Practices
@@ -253,7 +258,10 @@ let bash = Bash::builder()
 The `Builtin` trait requires `Send + Sync`. For builtins with mutable state, use
 appropriate synchronization:
 
-```rust,ignore
+```rust
+use bashkit::{Builtin, BuiltinContext, ExecResult, async_trait};
+use std::sync::Arc;
+
 struct Counter {
     count: Arc<std::sync::atomic::AtomicU64>,
 }
