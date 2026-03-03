@@ -45,11 +45,12 @@ through configurable limits.
 | ExtGlob blowup (TM-DOS-031) | `+(a\|aa)` exponential | Add depth limit | **OPEN** |
 
 **Configuration:**
-```rust,ignore
+```rust
 use bashkit::{Bash, ExecutionLimits, FsLimits, InMemoryFs};
 use std::sync::Arc;
 use std::time::Duration;
 
+# fn main() {
 let limits = ExecutionLimits::new()
     .max_commands(10_000)
     .max_loop_iterations(10_000)
@@ -67,6 +68,7 @@ let bash = Bash::builder()
     .limits(limits)
     .fs(fs)
     .build();
+# }
 ```
 
 ### Sandbox Escape (TM-ESC-*)
@@ -88,17 +90,19 @@ Scripts may attempt to break out of the sandbox to access the host system.
 Bashkit uses an in-memory virtual filesystem by default. Scripts cannot access the
 real filesystem unless explicitly mounted via [`MountableFs`].
 
-```rust,ignore
-use bashkit::{Bash, InMemoryFs};
+```rust
+use bashkit::{Bash, InMemoryFs, MountableFs};
 use std::sync::Arc;
 
+# fn main() {
 // Default: fully isolated in-memory filesystem
 let bash = Bash::new();
 
 // Custom filesystem with explicit mounts (advanced)
-use bashkit::MountableFs;
-let fs = Arc::new(MountableFs::new());
-// fs.mount_readonly("/data", "/real/path/to/data");  // Optional real FS access
+let root = Arc::new(InMemoryFs::new());
+let fs = Arc::new(MountableFs::new(root));
+// fs.mount("/data", Arc::new(InMemoryFs::new()));  // Mount additional filesystems
+# }
 ```
 
 ### Information Disclosure (TM-INF-*)
@@ -118,7 +122,8 @@ Scripts may attempt to leak sensitive information.
 
 Do NOT pass sensitive environment variables to untrusted scripts:
 
-```rust,ignore
+```rust
+# use bashkit::Bash;
 // UNSAFE - secrets may be leaked
 let bash = Bash::builder()
     .env("DATABASE_URL", "postgres://user:pass@host/db")
@@ -136,7 +141,8 @@ let bash = Bash::builder()
 
 System builtins return configurable virtual values, never real host information:
 
-```rust,ignore
+```rust
+# use bashkit::Bash;
 let bash = Bash::builder()
     .username("sandbox")         // whoami returns "sandbox"
     .hostname("bashkit-sandbox") // hostname returns "bashkit-sandbox"
@@ -227,10 +233,11 @@ echo $user_input
 Each [`Bash`] instance is fully isolated. For multi-tenant environments, create
 separate instances per tenant:
 
-```rust,ignore
+```rust
 use bashkit::{Bash, InMemoryFs};
 use std::sync::Arc;
 
+# fn main() {
 // Each tenant gets completely isolated instance
 let tenant_a = Bash::builder()
     .fs(Arc::new(InMemoryFs::new()))  // Separate filesystem
@@ -241,6 +248,7 @@ let tenant_b = Bash::builder()
     .build();
 
 // tenant_a cannot access tenant_b's files or state
+# }
 ```
 
 ### Internal Error Handling (TM-INT-*)

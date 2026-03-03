@@ -18,13 +18,17 @@ configurable resource limits and no host access.
 
 Enable the `python` feature and register via builder:
 
-```rust,ignore
+```rust
 use bashkit::Bash;
 
+# #[tokio::main]
+# async fn main() -> bashkit::Result<()> {
 let mut bash = Bash::builder().python().build();
 
 let result = bash.exec("python3 -c \"print('hello from Monty')\"").await?;
 assert_eq!(result.stdout, "hello from Monty\n");
+# Ok(())
+# }
 ```
 
 ## Usage Patterns
@@ -120,10 +124,11 @@ resumes execution with the result (or a Python exception like `FileNotFoundError
 
 Default limits prevent runaway Python code. Customize via `PythonLimits`:
 
-```rust,ignore
+```rust,no_run
 use bashkit::{Bash, PythonLimits};
 use std::time::Duration;
 
+# fn main() {
 let bash = Bash::builder()
     .python_with_limits(
         PythonLimits::default()
@@ -133,6 +138,7 @@ let bash = Bash::builder()
             .max_recursion(50)
     )
     .build();
+# }
 ```
 
 | Limit | Default | Purpose |
@@ -146,15 +152,17 @@ let bash = Bash::builder()
 
 When using `BashTool` for AI agents, call `.python()` on the tool builder:
 
-```rust,ignore
-use bashkit::BashTool;
+```rust,no_run
+use bashkit::{BashTool, Tool};
 
+# fn main() {
 let tool = BashTool::builder()
     .python()
     .build();
 
 // help() and system_prompt() automatically document Python limitations
 let help = tool.help();  // Includes NOTES section with Python hints
+# }
 ```
 
 The builtin's `llm_hint()` is automatically included in the tool's documentation,
