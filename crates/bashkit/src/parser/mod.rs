@@ -81,7 +81,7 @@ impl<'a> Parser<'a> {
     /// to prevent stack overflow from misconfiguration. Even if the caller passes
     /// `max_depth = 1_000_000`, the parser will cap it at 500.
     pub fn with_limits(input: &'a str, max_depth: usize, max_fuel: usize) -> Self {
-        let mut lexer = Lexer::new(input);
+        let mut lexer = Lexer::with_max_subst_depth(input, max_depth.min(HARD_MAX_AST_DEPTH));
         let spanned = lexer.next_spanned_token();
         let (current_token, current_span) = match spanned {
             Some(st) => (Some(st.token), st.span),

@@ -33,7 +33,6 @@ mod internal_variable_injection {
 
     /// TM-INJ-012: `declare` must not create namerefs via _NAMEREF_ prefix.
     #[tokio::test]
-    #[ignore = "TM-INJ-012: declare bypasses is_internal_variable()"]
     async fn security_audit_declare_blocks_nameref_prefix() {
         let mut bash = Bash::builder().build();
 
@@ -58,7 +57,6 @@ mod internal_variable_injection {
 
     /// TM-INJ-013: `readonly` must not create namerefs via _NAMEREF_ prefix.
     #[tokio::test]
-    #[ignore = "TM-INJ-013: readonly bypasses is_internal_variable()"]
     async fn security_audit_readonly_blocks_nameref_prefix() {
         let mut bash = Bash::builder().build();
 
@@ -82,7 +80,6 @@ mod internal_variable_injection {
 
     /// TM-INJ-012: `declare` must not inject _UPPER_ case conversion marker.
     #[tokio::test]
-    #[ignore = "TM-INJ-012: declare bypasses is_internal_variable()"]
     async fn security_audit_declare_blocks_upper_prefix() {
         let mut bash = Bash::builder().build();
 
@@ -107,7 +104,6 @@ mod internal_variable_injection {
 
     /// TM-INJ-012: `declare` must not inject _LOWER_ case conversion marker.
     #[tokio::test]
-    #[ignore = "TM-INJ-012: declare bypasses is_internal_variable()"]
     async fn security_audit_declare_blocks_lower_prefix() {
         let mut bash = Bash::builder().build();
 
@@ -131,7 +127,6 @@ mod internal_variable_injection {
 
     /// TM-INJ-016: _ARRAY_READ_ prefix must be rejected by is_internal_variable().
     #[tokio::test]
-    #[ignore = "TM-INJ-016: _ARRAY_READ_ not in is_internal_variable()"]
     async fn security_audit_array_read_prefix_blocked() {
         let mut bash = Bash::builder().build();
 
@@ -152,7 +147,6 @@ mod internal_variable_injection {
 
     /// TM-INJ-015: `export` must not inject _READONLY_ marker prefix.
     #[tokio::test]
-    #[ignore = "TM-INJ-015: export bypasses is_internal_variable()"]
     async fn security_audit_export_blocks_readonly_prefix() {
         let mut bash = Bash::builder().build();
 
@@ -183,7 +177,6 @@ mod internal_variable_injection {
     /// frame.locals without calling is_internal_variable().
     /// The marker ends up in the call frame, which set_variable traverses.
     #[tokio::test]
-    #[ignore = "TM-INJ-014: execute_local_builtin bypasses is_internal_variable()"]
     async fn security_audit_local_blocks_internal_prefixes() {
         let mut bash = Bash::builder().build();
 
@@ -222,7 +215,6 @@ mod internal_variable_leak {
 
     /// TM-INF-017: `set` must not expose internal _NAMEREF_/_READONLY_ markers.
     #[tokio::test]
-    #[ignore = "TM-INF-017: set leaks internal marker variables"]
     async fn security_audit_set_hides_internal_markers() {
         let mut bash = Bash::builder().build();
 
@@ -246,7 +238,6 @@ mod internal_variable_leak {
 
     /// TM-INF-017: `declare -p` must not expose internal markers.
     #[tokio::test]
-    #[ignore = "TM-INF-017: declare -p leaks internal marker variables"]
     async fn security_audit_declare_p_hides_internal_markers() {
         let mut bash = Bash::builder().build();
 
@@ -283,7 +274,6 @@ mod arithmetic_overflow {
     /// TM-DOS-043: i64::MAX + 1 in ((x+=1)) must not panic.
     /// Should use wrapping arithmetic like the non-compound path.
     #[tokio::test]
-    #[ignore = "TM-DOS-043: compound += panics on i64 overflow in debug mode"]
     async fn security_audit_compound_add_no_panic() {
         let limits = ExecutionLimits::new().timeout(Duration::from_secs(5));
         let mut bash = Bash::builder().limits(limits).build();
@@ -300,7 +290,6 @@ mod arithmetic_overflow {
 
     /// TM-DOS-043: Compound <<= must clamp shift amount like non-compound path.
     #[tokio::test]
-    #[ignore = "TM-DOS-043: compound <<= uses unclamped shift"]
     async fn security_audit_compound_shift_clamped() {
         let limits = ExecutionLimits::new().timeout(Duration::from_secs(5));
         let mut bash = Bash::builder().limits(limits).build();

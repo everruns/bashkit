@@ -14,6 +14,10 @@ pub struct SpannedToken {
     pub span: Span,
 }
 
+/// Maximum nesting depth for command substitution in the lexer.
+/// THREAT[TM-DOS-044]: Prevents stack overflow from deeply nested $() patterns.
+const DEFAULT_MAX_SUBST_DEPTH: usize = 50;
+
 /// Lexer for bash scripts.
 pub struct Lexer<'a> {
     #[allow(dead_code)] // Stored for error reporting in future
@@ -24,16 +28,25 @@ pub struct Lexer<'a> {
     /// Buffer for re-injected characters (e.g., rest-of-line after heredoc delimiter).
     /// Consumed before `chars`.
     reinject_buf: VecDeque<char>,
+    /// Maximum allowed nesting depth for command substitution
+    max_subst_depth: usize,
 }
 
 impl<'a> Lexer<'a> {
     /// Create a new lexer for the given input.
     pub fn new(input: &'a str) -> Self {
+        Self::with_max_subst_depth(input, DEFAULT_MAX_SUBST_DEPTH)
+    }
+
+    /// Create a new lexer with a custom max substitution nesting depth.
+    /// THREAT[TM-DOS-044]: Limits recursion in read_command_subst_into().
+    pub fn with_max_subst_depth(input: &'a str, max_depth: usize) -> Self {
         Self {
             input,
             position: Position::new(),
             chars: input.chars().peekable(),
             reinject_buf: VecDeque::new(),
+            max_subst_depth: max_depth,
         }
     }
 
@@ -1106,7 +1119,32 @@ impl<'a> Lexer<'a> {
 
     /// Read command substitution content after `$(`, handling nested parens and quotes.
     /// Appends chars to `content` and adds the closing `)`.
+    /// THREAT[TM-DOS-044]: `subst_depth` tracks nesting to prevent stack overflow.
     fn read_command_subst_into(&mut self, content: &mut String) {
+        self.read_command_subst_into_depth(content, 0);
+    }
+
+    fn read_command_subst_into_depth(&mut self, content: &mut String, subst_depth: usize) {
+        if subst_depth >= self.max_subst_depth {
+            // Depth limit exceeded — consume until matching ')' and emit error token
+            let mut depth = 1;
+            while let Some(c) = self.peek_char() {
+                self.advance();
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            content.push(')');
+                            return;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
+
         let mut depth = 1;
         while let Some(c) = self.peek_char() {
             match c {
@@ -1149,7 +1187,7 @@ impl<'a> Lexer<'a> {
                                 if self.peek_char() == Some('(') {
                                     content.push('(');
                                     self.advance();
-                                    self.read_command_subst_into(content);
+                                    self.read_command_subst_into_depth(content, subst_depth + 1);
                                 }
                             }
                             _ => {
