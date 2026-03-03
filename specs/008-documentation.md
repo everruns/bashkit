@@ -84,8 +84,47 @@ Add "Guides" section and link to scorecard in main crate documentation:
 4. Add link in crate docs `# Guides` section
 5. Run `cargo doc --open` to verify
 
+## Code Examples
+
+Rust code examples in guides are compiled and tested by `cargo test --doc`.
+
+### Fencing rules
+
+| Fence | When to use |
+|-------|-------------|
+| `` ```rust `` | Complete examples using only bashkit types — tested |
+| `` ```rust,no_run `` | Complete examples that compile but shouldn't execute |
+| `` ```rust,ignore `` | Uses external crates (sqlx, reqwest, tracing-subscriber) or feature-gated APIs in non-gated modules |
+
+### Making examples testable
+
+Use `# ` (hash-space) prefix to hide boilerplate lines from rendered docs while
+keeping them in the compiled test:
+
+````markdown
+```rust
+# use bashkit::Bash;
+# #[tokio::main]
+# async fn main() -> bashkit::Result<()> {
+let mut bash = Bash::new();
+let result = bash.exec("echo hello").await?;
+assert_eq!(result.stdout, "hello\n");
+# Ok(())
+# }
+```
+````
+
+### Feature-gated modules
+
+Doc modules behind `#[cfg(feature = "...")]` (e.g., `python_guide`, `logging_guide`)
+can use feature-gated APIs freely — their tests only run when the feature is enabled.
+
+Non-gated modules (e.g., `threat_model`, `compatibility_scorecard`) must NOT use
+feature-gated APIs in tested examples. Use `rust,ignore` for those.
+
 ## Verification
 
 - `cargo doc` builds without errors
+- `cargo test --doc --all-features` passes
 - Links resolve correctly in generated docs
 - Markdown renders properly in rustdoc

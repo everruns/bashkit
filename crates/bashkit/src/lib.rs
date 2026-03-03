@@ -243,11 +243,9 @@
 //!
 //! Enable the `http_client` feature and configure an allowlist for network access:
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use bashkit::{Bash, NetworkAllowlist};
 //!
-//! # #[tokio::main]
-//! # async fn main() -> bashkit::Result<()> {
 //! let mut bash = Bash::builder()
 //!     .network(NetworkAllowlist::new()
 //!         .allow("https://httpbin.org"))
@@ -256,8 +254,6 @@
 //! // curl and wget now work for allowed URLs
 //! let result = bash.exec("curl -s https://httpbin.org/get").await?;
 //! assert!(result.stdout.contains("httpbin.org"));
-//! # Ok(())
-//! # }
 //! ```
 //!
 //! Security features:

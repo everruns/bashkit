@@ -380,7 +380,7 @@ Default limits (configurable):
 
 ### Network Configuration
 
-```rust
+```rust,ignore
 use bashkit::{Bash, NetworkAllowlist};
 
 // Enable network with URL allowlist

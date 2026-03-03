@@ -79,9 +79,10 @@ RUST_LOG=bashkit::parser=debug cargo run
 
 ### Custom Configuration
 
-```rust,ignore
+```rust
 use bashkit::{Bash, LogConfig};
 
+# fn main() {
 let bash = Bash::builder()
     .log_config(LogConfig::new()
         // Add custom sensitive variable patterns
@@ -90,6 +91,7 @@ let bash = Bash::builder()
         // Limit logged value lengths
         .max_value_length(100))
     .build();
+# }
 ```
 
 ## Security (TM-LOG-*)
@@ -130,7 +132,8 @@ Control characters are filtered, and newlines are escaped.
 
 For debugging in **non-production** environments only:
 
-```rust,ignore
+```rust
+# use bashkit::LogConfig;
 // WARNING: May expose sensitive data
 let config = LogConfig::new()
     .unsafe_disable_redaction()  // Disable ALL redaction
