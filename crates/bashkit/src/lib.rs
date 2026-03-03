@@ -352,8 +352,11 @@
 //! - [`custom_builtins_guide`] - Creating custom builtins
 //! - `python_guide` - Embedded Python (Monty) guide (requires `python` feature)
 //! - [`compatibility_scorecard`] - Feature parity tracking
-//! - [`threat_model`] - Security threats and mitigations
 //! - `logging_guide` - Structured logging with security (requires `logging` feature)
+//!
+//! # Resources
+//!
+//! - [`threat_model`] - Security threats and mitigations
 //!
 //! # Ecosystem
 //!
