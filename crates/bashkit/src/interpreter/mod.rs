@@ -9625,6 +9625,24 @@ mod tests {
     async fn test_arithmetic_base_gt_36_no_panic() {
         let result = run_script("echo $(( 64#A ))").await;
         assert_eq!(result.exit_code, 0);
+        // 64#A = 36 (A is position 36 in the extended charset)
+        assert_eq!(result.stdout.trim(), "36");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_base_gt_36_special_chars() {
+        // @ = 62, _ = 63 in bash base-64 encoding
+        let result = run_script("echo $(( 64#@ ))").await;
+        assert_eq!(result.stdout.trim(), "62");
+        let result = run_script("echo $(( 64#_ ))").await;
+        assert_eq!(result.stdout.trim(), "63");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_base_gt_36_invalid_digit() {
+        // Invalid char for base — should return 0
+        let result = run_script("echo $(( 37#! ))").await;
+        assert_eq!(result.exit_code, 0);
     }
 
     #[tokio::test]
