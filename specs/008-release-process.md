@@ -1,5 +1,9 @@
 # Release Process
 
+## Status
+
+Implemented
+
 ## Abstract
 
 This document describes the release process for Bashkit. Releases are initiated by asking a coding agent to prepare the release, with CI automation handling the rest.

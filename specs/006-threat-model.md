@@ -1,5 +1,9 @@
 # Bashkit Threat Model
 
+## Status
+
+Living document
+
 ## Overview
 
 Bashkit is a virtual bash interpreter for multi-tenant environments, primarily designed for AI agent script execution. This document analyzes security threats and mitigations.

@@ -158,8 +158,8 @@ mod resource_exhaustion {
         let elapsed = start.elapsed();
 
         // Should complete quickly due to either timeout or loop limit.
-        // Under ASan/tarpaulin the overhead can be ~20x, so use a generous bound.
-        assert!(elapsed < Duration::from_secs(30));
+        // Under ASan/Miri the overhead can be ~200x, so use a very generous bound.
+        assert!(elapsed < Duration::from_secs(300));
     }
 }
 

@@ -1,5 +1,9 @@
 # 008: Documentation Approach
 
+## Status
+
+Implemented
+
 ## Decision
 
 Use `include_str!` macro to embed external markdown files into rustdoc as documentation modules.
