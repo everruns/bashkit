@@ -19,7 +19,7 @@ path = "src/main.rs"
 doc = false  # Disable to avoid collision with bashkit library docs
 
 [dependencies]
-bashkit = { path = "../bashkit", version = "0.1.8" }
+bashkit = { path = "../bashkit", version = "0.1.8", features = ["http_client", "git", "python"] }
 tokio.workspace = true
 clap.workspace = true
 anyhow.workspace = true
