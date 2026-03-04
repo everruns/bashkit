@@ -174,4 +174,37 @@ mod tests {
         let result = bash.exec("git init /repo").await.expect("exec");
         assert!(result.stderr.contains("not configured"));
     }
+
+    #[tokio::test]
+    async fn http_enabled_by_default() {
+        // curl should be recognized (not "command not found") even if network fails
+        let args = Args::parse_from(["bashkit", "-c", "curl --help"]);
+        let mut bash = build_bash(&args);
+        let result = bash.exec("curl --help").await.expect("exec");
+        assert!(!result.stderr.contains("command not found"));
+    }
+
+    #[tokio::test]
+    async fn http_can_be_disabled() {
+        let args = Args::parse_from(["bashkit", "--no-http", "-c", "curl https://example.com"]);
+        let mut bash = build_bash(&args);
+        let result = bash.exec("curl https://example.com").await.expect("exec");
+        assert!(result.stderr.contains("not configured"));
+    }
+
+    #[tokio::test]
+    async fn all_disabled_still_runs_basic_commands() {
+        let args = Args::parse_from([
+            "bashkit",
+            "--no-http",
+            "--no-git",
+            "--no-python",
+            "-c",
+            "echo works",
+        ]);
+        let mut bash = build_bash(&args);
+        let result = bash.exec("echo works").await.expect("exec");
+        assert_eq!(result.stdout, "works\n");
+        assert_eq!(result.exit_code, 0);
+    }
 }
