@@ -10,6 +10,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, Write};
 
+use crate::{build_bash, RuntimeConfig};
+
 /// JSON-RPC 2.0 request
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
@@ -119,7 +121,7 @@ struct ContentItem {
 }
 
 /// Run the MCP server
-pub async fn run() -> Result<()> {
+pub async fn run(config: RuntimeConfig) -> Result<()> {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
 
@@ -143,7 +145,7 @@ pub async fn run() -> Result<()> {
             }
         };
 
-        let response = handle_request(request).await;
+        let response = handle_request(request, config).await;
         writeln!(stdout, "{}", serde_json::to_string(&response)?)?;
         stdout.flush()?;
     }
@@ -151,12 +153,12 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-async fn handle_request(request: JsonRpcRequest) -> JsonRpcResponse {
+async fn handle_request(request: JsonRpcRequest, config: RuntimeConfig) -> JsonRpcResponse {
     match request.method.as_str() {
         "initialize" => handle_initialize(request.id),
         "initialized" => JsonRpcResponse::success(request.id, serde_json::Value::Null),
         "tools/list" => handle_tools_list(request.id),
-        "tools/call" => handle_tools_call(request.id, request.params).await,
+        "tools/call" => handle_tools_call(request.id, request.params, config).await,
         "shutdown" => JsonRpcResponse::success(request.id, serde_json::Value::Null),
         _ => JsonRpcResponse::error(request.id, -32601, "Method not found".to_string()),
     }
@@ -196,7 +198,11 @@ fn handle_tools_list(id: serde_json::Value) -> JsonRpcResponse {
     JsonRpcResponse::success(id, serde_json::json!({ "tools": tools }))
 }
 
-async fn handle_tools_call(id: serde_json::Value, params: serde_json::Value) -> JsonRpcResponse {
+async fn handle_tools_call(
+    id: serde_json::Value,
+    params: serde_json::Value,
+    config: RuntimeConfig,
+) -> JsonRpcResponse {
     // Extract tool name and arguments
     let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let arguments = params.get("arguments").cloned().unwrap_or_default();
@@ -214,7 +220,7 @@ async fn handle_tools_call(id: serde_json::Value, params: serde_json::Value) -> 
     };
 
     // Execute the script
-    let mut bash = bashkit::Bash::new();
+    let mut bash = build_bash(config);
     let result = match bash.exec(&args.script).await {
         Ok(r) => r,
         Err(e) => {

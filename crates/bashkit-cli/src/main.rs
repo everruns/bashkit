@@ -1,5 +1,92 @@
-//! Bashkit CLI - Command line interface for sandboxed bash execution
-//!
+mod python;
+    /// Disable HTTP builtins (curl/wget)
+    #[arg(long)]
+    no_http: bool,
+
+    /// Disable git builtin
+    #[arg(long)]
+    no_git: bool,
+
+    /// Disable python builtin (monty backend)
+    #[arg(long)]
+    no_python: bool,
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RuntimeConfig {
+    enable_http: bool,
+    enable_git: bool,
+    enable_python: bool,
+}
+
+impl RuntimeConfig {
+    fn from_args(args: &Args) -> Self {
+        Self {
+            enable_http: !args.no_http,
+            enable_git: !args.no_git,
+            enable_python: !args.no_python,
+        }
+    }
+}
+
+pub(crate) fn build_bash(config: RuntimeConfig) -> bashkit::Bash {
+    let mut builder = bashkit::Bash::builder();
+
+    if config.enable_http {
+        builder = builder.network(bashkit::NetworkAllowlist::allow_all());
+    }
+
+    if config.enable_git {
+        builder = builder.git(bashkit::GitConfig::new());
+    }
+
+    if config.enable_python {
+        builder = builder.builtin("python", Box::new(python::PythonBuiltin::new()));
+    }
+
+    builder.build()
+}
+
+    let config = RuntimeConfig::from_args(&args);
+
+        return mcp::run(config).await;
+    let mut bash = build_bash(config);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parse_disable_flags() {
+        let args = Args::parse_from([
+            "bashkit",
+            "--no-http",
+            "--no-git",
+            "--no-python",
+            "-c",
+            "echo hi",
+        ]);
+        assert!(args.no_http);
+        assert!(args.no_git);
+        assert!(args.no_python);
+    }
+
+    #[tokio::test]
+    async fn python_enabled_by_default() {
+        let args = Args::parse_from(["bashkit", "-c", "python --version"]);
+        let mut bash = build_bash(RuntimeConfig::from_args(&args));
+        let result = bash.exec("python --version").await.expect("exec");
+        assert_ne!(result.stderr, "python: command not found\n");
+    }
+
+    #[tokio::test]
+    async fn python_can_be_disabled() {
+        let args = Args::parse_from(["bashkit", "--no-python", "-c", "python --version"]);
+        let mut bash = build_bash(RuntimeConfig::from_args(&args));
+        let result = bash.exec("python --version").await.expect("exec");
+        assert!(result.stderr.contains("python: command not found"));
+    }
+}
 //! Usage:
 //!   bashkit -c 'echo hello'        # Execute a command string
 //!   bashkit script.sh              # Execute a script file

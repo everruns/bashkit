@@ -1,4 +1,4 @@
-# Bashkit CLI - Command line interface for bashkit
+bashkit = { path = "../bashkit", version = "0.1.0", features = ["http_client", "git"] }
 # Run bash scripts in a sandboxed environment
 
 [package]
