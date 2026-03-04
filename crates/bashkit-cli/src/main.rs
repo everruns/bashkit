@@ -41,7 +41,8 @@ struct Args {
     no_git: bool,
 
     /// Disable python builtin (monty backend)
-    #[arg(long)]
+    #[cfg_attr(not(feature = "python"), arg(long, hide = true))]
+    #[cfg_attr(feature = "python", arg(long))]
     no_python: bool,
 
     #[command(subcommand)]
@@ -65,6 +66,7 @@ fn build_bash(args: &Args) -> bashkit::Bash {
         builder = builder.git(bashkit::GitConfig::new());
     }
 
+    #[cfg(feature = "python")]
     if !args.no_python {
         builder = builder.python();
     }
@@ -143,6 +145,7 @@ mod tests {
         assert!(!args.no_python);
     }
 
+    #[cfg(feature = "python")]
     #[tokio::test]
     async fn python_enabled_by_default() {
         let args = Args::parse_from(["bashkit", "-c", "python --version"]);
@@ -151,6 +154,7 @@ mod tests {
         assert_ne!(result.stderr, "python: command not found\n");
     }
 
+    #[cfg(feature = "python")]
     #[tokio::test]
     async fn python_can_be_disabled() {
         let args = Args::parse_from(["bashkit", "--no-python", "-c", "python --version"]);
