@@ -342,6 +342,7 @@
 //! - `agent_tool.rs` - LLM agent integration
 //! - `git_workflow.rs` - Git operations on the virtual filesystem
 //! - `python_scripts.rs` - Embedded Python with VFS bridging
+//! - `python_external_functions.rs` - Python callbacks into host functions
 //!
 //! # Guides
 //!
@@ -402,7 +403,12 @@ pub use network::HttpClient;
 pub use git::GitClient;
 
 #[cfg(feature = "python")]
-pub use builtins::PythonLimits;
+pub use builtins::{PythonExternalFnHandler, PythonExternalFns, PythonLimits};
+// Re-export monty types needed by external handler consumers.
+// **Unstable:** These types come from monty (git-pinned, not on crates.io).
+// They may change in breaking ways between bashkit releases.
+#[cfg(feature = "python")]
+pub use monty::{ExcType, ExternalResult, MontyException, MontyObject};
 
 /// Logging utilities module
 ///
@@ -977,6 +983,31 @@ impl BashBuilder {
             Box::new(builtins::Python::with_limits(limits.clone())),
         )
         .builtin("python3", Box::new(builtins::Python::with_limits(limits)))
+    }
+
+    /// Enable embedded Python with external function handlers.
+    ///
+    /// See [`PythonExternalFnHandler`] for handler details.
+    #[cfg(feature = "python")]
+    pub fn python_with_external_handler(
+        self,
+        limits: builtins::PythonLimits,
+        external_fns: Vec<String>,
+        handler: builtins::PythonExternalFnHandler,
+    ) -> Self {
+        self.builtin(
+            "python",
+            Box::new(
+                builtins::Python::with_limits(limits.clone())
+                    .with_external_handler(external_fns.clone(), handler.clone()),
+            ),
+        )
+        .builtin(
+            "python3",
+            Box::new(
+                builtins::Python::with_limits(limits).with_external_handler(external_fns, handler),
+            ),
+        )
     }
 
     /// Register a custom builtin command.

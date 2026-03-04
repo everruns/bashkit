@@ -116,3 +116,7 @@ required-features = ["scripted_tool"]
 [[example]]
 name = "python_scripts"
 required-features = ["python"]
+
+[[example]]
+name = "python_external_functions"
+required-features = ["python"]
