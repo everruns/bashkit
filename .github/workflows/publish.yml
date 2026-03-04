@@ -70,7 +70,15 @@ jobs:
       - name: Wait for crates.io index update
         run: sleep 30
 
+      - name: Strip python feature from bashkit-cli dependency
+        # python feature is stripped from bashkit during publish (monty is git-only)
+        run: |
+          TOML=crates/bashkit-cli/Cargo.toml
+          sed -i 's/features = \["http_client", "git", "python"\]/features = ["http_client", "git"]/' "$TOML"
+          echo "--- bashkit-cli Cargo.toml after stripping ---"
+          cat "$TOML"
+
       - name: Publish bashkit-cli to crates.io
-        run: cargo publish -p bashkit-cli
+        run: cargo publish -p bashkit-cli --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
