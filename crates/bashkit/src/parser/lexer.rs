@@ -310,7 +310,7 @@ impl<'a> Lexer<'a> {
         // Check patterns: "N>" "N>>" "N>&" "N<" "N<&"
         if fd_str.len() == 1 {
             if let Some(first_digit) = fd_str.chars().next() {
-                let rest = &input_remaining[1..]; // Skip the digit we already matched
+                let rest = input_remaining.get(1..).unwrap_or(""); // Skip the digit we already matched
 
                 if rest.starts_with(">>") {
                     // N>> - append redirect with fd
@@ -1773,5 +1773,15 @@ mod tests {
         let mut lexer = Lexer::new(r#"arr=("hello world")"#);
         assert_eq!(lexer.next_token(), Some(Token::Word("arr=".to_string())));
         assert_eq!(lexer.next_token(), Some(Token::LeftParen));
+    }
+
+    /// Regression test for fuzz crash: single digit at EOF should not panic
+    /// (crash-13c5f6f887a11b2296d67f9857975d63b205ac4b)
+    #[test]
+    fn test_digit_at_eof_no_panic() {
+        // A lone digit with no following redirect operator must not panic
+        let mut lexer = Lexer::new("2");
+        let token = lexer.next_token();
+        assert!(token.is_some());
     }
 }

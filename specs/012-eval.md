@@ -1,5 +1,9 @@
 # Spec 012: bashkit-eval — LLM Evaluation Harness
 
+## Status
+
+Implemented
+
 ## Purpose
 
 Evaluate how well LLM models use bashkit's bash tool in agentic workloads. Measure model capability across bash feature categories, identify bashkit compatibility gaps, and drive improvement.

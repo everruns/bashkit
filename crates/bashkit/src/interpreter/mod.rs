@@ -7649,8 +7649,11 @@ impl Interpreter {
             let base_str = &expr[..hash_pos];
             let value_str = &expr[hash_pos + 1..];
             if let Ok(base) = base_str.parse::<u32>() {
-                if (2..=64).contains(&base) {
+                if (2..=36).contains(&base) {
                     return i64::from_str_radix(value_str, base).unwrap_or(0);
+                } else if (37..=64).contains(&base) {
+                    // Bash bases 37-64 use: 0-9, a-z, A-Z, @, _
+                    return Self::parse_base_n(value_str, base);
                 }
             }
         }
@@ -7665,6 +7668,26 @@ impl Interpreter {
 
         // Parse as number
         expr.trim().parse().unwrap_or(0)
+    }
+
+    /// Parse a number in base 37-64 using bash's extended charset: 0-9, a-z, A-Z, @, _
+    fn parse_base_n(value_str: &str, base: u32) -> i64 {
+        let mut result: i64 = 0;
+        for ch in value_str.chars() {
+            let digit = match ch {
+                '0'..='9' => ch as u32 - '0' as u32,
+                'a'..='z' => 10 + ch as u32 - 'a' as u32,
+                'A'..='Z' => 36 + ch as u32 - 'A' as u32,
+                '@' => 62,
+                '_' => 63,
+                _ => return 0,
+            };
+            if digit >= base {
+                return 0;
+            }
+            result = result.wrapping_mul(base as i64).wrapping_add(digit as i64);
+        }
+        result
     }
 
     /// Expand a variable by name, checking local scope, positional params, shell vars, then env
@@ -9593,6 +9616,32 @@ mod tests {
     #[tokio::test]
     async fn test_arithmetic_overflow_mul_no_panic() {
         let result = run_script("echo $(( 9223372036854775807 * 2 ))").await;
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// Regression test for fuzz crash: base > 36 in arithmetic
+    /// (crash-802347e7f64e6cb69da447b343e4f16081ffe48d)
+    #[tokio::test]
+    async fn test_arithmetic_base_gt_36_no_panic() {
+        let result = run_script("echo $(( 64#A ))").await;
+        assert_eq!(result.exit_code, 0);
+        // 64#A = 36 (A is position 36 in the extended charset)
+        assert_eq!(result.stdout.trim(), "36");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_base_gt_36_special_chars() {
+        // @ = 62, _ = 63 in bash base-64 encoding
+        let result = run_script("echo $(( 64#@ ))").await;
+        assert_eq!(result.stdout.trim(), "62");
+        let result = run_script("echo $(( 64#_ ))").await;
+        assert_eq!(result.stdout.trim(), "63");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_base_gt_36_invalid_digit() {
+        // Invalid char for base — should return 0
+        let result = run_script("echo $(( 37#! ))").await;
         assert_eq!(result.exit_code, 0);
     }
 

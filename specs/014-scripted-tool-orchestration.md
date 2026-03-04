@@ -1,5 +1,9 @@
 # Spec 014: Scripted Tool Orchestration
 
+## Status
+
+Implemented
+
 ## Summary
 
 Compose tool definitions (`ToolDef`) + execution callbacks into a single `ScriptedTool` that accepts bash scripts. Each sub-tool becomes a builtin command, letting LLMs orchestrate N tools in one call using pipes, variables, loops, and conditionals.
