@@ -70,11 +70,13 @@ jobs:
       - name: Wait for crates.io index update
         run: sleep 30
 
-      - name: Strip python feature from bashkit-cli dependency
+      - name: Strip python feature from bashkit-cli
         # python feature is stripped from bashkit during publish (monty is git-only)
         run: |
           TOML=crates/bashkit-cli/Cargo.toml
-          sed -i 's/features = \["http_client", "git", "python"\]/features = ["http_client", "git"]/' "$TOML"
+          # Remove python feature and default that references it
+          sed -i '/^python = \["bashkit\/python"\]/d' "$TOML"
+          sed -i 's/default = \["python"\]/default = []/' "$TOML"
           echo "--- bashkit-cli Cargo.toml after stripping ---"
           cat "$TOML"
 
