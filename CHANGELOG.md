@@ -1,5 +1,70 @@
 # Changelog
 
+## [0.1.9] - 2026-03-04
+
+### Highlights
+
+- **First external contribution!** Welcome @achicu, who contributed external function handler support for the Python bindings ([#394](https://github.com/everruns/bashkit/pull/394)) — a milestone for the project as our first community-contributed feature. Thank you!
+- Comprehensive security hardening: deep audit with 40+ fixes across VFS, parser, interpreter, network, and Python bindings
+- HTTP, git, and Python features now enabled by default in the CLI
+- Multi-byte UTF-8 safety across builtins (awk, tr, printf, expr)
+- Python runtime improvements: GIL release, tokio runtime reuse, security config preservation
+
+### What's Changed
+
+* feat(python): add external function handler support ([#394](https://github.com/everruns/bashkit/pull/394)) by Alexandru Chiculita
+* feat(cli): enable http, git, python by default ([#507](https://github.com/everruns/bashkit/pull/507))
+* chore: run maintenance checklist (012-maintenance) ([#508](https://github.com/everruns/bashkit/pull/508))
+* docs: convert doc examples to tested doctests ([#504](https://github.com/everruns/bashkit/pull/504))
+* fix(security): batch 3 — issues #498-#499 ([#503](https://github.com/everruns/bashkit/pull/503))
+* fix(security): batch 2 — issues #493-#497 ([#502](https://github.com/everruns/bashkit/pull/502))
+* fix(security): batch 1 — issues #488-#492 ([#501](https://github.com/everruns/bashkit/pull/501))
+* docs: align rustdoc with README, add doc review to maintenance ([#500](https://github.com/everruns/bashkit/pull/500))
+* test(security): deep security audit with regression tests ([#487](https://github.com/everruns/bashkit/pull/487))
+* fix(builtins): make exported variables visible to Python's os.getenv ([#486](https://github.com/everruns/bashkit/pull/486))
+* refactor(interpreter): extract inline builtins from execute_dispatched_command ([#485](https://github.com/everruns/bashkit/pull/485))
+* fix(parser): allow glob expansion on unquoted suffix after quoted prefix ([#484](https://github.com/everruns/bashkit/pull/484))
+* fix(parser): handle quotes inside ${...} in double-quoted strings ([#483](https://github.com/everruns/bashkit/pull/483))
+* fix(parser): expand variables in [[ =~ $var ]] regex patterns ([#482](https://github.com/everruns/bashkit/pull/482))
+* fix(builtins): count newlines for wc -l instead of logical lines ([#481](https://github.com/everruns/bashkit/pull/481))
+* fix(interpreter): reset OPTIND between bash script invocations ([#478](https://github.com/everruns/bashkit/pull/478))
+* fix(builtins): awk array features — SUBSEP, multi-subscript, pre-increment ([#477](https://github.com/everruns/bashkit/pull/477))
+* fix(builtins): prevent awk parser panic on multi-byte UTF-8 ([#476](https://github.com/everruns/bashkit/pull/476))
+* fix(network): use byte-safe path boundary check in allowlist ([#475](https://github.com/everruns/bashkit/pull/475))
+* fix(interpreter): use byte-safe indexing for arithmetic compound assignment ([#474](https://github.com/everruns/bashkit/pull/474))
+* fix(builtins): add recursion depth limit to AWK function calls ([#473](https://github.com/everruns/bashkit/pull/473))
+* fix(network): use try_from instead of truncating u64-to-usize cast ([#472](https://github.com/everruns/bashkit/pull/472))
+* fix(network): redact credentials from allowlist error messages ([#471](https://github.com/everruns/bashkit/pull/471))
+* fix(scripted_tool): use Display not Debug format in errors ([#470](https://github.com/everruns/bashkit/pull/470))
+* fix(python): add depth limit to py_to_json/json_to_py ([#469](https://github.com/everruns/bashkit/pull/469))
+* fix(builtins): handle multi-byte UTF-8 in tr expand_char_set() ([#468](https://github.com/everruns/bashkit/pull/468))
+* fix(builtins): use char-based precision truncation in printf ([#467](https://github.com/everruns/bashkit/pull/467))
+* fix(builtins): use char count instead of byte length in expr ([#466](https://github.com/everruns/bashkit/pull/466))
+* fix(interpreter): detect cyclic nameref to prevent wrong resolution ([#465](https://github.com/everruns/bashkit/pull/465))
+* fix(interpreter): sandbox $$ to return 1 instead of host PID ([#464](https://github.com/everruns/bashkit/pull/464))
+* fix(python): preserve security config across Bash.reset() ([#463](https://github.com/everruns/bashkit/pull/463))
+* fix(git): validate branch names to prevent path injection ([#462](https://github.com/everruns/bashkit/pull/462))
+* fix(tool): preserve custom builtins across create_bash calls ([#461](https://github.com/everruns/bashkit/pull/461))
+* fix(fs): add validate_path to all InMemoryFs methods ([#460](https://github.com/everruns/bashkit/pull/460))
+* fix(fs): recursive delete whiteouts lower-layer children in OverlayFs ([#459](https://github.com/everruns/bashkit/pull/459))
+* fix(fs): use combined usage for OverlayFs write limits ([#458](https://github.com/everruns/bashkit/pull/458))
+* fix(fs): prevent usage double-counting in OverlayFs ([#457](https://github.com/everruns/bashkit/pull/457))
+* fix(fs): enforce write limits on chmod copy-on-write ([#456](https://github.com/everruns/bashkit/pull/456))
+* fix(archive): prevent tar path traversal in VFS ([#455](https://github.com/everruns/bashkit/pull/455))
+* fix(fs): prevent TOCTOU race in InMemoryFs::append_file() ([#454](https://github.com/everruns/bashkit/pull/454))
+* docs: add quick install section to README ([#453](https://github.com/everruns/bashkit/pull/453))
+* fix(jq): prevent process env pollution in jq builtin ([#452](https://github.com/everruns/bashkit/pull/452))
+* fix(python): reuse tokio runtime instead of creating per call ([#451](https://github.com/everruns/bashkit/pull/451))
+* fix(python): release GIL before blocking on tokio runtime ([#450](https://github.com/everruns/bashkit/pull/450))
+* fix(python): prevent heredoc delimiter injection in write() ([#449](https://github.com/everruns/bashkit/pull/449))
+* fix(python): prevent shell injection in BashkitBackend ([#448](https://github.com/everruns/bashkit/pull/448))
+* fix(interpreter): add depth limit to extglob pattern matching ([#447](https://github.com/everruns/bashkit/pull/447))
+* fix(interpreter): block internal variable namespace injection ([#445](https://github.com/everruns/bashkit/pull/445))
+* chore(ci): bump the github-actions group with 2 updates ([#479](https://github.com/everruns/bashkit/pull/479))
+* chore: add tokio-macros 2.6.1 to cargo-vet exemptions ([#480](https://github.com/everruns/bashkit/pull/480))
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.8...v0.1.9
+
 ## [0.1.8] - 2026-03-01
 
 ### Highlights
