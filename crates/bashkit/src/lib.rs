@@ -343,6 +343,7 @@
 //! - `agent_tool.rs` - LLM agent integration
 //! - `git_workflow.rs` - Git operations on the virtual filesystem
 //! - `python_scripts.rs` - Embedded Python with VFS bridging
+//! - `python_external_functions.rs` - Python callbacks into host functions
 //!
 //! # Guides
 //!

@@ -113,8 +113,7 @@ jobs:
           cargo run --example resource_limits
           cargo run --example text_processing
           cargo run --example git_workflow --features git
-          # python_scripts requires monty git dep (not on crates.io)
-          # cargo run --example python_scripts --features python
+          cargo run --example python_external_functions --features python
 
       # External API dependency — don't block CI on Anthropic outages
       - name: Run LLM agent example
