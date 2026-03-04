@@ -52,7 +52,7 @@ jobs:
           cat "$TOML"
 
       - name: Publish bashkit to crates.io
-        run: cargo publish -p bashkit --allow-dirty
+        run: cargo publish -p bashkit --allow-dirty 2>&1 || echo "::warning::bashkit publish failed (may already exist)"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
