@@ -74,7 +74,7 @@ mod yes;
 mod git;
 
 #[cfg(feature = "python")]
-pub(crate) mod python;
+mod python;
 
 pub use archive::{Gunzip, Gzip, Tar};
 pub use awk::Awk;

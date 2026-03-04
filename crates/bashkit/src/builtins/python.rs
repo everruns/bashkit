@@ -126,7 +126,7 @@ pub type PythonExternalFnHandler = Arc<
 /// External function configuration for the Python builtin.
 ///
 /// Groups function names and their async handler together.
-/// Constructed internally via [`Python::with_external_handler`].
+/// Configure via [`BashBuilder::python_with_external_handler`](crate::BashBuilder::python_with_external_handler).
 #[derive(Clone)]
 pub struct PythonExternalFns {
     /// Function names callable from Python (e.g., `"call_tool"`).

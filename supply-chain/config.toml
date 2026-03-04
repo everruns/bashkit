@@ -898,6 +898,10 @@ criteria = "safe-to-deploy"
 version = "1.0.44"
 criteria = "safe-to-deploy"
 
+[[exemptions.quote]]
+version = "1.0.45"
+criteria = "safe-to-deploy"
+
 [[exemptions.quote-use]]
 version = "0.8.4"
 criteria = "safe-to-deploy"
