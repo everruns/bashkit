@@ -2161,6 +2161,14 @@ mod tests {
         assert_eq!(result.stdout, "first second\n");
     }
 
+    #[tokio::test]
+    async fn test_array_single_quote_subscript_no_panic() {
+        // Regression: single quote char as array index caused begin > end slice panic
+        let mut bash = Bash::new();
+        // Should not panic on malformed subscript with lone quote
+        let _ = bash.exec("echo ${arr[\"]}").await;
+    }
+
     // Resource limit tests
 
     #[tokio::test]
@@ -3572,6 +3580,17 @@ done"#,
         // (5 < 3) || (2 < 4) => 0 || 1 => 1
         let result = bash.exec("echo $((5 < 3 || 2 < 4))").await.unwrap();
         assert_eq!(result.stdout, "1\n");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_multibyte_no_panic() {
+        // Regression: multi-byte chars caused char-index/byte-index mismatch panic
+        let mut bash = Bash::new();
+        // Multi-byte char in comma expression - should not panic
+        let result = bash.exec("echo $((0,1))").await.unwrap();
+        assert_eq!(result.stdout, "1\n");
+        // Ensure multi-byte input doesn't panic (treated as 0 / error)
+        let _ = bash.exec("echo $((\u{00e9}+1))").await;
     }
 
     // ============================================================

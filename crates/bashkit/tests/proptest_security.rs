@@ -15,6 +15,34 @@ fn bash_input_strategy() -> impl Strategy<Value = String> {
     proptest::string::string_regex("[a-zA-Z0-9_ ;|$()]{0,50}").unwrap()
 }
 
+// Strategy for generating arithmetic expressions with multi-byte chars
+// Covers the char-index vs byte-index mismatch that caused panics
+fn arithmetic_multibyte_strategy() -> impl Strategy<Value = String> {
+    prop_oneof![
+        // Multi-byte chars mixed with operators
+        proptest::string::string_regex("[0-9a-z+\\-*/%,()éèüöñ]{1,30}").unwrap(),
+        // CJK + operators
+        proptest::string::string_regex("[0-9+\\-*/()你好世界]{1,20}").unwrap(),
+        // Emoji + arithmetic
+        proptest::string::string_regex("[0-9+\\-*/,🎉🚀]{1,15}").unwrap(),
+        // Multi-byte with ternary/bitwise
+        proptest::string::string_regex("[0-9a-z?:|&^!<>=éü]{1,30}").unwrap(),
+    ]
+}
+
+// Strategy for generating degenerate array subscript expressions
+fn array_subscript_strategy() -> impl Strategy<Value = String> {
+    prop_oneof![
+        // Lone/mismatched quotes in subscripts
+        proptest::string::string_regex("\\$\\{arr\\[[\"'a-z]{0,5}\\]\\}").unwrap(),
+        // Multi-byte in subscripts
+        proptest::string::string_regex("\\$\\{arr\\[[éü0-9\"']{0,5}\\]\\}").unwrap(),
+        // Edge-case subscript lengths (0, 1, 2 chars)
+        Just("${arr[\"]}".to_string()),
+        Just("${arr[']}".to_string()),
+    ]
+}
+
 // Strategy for generating resource-intensive scripts
 fn resource_stress_strategy() -> impl Strategy<Value = String> {
     prop_oneof![
@@ -124,6 +152,63 @@ proptest! {
                 let _ = bash.exec(&script).await;
             });
         });
+    }
+
+    /// Arithmetic evaluator must not panic on multi-byte input
+    /// Regression: char-index used as byte-index caused panics on multi-byte chars
+    #[test]
+    fn arithmetic_multibyte_no_panic(expr in arithmetic_multibyte_strategy()) {
+        thread_local! {
+            static RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+        }
+
+        let script = format!("echo $(({expr}))");
+
+        RT.with(|rt| {
+            rt.block_on(async {
+                let limits = ExecutionLimits::new()
+                    .max_commands(10)
+                    .timeout(Duration::from_millis(50));
+
+                let mut bash = Bash::builder().limits(limits).build();
+                let _ = bash.exec(&script).await;
+            });
+        });
+    }
+
+    /// Parser must not panic on degenerate array subscripts
+    /// Regression: single-char quote in subscript caused begin > end slice panic
+    #[test]
+    fn parser_subscript_no_panic(input in array_subscript_strategy()) {
+        thread_local! {
+            static RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+        }
+
+        let script = format!("arr=(a b c); echo {input}");
+
+        RT.with(|rt| {
+            rt.block_on(async {
+                let limits = ExecutionLimits::new()
+                    .max_commands(10)
+                    .timeout(Duration::from_millis(50));
+
+                let mut bash = Bash::builder().limits(limits).build();
+                let _ = bash.exec(&script).await;
+            });
+        });
+    }
+
+    /// Lexer must not panic on multi-byte input (extends lexer_never_panics with unicode)
+    #[test]
+    fn lexer_multibyte_no_panic(input in proptest::string::string_regex("[a-zA-Z0-9_ ;|$()\"'éèüöñ你好🎉]{0,50}").unwrap()) {
+        let mut lexer = bashkit::parser::Lexer::new(&input);
+        while lexer.next_token().is_some() {}
     }
 
     /// Variable expansion should not execute code
