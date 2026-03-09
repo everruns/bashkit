@@ -62,7 +62,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 |----------|--------|-------|
 | Reserved Words | Full | All 16 reserved words supported |
 | Special Parameters | Full | All 8 POSIX parameters supported |
-| Special Built-in Utilities | Substantial | 13/15 implemented (2 excluded) |
+| Special Built-in Utilities | Substantial | 14/15 implemented (1 excluded: exec) |
 | Regular Built-in Utilities | Full | Core set implemented |
 | Quoting | Full | All quoting mechanisms supported |
 | Word Expansions | Substantial | Most expansions supported |

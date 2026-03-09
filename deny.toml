@@ -37,6 +37,9 @@ ignore = [
     # paste: transitive via bashkit-bench -> statrs -> nalgebra -> simba
     # No security impact; bench-only dependency
     "RUSTSEC-2024-0436",
+    # atomic-polyfill: transitive via monty -> postcard -> heapless
+    # Unmaintained but no security vulnerability; upstream dep we can't control
+    "RUSTSEC-2023-0089",
 ]
 
 [bans]
