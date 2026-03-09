@@ -15,6 +15,7 @@ Virtual bash interpreter for multi-tenant environments. Written in Rust.
 - **Virtual filesystem** - InMemoryFs, OverlayFs, MountableFs
 - **Resource limits** - Command count, loop iterations, function depth
 - **Network allowlist** - Control HTTP access per-domain
+- **Custom builtins** - Extend with domain-specific commands
 - **Async-first** - Built on tokio
 - **Experimental: Git support** - Virtual git operations on the virtual filesystem (`git` feature)
 - **Experimental: Python support** - Embedded Python interpreter via [Monty](https://github.com/pydantic/monty) (`python` feature)
@@ -88,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
 - Variables and parameter expansion (`$VAR`, `${VAR:-default}`, `${#VAR}`)
 - Command substitution (`$(cmd)`)
 - Arithmetic expansion (`$((1 + 2))`)
-- Pipelines and redirections (`|`, `>`, `>>`, `<`, `<<<`)
+- Pipelines and redirections (`|`, `>`, `>>`, `<`, `<<<`, `2>&1`)
 - Control flow (`if`/`elif`/`else`, `for`, `while`, `case`)
 - Functions (POSIX and bash-style)
 - Arrays (`arr=(a b c)`, `${arr[@]}`, `${#arr[@]}`)

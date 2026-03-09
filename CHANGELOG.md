@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### What's Changed
+
+* fix: prevent fuzz-found panics on multi-byte input ([#513](https://github.com/everruns/bashkit/pull/513))
+
 ## [0.1.9] - 2026-03-04
 
 ### Highlights

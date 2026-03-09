@@ -19,22 +19,28 @@ for detailed compliance status.
 |----------------|--------|
 | Reserved Words (16) | Full compliance |
 | Special Parameters (8) | Full compliance |
-| Special Built-ins (15) | 13/15 implemented |
+| Special Built-ins (15) | 14/15 implemented |
 | Word Expansions | Substantial compliance |
 | Redirections | Full compliance |
 | Compound Commands | Full compliance |
 
-**Security Exclusions**: `exec` and `trap` are intentionally not implemented
+**Security Exclusions**: `exec` is intentionally not implemented
 for sandbox security reasons. See the compliance spec for details.
 
 ## Quick Status
 
-| Category | Implemented | Planned | Total |
-|----------|-------------|---------|-------|
-| Shell Builtins | 85 | 0 | 85 |
-| Text Processing | 14 | 0 | 14 |
-| File Operations | 10 | 0 | 10 |
-| Network | 2 | 0 | 2 |
+| Category | Count |
+|----------|-------|
+| Core & Navigation | 12 |
+| Flow Control & Variables | 21 |
+| Shell | 7 |
+| Text Processing | 20 |
+| File Operations & Inspection | 17 |
+| Archives & Byte Tools | 6 |
+| Utilities & System | 20 |
+| Network | 2 |
+| Experimental | 3 |
+| **Total** | **~106** |
 
 ---
 
