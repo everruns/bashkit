@@ -295,16 +295,18 @@ struct FindOptions {
     name_pattern: Option<String>,
     type_filter: Option<char>,
     max_depth: Option<usize>,
+    min_depth: Option<usize>,
 }
 
 /// The find builtin - search for files.
 ///
-/// Usage: find [PATH...] [-name PATTERN] [-type TYPE] [-maxdepth N] [-exec CMD {} \;]
+/// Usage: find [PATH...] [-name PATTERN] [-type TYPE] [-maxdepth N] [-mindepth N] [-exec CMD {} \;]
 ///
 /// Options:
 ///   -name PATTERN      Match filename against PATTERN (supports * and ?)
 ///   -type TYPE         Match file type: f (file), d (directory), l (link)
 ///   -maxdepth N        Descend at most N levels
+///   -mindepth N        Do not apply tests at levels less than N
 ///   -print             Print matching paths (default)
 ///   -exec CMD {} \;    Execute CMD for each match ({} = path)
 ///   -exec CMD {} +     Execute CMD once with all matches
@@ -318,6 +320,7 @@ impl Builtin for Find {
             name_pattern: None,
             type_filter: None,
             max_depth: None,
+            min_depth: None,
         };
 
         // Parse arguments
@@ -364,6 +367,24 @@ impl Builtin for Find {
                         Err(_) => {
                             return Ok(ExecResult::err(
                                 format!("find: invalid maxdepth value '{}'\n", ctx.args[i]),
+                                1,
+                            ));
+                        }
+                    }
+                }
+                "-mindepth" => {
+                    i += 1;
+                    if i >= ctx.args.len() {
+                        return Ok(ExecResult::err(
+                            "find: missing argument to '-mindepth'\n".to_string(),
+                            1,
+                        ));
+                    }
+                    match ctx.args[i].parse::<usize>() {
+                        Ok(n) => opts.min_depth = Some(n),
+                        Err(_) => {
+                            return Ok(ExecResult::err(
+                                format!("find: invalid mindepth value '{}'\n", ctx.args[i]),
                                 1,
                             ));
                         }
@@ -454,8 +475,14 @@ fn find_recursive<'a>(
             None => true,
         };
 
+        // Check min depth before outputting
+        let above_min_depth = match opts.min_depth {
+            Some(min) => current_depth >= min,
+            None => true,
+        };
+
         // Output if matches (or if no filters, show everything)
-        if type_matches && name_matches {
+        if type_matches && name_matches && above_min_depth {
             output.push_str(display_path);
             output.push('\n');
         }
@@ -1484,6 +1511,203 @@ mod tests {
             result.stdout.contains("target.txt"),
             "Should find target.txt"
         );
+    }
+
+    #[tokio::test]
+    async fn test_find_mindepth() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        fs.mkdir(&cwd.join("a"), false).await.unwrap();
+        fs.mkdir(&cwd.join("a/b"), false).await.unwrap();
+        fs.write_file(&cwd.join("a/file1.txt"), b"f1")
+            .await
+            .unwrap();
+        fs.write_file(&cwd.join("a/b/file2.txt"), b"f2")
+            .await
+            .unwrap();
+
+        // mindepth 1 should exclude the starting directory "."
+        let args = vec!["-mindepth".to_string(), "1".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Find.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        // Should NOT contain "." as the starting point (depth 0)
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        assert!(!lines.contains(&"."), "mindepth 1 should exclude '.'");
+        // Should contain everything at depth >= 1
+        assert!(result.stdout.contains("./a"));
+        assert!(result.stdout.contains("file1.txt"));
+        assert!(result.stdout.contains("file2.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_find_mindepth_with_type() {
+        // Reproduces the reported issue: find . -mindepth 1 -type f | wc -l
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        fs.mkdir(&cwd.join("a"), false).await.unwrap();
+        fs.mkdir(&cwd.join("a/b"), false).await.unwrap();
+        fs.write_file(&cwd.join("a/file1.txt"), b"f1")
+            .await
+            .unwrap();
+        fs.write_file(&cwd.join("a/b/file2.txt"), b"f2")
+            .await
+            .unwrap();
+
+        // mindepth 1 + type f
+        let args = vec![
+            "-mindepth".to_string(),
+            "1".to_string(),
+            "-type".to_string(),
+            "f".to_string(),
+        ];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Find.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<&str> = result.stdout.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(lines.len(), 2, "Should find 2 files: {:?}", lines);
+
+        // mindepth 1 + type d
+        let args2 = vec![
+            "-mindepth".to_string(),
+            "1".to_string(),
+            "-type".to_string(),
+            "d".to_string(),
+        ];
+        let ctx2 = Context {
+            args: &args2,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result2 = Find.execute(ctx2).await.unwrap();
+        assert_eq!(result2.exit_code, 0);
+        let lines2: Vec<&str> = result2.stdout.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(lines2.len(), 2, "Should find 2 dirs: {:?}", lines2);
+    }
+
+    #[tokio::test]
+    async fn test_find_mindepth_2() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        fs.mkdir(&cwd.join("a"), false).await.unwrap();
+        fs.mkdir(&cwd.join("a/b"), false).await.unwrap();
+        fs.write_file(&cwd.join("top.txt"), b"top").await.unwrap();
+        fs.write_file(&cwd.join("a/mid.txt"), b"mid").await.unwrap();
+        fs.write_file(&cwd.join("a/b/deep.txt"), b"deep")
+            .await
+            .unwrap();
+
+        // mindepth 2 should exclude depth 0 and depth 1
+        let args = vec!["-mindepth".to_string(), "2".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Find.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        // depth 0: "." - excluded
+        assert!(!lines.contains(&"."));
+        // depth 1: "./a", "./top.txt" - excluded
+        assert!(!lines.contains(&"./a"));
+        assert!(!lines.contains(&"./top.txt"));
+        // depth 2: "./a/b", "./a/mid.txt" - included
+        assert!(lines.contains(&"./a/b"));
+        assert!(lines.contains(&"./a/mid.txt"));
+        // depth 3: "./a/b/deep.txt" - included
+        assert!(lines.contains(&"./a/b/deep.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_find_mindepth_missing_arg() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec!["-mindepth".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Find.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("missing argument"));
+    }
+
+    #[tokio::test]
+    async fn test_find_mindepth_invalid_value() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec!["-mindepth".to_string(), "abc".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = Find.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid mindepth"));
     }
 
     // ==================== rmdir tests ====================
