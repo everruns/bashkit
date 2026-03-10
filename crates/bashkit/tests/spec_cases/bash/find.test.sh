@@ -75,6 +75,31 @@ find /tmp/glob -name "test.*" | sort
 /tmp/glob/test.txt
 ### end
 
+### find_mindepth
+# Find with mindepth should skip entries below minimum depth
+mkdir -p /tmp/mdtest/a/b
+touch /tmp/mdtest/top.txt
+touch /tmp/mdtest/a/mid.txt
+touch /tmp/mdtest/a/b/deep.txt
+find /tmp/mdtest -mindepth 1 -type f | sort
+### expect
+/tmp/mdtest/a/b/deep.txt
+/tmp/mdtest/a/mid.txt
+/tmp/mdtest/top.txt
+### end
+
+### find_mindepth_2
+# Find with mindepth 2 should skip depth 0 and 1
+mkdir -p /tmp/md2test/a/b
+touch /tmp/md2test/top.txt
+touch /tmp/md2test/a/mid.txt
+touch /tmp/md2test/a/b/deep.txt
+find /tmp/md2test -mindepth 2 -type f | sort
+### expect
+/tmp/md2test/a/b/deep.txt
+/tmp/md2test/a/mid.txt
+### end
+
 ### ls_recursive
 # ls -R should list nested directories
 mkdir -p /tmp/lsrec/a/b
