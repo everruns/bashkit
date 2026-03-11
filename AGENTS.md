@@ -134,7 +134,7 @@ Types: feat, fix, docs, refactor, test, chore
 
 Squash and Merge. Use PR template if exists.
 
-**NEVER add links to Claude sessions in PR body.**
+**NEVER add links to Claude sessions in PR body or commits. Also never attribute commit or merge commit to coding agents, always use real user.**
 
 - Prefer small, shippable PRs. Split large changes into independent, reviewable units.
 - When asked to create separate PRs, follow that instruction—do not bundle unrelated changes.

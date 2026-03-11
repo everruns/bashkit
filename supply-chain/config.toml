@@ -1079,7 +1079,7 @@ version = "2.4.0"
 criteria = "safe-to-run"
 
 [[exemptions.schannel]]
-version = "0.1.28"
+version = "0.1.29"
 criteria = "safe-to-deploy"
 
 [[exemptions.schemars]]
@@ -1251,7 +1251,7 @@ version = "0.13.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.tempfile]]
-version = "3.26.0"
+version = "3.27.0"
 criteria = "safe-to-run"
 
 [[exemptions.testing_table]]
