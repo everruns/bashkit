@@ -273,7 +273,14 @@ Bashkit is designed as a virtual interpreter with sandboxed execution for untrus
 
 ## Acknowledgments
 
-This project was inspired by [just-bash](https://github.com/vercel-labs/just-bash) from Vercel Labs. Huge kudos to the Vercel team for pioneering the idea of a virtual bash interpreter for AI-powered environments. Their work laid the conceptual foundation that made Bashkit possible.
+Bashkit is an independent implementation that draws design inspiration from several open source projects:
+
+- **[just-bash](https://github.com/vercel-labs/just-bash)** (Vercel Labs, Apache-2.0) — Pioneered the idea of a virtual bash interpreter for AI-powered environments. Bashkit's sandboxing architecture and multi-tenant design was inspired by their approach.
+- **[Oils](https://github.com/oilshell/oil)** (Andy Chu, Apache-2.0) — Comprehensive bash compatibility testing approach inspired our spec test methodology.
+- **[One True AWK](https://github.com/onetrueawk/awk)** (Lucent Technologies) — AWK language semantics reference for our awk builtin.
+- **[jq](https://github.com/jqlang/jq)** (Stephen Dolan, MIT) — jq query syntax and behavior reference. Our implementation uses the [jaq](https://github.com/01mf02/jaq) Rust crates.
+
+No code was copied from any of these projects. See [NOTICE](NOTICE) for full details.
 
 ## Ecosystem
 
