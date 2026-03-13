@@ -111,13 +111,18 @@ Monty implements a subset of Python 3.12:
 - Control flow: if/elif/else, for, while, break, continue
 - Functions: def, return, default args, *args, **kwargs
 - Star unpacking in calls: `func(*args, **kwargs)` (since Monty 0.0.4)
+- PEP 448 generalised unpacking in literals: `[*a, *b]`, `{**d1, **d2}` (since Monty 0.0.8)
 - Data structures: list, dict, tuple, set, frozenset, namedtuple
+- Dict constructor: `dict(iterable)`, `dict(zip(...))`, `dict(iterable, **kwargs)` (since Monty 0.0.8)
+- Tuple comparison: `<`, `>`, `<=`, `>=` (since Monty 0.0.8)
+- Dict view and set/frozenset operators (since Monty 0.0.8)
+- `str` and `bytes` comparison operators (since Monty 0.0.8)
 - List/dict/set comprehensions, generator expressions
 - String operations, f-strings
 - Exception handling: try/except/finally/raise
 - Property descriptors (`@property`) (since Monty 0.0.4)
 - Built-in functions: print, len, range, enumerate, zip, map, filter, sorted, reversed, sum, min, max, abs, round, int, float, str, bool, list, dict, tuple, set, type, isinstance, hasattr, getattr, id, repr, ord, chr, hex, oct, bin, all, any, input
-- Standard modules: sys, typing
+- Standard modules: sys, typing, math (~50 functions), re (regex), pathlib, os (getenv/environ)
 - `TYPE_CHECKING` guard support (since Monty 0.0.4)
 
 **Not supported (Monty limitations):**
@@ -284,7 +289,7 @@ Relative paths are resolved against the shell's cwd. Path traversal via
 When Python is registered via `BashToolBuilder::python()`, the builtin contributes
 a hint to `help()` and `system_prompt()` documenting its limitations:
 
-> python/python3: Embedded Python (Monty). File I/O via pathlib.Path only (no open()). No HTTP/network. No classes. No third-party imports.
+> python/python3: Embedded Python (Monty). Stdlib: math, re, pathlib, os.getenv, sys, typing. File I/O via pathlib.Path only (no open()). No HTTP/network. No classes. No third-party imports.
 
 This uses the general `Builtin::llm_hint()` mechanism — any builtin can provide
 hints that are automatically deduplicated and included in LLM-facing documentation.

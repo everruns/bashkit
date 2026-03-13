@@ -209,6 +209,7 @@ impl Builtin for Python {
     fn llm_hint(&self) -> Option<&'static str> {
         Some(
             "python/python3: Embedded Python (Monty). \
+             Stdlib: math, re, pathlib, os.getenv, sys, typing. \
              File I/O via pathlib.Path only (no open()). \
              No HTTP/network. No classes. No third-party imports.",
         )

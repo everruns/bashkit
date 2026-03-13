@@ -322,6 +322,7 @@
 //! ""#).await?;
 //! ```
 //!
+//! Stdlib modules: `math`, `re`, `pathlib`, `os` (getenv/environ), `sys`, `typing`.
 //! Limitations: no `open()` (use `pathlib.Path`), no network, no classes,
 //! no third-party imports.
 //!
