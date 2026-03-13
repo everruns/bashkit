@@ -1,6 +1,18 @@
 # Bashkit Examples
 
-All examples use [PEP 723](https://peps.python.org/pep-0723/) inline script metadata.
+## realfs_mount.sh
+
+Mount host directories into a sandboxed bashkit session. Demonstrates
+`--mount-ro` (readonly) and `--mount-rw` (read-write) CLI flags.
+
+```bash
+cargo build -p bashkit-cli --features realfs
+bash examples/realfs_mount.sh
+```
+
+## Python Examples
+
+Python examples use [PEP 723](https://peps.python.org/pep-0723/) inline script metadata.
 `uv run` resolves dependencies automatically — bashkit installs from PyPI as a pre-built wheel (no Rust toolchain needed).
 
 ## treasure_hunt_agent.py

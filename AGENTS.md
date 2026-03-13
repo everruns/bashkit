@@ -66,9 +66,23 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 just build                    # Build project
 ```
 
-Pre-configured: `GITHUB_TOKEN`
+#### Secrets via Doppler
 
-<!-- API keys: ANTHROPIC_API_KEY for eval/examples -->
+`DOPPLER_TOKEN` is pre-configured. Fetch secrets with:
+
+```bash
+curl -s "https://api.doppler.com/v3/configs/config/secret?name=SECRET_NAME" \
+  -u "$DOPPLER_TOKEN:" | python3 -c "import sys,json; print(json.load(sys.stdin)['value']['raw'])"
+```
+
+Common secrets: `GITHUB_TOKEN`, `ANTHROPIC_API_KEY`
+
+For `gh` CLI, set `GH_TOKEN`:
+
+```bash
+export GH_TOKEN=$(curl -s "https://api.doppler.com/v3/configs/config/secret?name=GITHUB_TOKEN" \
+  -u "$DOPPLER_TOKEN:" | python3 -c "import sys,json; print(json.load(sys.stdin)['value']['raw'])")
+```
 
 ### Local Dev
 

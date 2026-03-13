@@ -362,7 +362,11 @@ Tests not ported (requires `--features http_client` and URL allowlist):
 ## Filesystem
 
 - Virtual filesystem only (InMemoryFs, OverlayFs, MountableFs)
-- No real filesystem access by default
+- Optional real filesystem access via `RealFs` backend (`realfs` feature flag)
+  - Readonly and read-write modes
+  - Root overlay or mount-at-path
+  - Path traversal prevention via canonicalization
+  - CLI: `--mount-ro` / `--mount-rw` flags
 - Symlinks stored but not followed (see [Intentionally Unimplemented](#intentionally-unimplemented-features))
 - No file permissions enforcement
 
