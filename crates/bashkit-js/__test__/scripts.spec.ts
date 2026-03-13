@@ -155,7 +155,7 @@ test("multiline: while read loop", (t) => {
 test("BashTool: LLM-style single command", (t) => {
   const tool = new BashTool();
   const r = tool.executeSync("echo 'Hello from the AI agent'");
-  t.is(r.exit_code, 0);
+  t.is(r.exitCode, 0);
   t.true(r.stdout.includes("Hello from the AI agent"));
 });
 
@@ -215,5 +215,5 @@ test("large output", (t) => {
 test("empty stdin pipe", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("echo '' | grep 'x'");
-  t.not(r.exit_code, 0);
+  t.not(r.exitCode, 0);
 });

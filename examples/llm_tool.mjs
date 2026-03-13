@@ -8,10 +8,10 @@
  * - Feeding results back as tool responses
  *
  * Run:
- *   cd crates/bashkit-js && npm run build && node examples/llm_tool.mjs
+ *   node examples/llm_tool.mjs
  */
 
-import { BashTool } from "../wrapper.js";
+import { BashTool } from "@everruns/bashkit";
 
 function main() {
   const tool = new BashTool({ username: "agent", hostname: "sandbox" });
@@ -42,7 +42,7 @@ function main() {
   const llmToolCalls = [
     'echo "Setting up project..."',
     "mkdir -p /tmp/project/src",
-    'echo \'console.log("hello")\' > /tmp/project/src/index.js',
+    "echo 'console.log(\"hello\")' > /tmp/project/src/index.js",
     "cat /tmp/project/src/index.js",
     "ls -la /tmp/project/src/",
   ];
@@ -55,13 +55,13 @@ function main() {
     const toolResponse = {
       stdout: result.stdout,
       stderr: result.stderr,
-      exit_code: result.exit_code,
+      exit_code: result.exitCode,
     };
 
-    if (result.exit_code === 0) {
+    if (result.exitCode === 0) {
       console.log(`  → stdout: ${result.stdout.trim() || "(empty)"}`);
     } else {
-      console.log(`  → error (${result.exit_code}): ${result.stderr.trim()}`);
+      console.log(`  → error (${result.exitCode}): ${result.stderr.trim()}`);
     }
     console.log();
   }
@@ -101,7 +101,7 @@ function createToolAdapter(bashTool) {
       return {
         stdout: result.stdout,
         stderr: result.stderr,
-        exit_code: result.exit_code,
+        exit_code: result.exitCode,
       };
     },
   };

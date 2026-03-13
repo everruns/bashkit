@@ -31,3 +31,6 @@ __pycache__/
 *.so
 *.egg-info/
 dist/
+
+# Node
+node_modules/

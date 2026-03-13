@@ -11,13 +11,13 @@
  *   export OPENAI_API_KEY=sk-...
  *
  * Run:
- *   cd crates/bashkit-js && npm run build && node examples/vercel_ai_tool.mjs
+ *   node examples/vercel_ai_tool.mjs
  */
 
 import { generateText, tool } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
-import { BashTool } from "../wrapper.js";
+import { BashTool } from "@everruns/bashkit";
 
 // ─── Setup ───────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ const bashkitTool = tool({
     return {
       stdout: result.stdout,
       stderr: result.stderr,
-      exit_code: result.exit_code,
+      exit_code: result.exitCode,
     };
   },
 });

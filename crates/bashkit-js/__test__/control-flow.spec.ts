@@ -45,7 +45,7 @@ test("nested if", (t) => {
 test("test string equality", (t) => {
   const bash = new Bash();
   t.is(bash.executeSync('[ "abc" = "abc" ] && echo match').stdout.trim(), "match");
-  t.not(bash.executeSync('[ "abc" = "xyz" ] && echo match').exit_code, 0);
+  t.not(bash.executeSync('[ "abc" = "xyz" ] && echo match').exitCode, 0);
 });
 
 test("test numeric comparison", (t) => {
@@ -53,7 +53,7 @@ test("test numeric comparison", (t) => {
   t.is(bash.executeSync("[ 5 -gt 3 ] && echo yes").stdout.trim(), "yes");
   t.is(bash.executeSync("[ 3 -lt 5 ] && echo yes").stdout.trim(), "yes");
   t.is(bash.executeSync("[ 5 -eq 5 ] && echo yes").stdout.trim(), "yes");
-  t.not(bash.executeSync("[ 5 -lt 3 ]").exit_code, 0);
+  t.not(bash.executeSync("[ 5 -lt 3 ]").exitCode, 0);
 });
 
 test("logical AND (&&)", (t) => {
@@ -249,8 +249,8 @@ test("function persists across calls", (t) => {
 
 test("exit code from exit command", (t) => {
   const bash = new Bash();
-  t.is(bash.executeSync("exit 0").exit_code, 0);
-  t.is(bash.executeSync("exit 42").exit_code, 42);
+  t.is(bash.executeSync("exit 0").exitCode, 0);
+  t.is(bash.executeSync("exit 42").exitCode, 42);
 });
 
 test("$? captures last exit code", (t) => {

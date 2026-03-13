@@ -77,7 +77,7 @@ test("grep -c count matches", (t) => {
 
 test("grep no match returns non-zero", (t) => {
   const bash = new Bash();
-  t.not(bash.executeSync("echo hello | grep xyz").exit_code, 0);
+  t.not(bash.executeSync("echo hello | grep xyz").exitCode, 0);
 });
 
 // ============================================================================
@@ -240,7 +240,7 @@ test("unset variable", (t) => {
 test("date runs without error", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("date");
-  t.is(r.exit_code, 0);
+  t.is(r.exitCode, 0);
   t.truthy(r.stdout.trim().length > 0);
 });
 
@@ -304,14 +304,14 @@ test("jq filter array", (t) => {
 test("md5sum produces hash", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("echo -n 'hello' | md5sum");
-  t.is(r.exit_code, 0);
+  t.is(r.exitCode, 0);
   t.true(r.stdout.includes("5d41402abc4b2a76b9719d911017c592"));
 });
 
 test("sha256sum produces hash", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("echo -n 'hello' | sha256sum");
-  t.is(r.exit_code, 0);
+  t.is(r.exitCode, 0);
   t.true(
     r.stdout.includes(
       "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"

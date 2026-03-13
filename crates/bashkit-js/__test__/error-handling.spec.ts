@@ -9,26 +9,26 @@ test("successful command has null error", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("echo ok");
   t.is(r.error, null);
-  t.is(r.exit_code, 0);
+  t.is(r.exitCode, 0);
 });
 
 test("failed command has non-zero exit code", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("false");
-  t.not(r.exit_code, 0);
+  t.not(r.exitCode, 0);
 });
 
 test("exit with specific code", (t) => {
   const bash = new Bash();
-  t.is(bash.executeSync("exit 0").exit_code, 0);
-  t.is(bash.executeSync("exit 1").exit_code, 1);
-  t.is(bash.executeSync("exit 127").exit_code, 127);
+  t.is(bash.executeSync("exit 0").exitCode, 0);
+  t.is(bash.executeSync("exit 1").exitCode, 1);
+  t.is(bash.executeSync("exit 127").exitCode, 127);
 });
 
 test("command not found produces stderr", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("nonexistent_command_xyz");
-  t.not(r.exit_code, 0);
+  t.not(r.exitCode, 0);
   t.true(r.stderr.length > 0);
 });
 
@@ -115,14 +115,14 @@ test("BashError.message is string", (t) => {
 test("executeSyncOrThrow returns result on success", (t) => {
   const bash = new Bash();
   const r = bash.executeSyncOrThrow("echo hello");
-  t.is(r.exit_code, 0);
+  t.is(r.exitCode, 0);
   t.is(r.stdout.trim(), "hello");
 });
 
 test("BashTool executeSyncOrThrow returns result on success", (t) => {
   const tool = new BashTool();
   const r = tool.executeSyncOrThrow("echo from_tool");
-  t.is(r.exit_code, 0);
+  t.is(r.exitCode, 0);
   t.is(r.stdout.trim(), "from_tool");
 });
 
@@ -141,7 +141,7 @@ test("interpreter usable after error", (t) => {
   const bash = new Bash();
   bash.executeSync("false");
   const r = bash.executeSync("echo recovered");
-  t.is(r.exit_code, 0);
+  t.is(r.exitCode, 0);
   t.is(r.stdout.trim(), "recovered");
 });
 
@@ -172,9 +172,9 @@ test("multiple errors in sequence", (t) => {
   const r1 = bash.executeSync("false");
   const r2 = bash.executeSync("exit 2");
   const r3 = bash.executeSync("echo ok");
-  t.not(r1.exit_code, 0);
-  t.is(r2.exit_code, 2);
-  t.is(r3.exit_code, 0);
+  t.not(r1.exitCode, 0);
+  t.is(r2.exitCode, 2);
+  t.is(r3.exitCode, 0);
   t.is(r3.stdout.trim(), "ok");
 });
 
@@ -185,12 +185,12 @@ test("multiple errors in sequence", (t) => {
 test("syntax error returns non-zero", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("if then fi");
-  t.not(r.exit_code, 0);
+  t.not(r.exitCode, 0);
 });
 
 test("unclosed quote returns non-zero or handles gracefully", (t) => {
   const bash = new Bash();
   const r = bash.executeSync('echo "unclosed');
   // Should either error or handle gracefully
-  t.is(typeof r.exit_code, "number");
+  t.is(typeof r.exitCode, "number");
 });

@@ -6,10 +6,10 @@
  * log analysis, and report generation — all in a sandboxed virtual filesystem.
  *
  * Run:
- *   cd crates/bashkit-js && npm run build && node examples/data_pipeline.mjs
+ *   node examples/data_pipeline.mjs
  */
 
-import { Bash } from "../wrapper.js";
+import { Bash } from "@everruns/bashkit";
 
 function assert(condition, msg = "assertion failed") {
   if (!condition) throw new Error(msg);

@@ -11,11 +11,11 @@
  *   export OPENAI_API_KEY=sk-...
  *
  * Run:
- *   cd crates/bashkit-js && npm run build && node examples/openai_tool.mjs
+ *   node examples/openai_tool.mjs
  */
 
 import OpenAI from "openai";
-import { BashTool } from "../wrapper.js";
+import { BashTool } from "@everruns/bashkit";
 
 // ─── Setup ───────────────────────────────────────────────────────────
 
@@ -56,7 +56,7 @@ function executeTool(name, args) {
   return JSON.stringify({
     stdout: result.stdout,
     stderr: result.stderr,
-    exit_code: result.exit_code,
+    exit_code: result.exitCode,
   });
 }
 

@@ -37,22 +37,22 @@ jobs:
         settings:
           - host: macos-latest
             target: x86_64-apple-darwin
-            build: npm run build:napi -- --target x86_64-apple-darwin && npm run build:ts
+            build: npm run build:napi -- --target x86_64-apple-darwin && npm run build:cjs && npm run build:ts
           - host: macos-latest
             target: aarch64-apple-darwin
-            build: npm run build:napi -- --target aarch64-apple-darwin && npm run build:ts
+            build: npm run build:napi -- --target aarch64-apple-darwin && npm run build:cjs && npm run build:ts
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            build: npm run build:napi -- --target x86_64-unknown-linux-gnu --use-napi-cross && npm run build:ts
+            build: npm run build:napi -- --target x86_64-unknown-linux-gnu --use-napi-cross && npm run build:cjs && npm run build:ts
           - host: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            build: npm run build:napi -- --target aarch64-unknown-linux-gnu && npm run build:ts
+            build: npm run build:napi -- --target aarch64-unknown-linux-gnu && npm run build:cjs && npm run build:ts
           - host: windows-latest
             target: x86_64-pc-windows-msvc
-            build: npm run build:napi -- --target x86_64-pc-windows-msvc && npm run build:ts
+            build: npm run build:napi -- --target x86_64-pc-windows-msvc && npm run build:cjs && npm run build:ts
           - host: ubuntu-latest
             target: wasm32-wasip1-threads
-            build: npm run build:napi -- --target wasm32-wasip1-threads && npm run build:ts
+            build: npm run build:napi -- --target wasm32-wasip1-threads && npm run build:cjs && npm run build:ts
 
     steps:
       - uses: actions/checkout@v6
@@ -107,8 +107,9 @@ jobs:
           name: js-stubs
           path: |
             crates/bashkit-js/browser.js
-            crates/bashkit-js/index.js
+            crates/bashkit-js/index.cjs
             crates/bashkit-js/index.d.ts
+            crates/bashkit-js/index.d.cts
             crates/bashkit-js/wrapper.js
             crates/bashkit-js/wrapper.d.ts
             crates/bashkit-js/bashkit.wasi.cjs
@@ -168,6 +169,19 @@ jobs:
       - name: Test bindings
         run: npm test
         working-directory: crates/bashkit-js
+
+      - name: Run examples
+        shell: bash
+        run: |
+          mkdir -p node_modules/@everruns
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp -r crates/bashkit-js node_modules/@everruns/bashkit
+          else
+            ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
+          fi
+          node examples/bash_basics.mjs
+          node examples/data_pipeline.mjs
+          node examples/llm_tool.mjs
 
   # ============================================================================
   # Test bindings on Linux
@@ -234,6 +248,19 @@ jobs:
           --platform ${{ steps.docker.outputs.PLATFORM }}
           ${{ steps.docker.outputs.IMAGE }}
           npm test
+
+      - name: Link package for examples
+        run: |
+          mkdir -p node_modules/@everruns
+          ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
+
+      - name: Run examples
+        run: >
+          docker run --rm -v ${{ github.workspace }}:${{ github.workspace }}
+          -w ${{ github.workspace }}
+          --platform ${{ steps.docker.outputs.PLATFORM }}
+          ${{ steps.docker.outputs.IMAGE }}
+          sh -c "node examples/bash_basics.mjs && node examples/data_pipeline.mjs && node examples/llm_tool.mjs"
 
   # ============================================================================
   # Test WASI target

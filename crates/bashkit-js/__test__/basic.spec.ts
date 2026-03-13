@@ -22,7 +22,7 @@ test("Bash: default constructor", (t) => {
 test("Bash: constructor with empty options", (t) => {
   const bash = new Bash({});
   const r = bash.executeSync("echo ok");
-  t.is(r.exit_code, 0);
+  t.is(r.exitCode, 0);
 });
 
 test("Bash: constructor with all options", (t) => {
@@ -43,7 +43,7 @@ test("Bash: constructor with all options", (t) => {
 test("Bash: echo command", (t) => {
   const bash = new Bash();
   const result = bash.executeSync('echo "hello"');
-  t.is(result.exit_code, 0);
+  t.is(result.exitCode, 0);
   t.is(result.stdout.trim(), "hello");
 });
 
@@ -68,23 +68,23 @@ test("Bash: echo -e interprets escapes", (t) => {
 test("Bash: empty command", (t) => {
   const bash = new Bash();
   const result = bash.executeSync("");
-  t.is(result.exit_code, 0);
+  t.is(result.exitCode, 0);
 });
 
 test("Bash: comment-only command", (t) => {
   const bash = new Bash();
   const result = bash.executeSync("# this is a comment");
-  t.is(result.exit_code, 0);
+  t.is(result.exitCode, 0);
 });
 
 test("Bash: true returns 0", (t) => {
   const bash = new Bash();
-  t.is(bash.executeSync("true").exit_code, 0);
+  t.is(bash.executeSync("true").exitCode, 0);
 });
 
 test("Bash: false returns non-zero", (t) => {
   const bash = new Bash();
-  t.not(bash.executeSync("false").exit_code, 0);
+  t.not(bash.executeSync("false").exitCode, 0);
 });
 
 // ============================================================================
@@ -201,21 +201,21 @@ test("Bash: mv file", (t) => {
   bash.executeSync('echo "moveme" > /tmp/before.txt');
   bash.executeSync("mv /tmp/before.txt /tmp/after.txt");
   t.is(bash.executeSync("cat /tmp/after.txt").stdout.trim(), "moveme");
-  t.not(bash.executeSync("cat /tmp/before.txt 2>&1").exit_code, 0);
+  t.not(bash.executeSync("cat /tmp/before.txt 2>&1").exitCode, 0);
 });
 
 test("Bash: rm file", (t) => {
   const bash = new Bash();
   bash.executeSync("touch /tmp/removeme.txt");
   bash.executeSync("rm /tmp/removeme.txt");
-  t.not(bash.executeSync("cat /tmp/removeme.txt 2>&1").exit_code, 0);
+  t.not(bash.executeSync("cat /tmp/removeme.txt 2>&1").exitCode, 0);
 });
 
 test("Bash: file test -f", (t) => {
   const bash = new Bash();
   bash.executeSync("touch /tmp/exists.txt");
   t.is(bash.executeSync("test -f /tmp/exists.txt && echo yes").stdout.trim(), "yes");
-  t.not(bash.executeSync("test -f /tmp/nope.txt").exit_code, 0);
+  t.not(bash.executeSync("test -f /tmp/nope.txt").exitCode, 0);
 });
 
 test("Bash: directory test -d", (t) => {
@@ -227,7 +227,7 @@ test("Bash: directory test -d", (t) => {
 test("Bash: pwd", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("pwd");
-  t.is(r.exit_code, 0);
+  t.is(r.exitCode, 0);
   t.truthy(r.stdout.trim().length > 0);
 });
 
@@ -307,7 +307,7 @@ test("Bash: reset clears files", (t) => {
   const bash = new Bash();
   bash.executeSync('echo "data" > /tmp/resetfile.txt');
   bash.reset();
-  t.not(bash.executeSync("cat /tmp/resetfile.txt 2>&1").exit_code, 0);
+  t.not(bash.executeSync("cat /tmp/resetfile.txt 2>&1").exitCode, 0);
 });
 
 test("Bash: reset preserves username config", (t) => {
@@ -324,7 +324,7 @@ test("Bash: reset preserves username config", (t) => {
 test("Bash: executeSyncOrThrow succeeds on exit 0", (t) => {
   const bash = new Bash();
   const result = bash.executeSyncOrThrow("echo ok");
-  t.is(result.exit_code, 0);
+  t.is(result.exitCode, 0);
   t.is(result.stdout.trim(), "ok");
 });
 
@@ -374,7 +374,7 @@ test("Multiple Bash instances have isolated filesystems", (t) => {
   const a = new Bash();
   const b = new Bash();
   a.executeSync('echo "a" > /tmp/iso.txt');
-  t.not(b.executeSync("cat /tmp/iso.txt 2>&1").exit_code, 0);
+  t.not(b.executeSync("cat /tmp/iso.txt 2>&1").exitCode, 0);
 });
 
 test("Multiple BashTool instances are isolated", (t) => {

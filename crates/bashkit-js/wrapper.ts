@@ -1,10 +1,16 @@
-import {
-  Bash as NativeBash,
-  BashTool as NativeBashTool,
-  getVersion as nativeGetVersion,
-} from "./index.js";
+import { createRequire } from "node:module";
+import type {
+  Bash as NativeBashType,
+  BashTool as NativeBashToolType,
+  ExecResult,
+  BashOptions,
+} from "./index.cjs";
 
-import type { ExecResult, BashOptions } from "./index.js";
+const require = createRequire(import.meta.url);
+const native = require("./index.cjs");
+const NativeBash: typeof NativeBashType = native.Bash;
+const NativeBashTool: typeof NativeBashToolType = native.BashTool;
+const nativeGetVersion: () => string = native.getVersion;
 
 export type { ExecResult, BashOptions };
 
@@ -16,10 +22,10 @@ export class BashError extends Error {
   readonly stderr: string;
 
   constructor(result: ExecResult) {
-    const message = result.error ?? result.stderr ?? `Exit code ${result.exit_code}`;
+    const message = result.error ?? result.stderr ?? `Exit code ${result.exitCode}`;
     super(message);
     this.name = "BashError";
-    this.exitCode = result.exit_code;
+    this.exitCode = result.exitCode;
     this.stderr = result.stderr;
   }
 
@@ -44,7 +50,7 @@ export class BashError extends Error {
  * ```
  */
 export class Bash {
-  private native: NativeBash;
+  private native: NativeBashType;
 
   constructor(options?: BashOptions) {
     this.native = new NativeBash(options);
@@ -62,7 +68,7 @@ export class Bash {
    */
   executeSyncOrThrow(commands: string): ExecResult {
     const result = this.native.executeSync(commands);
-    if (result.exit_code !== 0) {
+    if (result.exitCode !== 0) {
       throw new BashError(result);
     }
     return result;
@@ -94,7 +100,7 @@ export class Bash {
  * ```
  */
 export class BashTool {
-  private native: NativeBashTool;
+  private native: NativeBashToolType;
 
   constructor(options?: BashOptions) {
     this.native = new NativeBashTool(options);
@@ -112,7 +118,7 @@ export class BashTool {
    */
   executeSyncOrThrow(commands: string): ExecResult {
     const result = this.native.executeSync(commands);
-    if (result.exit_code !== 0) {
+    if (result.exitCode !== 0) {
       throw new BashError(result);
     }
     return result;

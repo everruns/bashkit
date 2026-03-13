@@ -150,7 +150,7 @@ test("BashTool: execute returns ExecResult shape", (t) => {
   const r = tool.executeSync("echo test");
   t.is(typeof r.stdout, "string");
   t.is(typeof r.stderr, "string");
-  t.is(typeof r.exit_code, "number");
+  t.is(typeof r.exitCode, "number");
 });
 
 test("BashTool: execute with options", (t) => {

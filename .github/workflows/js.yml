@@ -9,6 +9,7 @@ on:
     paths:
       - "crates/bashkit-js/**"
       - "crates/bashkit/src/**"
+      - "examples/*.mjs"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/js.yml"
@@ -17,6 +18,7 @@ on:
     paths:
       - "crates/bashkit-js/**"
       - "crates/bashkit/src/**"
+      - "examples/*.mjs"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/js.yml"
@@ -62,6 +64,17 @@ jobs:
       - name: Run tests
         run: npm test
         working-directory: crates/bashkit-js
+
+      - name: Link package for examples
+        run: |
+          mkdir -p node_modules/@everruns
+          ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
+
+      - name: Run examples (self-contained)
+        run: |
+          node examples/bash_basics.mjs
+          node examples/data_pipeline.mjs
+          node examples/llm_tool.mjs
 
   # Gate job for branch protection
   js-check:

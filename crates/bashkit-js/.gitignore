@@ -12,7 +12,9 @@ target/
 # napi generated js files
 browser.js
 index.js
+index.cjs
 index.d.ts
+index.d.cts
 bashkit.wasi.cjs
 bashkit.wasi-browser.js
 wasi-worker.mjs

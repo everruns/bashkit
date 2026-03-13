@@ -11,14 +11,14 @@
  *   export OPENAI_API_KEY=sk-...
  *
  * Run:
- *   cd crates/bashkit-js && npm run build && node examples/langchain_agent.mjs
+ *   node examples/langchain_agent.mjs
  */
 
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { ChatOpenAI } from "@langchain/openai";
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { z } from "zod";
-import { BashTool } from "../wrapper.js";
+import { BashTool } from "@everruns/bashkit";
 
 // ─── Setup ───────────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ const bashLangChainTool = new DynamicStructuredTool({
     return JSON.stringify({
       stdout: result.stdout,
       stderr: result.stderr,
-      exit_code: result.exit_code,
+      exit_code: result.exitCode,
     });
   },
 });

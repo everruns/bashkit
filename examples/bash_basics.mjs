@@ -6,10 +6,10 @@
  * loops, virtual filesystem persistence, jq, error handling, and reset.
  *
  * Run:
- *   cd crates/bashkit-js && npm run build && node examples/bash_basics.mjs
+ *   node examples/bash_basics.mjs
  */
 
-import { Bash, BashTool, getVersion, BashError } from "../wrapper.js";
+import { Bash, BashTool, getVersion, BashError } from "@everruns/bashkit";
 
 function demoBasics() {
   console.log("=== Basic Execution ===\n");
@@ -19,7 +19,7 @@ function demoBasics() {
   // Simple command
   const r1 = bash.executeSync('echo "Hello from Bashkit!"');
   console.log(`echo: ${r1.stdout.trim()}`);
-  assert(r1.exit_code === 0);
+  assert(r1.exitCode === 0);
 
   // Pipeline
   const r2 = bash.executeSync("echo -e 'banana\\napple\\ncherry' | sort");
@@ -78,8 +78,8 @@ function demoErrorHandling() {
 
   // Exit codes
   const r1 = bash.executeSync("exit 42");
-  console.log(`exit: code=${r1.exit_code}`);
-  assert(r1.exit_code === 42);
+  console.log(`exit: code=${r1.exitCode}`);
+  assert(r1.exitCode === 42);
 
   // executeSyncOrThrow
   try {
@@ -94,7 +94,7 @@ function demoErrorHandling() {
   // Recover after error
   const r2 = bash.executeSync("echo 'recovered'");
   console.log(`recovered: ${r2.stdout.trim()}`);
-  assert(r2.exit_code === 0);
+  assert(r2.exitCode === 0);
 
   console.log();
 }
@@ -156,7 +156,7 @@ function demoBashTool() {
   // Execute through BashTool
   const r = tool.executeSync("echo 'hello from BashTool'");
   console.log(`exec:    ${r.stdout.trim()}`);
-  assert(r.exit_code === 0);
+  assert(r.exitCode === 0);
 
   console.log();
 }

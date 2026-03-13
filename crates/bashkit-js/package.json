@@ -32,14 +32,16 @@
   "files": [
     "wrapper.js",
     "wrapper.d.ts",
-    "index.js",
+    "index.cjs",
     "index.d.ts",
+    "index.d.cts",
     "bashkit.*.node",
     "bashkit.*.wasm"
   ],
   "scripts": {
-    "build": "npm run build:napi && npm run build:ts",
+    "build": "npm run build:napi && npm run build:cjs && npm run build:ts",
     "build:napi": "napi build --platform --release",
+    "build:cjs": "node -e \"const fs=require('fs'); if(fs.existsSync('index.js')){fs.renameSync('index.js','index.cjs')}; if(fs.existsSync('index.d.ts')){fs.copyFileSync('index.d.ts','index.d.cts')}\"",
     "build:ts": "tsc",
     "artifacts": "napi artifacts",
     "test": "ava",
@@ -51,9 +53,11 @@
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0",
+    "@types/node": "^25.5.0",
     "ava": "^6.2.0",
     "oxlint": "^0.16.0",
     "prettier": "^3.4.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.0"
   },
   "ava": {
