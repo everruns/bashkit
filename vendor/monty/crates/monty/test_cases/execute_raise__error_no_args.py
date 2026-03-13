@@ -1,0 +1,2 @@
+raise TypeError()
+# Raise=TypeError()

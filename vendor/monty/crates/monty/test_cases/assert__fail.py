@@ -1,0 +1,2 @@
+assert False
+# Raise=AssertionError()

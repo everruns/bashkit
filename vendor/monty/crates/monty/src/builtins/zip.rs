@@ -1,0 +1,77 @@
+//! Implementation of the zip() builtin function.
+
+use crate::{
+    args::ArgValues,
+    bytecode::VM,
+    defer_drop_mut,
+    exception_private::RunResult,
+    heap::HeapData,
+    resource::ResourceTracker,
+    types::{List, MontyIter, allocate_tuple, tuple::TupleVec},
+    value::Value,
+};
+
+/// Implementation of the zip() builtin function.
+///
+/// Returns a list of tuples, where the i-th tuple contains the i-th element
+/// from each of the argument iterables. Stops when the shortest iterable is exhausted.
+/// Note: In Python this returns an iterator, but we return a list for simplicity.
+pub fn builtin_zip(vm: &mut VM<'_, '_, impl ResourceTracker>, args: ArgValues) -> RunResult<Value> {
+    let (positional, kwargs) = args.into_parts();
+    defer_drop_mut!(positional, vm);
+
+    // TODO: support kwargs (strict)
+    kwargs.not_supported_yet("zip", vm.heap)?;
+
+    if positional.len() == 0 {
+        // zip() with no arguments returns empty list
+        let heap_id = vm.heap.allocate(HeapData::List(List::new(Vec::new())))?;
+        return Ok(Value::Ref(heap_id));
+    }
+
+    // Create iterators for each iterable
+    let mut iterators: Vec<MontyIter> = Vec::with_capacity(positional.len());
+    for iterable in positional {
+        match MontyIter::new(iterable, vm) {
+            Ok(iter) => iterators.push(iter),
+            Err(e) => {
+                // Clean up already-created iterators
+                for iter in iterators {
+                    iter.drop_with_heap(vm);
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    let mut result: Vec<Value> = Vec::new();
+
+    // Zip until shortest iterator is exhausted
+    'outer: loop {
+        let mut tuple_items = TupleVec::with_capacity(iterators.len());
+
+        for iter in &mut iterators {
+            if let Some(item) = iter.for_next(vm)? {
+                tuple_items.push(item);
+            } else {
+                // This iterator is exhausted - drop partial tuple items and stop
+                for item in tuple_items {
+                    item.drop_with_heap(vm);
+                }
+                break 'outer;
+            }
+        }
+
+        // Create tuple from collected items
+        let tuple_val = allocate_tuple(tuple_items, vm.heap)?;
+        result.push(tuple_val);
+    }
+
+    // Clean up iterators
+    for iter in iterators {
+        iter.drop_with_heap(vm);
+    }
+
+    let heap_id = vm.heap.allocate(HeapData::List(List::new(result)))?;
+    Ok(Value::Ref(heap_id))
+}

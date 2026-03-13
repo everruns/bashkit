@@ -53,8 +53,9 @@ deny = []
 unknown-registry = "deny"
 unknown-git = "deny"
 
-# Allow git sources for Monty (not yet on crates.io) and its ruff deps
+# Allow git sources for Monty's transitive deps (ruff parser, salsa)
+# Monty itself is vendored in vendor/monty/ (temporary until on crates.io)
 allow-git = [
-    "https://github.com/pydantic/monty",
     "https://github.com/astral-sh/ruff",
+    "https://github.com/salsa-rs/salsa",
 ]

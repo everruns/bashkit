@@ -1,0 +1,47 @@
+fail_fast: true
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.0.1
+    hooks:
+      - id: no-commit-to-branch # prevent direct commits to the `main` branch
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-added-large-files
+
+  - repo: https://github.com/codespell-project/codespell
+    # Configuration for codespell is in pyproject.toml
+    rev: v2.3.0
+    hooks:
+      - id: codespell
+        additional_dependencies:
+          - tomli
+
+  - repo: local
+    hooks:
+      - id: format-rs
+        name: Format Rust
+        entry: make format-rs
+        types: [rust]
+        language: system
+        pass_filenames: false
+      - id: lint-rs
+        name: Lint Rust
+        entry: make lint-rs
+        types: [rust]
+        language: system
+        pass_filenames: false
+      - id: format-lint-py
+        name: Format & Lint Python
+        entry: make format-lint-py
+        types: [python]
+        language: system
+        pass_filenames: false
+      - id: format-lint-js
+        name: Format & Lint TypeScript
+        entry: make format-js lint-js
+        types: [ts]
+        language: system
+        pass_filenames: false

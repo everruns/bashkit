@@ -38,16 +38,21 @@ jobs:
             echo "Manual dispatch - skipping tag verification"
           fi
 
-      - name: Strip git-only dependencies for publishing
-        # monty is a git dep (not yet on crates.io) — remove before publish
+      - name: Strip vendored dependencies for publishing
+        # monty is vendored (not yet on crates.io) — remove before publish
+        # Temporary: remove this step once monty is published to crates.io
         run: |
           TOML=crates/bashkit/Cargo.toml
-          # Remove monty dependency line
+          # Remove monty dependency lines (path dep + comment lines)
+          sed -i '/^# Vendored from.*monty/d' "$TOML"
+          sed -i '/^# Temporary.*crates\.io/d' "$TOML"
           sed -i '/^monty = .*/d' "$TOML"
           # Remove python feature that references monty
           sed -i '/^python = \["dep:monty"\]/d' "$TOML"
           # Remove python_scripts example block (requires python feature)
           sed -i '/^\[\[example\]\]/{N;N;/python_scripts/d}' "$TOML"
+          # Remove python_external_functions example block (requires python feature)
+          sed -i '/^\[\[example\]\]/{N;N;/python_external_functions/d}' "$TOML"
           echo "--- Cargo.toml after stripping ---"
           cat "$TOML"
 
@@ -71,7 +76,8 @@ jobs:
         run: sleep 30
 
       - name: Strip python feature from bashkit-cli
-        # python feature is stripped from bashkit during publish (monty is git-only)
+        # python feature is stripped from bashkit during publish (monty is vendored, not on crates.io)
+        # Temporary: remove this step once monty is published to crates.io
         run: |
           TOML=crates/bashkit-cli/Cargo.toml
           # Remove python feature and default that references it

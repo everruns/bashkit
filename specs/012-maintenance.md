@@ -137,7 +137,7 @@ Common failure patterns:
 
 | Pattern | Cause | Fix |
 |---------|-------|-----|
-| `failed to select a version for monty` | Upstream git dep bumped version | Update version pin or switch to `rev` pin |
+| `failed to select a version for monty` | Vendored monty version mismatch | Re-vendor monty (see `specs/011-python-builtin.md` vendoring section) |
 | `outdated or invalid JSON; try cargo clean` | Stale Miri cache | Self-heals; if persistent, clear CI cache |
 | `cannot find module or crate` in fuzz targets | Missing dependency in fuzz `Cargo.toml` | Add the crate to `crates/bashkit/fuzz/Cargo.toml` |
 | Fuzz target crashes | Real bug found by fuzzer | Reproduce locally, fix, add regression test |

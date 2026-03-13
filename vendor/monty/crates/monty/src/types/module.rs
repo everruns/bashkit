@@ -1,0 +1,146 @@
+//! Python module type for representing imported modules.
+
+use crate::{
+    args::ArgValues,
+    bytecode::{CallResult, VM},
+    defer_drop,
+    exception_private::{ExcType, RunResult},
+    heap::{Heap, HeapGuard, HeapId},
+    intern::{Interns, StringId},
+    resource::ResourceTracker,
+    types::{Dict, PyTrait},
+    value::{EitherStr, Value},
+};
+
+/// A Python module with a name and attribute dictionary.
+///
+/// Modules in Monty are simplified compared to CPython - they just have a name
+/// and a dictionary of attributes. This is sufficient for built-in modules like
+/// `sys` and `typing` where we control the available attributes.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Module {
+    /// The module name (e.g., "sys", "typing").
+    name: StringId,
+    /// The module's attributes (e.g., `version`, `platform` for `sys`).
+    attrs: Dict,
+}
+
+impl Module {
+    /// Creates a new module with an empty attributes dictionary.
+    ///
+    /// The module name must be pre-interned during the prepare phase.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the module name string has not been pre-interned.
+    pub fn new(name: impl Into<StringId>) -> Self {
+        Self {
+            name: name.into(),
+            attrs: Dict::new(),
+        }
+    }
+
+    /// Returns the module's name StringId.
+    pub fn name(&self) -> StringId {
+        self.name
+    }
+
+    /// Returns a reference to the module's attribute dictionary.
+    pub fn attrs(&self) -> &Dict {
+        &self.attrs
+    }
+
+    /// Sets an attribute in the module's dictionary.
+    ///
+    /// The attribute name must be pre-interned during the prepare phase.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the attribute name string has not been pre-interned.
+    pub fn set_attr(&mut self, name: impl Into<StringId>, value: Value, vm: &mut VM<'_, '_, impl ResourceTracker>) {
+        let key = Value::InternString(name.into());
+        // Unwrap is safe because InternString keys are always hashable
+        self.attrs.set(key, value, vm).unwrap();
+    }
+
+    /// Looks up an attribute by name in the module's attribute dictionary.
+    ///
+    /// Returns `Some(value)` if the attribute exists, `None` otherwise.
+    /// The returned value is cloned with proper refcount handling.
+    pub fn get_attr(&self, attr_value: &Value, vm: &mut VM<'_, '_, impl ResourceTracker>) -> Option<Value> {
+        // Dict::get returns Result because of hash computation, but InternString keys
+        // are always hashable, so `.ok()` is safe here.
+        self.attrs
+            .get(attr_value, vm)
+            .ok()
+            .flatten()
+            .map(|v| v.clone_with_heap(vm))
+    }
+
+    /// Returns whether this module has any heap references in its attributes.
+    pub fn has_refs(&self) -> bool {
+        self.attrs.has_refs()
+    }
+
+    /// Collects child HeapIds for reference counting.
+    pub fn py_dec_ref_ids(&mut self, stack: &mut Vec<HeapId>) {
+        self.attrs.py_dec_ref_ids(stack);
+    }
+
+    /// Gets an attribute by string ID for the `py_getattr` trait method.
+    ///
+    /// Returns the attribute value if found, or `None` if the attribute doesn't exist.
+    /// For `Property` values, invokes the property getter rather than returning
+    /// the Property itself - this implements Python's descriptor protocol.
+    pub fn py_getattr(
+        &self,
+        attr: &EitherStr,
+        heap: &mut Heap<impl ResourceTracker>,
+        interns: &Interns,
+    ) -> Option<CallResult> {
+        let value = self.attrs.get_by_str(attr.as_str(interns), heap, interns)?;
+
+        // If the value is a Property, invoke its getter to compute the actual value
+        if let Value::Property(prop) = *value {
+            Some(prop.get())
+        } else {
+            Some(CallResult::Value(value.clone_with_heap(heap)))
+        }
+    }
+
+    /// Calls an attribute as a function on this module.
+    ///
+    /// Modules don't have methods - they have callable attributes. This looks up
+    /// the attribute and calls it if it's a `ModuleFunction`.
+    ///
+    /// Returns `CallResult` because module functions may need OS operations
+    /// (e.g., `os.getenv()`) that require host involvement.
+    pub fn py_call_attr(
+        &self,
+        _self_id: HeapId,
+        vm: &mut VM<'_, '_, impl ResourceTracker>,
+        attr: &EitherStr,
+        args: ArgValues,
+    ) -> RunResult<CallResult> {
+        let mut args_guard = HeapGuard::new(args, vm);
+        let vm = args_guard.heap();
+        let attr_key = match attr {
+            EitherStr::Interned(id) => Value::InternString(*id),
+            EitherStr::Heap(s) => {
+                return Err(ExcType::attribute_error_module(vm.interns.get_str(self.name), s));
+            }
+        };
+
+        match self.get_attr(&attr_key, vm) {
+            Some(value) => {
+                let (args, vm) = args_guard.into_parts();
+                defer_drop!(value, vm);
+                vm.call_function(value, args)
+            }
+            None => Err(ExcType::attribute_error_module(
+                vm.interns.get_str(self.name),
+                attr.as_str(vm.interns),
+            )),
+        }
+    }
+}

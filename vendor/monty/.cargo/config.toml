@@ -1,0 +1,3 @@
+[env]
+# Use the project's venv Python for PyO3 builds
+PYO3_PYTHON = { value = ".venv/bin/python3", relative = true }

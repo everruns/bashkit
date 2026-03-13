@@ -22,6 +22,34 @@ Enable with:
 bashkit = { version = "0.1", features = ["python"] }
 ```
 
+### Vendoring
+
+Monty is vendored in `vendor/monty/` from
+[pydantic/monty](https://github.com/pydantic/monty) at a pinned revision.
+This is a **temporary** arrangement until Monty is published to crates.io.
+
+**Why vendored:**
+- Monty is not yet on crates.io, so the `python` feature was unavailable to
+  registry users
+- Vendoring makes the source self-contained and builds reproducible
+- Git-based consumers no longer need to fetch from a separate repo at build time
+
+**Updating the vendored copy:**
+1. `rm -rf vendor/monty`
+2. `git clone https://github.com/pydantic/monty vendor/monty`
+3. `cd vendor/monty && git checkout <new-rev> && cd ../..`
+4. `rm -rf vendor/monty/.git`
+5. Update the comment in `crates/bashkit/Cargo.toml` with the new rev
+6. Run `cargo test --features python` to verify
+
+**Migration to crates.io (when available):**
+1. Replace path dep with `monty = { version = "X.Y", optional = true }` in
+   `crates/bashkit/Cargo.toml`
+2. Remove `vendor/monty/`
+3. Remove `exclude = ["vendor"]` from workspace `Cargo.toml`
+4. Remove stripping steps from `.github/workflows/publish.yml`
+5. Remove git allow entries for ruff/salsa from `deny.toml`
+
 ### Registration (Opt-in)
 
 Python builtins are **not** auto-registered. Enable via builder:
@@ -242,7 +270,7 @@ let bash = Bash::builder()
 registers trusted Rust code, untrusted scripts invoke it by name.
 
 **Unstable re-exports:** `MontyObject`, `ExtFunctionResult`, `MontyException`, and
-`ExcType` are re-exported from the `monty` crate (git-pinned, not on crates.io).
+`ExcType` are re-exported from the `monty` crate (vendored, not yet on crates.io).
 These types may change in breaking ways between bashkit releases.
 
 ### Security

@@ -66,7 +66,9 @@ sha2 = { workspace = true }
 tracing = { workspace = true, optional = true }
 
 # Embedded Python interpreter (optional)
-monty = { git = "https://github.com/pydantic/monty", rev = "e59c8fa", optional = true }
+# Vendored from https://github.com/pydantic/monty at rev e59c8fa
+# Temporary: switch to crates.io version once monty is published there
+monty = { path = "../../vendor/monty/crates/monty", optional = true }
 
 [features]
 default = []
@@ -86,7 +88,7 @@ git = []
 # Usage: cargo build --features scripted_tool
 scripted_tool = []
 # Enable python/python3 builtins via embedded Monty interpreter
-# Monty is a git dep (not yet on crates.io) — feature unavailable from registry
+# Monty is vendored (not yet on crates.io) — will switch to registry dep when available
 python = ["dep:monty"]
 # Enable RealFs backend for accessing host filesystem directories
 # WARNING: This intentionally breaks the sandbox boundary.
