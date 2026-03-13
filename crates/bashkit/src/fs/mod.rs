@@ -351,6 +351,8 @@ mod memory;
 mod mountable;
 mod overlay;
 mod posix;
+#[cfg(feature = "realfs")]
+mod realfs;
 mod traits;
 
 pub use backend::FsBackend;
@@ -359,6 +361,8 @@ pub use memory::{InMemoryFs, VfsSnapshot};
 pub use mountable::MountableFs;
 pub use overlay::OverlayFs;
 pub use posix::PosixFs;
+#[cfg(feature = "realfs")]
+pub use realfs::{RealFs, RealFsMode};
 #[allow(unused_imports)]
 pub use traits::{fs_errors, DirEntry, FileSystem, FileType, Metadata};
 
