@@ -1357,4 +1357,91 @@ mod tests {
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.stdout, "30\n");
     }
+
+    #[tokio::test]
+    async fn test_unregistered_name_reference_raises_name_error() {
+        // Referencing a name (not as a call) that is NOT in the registered
+        // external function list should raise NameError via NameLookup → Undefined.
+        let handler: PythonExternalFnHandler = Arc::new(|_name, _args, _kwargs| {
+            Box::pin(async { ExtFunctionResult::Return(MontyObject::Int(1)) })
+        });
+        // Register "registered_fn" but reference "unknown_var" (not a call)
+        let r = run_with_external("x = unknown_var", &["registered_fn"], handler).await;
+        assert_eq!(r.exit_code, 1);
+        assert!(r.stderr.contains("NameError"));
+    }
+
+    // --- Monty 0.0.8 feature tests ---
+
+    #[tokio::test]
+    async fn test_math_module() {
+        let r = run(&["-c", "import math; print(math.sqrt(144))"], None).await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "12.0");
+    }
+
+    #[tokio::test]
+    async fn test_re_module() {
+        let r = run(
+            &[
+                "-c",
+                "import re; m = re.search(r'(\\d+)', 'abc123def'); print(m.group(1))",
+            ],
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "123");
+    }
+
+    #[tokio::test]
+    async fn test_filter_builtin() {
+        let r = run(
+            &["-c", "print(list(filter(lambda x: x > 2, [1, 2, 3, 4])))"],
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "[3, 4]");
+    }
+
+    #[tokio::test]
+    async fn test_getattr_builtin() {
+        // getattr with default value fallback
+        let r = run(
+            &["-c", "print(getattr('hello', 'missing_attr', 'default'))"],
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "default");
+    }
+
+    #[tokio::test]
+    async fn test_tuple_comparison() {
+        let r = run(&["-c", "print((1, 2) < (1, 3))"], None).await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "True");
+    }
+
+    #[tokio::test]
+    async fn test_pep448_unpacking() {
+        let r = run(&["-c", "a = [1, 2]; b = [3, 4]; print([*a, *b])"], None).await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "[1, 2, 3, 4]");
+    }
+
+    #[tokio::test]
+    async fn test_dict_constructor_from_iterable() {
+        let r = run(
+            &[
+                "-c",
+                "d = dict([('a', 1), ('b', 2)]); print(d['a'], d['b'])",
+            ],
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "1 2");
+    }
 }
