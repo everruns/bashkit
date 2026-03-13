@@ -82,10 +82,10 @@ pub fn parse_spec_file(content: &str) -> Vec<SpecTest> {
                 in_script = false;
                 in_expect = false;
             } else if let Some(code_str) = directive.strip_prefix("exit_code:") {
-                if let Some(ref mut test) = current_test {
-                    if let Ok(code) = code_str.trim().parse() {
-                        test.expected_exit_code = Some(code);
-                    }
+                if let Some(ref mut test) = current_test
+                    && let Ok(code) = code_str.trim().parse()
+                {
+                    test.expected_exit_code = Some(code);
                 }
             } else if let Some(reason) = directive.strip_prefix("skip:") {
                 if let Some(ref mut test) = current_test {
@@ -294,17 +294,17 @@ pub fn load_spec_tests(dir: &Path) -> HashMap<String, Vec<SpecTest>> {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().is_some_and(|e| e == "sh") {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    let file_name = path
-                        .file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-                    let tests = parse_spec_file(&content);
-                    if !tests.is_empty() {
-                        all_tests.insert(file_name, tests);
-                    }
+            if path.extension().is_some_and(|e| e == "sh")
+                && let Ok(content) = fs::read_to_string(&path)
+            {
+                let file_name = path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let tests = parse_spec_file(&content);
+                if !tests.is_empty() {
+                    all_tests.insert(file_name, tests);
                 }
             }
         }

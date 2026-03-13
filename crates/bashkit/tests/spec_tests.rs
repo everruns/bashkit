@@ -58,7 +58,7 @@
 
 mod spec_runner;
 
-use spec_runner::{load_spec_tests, run_spec_test, run_spec_test_with_comparison, TestSummary};
+use spec_runner::{TestSummary, load_spec_tests, run_spec_test, run_spec_test_with_comparison};
 use std::path::PathBuf;
 
 fn spec_cases_dir() -> PathBuf {

@@ -824,10 +824,11 @@ impl FileSystem for InMemoryFs {
         let mut entries = self.entries.write().unwrap();
 
         // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            if !entries.contains_key(parent) && parent != Path::new("/") {
-                return Err(IoError::new(ErrorKind::NotFound, "parent directory not found").into());
-            }
+        if let Some(parent) = path.parent()
+            && !entries.contains_key(parent)
+            && parent != Path::new("/")
+        {
+            return Err(IoError::new(ErrorKind::NotFound, "parent directory not found").into());
         }
 
         // Cannot write to a directory
@@ -883,14 +884,13 @@ impl FileSystem for InMemoryFs {
                 // File doesn't exist - create via check_write_limits + insert
                 // (inline instead of calling write_file to avoid deadlock on entries lock)
                 self.check_write_limits(&entries, &path, content.len())?;
-                if let Some(parent) = path.parent() {
-                    if !entries.contains_key(parent) && parent != Path::new("/") {
-                        return Err(IoError::new(
-                            ErrorKind::NotFound,
-                            "parent directory not found",
-                        )
-                        .into());
-                    }
+                if let Some(parent) = path.parent()
+                    && !entries.contains_key(parent)
+                    && parent != Path::new("/")
+                {
+                    return Err(
+                        IoError::new(ErrorKind::NotFound, "parent directory not found").into(),
+                    );
                 }
                 entries.insert(
                     path,
@@ -1002,12 +1002,11 @@ impl FileSystem for InMemoryFs {
             }
         } else {
             // Check parent exists
-            if let Some(parent) = path.parent() {
-                if !entries.contains_key(parent) && parent != Path::new("/") {
-                    return Err(
-                        IoError::new(ErrorKind::NotFound, "parent directory not found").into(),
-                    );
-                }
+            if let Some(parent) = path.parent()
+                && !entries.contains_key(parent)
+                && parent != Path::new("/")
+            {
+                return Err(IoError::new(ErrorKind::NotFound, "parent directory not found").into());
             }
 
             if entries.contains_key(&path) {

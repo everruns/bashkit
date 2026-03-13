@@ -21,8 +21,8 @@ pub use state::{ControlFlow, ExecResult};
 use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Monotonic counter for unique process substitution file paths
 static PROC_SUB_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -880,18 +880,17 @@ impl Interpreter {
                         .parse()
                         {
                             let emit_before = self.output_emit_count;
-                            if let Ok(ref mut res) = result {
-                                if let Ok(trap_result) =
+                            if let Ok(ref mut res) = result
+                                && let Ok(trap_result) =
                                     self.execute_command_sequence(&trap_script.commands).await
-                                {
-                                    self.maybe_emit_output(
-                                        &trap_result.stdout,
-                                        &trap_result.stderr,
-                                        emit_before,
-                                    );
-                                    res.stdout.push_str(&trap_result.stdout);
-                                    res.stderr.push_str(&trap_result.stderr);
-                                }
+                            {
+                                self.maybe_emit_output(
+                                    &trap_result.stdout,
+                                    &trap_result.stderr,
+                                    emit_before,
+                                );
+                                res.stdout.push_str(&trap_result.stdout);
+                                res.stderr.push_str(&trap_result.stderr);
                             }
                         }
                     }
@@ -2007,11 +2006,7 @@ impl Interpreter {
         let duration = match Self::parse_timeout_duration(duration_str) {
             Some(d) => {
                 // Cap at max while preserving subsecond precision
-                if d > max_duration {
-                    max_duration
-                } else {
-                    d
-                }
+                if d > max_duration { max_duration } else { d }
             }
             None => {
                 return Ok(ExecResult::err(
@@ -2517,10 +2512,10 @@ impl Interpreter {
             }
 
             if metadata.file_type.is_dir() {
-                if let Some(max) = max_depth {
-                    if current_depth >= max {
-                        return Ok(());
-                    }
+                if let Some(max) = max_depth
+                    && current_depth >= max
+                {
+                    return Ok(());
                 }
 
                 let entries = self.fs.read_dir(path).await?;
@@ -2575,7 +2570,7 @@ impl Interpreter {
         let mut script_file: Option<String> = None;
         let mut script_args: Vec<String> = Vec::new();
         let mut noexec = false; // -n flag: syntax check only
-                                // Shell options to set before executing the script
+        // Shell options to set before executing the script
         let mut shell_opts: Vec<(&str, &str)> = Vec::new();
         let mut idx = 0;
 
@@ -3364,10 +3359,10 @@ impl Interpreter {
         self.arrays.insert("PIPESTATUS".to_string(), ps_arr);
 
         // pipefail: return rightmost non-zero exit code from pipeline
-        if self.is_pipefail() {
-            if let Some(&nonzero) = pipe_statuses.iter().rev().find(|&&c| c != 0) {
-                last_result.exit_code = nonzero;
-            }
+        if self.is_pipefail()
+            && let Some(&nonzero) = pipe_statuses.iter().rev().find(|&&c| c != 0)
+        {
+            last_result.exit_code = nonzero;
         }
 
         // Handle negation
@@ -3661,74 +3656,71 @@ impl Interpreter {
         if is_plain_literal
             && self.is_expand_aliases_enabled()
             && !self.expanding_aliases.contains(&name)
+            && let Some(expansion) = self.aliases.get(&name).cloned()
         {
-            if let Some(expansion) = self.aliases.get(&name).cloned() {
-                // Restore variable saves before re-executing (alias expansion
-                // replays the full command including assignments)
-                for (vname, old) in var_saves.into_iter().rev() {
-                    match old {
-                        Some(v) => {
-                            self.variables.insert(vname, v);
-                        }
-                        None => {
-                            self.variables.remove(&vname);
-                        }
+            // Restore variable saves before re-executing (alias expansion
+            // replays the full command including assignments)
+            for (vname, old) in var_saves.into_iter().rev() {
+                match old {
+                    Some(v) => {
+                        self.variables.insert(vname, v);
+                    }
+                    None => {
+                        self.variables.remove(&vname);
                     }
                 }
-
-                // Build expanded command: alias value + original args.
-                // If alias value ends with space, also expand the first arg
-                // as an alias (bash trailing-space alias chaining).
-                let mut expanded_cmd = expansion.clone();
-                let trailing_space = expanded_cmd.ends_with(' ');
-                let mut args_iter = command.args.iter();
-                if trailing_space {
-                    if let Some(first_arg) = args_iter.next() {
-                        let arg_str = format!("{}", first_arg);
-                        if let Some(arg_expansion) = self.aliases.get(&arg_str).cloned() {
-                            expanded_cmd.push_str(&arg_expansion);
-                        } else {
-                            expanded_cmd.push_str(&arg_str);
-                        }
-                    }
-                }
-                for word in args_iter {
-                    expanded_cmd.push(' ');
-                    expanded_cmd.push_str(&format!("{}", word));
-                }
-                // Append original redirections as text
-                for redir in &command.redirects {
-                    expanded_cmd.push(' ');
-                    expanded_cmd.push_str(&Self::format_redirect(redir));
-                }
-
-                // Mark this alias as being expanded to prevent recursion
-                self.expanding_aliases.insert(name.clone());
-
-                // Forward pipeline stdin so aliases work in pipelines
-                let prev_pipeline_stdin = self.pipeline_stdin.take();
-                if stdin.is_some() {
-                    self.pipeline_stdin = stdin;
-                }
-
-                // THREAT[TM-DOS-030]: Propagate interpreter parser limits
-                let parser = Parser::with_limits(
-                    &expanded_cmd,
-                    self.limits.max_ast_depth,
-                    self.limits.max_parser_operations,
-                );
-                let result = match parser.parse() {
-                    Ok(s) => self.execute(&s).await,
-                    Err(e) => Ok(ExecResult::err(
-                        format!("bash: alias expansion: parse error: {}\n", e),
-                        1,
-                    )),
-                };
-
-                self.pipeline_stdin = prev_pipeline_stdin;
-                self.expanding_aliases.remove(&name);
-                return result;
             }
+
+            // Build expanded command: alias value + original args.
+            // If alias value ends with space, also expand the first arg
+            // as an alias (bash trailing-space alias chaining).
+            let mut expanded_cmd = expansion.clone();
+            let trailing_space = expanded_cmd.ends_with(' ');
+            let mut args_iter = command.args.iter();
+            if trailing_space && let Some(first_arg) = args_iter.next() {
+                let arg_str = format!("{}", first_arg);
+                if let Some(arg_expansion) = self.aliases.get(&arg_str).cloned() {
+                    expanded_cmd.push_str(&arg_expansion);
+                } else {
+                    expanded_cmd.push_str(&arg_str);
+                }
+            }
+            for word in args_iter {
+                expanded_cmd.push(' ');
+                expanded_cmd.push_str(&format!("{}", word));
+            }
+            // Append original redirections as text
+            for redir in &command.redirects {
+                expanded_cmd.push(' ');
+                expanded_cmd.push_str(&Self::format_redirect(redir));
+            }
+
+            // Mark this alias as being expanded to prevent recursion
+            self.expanding_aliases.insert(name.clone());
+
+            // Forward pipeline stdin so aliases work in pipelines
+            let prev_pipeline_stdin = self.pipeline_stdin.take();
+            if stdin.is_some() {
+                self.pipeline_stdin = stdin;
+            }
+
+            // THREAT[TM-DOS-030]: Propagate interpreter parser limits
+            let parser = Parser::with_limits(
+                &expanded_cmd,
+                self.limits.max_ast_depth,
+                self.limits.max_parser_operations,
+            );
+            let result = match parser.parse() {
+                Ok(s) => self.execute(&s).await,
+                Err(e) => Ok(ExecResult::err(
+                    format!("bash: alias expansion: parse error: {}\n", e),
+                    1,
+                )),
+            };
+
+            self.pipeline_stdin = prev_pipeline_stdin;
+            self.expanding_aliases.remove(&name);
+            return result;
         }
 
         // If name is empty after expansion, behavior depends on context:
@@ -3757,11 +3749,11 @@ impl Interpreter {
         // can see them via ctx.env (e.g., `MYVAR=hello printenv MYVAR`).
         let mut env_saves: Vec<(String, Option<String>)> = Vec::new();
         for assignment in &command.assignments {
-            if assignment.index.is_none() {
-                if let Some(value) = self.variables.get(&assignment.name).cloned() {
-                    let old = self.env.insert(assignment.name.clone(), value);
-                    env_saves.push((assignment.name.clone(), old));
-                }
+            if assignment.index.is_none()
+                && let Some(value) = self.variables.get(&assignment.name).cloned()
+            {
+                let old = self.env.insert(assignment.name.clone(), value);
+                env_saves.push((assignment.name.clone(), old));
             }
         }
 
@@ -4737,21 +4729,21 @@ impl Interpreter {
         }
 
         for arg in &var_args {
-            if let Some(bracket) = arg.find('[') {
-                if arg.ends_with(']') {
-                    let arr_name = &arg[..bracket];
-                    let key = &arg[bracket + 1..arg.len() - 1];
-                    let expanded_key = self.expand_variable_or_literal(key);
-                    let resolved_name = self.resolve_nameref(arr_name).to_string();
-                    if let Some(arr) = self.assoc_arrays.get_mut(&resolved_name) {
-                        arr.remove(&expanded_key);
-                    } else if let Some(arr) = self.arrays.get_mut(&resolved_name) {
-                        if let Ok(idx) = key.parse::<usize>() {
-                            arr.remove(&idx);
-                        }
-                    }
-                    continue;
+            if let Some(bracket) = arg.find('[')
+                && arg.ends_with(']')
+            {
+                let arr_name = &arg[..bracket];
+                let key = &arg[bracket + 1..arg.len() - 1];
+                let expanded_key = self.expand_variable_or_literal(key);
+                let resolved_name = self.resolve_nameref(arr_name).to_string();
+                if let Some(arr) = self.assoc_arrays.get_mut(&resolved_name) {
+                    arr.remove(&expanded_key);
+                } else if let Some(arr) = self.arrays.get_mut(&resolved_name)
+                    && let Ok(idx) = key.parse::<usize>()
+                {
+                    arr.remove(&idx);
                 }
+                continue;
             }
             if unset_nameref {
                 self.variables.remove(&format!("_NAMEREF_{}", arg));
@@ -5649,11 +5641,11 @@ impl Interpreter {
                     self.variables.remove(&format!("_NAMEREF_{}", name));
                 } else if is_nameref {
                     // typeset -n ref (without =value): use existing variable value as target
-                    if let Some(existing) = self.variables.get(name.as_str()).cloned() {
-                        if !existing.is_empty() {
-                            self.variables
-                                .insert(format!("_NAMEREF_{}", name), existing);
-                        }
+                    if let Some(existing) = self.variables.get(name.as_str()).cloned()
+                        && !existing.is_empty()
+                    {
+                        self.variables
+                            .insert(format!("_NAMEREF_{}", name), existing);
                     }
                 } else if is_assoc {
                     // Initialize empty associative array
@@ -6071,10 +6063,10 @@ impl Interpreter {
                         } else {
                             let idx: usize =
                                 self.evaluate_arithmetic(&extra_idx).try_into().unwrap_or(0);
-                            if let Some(arr) = self.arrays.get(arr_name) {
-                                if let Some(value) = arr.get(&idx) {
-                                    result.push_str(value);
-                                }
+                            if let Some(arr) = self.arrays.get(arr_name)
+                                && let Some(value) = arr.get(&idx)
+                            {
+                                result.push_str(value);
                             }
                         }
                     } else if let Some(arr) = self.assoc_arrays.get(arr_name) {
@@ -6097,10 +6089,10 @@ impl Interpreter {
                         } else {
                             raw_idx as usize
                         };
-                        if let Some(arr) = self.arrays.get(arr_name) {
-                            if let Some(value) = arr.get(&idx) {
-                                result.push_str(value);
-                            }
+                        if let Some(arr) = self.arrays.get(arr_name)
+                            && let Some(value) = arr.get(&idx)
+                        {
+                            result.push_str(value);
                         }
                     }
                 }
@@ -6360,32 +6352,32 @@ impl Interpreter {
                     return Ok(fields);
                 }
             }
-            if let WordPart::ArrayAccess { name, index } = &word.parts[0] {
-                if index == "@" || index == "*" {
-                    // Check assoc arrays first
-                    if let Some(arr) = self.assoc_arrays.get(name) {
-                        let mut keys: Vec<_> = arr.keys().cloned().collect();
-                        keys.sort();
-                        let values: Vec<String> =
-                            keys.iter().filter_map(|k| arr.get(k).cloned()).collect();
-                        if word.quoted && index == "*" {
-                            return Ok(vec![values.join(" ")]);
-                        }
-                        return Ok(values);
+            if let WordPart::ArrayAccess { name, index } = &word.parts[0]
+                && (index == "@" || index == "*")
+            {
+                // Check assoc arrays first
+                if let Some(arr) = self.assoc_arrays.get(name) {
+                    let mut keys: Vec<_> = arr.keys().cloned().collect();
+                    keys.sort();
+                    let values: Vec<String> =
+                        keys.iter().filter_map(|k| arr.get(k).cloned()).collect();
+                    if word.quoted && index == "*" {
+                        return Ok(vec![values.join(" ")]);
                     }
-                    if let Some(arr) = self.arrays.get(name) {
-                        let mut indices: Vec<_> = arr.keys().collect();
-                        indices.sort();
-                        let values: Vec<String> =
-                            indices.iter().filter_map(|i| arr.get(i).cloned()).collect();
-                        // "${arr[*]}" joins into single field; "${arr[@]}" keeps separate
-                        if word.quoted && index == "*" {
-                            return Ok(vec![values.join(" ")]);
-                        }
-                        return Ok(values);
-                    }
-                    return Ok(Vec::new());
+                    return Ok(values);
                 }
+                if let Some(arr) = self.arrays.get(name) {
+                    let mut indices: Vec<_> = arr.keys().collect();
+                    indices.sort();
+                    let values: Vec<String> =
+                        indices.iter().filter_map(|i| arr.get(i).cloned()).collect();
+                    // "${arr[*]}" joins into single field; "${arr[@]}" keeps separate
+                    if word.quoted && index == "*" {
+                        return Ok(vec![values.join(" ")]);
+                    }
+                    return Ok(values);
+                }
+                return Ok(Vec::new());
             }
             // "${!arr[@]}" - array keys/indices as separate fields
             if let WordPart::ArrayIndices(name) = &word.parts[0] {
@@ -7201,13 +7193,12 @@ impl Interpreter {
             } else if ch.is_ascii_digit() {
                 result.push(ch);
                 // Check for 0x/0X hex prefix
-                if ch == '0' {
-                    if let Some(&next) = chars.peek() {
-                        if next == 'x' || next == 'X' {
-                            result.push(chars.next().unwrap());
-                            in_numeric_literal = true;
-                        }
-                    }
+                if ch == '0'
+                    && let Some(&next) = chars.peek()
+                    && (next == 'x' || next == 'X')
+                {
+                    result.push(chars.next().unwrap());
+                    in_numeric_literal = true;
                 }
             } else if ch.is_ascii_alphabetic() || ch == '_' {
                 in_numeric_literal = false;
@@ -7783,18 +7774,18 @@ impl Interpreter {
         let name = self.resolve_nameref(name);
 
         // If resolved name is an array element ref like "a[2]", expand as array access
-        if let Some(bracket) = name.find('[') {
-            if name.ends_with(']') {
-                let arr_name = &name[..bracket];
-                let idx_str = &name[bracket + 1..name.len() - 1];
-                if let Some(arr) = self.assoc_arrays.get(arr_name) {
-                    return arr.get(idx_str).cloned().unwrap_or_default();
-                } else if let Some(arr) = self.arrays.get(arr_name) {
-                    let idx: usize = self.evaluate_arithmetic(idx_str).try_into().unwrap_or(0);
-                    return arr.get(&idx).cloned().unwrap_or_default();
-                }
-                return String::new();
+        if let Some(bracket) = name.find('[')
+            && name.ends_with(']')
+        {
+            let arr_name = &name[..bracket];
+            let idx_str = &name[bracket + 1..name.len() - 1];
+            if let Some(arr) = self.assoc_arrays.get(arr_name) {
+                return arr.get(idx_str).cloned().unwrap_or_default();
+            } else if let Some(arr) = self.arrays.get(arr_name) {
+                let idx: usize = self.evaluate_arithmetic(idx_str).try_into().unwrap_or(0);
+                return arr.get(&idx).cloned().unwrap_or_default();
             }
+            return String::new();
         }
 
         // Check for special parameters (POSIX required)
@@ -7915,10 +7906,11 @@ impl Interpreter {
                 return "bash".to_string();
             }
             // $1, $2, etc. (1-indexed)
-            if let Some(frame) = self.call_stack.last() {
-                if n > 0 && n <= frame.positional.len() {
-                    return frame.positional[n - 1].clone();
-                }
+            if let Some(frame) = self.call_stack.last()
+                && n > 0
+                && n <= frame.positional.len()
+            {
+                return frame.positional[n - 1].clone();
             }
             return String::new();
         }

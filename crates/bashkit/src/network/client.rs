@@ -232,13 +232,13 @@ impl HttpClient {
             .collect();
 
         // Check Content-Length header to fail fast on large responses
-        if let Some(content_length) = response.content_length() {
-            if usize::try_from(content_length).unwrap_or(usize::MAX) > self.max_response_bytes {
-                return Err(Error::Network(format!(
-                    "response too large: {} bytes (max: {} bytes)",
-                    content_length, self.max_response_bytes
-                )));
-            }
+        if let Some(content_length) = response.content_length()
+            && usize::try_from(content_length).unwrap_or(usize::MAX) > self.max_response_bytes
+        {
+            return Err(Error::Network(format!(
+                "response too large: {} bytes (max: {} bytes)",
+                content_length, self.max_response_bytes
+            )));
         }
 
         // Read body with size limit enforcement
@@ -415,13 +415,13 @@ impl HttpClient {
             .collect();
 
         // Check Content-Length header to fail fast on large responses
-        if let Some(content_length) = response.content_length() {
-            if usize::try_from(content_length).unwrap_or(usize::MAX) > self.max_response_bytes {
-                return Err(Error::Network(format!(
-                    "response too large: {} bytes (max: {} bytes)",
-                    content_length, self.max_response_bytes
-                )));
-            }
+        if let Some(content_length) = response.content_length()
+            && usize::try_from(content_length).unwrap_or(usize::MAX) > self.max_response_bytes
+        {
+            return Err(Error::Network(format!(
+                "response too large: {} bytes (max: {} bytes)",
+                content_length, self.max_response_bytes
+            )));
         }
 
         // Read body with size limit enforcement

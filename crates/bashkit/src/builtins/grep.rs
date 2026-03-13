@@ -538,11 +538,10 @@ impl Builtin for Grep {
                                 &opts.include_patterns,
                                 &opts.exclude_patterns,
                             )
+                            && let Ok(content) = ctx.fs.read_file(&entry_path).await
                         {
-                            if let Ok(content) = ctx.fs.read_file(&entry_path).await {
-                                let text = process_content(content, opts.binary_as_text);
-                                inputs.push((entry_path.to_string_lossy().into_owned(), text));
-                            }
+                            let text = process_content(content, opts.binary_as_text);
+                            inputs.push((entry_path.to_string_lossy().into_owned(), text));
                         }
                     }
                 } else if let Ok(content) = ctx.fs.read_file(&path).await {
@@ -592,10 +591,10 @@ impl Builtin for Grep {
 
         'file_loop: for (filename, content) in &inputs {
             // Check if we already reached max count from previous files
-            if let Some(max) = opts.max_count {
-                if total_matches >= max {
-                    break 'file_loop;
-                }
+            if let Some(max) = opts.max_count
+                && total_matches >= max
+            {
+                break 'file_loop;
             }
 
             let mut match_count = 0;
@@ -633,11 +632,11 @@ impl Builtin for Grep {
             // First pass: find all matching lines (up to max_count)
             for (line_num, line) in lines.iter().enumerate() {
                 // Check max count limit before adding more matches
-                if let Some(max) = opts.max_count {
-                    if total_matches >= max {
-                        max_reached = true;
-                        break; // Break inner loop, continue to output phase
-                    }
+                if let Some(max) = opts.max_count
+                    && total_matches >= max
+                {
+                    max_reached = true;
+                    break; // Break inner loop, continue to output phase
                 }
 
                 if opts.only_matching && !opts.invert_match {
@@ -654,11 +653,11 @@ impl Builtin for Grep {
                             break;
                         }
 
-                        if let Some(max) = opts.max_count {
-                            if total_matches >= max {
-                                max_reached = true;
-                                break;
-                            }
+                        if let Some(max) = opts.max_count
+                            && total_matches >= max
+                        {
+                            max_reached = true;
+                            break;
                         }
                     }
                     if (opts.files_with_matches || opts.files_without_matches) && file_matched {
@@ -691,11 +690,11 @@ impl Builtin for Grep {
                         }
 
                         // Check max after recording this match
-                        if let Some(max) = opts.max_count {
-                            if total_matches >= max {
-                                max_reached = true;
-                                break;
-                            }
+                        if let Some(max) = opts.max_count
+                            && total_matches >= max
+                        {
+                            max_reached = true;
+                            break;
                         }
                     }
                 }
@@ -748,10 +747,10 @@ impl Builtin for Grep {
                     let mut o_matches = 0usize;
                     for (line_num, line) in lines.iter().enumerate() {
                         for mat in regex.find_iter(line) {
-                            if let Some(max) = opts.max_count {
-                                if o_matches >= max {
-                                    break;
-                                }
+                            if let Some(max) = opts.max_count
+                                && o_matches >= max
+                            {
+                                break;
                             }
                             if show_filename {
                                 output.push_str(filename);
@@ -767,10 +766,10 @@ impl Builtin for Grep {
                             output.push('\n');
                             o_matches += 1;
                         }
-                        if let Some(max) = opts.max_count {
-                            if o_matches >= max {
-                                break;
-                            }
+                        if let Some(max) = opts.max_count
+                            && o_matches >= max
+                        {
+                            break;
                         }
                     }
                 } else if has_context {
@@ -791,10 +790,10 @@ impl Builtin for Grep {
                     let mut prev_line: Option<usize> = None;
                     for line_idx in sorted_lines {
                         // Print separator if there's a gap
-                        if let Some(prev) = prev_line {
-                            if line_idx > prev + 1 {
-                                output.push_str("--\n");
-                            }
+                        if let Some(prev) = prev_line
+                            && line_idx > prev + 1
+                        {
+                            output.push_str("--\n");
                         }
                         prev_line = Some(line_idx);
 
@@ -818,10 +817,10 @@ impl Builtin for Grep {
                 } else {
                     // Normal mode: output matching lines
                     for (out_count, &line_idx) in match_lines.iter().enumerate() {
-                        if let Some(max) = opts.max_count {
-                            if out_count >= max {
-                                break;
-                            }
+                        if let Some(max) = opts.max_count
+                            && out_count >= max
+                        {
+                            break;
                         }
                         if show_filename {
                             output.push_str(filename);

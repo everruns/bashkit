@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context};
 use crate::error::Result;
-use crate::interpreter::{is_internal_variable, ExecResult};
+use crate::interpreter::{ExecResult, is_internal_variable};
 
 /// Check if a variable name is valid: [a-zA-Z_][a-zA-Z0-9_]*
 fn is_valid_var_name(name: &str) -> bool {

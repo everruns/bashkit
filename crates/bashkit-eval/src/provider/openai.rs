@@ -139,12 +139,12 @@ impl OpenAiProvider {
         let mut blocks = Vec::new();
 
         // Text content
-        if let Some(content) = message["content"].as_str() {
-            if !content.is_empty() {
-                blocks.push(ContentBlock::Text {
-                    text: content.to_string(),
-                });
-            }
+        if let Some(content) = message["content"].as_str()
+            && !content.is_empty()
+        {
+            blocks.push(ContentBlock::Text {
+                text: content.to_string(),
+            });
         }
 
         // Tool calls
@@ -209,18 +209,16 @@ impl Provider for OpenAiProvider {
 
             // Retry on 429 (rate limit) and 5xx (server errors)
             let retryable = status.as_u16() == 429 || status.is_server_error();
-            if retryable {
-                if let Some(&delay) = delays.get(attempt) {
-                    eprintln!(
-                        "  [retry] OpenAI {} — waiting {}s (attempt {}/{})",
-                        status,
-                        delay,
-                        attempt + 1,
-                        delays.len()
-                    );
-                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
-                    continue;
-                }
+            if retryable && let Some(&delay) = delays.get(attempt) {
+                eprintln!(
+                    "  [retry] OpenAI {} — waiting {}s (attempt {}/{})",
+                    status,
+                    delay,
+                    attempt + 1,
+                    delays.len()
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                continue;
             }
 
             anyhow::bail!("OpenAI API error ({}): {}", status, error_msg);

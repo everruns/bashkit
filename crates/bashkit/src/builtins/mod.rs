@@ -116,7 +116,7 @@ pub use sleep::Sleep;
 pub use sortuniq::{Sort, Uniq};
 pub use source::Source;
 pub use strings::Strings;
-pub use system::{Hostname, Id, Uname, Whoami, DEFAULT_HOSTNAME, DEFAULT_USERNAME};
+pub use system::{DEFAULT_HOSTNAME, DEFAULT_USERNAME, Hostname, Id, Uname, Whoami};
 pub use test::{Bracket, Test};
 pub use textrev::{Rev, Tac};
 pub use timeout::Timeout;

@@ -6,7 +6,7 @@
 //!
 //! Run with: cargo run --example custom_filesystem_impl
 
-use bashkit::{async_trait, Bash, DirEntry, Error, FileSystem, FileType, Metadata, Result};
+use bashkit::{Bash, DirEntry, Error, FileSystem, FileType, Metadata, Result, async_trait};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -38,10 +38,10 @@ impl MockSessionStore {
         // A path is a directory if it exists AND either:
         // - Has empty content (directory marker)
         // - Has children (other paths start with this path + /)
-        if let Some(content) = files.get(path) {
-            if content.is_empty() {
-                return true;
-            }
+        if let Some(content) = files.get(path)
+            && content.is_empty()
+        {
+            return true;
         }
         // Check for children
         let path_str = path.to_string_lossy();
@@ -124,13 +124,13 @@ impl FileSystem for SessionFileSystemAdapter {
         let path = self.normalize_path(path);
 
         // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            if !self.exists(parent).await? {
-                return Err(Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("parent directory not found: {}", parent.display()),
-                )));
-            }
+        if let Some(parent) = path.parent()
+            && !self.exists(parent).await?
+        {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("parent directory not found: {}", parent.display()),
+            )));
         }
 
         let mut files = self.store.files.write().unwrap();
@@ -165,13 +165,13 @@ impl FileSystem for SessionFileSystemAdapter {
                 }
             }
         } else {
-            if let Some(parent) = path.parent() {
-                if !self.exists(parent).await? {
-                    return Err(Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("parent directory not found: {}", parent.display()),
-                    )));
-                }
+            if let Some(parent) = path.parent()
+                && !self.exists(parent).await?
+            {
+                return Err(Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("parent directory not found: {}", parent.display()),
+                )));
             }
             let mut files = self.store.files.write().unwrap();
             if files.contains_key(&path) {

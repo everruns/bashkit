@@ -7,11 +7,11 @@
 //!   jq '.[] | .id' < data.json
 
 use async_trait::async_trait;
-use jaq_core::{load, Compiler, Ctx, RcIter};
+use jaq_core::{Compiler, Ctx, RcIter, load};
 use jaq_json::Val;
 use std::path::Path;
 
-use super::{resolve_path, Builtin, Context};
+use super::{Builtin, Context, resolve_path};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
 
@@ -846,10 +846,10 @@ mod tests {
         for (path, content) in files {
             // Ensure parent directory exists
             let p = std::path::Path::new(path);
-            if let Some(parent) = p.parent() {
-                if parent != std::path::Path::new("/") {
-                    fs.mkdir(parent, true).await.unwrap();
-                }
+            if let Some(parent) = p.parent()
+                && parent != std::path::Path::new("/")
+            {
+                fs.mkdir(parent, true).await.unwrap();
             }
             fs.write_file(p, content.as_bytes()).await.unwrap();
         }
@@ -1291,7 +1291,8 @@ mod tests {
         let unique_key = "BASHKIT_TEST_HOST_LEAK_410";
 
         // Set a host process env var that should NOT be visible to jq
-        std::env::set_var(unique_key, "host_secret");
+        // SAFETY: This test is single-threaded (serial_test) so set_var is safe
+        unsafe { std::env::set_var(unique_key, "host_secret") };
 
         let jq = Jq;
         let fs = Arc::new(InMemoryFs::new());
@@ -1322,6 +1323,7 @@ mod tests {
         );
 
         // Cleanup
-        std::env::remove_var(unique_key);
+        // SAFETY: This test is single-threaded (serial_test) so remove_var is safe
+        unsafe { std::env::remove_var(unique_key) };
     }
 }

@@ -236,7 +236,7 @@ async fn check_file_contains(
                 passed: false,
                 detail: "invalid format, expected file_contains:/path:text".to_string(),
                 weight,
-            }
+            };
         }
     };
 

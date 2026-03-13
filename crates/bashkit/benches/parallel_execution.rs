@@ -10,7 +10,7 @@
 //! - Filesystem: Thread-safe via Arc + RwLock
 
 use bashkit::{Bash, InMemoryFs};
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 

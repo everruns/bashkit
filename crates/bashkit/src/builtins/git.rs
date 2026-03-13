@@ -30,7 +30,7 @@
 
 use async_trait::async_trait;
 
-use super::{resolve_path, Context};
+use super::{Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 

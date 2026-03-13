@@ -408,7 +408,7 @@ pub use posix::PosixFs;
 #[cfg(feature = "realfs")]
 pub use realfs::{RealFs, RealFsMode};
 #[allow(unused_imports)]
-pub use traits::{fs_errors, DirEntry, FileSystem, FileType, Metadata};
+pub use traits::{DirEntry, FileSystem, FileType, Metadata, fs_errors};
 
 use crate::error::Result;
 use std::io::{Error as IoError, ErrorKind};

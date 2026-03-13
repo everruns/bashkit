@@ -144,7 +144,7 @@ impl NetworkAllowlist {
             Err(e) => {
                 return UrlMatch::Invalid {
                     reason: format!("invalid URL: {}", e),
-                }
+                };
             }
         };
 

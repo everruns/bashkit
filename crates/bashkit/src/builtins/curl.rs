@@ -588,10 +588,10 @@ fn resolve_redirect_url(base: &str, location: &str) -> String {
         }
     } else {
         // Relative path
-        if let Ok(base_url) = url::Url::parse(base) {
-            if let Ok(resolved) = base_url.join(location) {
-                return resolved.to_string();
-            }
+        if let Ok(base_url) = url::Url::parse(base)
+            && let Ok(resolved) = base_url.join(location)
+        {
+            return resolved.to_string();
         }
         location.to_string()
     }
@@ -889,7 +889,10 @@ async fn execute_wget_request(
                     let msg = if quiet {
                         String::new()
                     } else {
-                        format!("Spider mode enabled. Check if remote file exists.\nHTTP request sent, awaiting response... {} OK\nRemote file exists.\n", response.status)
+                        format!(
+                            "Spider mode enabled. Check if remote file exists.\nHTTP request sent, awaiting response... {} OK\nRemote file exists.\n",
+                            response.status
+                        )
                     };
                     return Ok(ExecResult::ok(msg));
                 } else {
@@ -983,10 +986,10 @@ async fn execute_wget_request(
 fn extract_filename_from_url(url: &str) -> String {
     if let Ok(parsed) = url::Url::parse(url) {
         let path = parsed.path();
-        if let Some(filename) = path.rsplit('/').next() {
-            if !filename.is_empty() {
-                return filename.to_string();
-            }
+        if let Some(filename) = path.rsplit('/').next()
+            && !filename.is_empty()
+        {
+            return filename.to_string();
         }
     }
     "index.html".to_string()
@@ -995,10 +998,10 @@ fn extract_filename_from_url(url: &str) -> String {
 /// Extract host from URL for wget progress output.
 #[cfg(feature = "http_client")]
 fn extract_host_from_url(url: &str) -> String {
-    if let Ok(parsed) = url::Url::parse(url) {
-        if let Some(host) = parsed.host_str() {
-            return host.to_string();
-        }
+    if let Ok(parsed) = url::Url::parse(url)
+        && let Some(host) = parsed.host_str()
+    {
+        return host.to_string();
     }
     "unknown".to_string()
 }

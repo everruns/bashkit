@@ -1,11 +1,11 @@
 //! ScriptedTool execution: Tool impl, builtin adapter, flag parser, documentation helpers.
 
 use super::{ScriptedTool, ToolArgs, ToolCallback};
+use crate::Bash;
 use crate::builtins::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 use crate::tool::{Tool, ToolRequest, ToolResponse, ToolStatus, VERSION};
-use crate::Bash;
 use async_trait::async_trait;
 use schemars::schema_for;
 use std::sync::Arc;
@@ -426,9 +426,11 @@ mod tests {
         let schema = serde_json::json!({});
         let result = parse_flags(&["42".into()], &schema);
         assert!(result.is_err());
-        assert!(result
-            .expect_err("should reject positional")
-            .contains("expected --flag"));
+        assert!(
+            result
+                .expect_err("should reject positional")
+                .contains("expected --flag")
+        );
     }
 
     #[test]
@@ -456,8 +458,8 @@ mod tests {
     #[tokio::test]
     async fn test_error_uses_display_not_debug() {
         use super::ScriptedTool;
-        use crate::tool::Tool;
         use crate::ToolDef;
+        use crate::tool::Tool;
 
         let mut tool = ScriptedTool::builder("test")
             .short_description("test")

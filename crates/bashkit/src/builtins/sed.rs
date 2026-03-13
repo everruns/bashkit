@@ -409,14 +409,14 @@ fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
             let end2 = after_comma
                 .find(|c: char| !c.is_ascii_digit())
                 .unwrap_or(after_comma.len());
-            if end2 > 0 {
-                if let Ok(line_num) = after_comma[..end2].parse::<usize>() {
-                    // Create regex that matches at line N (handled as RegexRange with a line check)
-                    return Ok((
-                        Some(Address::Range(0, line_num)), // Approximate
-                        &after_comma[end2..],
-                    ));
-                }
+            if end2 > 0
+                && let Ok(line_num) = after_comma[..end2].parse::<usize>()
+            {
+                // Create regex that matches at line N (handled as RegexRange with a line check)
+                return Ok((
+                    Some(Address::Range(0, line_num)), // Approximate
+                    &after_comma[end2..],
+                ));
             }
         }
 
@@ -958,10 +958,10 @@ impl Builtin for Sed {
 /// Find the index of a label command in the command list
 fn find_label(cmds: &[(Option<Address>, bool, SedCommand)], target: &str) -> Option<usize> {
     for (i, (_, _, cmd)) in cmds.iter().enumerate() {
-        if let SedCommand::Label(name) = cmd {
-            if name == target {
-                return Some(i);
-            }
+        if let SedCommand::Label(name) = cmd
+            && name == target
+        {
+            return Some(i);
         }
     }
     None

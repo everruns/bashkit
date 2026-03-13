@@ -182,12 +182,11 @@ impl GitClient {
             }
 
             // Check for key = value in the right section
-            if in_section {
-                if let Some((k, v)) = line.split_once('=') {
-                    if k.trim().to_lowercase() == name {
-                        return Ok(Some(v.trim().to_string()));
-                    }
-                }
+            if in_section
+                && let Some((k, v)) = line.split_once('=')
+                && k.trim().to_lowercase() == name
+            {
+                return Ok(Some(v.trim().to_string()));
             }
         }
 
@@ -251,15 +250,14 @@ impl GitClient {
             }
 
             // Check for key = value in the right section
-            if in_section {
-                if let Some((k, _)) = trimmed.split_once('=') {
-                    if k.trim().to_lowercase() == name {
-                        // Replace this line
-                        new_content.push_str(&format!("\t{} = {}\n", name, value));
-                        found = true;
-                        continue;
-                    }
-                }
+            if in_section
+                && let Some((k, _)) = trimmed.split_once('=')
+                && k.trim().to_lowercase() == name
+            {
+                // Replace this line
+                new_content.push_str(&format!("\t{} = {}\n", name, value));
+                found = true;
+                continue;
             }
 
             new_content.push_str(line);
@@ -630,10 +628,10 @@ impl GitClient {
                     });
                 }
 
-                if let Some(limit) = limit {
-                    if entries.len() >= limit {
-                        break;
-                    }
+                if let Some(limit) = limit
+                    && entries.len() >= limit
+                {
+                    break;
                 }
             }
         }
@@ -735,13 +733,13 @@ impl GitClient {
 
             // Check if remote already exists
             for line in remotes.lines() {
-                if let Some((existing_name, _)) = line.split_once('|') {
-                    if existing_name == name {
-                        return Err(Error::Internal(format!(
-                            "error: remote {} already exists",
-                            name
-                        )));
-                    }
+                if let Some((existing_name, _)) = line.split_once('|')
+                    && existing_name == name
+                {
+                    return Err(Error::Internal(format!(
+                        "error: remote {} already exists",
+                        name
+                    )));
                 }
             }
         }
@@ -780,11 +778,11 @@ impl GitClient {
         let mut found = false;
         let mut new_content = String::new();
         for line in content.lines() {
-            if let Some((existing_name, _)) = line.split_once('|') {
-                if existing_name == name {
-                    found = true;
-                    continue;
-                }
+            if let Some((existing_name, _)) = line.split_once('|')
+                && existing_name == name
+            {
+                found = true;
+                continue;
             }
             new_content.push_str(line);
             new_content.push('\n');

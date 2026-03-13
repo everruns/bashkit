@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use std::path::Path;
 
-use super::{resolve_path, Builtin, Context};
+use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -35,17 +35,17 @@ impl Builtin for Mkdir {
             // Check if already exists
             if ctx.fs.exists(&path).await.unwrap_or(false) {
                 // Check if it's a directory or something else (file/symlink)
-                if let Ok(meta) = ctx.fs.stat(&path).await {
-                    if meta.file_type.is_dir() {
-                        if !recursive {
-                            return Ok(ExecResult::err(
-                                format!("mkdir: cannot create directory '{}': File exists\n", dir),
-                                1,
-                            ));
-                        }
-                        // With -p, existing directory is not an error
-                        continue;
+                if let Ok(meta) = ctx.fs.stat(&path).await
+                    && meta.file_type.is_dir()
+                {
+                    if !recursive {
+                        return Ok(ExecResult::err(
+                            format!("mkdir: cannot create directory '{}': File exists\n", dir),
+                            1,
+                        ));
                     }
+                    // With -p, existing directory is not an error
+                    continue;
                 }
                 // File or symlink exists - always an error
                 return Ok(ExecResult::err(
@@ -116,22 +116,23 @@ impl Builtin for Rm {
 
             // Check if it's a directory
             let metadata = ctx.fs.stat(&path).await;
-            if let Ok(meta) = metadata {
-                if meta.file_type.is_dir() && !recursive {
-                    return Ok(ExecResult::err(
-                        format!("rm: cannot remove '{}': Is a directory\n", file),
-                        1,
-                    ));
-                }
+            if let Ok(meta) = metadata
+                && meta.file_type.is_dir()
+                && !recursive
+            {
+                return Ok(ExecResult::err(
+                    format!("rm: cannot remove '{}': Is a directory\n", file),
+                    1,
+                ));
             }
 
-            if let Err(e) = ctx.fs.remove(&path, recursive).await {
-                if !force {
-                    return Ok(ExecResult::err(
-                        format!("rm: cannot remove '{}': {}\n", file, e),
-                        1,
-                    ));
-                }
+            if let Err(e) = ctx.fs.remove(&path, recursive).await
+                && !force
+            {
+                return Ok(ExecResult::err(
+                    format!("rm: cannot remove '{}': {}\n", file, e),
+                    1,
+                ));
             }
         }
 
@@ -709,10 +710,10 @@ impl Builtin for Mktemp {
         let full_path = std::path::PathBuf::from(&path);
 
         // Ensure parent directory exists
-        if let Some(parent) = full_path.parent() {
-            if !ctx.fs.exists(parent).await.unwrap_or(false) {
-                let _ = ctx.fs.mkdir(parent, true).await;
-            }
+        if let Some(parent) = full_path.parent()
+            && !ctx.fs.exists(parent).await.unwrap_or(false)
+        {
+            let _ = ctx.fs.mkdir(parent, true).await;
         }
 
         if create_dir {

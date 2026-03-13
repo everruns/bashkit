@@ -385,8 +385,8 @@ pub use async_trait::async_trait;
 pub use builtins::{Builtin, Context as BuiltinContext};
 pub use error::{Error, Result};
 pub use fs::{
-    verify_filesystem_requirements, DirEntry, FileSystem, FileType, FsBackend, FsLimitExceeded,
-    FsLimits, FsUsage, InMemoryFs, Metadata, MountableFs, OverlayFs, PosixFs, VfsSnapshot,
+    DirEntry, FileSystem, FileType, FsBackend, FsLimitExceeded, FsLimits, FsUsage, InMemoryFs,
+    Metadata, MountableFs, OverlayFs, PosixFs, VfsSnapshot, verify_filesystem_requirements,
 };
 #[cfg(feature = "realfs")]
 pub use fs::{RealFs, RealFsMode};
@@ -419,7 +419,7 @@ pub use monty::{ExcType, ExtFunctionResult, MontyException, MontyObject};
 /// Only available when the `logging` feature is enabled.
 #[cfg(feature = "logging")]
 pub mod logging {
-    pub use crate::logging_impl::{format_script_for_log, sanitize_for_log, LogConfig};
+    pub use crate::logging_impl::{LogConfig, format_script_for_log, sanitize_for_log};
 }
 
 #[cfg(feature = "logging")]
@@ -2629,10 +2629,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(content, b"data");
-        assert!(!fs
-            .exists(std::path::Path::new("/tmp/copied.txt"))
-            .await
-            .unwrap());
+        assert!(
+            !fs.exists(std::path::Path::new("/tmp/copied.txt"))
+                .await
+                .unwrap()
+        );
     }
 
     // Bug fix tests
@@ -2846,8 +2847,8 @@ mod tests {
 
     mod custom_builtins {
         use super::*;
-        use crate::builtins::{Builtin, Context};
         use crate::ExecResult;
+        use crate::builtins::{Builtin, Context};
         use async_trait::async_trait;
 
         /// A simple custom builtin that outputs a static string

@@ -624,20 +624,21 @@ fn generate_markdown_report(report: &BenchReport) -> String {
         let bashkit_stats = report.summary.runner_stats.get("bashkit");
         let bash_stats = report.summary.runner_stats.get("bash");
 
-        if let (Some(bk), Some(b)) = (bashkit_stats, bash_stats) {
-            if bk.avg_time_ms > 0.0 && b.avg_time_ms > 0.0 {
-                let speedup = b.avg_time_ms / bk.avg_time_ms;
-                if speedup > 1.0 {
-                    md.push_str(&format!(
-                        "**Bashkit is {:.1}x faster** than bash on average.\n\n",
-                        speedup
-                    ));
-                } else {
-                    md.push_str(&format!(
-                        "**Bash is {:.1}x faster** than bashkit on average.\n\n",
-                        1.0 / speedup
-                    ));
-                }
+        if let (Some(bk), Some(b)) = (bashkit_stats, bash_stats)
+            && bk.avg_time_ms > 0.0
+            && b.avg_time_ms > 0.0
+        {
+            let speedup = b.avg_time_ms / bk.avg_time_ms;
+            if speedup > 1.0 {
+                md.push_str(&format!(
+                    "**Bashkit is {:.1}x faster** than bash on average.\n\n",
+                    speedup
+                ));
+            } else {
+                md.push_str(&format!(
+                    "**Bash is {:.1}x faster** than bashkit on average.\n\n",
+                    1.0 / speedup
+                ));
             }
         }
     }

@@ -236,14 +236,18 @@ mod tests {
         let config = GitConfig::new().allow_remote("https://github.com/org/");
 
         // Allowed URL
-        assert!(config
-            .is_url_allowed("https://github.com/org/repo.git")
-            .is_ok());
+        assert!(
+            config
+                .is_url_allowed("https://github.com/org/repo.git")
+                .is_ok()
+        );
 
         // Different org - not allowed
-        assert!(config
-            .is_url_allowed("https://github.com/other/repo.git")
-            .is_err());
+        assert!(
+            config
+                .is_url_allowed("https://github.com/other/repo.git")
+                .is_err()
+        );
     }
 
     #[test]
@@ -252,9 +256,11 @@ mod tests {
         let config = GitConfig::new().allow_all_remotes();
 
         // SSH URLs should be blocked
-        assert!(config
-            .is_url_allowed("git@github.com:org/repo.git")
-            .is_err());
+        assert!(
+            config
+                .is_url_allowed("git@github.com:org/repo.git")
+                .is_err()
+        );
     }
 
     #[test]
@@ -263,9 +269,11 @@ mod tests {
         let config = GitConfig::new().allow_all_remotes();
 
         // git:// protocol should be blocked
-        assert!(config
-            .is_url_allowed("git://github.com/org/repo.git")
-            .is_err());
+        assert!(
+            config
+                .is_url_allowed("git://github.com/org/repo.git")
+                .is_err()
+        );
     }
 
     #[test]
@@ -274,9 +282,11 @@ mod tests {
         let config = GitConfig::new();
 
         // Empty allowlist should block all
-        assert!(config
-            .is_url_allowed("https://github.com/org/repo.git")
-            .is_err());
+        assert!(
+            config
+                .is_url_allowed("https://github.com/org/repo.git")
+                .is_err()
+        );
     }
 
     #[test]
@@ -285,11 +295,15 @@ mod tests {
         let config = GitConfig::new().allow_all_remotes();
 
         // All HTTPS URLs should be allowed
-        assert!(config
-            .is_url_allowed("https://github.com/any/repo.git")
-            .is_ok());
-        assert!(config
-            .is_url_allowed("https://gitlab.com/any/repo.git")
-            .is_ok());
+        assert!(
+            config
+                .is_url_allowed("https://github.com/any/repo.git")
+                .is_ok()
+        );
+        assert!(
+            config
+                .is_url_allowed("https://gitlab.com/any/repo.git")
+                .is_ok()
+        );
     }
 }

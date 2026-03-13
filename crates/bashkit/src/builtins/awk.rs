@@ -1238,11 +1238,10 @@ impl<'a> AwkParser<'a> {
                     && !remaining.starts_with("==")
                     && !remaining.starts_with("!=")
                     && !self.is_keyword_at_pos()
+                    && let Ok(next) = self.parse_additive()
                 {
-                    if let Ok(next) = self.parse_additive() {
-                        parts.push(next);
-                        continue;
-                    }
+                    parts.push(next);
+                    continue;
                 }
             }
             break;
@@ -1382,7 +1381,7 @@ impl<'a> AwkParser<'a> {
                 _ => {
                     return Err(Error::Execution(
                         "awk: expected variable after ++".to_string(),
-                    ))
+                    ));
                 }
             }
         }
@@ -1411,7 +1410,7 @@ impl<'a> AwkParser<'a> {
                 _ => {
                     return Err(Error::Execution(
                         "awk: expected variable after --".to_string(),
-                    ))
+                    ));
                 }
             }
         }
@@ -2370,11 +2369,11 @@ impl AwkInterpreter {
                 }
 
                 // Parse conversion character
-                if let Some(&c) = chars.peek() {
-                    if c.is_ascii_alphabetic() {
-                        conversion = c;
-                        chars.next();
-                    }
+                if let Some(&c) = chars.peek()
+                    && c.is_ascii_alphabetic()
+                {
+                    conversion = c;
+                    chars.next();
                 }
 
                 if value_idx < values.len() {
@@ -2401,11 +2400,7 @@ impl AwkInterpreter {
                             // %g: use shorter of %e or %f, strip trailing zeros
                             let s = format!("{:.prec$e}", n);
                             let f = format!("{:.prec$}", n);
-                            if s.len() < f.len() {
-                                s
-                            } else {
-                                f
-                            }
+                            if s.len() < f.len() { s } else { f }
                         }
                         'e' | 'E' => {
                             let n = val.as_number();
@@ -2752,18 +2747,18 @@ impl Builtin for Awk {
             } else if arg == "-v" {
                 // Variable assignment: -v var=value
                 i += 1;
-                if i < ctx.args.len() {
-                    if let Some(eq_pos) = ctx.args[i].find('=') {
-                        let name = ctx.args[i][..eq_pos].to_string();
-                        let mut value = ctx.args[i][eq_pos + 1..].to_string();
-                        // Strip surrounding quotes if present (shell may pass them)
-                        if (value.starts_with('"') && value.ends_with('"'))
-                            || (value.starts_with('\'') && value.ends_with('\''))
-                        {
-                            value = value[1..value.len() - 1].to_string();
-                        }
-                        pre_vars.push((name, value));
+                if i < ctx.args.len()
+                    && let Some(eq_pos) = ctx.args[i].find('=')
+                {
+                    let name = ctx.args[i][..eq_pos].to_string();
+                    let mut value = ctx.args[i][eq_pos + 1..].to_string();
+                    // Strip surrounding quotes if present (shell may pass them)
+                    if (value.starts_with('"') && value.ends_with('"'))
+                        || (value.starts_with('\'') && value.ends_with('\''))
+                    {
+                        value = value[1..value.len() - 1].to_string();
                     }
+                    pre_vars.push((name, value));
                 }
             } else if arg == "-f" {
                 // Read program from file

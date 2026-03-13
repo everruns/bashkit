@@ -158,10 +158,10 @@ impl Builtin for CurlStub {
 
         let mut result = String::new();
         // Handle -w "%{http_code}" pattern
-        if let Some(ref fmt) = write_out {
-            if fmt.contains("http_code") {
-                result.push_str("200");
-            }
+        if let Some(ref fmt) = write_out
+            && fmt.contains("http_code")
+        {
+            result.push_str("200");
         }
         if result.is_empty() && output_file.is_none() {
             result.push_str("{\"previewUrl\":\"https://test.vercel.app\",\"claimUrl\":\"https://vercel.com/claim/test\"}\n");

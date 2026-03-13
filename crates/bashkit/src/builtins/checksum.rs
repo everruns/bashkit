@@ -123,9 +123,11 @@ mod tests {
         let result = run_checksum(&Md5sum, &[], Some("hello\n")).await;
         assert_eq!(result.exit_code, 0);
         // md5("hello\n") = b1946ac92492d2347c6235b4d2611184
-        assert!(result
-            .stdout
-            .starts_with("b1946ac92492d2347c6235b4d2611184"));
+        assert!(
+            result
+                .stdout
+                .starts_with("b1946ac92492d2347c6235b4d2611184")
+        );
         assert!(result.stdout.contains("  -"));
     }
 
@@ -134,9 +136,11 @@ mod tests {
         let result = run_checksum(&Sha256sum, &[], Some("hello\n")).await;
         assert_eq!(result.exit_code, 0);
         // sha256("hello\n") = 5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03
-        assert!(result
-            .stdout
-            .starts_with("5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"));
+        assert!(
+            result
+                .stdout
+                .starts_with("5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03")
+        );
     }
 
     #[tokio::test]
@@ -144,9 +148,11 @@ mod tests {
         let result = run_checksum(&Sha1sum, &[], Some("hello\n")).await;
         assert_eq!(result.exit_code, 0);
         // sha1("hello\n") = f572d396fae9206628714fb2ce00f72e94f2258f
-        assert!(result
-            .stdout
-            .starts_with("f572d396fae9206628714fb2ce00f72e94f2258f"));
+        assert!(
+            result
+                .stdout
+                .starts_with("f572d396fae9206628714fb2ce00f72e94f2258f")
+        );
     }
 
     #[tokio::test]
@@ -154,8 +160,10 @@ mod tests {
         let result = run_checksum(&Md5sum, &[], Some("")).await;
         assert_eq!(result.exit_code, 0);
         // md5("") = d41d8cd98f00b204e9800998ecf8427e
-        assert!(result
-            .stdout
-            .starts_with("d41d8cd98f00b204e9800998ecf8427e"));
+        assert!(
+            result
+                .stdout
+                .starts_with("d41d8cd98f00b204e9800998ecf8427e")
+        );
     }
 }

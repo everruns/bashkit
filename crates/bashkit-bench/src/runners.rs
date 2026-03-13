@@ -125,10 +125,10 @@ async fn which_just_bash() -> Result<String> {
         .output()
         .await;
 
-    if let Ok(out) = output {
-        if out.status.success() {
-            return Ok("npx:just-bash".to_string());
-        }
+    if let Ok(out) = output
+        && out.status.success()
+    {
+        return Ok("npx:just-bash".to_string());
     }
 
     // Try which

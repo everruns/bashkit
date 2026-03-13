@@ -16,8 +16,9 @@
 
 use async_trait::async_trait;
 use monty::{
-    dir_stat, file_stat, symlink_stat, ExcType, ExtFunctionResult, LimitedTracker, MontyException,
-    MontyObject, MontyRun, NameLookupResult, OsFunction, PrintWriter, ResourceLimits, RunProgress,
+    ExcType, ExtFunctionResult, LimitedTracker, MontyException, MontyObject, MontyRun,
+    NameLookupResult, OsFunction, PrintWriter, ResourceLimits, RunProgress, dir_stat, file_stat,
+    symlink_stat,
 };
 use std::collections::HashMap;
 use std::future::Future;
@@ -26,7 +27,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{resolve_path, Builtin, Context};
+use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::fs::{FileSystem, FileType};
 use crate::interpreter::ExecResult;
@@ -502,7 +503,7 @@ async fn handle_os_call(
             return ExtFunctionResult::Error(MontyException::new(
                 ExcType::TypeError,
                 Some("expected path argument".into()),
-            ))
+            ));
         }
     };
 
@@ -547,7 +548,7 @@ async fn handle_os_call(
                     return ExtFunctionResult::Error(MontyException::new(
                         ExcType::TypeError,
                         Some("write_text() requires a string argument".into()),
-                    ))
+                    ));
                 }
             };
             let len = content.len();
@@ -563,7 +564,7 @@ async fn handle_os_call(
                     return ExtFunctionResult::Error(MontyException::new(
                         ExcType::TypeError,
                         Some("write_bytes() requires a bytes argument".into()),
-                    ))
+                    ));
                 }
             };
             let len = content.len();
@@ -633,7 +634,7 @@ async fn handle_os_call(
                     return ExtFunctionResult::Error(MontyException::new(
                         ExcType::TypeError,
                         Some("rename() requires a target path".into()),
-                    ))
+                    ));
                 }
             };
             match fs.rename(&path, &target).await {
@@ -699,13 +700,13 @@ fn map_vfs_error(e: crate::Error, path: &Path) -> ExtFunctionResult {
 /// Extract a bool kwarg by name from the kwargs list.
 fn get_bool_kwarg(kwargs: &[(MontyObject, MontyObject)], name: &str) -> Option<bool> {
     for (key, val) in kwargs {
-        if let MontyObject::String(k) = key {
-            if k == name {
-                return match val {
-                    MontyObject::Bool(b) => Some(*b),
-                    _ => None,
-                };
-            }
+        if let MontyObject::String(k) = key
+            && k == name
+        {
+            return match val {
+                MontyObject::Bool(b) => Some(*b),
+                _ => None,
+            };
         }
     }
     None
@@ -719,7 +720,7 @@ fn handle_getenv(args: &[MontyObject], env: &HashMap<String, String>) -> ExtFunc
             return ExtFunctionResult::Error(MontyException::new(
                 ExcType::TypeError,
                 Some("getenv() requires a string argument".into()),
-            ))
+            ));
         }
     };
     let default = match args.get(1) {
@@ -1251,12 +1252,12 @@ mod tests {
         let handler: PythonExternalFnHandler = Arc::new(|_name, _args, kwargs| {
             Box::pin(async move {
                 for (k, v) in &kwargs {
-                    if let (MontyObject::String(key), MontyObject::String(val)) = (k, v) {
-                        if key == "name" {
-                            return ExtFunctionResult::Return(MontyObject::String(format!(
-                                "hello {val}"
-                            )));
-                        }
+                    if let (MontyObject::String(key), MontyObject::String(val)) = (k, v)
+                        && key == "name"
+                    {
+                        return ExtFunctionResult::Return(MontyObject::String(format!(
+                            "hello {val}"
+                        )));
                     }
                 }
                 ExtFunctionResult::Return(MontyObject::String("hello unknown".into()))

@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{resolve_path, Builtin, Context};
+use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
