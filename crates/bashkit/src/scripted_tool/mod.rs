@@ -888,4 +888,56 @@ mod tests {
         // Counter persists across execute() calls via Arc
         assert_eq!(resp.stdout.trim(), "3");
     }
+
+    // -- LLM-state-carrier pattern tests --
+
+    #[tokio::test]
+    async fn test_llm_state_carrier_pattern() {
+        // Demonstrates the LLM-state-carrier pattern: the LLM extracts
+        // data from one execute() call and passes it into the next.
+        let mut tool = build_test_tool();
+
+        // Call 1: LLM gets user data
+        let resp1 = tool
+            .execute(ToolRequest {
+                commands: "get_user --id 42 | jq -r '.name'".into(),
+                timeout_ms: None,
+            })
+            .await;
+        let user_name = resp1.stdout.trim().to_string();
+        assert_eq!(user_name, "Alice");
+
+        // Call 2: LLM passes extracted data into next script
+        let resp2 = tool
+            .execute(ToolRequest {
+                commands: format!("echo 'Processing orders for {}'", user_name),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp2.exit_code, 0);
+        assert!(resp2.stdout.contains("Processing orders for Alice"));
+    }
+
+    #[tokio::test]
+    async fn test_fresh_interpreter_per_execute() {
+        // Verifies that each execute() gets a fresh interpreter
+        // (variables from one call don't leak to another)
+        let mut tool = build_test_tool();
+
+        // Set a variable in call 1
+        tool.execute(ToolRequest {
+            commands: "MY_VAR=secret".into(),
+            timeout_ms: None,
+        })
+        .await;
+
+        // Variable should not exist in call 2
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "echo \"var=${MY_VAR:-unset}\"".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.stdout.trim(), "var=unset");
+    }
 }

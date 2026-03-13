@@ -261,6 +261,40 @@ stdout/stderr/exit_code. The existing `bash` tool is preserved.
 
 Gated behind the `scripted_tool` feature flag in `bashkit-cli`.
 
+## State across execute() calls
+
+Each `execute()` creates a fresh Bash interpreter (security boundary). State
+does not carry over between calls at the interpreter level.
+
+### Recommended: LLM-as-state-carrier (Option D)
+
+The LLM passes relevant output from one call into subsequent scripts:
+
+```
+# Call 1: get user data
+user=$(get_user --id 42)
+echo "$user"
+
+# Call 2: LLM extracts user_id from call 1 output, passes it here
+orders=$(get_orders --user_id 42)
+echo "$orders"
+```
+
+Zero implementation overhead. Works well for small intermediate results.
+
+### Callback-level persistence (Option C from #522)
+
+Callbacks capture `Arc<Mutex<T>>` state that persists across `execute()` calls.
+See "Shared context across callbacks" section above. Useful for auth tokens,
+connection pools, and small caches that are invisible to the LLM.
+
+### Future: Persistent VFS (Option A)
+
+If real-world usage reveals pain points with Option D, a persistent VFS
+could be added behind `ScriptedToolBuilder::persistent(true)` (default false).
+Would store the virtual filesystem across calls, requiring size limits
+and security review.
+
 ## Future: OpenAPI auto-generation (RFC)
 
 Planned but not yet implemented. See issue #523 for the full RFC.
