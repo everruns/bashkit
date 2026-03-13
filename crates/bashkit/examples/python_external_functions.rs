@@ -4,7 +4,9 @@
 //!
 //! Run with: cargo run --features python --example python_external_functions
 
-use bashkit::{Bash, ExternalResult, MontyObject, PythonExternalFnHandler, PythonLimits, Result};
+use bashkit::{
+    Bash, ExtFunctionResult, MontyObject, PythonExternalFnHandler, PythonLimits, Result,
+};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -12,7 +14,7 @@ async fn main() -> Result<()> {
     let handler: PythonExternalFnHandler = Arc::new(|name, args, _kwargs| {
         Box::pin(async move {
             if name != "add" {
-                return ExternalResult::Return(MontyObject::None);
+                return ExtFunctionResult::Return(MontyObject::None);
             }
 
             let a = match args.first() {
@@ -24,7 +26,7 @@ async fn main() -> Result<()> {
                 _ => 0,
             };
 
-            ExternalResult::Return(MontyObject::Int(a + b))
+            ExtFunctionResult::Return(MontyObject::Int(a + b))
         })
     });
 

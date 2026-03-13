@@ -16,8 +16,8 @@
 
 use async_trait::async_trait;
 use monty::{
-    dir_stat, file_stat, symlink_stat, ExcType, ExternalResult, LimitedTracker, MontyException,
-    MontyObject, MontyRun, OsFunction, PrintWriter, ResourceLimits, RunProgress,
+    dir_stat, file_stat, symlink_stat, ExcType, ExtFunctionResult, LimitedTracker, MontyException,
+    MontyObject, MontyRun, NameLookupResult, OsFunction, PrintWriter, ResourceLimits, RunProgress,
 };
 use std::collections::HashMap;
 use std::future::Future;
@@ -112,13 +112,13 @@ impl PythonLimits {
 /// Async handler for external Python function calls.
 ///
 /// Receives `(function_name, positional_args, keyword_args)` directly from monty.
-/// Return `ExternalResult::Return(value)` for success or `ExternalResult::Error(exc)` for failure.
+/// Return `ExtFunctionResult::Return(value)` for success or `ExtFunctionResult::Error(exc)` for failure.
 pub type PythonExternalFnHandler = Arc<
     dyn Fn(
             String,
             Vec<MontyObject>,
             Vec<(MontyObject, MontyObject)>,
-        ) -> Pin<Box<dyn Future<Output = ExternalResult> + Send>>
+        ) -> Pin<Box<dyn Future<Output = ExtFunctionResult> + Send>>
         + Send
         + Sync,
 >;
@@ -353,8 +353,7 @@ async fn run_python(
         code
     };
 
-    let ext_fn_names = external_fns.map(|ef| ef.names.clone()).unwrap_or_default();
-    let runner = match MontyRun::new(code.to_owned(), filename, vec![], ext_fn_names) {
+    let runner = match MontyRun::new(code.to_owned(), filename, vec![]) {
         Ok(r) => r,
         Err(e) => return Ok(format_exception(e)),
     };
@@ -370,50 +369,47 @@ async fn run_python(
     // Run the synchronous start() phase, then extract collected output.
     // PrintWriter::Collect is not Send, so we scope it to avoid holding across .await.
     let (mut progress, mut buf) = {
-        let mut printer = PrintWriter::Collect(String::new());
-        match runner.start(vec![], tracker, &mut printer) {
-            Ok(p) => (p, take_collected(&mut printer)),
+        let mut buf = String::new();
+        match runner.start(vec![], tracker, PrintWriter::Collect(&mut buf)) {
+            Ok(p) => (p, buf),
             Err(e) => {
-                let printed = take_collected(&mut printer);
-                return Ok(format_exception_with_output(e, &printed));
+                return Ok(format_exception_with_output(e, &buf));
             }
         }
     };
 
     loop {
         match progress {
-            RunProgress::OsCall {
-                function,
-                args,
-                kwargs,
-                state,
-                ..
-            } => {
-                let result = handle_os_call(function, &args, &kwargs, &fs, cwd, env).await;
-                let mut printer = PrintWriter::Collect(buf);
-                match state.run(result, &mut printer) {
+            RunProgress::OsCall(os_call) => {
+                let result = handle_os_call(
+                    os_call.function,
+                    &os_call.args,
+                    &os_call.kwargs,
+                    &fs,
+                    cwd,
+                    env,
+                )
+                .await;
+                match os_call.resume(result, PrintWriter::Collect(&mut buf)) {
                     Ok(next) => {
-                        buf = take_collected(&mut printer);
                         progress = next;
                     }
                     Err(e) => {
-                        let printed = take_collected(&mut printer);
-                        return Ok(format_exception_with_output(e, &printed));
+                        return Ok(format_exception_with_output(e, &buf));
                     }
                 }
             }
-            RunProgress::FunctionCall {
-                function_name,
-                args,
-                kwargs,
-                state,
-                ..
-            } => {
+            RunProgress::FunctionCall(call) => {
                 let result = if let Some(ef) = external_fns {
-                    (ef.handler)(function_name, args, kwargs).await
+                    (ef.handler)(
+                        call.function_name.clone(),
+                        call.args.clone(),
+                        call.kwargs.clone(),
+                    )
+                    .await
                 } else {
                     // No external functions registered; return error
-                    ExternalResult::Error(MontyException::new(
+                    ExtFunctionResult::Error(MontyException::new(
                         ExcType::RuntimeError,
                         Some(
                             "no external function handler configured (external functions not enabled)".into(),
@@ -421,15 +417,39 @@ async fn run_python(
                     ))
                 };
 
-                let mut printer = PrintWriter::Collect(buf);
-                match state.run(result, &mut printer) {
+                match call.resume(result, PrintWriter::Collect(&mut buf)) {
                     Ok(next) => {
-                        buf = take_collected(&mut printer);
                         progress = next;
                     }
                     Err(e) => {
-                        let printed = take_collected(&mut printer);
-                        return Ok(format_exception_with_output(e, &printed));
+                        return Ok(format_exception_with_output(e, &buf));
+                    }
+                }
+            }
+            RunProgress::NameLookup(lookup) => {
+                // External functions are now auto-detected via NameLookup.
+                // If the name matches one of our registered external function names,
+                // resolve it as a callable; otherwise let Python raise NameError.
+                let result = if external_fns
+                    .map(|ef| ef.names.contains(&lookup.name))
+                    .unwrap_or(false)
+                {
+                    // Return a callable marker — monty will pause again with
+                    // FunctionCall when it's actually invoked.
+                    NameLookupResult::Value(MontyObject::Function {
+                        name: lookup.name.clone(),
+                        docstring: None,
+                    })
+                } else {
+                    NameLookupResult::Undefined
+                };
+
+                match lookup.resume(result, PrintWriter::Collect(&mut buf)) {
+                    Ok(next) => {
+                        progress = next;
+                    }
+                    Err(e) => {
+                        return Ok(format_exception_with_output(e, &buf));
                     }
                 }
             }
@@ -454,14 +474,6 @@ async fn run_python(
     }
 }
 
-/// Extract collected output from a `PrintWriter::Collect`, replacing it with an empty string.
-fn take_collected(printer: &mut PrintWriter<'_>) -> String {
-    match printer {
-        PrintWriter::Collect(buf) => std::mem::take(buf),
-        _ => String::new(),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // VFS bridging: Monty OsCall → BashKit FileSystem
 // ---------------------------------------------------------------------------
@@ -474,7 +486,7 @@ async fn handle_os_call(
     fs: &Arc<dyn FileSystem>,
     cwd: &Path,
     env: &HashMap<String, String>,
-) -> ExternalResult {
+) -> ExtFunctionResult {
     // Environment access doesn't need a path
     match function {
         OsFunction::Getenv => return handle_getenv(args, env),
@@ -486,7 +498,7 @@ async fn handle_os_call(
     let path = match extract_path(args, cwd) {
         Some(p) => p,
         None => {
-            return ExternalResult::Error(MontyException::new(
+            return ExtFunctionResult::Error(MontyException::new(
                 ExcType::TypeError,
                 Some("expected path argument".into()),
             ))
@@ -496,24 +508,24 @@ async fn handle_os_call(
     match function {
         OsFunction::Exists => {
             let exists = fs.exists(&path).await.unwrap_or(false);
-            ExternalResult::Return(MontyObject::Bool(exists))
+            ExtFunctionResult::Return(MontyObject::Bool(exists))
         }
         OsFunction::IsFile => match fs.stat(&path).await {
-            Ok(meta) => ExternalResult::Return(MontyObject::Bool(meta.file_type.is_file())),
-            Err(_) => ExternalResult::Return(MontyObject::Bool(false)),
+            Ok(meta) => ExtFunctionResult::Return(MontyObject::Bool(meta.file_type.is_file())),
+            Err(_) => ExtFunctionResult::Return(MontyObject::Bool(false)),
         },
         OsFunction::IsDir => match fs.stat(&path).await {
-            Ok(meta) => ExternalResult::Return(MontyObject::Bool(meta.file_type.is_dir())),
-            Err(_) => ExternalResult::Return(MontyObject::Bool(false)),
+            Ok(meta) => ExtFunctionResult::Return(MontyObject::Bool(meta.file_type.is_dir())),
+            Err(_) => ExtFunctionResult::Return(MontyObject::Bool(false)),
         },
         OsFunction::IsSymlink => match fs.stat(&path).await {
-            Ok(meta) => ExternalResult::Return(MontyObject::Bool(meta.file_type.is_symlink())),
-            Err(_) => ExternalResult::Return(MontyObject::Bool(false)),
+            Ok(meta) => ExtFunctionResult::Return(MontyObject::Bool(meta.file_type.is_symlink())),
+            Err(_) => ExtFunctionResult::Return(MontyObject::Bool(false)),
         },
         OsFunction::ReadText => match fs.read_file(&path).await {
             Ok(bytes) => match String::from_utf8(bytes) {
-                Ok(s) => ExternalResult::Return(MontyObject::String(s)),
-                Err(_) => ExternalResult::Error(MontyException::new(
+                Ok(s) => ExtFunctionResult::Return(MontyObject::String(s)),
+                Err(_) => ExtFunctionResult::Error(MontyException::new(
                     ExcType::OSError,
                     Some(format!(
                         "can't decode '{}': not valid UTF-8",
@@ -524,14 +536,14 @@ async fn handle_os_call(
             Err(e) => map_vfs_error(e, &path),
         },
         OsFunction::ReadBytes => match fs.read_file(&path).await {
-            Ok(bytes) => ExternalResult::Return(MontyObject::Bytes(bytes)),
+            Ok(bytes) => ExtFunctionResult::Return(MontyObject::Bytes(bytes)),
             Err(e) => map_vfs_error(e, &path),
         },
         OsFunction::WriteText => {
             let content = match args.get(1) {
                 Some(MontyObject::String(s)) => s.as_bytes().to_vec(),
                 _ => {
-                    return ExternalResult::Error(MontyException::new(
+                    return ExtFunctionResult::Error(MontyException::new(
                         ExcType::TypeError,
                         Some("write_text() requires a string argument".into()),
                     ))
@@ -539,7 +551,7 @@ async fn handle_os_call(
             };
             let len = content.len();
             match fs.write_file(&path, &content).await {
-                Ok(()) => ExternalResult::Return(MontyObject::Int(len as i64)),
+                Ok(()) => ExtFunctionResult::Return(MontyObject::Int(len as i64)),
                 Err(e) => map_vfs_error(e, &path),
             }
         }
@@ -547,7 +559,7 @@ async fn handle_os_call(
             let content = match args.get(1) {
                 Some(MontyObject::Bytes(b)) => b.clone(),
                 _ => {
-                    return ExternalResult::Error(MontyException::new(
+                    return ExtFunctionResult::Error(MontyException::new(
                         ExcType::TypeError,
                         Some("write_bytes() requires a bytes argument".into()),
                     ))
@@ -555,7 +567,7 @@ async fn handle_os_call(
             };
             let len = content.len();
             match fs.write_file(&path, &content).await {
-                Ok(()) => ExternalResult::Return(MontyObject::Int(len as i64)),
+                Ok(()) => ExtFunctionResult::Return(MontyObject::Int(len as i64)),
                 Err(e) => map_vfs_error(e, &path),
             }
         }
@@ -563,11 +575,11 @@ async fn handle_os_call(
             let parents = get_bool_kwarg(kwargs, "parents").unwrap_or(false);
             let exist_ok = get_bool_kwarg(kwargs, "exist_ok").unwrap_or(false);
             match fs.mkdir(&path, parents).await {
-                Ok(()) => ExternalResult::Return(MontyObject::None),
+                Ok(()) => ExtFunctionResult::Return(MontyObject::None),
                 Err(e) => {
                     let msg = e.to_string();
                     if exist_ok && msg.contains("already exists") {
-                        ExternalResult::Return(MontyObject::None)
+                        ExtFunctionResult::Return(MontyObject::None)
                     } else {
                         map_vfs_error(e, &path)
                     }
@@ -575,11 +587,11 @@ async fn handle_os_call(
             }
         }
         OsFunction::Unlink => match fs.remove(&path, false).await {
-            Ok(()) => ExternalResult::Return(MontyObject::None),
+            Ok(()) => ExtFunctionResult::Return(MontyObject::None),
             Err(e) => map_vfs_error(e, &path),
         },
         OsFunction::Rmdir => match fs.remove(&path, false).await {
-            Ok(()) => ExternalResult::Return(MontyObject::None),
+            Ok(()) => ExtFunctionResult::Return(MontyObject::None),
             Err(e) => map_vfs_error(e, &path),
         },
         OsFunction::Iterdir => match fs.read_dir(&path).await {
@@ -591,7 +603,7 @@ async fn handle_os_call(
                         MontyObject::Path(child.to_string_lossy().to_string())
                     })
                     .collect();
-                ExternalResult::Return(MontyObject::List(items))
+                ExtFunctionResult::Return(MontyObject::List(items))
             }
             Err(e) => map_vfs_error(e, &path),
         },
@@ -607,7 +619,7 @@ async fn handle_os_call(
                     FileType::Symlink => symlink_stat(meta.mode as i64, mtime),
                     _ => file_stat(meta.mode as i64, meta.size as i64, mtime),
                 };
-                ExternalResult::Return(stat_obj)
+                ExtFunctionResult::Return(stat_obj)
             }
             Err(e) => map_vfs_error(e, &path),
         },
@@ -617,25 +629,25 @@ async fn handle_os_call(
                     resolve_python_path(p, cwd)
                 }
                 _ => {
-                    return ExternalResult::Error(MontyException::new(
+                    return ExtFunctionResult::Error(MontyException::new(
                         ExcType::TypeError,
                         Some("rename() requires a target path".into()),
                     ))
                 }
             };
             match fs.rename(&path, &target).await {
-                Ok(()) => {
-                    ExternalResult::Return(MontyObject::Path(target.to_string_lossy().to_string()))
-                }
+                Ok(()) => ExtFunctionResult::Return(MontyObject::Path(
+                    target.to_string_lossy().to_string(),
+                )),
                 Err(e) => map_vfs_error(e, &path),
             }
         }
         OsFunction::Resolve | OsFunction::Absolute => {
             // No symlink resolution in BashKit VFS; just return absolute path
-            ExternalResult::Return(MontyObject::Path(path.to_string_lossy().to_string()))
+            ExtFunctionResult::Return(MontyObject::Path(path.to_string_lossy().to_string()))
         }
         // Getenv/GetEnviron handled above
-        _ => ExternalResult::Error(MontyException::new(
+        _ => ExtFunctionResult::Error(MontyException::new(
             ExcType::OSError,
             Some(format!("{function} not supported in virtual mode")),
         )),
@@ -660,8 +672,8 @@ fn resolve_python_path(path_str: &str, cwd: &Path) -> PathBuf {
     }
 }
 
-/// Map a BashKit VFS error to a Python exception via ExternalResult.
-fn map_vfs_error(e: crate::Error, path: &Path) -> ExternalResult {
+/// Map a BashKit VFS error to a Python exception via ExtFunctionResult.
+fn map_vfs_error(e: crate::Error, path: &Path) -> ExtFunctionResult {
     let msg = e.to_string();
     let path_str = path.display().to_string();
 
@@ -677,7 +689,7 @@ fn map_vfs_error(e: crate::Error, path: &Path) -> ExternalResult {
         (ExcType::OSError, 0)
     };
 
-    ExternalResult::Error(MontyException::new(
+    ExtFunctionResult::Error(MontyException::new(
         exc_type,
         Some(format!("[Errno {errno}] {msg}: '{path_str}'")),
     ))
@@ -699,11 +711,11 @@ fn get_bool_kwarg(kwargs: &[(MontyObject, MontyObject)], name: &str) -> Option<b
 }
 
 /// Handle os.getenv(key, default=None).
-fn handle_getenv(args: &[MontyObject], env: &HashMap<String, String>) -> ExternalResult {
+fn handle_getenv(args: &[MontyObject], env: &HashMap<String, String>) -> ExtFunctionResult {
     let key = match args.first() {
         Some(MontyObject::String(s)) => s.as_str(),
         _ => {
-            return ExternalResult::Error(MontyException::new(
+            return ExtFunctionResult::Error(MontyException::new(
                 ExcType::TypeError,
                 Some("getenv() requires a string argument".into()),
             ))
@@ -714,13 +726,13 @@ fn handle_getenv(args: &[MontyObject], env: &HashMap<String, String>) -> Externa
         Some(other) => other.clone(),
     };
     match env.get(key) {
-        Some(val) => ExternalResult::Return(MontyObject::String(val.clone())),
-        None => ExternalResult::Return(default),
+        Some(val) => ExtFunctionResult::Return(MontyObject::String(val.clone())),
+        None => ExtFunctionResult::Return(default),
     }
 }
 
 /// Handle os.environ → dict of all env vars.
-fn handle_get_environ(env: &HashMap<String, String>) -> ExternalResult {
+fn handle_get_environ(env: &HashMap<String, String>) -> ExtFunctionResult {
     let pairs: Vec<(MontyObject, MontyObject)> = env
         .iter()
         .map(|(k, v)| {
@@ -730,7 +742,7 @@ fn handle_get_environ(env: &HashMap<String, String>) -> ExternalResult {
             )
         })
         .collect();
-    ExternalResult::Return(MontyObject::dict(pairs))
+    ExtFunctionResult::Return(MontyObject::dict(pairs))
 }
 
 // ---------------------------------------------------------------------------
@@ -1206,7 +1218,7 @@ mod tests {
     #[tokio::test]
     async fn test_external_fn_return_value() {
         let handler: PythonExternalFnHandler = Arc::new(|_name, _args, _kwargs| {
-            Box::pin(async { ExternalResult::Return(MontyObject::Int(42)) })
+            Box::pin(async { ExtFunctionResult::Return(MontyObject::Int(42)) })
         });
         let r = run_with_external("print(get_answer())", &["get_answer"], handler).await;
         assert_eq!(r.exit_code, 0);
@@ -1225,7 +1237,7 @@ mod tests {
                     MontyObject::Int(i) => *i,
                     _ => 0,
                 };
-                ExternalResult::Return(MontyObject::Int(a + b))
+                ExtFunctionResult::Return(MontyObject::Int(a + b))
             })
         });
         let r = run_with_external("print(add(3, 4))", &["add"], handler).await;
@@ -1240,13 +1252,13 @@ mod tests {
                 for (k, v) in &kwargs {
                     if let (MontyObject::String(key), MontyObject::String(val)) = (k, v) {
                         if key == "name" {
-                            return ExternalResult::Return(MontyObject::String(format!(
+                            return ExtFunctionResult::Return(MontyObject::String(format!(
                                 "hello {val}"
                             )));
                         }
                     }
                 }
-                ExternalResult::Return(MontyObject::String("hello unknown".into()))
+                ExtFunctionResult::Return(MontyObject::String("hello unknown".into()))
             })
         });
         let r = run_with_external("print(greet(name='world'))", &["greet"], handler).await;
@@ -1258,7 +1270,7 @@ mod tests {
     async fn test_external_fn_error() {
         let handler: PythonExternalFnHandler = Arc::new(|_name, _args, _kwargs| {
             Box::pin(async {
-                ExternalResult::Error(MontyException::new(
+                ExtFunctionResult::Error(MontyException::new(
                     ExcType::RuntimeError,
                     Some("something went wrong".into()),
                 ))
@@ -1274,7 +1286,7 @@ mod tests {
     async fn test_external_fn_caught_error() {
         let handler: PythonExternalFnHandler = Arc::new(|_name, _args, _kwargs| {
             Box::pin(async {
-                ExternalResult::Error(MontyException::new(
+                ExtFunctionResult::Error(MontyException::new(
                     ExcType::ValueError,
                     Some("bad value".into()),
                 ))
@@ -1299,7 +1311,7 @@ mod tests {
             let c = counter_clone.clone();
             Box::pin(async move {
                 let val = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                ExternalResult::Return(MontyObject::Int(val))
+                ExtFunctionResult::Return(MontyObject::Int(val))
             })
         });
         let r = run_with_external(
@@ -1320,7 +1332,7 @@ mod tests {
                     MontyObject::String(s) => s.clone(),
                     _ => String::new(),
                 };
-                ExternalResult::Return(MontyObject::String(input.to_uppercase()))
+                ExtFunctionResult::Return(MontyObject::String(input.to_uppercase()))
             })
         });
         let r = run_with_external("print(upper('hello'))", &["upper"], handler).await;
@@ -1337,7 +1349,7 @@ mod tests {
                     "get_y" => MontyObject::Int(20),
                     _ => MontyObject::None,
                 };
-                ExternalResult::Return(result)
+                ExtFunctionResult::Return(result)
             })
         });
         let r = run_with_external("print(get_x() + get_y())", &["get_x", "get_y"], handler).await;

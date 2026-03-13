@@ -205,12 +205,12 @@ as raw `MontyObject` values.
 
 ```rust
 use bashkit::{Bash, PythonLimits, PythonExternalFnHandler};
-use bashkit::{MontyObject, ExternalResult};
+use bashkit::{MontyObject, ExtFunctionResult};
 use std::sync::Arc;
 
 let handler: PythonExternalFnHandler = Arc::new(|name, args, kwargs| {
     Box::pin(async move {
-        ExternalResult::Return(MontyObject::Int(42))
+        ExtFunctionResult::Return(MontyObject::Int(42))
     })
 });
 
@@ -223,11 +223,11 @@ let bash = Bash::builder()
     .build();
 ```
 
-**Handler signature:** `(function_name: String, positional_args: Vec<MontyObject>, keyword_args: Vec<(MontyObject, MontyObject)>) -> Pin<Box<dyn Future<Output = ExternalResult> + Send>>`
+**Handler signature:** `(function_name: String, positional_args: Vec<MontyObject>, keyword_args: Vec<(MontyObject, MontyObject)>) -> Pin<Box<dyn Future<Output = ExtFunctionResult> + Send>>`
 
 **Return values:**
-- `ExternalResult::Return(MontyObject)` — success, value returned to Python
-- `ExternalResult::Error(MontyException)` — raises a Python exception
+- `ExtFunctionResult::Return(MontyObject)` — success, value returned to Python
+- `ExtFunctionResult::Error(MontyException)` — raises a Python exception
 
 **Dispatch:** A single handler receives all registered function names; dispatch by
 `function_name` inside the handler.
@@ -236,7 +236,7 @@ let bash = Bash::builder()
 `BashBuilder::builtin()` and `ScriptedTool` callbacks — the host application
 registers trusted Rust code, untrusted scripts invoke it by name.
 
-**Unstable re-exports:** `MontyObject`, `ExternalResult`, `MontyException`, and
+**Unstable re-exports:** `MontyObject`, `ExtFunctionResult`, `MontyException`, and
 `ExcType` are re-exported from the `monty` crate (git-pinned, not on crates.io).
 These types may change in breaking ways between bashkit releases.
 
