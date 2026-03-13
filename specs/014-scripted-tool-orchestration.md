@@ -261,6 +261,22 @@ stdout/stderr/exit_code. The existing `bash` tool is preserved.
 
 Gated behind the `scripted_tool` feature flag in `bashkit-cli`.
 
+## Future: OpenAPI auto-generation (RFC)
+
+Planned but not yet implemented. See issue #523 for the full RFC.
+
+Goal: `ScriptedTool::from_openapi(spec, config)` to auto-generate tools from
+OpenAPI specs. Requires resolving:
+
+- OpenAPI parser crate selection (`oas3`, `openapiv3`, `openapi`)
+- Async callback support for HTTP calls
+- Naming conventions (operationId vs path-based)
+- Auth support scope (Bearer, API key, OAuth2)
+- Separate crate vs feature flag (`bashkit-openapi` vs `openapi` feature)
+
+Deferred until prerequisites (#519, #521) are stable and a Petstore prototype
+validates the approach.
+
 ## Security
 
 Inherits all bashkit sandbox guarantees:
