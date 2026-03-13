@@ -10,7 +10,7 @@
 //!
 //! Run with: cargo run --example custom_backend
 
-use bashkit::{async_trait, Bash, DirEntry, FileType, FsBackend, Metadata, PosixFs, Result};
+use bashkit::{Bash, DirEntry, FileType, FsBackend, Metadata, PosixFs, Result, async_trait};
 use std::collections::HashMap;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};

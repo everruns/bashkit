@@ -443,16 +443,14 @@ impl FileSystem for OverlayFs {
         self.remove_whiteout(&path);
 
         // Ensure parent directory exists in upper
-        if let Some(parent) = path.parent() {
-            if !self.upper.exists(parent).await.unwrap_or(false) {
-                // Copy parent directory structure from lower if it exists
-                if self.lower.exists(parent).await.unwrap_or(false) {
-                    self.upper.mkdir(parent, true).await?;
-                } else {
-                    return Err(
-                        IoError::new(ErrorKind::NotFound, "parent directory not found").into(),
-                    );
-                }
+        if let Some(parent) = path.parent()
+            && !self.upper.exists(parent).await.unwrap_or(false)
+        {
+            // Copy parent directory structure from lower if it exists
+            if self.lower.exists(parent).await.unwrap_or(false) {
+                self.upper.mkdir(parent, true).await?;
+            } else {
+                return Err(IoError::new(ErrorKind::NotFound, "parent directory not found").into());
             }
         }
 
@@ -461,13 +459,15 @@ impl FileSystem for OverlayFs {
 
         // If this write newly hides a lower file (not previously hidden by
         // upper override or whiteout), record the hidden lower contribution.
-        if lower_exists && !already_in_upper && !already_whited {
-            if let Ok(meta) = self.lower.stat(&path).await {
-                match meta.file_type {
-                    FileType::File => self.hide_lower_file(meta.size),
-                    FileType::Directory => self.hide_lower_dir(),
-                    _ => {}
-                }
+        if lower_exists
+            && !already_in_upper
+            && !already_whited
+            && let Ok(meta) = self.lower.stat(&path).await
+        {
+            match meta.file_type {
+                FileType::File => self.hide_lower_file(meta.size),
+                FileType::Directory => self.hide_lower_dir(),
+                _ => {}
             }
         }
 
@@ -503,10 +503,10 @@ impl FileSystem for OverlayFs {
             self.check_write_limits(existing.len() + content.len())?;
 
             // Ensure parent exists in upper
-            if let Some(parent) = path.parent() {
-                if !self.upper.exists(parent).await.unwrap_or(false) {
-                    self.upper.mkdir(parent, true).await?;
-                }
+            if let Some(parent) = path.parent()
+                && !self.upper.exists(parent).await.unwrap_or(false)
+            {
+                self.upper.mkdir(parent, true).await?;
             }
 
             // Copy existing content and append new content
@@ -561,20 +561,18 @@ impl FileSystem for OverlayFs {
         // so no additional deduction needed.
         if in_lower {
             // Newly hiding the lower entry only if there was no upper override
-            if !in_upper {
-                if let Ok(meta) = self.lower.stat(&path).await {
-                    match meta.file_type {
-                        FileType::File => self.hide_lower_file(meta.size),
-                        FileType::Directory => {
-                            self.hide_lower_dir();
-                            // THREAT[TM-DOS-038]: Recursive delete must track all
-                            // lower children for accurate usage deduction.
-                            if recursive {
-                                self.hide_lower_children_recursive(&path).await;
-                            }
+            if !in_upper && let Ok(meta) = self.lower.stat(&path).await {
+                match meta.file_type {
+                    FileType::File => self.hide_lower_file(meta.size),
+                    FileType::Directory => {
+                        self.hide_lower_dir();
+                        // THREAT[TM-DOS-038]: Recursive delete must track all
+                        // lower children for accurate usage deduction.
+                        if recursive {
+                            self.hide_lower_children_recursive(&path).await;
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
             self.add_whiteout(&path);
@@ -612,24 +610,24 @@ impl FileSystem for OverlayFs {
             std::collections::HashMap::new();
 
         // Get entries from lower (if not whited out)
-        if self.lower.exists(&path).await.unwrap_or(false) {
-            if let Ok(lower_entries) = self.lower.read_dir(&path).await {
-                for entry in lower_entries {
-                    // Skip whited out entries
-                    let entry_path = path.join(&entry.name);
-                    if !self.is_whiteout(&entry_path) {
-                        entries.insert(entry.name.clone(), entry);
-                    }
+        if self.lower.exists(&path).await.unwrap_or(false)
+            && let Ok(lower_entries) = self.lower.read_dir(&path).await
+        {
+            for entry in lower_entries {
+                // Skip whited out entries
+                let entry_path = path.join(&entry.name);
+                if !self.is_whiteout(&entry_path) {
+                    entries.insert(entry.name.clone(), entry);
                 }
             }
         }
 
         // Overlay with entries from upper (overriding lower)
-        if self.upper.exists(&path).await.unwrap_or(false) {
-            if let Ok(upper_entries) = self.upper.read_dir(&path).await {
-                for entry in upper_entries {
-                    entries.insert(entry.name.clone(), entry);
-                }
+        if self.upper.exists(&path).await.unwrap_or(false)
+            && let Ok(upper_entries) = self.upper.read_dir(&path).await
+        {
+            for entry in upper_entries {
+                entries.insert(entry.name.clone(), entry);
             }
         }
 
@@ -738,10 +736,10 @@ impl FileSystem for OverlayFs {
                 self.check_write_limits(content.len())?;
 
                 // Ensure parent dir exists in upper before write
-                if let Some(parent) = path.parent() {
-                    if !self.upper.exists(parent).await.unwrap_or(false) {
-                        self.upper.mkdir(parent, true).await?;
-                    }
+                if let Some(parent) = path.parent()
+                    && !self.upper.exists(parent).await.unwrap_or(false)
+                {
+                    self.upper.mkdir(parent, true).await?;
                 }
 
                 self.upper.write_file(&path, &content).await?;

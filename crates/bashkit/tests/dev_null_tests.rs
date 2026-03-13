@@ -6,8 +6,8 @@
 //! Security invariant: Redirects to /dev/null NEVER reach the filesystem layer.
 
 use bashkit::{
-    async_trait, Bash, DirEntry, Error, FileSystem, FileType, InMemoryFs, Metadata, MountableFs,
-    OverlayFs, Result,
+    Bash, DirEntry, Error, FileSystem, FileType, InMemoryFs, Metadata, MountableFs, OverlayFs,
+    Result, async_trait,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

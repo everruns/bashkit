@@ -7,6 +7,7 @@
 # This script installs:
 # - just: command runner (see justfile)
 # - gh: GitHub CLI (for PR/issue operations)
+# - doppler: secrets manager CLI
 
 set -euo pipefail
 
@@ -32,7 +33,7 @@ install_just() {
     fi
 
     info "Installing just (pre-built binary)..."
-    curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to "$INSTALL_DIR"
+    curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 2 https://just.systems/install.sh | bash -s -- --to "$INSTALL_DIR"
 
     if command -v just &> /dev/null; then
         info "just installed: $(just --version)"
@@ -43,7 +44,7 @@ install_just() {
 
 install_gh() {
     if command -v gh &> /dev/null; then
-        info "gh already installed: $(gh --version | grep -m1 '')"
+        info "gh already installed: $(gh --version | head -1)"
         return 0
     fi
 
@@ -56,11 +57,8 @@ install_gh() {
         *)       error "Unsupported architecture: $ARCH" ;;
     esac
 
-    GH_VERSION=$(curl -sS https://api.github.com/repos/cli/cli/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | sed 's/^v//')
-    if [[ -z "$GH_VERSION" ]]; then
-        GH_VERSION="2.63.2"
-        warn "Could not fetch latest gh version, using fallback: $GH_VERSION"
-    fi
+    # Pinned version — skip GitHub API call to avoid rate limits and hangs
+    GH_VERSION="2.63.2"
 
     GH_TARBALL="gh_${GH_VERSION}_linux_${GH_ARCH}.tar.gz"
     GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_TARBALL}"
@@ -68,16 +66,98 @@ install_gh() {
     TEMP_DIR=$(mktemp -d)
     trap "rm -rf $TEMP_DIR" EXIT
 
-    curl -sSL "$GH_URL" -o "$TEMP_DIR/$GH_TARBALL"
+    info "Downloading gh v${GH_VERSION}..."
+    curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 2 "$GH_URL" -o "$TEMP_DIR/$GH_TARBALL"
     tar -xzf "$TEMP_DIR/$GH_TARBALL" -C "$TEMP_DIR"
     cp "$TEMP_DIR/gh_${GH_VERSION}_linux_${GH_ARCH}/bin/gh" "$INSTALL_DIR/gh"
     chmod +x "$INSTALL_DIR/gh"
 
     if command -v gh &> /dev/null; then
-        info "gh installed: $(gh --version | grep -m1 '')"
+        info "gh installed: $(gh --version | head -1)"
     else
         error "Failed to install gh"
     fi
+}
+
+install_doppler() {
+    if command -v doppler &> /dev/null; then
+        info "doppler already installed: $(doppler --version 2>/dev/null)"
+        return 0
+    fi
+
+    info "Installing Doppler CLI (pre-built binary)..."
+
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64)  DOP_ARCH="amd64" ;;
+        aarch64) DOP_ARCH="arm64" ;;
+        *)       error "Unsupported architecture: $ARCH" ;;
+    esac
+
+    # Pinned version — skip GitHub API call to avoid rate limits and hangs
+    DOP_VERSION="3.75.2"
+
+    DOP_TARBALL="doppler_${DOP_VERSION}_linux_${DOP_ARCH}.tar.gz"
+    DOP_URL="https://github.com/DopplerHQ/cli/releases/download/${DOP_VERSION}/${DOP_TARBALL}"
+
+    TEMP_DIR=$(mktemp -d)
+    trap "rm -rf $TEMP_DIR" EXIT
+
+    info "Downloading doppler v${DOP_VERSION}..."
+    curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 2 "$DOP_URL" -o "$TEMP_DIR/$DOP_TARBALL"
+    tar -xzf "$TEMP_DIR/$DOP_TARBALL" -C "$TEMP_DIR"
+    cp "$TEMP_DIR/doppler" "$INSTALL_DIR/doppler"
+    chmod +x "$INSTALL_DIR/doppler"
+
+    if command -v doppler &> /dev/null; then
+        info "doppler installed: $(doppler --version 2>/dev/null)"
+    else
+        error "Failed to install doppler"
+    fi
+}
+
+configure_doppler() {
+    if [[ -z "${DOPPLER_TOKEN:-}" ]]; then
+        warn "DOPPLER_TOKEN not set, skipping Doppler configuration"
+        return 0
+    fi
+
+    if ! command -v doppler &> /dev/null; then
+        warn "doppler not installed, skipping configuration"
+        return 0
+    fi
+
+    info "Configuring Doppler..."
+    doppler setup --no-interactive 2>/dev/null \
+        && info "Doppler configured" \
+        || warn "Failed to configure Doppler"
+}
+
+configure_gh_auth() {
+    if ! command -v gh &> /dev/null; then
+        warn "gh not installed, skipping GitHub auth check"
+        return 0
+    fi
+
+    # Prefer Doppler-managed token for non-interactive cloud auth.
+    if command -v doppler &> /dev/null && [[ -n "${DOPPLER_TOKEN:-}" ]]; then
+        if doppler run -- bash -lc 'GH_TOKEN="$GITHUB_TOKEN" gh auth status >/dev/null 2>&1'; then
+            info "gh authenticated via Doppler token"
+            return 0
+        fi
+    fi
+
+    # Fallback: direct environment token (if present).
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        if GH_TOKEN="$GITHUB_TOKEN" gh auth status >/dev/null 2>&1; then
+            info "gh authenticated via GITHUB_TOKEN"
+        else
+            warn "GITHUB_TOKEN present but gh auth check failed"
+        fi
+        return 0
+    fi
+
+    warn "gh not authenticated. Set DOPPLER_TOKEN or GITHUB_TOKEN."
 }
 
 configure_gh_repo() {
@@ -129,17 +209,31 @@ main() {
     echo "========================================"
     echo ""
 
-    # Check GITHUB_TOKEN
-    if [ -z "${GITHUB_TOKEN:-}" ]; then
-        warn "GITHUB_TOKEN not set"
+    # Install tools in parallel
+    install_just & PID_JUST=$!
+    install_gh & PID_GH=$!
+    install_doppler & PID_DOPPLER=$!
+
+    INSTALL_FAILED=0
+    wait $PID_JUST    || INSTALL_FAILED=1
+    wait $PID_GH      || INSTALL_FAILED=1
+    wait $PID_DOPPLER || INSTALL_FAILED=1
+
+    if [[ "$INSTALL_FAILED" -eq 1 ]]; then
+        error "One or more tool installs failed"
     fi
 
-    install_just
-    install_gh
     configure_gh_repo
+    configure_doppler
+    configure_gh_auth
 
     echo ""
     info "Cloud environment ready"
+    echo ""
+    echo "Installed tools:"
+    echo "  - just $(just --version 2>/dev/null || echo '(not in PATH)')"
+    echo "  - gh $(gh --version 2>/dev/null | head -1 || echo '(not in PATH)')"
+    echo "  - doppler $(doppler --version 2>/dev/null || echo '(not in PATH)')"
     echo ""
     echo "Next steps:"
     echo "  just --list    # See available commands"

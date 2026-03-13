@@ -10,13 +10,13 @@
 #![allow(clippy::unwrap_used)]
 
 use async_trait::async_trait;
+use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use flate2::Compression;
 use std::io::{Read, Write};
 use std::path::Path;
 
-use super::{resolve_path, Builtin, Context};
+use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -757,7 +757,9 @@ impl Builtin for Gzip {
                     let decoder = GzDecoder::new(stdin.as_bytes());
                     match read_with_limit(decoder, compressed_size, max_size) {
                         Ok(output) => {
-                            return Ok(ExecResult::ok(String::from_utf8_lossy(&output).to_string()))
+                            return Ok(ExecResult::ok(
+                                String::from_utf8_lossy(&output).to_string(),
+                            ));
                         }
                         Err(e) => return Ok(ExecResult::err(format!("gzip: stdin: {}\n", e), 1)),
                     }

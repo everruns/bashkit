@@ -184,17 +184,17 @@ fn match_pattern(s: &str, pattern: &str) -> std::result::Result<String, String> 
     if has_group {
         // Extract the group pattern
         // For simplicity, handle common case: prefix\(.*\)suffix
-        if let Some(start) = pattern.find("\\(") {
-            if let Some(end) = pattern.find("\\)") {
-                let before = &pattern[..start];
-                let inner = &pattern[start + 2..end];
-                let _after = &pattern[end + 2..];
+        if let Some(start) = pattern.find("\\(")
+            && let Some(end) = pattern.find("\\)")
+        {
+            let before = &pattern[..start];
+            let inner = &pattern[start + 2..end];
+            let _after = &pattern[end + 2..];
 
-                // Simple: if before matches start, capture inner
-                if let Some(rest) = s.strip_prefix(before) {
-                    let matched = simple_match(rest, inner);
-                    return Ok(matched);
-                }
+            // Simple: if before matches start, capture inner
+            if let Some(rest) = s.strip_prefix(before) {
+                let matched = simple_match(rest, inner);
+                return Ok(matched);
             }
         }
         Ok(String::new())
@@ -240,11 +240,7 @@ fn count_match(s: &str, pattern: &str) -> usize {
         pi += 2;
     }
 
-    if pi >= p_chars.len() {
-        si
-    } else {
-        0
-    }
+    if pi >= p_chars.len() { si } else { 0 }
 }
 
 /// Simple match returning the matched portion

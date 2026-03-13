@@ -4,7 +4,7 @@
 //! are properly exported from the crate's public API.
 
 use bashkit::{
-    async_trait, Bash, DirEntry, Error, FileSystem, FileType, InMemoryFs, Metadata, Result,
+    Bash, DirEntry, Error, FileSystem, FileType, InMemoryFs, Metadata, Result, async_trait,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

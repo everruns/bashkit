@@ -36,7 +36,7 @@ use crate::builtins::Builtin;
 use crate::error::Error;
 use crate::{Bash, ExecResult, ExecutionLimits, OutputCallback};
 use async_trait::async_trait;
-use schemars::{schema_for, JsonSchema};
+use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -1276,8 +1276,8 @@ mod tests {
     // Issue #422: create_bash should not empty builtins after first call
     #[tokio::test]
     async fn test_create_bash_preserves_builtins() {
-        use crate::builtins::{Builtin, Context};
         use crate::ExecResult;
+        use crate::builtins::{Builtin, Context};
         use async_trait::async_trait;
 
         struct TestBuiltin;

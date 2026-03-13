@@ -173,18 +173,16 @@ impl Provider for AnthropicProvider {
 
             // Retry on 429 (rate limit) and 529 (overloaded)
             let retryable = status.as_u16() == 429 || status.as_u16() == 529;
-            if retryable {
-                if let Some(&delay) = delays.get(attempt) {
-                    eprintln!(
-                        "  [retry] Anthropic {} — waiting {}s (attempt {}/{})",
-                        status,
-                        delay,
-                        attempt + 1,
-                        delays.len()
-                    );
-                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
-                    continue;
-                }
+            if retryable && let Some(&delay) = delays.get(attempt) {
+                eprintln!(
+                    "  [retry] Anthropic {} — waiting {}s (attempt {}/{})",
+                    status,
+                    delay,
+                    attempt + 1,
+                    delays.len()
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                continue;
             }
 
             anyhow::bail!("Anthropic API error ({}): {}", status, error_msg);

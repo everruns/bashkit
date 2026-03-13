@@ -401,22 +401,22 @@ impl FileSystem for MountableFs {
         // Add mount points that are direct children of this directory
         let mounts = self.mounts.read().unwrap();
         for mount_path in mounts.keys() {
-            if mount_path.parent() == Some(&path) {
-                if let Some(name) = mount_path.file_name() {
-                    // Check if this entry already exists
-                    let name_str = name.to_string_lossy().to_string();
-                    if !entries.iter().any(|e| e.name == name_str) {
-                        entries.push(DirEntry {
-                            name: name_str,
-                            metadata: Metadata {
-                                file_type: FileType::Directory,
-                                size: 0,
-                                mode: 0o755,
-                                modified: std::time::SystemTime::now(),
-                                created: std::time::SystemTime::now(),
-                            },
-                        });
-                    }
+            if mount_path.parent() == Some(&path)
+                && let Some(name) = mount_path.file_name()
+            {
+                // Check if this entry already exists
+                let name_str = name.to_string_lossy().to_string();
+                if !entries.iter().any(|e| e.name == name_str) {
+                    entries.push(DirEntry {
+                        name: name_str,
+                        metadata: Metadata {
+                            file_type: FileType::Directory,
+                            size: 0,
+                            mode: 0o755,
+                            modified: std::time::SystemTime::now(),
+                            created: std::time::SystemTime::now(),
+                        },
+                    });
                 }
             }
         }

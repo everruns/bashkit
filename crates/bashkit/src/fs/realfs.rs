@@ -155,19 +155,19 @@ impl RealFs {
         }
 
         // Path doesn't exist yet - check that its parent is within root
-        if let Some(parent) = joined.parent() {
-            if parent.exists() {
-                let canon_parent = std::fs::canonicalize(parent)?;
-                if !canon_parent.starts_with(&self.root) {
-                    return Err(IoError::new(
-                        ErrorKind::PermissionDenied,
-                        "path escapes realfs root",
-                    ));
-                }
-                // Re-join the filename onto the canonicalized parent
-                if let Some(file_name) = joined.file_name() {
-                    return Ok(canon_parent.join(file_name));
-                }
+        if let Some(parent) = joined.parent()
+            && parent.exists()
+        {
+            let canon_parent = std::fs::canonicalize(parent)?;
+            if !canon_parent.starts_with(&self.root) {
+                return Err(IoError::new(
+                    ErrorKind::PermissionDenied,
+                    "path escapes realfs root",
+                ));
+            }
+            // Re-join the filename onto the canonicalized parent
+            if let Some(file_name) = joined.file_name() {
+                return Ok(canon_parent.join(file_name));
             }
         }
 

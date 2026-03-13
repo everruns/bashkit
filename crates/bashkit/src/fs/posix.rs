@@ -53,7 +53,7 @@ use std::sync::Arc;
 
 use super::backend::FsBackend;
 use super::limits::{FsLimits, FsUsage};
-use super::traits::{fs_errors, DirEntry, FileSystem, Metadata};
+use super::traits::{DirEntry, FileSystem, Metadata, fs_errors};
 use crate::error::Result;
 
 /// POSIX-compatible filesystem wrapper.
@@ -102,13 +102,12 @@ impl<B: FsBackend> PosixFs<B> {
 
     /// Check if parent directory exists.
     async fn check_parent_exists(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            if parent != Path::new("/")
-                && parent != Path::new("")
-                && !self.backend.exists(parent).await?
-            {
-                return Err(fs_errors::parent_not_found());
-            }
+        if let Some(parent) = path.parent()
+            && parent != Path::new("/")
+            && parent != Path::new("")
+            && !self.backend.exists(parent).await?
+        {
+            return Err(fs_errors::parent_not_found());
         }
         Ok(())
     }
@@ -118,10 +117,10 @@ impl<B: FsBackend> PosixFs<B> {
 impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
         // Check if it's a directory
-        if let Ok(meta) = self.backend.stat(path).await {
-            if meta.file_type.is_dir() {
-                return Err(fs_errors::is_a_directory());
-            }
+        if let Ok(meta) = self.backend.stat(path).await
+            && meta.file_type.is_dir()
+        {
+            return Err(fs_errors::is_a_directory());
         }
         self.backend.read(path).await
     }
@@ -131,10 +130,10 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
         self.check_parent_exists(path).await?;
 
         // Check if path is a directory
-        if let Ok(meta) = self.backend.stat(path).await {
-            if meta.file_type.is_dir() {
-                return Err(fs_errors::is_a_directory());
-            }
+        if let Ok(meta) = self.backend.stat(path).await
+            && meta.file_type.is_dir()
+        {
+            return Err(fs_errors::is_a_directory());
         }
 
         self.backend.write(path, content).await
@@ -142,10 +141,10 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
 
     async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()> {
         // Check if path is a directory
-        if let Ok(meta) = self.backend.stat(path).await {
-            if meta.file_type.is_dir() {
-                return Err(fs_errors::is_a_directory());
-            }
+        if let Ok(meta) = self.backend.stat(path).await
+            && meta.file_type.is_dir()
+        {
+            return Err(fs_errors::is_a_directory());
         }
 
         self.backend.append(path, content).await
@@ -173,10 +172,10 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
                 let mut current = PathBuf::from("/");
                 for component in parent.components().skip(1) {
                     current.push(component);
-                    if let Ok(meta) = self.backend.stat(&current).await {
-                        if !meta.file_type.is_dir() {
-                            return Err(fs_errors::already_exists("file exists"));
-                        }
+                    if let Ok(meta) = self.backend.stat(&current).await
+                        && !meta.file_type.is_dir()
+                    {
+                        return Err(fs_errors::already_exists("file exists"));
                     }
                 }
             }
@@ -198,10 +197,10 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
         // Check if it's actually a directory
-        if let Ok(meta) = self.backend.stat(path).await {
-            if !meta.file_type.is_dir() {
-                return Err(fs_errors::not_a_directory());
-            }
+        if let Ok(meta) = self.backend.stat(path).await
+            && !meta.file_type.is_dir()
+        {
+            return Err(fs_errors::not_a_directory());
         }
         self.backend.read_dir(path).await
     }
@@ -216,10 +215,10 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
 
     async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
         // Check source is not a directory
-        if let Ok(meta) = self.backend.stat(from).await {
-            if meta.file_type.is_dir() {
-                return Err(IoError::other("cannot copy directory").into());
-            }
+        if let Ok(meta) = self.backend.stat(from).await
+            && meta.file_type.is_dir()
+        {
+            return Err(IoError::other("cannot copy directory").into());
         }
         self.backend.copy(from, to).await
     }
@@ -272,10 +271,12 @@ mod tests {
         // Writing to it should fail
         let result = fs.write_file(Path::new("/tmp/testdir"), b"test").await;
         assert!(result.is_err());
-        assert!(result
-            .expect_err("write_file should fail")
-            .to_string()
-            .contains("directory"));
+        assert!(
+            result
+                .expect_err("write_file should fail")
+                .to_string()
+                .contains("directory")
+        );
     }
 
     #[tokio::test]
