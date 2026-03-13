@@ -4,9 +4,8 @@
 # Adapted from https://github.com/pydantic/monty CI JS-building pattern.
 #
 # Prerequisites:
-#   - npm trusted publisher configured for each platform package
-#   - GitHub environment "release-js" created in repo settings
-#   - NPM_TOKEN secret for fallback auth (trusted publishing preferred)
+#   - NPM_TOKEN secret with publish access (GitHub Settings > Secrets > Actions)
+#   - id-token: write permission for npm provenance (OIDC attestation)
 
 name: Publish JS
 
@@ -288,11 +287,8 @@ jobs:
 
     if: success()
 
-    environment:
-      name: release-js
-
     permissions:
-      contents: write
+      contents: read
       id-token: write
 
     steps:

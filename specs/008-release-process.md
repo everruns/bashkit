@@ -193,8 +193,8 @@ The CI workflows handle this automatically on GitHub Release.
 - **Trigger**: GitHub Release published (runs in parallel with publish.yml and publish-python.yml)
 - **Actions**: Builds native NAPI-RS bindings for all platforms, tests on Node 20/22, publishes to npm
 - **File**: `.github/workflows/publish-js.yml`
-- **Secret required**: `NPM_TOKEN` (npm access token, fallback for trusted publishing)
-- **Environment**: `release-js` (must exist in GitHub repo settings)
+- **Secret required**: `NPM_TOKEN` (npm access token)
+- **Auth**: `id-token: write` for npm provenance (OIDC attestation), same pattern as everruns/sdk
 
 #### JS native binding matrix
 
@@ -254,13 +254,13 @@ Python package version is read dynamically from `Cargo.toml` via maturin
 - Configure at: https://pypi.org/manage/project/bashkit/settings/publishing/
 - Add publisher: GitHub, repo `everruns/bashkit`, workflow `publish-python.yml`, environment `release-python`
 
-**npm Publishing**:
+**npm Publishing** (same pattern as everruns/sdk):
 
 - `NPM_TOKEN`: npm access token (GitHub Settings > Secrets > Actions)
   - Generate at: https://www.npmjs.com/settings/~/tokens
   - Type: Automation
-- After first publish, configure trusted publishing for each platform package:
-  - Go to each package on npmjs.com > Settings > Trusted Publisher > GitHub Actions > `everruns/bashkit`
+- Provenance enabled via `id-token: write` OIDC permission + `--provenance` flag
+- No separate GitHub environment required
 
 ## Example Conversation
 
