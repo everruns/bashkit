@@ -220,6 +220,31 @@ Run: `cargo run --example scripted_tool --features scripted_tool`
 - Built-in `discover` command (categories, tag filter, search, JSON, empty results)
 - Tags and category metadata on ToolDef
 
+## Shared context across callbacks
+
+Callbacks share state via the closure-capture pattern using `Arc`:
+
+```rust
+let token = Arc::new("Bearer secret".to_string());
+let t1 = Arc::clone(&token);
+let t2 = Arc::clone(&token);
+
+ScriptedTool::builder("api")
+    .tool(ToolDef::new("get_user", "..."), move |_| {
+        Ok(format!("auth: {}\n", t1))
+    })
+    .tool(ToolDef::new("get_orders", "..."), move |_| {
+        Ok(format!("auth: {}\n", t2))
+    })
+    .build();
+```
+
+For mutable shared state, use `Arc<Mutex<T>>`. State persists across
+`execute()` calls because `ToolCallback` is `Arc`-wrapped and cloned.
+
+No breaking API changes needed — the existing `ToolCallback` type supports
+`Arc`-captured closures naturally.
+
 ## MCP integration
 
 `McpServer::register_scripted_tool()` exposes a ScriptedTool as an MCP tool over JSON-RPC:

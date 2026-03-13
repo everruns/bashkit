@@ -48,6 +48,74 @@
 //! assert_eq!(resp.stdout.trim(), "hello Alice");
 //! # });
 //! ```
+//!
+//! # Sharing state across callbacks
+//!
+//! Use `Arc<Mutex<T>>` or `Arc<T>` to share resources (HTTP clients,
+//! auth tokens, caches) across multiple tool callbacks:
+//!
+//! ```rust
+//! use bashkit::{ScriptedTool, ToolArgs, ToolDef, Tool, ToolRequest};
+//! use std::sync::{Arc, Mutex};
+//!
+//! # tokio_test::block_on(async {
+//! // Shared auth token across callbacks
+//! let token = Arc::new("Bearer secret-token".to_string());
+//!
+//! let token_for_users = Arc::clone(&token);
+//! let token_for_orders = Arc::clone(&token);
+//!
+//! let mut tool = ScriptedTool::builder("api")
+//!     .tool(
+//!         ToolDef::new("get_user", "Fetch user (uses shared auth)"),
+//!         move |_args: &ToolArgs| {
+//!             Ok(format!("user data (auth: {})\n", token_for_users))
+//!         },
+//!     )
+//!     .tool(
+//!         ToolDef::new("get_orders", "Fetch orders (uses shared auth)"),
+//!         move |_args: &ToolArgs| {
+//!             Ok(format!("order data (auth: {})\n", token_for_orders))
+//!         },
+//!     )
+//!     .build();
+//!
+//! let resp = tool.execute(ToolRequest {
+//!     commands: "get_user && get_orders".to_string(),
+//!     timeout_ms: None,
+//! }).await;
+//! assert!(resp.stdout.contains("auth: Bearer secret-token"));
+//! # });
+//! ```
+//!
+//! For mutable shared state (counters, caches), use `Arc<Mutex<T>>`:
+//!
+//! ```rust
+//! use bashkit::{ScriptedTool, ToolArgs, ToolDef, Tool, ToolRequest};
+//! use std::sync::{Arc, Mutex};
+//!
+//! # tokio_test::block_on(async {
+//! let call_count = Arc::new(Mutex::new(0u64));
+//! let counter = Arc::clone(&call_count);
+//!
+//! let mut tool = ScriptedTool::builder("api")
+//!     .tool(
+//!         ToolDef::new("track", "Increment counter"),
+//!         move |_args: &ToolArgs| {
+//!             let mut c = counter.lock().expect("lock");
+//!             *c += 1;
+//!             Ok(format!("{c}\n"))
+//!         },
+//!     )
+//!     .build();
+//!
+//! tool.execute(ToolRequest {
+//!     commands: "track && track && track".to_string(),
+//!     timeout_ms: None,
+//! }).await;
+//! assert_eq!(*call_count.lock().expect("lock"), 3);
+//! # });
+//! ```
 
 mod execute;
 
@@ -713,5 +781,111 @@ mod tests {
             serde_json::from_str(resp.stdout.trim()).expect("stdout should be valid JSON");
         assert_eq!(parsed["name"], "Alice");
         assert_eq!(parsed["count"], "3"); // string, not int — no schema
+    }
+
+    // -- Shared context tests (closure-capture pattern) --
+
+    #[tokio::test]
+    async fn test_shared_arc_across_callbacks() {
+        use std::sync::{Arc, Mutex};
+
+        let token = Arc::new("Bearer secret".to_string());
+        let t1 = Arc::clone(&token);
+        let t2 = Arc::clone(&token);
+
+        let mut tool = ScriptedTool::builder("shared")
+            .tool(
+                ToolDef::new("get_user", "Fetch user"),
+                move |_: &ToolArgs| Ok(format!("user auth={}\n", t1)),
+            )
+            .tool(
+                ToolDef::new("get_orders", "Fetch orders"),
+                move |_: &ToolArgs| Ok(format!("orders auth={}\n", t2)),
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "get_user && get_orders".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        // Both callbacks see the same token
+        let lines: Vec<&str> = resp.stdout.trim().lines().collect();
+        assert!(lines[0].contains("auth=Bearer secret"));
+        assert!(lines[1].contains("auth=Bearer secret"));
+    }
+
+    #[tokio::test]
+    async fn test_shared_mutable_state_across_callbacks() {
+        use std::sync::{Arc, Mutex};
+
+        let counter = Arc::new(Mutex::new(0u64));
+        let c1 = Arc::clone(&counter);
+        let c2 = Arc::clone(&counter);
+
+        let mut tool = ScriptedTool::builder("shared_mut")
+            .tool(
+                ToolDef::new("inc", "Increment counter"),
+                move |_: &ToolArgs| {
+                    let mut c = c1.lock().expect("lock");
+                    *c += 1;
+                    Ok(format!("{c}\n"))
+                },
+            )
+            .tool(
+                ToolDef::new("get", "Get counter value"),
+                move |_: &ToolArgs| {
+                    let c = c2.lock().expect("lock");
+                    Ok(format!("{c}\n"))
+                },
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "inc\ninc\ninc\nget".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        // Counter should be 3 after three increments
+        let lines: Vec<&str> = resp.stdout.trim().lines().collect();
+        assert_eq!(lines.last().expect("last line"), &"3");
+    }
+
+    #[tokio::test]
+    async fn test_shared_state_persists_across_execute_calls() {
+        use std::sync::{Arc, Mutex};
+
+        let counter = Arc::new(Mutex::new(0u64));
+        let c = Arc::clone(&counter);
+
+        let mut tool = ScriptedTool::builder("persist")
+            .tool(ToolDef::new("inc", "Increment"), move |_: &ToolArgs| {
+                let mut c = c.lock().expect("lock");
+                *c += 1;
+                Ok(format!("{c}\n"))
+            })
+            .build();
+
+        // First execute: increment twice
+        tool.execute(ToolRequest {
+            commands: "inc\ninc".into(),
+            timeout_ms: None,
+        })
+        .await;
+
+        // Second execute: increment once more
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "inc".into(),
+                timeout_ms: None,
+            })
+            .await;
+
+        // Counter persists across execute() calls via Arc
+        assert_eq!(resp.stdout.trim(), "3");
     }
 }
