@@ -80,7 +80,8 @@ async function runAgent(userMessage) {
   // Loop until the model produces a final text response
   for (let step = 0; step < 10; step++) {
     const response = await openai.chat.completions.create({
-      model: "gpt-4.1-mini",
+      model: "gpt-5.4",
+      reasoning_effort: "none",
       messages,
       tools,
     });

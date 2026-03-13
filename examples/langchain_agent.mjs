@@ -53,8 +53,8 @@ async function runAgent(userMessage) {
   console.log(`\nUser: ${userMessage}\n`);
 
   const model = new ChatOpenAI({
-    model: "gpt-4.1-mini",
-    temperature: 0,
+    model: "gpt-5.4",
+    modelKwargs: { reasoning_effort: "none" },
   });
 
   const agent = createReactAgent({

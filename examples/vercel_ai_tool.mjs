@@ -47,7 +47,7 @@ async function runAgent(userMessage) {
   console.log(`\nUser: ${userMessage}\n`);
 
   const result = await generateText({
-    model: openai("gpt-4.1-mini"),
+    model: openai("gpt-5.4", { reasoningEffort: "none" }),
     system: [
       "You have access to a sandboxed bash interpreter.",
       "Use the bash tool to run commands when needed.",

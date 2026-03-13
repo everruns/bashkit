@@ -183,6 +183,21 @@ jobs:
           node examples/data_pipeline.mjs
           node examples/llm_tool.mjs
 
+      - name: Install AI SDK dependencies
+        run: npm install openai ai @ai-sdk/openai @langchain/core @langchain/langgraph @langchain/openai zod
+        working-directory: crates/bashkit-js
+
+      # External API dependency — don't block release on OpenAI outages
+      - name: Run AI examples
+        continue-on-error: true
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          node examples/openai_tool.mjs
+          node examples/vercel_ai_tool.mjs
+          node examples/langchain_agent.mjs
+
   # ============================================================================
   # Test bindings on Linux
   # ============================================================================
@@ -261,6 +276,23 @@ jobs:
           --platform ${{ steps.docker.outputs.PLATFORM }}
           ${{ steps.docker.outputs.IMAGE }}
           sh -c "node examples/bash_basics.mjs && node examples/data_pipeline.mjs && node examples/llm_tool.mjs"
+
+      - name: Install AI SDK dependencies
+        run: npm install openai ai @ai-sdk/openai @langchain/core @langchain/langgraph @langchain/openai zod
+        working-directory: crates/bashkit-js
+
+      # External API dependency — don't block release on OpenAI outages
+      - name: Run AI examples
+        continue-on-error: true
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: >
+          docker run --rm -v ${{ github.workspace }}:${{ github.workspace }}
+          -w ${{ github.workspace }}
+          -e OPENAI_API_KEY
+          --platform ${{ steps.docker.outputs.PLATFORM }}
+          ${{ steps.docker.outputs.IMAGE }}
+          sh -c "node examples/openai_tool.mjs && node examples/vercel_ai_tool.mjs && node examples/langchain_agent.mjs"
 
   # ============================================================================
   # Test WASI target
