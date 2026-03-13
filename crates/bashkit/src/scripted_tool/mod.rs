@@ -70,6 +70,10 @@ pub struct ToolDef {
     pub description: String,
     /// JSON Schema describing accepted arguments. Empty object if unspecified.
     pub input_schema: serde_json::Value,
+    /// Tags for categorical classification (e.g. `["read", "user"]`).
+    pub tags: Vec<String>,
+    /// Category for grouping (e.g. `"users"`, `"orders"`).
+    pub category: Option<String>,
 }
 
 impl ToolDef {
@@ -79,12 +83,26 @@ impl ToolDef {
             name: name.into(),
             description: description.into(),
             input_schema: serde_json::Value::Object(Default::default()),
+            tags: Vec::new(),
+            category: None,
         }
     }
 
     /// Attach a JSON Schema for the tool's input parameters.
     pub fn with_schema(mut self, schema: serde_json::Value) -> Self {
         self.input_schema = schema;
+        self
+    }
+
+    /// Add tags for categorical classification.
+    pub fn with_tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.tags = tags.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Set category for grouping.
+    pub fn with_category(mut self, category: impl Into<String>) -> Self {
+        self.category = Some(category.into());
         self
     }
 }

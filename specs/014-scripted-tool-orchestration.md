@@ -25,15 +25,20 @@ pub struct ToolDef {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,  // JSON Schema, empty object if unset
+    pub tags: Vec<String>,               // categorical tags (e.g. ["read", "user"])
+    pub category: Option<String>,        // grouping category (e.g. "users")
 }
 
 impl ToolDef {
     pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self;
     pub fn with_schema(self, schema: serde_json::Value) -> Self;
+    pub fn with_tags(self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self;
+    pub fn with_category(self, category: impl Into<String>) -> Self;
 }
 ```
 
 Standard OpenAPI fields: `name`, `description`, `input_schema`. Schema is optional — defaults to `{}`.
+Tags and category are optional metadata for progressive discovery.
 
 ### ToolArgs — parsed arguments passed to callbacks
 
@@ -115,6 +120,19 @@ Implements the `Tool` trait. On each `execute()`:
 
 Reusable — multiple `execute()` calls share the same `Arc<ToolCallback>` instances.
 
+### Built-in `discover` command
+
+A built-in `discover` command is automatically registered for progressive tool discovery:
+
+| Command | Output |
+|---------|--------|
+| `discover` | List all tools |
+| `discover --categories` | List categories with tool counts |
+| `discover --category <name>` | List tools in a category |
+| `discover --tag <tag>` | Filter tools by tag |
+| `discover --search <keyword>` | Substring search in name/description (case-insensitive) |
+| `discover --json` | JSON output (combinable with above) |
+
 ### Built-in `help` command
 
 A built-in `help` command is automatically registered for runtime schema introspection:
@@ -172,6 +190,10 @@ scripted_tool/
 Public exports from `lib.rs` (gated by `scripted_tool` feature):
 `ToolDef`, `ToolArgs`, `ToolCallback`, `ScriptedTool`, `ScriptedToolBuilder`.
 
+Built-in commands (auto-registered, not user-visible):
+- `help` — runtime schema introspection
+- `discover` — progressive tool discovery by category/tag/search
+
 ## Example
 
 `crates/bashkit/examples/scripted_tool.rs` — e-commerce API demo with get_user, list_orders, get_inventory, create_discount. Uses `ToolDef` + closures (no trait impls needed).
@@ -180,7 +202,7 @@ Run: `cargo run --example scripted_tool --features scripted_tool`
 
 ## Test coverage
 
-39+ unit tests covering:
+52+ unit tests covering:
 - Builder configuration (name, description, defaults)
 - Introspection (help, system_prompt, schemas, schema rendering)
 - Flag parsing (`--key value`, `--key=value`, boolean flags, type coercion)
@@ -195,6 +217,8 @@ Run: `cargo run --example scripted_tool --features scripted_tool`
 - Multiple sequential `execute()` calls (Arc reuse)
 - Built-in `help` command (list, human-readable, JSON, jq pipeline, unknown tool)
 - Compact prompt mode (omits Usage lines, includes help tip)
+- Built-in `discover` command (categories, tag filter, search, JSON, empty results)
+- Tags and category metadata on ToolDef
 
 ## Security
 

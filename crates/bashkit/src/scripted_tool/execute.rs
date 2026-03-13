@@ -187,11 +187,17 @@ impl Builtin for HelpBuiltin {
         };
 
         if json_mode {
-            let schema = serde_json::json!({
+            let mut schema = serde_json::json!({
                 "name": def.name,
                 "description": def.description,
                 "input_schema": def.input_schema,
             });
+            if !def.tags.is_empty() {
+                schema["tags"] = serde_json::json!(def.tags);
+            }
+            if let Some(ref cat) = def.category {
+                schema["category"] = serde_json::json!(cat);
+            }
             let output = serde_json::to_string_pretty(&schema).unwrap_or_else(|_| "{}".to_string());
             Ok(ExecResult::ok(format!("{output}\n")))
         } else {
@@ -211,6 +217,150 @@ impl HelpBuiltin {
             out.push_str(&format!("{:<20} {}\n", t.name, t.description));
         }
         out
+    }
+}
+
+// ============================================================================
+// DiscoverBuiltin — progressive discovery of tool collections
+// ============================================================================
+
+/// Built-in `discover` command for browsing tools by category, tag, or search.
+///
+/// Modes:
+/// - `discover --categories`: list all categories with tool counts
+/// - `discover --category <name>`: list tools in a category
+/// - `discover --tag <tag>`: filter tools by tag
+/// - `discover --search <keyword>`: substring search in name and description
+/// - `discover --json`: output in JSON format (combinable with above)
+struct DiscoverBuiltin {
+    tools: Vec<ToolDef>,
+}
+
+#[async_trait]
+impl Builtin for DiscoverBuiltin {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        let args = ctx.args;
+        let json_mode = args.iter().any(|a| a == "--json");
+
+        // --categories: list all categories with counts
+        if args.iter().any(|a| a == "--categories") {
+            return Ok(ExecResult::ok(self.format_categories(json_mode)));
+        }
+
+        // --category <name>
+        if let Some(pos) = args.iter().position(|a| a == "--category") {
+            let cat = args.get(pos + 1).map(|s| s.as_str()).unwrap_or("");
+            let matched: Vec<&ToolDef> = self
+                .tools
+                .iter()
+                .filter(|t| t.category.as_deref() == Some(cat))
+                .collect();
+            return Ok(ExecResult::ok(self.format_tools(&matched, json_mode)));
+        }
+
+        // --tag <tag>
+        if let Some(pos) = args.iter().position(|a| a == "--tag") {
+            let tag = args.get(pos + 1).map(|s| s.as_str()).unwrap_or("");
+            let matched: Vec<&ToolDef> = self
+                .tools
+                .iter()
+                .filter(|t| t.tags.iter().any(|tg| tg == tag))
+                .collect();
+            return Ok(ExecResult::ok(self.format_tools(&matched, json_mode)));
+        }
+
+        // --search <keyword>
+        if let Some(pos) = args.iter().position(|a| a == "--search") {
+            let keyword = args
+                .get(pos + 1)
+                .map(|s| s.to_lowercase())
+                .unwrap_or_default();
+            let matched: Vec<&ToolDef> = self
+                .tools
+                .iter()
+                .filter(|t| {
+                    t.name.to_lowercase().contains(&keyword)
+                        || t.description.to_lowercase().contains(&keyword)
+                })
+                .collect();
+            return Ok(ExecResult::ok(self.format_tools(&matched, json_mode)));
+        }
+
+        // No specific filter → list all
+        let all: Vec<&ToolDef> = self.tools.iter().collect();
+        Ok(ExecResult::ok(self.format_tools(&all, json_mode)))
+    }
+}
+
+impl DiscoverBuiltin {
+    fn format_categories(&self, json_mode: bool) -> String {
+        let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+        let mut uncategorized = 0usize;
+        for t in &self.tools {
+            match &t.category {
+                Some(cat) => *counts.entry(cat.as_str()).or_default() += 1,
+                None => uncategorized += 1,
+            }
+        }
+
+        if json_mode {
+            let entries: Vec<serde_json::Value> = counts
+                .iter()
+                .map(|(cat, count)| serde_json::json!({"category": cat, "count": count}))
+                .chain(if uncategorized > 0 {
+                    Some(serde_json::json!({"category": null, "count": uncategorized}))
+                } else {
+                    None
+                })
+                .collect();
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&entries).unwrap_or_default()
+            )
+        } else {
+            let mut out = String::new();
+            for (cat, count) in &counts {
+                out.push_str(&format!("{:<20} ({} tools)\n", cat, count));
+            }
+            if uncategorized > 0 {
+                out.push_str(&format!(
+                    "{:<20} ({} tools)\n",
+                    "(uncategorized)", uncategorized
+                ));
+            }
+            out
+        }
+    }
+
+    fn format_tools(&self, tools: &[&ToolDef], json_mode: bool) -> String {
+        if json_mode {
+            let entries: Vec<serde_json::Value> = tools
+                .iter()
+                .map(|t| {
+                    let mut obj = serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                    });
+                    if !t.tags.is_empty() {
+                        obj["tags"] = serde_json::json!(t.tags);
+                    }
+                    if let Some(ref cat) = t.category {
+                        obj["category"] = serde_json::json!(cat);
+                    }
+                    obj
+                })
+                .collect();
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&entries).unwrap_or_default()
+            )
+        } else {
+            let mut out = String::new();
+            for t in tools {
+                out.push_str(&format!("{:<20} {}\n", t.name, t.description));
+            }
+            out
+        }
     }
 }
 
@@ -238,7 +388,7 @@ impl ScriptedTool {
             builder = builder.builtin(name, builtin);
         }
 
-        // Register the built-in `help` command for runtime introspection
+        // Register built-in commands for runtime introspection
         let tool_defs: Vec<ToolDef> = self
             .tools
             .iter()
@@ -246,11 +396,29 @@ impl ScriptedTool {
                 name: t.def.name.clone(),
                 description: t.def.description.clone(),
                 input_schema: t.def.input_schema.clone(),
+                tags: t.def.tags.clone(),
+                category: t.def.category.clone(),
+            })
+            .collect();
+        let tool_defs_for_discover = tool_defs
+            .iter()
+            .map(|t| ToolDef {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                input_schema: t.input_schema.clone(),
+                tags: t.tags.clone(),
+                category: t.category.clone(),
             })
             .collect();
         builder = builder.builtin(
             "help".to_string(),
             Box::new(HelpBuiltin { tools: tool_defs }),
+        );
+        builder = builder.builtin(
+            "discover".to_string(),
+            Box::new(DiscoverBuiltin {
+                tools: tool_defs_for_discover,
+            }),
         );
 
         builder.build()
@@ -343,7 +511,9 @@ impl ScriptedTool {
              - Use `set -e` to stop on first error\n\
              - Standard builtins (echo, grep, sed, awk, etc.) are available\n\
              - Use `help <tool>` for usage details, `help <tool> --json` for schema\n\
-             - Use `help --list` to see all available tool commands\n",
+             - Use `help --list` to see all available tool commands\n\
+             - Use `discover --categories` to browse by category\n\
+             - Use `discover --search <keyword>` to find tools\n",
         );
 
         prompt
@@ -767,6 +937,223 @@ mod tests {
         let sp = tool.system_prompt();
         assert!(sp.contains("help <tool>"));
         assert!(sp.contains("help --list"));
+    }
+
+    // -- Discover builtin tests --
+
+    fn build_categorized_tool() -> ScriptedTool {
+        ScriptedTool::builder("api")
+            .tool(
+                ToolDef::new("get_user", "Fetch user by ID")
+                    .with_category("users")
+                    .with_tags(["read", "user"]),
+                |_: &super::ToolArgs| Ok("ok\n".into()),
+            )
+            .tool(
+                ToolDef::new("create_user", "Create a new user")
+                    .with_category("users")
+                    .with_tags(["write", "user"]),
+                |_: &super::ToolArgs| Ok("ok\n".into()),
+            )
+            .tool(
+                ToolDef::new("list_orders", "List all orders")
+                    .with_category("orders")
+                    .with_tags(["read", "order"]),
+                |_: &super::ToolArgs| Ok("ok\n".into()),
+            )
+            .tool(
+                ToolDef::new("health", "Health check"),
+                |_: &super::ToolArgs| Ok("ok\n".into()),
+            )
+            .build()
+    }
+
+    #[tokio::test]
+    async fn test_discover_categories() {
+        use crate::tool::Tool;
+
+        let mut tool = build_categorized_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --categories".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("users"));
+        assert!(resp.stdout.contains("orders"));
+        assert!(resp.stdout.contains("(2 tools)"));
+        assert!(resp.stdout.contains("(1 tools)"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_by_category() {
+        use crate::tool::Tool;
+
+        let mut tool = build_categorized_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --category users".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("get_user"));
+        assert!(resp.stdout.contains("create_user"));
+        assert!(!resp.stdout.contains("list_orders"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_by_tag() {
+        use crate::tool::Tool;
+
+        let mut tool = build_categorized_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --tag read".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("get_user"));
+        assert!(resp.stdout.contains("list_orders"));
+        assert!(!resp.stdout.contains("create_user"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_search() {
+        use crate::tool::Tool;
+
+        let mut tool = build_categorized_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --search order".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("list_orders"));
+        assert!(!resp.stdout.contains("get_user"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_search_case_insensitive() {
+        use crate::tool::Tool;
+
+        let mut tool = build_categorized_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --search USER".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("get_user"));
+        assert!(resp.stdout.contains("create_user"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_json_output() {
+        use crate::tool::Tool;
+
+        let mut tool = build_categorized_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --category users --json".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        let parsed: serde_json::Value =
+            serde_json::from_str(resp.stdout.trim()).expect("should be valid JSON");
+        assert!(parsed.is_array());
+        let arr = parsed.as_array().expect("should be array");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["name"], "get_user");
+    }
+
+    #[tokio::test]
+    async fn test_discover_categories_json() {
+        use crate::tool::Tool;
+
+        let mut tool = build_categorized_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --categories --json".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        let parsed: serde_json::Value =
+            serde_json::from_str(resp.stdout.trim()).expect("should be valid JSON");
+        assert!(parsed.is_array());
+    }
+
+    #[tokio::test]
+    async fn test_discover_no_args_lists_all() {
+        use crate::tool::Tool;
+
+        let mut tool = build_categorized_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("get_user"));
+        assert!(resp.stdout.contains("list_orders"));
+        assert!(resp.stdout.contains("health"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_empty_search_result() {
+        use crate::tool::Tool;
+
+        let mut tool = build_categorized_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --search nonexistent".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.trim().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_help_json_includes_tags_and_category() {
+        use crate::tool::Tool;
+
+        let mut tool = build_categorized_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "help get_user --json".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        let parsed: serde_json::Value =
+            serde_json::from_str(resp.stdout.trim()).expect("should be valid JSON");
+        assert_eq!(parsed["category"], "users");
+        assert!(parsed["tags"]
+            .as_array()
+            .expect("tags should be array")
+            .contains(&serde_json::json!("read")));
+    }
+
+    #[test]
+    fn test_system_prompt_includes_discover_tip() {
+        use crate::tool::Tool;
+
+        let tool = ScriptedTool::builder("test")
+            .tool(ToolDef::new("noop", "No-op"), |_: &super::ToolArgs| {
+                Ok("ok\n".into())
+            })
+            .build();
+        let sp = tool.system_prompt();
+        assert!(sp.contains("discover --categories"));
+        assert!(sp.contains("discover --search"));
     }
 
     #[tokio::test]
