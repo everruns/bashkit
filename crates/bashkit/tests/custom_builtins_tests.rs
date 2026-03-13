@@ -4,8 +4,8 @@
 
 use async_trait::async_trait;
 use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, FileSystem, InMemoryFs};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Helper struct for testing - a simple echo with prefix
 struct PrefixEcho {

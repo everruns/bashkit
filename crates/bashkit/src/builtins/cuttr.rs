@@ -231,10 +231,10 @@ fn parse_position_spec(spec: &str) -> Vec<Position> {
                 let e: usize = end.parse().unwrap_or(s);
                 positions.push(Position::Range(s, e));
             }
-        } else if let Ok(f) = part.parse::<usize>() {
-            if f > 0 {
-                positions.push(Position::Single(f));
-            }
+        } else if let Ok(f) = part.parse::<usize>()
+            && f > 0
+        {
+            positions.push(Position::Single(f));
         }
     }
 
@@ -407,73 +407,74 @@ fn expand_char_set(spec: &str) -> Vec<char> {
 
     while i < len {
         // Check for POSIX character class [:class:]
-        if char_vec[i] == '[' && i + 1 < len && char_vec[i + 1] == ':' {
-            if let Some(end) = spec[spec
+        if char_vec[i] == '['
+            && i + 1 < len
+            && char_vec[i + 1] == ':'
+            && let Some(end) = spec[spec
                 .char_indices()
                 .nth(i + 2)
                 .map_or(spec.len(), |(pos, _)| pos)..]
                 .find(":]")
-            {
-                let class_start = spec
-                    .char_indices()
-                    .nth(i + 2)
-                    .map_or(spec.len(), |(pos, _)| pos);
-                let class_name = &spec[class_start..class_start + end];
-                match class_name {
-                    "lower" => chars.extend('a'..='z'),
-                    "upper" => chars.extend('A'..='Z'),
-                    "digit" => chars.extend('0'..='9'),
-                    "alpha" => {
-                        chars.extend('a'..='z');
-                        chars.extend('A'..='Z');
-                    }
-                    "alnum" => {
-                        chars.extend('a'..='z');
-                        chars.extend('A'..='Z');
-                        chars.extend('0'..='9');
-                    }
-                    "space" => chars.extend([' ', '\t', '\n', '\r', '\x0b', '\x0c']),
-                    "blank" => chars.extend([' ', '\t']),
-                    "punct" => {
-                        for code in 0x21u8..=0x7e {
-                            let c = code as char;
-                            if !c.is_ascii_alphanumeric() {
-                                chars.push(c);
-                            }
+        {
+            let class_start = spec
+                .char_indices()
+                .nth(i + 2)
+                .map_or(spec.len(), |(pos, _)| pos);
+            let class_name = &spec[class_start..class_start + end];
+            match class_name {
+                "lower" => chars.extend('a'..='z'),
+                "upper" => chars.extend('A'..='Z'),
+                "digit" => chars.extend('0'..='9'),
+                "alpha" => {
+                    chars.extend('a'..='z');
+                    chars.extend('A'..='Z');
+                }
+                "alnum" => {
+                    chars.extend('a'..='z');
+                    chars.extend('A'..='Z');
+                    chars.extend('0'..='9');
+                }
+                "space" => chars.extend([' ', '\t', '\n', '\r', '\x0b', '\x0c']),
+                "blank" => chars.extend([' ', '\t']),
+                "punct" => {
+                    for code in 0x21u8..=0x7e {
+                        let c = code as char;
+                        if !c.is_ascii_alphanumeric() {
+                            chars.push(c);
                         }
-                    }
-                    "xdigit" => {
-                        chars.extend('0'..='9');
-                        chars.extend('A'..='F');
-                        chars.extend('a'..='f');
-                    }
-                    "print" => {
-                        for code in 0x20u8..=0x7e {
-                            chars.push(code as char);
-                        }
-                    }
-                    "graph" => {
-                        for code in 0x21u8..=0x7e {
-                            chars.push(code as char);
-                        }
-                    }
-                    "cntrl" => {
-                        for code in 0u8..=0x1f {
-                            chars.push(code as char);
-                        }
-                        chars.push(0x7f as char);
-                    }
-                    _ => {
-                        chars.push('[');
-                        i += 1;
-                        continue;
                     }
                 }
-                // Count chars in the class spec to advance properly
-                let class_char_count = class_name.chars().count();
-                i += 2 + class_char_count + 2; // skip past [: + class + :]
-                continue;
+                "xdigit" => {
+                    chars.extend('0'..='9');
+                    chars.extend('A'..='F');
+                    chars.extend('a'..='f');
+                }
+                "print" => {
+                    for code in 0x20u8..=0x7e {
+                        chars.push(code as char);
+                    }
+                }
+                "graph" => {
+                    for code in 0x21u8..=0x7e {
+                        chars.push(code as char);
+                    }
+                }
+                "cntrl" => {
+                    for code in 0u8..=0x1f {
+                        chars.push(code as char);
+                    }
+                    chars.push(0x7f as char);
+                }
+                _ => {
+                    chars.push('[');
+                    i += 1;
+                    continue;
+                }
             }
+            // Count chars in the class spec to advance properly
+            let class_char_count = class_name.chars().count();
+            i += 2 + class_char_count + 2; // skip past [: + class + :]
+            continue;
         }
 
         let c = char_vec[i];

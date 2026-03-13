@@ -167,19 +167,19 @@ fn parse_date_string(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTim
 
     if let Some(ref re) = re_compound {
         let lower = s.to_lowercase();
-        if let Some(caps) = re.captures(&lower) {
-            if let Some(base_match) = caps.get(1) {
-                let sign = if &caps[2] == "-" { -1i64 } else { 1i64 };
-                let n: i64 = caps[3].parse().unwrap_or(0);
-                let unit = &caps[4];
+        if let Some(caps) = re.captures(&lower)
+            && let Some(base_match) = caps.get(1)
+        {
+            let sign = if &caps[2] == "-" { -1i64 } else { 1i64 };
+            let n: i64 = caps[3].parse().unwrap_or(0);
+            let unit = &caps[4];
 
-                // Use original case for base string to handle epoch (@N)
-                // and ISO dates correctly.
-                let orig_base = s[..base_match.end()].trim();
-                if let Ok(base_dt) = parse_base_date(orig_base, now) {
-                    let offset = unit_duration(unit, sign * n);
-                    return Ok(base_dt + offset);
-                }
+            // Use original case for base string to handle epoch (@N)
+            // and ISO dates correctly.
+            let orig_base = s[..base_match.end()].trim();
+            if let Ok(base_dt) = parse_base_date(orig_base, now) {
+                let offset = unit_duration(unit, sign * n);
+                return Ok(base_dt + offset);
             }
         }
     }

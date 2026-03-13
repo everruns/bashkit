@@ -297,10 +297,10 @@ impl<'a> Lexer<'a> {
         let mut fd_str = String::new();
 
         // Peek at the first digit - we know it's a digit from the match
-        if let Some(ch) = self.peek_char() {
-            if ch.is_ascii_digit() {
-                fd_str.push(ch);
-            }
+        if let Some(ch) = self.peek_char()
+            && ch.is_ascii_digit()
+        {
+            fd_str.push(ch);
         }
 
         // Check if it's a single digit followed by > or <
@@ -308,49 +308,49 @@ impl<'a> Lexer<'a> {
         let input_remaining: String = self.chars.clone().collect();
 
         // Check patterns: "N>" "N>>" "N>&" "N<" "N<&"
-        if fd_str.len() == 1 {
-            if let Some(first_digit) = fd_str.chars().next() {
-                let rest = input_remaining.get(1..).unwrap_or(""); // Skip the digit we already matched
+        if fd_str.len() == 1
+            && let Some(first_digit) = fd_str.chars().next()
+        {
+            let rest = input_remaining.get(1..).unwrap_or(""); // Skip the digit we already matched
 
-                if rest.starts_with(">>") {
-                    // N>> - append redirect with fd
-                    let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
-                    self.advance(); // consume digit
-                    self.advance(); // consume >
-                    self.advance(); // consume >
-                    return Some(Token::RedirectFdAppend(fd));
-                } else if rest.starts_with(">&") {
-                    // N>&M - duplicate fd
-                    let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
-                    self.advance(); // consume digit
-                    self.advance(); // consume >
-                    self.advance(); // consume &
+            if rest.starts_with(">>") {
+                // N>> - append redirect with fd
+                let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
+                self.advance(); // consume digit
+                self.advance(); // consume >
+                self.advance(); // consume >
+                return Some(Token::RedirectFdAppend(fd));
+            } else if rest.starts_with(">&") {
+                // N>&M - duplicate fd
+                let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
+                self.advance(); // consume digit
+                self.advance(); // consume >
+                self.advance(); // consume &
 
-                    // Read the target fd number
-                    let mut target_str = String::new();
-                    while let Some(c) = self.peek_char() {
-                        if c.is_ascii_digit() {
-                            target_str.push(c);
-                            self.advance();
-                        } else {
-                            break;
-                        }
+                // Read the target fd number
+                let mut target_str = String::new();
+                while let Some(c) = self.peek_char() {
+                    if c.is_ascii_digit() {
+                        target_str.push(c);
+                        self.advance();
+                    } else {
+                        break;
                     }
+                }
 
-                    if target_str.is_empty() {
-                        // Just N>& without target - treat as DupOutput with fd
-                        return Some(Token::RedirectFd(fd));
-                    }
-
-                    let target_fd: i32 = target_str.parse().unwrap_or(1);
-                    return Some(Token::DupFd(fd, target_fd));
-                } else if rest.starts_with('>') {
-                    // N> - redirect with fd
-                    let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
-                    self.advance(); // consume digit
-                    self.advance(); // consume >
+                if target_str.is_empty() {
+                    // Just N>& without target - treat as DupOutput with fd
                     return Some(Token::RedirectFd(fd));
                 }
+
+                let target_fd: i32 = target_str.parse().unwrap_or(1);
+                return Some(Token::DupFd(fd, target_fd));
+            } else if rest.starts_with('>') {
+                // N> - redirect with fd
+                let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
+                self.advance(); // consume digit
+                self.advance(); // consume >
+                return Some(Token::RedirectFd(fd));
             }
         }
 
@@ -757,11 +757,11 @@ impl<'a> Lexer<'a> {
                                 if qc == '"' {
                                     break;
                                 }
-                                if qc == '\\' {
-                                    if let Some(esc) = self.peek_char() {
-                                        word.push(esc);
-                                        self.advance();
-                                    }
+                                if qc == '\\'
+                                    && let Some(esc) = self.peek_char()
+                                {
+                                    word.push(esc);
+                                    self.advance();
                                 }
                             }
                         }
@@ -958,10 +958,10 @@ impl<'a> Lexer<'a> {
                                     }
                                 }
                             }
-                            if let Ok(val) = u32::from_str_radix(&hex, 16) {
-                                if let Some(c) = char::from_u32(val) {
-                                    out.push(c);
-                                }
+                            if let Ok(val) = u32::from_str_radix(&hex, 16)
+                                && let Some(c) = char::from_u32(val)
+                            {
+                                out.push(c);
                             }
                         }
                         'U' => {
@@ -976,10 +976,10 @@ impl<'a> Lexer<'a> {
                                     }
                                 }
                             }
-                            if let Ok(val) = u32::from_str_radix(&hex, 16) {
-                                if let Some(c) = char::from_u32(val) {
-                                    out.push(c);
-                                }
+                            if let Ok(val) = u32::from_str_radix(&hex, 16)
+                                && let Some(c) = char::from_u32(val)
+                            {
+                                out.push(c);
                             }
                         }
                         '0'..='7' => {
@@ -1107,11 +1107,11 @@ impl<'a> Lexer<'a> {
         // If there's adjacent unquoted content (word chars, globs, more quotes),
         // concatenate and return as Word (not QuotedWord) so glob expansion works
         // on the unquoted portion.
-        if let Some(ch) = self.peek_char() {
-            if self.is_word_char(ch) || ch == '\'' || ch == '"' || ch == '$' {
-                self.read_continuation_into(&mut content);
-                return Some(Token::Word(content));
-            }
+        if let Some(ch) = self.peek_char()
+            && (self.is_word_char(ch) || ch == '\'' || ch == '"' || ch == '$')
+        {
+            self.read_continuation_into(&mut content);
+            return Some(Token::Word(content));
         }
 
         Some(Token::QuotedWord(content))

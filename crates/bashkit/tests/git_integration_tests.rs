@@ -45,9 +45,11 @@ mod init {
         bash.exec("git init /repo").await.unwrap();
         let result = bash.exec("git init /repo").await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert!(result
-            .stdout
-            .contains("Reinitialized existing Git repository"));
+        assert!(
+            result
+                .stdout
+                .contains("Reinitialized existing Git repository")
+        );
     }
 }
 

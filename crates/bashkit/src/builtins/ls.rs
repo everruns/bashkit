@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use std::path::Path;
 
-use super::{resolve_path, Builtin, Context};
+use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::fs::FileType;
 use crate::interpreter::ExecResult;
@@ -490,10 +490,10 @@ fn find_recursive<'a>(
         // Recurse into directories
         if metadata.file_type.is_dir() {
             // Check max depth
-            if let Some(max) = opts.max_depth {
-                if current_depth >= max {
-                    return Ok(());
-                }
+            if let Some(max) = opts.max_depth
+                && current_depth >= max
+            {
+                return Ok(());
             }
 
             let entries = ctx.fs.read_dir(path).await?;

@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context};
 use crate::error::Result;
-use crate::interpreter::{is_internal_variable, ExecResult};
+use crate::interpreter::{ExecResult, is_internal_variable};
 
 /// Check if a variable name is valid: [a-zA-Z_][a-zA-Z0-9_]*
 fn is_valid_var_name(name: &str) -> bool {
@@ -250,10 +250,10 @@ impl Builtin for Readonly {
         if ctx.args.first().map(|s| s.as_str()) == Some("-p") {
             let mut output = String::new();
             for (name, _) in ctx.variables.iter() {
-                if let Some(var_name) = name.strip_prefix("_READONLY_") {
-                    if let Some(value) = ctx.variables.get(var_name) {
-                        output.push_str(&format!("declare -r {}=\"{}\"\n", var_name, value));
-                    }
+                if let Some(var_name) = name.strip_prefix("_READONLY_")
+                    && let Some(value) = ctx.variables.get(var_name)
+                {
+                    output.push_str(&format!("declare -r {}=\"{}\"\n", var_name, value));
                 }
             }
             return Ok(ExecResult::ok(output));

@@ -163,14 +163,13 @@ impl OpenAiResponsesProvider {
                     // Extract text from content array
                     if let Some(content) = item["content"].as_array() {
                         for part in content {
-                            if part["type"].as_str() == Some("output_text") {
-                                if let Some(text) = part["text"].as_str() {
-                                    if !text.is_empty() {
-                                        blocks.push(ContentBlock::Text {
-                                            text: text.to_string(),
-                                        });
-                                    }
-                                }
+                            if part["type"].as_str() == Some("output_text")
+                                && let Some(text) = part["text"].as_str()
+                                && !text.is_empty()
+                            {
+                                blocks.push(ContentBlock::Text {
+                                    text: text.to_string(),
+                                });
                             }
                         }
                     }
@@ -247,18 +246,16 @@ impl Provider for OpenAiResponsesProvider {
 
             // Retry on 429 (rate limit) and 5xx (server errors)
             let retryable = status.as_u16() == 429 || status.is_server_error();
-            if retryable {
-                if let Some(&delay) = delays.get(attempt) {
-                    eprintln!(
-                        "  [retry] OpenAI Responses {} — waiting {}s (attempt {}/{})",
-                        status,
-                        delay,
-                        attempt + 1,
-                        delays.len()
-                    );
-                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
-                    continue;
-                }
+            if retryable && let Some(&delay) = delays.get(attempt) {
+                eprintln!(
+                    "  [retry] OpenAI Responses {} — waiting {}s (attempt {}/{})",
+                    status,
+                    delay,
+                    attempt + 1,
+                    delays.len()
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                continue;
             }
 
             anyhow::bail!("OpenAI Responses API error ({}): {}", status, error_msg);

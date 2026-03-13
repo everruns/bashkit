@@ -209,13 +209,13 @@ impl Agent {
                         has_text = true;
                     }
                     ContentBlock::ToolUse { id, name, input } => {
-                        if name == "bash" {
-                            if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
-                                println!("$ {}", cmd);
-                                let result = self.execute_bash(cmd).await;
-                                println!("{}", result);
-                                tool_uses.push((id.clone(), result));
-                            }
+                        if name == "bash"
+                            && let Some(cmd) = input.get("command").and_then(|v| v.as_str())
+                        {
+                            println!("$ {}", cmd);
+                            let result = self.execute_bash(cmd).await;
+                            println!("{}", result);
+                            tool_uses.push((id.clone(), result));
                         }
                     }
                     _ => {}

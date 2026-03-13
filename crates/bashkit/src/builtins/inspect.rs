@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{resolve_path, Builtin, Context};
+use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::fs::FileType;
 use crate::interpreter::ExecResult;
@@ -173,27 +173,26 @@ fn determine_file_content_type(content: &[u8]) -> String {
     }
 
     // Check for shebang
-    if content.starts_with(b"#!") {
-        if let Ok(s) = std::str::from_utf8(content.get(0..64.min(content.len())).unwrap_or(b"")) {
-            if let Some(line) = s.lines().next() {
-                if line.contains("bash") || line.contains("/sh") {
-                    return "Bourne-Again shell script".to_string();
-                }
-                if line.contains("python") {
-                    return "Python script".to_string();
-                }
-                if line.contains("perl") {
-                    return "Perl script".to_string();
-                }
-                if line.contains("ruby") {
-                    return "Ruby script".to_string();
-                }
-                if line.contains("node") {
-                    return "Node.js script".to_string();
-                }
-                return "script text executable".to_string();
-            }
+    if content.starts_with(b"#!")
+        && let Ok(s) = std::str::from_utf8(content.get(0..64.min(content.len())).unwrap_or(b""))
+        && let Some(line) = s.lines().next()
+    {
+        if line.contains("bash") || line.contains("/sh") {
+            return "Bourne-Again shell script".to_string();
         }
+        if line.contains("python") {
+            return "Python script".to_string();
+        }
+        if line.contains("perl") {
+            return "Perl script".to_string();
+        }
+        if line.contains("ruby") {
+            return "Ruby script".to_string();
+        }
+        if line.contains("node") {
+            return "Node.js script".to_string();
+        }
+        return "script text executable".to_string();
     }
 
     // Check if content is valid UTF-8 text

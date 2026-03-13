@@ -1554,10 +1554,10 @@ impl<'a> Parser<'a> {
             self.skip_newlines()?;
 
             // Check for terminators
-            if let Some(tokens::Token::Word(w)) = &self.current_token {
-                if terminators.contains(&w.as_str()) {
-                    break;
-                }
+            if let Some(tokens::Token::Word(w)) = &self.current_token
+                && terminators.contains(&w.as_str())
+            {
+                break;
             }
 
             if self.current_token.is_none() {
@@ -2377,12 +2377,11 @@ impl<'a> Parser<'a> {
                         }
 
                         // Handle special parameters: ${@...}, ${*...}
-                        if var_name.is_empty() {
-                            if let Some(&c) = chars.peek() {
-                                if matches!(c, '@' | '*') {
-                                    var_name.push(chars.next().unwrap());
-                                }
-                            }
+                        if var_name.is_empty()
+                            && let Some(&c) = chars.peek()
+                            && matches!(c, '@' | '*')
+                        {
+                            var_name.push(chars.next().unwrap());
                         }
 
                         // Check for array access ${arr[index]} or ${arr[@]:offset:length}
@@ -2628,11 +2627,11 @@ impl<'a> Parser<'a> {
                                         }
                                         if ch == '\\' {
                                             chars.next();
-                                            if let Some(&next) = chars.peek() {
-                                                if next == '/' {
-                                                    pattern.push(chars.next().unwrap());
-                                                    continue;
-                                                }
+                                            if let Some(&next) = chars.peek()
+                                                && next == '/'
+                                            {
+                                                pattern.push(chars.next().unwrap());
+                                                continue;
                                             }
                                             pattern.push('\\');
                                             continue;
