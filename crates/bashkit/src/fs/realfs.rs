@@ -22,6 +22,46 @@
 //! |------|-------|--------|----------|
 //! | `RealFsMode::ReadOnly` | Yes | No | Expose host files to scripts safely |
 //! | `RealFsMode::ReadWrite` | Yes | Yes | Let scripts modify host files (dangerous) |
+//!
+//! # Builder API (Recommended)
+//!
+//! The easiest way to use RealFs is through the builder on [`Bash`](crate::Bash):
+//!
+//! ```rust,no_run
+//! use bashkit::Bash;
+//!
+//! // Readonly: host files visible at /mnt/data, writes go to in-memory overlay
+//! let bash = Bash::builder()
+//!     .mount_real_readonly_at("/tmp", "/mnt/data")
+//!     .build();
+//!
+//! // Read-write: scripts can modify host files (dangerous!)
+//! let bash = Bash::builder()
+//!     .mount_real_readwrite_at("/tmp", "/mnt/workspace")
+//!     .build();
+//! ```
+//!
+//! # Direct Usage
+//!
+//! For full control, create a `RealFs` backend and wrap it with
+//! [`PosixFs`](super::PosixFs):
+//!
+//! ```rust,no_run
+//! use bashkit::PosixFs;
+//! use bashkit::fs::{RealFs, RealFsMode};
+//! use std::sync::Arc;
+//!
+//! let backend = RealFs::new("/tmp", RealFsMode::ReadOnly).unwrap();
+//! let fs = Arc::new(PosixFs::new(backend));
+//! let bash = bashkit::Bash::builder().fs(fs).build();
+//! ```
+//!
+//! # CLI
+//!
+//! ```bash
+//! bashkit --mount-ro /path/to/data:/mnt/data -c 'cat /mnt/data/file.txt'
+//! bashkit --mount-rw /path/to/out:/mnt/out -c 'echo hi > /mnt/out/result.txt'
+//! ```
 
 use async_trait::async_trait;
 use std::io::{Error as IoError, ErrorKind};
@@ -50,15 +90,18 @@ pub enum RealFsMode {
 /// Real filesystem backend scoped to a root directory.
 ///
 /// Wraps host filesystem access with path containment and optional readonly
-/// enforcement. Use with [`PosixFs`](super::PosixFs) for POSIX semantics:
+/// enforcement. Use with [`PosixFs`](super::PosixFs) for POSIX semantics.
 ///
-/// ```rust,ignore
+/// # Example
+///
+/// ```rust,no_run
 /// use bashkit::fs::{RealFs, RealFsMode};
 /// use bashkit::PosixFs;
 /// use std::sync::Arc;
 ///
-/// let backend = RealFs::new("/path/to/root", RealFsMode::ReadOnly).unwrap();
+/// let backend = RealFs::new("/tmp", RealFsMode::ReadOnly).unwrap();
 /// let fs = Arc::new(PosixFs::new(backend));
+/// let bash = bashkit::Bash::builder().fs(fs).build();
 /// ```
 pub struct RealFs {
     /// Canonicalized root directory on the host.

@@ -86,6 +86,7 @@
 //! | [`InMemoryFs`] | HashMap-based storage with POSIX checks | Default, isolated execution |
 //! | [`OverlayFs`] | Copy-on-write layered filesystem | Templates, immutable bases |
 //! | [`MountableFs`] | Multiple filesystems at mount points | Complex multi-source setups |
+//! | [`RealFs`] | Host directory access (`realfs` feature) | Expose host files to scripts |
 //!
 //! All implementations are thread-safe (`Send + Sync`) and fully async.
 //!
@@ -176,6 +177,49 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! ## Using RealFs (Host Filesystem Access)
+//!
+//! [`RealFs`] exposes a host directory inside the VFS. It requires the `realfs`
+//! feature flag. Two access modes are available:
+//!
+//! - **ReadOnly** — scripts can read host files but writes go to an in-memory overlay
+//! - **ReadWrite** — scripts can modify host files directly (breaks sandbox)
+//!
+//! The easiest way to use it is through [`BashBuilder`](crate::BashBuilder):
+//!
+//! ```rust,ignore
+//! use bashkit::Bash;
+//!
+//! // Readonly overlay at root — host files visible at /
+//! let mut bash = Bash::builder()
+//!     .mount_real_readonly("/path/to/project")
+//!     .build();
+//!
+//! // Readonly mount at a specific path
+//! let mut bash = Bash::builder()
+//!     .mount_real_readonly_at("/path/to/data", "/mnt/data")
+//!     .build();
+//!
+//! // Read-write mount (WARNING: breaks sandbox)
+//! let mut bash = Bash::builder()
+//!     .mount_real_readwrite_at("/path/to/workspace", "/mnt/ws")
+//!     .build();
+//! ```
+//!
+//! You can also use [`RealFs`] directly as an [`FsBackend`] with [`PosixFs`]:
+//!
+//! ```rust,ignore
+//! use bashkit::{Bash, PosixFs};
+//! use bashkit::fs::{RealFs, RealFsMode};
+//! use std::sync::Arc;
+//!
+//! let backend = RealFs::new("/path/to/dir", RealFsMode::ReadOnly).unwrap();
+//! let fs = Arc::new(PosixFs::new(backend));
+//! let mut bash = Bash::builder().fs(fs).build();
+//! ```
+//!
+//! See `examples/realfs_readonly.rs` and `examples/realfs_readwrite.rs`.
 //!
 //! # Direct Filesystem Access
 //!
