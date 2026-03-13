@@ -21,6 +21,7 @@ doc = false  # Disable to avoid collision with bashkit library docs
 [features]
 default = ["python"]
 python = ["bashkit/python"]
+realfs = ["bashkit/realfs"]
 
 [dependencies]
 bashkit = { path = "../bashkit", version = "0.1.9", features = ["http_client", "git"] }
@@ -29,3 +30,6 @@ clap.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

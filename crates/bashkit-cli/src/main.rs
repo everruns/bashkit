@@ -45,6 +45,26 @@ struct Args {
     #[cfg_attr(feature = "python", arg(long))]
     no_python: bool,
 
+    /// Mount a host directory as readonly in the VFS (format: HOST_PATH or HOST_PATH:VFS_PATH)
+    ///
+    /// Examples:
+    ///   --mount-ro /path/to/project           # overlay at VFS root
+    ///   --mount-ro /path/to/data:/mnt/data    # mount at /mnt/data
+    #[cfg_attr(not(feature = "realfs"), arg(long, hide = true))]
+    #[cfg_attr(feature = "realfs", arg(long, value_name = "PATH"))]
+    mount_ro: Vec<String>,
+
+    /// Mount a host directory as read-write in the VFS (format: HOST_PATH or HOST_PATH:VFS_PATH)
+    ///
+    /// WARNING: This breaks the sandbox boundary. Scripts can modify host files.
+    ///
+    /// Examples:
+    ///   --mount-rw /path/to/workspace           # overlay at VFS root
+    ///   --mount-rw /path/to/output:/mnt/output  # mount at /mnt/output
+    #[cfg_attr(not(feature = "realfs"), arg(long, hide = true))]
+    #[cfg_attr(feature = "realfs", arg(long, value_name = "PATH"))]
+    mount_rw: Vec<String>,
+
     #[command(subcommand)]
     subcommand: Option<SubCmd>,
 }
@@ -71,7 +91,36 @@ fn build_bash(args: &Args) -> bashkit::Bash {
         builder = builder.python();
     }
 
+    #[cfg(feature = "realfs")]
+    {
+        builder = apply_real_mounts(builder, &args.mount_ro, &args.mount_rw);
+    }
+
     builder.build()
+}
+
+/// Parse mount specs (HOST_PATH or HOST_PATH:VFS_PATH) and apply to builder.
+#[cfg(feature = "realfs")]
+fn apply_real_mounts(
+    mut builder: bashkit::BashBuilder,
+    ro_mounts: &[String],
+    rw_mounts: &[String],
+) -> bashkit::BashBuilder {
+    for spec in ro_mounts {
+        if let Some((host, vfs)) = spec.split_once(':') {
+            builder = builder.mount_real_readonly_at(host, vfs);
+        } else {
+            builder = builder.mount_real_readonly(spec);
+        }
+    }
+    for spec in rw_mounts {
+        if let Some((host, vfs)) = spec.split_once(':') {
+            builder = builder.mount_real_readwrite_at(host, vfs);
+        } else {
+            builder = builder.mount_real_readwrite(spec);
+        }
+    }
+    builder
 }
 
 #[tokio::main]
@@ -210,5 +259,62 @@ mod tests {
         let result = bash.exec("echo works").await.expect("exec");
         assert_eq!(result.stdout, "works\n");
         assert_eq!(result.exit_code, 0);
+    }
+
+    #[cfg(feature = "realfs")]
+    #[test]
+    fn parse_mount_flags() {
+        let args = Args::parse_from([
+            "bashkit",
+            "--mount-ro",
+            "/tmp/data:/mnt/data",
+            "--mount-rw",
+            "/tmp/out",
+            "-c",
+            "echo hi",
+        ]);
+        assert_eq!(args.mount_ro, vec!["/tmp/data:/mnt/data"]);
+        assert_eq!(args.mount_rw, vec!["/tmp/out"]);
+    }
+
+    #[cfg(feature = "realfs")]
+    #[tokio::test]
+    async fn mount_ro_reads_host_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("test.txt"), "from host\n").unwrap();
+        let spec = format!("{}:/mnt/data", dir.path().display());
+
+        let args = Args::parse_from([
+            "bashkit",
+            "--mount-ro",
+            &spec,
+            "-c",
+            "cat /mnt/data/test.txt",
+        ]);
+        let mut bash = build_bash(&args);
+        let result = bash.exec("cat /mnt/data/test.txt").await.expect("exec");
+        assert_eq!(result.stdout, "from host\n");
+    }
+
+    #[cfg(feature = "realfs")]
+    #[tokio::test]
+    async fn mount_rw_writes_host_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = format!("{}:/mnt/out", dir.path().display());
+
+        let args = Args::parse_from([
+            "bashkit",
+            "--mount-rw",
+            &spec,
+            "-c",
+            "echo result > /mnt/out/r.txt",
+        ]);
+        let mut bash = build_bash(&args);
+        bash.exec("echo result > /mnt/out/r.txt")
+            .await
+            .expect("exec");
+
+        let content = std::fs::read_to_string(dir.path().join("r.txt")).unwrap();
+        assert_eq!(content, "result\n");
     }
 }

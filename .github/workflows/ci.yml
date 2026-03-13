@@ -84,6 +84,9 @@ jobs:
       - name: Run tests
         run: cargo test --features http_client
 
+      - name: Run realfs tests
+        run: cargo test --features realfs -p bashkit --test realfs_tests -p bashkit-cli
+
       - name: Run fail-point tests (single-threaded)
         run: cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
 
@@ -114,6 +117,13 @@ jobs:
           cargo run --example text_processing
           cargo run --example git_workflow --features git
           cargo run --example python_external_functions --features python
+          cargo run --example realfs_readonly --features realfs
+          cargo run --example realfs_readwrite --features realfs
+
+      - name: Run realfs bash example
+        run: |
+          cargo build -p bashkit-cli --features realfs
+          bash examples/realfs_mount.sh
 
       # External API dependency — don't block CI on Anthropic outages
       - name: Run LLM agent example

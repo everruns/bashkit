@@ -388,6 +388,8 @@ pub use fs::{
     verify_filesystem_requirements, DirEntry, FileSystem, FileType, FsBackend, FsLimitExceeded,
     FsLimits, FsUsage, InMemoryFs, Metadata, MountableFs, OverlayFs, PosixFs, VfsSnapshot,
 };
+#[cfg(feature = "realfs")]
+pub use fs::{RealFs, RealFsMode};
 pub use git::GitConfig;
 pub use interpreter::{ControlFlow, ExecResult, OutputCallback, ShellState};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
@@ -756,6 +758,17 @@ struct MountedFile {
     mode: u32,
 }
 
+/// A real host directory to mount in the VFS during builder construction.
+#[cfg(feature = "realfs")]
+struct MountedRealDir {
+    /// Path on the host filesystem.
+    host_path: PathBuf,
+    /// Mount point inside the VFS (e.g. "/mnt/data"). None = overlay at root.
+    vfs_mount: Option<PathBuf>,
+    /// Access mode.
+    mode: fs::RealFsMode,
+}
+
 #[derive(Default)]
 pub struct BashBuilder {
     fs: Option<Arc<dyn FileSystem>>,
@@ -778,6 +791,9 @@ pub struct BashBuilder {
     /// Git configuration for git builtins
     #[cfg(feature = "git")]
     git_config: Option<GitConfig>,
+    /// Real host directories to mount in the VFS
+    #[cfg(feature = "realfs")]
+    real_mounts: Vec<MountedRealDir>,
 }
 
 impl BashBuilder {
@@ -1140,6 +1156,118 @@ impl BashBuilder {
         self
     }
 
+    /// Mount a real host directory as a readonly overlay at the VFS root.
+    ///
+    /// Files from `host_path` become visible at the same paths inside the VFS.
+    /// For example, if the host directory contains `src/main.rs`, it will be
+    /// available as `/src/main.rs` inside the virtual bash session.
+    ///
+    /// The host directory is read-only: scripts cannot modify host files.
+    ///
+    /// Requires the `realfs` feature flag.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let bash = Bash::builder()
+    ///     .mount_real_readonly("/path/to/project")
+    ///     .build();
+    /// ```
+    #[cfg(feature = "realfs")]
+    pub fn mount_real_readonly(mut self, host_path: impl Into<PathBuf>) -> Self {
+        self.real_mounts.push(MountedRealDir {
+            host_path: host_path.into(),
+            vfs_mount: None,
+            mode: fs::RealFsMode::ReadOnly,
+        });
+        self
+    }
+
+    /// Mount a real host directory as a readonly filesystem at a specific VFS path.
+    ///
+    /// Files from `host_path` become visible under `vfs_mount` inside the VFS.
+    /// For example, mounting `/home/user/data` at `/mnt/data` makes
+    /// `/home/user/data/file.txt` available as `/mnt/data/file.txt`.
+    ///
+    /// The host directory is read-only: scripts cannot modify host files.
+    ///
+    /// Requires the `realfs` feature flag.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let bash = Bash::builder()
+    ///     .mount_real_readonly_at("/path/to/data", "/mnt/data")
+    ///     .build();
+    /// ```
+    #[cfg(feature = "realfs")]
+    pub fn mount_real_readonly_at(
+        mut self,
+        host_path: impl Into<PathBuf>,
+        vfs_mount: impl Into<PathBuf>,
+    ) -> Self {
+        self.real_mounts.push(MountedRealDir {
+            host_path: host_path.into(),
+            vfs_mount: Some(vfs_mount.into()),
+            mode: fs::RealFsMode::ReadOnly,
+        });
+        self
+    }
+
+    /// Mount a real host directory with read-write access at the VFS root.
+    ///
+    /// **WARNING**: This breaks the sandbox boundary. Scripts can modify files
+    /// on the host filesystem. Only use when:
+    /// - The script is fully trusted
+    /// - The host directory is appropriately scoped
+    ///
+    /// Requires the `realfs` feature flag.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let bash = Bash::builder()
+    ///     .mount_real_readwrite("/path/to/workspace")
+    ///     .build();
+    /// ```
+    #[cfg(feature = "realfs")]
+    pub fn mount_real_readwrite(mut self, host_path: impl Into<PathBuf>) -> Self {
+        self.real_mounts.push(MountedRealDir {
+            host_path: host_path.into(),
+            vfs_mount: None,
+            mode: fs::RealFsMode::ReadWrite,
+        });
+        self
+    }
+
+    /// Mount a real host directory with read-write access at a specific VFS path.
+    ///
+    /// **WARNING**: This breaks the sandbox boundary. Scripts can modify files
+    /// on the host filesystem.
+    ///
+    /// Requires the `realfs` feature flag.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let bash = Bash::builder()
+    ///     .mount_real_readwrite_at("/path/to/workspace", "/mnt/workspace")
+    ///     .build();
+    /// ```
+    #[cfg(feature = "realfs")]
+    pub fn mount_real_readwrite_at(
+        mut self,
+        host_path: impl Into<PathBuf>,
+        vfs_mount: impl Into<PathBuf>,
+    ) -> Self {
+        self.real_mounts.push(MountedRealDir {
+            host_path: host_path.into(),
+            vfs_mount: Some(vfs_mount.into()),
+            mode: fs::RealFsMode::ReadWrite,
+        });
+        self
+    }
+
     /// Build the Bash instance.
     ///
     /// If mounted files are specified, they are added via an [`OverlayFs`] layer
@@ -1177,7 +1305,11 @@ impl BashBuilder {
     pub fn build(self) -> Bash {
         let base_fs = self.fs.unwrap_or_else(|| Arc::new(InMemoryFs::new()));
 
-        // If there are mounted files, wrap in an OverlayFs
+        // Layer 1: Apply real filesystem mounts (if any)
+        #[cfg(feature = "realfs")]
+        let base_fs = Self::apply_real_mounts(&self.real_mounts, base_fs);
+
+        // Layer 2: If there are mounted text files, wrap in an OverlayFs
         let fs: Arc<dyn FileSystem> = if self.mounted_files.is_empty() {
             base_fs
         } else {
@@ -1205,6 +1337,66 @@ impl BashBuilder {
             #[cfg(feature = "git")]
             self.git_config,
         )
+    }
+
+    /// Apply real filesystem mounts to the base filesystem.
+    ///
+    /// - Mounts without a VFS path are overlaid at root (host files visible at /)
+    /// - Mounts with a VFS path use MountableFs to mount at that path
+    #[cfg(feature = "realfs")]
+    fn apply_real_mounts(
+        real_mounts: &[MountedRealDir],
+        base_fs: Arc<dyn FileSystem>,
+    ) -> Arc<dyn FileSystem> {
+        if real_mounts.is_empty() {
+            return base_fs;
+        }
+
+        let mut current_fs = base_fs;
+        let mut mount_points: Vec<(PathBuf, Arc<dyn FileSystem>)> = Vec::new();
+
+        for m in real_mounts {
+            let real_backend = match fs::RealFs::new(&m.host_path, m.mode) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!(
+                        "bashkit: warning: failed to mount {}: {}",
+                        m.host_path.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
+            let real_fs: Arc<dyn FileSystem> = Arc::new(PosixFs::new(real_backend));
+
+            match &m.vfs_mount {
+                None => {
+                    // Overlay at root: real fs becomes the lower layer,
+                    // existing VFS content overlaid on top
+                    current_fs = Arc::new(OverlayFs::new(real_fs));
+                }
+                Some(mount_point) => {
+                    mount_points.push((mount_point.clone(), real_fs));
+                }
+            }
+        }
+
+        // If there are specific mount points, wrap in MountableFs
+        if !mount_points.is_empty() {
+            let mountable = MountableFs::new(current_fs);
+            for (path, fs) in mount_points {
+                if let Err(e) = mountable.mount(&path, fs) {
+                    eprintln!(
+                        "bashkit: warning: failed to mount at {}: {}",
+                        path.display(),
+                        e
+                    );
+                }
+            }
+            Arc::new(mountable)
+        } else {
+            current_fs
+        }
     }
 
     /// Internal helper to build Bash with a configured filesystem.

@@ -88,6 +88,10 @@ scripted_tool = []
 # Enable python/python3 builtins via embedded Monty interpreter
 # Monty is a git dep (not yet on crates.io) — feature unavailable from registry
 python = ["dep:monty"]
+# Enable RealFs backend for accessing host filesystem directories
+# WARNING: This intentionally breaks the sandbox boundary.
+# Usage: cargo build --features realfs
+realfs = []
 
 [dev-dependencies]
 tokio-test = { workspace = true }
@@ -95,6 +99,7 @@ pretty_assertions = { workspace = true }
 insta = { workspace = true }
 criterion = { version = "0.8", features = ["async_tokio"] }
 proptest = { workspace = true }
+tempfile = "3"
 serial_test = { workspace = true }
 
 [[bench]]
@@ -120,3 +125,11 @@ required-features = ["python"]
 [[example]]
 name = "python_external_functions"
 required-features = ["python"]
+
+[[example]]
+name = "realfs_readonly"
+required-features = ["realfs"]
+
+[[example]]
+name = "realfs_readwrite"
+required-features = ["realfs"]
