@@ -1,0 +1,350 @@
+# NPM publishing workflow for bashkit JavaScript package
+# Builds native NAPI-RS bindings for all major platforms and publishes to npm.
+# Triggered alongside publish.yml on GitHub Release or manual dispatch.
+# Adapted from https://github.com/pydantic/monty CI JS-building pattern.
+#
+# Prerequisites:
+#   - npm trusted publisher configured for each platform package
+#   - GitHub environment "release-js" created in repo settings
+#   - NPM_TOKEN secret for fallback auth (trusted publishing preferred)
+
+name: Publish JS
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  MACOSX_DEPLOYMENT_TARGET: "10.13"
+  CARGO_INCREMENTAL: "1"
+  DEBUG: "napi:*"
+
+jobs:
+  # ============================================================================
+  # Build native bindings for each platform
+  # ============================================================================
+  build-js:
+    name: Build JS - ${{ matrix.settings.target }}
+    runs-on: ${{ matrix.settings.host }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: macos-latest
+            target: x86_64-apple-darwin
+            build: npm run build:napi -- --target x86_64-apple-darwin && npm run build:ts
+          - host: macos-latest
+            target: aarch64-apple-darwin
+            build: npm run build:napi -- --target aarch64-apple-darwin && npm run build:ts
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            build: npm run build:napi -- --target x86_64-unknown-linux-gnu --use-napi-cross && npm run build:ts
+          - host: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            build: npm run build:napi -- --target aarch64-unknown-linux-gnu && npm run build:ts
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+            build: npm run build:napi -- --target x86_64-pc-windows-msvc && npm run build:ts
+          - host: ubuntu-latest
+            target: wasm32-wasip1-threads
+            build: npm run build:napi -- --target wasm32-wasip1-threads && npm run build:ts
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: crates/bashkit-js/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.settings.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ~/.napi-rs
+            .cargo-cache
+            target/
+          key: ${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: crates/bashkit-js
+
+      - name: Build
+        run: ${{ matrix.settings.build }}
+        shell: bash
+        working-directory: crates/bashkit-js
+
+      - name: Upload native binding
+        uses: actions/upload-artifact@v7
+        with:
+          name: js-bindings-${{ matrix.settings.target }}
+          path: |
+            crates/bashkit-js/bashkit.*.node
+            crates/bashkit-js/bashkit.*.wasm
+          if-no-files-found: error
+
+      # Upload generated JS stubs from one build (they're identical across targets)
+      - if: ${{ matrix.settings.target == 'x86_64-unknown-linux-gnu' }}
+        name: Upload JS stubs
+        uses: actions/upload-artifact@v7
+        with:
+          name: js-stubs
+          path: |
+            crates/bashkit-js/browser.js
+            crates/bashkit-js/index.js
+            crates/bashkit-js/index.d.ts
+            crates/bashkit-js/wrapper.js
+            crates/bashkit-js/wrapper.d.ts
+            crates/bashkit-js/bashkit.wasi.cjs
+            crates/bashkit-js/bashkit.wasi-browser.js
+            crates/bashkit-js/wasi-worker.mjs
+            crates/bashkit-js/wasi-worker-browser.mjs
+          if-no-files-found: error
+
+  # ============================================================================
+  # Test bindings on macOS and Windows
+  # ============================================================================
+  test-js-macos-windows:
+    name: Test JS on ${{ matrix.settings.target }} - node@${{ matrix.node }}
+    needs: [build-js]
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+            architecture: x64
+          - host: macos-latest
+            target: aarch64-apple-darwin
+            architecture: arm64
+          - host: macos-latest
+            target: x86_64-apple-darwin
+            architecture: x64
+        node: ["20", "22"]
+    runs-on: ${{ matrix.settings.host }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: crates/bashkit-js/package-lock.json
+          architecture: ${{ matrix.settings.architecture }}
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: crates/bashkit-js
+
+      - name: Download native binding
+        uses: actions/download-artifact@v8
+        with:
+          name: js-bindings-${{ matrix.settings.target }}
+          path: crates/bashkit-js
+
+      - name: Download JS stubs
+        uses: actions/download-artifact@v8
+        with:
+          name: js-stubs
+          path: crates/bashkit-js
+
+      - name: Test bindings
+        run: npm test
+        working-directory: crates/bashkit-js
+
+  # ============================================================================
+  # Test bindings on Linux
+  # ============================================================================
+  test-js-linux:
+    name: Test JS ${{ matrix.target }} - node@${{ matrix.node }}
+    needs: [build-js]
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+        node: ["20", "22"]
+    runs-on: ${{ contains(matrix.target, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: crates/bashkit-js/package-lock.json
+
+      - name: Output docker params
+        id: docker
+        run: |
+          node -e "
+            if ('${{ matrix.target }}'.startsWith('aarch64')) {
+              console.log('PLATFORM=linux/arm64')
+            } else {
+              console.log('PLATFORM=linux/amd64')
+            }
+          " >> $GITHUB_OUTPUT
+          node -e "
+            if ('${{ matrix.target }}'.endsWith('-musl')) {
+              console.log('IMAGE=node:${{ matrix.node }}-alpine')
+            } else {
+              console.log('IMAGE=node:${{ matrix.node }}-slim')
+            }
+          " >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: crates/bashkit-js
+
+      - name: Download native binding
+        uses: actions/download-artifact@v8
+        with:
+          name: js-bindings-${{ matrix.target }}
+          path: crates/bashkit-js
+
+      - name: Download JS stubs
+        uses: actions/download-artifact@v8
+        with:
+          name: js-stubs
+          path: crates/bashkit-js
+
+      - name: Test bindings
+        run: >
+          docker run --rm -v ${{ github.workspace }}:${{ github.workspace }}
+          -w ${{ github.workspace }}/crates/bashkit-js
+          --platform ${{ steps.docker.outputs.PLATFORM }}
+          ${{ steps.docker.outputs.IMAGE }}
+          npm test
+
+  # ============================================================================
+  # Test WASI target
+  # ============================================================================
+  test-js-wasi:
+    name: Test WASI target
+    needs: [build-js]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: crates/bashkit-js/package-lock.json
+
+      - name: Install dependencies
+        run: npm install --cpu wasm32
+        working-directory: crates/bashkit-js
+
+      - name: Download native binding
+        uses: actions/download-artifact@v8
+        with:
+          name: js-bindings-wasm32-wasip1-threads
+          path: crates/bashkit-js
+
+      - name: Download JS stubs
+        uses: actions/download-artifact@v8
+        with:
+          name: js-stubs
+          path: crates/bashkit-js
+
+      - name: Test bindings
+        run: npm test
+        env:
+          NAPI_RS_FORCE_WASI: 1
+        working-directory: crates/bashkit-js
+
+  # ============================================================================
+  # Publish to npm
+  # ============================================================================
+  release-js:
+    name: Release to NPM
+    runs-on: ubuntu-latest
+    needs:
+      - test-js-macos-windows
+      - test-js-linux
+      - test-js-wasi
+
+    if: success()
+
+    environment:
+      name: release-js
+
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: crates/bashkit-js/package-lock.json
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: crates/bashkit-js
+
+      - name: Create npm dirs
+        run: npm run create-npm-dirs
+        working-directory: crates/bashkit-js
+
+      - name: Download all native bindings
+        uses: actions/download-artifact@v8
+        with:
+          pattern: js-bindings-*
+          path: crates/bashkit-js/artifacts
+          merge-multiple: true
+
+      - name: Download JS stubs
+        uses: actions/download-artifact@v8
+        with:
+          name: js-stubs
+          path: crates/bashkit-js
+
+      - name: Move artifacts
+        run: npm run artifacts
+        working-directory: crates/bashkit-js
+
+      - name: List packages
+        run: ls -R ./npm
+        shell: bash
+        working-directory: crates/bashkit-js
+
+      - name: Publish
+        run: |
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Publishing stable release"
+            npm publish --provenance --access public
+          else
+            echo "Publishing pre-release with 'next' tag"
+            npm publish --provenance --tag next --access public
+          fi
+        working-directory: crates/bashkit-js
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

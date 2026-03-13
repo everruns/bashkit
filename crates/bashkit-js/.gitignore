@@ -1,0 +1,31 @@
+# Node
+node_modules/
+npm-debug.log*
+*.tgz
+.npm
+
+# Build output
+target/
+*.node
+/npm
+
+# napi generated js files
+browser.js
+index.js
+index.d.ts
+bashkit.wasi.cjs
+bashkit.wasi-browser.js
+wasi-worker.mjs
+wasi-worker-browser.mjs
+
+# tsc output (source is wrapper.ts)
+wrapper.js
+wrapper.d.ts
+wrapper.d.ts.map
+wrapper.js.map
+
+# Lockfile managed by CI
+Cargo.lock
+
+# IDE
+.vscode-test

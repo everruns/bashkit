@@ -150,6 +150,7 @@ Example:
 - `bashkit` on crates.io (core library)
 - `bashkit-cli` on crates.io (CLI tool)
 - `bashkit` on PyPI (Python package, pre-built wheels)
+- `@everruns/bashkit` on npm (JavaScript/TypeScript package, native NAPI-RS bindings)
 
 ## Publishing Order
 
@@ -159,6 +160,8 @@ Crates must be published in dependency order:
 2. `bashkit-cli` (depends on bashkit)
 
 Python wheels are published independently (no crates.io dependency).
+
+npm packages are published independently (no crates.io dependency).
 
 The CI workflows handle this automatically on GitHub Release.
 
@@ -184,6 +187,40 @@ The CI workflows handle this automatically on GitHub Release.
 - **File**: `.github/workflows/publish-python.yml`
 - **Auth**: PyPI trusted publishing (OIDC, no secrets needed)
 - **Environment**: `release-python` (must exist in GitHub repo settings)
+
+### publish-js.yml
+
+- **Trigger**: GitHub Release published (runs in parallel with publish.yml and publish-python.yml)
+- **Actions**: Builds native NAPI-RS bindings for all platforms, tests on Node 20/22, publishes to npm
+- **File**: `.github/workflows/publish-js.yml`
+- **Secret required**: `NPM_TOKEN` (npm access token, fallback for trusted publishing)
+- **Environment**: `release-js` (must exist in GitHub repo settings)
+
+#### JS native binding matrix
+
+| OS | Target | Runner |
+|----|--------|--------|
+| macOS | x86_64-apple-darwin | macos-latest |
+| macOS | aarch64-apple-darwin | macos-latest |
+| Linux | x86_64-unknown-linux-gnu | ubuntu-latest |
+| Linux | aarch64-unknown-linux-gnu | ubuntu-24.04-arm |
+| Windows | x86_64-pc-windows-msvc | windows-latest |
+| WASM | wasm32-wasip1-threads | ubuntu-latest |
+
+Node.js versions tested: 20, 22
+
+#### JS version sync
+
+JS package version is synced from `Cargo.toml` workspace version via `build.rs`.
+The build script updates `package.json` automatically when the Cargo version changes.
+
+### init-npm-packages.yml
+
+- **Trigger**: Manual dispatch only (one-time setup)
+- **Actions**: Creates placeholder npm packages for each NAPI platform target
+- **File**: `.github/workflows/init-npm-packages.yml`
+- **Secret required**: `NPM_TOKEN`
+- **Post-setup**: Must manually configure trusted publishing for each package on npmjs.com
 
 #### Wheel matrix
 
@@ -216,6 +253,14 @@ Python package version is read dynamically from `Cargo.toml` via maturin
 
 - Configure at: https://pypi.org/manage/project/bashkit/settings/publishing/
 - Add publisher: GitHub, repo `everruns/bashkit`, workflow `publish-python.yml`, environment `release-python`
+
+**npm Publishing**:
+
+- `NPM_TOKEN`: npm access token (GitHub Settings > Secrets > Actions)
+  - Generate at: https://www.npmjs.com/settings/~/tokens
+  - Type: Automation
+- After first publish, configure trusted publishing for each platform package:
+  - Go to each package on npmjs.com > Settings > Trusted Publisher > GitHub Actions > `everruns/bashkit`
 
 ## Example Conversation
 
@@ -260,3 +305,4 @@ Each release includes:
 - **GitHub Release**: Tag, release notes, source archives
 - **crates.io**: Published crates for `cargo add bashkit`
 - **PyPI**: Pre-built wheels for `pip install bashkit`
+- **npm**: Native NAPI-RS bindings for `npm install @everruns/bashkit`
