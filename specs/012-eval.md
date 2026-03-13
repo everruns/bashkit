@@ -166,6 +166,81 @@ After running evals with `--save`, update `crates/bashkit-eval/README.md` with:
 
 Keep README highlights concise. Full per-task details live in the saved markdown reports under `crates/bashkit-eval/results/`.
 
+## Scripting Tool Eval Mode
+
+In addition to the default "bash" eval (testing direct bash tool usage), there is a
+"scripting-tool" eval mode that tests `ScriptedTool` orchestration (see spec 014).
+
+### Purpose
+
+Measure how well LLMs use `ScriptedTool` to orchestrate multiple mock tools via bash
+scripts, compared to calling each tool individually (baseline mode).
+
+### Modes
+
+- **Scripted** — All mock tools composed into a single `ScriptedTool`. LLM writes bash
+  scripts to orchestrate them. Measures tool composition effectiveness.
+- **Baseline** — Each mock tool exposed as a separate LLM tool. LLM calls them one at
+  a time. Provides a control for comparison.
+
+### Dataset Format
+
+Scripting-tool datasets use the same JSONL format with additional fields:
+
+```json
+{
+  "id": "mt-ecommerce",
+  "category": "many_tools",
+  "description": "E-commerce API: look up user, order, product, shipping",
+  "prompt": "Look up user 42 and summarize their last order",
+  "tools": [
+    {
+      "name": "get_user",
+      "description": "Fetch user by ID",
+      "schema": {"type": "object", "properties": {"id": {"type": "integer"}}},
+      "mock": {"param": "id", "responses": {"42": "{\"name\": \"Jane\"}"}}
+    }
+  ],
+  "expectations": [
+    {"check": "stdout_contains:Jane"},
+    {"check": "tool_calls_min:3"}
+  ]
+}
+```
+
+Mock behaviors:
+- **Static** — `"mock": "fixed response string"`
+- **ByParam** — `"mock": {"param": "key", "responses": {"val": "resp"}, "default": "fallback"}`
+
+### Dataset Categories
+
+| Category | Dataset | Tasks | Tests |
+|----------|---------|-------|-------|
+| large_output | `large-output.jsonl` | 3 | Tool output handling with large JSON, logs, nested configs |
+| many_tools | `many-tools.jsonl` | 4 | Orchestrating 15-20 tools (e-commerce, CRM, analytics, DevOps) |
+| paginated_responses | `paginated.jsonl` | 3 | Paginated API traversal (users, logs, inventory) |
+
+### CLI
+
+```
+bashkit-eval run \
+  --eval-type scripting-tool \
+  --dataset <path.jsonl> \
+  --provider <anthropic|openai|openresponses> \
+  --model <model-name> \
+  [--baseline] \
+  [--max-turns 10] \
+  [--save] \
+  [--output crates/bashkit-eval/results] \
+  [--moniker <custom-id>]
+```
+
+### Metrics (additional to base)
+
+- **Raw tool output bytes** — total bytes of mock tool output
+- **Tool output sent bytes** — bytes actually sent to LLM (after formatting)
+- **Per-mode comparison** — scripted vs baseline pass rate, token usage, turn count
+
 ## Non-Goals
 
 - No concurrency / parallelism
