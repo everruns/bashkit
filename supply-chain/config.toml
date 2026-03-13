@@ -46,12 +46,24 @@ criteria = "safe-to-run"
 version = "0.6.21"
 criteria = "safe-to-deploy"
 
+[[exemptions.anstream]]
+version = "1.0.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.anstyle]]
 version = "1.0.13"
 criteria = "safe-to-deploy"
 
+[[exemptions.anstyle]]
+version = "1.0.14"
+criteria = "safe-to-deploy"
+
 [[exemptions.anstyle-parse]]
 version = "0.2.7"
+criteria = "safe-to-deploy"
+
+[[exemptions.anstyle-parse]]
+version = "1.0.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.anstyle-query]]
@@ -108,11 +120,11 @@ criteria = "safe-to-deploy"
 
 [[exemptions.bit-set]]
 version = "0.8.0"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.bit-vec]]
 version = "0.8.0"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.bitflags]]
 version = "2.11.0"
@@ -194,16 +206,32 @@ criteria = "safe-to-run"
 version = "4.5.60"
 criteria = "safe-to-deploy"
 
+[[exemptions.clap]]
+version = "4.6.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.clap_builder]]
 version = "4.5.60"
+criteria = "safe-to-deploy"
+
+[[exemptions.clap_builder]]
+version = "4.6.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_derive]]
 version = "4.5.55"
 criteria = "safe-to-deploy"
 
+[[exemptions.clap_derive]]
+version = "4.6.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.clap_lex]]
 version = "1.0.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.clap_lex]]
+version = "1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.cmake]]
@@ -220,6 +248,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.colorchoice]]
 version = "1.0.4"
+criteria = "safe-to-deploy"
+
+[[exemptions.colorchoice]]
+version = "1.0.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.colored]]
@@ -294,6 +326,10 @@ criteria = "safe-to-deploy"
 version = "1.6.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.derive-where]]
+version = "1.6.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.diff]]
 version = "0.1.13"
 criteria = "safe-to-run"
@@ -344,6 +380,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.fail]]
 version = "0.5.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.fancy-regex]]
+version = "0.17.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.fastrand]]
@@ -736,6 +776,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.once_cell]]
 version = "1.21.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.once_cell]]
+version = "1.21.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.once_cell_polyfill]]

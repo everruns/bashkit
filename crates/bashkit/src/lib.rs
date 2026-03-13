@@ -322,6 +322,7 @@
 //! ""#).await?;
 //! ```
 //!
+//! Stdlib modules: `math`, `re`, `pathlib`, `os` (getenv/environ), `sys`, `typing`.
 //! Limitations: no `open()` (use `pathlib.Path`), no network, no classes,
 //! no third-party imports.
 //!
@@ -408,7 +409,7 @@ pub use builtins::{PythonExternalFnHandler, PythonExternalFns, PythonLimits};
 // **Unstable:** These types come from monty (git-pinned, not on crates.io).
 // They may change in breaking ways between bashkit releases.
 #[cfg(feature = "python")]
-pub use monty::{ExcType, ExternalResult, MontyException, MontyObject};
+pub use monty::{ExcType, ExtFunctionResult, MontyException, MontyObject};
 
 /// Logging utilities module
 ///

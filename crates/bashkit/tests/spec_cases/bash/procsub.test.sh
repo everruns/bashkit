@@ -1,4 +1,5 @@
 ### procsub_basic
+### bash_diff: requires /dev/fd/ which may not exist in all environments
 # Basic process substitution
 cat <(echo hello)
 ### expect
@@ -6,6 +7,7 @@ hello
 ### end
 
 ### procsub_with_pipe
+### bash_diff: requires /dev/fd/
 # Process substitution with pipe
 cat <(echo hello | tr a-z A-Z)
 ### expect
@@ -25,6 +27,7 @@ second
 ### end
 
 ### procsub_empty_output
+### bash_diff: requires /dev/fd/
 # Process substitution with empty command output
 cat <(echo "")
 echo done
@@ -34,6 +37,7 @@ done
 ### end
 
 ### procsub_multiline
+### bash_diff: requires /dev/fd/
 # Process substitution with multiline output
 cat <(printf 'line1\nline2\nline3\n')
 ### expect
@@ -43,6 +47,7 @@ line3
 ### end
 
 ### procsub_variable_expansion
+### bash_diff: requires /dev/fd/
 # Process substitution with variable
 msg="world"
 cat <(echo "hello $msg")
@@ -51,6 +56,7 @@ hello world
 ### end
 
 ### procsub_diff_two_commands
+### bash_diff: requires /dev/fd/
 # diff with two process substitutions
 echo "aaa" > /tmp/psub1.txt
 echo "bbb" > /tmp/psub2.txt
@@ -61,6 +67,7 @@ exit: 1
 ### end
 
 ### procsub_diff_identical
+### bash_diff: requires /dev/fd/
 # diff with identical process substitutions
 diff <(echo "same") <(echo "same") > /dev/null 2>&1
 echo "exit: $?"
@@ -69,6 +76,7 @@ exit: 0
 ### end
 
 ### procsub_paste_two_sources
+### bash_diff: requires /dev/fd/
 # paste with two process substitutions
 paste <(echo "col1") <(echo "col2")
 ### expect
@@ -76,6 +84,7 @@ col1	col2
 ### end
 
 ### procsub_nested_commands
+### bash_diff: requires /dev/fd/
 # process substitution with complex pipeline
 cat <(echo "hello world" | tr ' ' '\n' | sort)
 ### expect
@@ -84,6 +93,7 @@ world
 ### end
 
 ### procsub_sort_comparison
+### bash_diff: requires /dev/fd/
 # sort and compare with process substitution
 cat <(printf 'b\na\nc\n' | sort)
 ### expect

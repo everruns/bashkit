@@ -186,8 +186,8 @@ Monty has no network primitives and no OsCall variants for network operations.
 
 **No classes.** Class definitions are not yet supported by Monty (planned upstream).
 
-**No third-party imports.** Only builtin modules (`sys`, `typing`, `os`, `pathlib`)
-are available. No `pip install`, no `import numpy`.
+**No third-party imports.** Only builtin modules (`sys`, `typing`, `os`, `pathlib`,
+`math`, `re`) are available. No `pip install`, no `import numpy`.
 
 **No `str.format()`.** Use f-strings instead: `f"value={x}"` not `"value={}".format(x)`.
 

@@ -352,7 +352,6 @@ show(1, 2, 3, x=4, y=5)"
 ### end
 
 ### python3_set_operations
-### skip: Monty does not support set & and | operators yet
 # Set operations
 python3 -c "a = {1, 2, 3}
 b = {2, 3, 4}
@@ -364,7 +363,6 @@ print(sorted(a | b))"
 ### end
 
 ### python3_map_filter
-### skip: Monty does not have filter() builtin yet
 # Map and filter
 python3 -c "nums = [1, 2, 3, 4, 5]
 evens = list(filter(lambda x: x % 2 == 0, nums))
@@ -374,7 +372,6 @@ print(evens)"
 ### end
 
 ### python3_dict_comprehension
-### skip: Monty does not support dict comprehension with enumerate yet
 # Dictionary comprehension
 python3 -c "d = {k: v for k, v in enumerate('abc')}
 print(d)"
@@ -391,7 +388,6 @@ hello world
 ### end
 
 ### python3_sorted_with_key
-### skip: Monty does not support sorted() key parameter yet
 # sorted() with key function
 python3 -c "words = ['banana', 'apple', 'cherry']
 print(sorted(words, key=len))"

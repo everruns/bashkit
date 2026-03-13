@@ -186,6 +186,7 @@ Path('/tmp/data.txt').write_text('hello from python')
 bash.exec("cat /tmp/data.txt").await?; // "hello from python"
 ```
 
+Stdlib modules: `math`, `re`, `pathlib`, `os` (getenv/environ), `sys`, `typing`.
 Limitations: no `open()` (use `pathlib.Path`), no network, no classes, no third-party imports.
 See [crates/bashkit/docs/python.md](crates/bashkit/docs/python.md) for the full guide.
 
