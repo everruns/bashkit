@@ -214,14 +214,6 @@ Node.js versions tested: 20, 22, 24
 JS package version is synced from `Cargo.toml` workspace version via `build.rs`.
 The build script updates `package.json` automatically when the Cargo version changes.
 
-### init-npm-packages.yml
-
-- **Trigger**: Manual dispatch only (one-time setup)
-- **Actions**: Creates placeholder npm packages for each NAPI platform target
-- **File**: `.github/workflows/init-npm-packages.yml`
-- **Secret required**: `NPM_TOKEN`
-- **Post-setup**: Must manually configure trusted publishing for each package on npmjs.com
-
 #### Wheel matrix
 
 | OS | Architecture | Variant |

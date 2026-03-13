@@ -33,15 +33,15 @@
     "wrapper.js",
     "wrapper.d.ts",
     "index.js",
-    "index.d.ts"
+    "index.d.ts",
+    "bashkit.*.node",
+    "bashkit.*.wasm"
   ],
   "scripts": {
     "build": "npm run build:napi && npm run build:ts",
     "build:napi": "napi build --platform --release",
     "build:ts": "tsc",
     "artifacts": "napi artifacts",
-    "create-npm-dirs": "napi create-npm-dirs",
-    "prepublishOnly": "napi prepublish --skip-gh-release",
     "test": "ava",
     "lint": "oxlint .",
     "format": "prettier --write .",
@@ -68,13 +68,5 @@
   },
   "engines": {
     "node": ">= 18"
-  },
-  "optionalDependencies": {
-    "@everruns/bashkit-darwin-x64": "0.1.9",
-    "@everruns/bashkit-darwin-arm64": "0.1.9",
-    "@everruns/bashkit-linux-x64-gnu": "0.1.9",
-    "@everruns/bashkit-linux-arm64-gnu": "0.1.9",
-    "@everruns/bashkit-win32-x64-msvc": "0.1.9",
-    "@everruns/bashkit-wasm32-wasi": "0.1.9"
   }
 }
