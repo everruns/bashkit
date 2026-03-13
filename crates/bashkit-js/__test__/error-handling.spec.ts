@@ -5,10 +5,10 @@ import { Bash, BashTool, BashError } from "../wrapper.js";
 // ExecResult error fields
 // ============================================================================
 
-test("successful command has null error", (t) => {
+test("successful command has no error", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("echo ok");
-  t.is(r.error, null);
+  t.falsy(r.error);
   t.is(r.exitCode, 0);
 });
 

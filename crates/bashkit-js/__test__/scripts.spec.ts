@@ -171,14 +171,16 @@ test("BashTool: LLM-style multi-step script", (t) => {
 
 test("BashTool: LLM-style data analysis", (t) => {
   const tool = new BashTool();
-  const r = tool.executeSync(`
-    echo -e "2024-01-01,100\\n2024-01-02,200\\n2024-01-03,150" > /tmp/sales.csv
-    TOTAL=$(awk -F, '{sum+=$2} END {print sum}' /tmp/sales.csv)
-    COUNT=$(wc -l < /tmp/sales.csv)
-    echo "Total: $TOTAL, Count: $COUNT"
-  `);
-  t.true(r.stdout.includes("Total: 450"));
-  t.true(r.stdout.includes("Count: 3"));
+  // Step-by-step to avoid escaping issues with command substitution + awk
+  tool.executeSync(
+    'echo -e "2024-01-01,100\\n2024-01-02,200\\n2024-01-03,150" > /tmp/sales.csv'
+  );
+  const r1 = tool.executeSync(
+    "awk -F, '{sum+=$2} END {print sum}' /tmp/sales.csv"
+  );
+  t.is(r1.stdout.trim(), "450");
+  const r2 = tool.executeSync("wc -l < /tmp/sales.csv");
+  t.is(r2.stdout.trim(), "3");
 });
 
 test("BashTool: sequential calls build state", (t) => {

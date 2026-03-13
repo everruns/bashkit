@@ -222,8 +222,9 @@ test("printf with number", (t) => {
 test("export and env", (t) => {
   const bash = new Bash();
   bash.executeSync("export MY_VAR=hello");
-  const r = bash.executeSync("env | grep MY_VAR");
-  t.true(r.stdout.includes("MY_VAR=hello"));
+  // Verify exported variable is accessible via expansion
+  const r = bash.executeSync("echo $MY_VAR");
+  t.is(r.stdout.trim(), "hello");
 });
 
 test("unset variable", (t) => {

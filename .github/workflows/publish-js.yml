@@ -183,9 +183,18 @@ jobs:
           node examples/data_pipeline.mjs
           node examples/llm_tool.mjs
 
-      - name: Install AI SDK dependencies
-        run: npm install openai ai @ai-sdk/openai @langchain/core @langchain/langgraph @langchain/openai zod
-        working-directory: crates/bashkit-js
+      - name: Install AI SDK dependencies and re-link
+        shell: bash
+        run: |
+          echo '{"type":"module","private":true}' > package.json
+          npm install --no-save openai ai @ai-sdk/openai @langchain/core @langchain/langgraph @langchain/openai zod
+          rm -rf node_modules/@everruns/bashkit
+          mkdir -p node_modules/@everruns
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp -r crates/bashkit-js node_modules/@everruns/bashkit
+          else
+            ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
+          fi
 
       - name: Run AI examples
         shell: bash
@@ -275,9 +284,13 @@ jobs:
           ${{ steps.docker.outputs.IMAGE }}
           sh -c "node examples/bash_basics.mjs && node examples/data_pipeline.mjs && node examples/llm_tool.mjs"
 
-      - name: Install AI SDK dependencies
-        run: npm install openai ai @ai-sdk/openai @langchain/core @langchain/langgraph @langchain/openai zod
-        working-directory: crates/bashkit-js
+      - name: Install AI SDK dependencies and re-link
+        run: |
+          echo '{"type":"module","private":true}' > package.json
+          npm install --no-save openai ai @ai-sdk/openai @langchain/core @langchain/langgraph @langchain/openai zod
+          rm -rf node_modules/@everruns/bashkit
+          mkdir -p node_modules/@everruns
+          ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
 
       - name: Run AI examples
         env:
