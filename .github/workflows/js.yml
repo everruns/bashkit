@@ -80,9 +80,7 @@ jobs:
         run: npm install openai ai @ai-sdk/openai @langchain/core @langchain/langgraph @langchain/openai zod
         working-directory: crates/bashkit-js
 
-      # External API dependency — don't block CI on OpenAI outages
       - name: Run AI examples
-        continue-on-error: true
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
