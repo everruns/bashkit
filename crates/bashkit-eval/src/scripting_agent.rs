@@ -185,6 +185,7 @@ pub async fn run_scripted_agent(
             let resp = scripted_tool
                 .execute(ToolRequest {
                     commands: commands.to_string(),
+                    timeout_ms: None,
                 })
                 .await;
 
