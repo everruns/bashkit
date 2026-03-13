@@ -1,6 +1,6 @@
 //! ScriptedTool execution: Tool impl, builtin adapter, flag parser, documentation helpers.
 
-use super::{ScriptedTool, ToolArgs, ToolCallback};
+use super::{ScriptedTool, ToolArgs, ToolCallback, ToolDef};
 use crate::builtins::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -146,6 +146,75 @@ impl Builtin for ToolBuiltinAdapter {
 }
 
 // ============================================================================
+// HelpBuiltin — built-in `help` command for runtime schema introspection
+// ============================================================================
+
+/// Built-in `help` command that provides runtime schema introspection.
+///
+/// Modes:
+/// - `help --list`: one-line summary of all tools
+/// - `help <tool>`: human-readable description and usage
+/// - `help <tool> --json`: JSON schema output for `jq` pipelines
+struct HelpBuiltin {
+    tools: Vec<ToolDef>,
+}
+
+#[async_trait]
+impl Builtin for HelpBuiltin {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        let args = ctx.args;
+
+        // No arguments → show all tools
+        if args.is_empty() {
+            return Ok(ExecResult::ok(self.format_list()));
+        }
+
+        // --list flag → compact listing
+        if args.iter().any(|a| a == "--list") {
+            return Ok(ExecResult::ok(self.format_list()));
+        }
+
+        // Find tool name (first non-flag arg)
+        let tool_name = args.iter().find(|a| !a.starts_with("--"));
+        let json_mode = args.iter().any(|a| a == "--json");
+
+        let Some(name) = tool_name else {
+            return Ok(ExecResult::ok(self.format_list()));
+        };
+
+        let Some(def) = self.tools.iter().find(|t| t.name == *name) else {
+            return Ok(ExecResult::err(format!("unknown tool: {name}\n"), 1));
+        };
+
+        if json_mode {
+            let schema = serde_json::json!({
+                "name": def.name,
+                "description": def.description,
+                "input_schema": def.input_schema,
+            });
+            let output = serde_json::to_string_pretty(&schema).unwrap_or_else(|_| "{}".to_string());
+            Ok(ExecResult::ok(format!("{output}\n")))
+        } else {
+            let mut out = format!("{}: {}\n", def.name, def.description);
+            if let Some(usage) = usage_from_schema(&def.input_schema) {
+                out.push_str(&format!("Usage: {} {}\n", def.name, usage));
+            }
+            Ok(ExecResult::ok(out))
+        }
+    }
+}
+
+impl HelpBuiltin {
+    fn format_list(&self) -> String {
+        let mut out = String::new();
+        for t in &self.tools {
+            out.push_str(&format!("{:<20} {}\n", t.name, t.description));
+        }
+        out
+    }
+}
+
+// ============================================================================
 // ScriptedTool — internal helpers
 // ============================================================================
 
@@ -168,6 +237,21 @@ impl ScriptedTool {
             });
             builder = builder.builtin(name, builtin);
         }
+
+        // Register the built-in `help` command for runtime introspection
+        let tool_defs: Vec<ToolDef> = self
+            .tools
+            .iter()
+            .map(|t| ToolDef {
+                name: t.def.name.clone(),
+                description: t.def.description.clone(),
+                input_schema: t.def.input_schema.clone(),
+            })
+            .collect();
+        builder = builder.builtin(
+            "help".to_string(),
+            Box::new(HelpBuiltin { tools: tool_defs }),
+        );
 
         builder.build()
     }
@@ -244,8 +328,10 @@ impl ScriptedTool {
         prompt.push_str("## Available tool commands\n\n");
         for t in &self.tools {
             prompt.push_str(&format!("- `{}`: {}\n", t.def.name, t.def.description));
-            if let Some(usage) = usage_from_schema(&t.def.input_schema) {
-                prompt.push_str(&format!("  Usage: `{} {}`\n", t.def.name, usage));
+            if !self.compact_prompt {
+                if let Some(usage) = usage_from_schema(&t.def.input_schema) {
+                    prompt.push_str(&format!("  Usage: `{} {}`\n", t.def.name, usage));
+                }
             }
         }
 
@@ -255,7 +341,9 @@ impl ScriptedTool {
              - Pipe tool output through `jq` for JSON processing\n\
              - Use variables to pass data between tool calls\n\
              - Use `set -e` to stop on first error\n\
-             - Standard builtins (echo, grep, sed, awk, etc.) are available\n",
+             - Standard builtins (echo, grep, sed, awk, etc.) are available\n\
+             - Use `help <tool>` for usage details, `help <tool> --json` for schema\n\
+             - Use `help --list` to see all available tool commands\n",
         );
 
         prompt
@@ -451,6 +539,234 @@ mod tests {
         assert!(
             usage_from_schema(&serde_json::json!({"type": "object", "properties": {}})).is_none()
         );
+    }
+
+    // -- Help builtin tests --
+
+    #[tokio::test]
+    async fn test_help_list_shows_all_tools() {
+        use super::ScriptedTool;
+        use crate::tool::Tool;
+        use crate::ToolDef;
+
+        let mut tool = ScriptedTool::builder("test")
+            .tool(
+                ToolDef::new("get_user", "Fetch user by ID"),
+                |_: &super::ToolArgs| Ok("ok\n".into()),
+            )
+            .tool(
+                ToolDef::new("list_orders", "List orders"),
+                |_: &super::ToolArgs| Ok("ok\n".into()),
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "help --list".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("get_user"));
+        assert!(resp.stdout.contains("list_orders"));
+        assert!(resp.stdout.contains("Fetch user by ID"));
+    }
+
+    #[tokio::test]
+    async fn test_help_no_args_lists_tools() {
+        use super::ScriptedTool;
+        use crate::tool::Tool;
+        use crate::ToolDef;
+
+        let mut tool = ScriptedTool::builder("test")
+            .tool(
+                ToolDef::new("ping", "Ping a host"),
+                |_: &super::ToolArgs| Ok("ok\n".into()),
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "help".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("ping"));
+    }
+
+    #[tokio::test]
+    async fn test_help_tool_human_readable() {
+        use super::ScriptedTool;
+        use crate::tool::Tool;
+        use crate::ToolDef;
+
+        let mut tool = ScriptedTool::builder("test")
+            .tool(
+                ToolDef::new("get_user", "Fetch user by ID").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "id": {"type": "integer"} }
+                })),
+                |_: &super::ToolArgs| Ok("ok\n".into()),
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "help get_user".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("get_user: Fetch user by ID"));
+        assert!(resp.stdout.contains("--id <integer>"));
+    }
+
+    #[tokio::test]
+    async fn test_help_tool_json_schema() {
+        use super::ScriptedTool;
+        use crate::tool::Tool;
+        use crate::ToolDef;
+
+        let mut tool = ScriptedTool::builder("test")
+            .tool(
+                ToolDef::new("get_user", "Fetch user by ID").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "id": {"type": "integer"} }
+                })),
+                |_: &super::ToolArgs| Ok("ok\n".into()),
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "help get_user --json".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        let parsed: serde_json::Value =
+            serde_json::from_str(resp.stdout.trim()).expect("should be valid JSON");
+        assert_eq!(parsed["name"], "get_user");
+        assert_eq!(parsed["description"], "Fetch user by ID");
+        assert!(parsed["input_schema"]["properties"]["id"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_help_json_piped_to_jq() {
+        use super::ScriptedTool;
+        use crate::tool::Tool;
+        use crate::ToolDef;
+
+        let mut tool = ScriptedTool::builder("test")
+            .tool(
+                ToolDef::new("get_user", "Fetch user by ID").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"},
+                        "role": {"type": "string", "enum": ["admin", "user"]}
+                    }
+                })),
+                |_: &super::ToolArgs| Ok("ok\n".into()),
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "help get_user --json | jq -r '.input_schema.properties.role.enum[0]'"
+                    .into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout.trim(), "admin");
+    }
+
+    #[tokio::test]
+    async fn test_help_unknown_tool() {
+        use super::ScriptedTool;
+        use crate::tool::Tool;
+        use crate::ToolDef;
+
+        let mut tool = ScriptedTool::builder("test")
+            .tool(ToolDef::new("ping", "Ping"), |_: &super::ToolArgs| {
+                Ok("ok\n".into())
+            })
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "help nonexistent".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_ne!(resp.exit_code, 0);
+        assert!(resp.stderr.contains("unknown tool"));
+    }
+
+    // -- Compact prompt tests --
+
+    #[test]
+    fn test_compact_prompt_omits_usage() {
+        use super::ScriptedTool;
+        use crate::tool::Tool;
+        use crate::ToolDef;
+
+        let tool = ScriptedTool::builder("test")
+            .compact_prompt(true)
+            .tool(
+                ToolDef::new("get_user", "Fetch user by ID").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "id": {"type": "integer"} }
+                })),
+                |_: &super::ToolArgs| Ok("ok\n".into()),
+            )
+            .build();
+
+        let sp = tool.system_prompt();
+        assert!(sp.contains("get_user"));
+        assert!(sp.contains("Fetch user by ID"));
+        // Compact mode should NOT include Usage: lines
+        assert!(!sp.contains("Usage:"));
+        // But should mention help
+        assert!(sp.contains("help <tool>"));
+    }
+
+    #[test]
+    fn test_non_compact_prompt_includes_usage() {
+        use super::ScriptedTool;
+        use crate::tool::Tool;
+        use crate::ToolDef;
+
+        let tool = ScriptedTool::builder("test")
+            .tool(
+                ToolDef::new("get_user", "Fetch user by ID").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "id": {"type": "integer"} }
+                })),
+                |_: &super::ToolArgs| Ok("ok\n".into()),
+            )
+            .build();
+
+        let sp = tool.system_prompt();
+        assert!(sp.contains("Usage: `get_user --id <integer>`"));
+    }
+
+    #[test]
+    fn test_system_prompt_includes_help_tip() {
+        use super::ScriptedTool;
+        use crate::tool::Tool;
+        use crate::ToolDef;
+
+        let tool = ScriptedTool::builder("test")
+            .tool(ToolDef::new("noop", "No-op"), |_: &super::ToolArgs| {
+                Ok("ok\n".into())
+            })
+            .build();
+
+        let sp = tool.system_prompt();
+        assert!(sp.contains("help <tool>"));
+        assert!(sp.contains("help --list"));
     }
 
     #[tokio::test]

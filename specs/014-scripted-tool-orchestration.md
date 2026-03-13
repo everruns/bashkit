@@ -115,9 +115,27 @@ Implements the `Tool` trait. On each `execute()`:
 
 Reusable — multiple `execute()` calls share the same `Arc<ToolCallback>` instances.
 
+### Built-in `help` command
+
+A built-in `help` command is automatically registered for runtime schema introspection:
+
+| Command | Output |
+|---------|--------|
+| `help` or `help --list` | One-line summary of all tools |
+| `help <tool>` | Human-readable description and usage |
+| `help <tool> --json` | JSON schema output (pipe to `jq`) |
+
+Example: `help get_user --json | jq '.input_schema.properties.role.enum'`
+
+### Compact prompt mode
+
+`ScriptedToolBuilder::compact_prompt(true)` omits per-tool `Usage:` lines from `system_prompt()`,
+emitting only tool names and descriptions. The LLM queries schemas at runtime via `help <tool> --json`.
+Default: `false` (full schemas included, backward compatible).
+
 ### LLM integration
 
-`system_prompt()` generates markdown with available tool commands, input schemas (when present), and tips. Example output:
+`system_prompt()` generates markdown with available tool commands, input schemas (when present unless compact mode), and tips. Example output:
 
 ```markdown
 # api_name
@@ -137,6 +155,8 @@ Output: {stdout, stderr, exit_code}
 - Pass arguments as `--key value` or `--key=value` flags
 - Pipe tool output through `jq` for JSON processing
 - Use variables to pass data between tool calls
+- Use `help <tool>` for usage details, `help <tool> --json` for schema
+- Use `help --list` to see all available tool commands
 ```
 
 ## Module location
@@ -160,7 +180,7 @@ Run: `cargo run --example scripted_tool --features scripted_tool`
 
 ## Test coverage
 
-31 unit tests covering:
+39+ unit tests covering:
 - Builder configuration (name, description, defaults)
 - Introspection (help, system_prompt, schemas, schema rendering)
 - Flag parsing (`--key value`, `--key=value`, boolean flags, type coercion)
@@ -173,6 +193,8 @@ Run: `cargo run --example scripted_tool --features scripted_tool`
 - Environment variables
 - Status callbacks
 - Multiple sequential `execute()` calls (Arc reuse)
+- Built-in `help` command (list, human-readable, JSON, jq pipeline, unknown tool)
+- Compact prompt mode (omits Usage lines, includes help tip)
 
 ## Security
 

@@ -176,6 +176,7 @@ pub struct ScriptedToolBuilder {
     tools: Vec<RegisteredTool>,
     limits: Option<ExecutionLimits>,
     env_vars: Vec<(String, String)>,
+    compact_prompt: bool,
 }
 
 impl ScriptedToolBuilder {
@@ -186,6 +187,7 @@ impl ScriptedToolBuilder {
             tools: Vec::new(),
             limits: None,
             env_vars: Vec::new(),
+            compact_prompt: false,
         }
     }
 
@@ -223,6 +225,16 @@ impl ScriptedToolBuilder {
         self
     }
 
+    /// Enable compact prompt mode.
+    ///
+    /// When enabled, `system_prompt()` emits only tool names and descriptions
+    /// without full schemas. The LLM can query schemas at runtime via the
+    /// built-in `help <tool> --json` command.
+    pub fn compact_prompt(mut self, enabled: bool) -> Self {
+        self.compact_prompt = enabled;
+        self
+    }
+
     /// Build the [`ScriptedTool`].
     pub fn build(self) -> ScriptedTool {
         let short_desc = self
@@ -235,6 +247,7 @@ impl ScriptedToolBuilder {
             tools: self.tools,
             limits: self.limits,
             env_vars: self.env_vars,
+            compact_prompt: self.compact_prompt,
         }
     }
 }
@@ -262,6 +275,7 @@ pub struct ScriptedTool {
     pub(crate) tools: Vec<RegisteredTool>,
     pub(crate) limits: Option<ExecutionLimits>,
     pub(crate) env_vars: Vec<(String, String)>,
+    pub(crate) compact_prompt: bool,
 }
 
 impl ScriptedTool {
