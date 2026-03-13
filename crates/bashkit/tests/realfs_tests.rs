@@ -133,14 +133,30 @@ async fn readwrite_mount_modifies_host() {
         .mount_real_readwrite_at(dir.path(), "/workspace")
         .build();
 
-    // Append to host file
-    bash.exec("echo 'appended' >> /workspace/hello.txt")
+    // Read existing file
+    let result = bash.exec("cat /workspace/hello.txt").await.unwrap();
+    assert_eq!(result.stdout, "hello world\n");
+
+    // Write to host file (overwrite)
+    bash.exec("echo 'modified by bash' > /workspace/hello.txt")
         .await
         .unwrap();
 
     // Verify on host
     let content = std::fs::read_to_string(dir.path().join("hello.txt")).unwrap();
-    assert!(content.contains("appended"));
+    assert_eq!(content, "modified by bash\n");
+
+    // Append to host file
+    bash.exec("echo 'appended line' >> /workspace/hello.txt")
+        .await
+        .unwrap();
+
+    let content = std::fs::read_to_string(dir.path().join("hello.txt")).unwrap();
+    assert!(
+        content.contains("appended line"),
+        "append should modify host file, got: {:?}",
+        content
+    );
 }
 
 #[tokio::test]
