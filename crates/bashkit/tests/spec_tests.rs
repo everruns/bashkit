@@ -50,12 +50,8 @@
 //! ### jq.test.sh (1 skipped)
 //! - [ ] jaq errors on .foo applied to null instead of returning null for //
 //!
-//! ### python.test.sh (8 skipped)
-//! - [ ] Monty does not support set & and | operators yet
-//! - [ ] Monty does not have filter() builtin yet
-//! - [ ] Monty does not support dict comprehension with enumerate yet
+//! ### python.test.sh (4 skipped)
 //! - [ ] Monty does not support str.format() method yet
-//! - [ ] Monty does not support sorted() key parameter yet
 //! - [ ] Monty does not support chain assignment (a = b = c = 0) yet
 //! - [ ] Monty dict literal in bash quoting needs single-quote support
 //! - [ ] export propagation to ctx.env may not work in spec test runner
