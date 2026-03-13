@@ -220,6 +220,22 @@ Run: `cargo run --example scripted_tool --features scripted_tool`
 - Built-in `discover` command (categories, tag filter, search, JSON, empty results)
 - Tags and category metadata on ToolDef
 
+## MCP integration
+
+`McpServer::register_scripted_tool()` exposes a ScriptedTool as an MCP tool over JSON-RPC:
+
+```rust
+let mut server = McpServer::new();
+server.register_scripted_tool(my_tool);
+server.run().await?;
+```
+
+Each registered ScriptedTool appears in `tools/list` as a single tool accepting
+`{script: "<bash>"}`. `tools/call` routes to `ScriptedTool::execute()` and returns
+stdout/stderr/exit_code. The existing `bash` tool is preserved.
+
+Gated behind the `scripted_tool` feature flag in `bashkit-cli`.
+
 ## Security
 
 Inherits all bashkit sandbox guarantees:
