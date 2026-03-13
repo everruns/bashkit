@@ -1,0 +1,78 @@
+# JavaScript/TypeScript CI — builds NAPI-RS bindings and runs tests
+# Triggered on PRs and pushes to main when JS-related files change.
+
+name: JS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/bashkit-js/**"
+      - "crates/bashkit/src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/js.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/bashkit-js/**"
+      - "crates/bashkit/src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/js.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22", "24", "latest"]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: crates/bashkit-js
+
+      - name: Build native binding
+        run: npm run build
+        working-directory: crates/bashkit-js
+
+      - name: Run tests
+        run: npm test
+        working-directory: crates/bashkit-js
+
+  # Gate job for branch protection
+  js-check:
+    name: JS Check
+    if: always()
+    needs: [build-and-test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all jobs passed
+        run: |
+          if [[ "${{ needs.build-and-test.result }}" != "success" ]]; then
+            echo "JS build/test failed"
+            exit 1
+          fi
