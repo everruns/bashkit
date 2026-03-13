@@ -207,7 +207,7 @@ The CI workflows handle this automatically on GitHub Release.
 | Windows | x86_64-pc-windows-msvc | windows-latest |
 | WASM | wasm32-wasip1-threads | ubuntu-latest |
 
-Node.js versions tested: 20, 22
+Node.js versions tested: 20, 22, 24
 
 #### JS version sync
 
