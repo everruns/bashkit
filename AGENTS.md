@@ -10,6 +10,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 
 ### Principles
 
+- Always make sure you are working on top of latest main from remote. Especially in worktrees: fetch `origin/main`, then rebase or recreate the worktree on top of it before editing.
 - Important decisions as comments on top of file
 - Code testable, smoke testable, runnable locally
 - Small, incremental PR-sized changes
@@ -123,7 +124,7 @@ Use the `/ship` command (`.claude/commands/ship.md`) to execute the complete shi
 5. Unit tests cover both positive (expected behavior) and negative (error handling, edge cases) scenarios
 6. Security tests if change touches user input, parsing, sandboxing, or permissions (see `specs/005-security-testing.md`)
 7. Compatibility/differential tests if change affects Bash behavior parity (compare against real Bash)
-8. Rebase on main: `git fetch origin main && git rebase origin/main`
+8. Rebase on main: `git fetch origin main && git rebase origin/main` (for worktrees: verify the worktree `HEAD` is on latest `origin/main` before editing)
 9. Update specs if behavior changes
 10. CI green before merge
 11. Resolve all PR comments
@@ -149,14 +150,16 @@ Types: feat, fix, docs, refactor, test, chore
 
 All commits MUST be attributed to the real human user, never to a coding agent or bot.
 
-Before committing, configure git user from environment variables:
+Before committing, verify `git config user.name` and `git config user.email` resolve to a real human identity.
+
+If git config is missing, or resolves to a bot/agent identity, configure git user from environment variables:
 
 ```bash
 git config user.name "$GIT_USER_NAME"
 git config user.email "$GIT_USER_EMAIL"
 ```
 
-Environment variables `GIT_USER_NAME` and `GIT_USER_EMAIL` must be set in the session. If they are missing, stop and ask the user — do not commit with default/bot identity.
+Environment variables `GIT_USER_NAME` and `GIT_USER_EMAIL` only need to be set when git config is missing or non-human. If both are missing in that case, stop and ask the user — do not commit with default/bot identity.
 
 - Do NOT set `GIT_AUTHOR_NAME`, `GIT_COMMITTER_NAME`, or `user.name` to any AI/bot identity (e.g. "Claude", "Cursor", "Copilot", "github-actions[bot]")
 - Do NOT use `Co-authored-by` trailers referencing AI tools
