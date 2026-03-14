@@ -422,7 +422,7 @@ impl ScriptedToolBuilder {
 // ScriptedTool
 // ============================================================================
 
-/// A [`Tool`](crate::tool::Tool) that orchestrates multiple tools via bash scripts.
+/// A [`Tool`] that orchestrates multiple tools via bash scripts.
 ///
 /// Each registered tool (defined by [`ToolDef`] + callback) becomes a bash builtin.
 /// The LLM sends a bash script that can pipe, loop, branch, and compose these

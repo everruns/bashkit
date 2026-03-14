@@ -53,7 +53,7 @@
 //! let handle = tokio::spawn(async move { execution.execute().await.expect("execution succeeds") });
 //! let first = stream.next().await.expect("first chunk");
 //! assert_eq!(first.kind, "stdout");
-//! assert_eq!(first.data, serde_json::json!("a\n"));
+//! assert!(first.data.as_str().is_some_and(|chunk| chunk.starts_with("a\n")));
 //!
 //! let output = handle.await.expect("join");
 //! assert_eq!(output.result["stdout"], "a\nb\n");

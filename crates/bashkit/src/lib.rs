@@ -186,7 +186,7 @@
 //!     .await?;
 //!
 //! assert_eq!(output.result["stdout"], "hello from bashkit\n");
-//! assert!(tool.help().contains("## Input"));
+//! assert!(tool.help().contains("## Parameters"));
 //! # Ok(())
 //! # }
 //! ```

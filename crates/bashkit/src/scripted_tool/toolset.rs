@@ -179,7 +179,8 @@ impl ScriptingToolSetBuilder {
 ///     .build();
 ///
 /// let prompt = toolset.system_prompt();
-/// assert!(prompt.contains("Usage:"));
+/// assert!(prompt.contains("greet"));
+/// assert!(prompt.contains("--name <string>"));
 ///
 /// let resp = toolset.execute(ToolRequest {
 ///     commands: "greet --name Alice".into(),
