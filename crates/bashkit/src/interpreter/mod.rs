@@ -271,9 +271,8 @@ pub struct Interpreter {
     limits: ExecutionLimits,
     /// Execution counters for resource tracking
     counters: ExecutionCounters,
-    /// Job table for background execution
-    #[allow(dead_code)]
-    jobs: JobTable,
+    /// Job table for background execution (shared for wait builtin access)
+    jobs: SharedJobTable,
     /// Shell options (set -e, set -x, etc.)
     options: ShellOptions,
     /// Current line number for $LINENO
@@ -545,7 +544,7 @@ impl Interpreter {
             call_stack: Vec::new(),
             limits: ExecutionLimits::default(),
             counters: ExecutionCounters::new(),
-            jobs: JobTable::new(),
+            jobs: jobs::new_shared_job_table(),
             options: ShellOptions::default(),
             current_line: 1,
             #[cfg(feature = "http_client")]
@@ -3404,42 +3403,104 @@ impl Interpreter {
         Ok(last_result)
     }
 
+    /// Check if a command is the empty sentinel produced by the parser for trailing `&`.
+    fn is_empty_sentinel(cmd: &Command) -> bool {
+        if let Command::Simple(sc) = cmd {
+            let name_is_empty = sc.name.parts.len() == 1
+                && matches!(&sc.name.parts[0], WordPart::Literal(s) if s.is_empty());
+            name_is_empty
+                && sc.args.is_empty()
+                && sc.redirects.is_empty()
+                && sc.assignments.is_empty()
+        } else {
+            false
+        }
+    }
+
+    /// Run a command as a "background" job.
+    ///
+    /// Executes the command synchronously (deterministic in virtual env) but
+    /// stores the result in the job table so `wait` and `$!` work correctly.
+    /// The command's stdout is emitted immediately (like real bash terminal output).
+    async fn spawn_in_background(
+        &mut self,
+        cmd: &Command,
+        parent_stdout: &mut String,
+        parent_stderr: &mut String,
+    ) -> Result<()> {
+        // Execute the command synchronously
+        let emit_before = self.output_emit_count;
+        let result = self.execute_command(cmd).await?;
+        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+
+        // Emit output immediately (background output goes to terminal in real bash)
+        parent_stdout.push_str(&result.stdout);
+        parent_stderr.push_str(&result.stderr);
+
+        // Store only the exit code in the job table (output already emitted)
+        let exit_code = result.exit_code;
+        let job_result = ExecResult::with_code(String::new(), exit_code);
+        let handle = tokio::spawn(async move { job_result });
+        let job_id = self.jobs.lock().await.spawn(handle);
+        self.variables
+            .insert("_LAST_BG_PID".to_string(), job_id.to_string());
+
+        // Background commands always return exit code 0 to the parent
+        self.last_exit_code = 0;
+        // But store the real exit code for $? after wait
+        self.variables
+            .insert("_BG_EXIT_CODE".to_string(), exit_code.to_string());
+        Ok(())
+    }
+
     /// Execute a command list (cmd1 && cmd2 || cmd3)
+    #[allow(unused_assignments)] // control_flow may be set but overwritten
     async fn execute_list(&mut self, list: &CommandList) -> Result<ExecResult> {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code;
-        let emit_before = self.output_emit_count;
-        let result = self.execute_command(&list.first).await?;
-        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-        stdout.push_str(&result.stdout);
-        stderr.push_str(&result.stderr);
-        exit_code = result.exit_code;
-        self.last_exit_code = exit_code;
-        let mut control_flow = result.control_flow;
+        let mut control_flow;
 
-        // If first command signaled control flow, return immediately
-        if control_flow != ControlFlow::None {
-            return Ok(ExecResult {
-                stdout,
-                stderr,
-                exit_code,
-                control_flow,
-            });
-        }
+        // Determine if the first command should run in the background.
+        // The `&` terminator for first appears as rest[0].op == Background.
+        let first_is_bg = matches!(list.rest.first(), Some((ListOperator::Background, _)));
 
-        // Check if first command in a semicolon-separated list failed => ERR trap
-        // Only fire if the first rest operator is semicolon (not &&/||)
-        let first_op_is_semicolon = list
-            .rest
-            .first()
-            .is_some_and(|(op, _)| matches!(op, ListOperator::Semicolon));
-        if exit_code != 0 && first_op_is_semicolon {
-            self.run_err_trap(&mut stdout, &mut stderr).await;
+        if first_is_bg {
+            self.spawn_in_background(&list.first, &mut stdout, &mut stderr)
+                .await?;
+            exit_code = 0;
+            control_flow = ControlFlow::None;
+        } else {
+            let emit_before = self.output_emit_count;
+            let result = self.execute_command(&list.first).await?;
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+            stdout.push_str(&result.stdout);
+            stderr.push_str(&result.stderr);
+            exit_code = result.exit_code;
+            self.last_exit_code = exit_code;
+            control_flow = result.control_flow;
+
+            // If first command signaled control flow, return immediately
+            if control_flow != ControlFlow::None {
+                return Ok(ExecResult {
+                    stdout,
+                    stderr,
+                    exit_code,
+                    control_flow,
+                });
+            }
+
+            // Check if first command in a semicolon-separated list failed => ERR trap
+            let first_op_is_semicolon = list
+                .rest
+                .first()
+                .is_some_and(|(op, _)| matches!(op, ListOperator::Semicolon));
+            if exit_code != 0 && first_op_is_semicolon {
+                self.run_err_trap(&mut stdout, &mut stderr).await;
+            }
         }
 
         // Track if the list contains any && or || operators
-        // If so, failures within the list are "handled" by those operators
         let has_conditional_operators = list
             .rest
             .iter()
@@ -3449,17 +3510,27 @@ impl Interpreter {
         let mut just_exited_conditional_chain = false;
 
         for (i, (op, cmd)) in list.rest.iter().enumerate() {
+            // Skip empty sentinel commands (produced by trailing `&`)
+            if Self::is_empty_sentinel(cmd) {
+                continue;
+            }
+
             // Check if next operator (if any) is && or ||
             let next_op = list.rest.get(i + 1).map(|(op, _)| op);
             let current_is_conditional = matches!(op, ListOperator::And | ListOperator::Or);
             let next_is_conditional =
                 matches!(next_op, Some(ListOperator::And) | Some(ListOperator::Or));
 
+            // Determine if THIS command should be backgrounded.
+            // A command is backgrounded when the NEXT separator is Background
+            // (the `&` terminates the current command).
+            let should_background =
+                matches!(list.rest.get(i + 1), Some((ListOperator::Background, _)));
+
             // Check errexit before executing if:
             // - We just exited a conditional chain (and current op is semicolon)
             // - OR: current op is semicolon and previous wasn't in a conditional chain
             // - Exit code is non-zero
-            // But NOT if we're about to enter/continue a conditional chain
             let should_check_errexit = matches!(op, ListOperator::Semicolon)
                 && !just_exited_conditional_chain
                 && self.is_errexit_enabled()
@@ -3477,8 +3548,7 @@ impl Interpreter {
             // Reset the flag
             just_exited_conditional_chain = false;
 
-            // Mark that we're exiting a conditional chain if:
-            // - Current is conditional (&&/||) and next is not conditional (;/end)
+            // Mark that we're exiting a conditional chain
             if current_is_conditional && !next_is_conditional {
                 just_exited_conditional_chain = true;
             }
@@ -3486,46 +3556,43 @@ impl Interpreter {
             let should_execute = match op {
                 ListOperator::And => exit_code == 0,
                 ListOperator::Or => exit_code != 0,
-                ListOperator::Semicolon => true,
-                ListOperator::Background => {
-                    // Background (&) runs command synchronously in virtual mode.
-                    // True process backgrounding requires OS process spawning which
-                    // is excluded from the sandboxed virtual environment by design.
-                    true
-                }
+                ListOperator::Semicolon | ListOperator::Background => true,
             };
 
             if should_execute {
-                let emit_before = self.output_emit_count;
-                let result = self.execute_command(cmd).await?;
-                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-                stdout.push_str(&result.stdout);
-                stderr.push_str(&result.stderr);
-                exit_code = result.exit_code;
-                self.last_exit_code = exit_code;
-                control_flow = result.control_flow;
+                if should_background {
+                    self.spawn_in_background(cmd, &mut stdout, &mut stderr)
+                        .await?;
+                    exit_code = 0;
+                } else {
+                    let emit_before = self.output_emit_count;
+                    let result = self.execute_command(cmd).await?;
+                    self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+                    stdout.push_str(&result.stdout);
+                    stderr.push_str(&result.stderr);
+                    exit_code = result.exit_code;
+                    self.last_exit_code = exit_code;
+                    control_flow = result.control_flow;
 
-                // If command signaled control flow, return immediately
-                if control_flow != ControlFlow::None {
-                    return Ok(ExecResult {
-                        stdout,
-                        stderr,
-                        exit_code,
-                        control_flow,
-                    });
-                }
+                    // If command signaled control flow, return immediately
+                    if control_flow != ControlFlow::None {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code,
+                            control_flow,
+                        });
+                    }
 
-                // ERR trap: fire on non-zero exit after semicolon commands (not &&/||)
-                if exit_code != 0 && !current_is_conditional {
-                    self.run_err_trap(&mut stdout, &mut stderr).await;
+                    // ERR trap: fire on non-zero exit after semicolon commands
+                    if exit_code != 0 && !current_is_conditional {
+                        self.run_err_trap(&mut stdout, &mut stderr).await;
+                    }
                 }
             }
         }
 
         // Final errexit check for the last command
-        // Don't check if:
-        // - The list had conditional operators (failures are "handled" by && / ||)
-        // - OR we're in/just exited a conditional chain
         let should_final_errexit_check =
             !has_conditional_operators && self.is_errexit_enabled() && exit_code != 0;
 
@@ -4032,6 +4099,11 @@ impl Interpreter {
         // Handle `caller` - needs direct access to call stack
         if name == "caller" {
             return self.execute_caller_builtin(&args, &command.redirects).await;
+        }
+
+        // Handle `wait` - needs direct access to job table
+        if name == "wait" {
+            return self.execute_wait_builtin(&args, &command.redirects).await;
         }
 
         // Handle `mapfile`/`readarray` - needs direct access to arrays
@@ -4819,6 +4891,52 @@ impl Interpreter {
         };
         let result = ExecResult::ok(output);
         self.apply_redirections(result, redirects).await
+    }
+
+    /// Execute the `wait` builtin with direct access to the job table.
+    ///
+    /// Merges background job stdout/stderr into the result so callers
+    /// see the output produced by waited-for jobs.
+    async fn execute_wait_builtin(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let mut last_exit_code = 0i32;
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        if args.is_empty() {
+            // Wait for all background jobs, collecting their output
+            let results = self.jobs.lock().await.wait_all_results().await;
+            for r in results {
+                stdout.push_str(&r.stdout);
+                stderr.push_str(&r.stderr);
+                last_exit_code = r.exit_code;
+            }
+        } else {
+            // Wait for specific job IDs
+            for arg in args {
+                if let Ok(job_id) = arg.parse::<usize>()
+                    && let Some(r) = self.jobs.lock().await.wait_for(job_id).await
+                {
+                    stdout.push_str(&r.stdout);
+                    stderr.push_str(&r.stderr);
+                    last_exit_code = r.exit_code;
+                }
+                // If job not found or not parseable, that's ok
+            }
+        }
+
+        self.last_exit_code = last_exit_code;
+        let mut result = ExecResult {
+            stdout,
+            stderr,
+            exit_code: last_exit_code,
+            control_flow: ControlFlow::None,
+        };
+        result = self.apply_redirections(result, redirects).await?;
+        Ok(result)
     }
 
     /// Execute the `alias` builtin. Needs direct access to self.aliases.
