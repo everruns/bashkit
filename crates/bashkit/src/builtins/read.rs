@@ -107,14 +107,33 @@ impl Builtin for Read {
         };
 
         // Split line by IFS (default: space, tab, newline)
+        // IFS whitespace chars (space, tab, newline) collapse runs and trim.
+        // Non-whitespace IFS chars preserve empty fields between consecutive delimiters.
         let ifs = ctx.env.get("IFS").map(|s| s.as_str()).unwrap_or(" \t\n");
         let words: Vec<&str> = if ifs.is_empty() {
             // Empty IFS means no word splitting
             vec![&line]
         } else {
-            line.split(|c: char| ifs.contains(c))
-                .filter(|s| !s.is_empty())
-                .collect()
+            let ifs_ws: Vec<char> = ifs.chars().filter(|c| " \t\n".contains(*c)).collect();
+            let ifs_non_ws: Vec<char> = ifs.chars().filter(|c| !" \t\n".contains(*c)).collect();
+
+            if ifs_non_ws.is_empty() {
+                // All IFS chars are whitespace: collapse runs, trim
+                line.split(|c: char| ifs.contains(c))
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            } else {
+                // Has non-whitespace delimiters: split on them, trim whitespace from each field
+                let mut fields: Vec<&str> = line.split(|c: char| ifs_non_ws.contains(&c)).collect();
+                // Trim IFS whitespace from each field
+                if !ifs_ws.is_empty() {
+                    fields = fields
+                        .into_iter()
+                        .map(|f| f.trim_matches(|c: char| ifs_ws.contains(&c)))
+                        .collect();
+                }
+                fields
+            }
         };
 
         if array_mode {
@@ -466,6 +485,33 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert_eq!(variables.get("A").unwrap(), "foo");
         assert_eq!(variables.get("B").unwrap(), "bar baz");
+    }
+
+    #[tokio::test]
+    async fn read_custom_ifs_preserves_empty_fields() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let mut env = HashMap::new();
+        env.insert("IFS".to_string(), ":".to_string());
+        let args = vec![
+            "A".to_string(),
+            "B".to_string(),
+            "C".to_string(),
+            "D".to_string(),
+        ];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("one::three:"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(variables.get("A").unwrap(), "one");
+        assert_eq!(variables.get("B").unwrap(), "");
+        assert_eq!(variables.get("C").unwrap(), "three");
+        assert_eq!(variables.get("D").unwrap(), "");
     }
 
     #[tokio::test]
