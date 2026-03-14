@@ -44,7 +44,52 @@ function ensureParentDir(filePath: string): void {
 	}
 }
 
+// System prompt snippet explaining bashkit environment to the LLM
+const BASHKIT_SYSTEM_PROMPT = `
+## Bashkit Virtual Environment
+
+You are running in a **bashkit** sandboxed environment. All tools (bash, read, write, edit) operate on a virtual in-memory filesystem — nothing touches the real host filesystem.
+
+### Key differences from real bash
+
+- **No network access**: \`curl\` and \`wget\` are simulated but do not make real HTTP requests.
+- **No package managers**: \`apt\`, \`pip\`, \`npm\`, \`cargo\` etc. are not available. Do not try to install packages.
+- **No interpreters**: \`python\`, \`python3\`, \`perl\`, \`node\`, \`ruby\` are not available. Write bash-native solutions using the available builtins.
+- **No \`git\`**: Version control commands are not available.
+- **No \`sudo\`**: Everything runs as a regular user. Permission commands (\`chmod\`, \`chown\`) are accepted but have no real OS effect.
+- **Virtual filesystem**: All paths (e.g. \`/home/user\`, \`/tmp\`, \`/project\`) exist in memory only. Files persist across tool calls within the same session but are gone when the session ends.
+- **State persists**: Shell variables, functions, cwd, and files carry over between bash tool calls.
+
+### Available builtins (100+)
+
+**Core I/O**: echo, printf, cat, read
+**Text processing**: grep, sed, awk, jq, head, tail, sort, uniq, cut, tr, wc, nl, paste, column, comm, diff, strings, tac, rev
+**File operations**: cd, pwd, ls, find, mkdir, mktemp, rm, rmdir, cp, mv, touch, chmod, chown, ln
+**File inspection**: file, stat, less, tar, gzip, gunzip, du, df
+**Flow control**: test, [, true, false, exit, return, break, continue
+**Shell/variables**: export, set, unset, local, shift, source, eval, declare, typeset, readonly, shopt, getopts
+**Utilities**: sleep, date, seq, expr, yes, wait, timeout, xargs, tee, watch, basename, dirname, realpath
+**Dir stack**: pushd, popd, dirs
+**System info**: whoami, hostname, uname, id, env, printenv, history
+**Binary/hex**: od, xxd, hexdump, base64
+**Signals**: kill
+
+### Best practices
+
+- Use bash builtins for all text processing — they are fast and fully functional.
+- Create files with the \`write\` tool for large content; use \`bash\` with echo/cat for quick one-liners.
+- Use absolute paths (start with \`/\`) to avoid ambiguity.
+- Don't attempt to run compilers, interpreters, or external tools — they don't exist in this environment.
+`.trim();
+
 export default function (pi: any) {
+	// Inject bashkit context into the LLM system prompt
+	pi.on("before_agent_start", async (event: any) => {
+		return {
+			systemPrompt: event.systemPrompt + "\n\n" + BASHKIT_SYSTEM_PROMPT,
+		};
+	});
+
 	// --- bash tool ---
 	pi.registerTool({
 		name: "bash",
