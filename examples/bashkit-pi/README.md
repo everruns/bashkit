@@ -11,15 +11,18 @@ Replaces all four of pi's core tools (bash, read, write, edit) with bashkit-back
 - **write** — writes files to bashkit's in-memory VFS
 - **edit** — edits files in bashkit's in-memory VFS (find-and-replace)
 
-No real filesystem access. All state persists across tool calls within a session.
+No real filesystem access. No subprocess. Uses `@everruns/bashkit` Node.js native bindings (NAPI-RS) loaded directly in pi's process.
 
 ## Setup
 
 ```bash
-# 1. Build the server binary
-cargo build --example pi_server --release
+# 1. Build the Node.js bindings
+cd crates/bashkit-js && npm install && npm run build && cd -
 
-# 2. Install pi
+# 2. Install this example's dependencies
+cd examples/bashkit-pi && npm install && cd -
+
+# 3. Install pi
 npm install -g @mariozechner/pi-coding-agent
 ```
 
@@ -47,25 +50,17 @@ pi --provider openai --model gpt-5.4 \
 
 ```
 pi (LLM agent)
-  ├── bash tool  ──→ pi_server (Rust binary) ──→ bashkit virtual bash
-  ├── read tool  ──→ pi_server ──→ bashkit VFS read
-  ├── write tool ──→ pi_server ──→ bashkit VFS write
-  └── edit tool  ──→ pi_server ──→ bashkit VFS read+write
+  ├── bash tool  ──→ @everruns/bashkit (NAPI) ──→ bashkit virtual bash
+  ├── read tool  ──→ bashkit VFS via bash cat
+  ├── write tool ──→ bashkit VFS via bash heredoc
+  └── edit tool  ──→ bashkit VFS read + modify + write
 ```
 
-The `pi_server` binary (`crates/bashkit/examples/pi_server.rs`) is a JSON-line protocol server that keeps bashkit state alive for the session. The TypeScript extension talks to it over stdin/stdout.
-
-## Configuration
-
-Override the server binary path:
-
-```bash
-BASHKIT_PI_SERVER=/path/to/pi_server pi -e examples/bashkit-pi/bashkit-extension.ts
-```
+Single `Bash` instance shared across all tools. No subprocess — bashkit runs in-process via native Node.js bindings.
 
 ## How It Works
 
-1. Extension starts `pi_server` as a child process on first tool call
-2. Each tool call sends a JSON request over stdin: `{"id":"...","op":"bash","command":"echo hi"}`
-3. Server executes in bashkit, returns JSON response: `{"id":"...","stdout":"hi\n","exit_code":0}`
-4. VFS and shell state persist across all calls — files created by bash are visible to read/write/edit and vice versa
+1. Extension creates a single `Bash` instance on load
+2. All four tools (bash, read, write, edit) operate on the same virtual filesystem
+3. Files created by `write` are visible to `bash`, `read`, `edit` — and vice versa
+4. Shell state (variables, cwd, functions) persists across `bash` calls
