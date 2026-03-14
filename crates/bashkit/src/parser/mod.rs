@@ -528,6 +528,7 @@ impl<'a> Parser<'a> {
                 "case" => return self.parse_compound_with_redirects(|s| s.parse_case()),
                 "select" => return self.parse_compound_with_redirects(|s| s.parse_select()),
                 "time" => return self.parse_compound_with_redirects(|s| s.parse_time()),
+                "coproc" => return self.parse_compound_with_redirects(|s| s.parse_coproc()),
                 "function" => return self.parse_function_keyword().map(Some),
                 _ => {
                     // Check for POSIX-style function: name() { body }
@@ -1151,6 +1152,53 @@ impl<'a> Parser<'a> {
         Ok(CompoundCommand::Time(TimeCommand {
             posix_format,
             command: command.map(Box::new),
+            span: start_span.merge(self.current_span),
+        }))
+    }
+
+    /// Parse a coproc command: `coproc [NAME] command`
+    ///
+    /// If the token after `coproc` is a simple word followed by a compound
+    /// command (`{`, `(`, `while`, `for`, etc.), it is treated as the coproc
+    /// name. Otherwise the command starts immediately and the default name
+    /// "COPROC" is used.
+    fn parse_coproc(&mut self) -> Result<CompoundCommand> {
+        let start_span = self.current_span;
+        self.advance(); // consume 'coproc'
+        self.skip_newlines()?;
+
+        // Determine if next token is a NAME (simple word that is NOT a compound-
+        // command keyword and is followed by a compound command start).
+        let (name, consumed_name) = if let Some(tokens::Token::Word(w)) = &self.current_token {
+            let word = w.clone();
+            let is_compound_keyword = matches!(
+                word.as_str(),
+                "if" | "for" | "while" | "until" | "case" | "select" | "time" | "coproc"
+            );
+            let next_is_compound_start = matches!(
+                self.peek_next(),
+                Some(tokens::Token::LeftBrace) | Some(tokens::Token::LeftParen)
+            );
+            if !is_compound_keyword && next_is_compound_start {
+                self.advance(); // consume the NAME
+                self.skip_newlines()?;
+                (word, true)
+            } else {
+                ("COPROC".to_string(), false)
+            }
+        } else {
+            ("COPROC".to_string(), false)
+        };
+
+        let _ = consumed_name;
+
+        // Parse the command body (could be simple, compound, or pipeline)
+        let body = self.parse_pipeline()?;
+        let body = body.ok_or_else(|| self.error("coproc: missing command"))?;
+
+        Ok(CompoundCommand::Coproc(ast::CoprocCommand {
+            name,
+            body: Box::new(body),
             span: start_span.merge(self.current_span),
         }))
     }
