@@ -16,6 +16,7 @@
 //! - **TM-NET-014**: DNS rebind via redirect → manual redirect requires allowlist check
 
 use reqwest::Client;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use super::allowlist::{NetworkAllowlist, UrlMatch};
@@ -42,8 +43,9 @@ pub const MIN_TIMEOUT_SECS: u64 = 1;
 /// - Configurable timeouts to prevent hanging
 /// - No automatic redirect following (to prevent allowlist bypass)
 pub struct HttpClient {
-    client: Client,
+    client: OnceLock<std::result::Result<Client, String>>,
     allowlist: NetworkAllowlist,
+    default_timeout: Duration,
     /// Maximum response body size in bytes
     max_response_bytes: usize,
 }
@@ -127,27 +129,21 @@ impl HttpClient {
         timeout: Duration,
         max_response_bytes: usize,
     ) -> Self {
-        let client = Client::builder()
-            .timeout(timeout)
-            .connect_timeout(Duration::from_secs(10)) // Separate connect timeout
-            .user_agent("bashkit/0.1.2")
-            // Disable automatic redirects to prevent allowlist bypass via redirect
-            // Scripts can follow redirects manually if needed
-            .redirect(reqwest::redirect::Policy::none())
-            // Disable automatic decompression to prevent zip bomb attacks
-            // and match real curl behavior (which requires --compressed flag)
-            // With decompression enabled, a 10KB gzip could expand to 10GB
-            .no_gzip()
-            .no_brotli()
-            .no_deflate()
-            .build()
-            .expect("failed to build HTTP client");
-
         Self {
-            client,
+            client: OnceLock::new(),
             allowlist,
+            default_timeout: timeout,
             max_response_bytes,
         }
+    }
+
+    fn client(&self) -> Result<&Client> {
+        let client = self
+            .client
+            .get_or_init(|| build_client(self.default_timeout, None));
+        client
+            .as_ref()
+            .map_err(|err| Error::Internal(format!("failed to build HTTP client: {err}")))
     }
 
     /// Make a GET request.
@@ -206,7 +202,7 @@ impl HttpClient {
         }
 
         // Build request
-        let mut request = self.client.request(method.as_reqwest(), url);
+        let mut request = self.client()?.request(method.as_reqwest(), url);
 
         // Add custom headers
         for (name, value) in headers {
@@ -370,18 +366,10 @@ impl HttpClient {
                 || std::cmp::min(timeout, Duration::from_secs(10)),
                 |s| Duration::from_secs(clamp_timeout(s)),
             );
-            Client::builder()
-                .timeout(timeout)
-                .connect_timeout(connect_timeout)
-                .user_agent("bashkit/0.1.2")
-                .redirect(reqwest::redirect::Policy::none())
-                .no_gzip()
-                .no_brotli()
-                .no_deflate()
-                .build()
+            build_client(timeout, Some(connect_timeout))
                 .map_err(|e| Error::Network(format!("failed to create client: {}", e)))?
         } else {
-            self.client.clone()
+            self.client()?.clone()
         };
 
         // Build request
@@ -435,6 +423,27 @@ impl HttpClient {
     }
 }
 
+fn build_client(
+    timeout: Duration,
+    connect_timeout: Option<Duration>,
+) -> std::result::Result<Client, String> {
+    Client::builder()
+        .timeout(timeout)
+        .connect_timeout(connect_timeout.unwrap_or(Duration::from_secs(10)))
+        .user_agent("bashkit/0.1.2")
+        // Disable automatic redirects to prevent allowlist bypass via redirect
+        // Scripts can follow redirects manually if needed
+        .redirect(reqwest::redirect::Policy::none())
+        // Disable automatic decompression to prevent zip bomb attacks
+        // and match real curl behavior (which requires --compressed flag)
+        // With decompression enabled, a 10KB gzip could expand to 10GB
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .build()
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -443,10 +452,22 @@ mod tests {
     #[tokio::test]
     async fn test_blocked_by_empty_allowlist() {
         let client = HttpClient::new(NetworkAllowlist::new());
+        assert!(client.client.get().is_none());
 
         let result = client.get("https://example.com").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("access denied"));
+        assert!(client.client.get().is_none());
+    }
+
+    #[test]
+    fn test_default_client_initializes_on_first_use() {
+        let client = HttpClient::new(NetworkAllowlist::allow_all());
+        assert!(client.client.get().is_none());
+
+        client.client().expect("client");
+
+        assert!(client.client.get().is_some());
     }
 
     #[tokio::test]
