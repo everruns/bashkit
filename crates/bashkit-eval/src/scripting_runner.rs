@@ -5,11 +5,11 @@ use anyhow::Result;
 
 use crate::provider::create_provider;
 use crate::scorer;
-use crate::scripting_agent::{run_baseline_agent, run_scripted_agent, ScriptingTrace};
+use crate::scripting_agent::{ScriptingTrace, run_baseline_agent, run_scripted_agent};
 use crate::scripting_dataset::load_scripting_dataset;
 use crate::scripting_report::{
-    build_scripting_report, print_scripting_terminal_report, save_scripting_report,
-    ScriptingEvalResult,
+    ScriptingEvalResult, build_scripting_report, print_scripting_terminal_report,
+    save_scripting_report,
 };
 
 #[allow(clippy::too_many_arguments)]
