@@ -229,6 +229,38 @@ server.run().await?;
 - Gated behind `scripted_tool` feature flag on `bashkit-cli`
 - Existing `bash` tool unaffected (backward compatible)
 
+### ScriptingToolSet — mode-controlled wrapper
+
+`ScriptingToolSet` is a higher-level wrapper around `ScriptedTool` that controls
+`system_prompt()` generation based on a `DiscoveryMode`:
+
+| Mode | system_prompt() | When to use |
+|------|----------------|-------------|
+| `Exclusive` (default) | Full schemas, usage hints | Only tool the LLM has |
+| `WithDiscovery` | Semantic descriptions + discover/help instructions | Alongside other tools, or large tool sets |
+
+```rust
+// Exclusive mode (default): full schemas in prompt
+let toolset = ScriptingToolSet::builder("api")
+    .short_description("My API")
+    .tool(ToolDef::new("get_user", "Fetch user").with_schema(...), callback)
+    .build();
+
+// Discovery mode: semantic-only prompt
+let toolset = ScriptingToolSet::builder("api")
+    .short_description("My API")
+    .tool(ToolDef::new("get_user", "Fetch user").with_category("users"), callback)
+    .with_discovery()
+    .build();
+```
+
+`ScriptingToolSet` implements `Tool` — delegates `execute()` to inner `ScriptedTool`,
+overrides `system_prompt()` based on mode. In discovery mode, the prompt tells the LLM
+to use `discover` and `help` builtins rather than listing full schemas.
+
+Builder API mirrors `ScriptedToolBuilder`: `.tool()`, `.env()`, `.limits()`,
+`.short_description()`, plus `.with_discovery()` to switch mode.
+
 ## Module location
 
 `crates/bashkit/src/scripted_tool/`
@@ -236,11 +268,13 @@ server.run().await?;
 ```
 scripted_tool/
 ├── mod.rs       — ToolDef, ToolCallback, ScriptedToolBuilder, ScriptedTool struct, tests
-└── execute.rs   — Tool impl, ToolBuiltinAdapter, documentation helpers
+├── execute.rs   — Tool impl, ToolBuiltinAdapter, documentation helpers
+└── toolset.rs   — ScriptingToolSet, ScriptingToolSetBuilder, DiscoveryMode
 ```
 
 Public exports from `lib.rs` (gated by `scripted_tool` feature):
-`ToolDef`, `ToolArgs`, `ToolCallback`, `ScriptedTool`, `ScriptedToolBuilder`.
+`ToolDef`, `ToolArgs`, `ToolCallback`, `ScriptedTool`, `ScriptedToolBuilder`,
+`ScriptingToolSet`, `ScriptingToolSetBuilder`, `DiscoveryMode`.
 
 ## Example
 
