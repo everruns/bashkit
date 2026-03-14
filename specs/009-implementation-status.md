@@ -202,7 +202,7 @@ Features that may be added in the future (not intentionally excluded):
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| Coprocesses `coproc` | Low | Rarely used |
+| ~~Coprocesses `coproc`~~ | ~~Low~~ | Implemented: `coproc [NAME] cmd` with NAME array FDs + `read -u` support |
 | History expansion | Out of scope | Interactive only |
 
 ### Partially Implemented

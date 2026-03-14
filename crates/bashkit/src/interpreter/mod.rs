@@ -61,8 +61,8 @@ pub struct HistoryEntry {
 pub type OutputCallback = Box<dyn FnMut(&str, &str) + Send + Sync>;
 use crate::parser::{
     ArithmeticForCommand, AssignmentValue, CaseCommand, Command, CommandList, CompoundCommand,
-    ForCommand, FunctionDef, IfCommand, ListOperator, ParameterOp, Parser, Pipeline, Redirect,
-    RedirectKind, Script, SelectCommand, SimpleCommand, Span, TimeCommand, UntilCommand,
+    CoprocCommand, ForCommand, FunctionDef, IfCommand, ListOperator, ParameterOp, Parser, Pipeline,
+    Redirect, RedirectKind, Script, SelectCommand, SimpleCommand, Span, TimeCommand, UntilCommand,
     WhileCommand, Word, WordPart,
 };
 
@@ -325,6 +325,12 @@ pub struct Interpreter {
     history_file: Option<PathBuf>,
     /// Whether history has been loaded from VFS (to avoid re-loading on each exec).
     history_loaded: bool,
+    /// Coprocess read buffers: maps virtual FD number to remaining lines.
+    /// When a coproc runs, its stdout is split into lines and stored here
+    /// so `read -u FD` or `read <&FD` can consume them one at a time.
+    coproc_buffers: HashMap<i32, Vec<String>>,
+    /// Next virtual FD to assign for coproc read ends (starts at 63, like bash).
+    coproc_next_fd: i32,
 }
 
 impl Interpreter {
@@ -584,6 +590,8 @@ impl Interpreter {
             history: Vec::new(),
             history_file: None,
             history_loaded: false,
+            coproc_buffers: HashMap::new(),
+            coproc_next_fd: 63,
         }
     }
 
@@ -915,6 +923,7 @@ impl Interpreter {
                 CompoundCommand::Case(cmd) => cmd.span.line(),
                 CompoundCommand::Select(cmd) => cmd.span.line(),
                 CompoundCommand::Time(cmd) => cmd.span.line(),
+                CompoundCommand::Coproc(cmd) => cmd.span.line(),
                 CompoundCommand::Subshell(_) | CompoundCommand::BraceGroup(_) => 1,
                 CompoundCommand::Arithmetic(_) | CompoundCommand::Conditional(_) => 1,
             },
@@ -1016,6 +1025,7 @@ impl Interpreter {
                 let saved_exit = self.last_exit_code;
                 let saved_options = self.options.clone();
                 let saved_aliases = self.aliases.clone();
+                let saved_coproc = self.coproc_buffers.clone();
 
                 let mut result = self.execute_command_sequence(commands).await;
 
@@ -1059,6 +1069,7 @@ impl Interpreter {
                 self.last_exit_code = saved_exit;
                 self.options = saved_options;
                 self.aliases = saved_aliases;
+                self.coproc_buffers = saved_coproc;
                 result
             }
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
@@ -1067,6 +1078,7 @@ impl Interpreter {
             CompoundCommand::Arithmetic(expr) => self.execute_arithmetic_command(expr).await,
             CompoundCommand::Time(time_cmd) => self.execute_time(time_cmd).await,
             CompoundCommand::Conditional(words) => self.execute_conditional(words).await,
+            CompoundCommand::Coproc(coproc_cmd) => self.execute_coproc(coproc_cmd).await,
         }
     }
 
@@ -2088,6 +2100,79 @@ impl Interpreter {
         result.stderr.push_str(&timing);
 
         Ok(result)
+    }
+
+    /// Execute a coprocess command.
+    ///
+    /// Runs the command body synchronously (bashkit's deterministic model),
+    /// buffers its stdout for later reading via virtual FDs, sets the NAME
+    /// array with FD numbers, and stores a virtual PID in NAME_PID.
+    async fn execute_coproc(&mut self, coproc: &CoprocCommand) -> Result<ExecResult> {
+        let name = &coproc.name;
+
+        // Allocate virtual FD numbers (bash uses 63/60 by default)
+        let read_fd = self.coproc_next_fd;
+        let write_fd = self.coproc_next_fd - 1;
+        self.coproc_next_fd -= 2; // reserve pair for next coproc
+
+        // Execute the command body, capturing output
+        let result = self.execute_command(&coproc.body).await?;
+
+        // Buffer stdout lines for reading via the virtual read FD.
+        // Lines are stored in reverse order so pop() yields the first line.
+        let mut lines: Vec<String> = result.stdout.lines().map(|l| l.to_string()).collect();
+        lines.reverse();
+        self.coproc_buffers.insert(read_fd, lines);
+
+        // Set NAME array: NAME[0] = read FD, NAME[1] = write FD
+        let mut arr = HashMap::new();
+        arr.insert(0, read_fd.to_string());
+        arr.insert(1, write_fd.to_string());
+        self.arrays.insert(name.clone(), arr);
+
+        // Set NAME_PID to a virtual PID (use job table counter)
+        let virtual_pid = {
+            let table = self.jobs.lock().await;
+            table.last_job_id().unwrap_or(0) + 1000
+        };
+        self.variables
+            .insert(format!("{}_PID", name), virtual_pid.to_string());
+
+        // Also set $! (last background PID)
+        self.variables
+            .insert("_LAST_BG_PID".to_string(), virtual_pid.to_string());
+
+        // Coproc itself returns success with empty output (stdout was captured)
+        Ok(ExecResult::ok(String::new()))
+    }
+
+    /// Check if `read -u FD` args reference a coproc FD and return next line if so.
+    fn try_coproc_read_stdin(&mut self, args: &[String]) -> Option<String> {
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            if arg == "-u"
+                && let Some(fd_str) = iter.next()
+                && let Ok(fd) = fd_str.parse::<i32>()
+                && let Some(buf) = self.coproc_buffers.get_mut(&fd)
+            {
+                return if let Some(line) = buf.pop() {
+                    Some(format!("{}\n", line))
+                } else {
+                    Some(String::new()) // EOF
+                };
+            } else if arg.starts_with("-u")
+                && arg.len() > 2
+                && let Ok(fd) = arg[2..].parse::<i32>()
+                && let Some(buf) = self.coproc_buffers.get_mut(&fd)
+            {
+                return if let Some(line) = buf.pop() {
+                    Some(format!("{}\n", line))
+                } else {
+                    Some(String::new()) // EOF
+                };
+            }
+        }
+        None
     }
 
     /// Execute a timeout command - run command with time limit
@@ -4098,6 +4183,13 @@ impl Interpreter {
         let stdin = self
             .process_input_redirections(stdin, &command.redirects)
             .await?;
+
+        // For `read -u FD`, check if FD is a coproc read FD and inject data as stdin
+        let stdin = if name == "read" && stdin.is_none() {
+            self.try_coproc_read_stdin(&args).or(stdin)
+        } else {
+            stdin
+        };
 
         // If no explicit stdin, inherit from pipeline_stdin (for compound cmds in pipes).
         // For `read`, consume one line; for other commands, provide all remaining data.
@@ -6172,6 +6264,19 @@ impl Interpreter {
                     let content = self.expand_word(&redirect.target).await?;
                     stdin = Some(content);
                 }
+                RedirectKind::DupInput => {
+                    // <&FD - if FD is a coproc read FD, consume next line
+                    let target = self.expand_word(&redirect.target).await?;
+                    if let Ok(fd) = target.parse::<i32>()
+                        && let Some(buf) = self.coproc_buffers.get_mut(&fd)
+                    {
+                        if let Some(line) = buf.pop() {
+                            stdin = Some(format!("{}\n", line));
+                        } else {
+                            stdin = Some(String::new()); // EOF
+                        }
+                    }
+                }
                 _ => {
                     // Output redirections handled separately
                 }
@@ -6320,7 +6425,8 @@ impl Interpreter {
                     // Input redirections handled in process_input_redirections
                 }
                 RedirectKind::DupInput => {
-                    // Input fd duplication not yet supported
+                    // Input fd duplication - handled in process_input_redirections
+                    // for coproc FDs; other cases not yet supported
                 }
             }
         }
