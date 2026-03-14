@@ -200,7 +200,15 @@ async fn evaluate_unary(op: &str, arg: &str, fs: &Arc<dyn FileSystem>, cwd: &Pat
                 false
             }
         }
-        "-p" => false, // named pipe (not supported)
+        "-p" => {
+            // named pipe (FIFO)
+            let path = resolve_file_path(cwd, arg);
+            if let Ok(meta) = fs.stat(&path).await {
+                meta.file_type.is_fifo()
+            } else {
+                false
+            }
+        }
         "-S" => false, // socket (not supported)
         "-b" => false, // block device (not supported)
         "-c" => false, // character device (not supported)

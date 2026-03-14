@@ -125,6 +125,7 @@ impl Builtin for File {
                         determine_file_content_type(&content)
                     }
                 }
+                FileType::Fifo => "fifo (named pipe)".to_string(),
             };
 
             output.push_str(&format!("{}: {}\n", file, file_type_str));
@@ -344,6 +345,7 @@ fn format_file_type(file_type: FileType) -> String {
         FileType::File => "regular file".to_string(),
         FileType::Directory => "directory".to_string(),
         FileType::Symlink => "symbolic link".to_string(),
+        FileType::Fifo => "fifo (named pipe)".to_string(),
     }
 }
 
@@ -352,6 +354,7 @@ fn format_permissions(metadata: &crate::fs::Metadata) -> String {
     let file_type = match metadata.file_type {
         FileType::Directory => 'd',
         FileType::Symlink => 'l',
+        FileType::Fifo => 'p',
         FileType::File => '-',
     };
 

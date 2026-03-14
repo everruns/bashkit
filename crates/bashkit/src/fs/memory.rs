@@ -183,6 +183,10 @@ enum FsEntry {
         target: PathBuf,
         metadata: Metadata,
     },
+    Fifo {
+        content: Vec<u8>,
+        metadata: Metadata,
+    },
 }
 
 /// A snapshot of the virtual filesystem state.
@@ -233,6 +237,7 @@ enum VfsEntryKind {
     File { content: Vec<u8> },
     Directory,
     Symlink { target: PathBuf },
+    Fifo,
 }
 
 impl Default for InMemoryFs {
@@ -377,7 +382,7 @@ impl InMemoryFs {
 
         for entry in entries.values() {
             match entry {
-                FsEntry::File { content, .. } => {
+                FsEntry::File { content, .. } | FsEntry::Fifo { content, .. } => {
                     total_bytes += content.len() as u64;
                     file_count += 1;
                 }
@@ -413,13 +418,16 @@ impl InMemoryFs {
         let mut is_new_file = true;
 
         for (entry_path, entry) in entries.iter() {
-            if let FsEntry::File { content, .. } = entry {
-                current_total += content.len() as u64;
-                current_file_count += 1;
-                if entry_path == path {
-                    old_file_size = content.len() as u64;
-                    is_new_file = false;
+            match entry {
+                FsEntry::File { content, .. } | FsEntry::Fifo { content, .. } => {
+                    current_total += content.len() as u64;
+                    current_file_count += 1;
+                    if entry_path == path {
+                        old_file_size = content.len() as u64;
+                        is_new_file = false;
+                    }
                 }
+                _ => {}
             }
         }
 
@@ -504,6 +512,13 @@ impl InMemoryFs {
                         kind: VfsEntryKind::Symlink {
                             target: target.clone(),
                         },
+                        mode: metadata.mode,
+                    });
+                }
+                FsEntry::Fifo { metadata, .. } => {
+                    files.push(VfsEntry {
+                        path: path.clone(),
+                        kind: VfsEntryKind::Fifo,
                         mode: metadata.mode,
                     });
                 }
@@ -617,6 +632,21 @@ impl InMemoryFs {
                             target: target.clone(),
                             metadata: Metadata {
                                 file_type: FileType::Symlink,
+                                size: 0,
+                                mode: entry.mode,
+                                modified: now,
+                                created: now,
+                            },
+                        },
+                    );
+                }
+                VfsEntryKind::Fifo => {
+                    entries.insert(
+                        entry.path.clone(),
+                        FsEntry::Fifo {
+                            content: Vec::new(),
+                            metadata: Metadata {
+                                file_type: FileType::Fifo,
                                 size: 0,
                                 mode: entry.mode,
                                 modified: now,
@@ -773,7 +803,9 @@ impl FileSystem for InMemoryFs {
         let entries = self.entries.read().unwrap();
 
         match entries.get(&path) {
-            Some(FsEntry::File { content, .. }) => Ok(content.clone()),
+            Some(FsEntry::File { content, .. }) | Some(FsEntry::Fifo { content, .. }) => {
+                Ok(content.clone())
+            }
             Some(FsEntry::Directory { .. }) => Err(IoError::other("is a directory").into()),
             Some(FsEntry::Symlink { .. }) => {
                 // Symlinks are intentionally not followed for security (TM-ESC-002, TM-DOS-011)
@@ -839,19 +871,37 @@ impl FileSystem for InMemoryFs {
         // Check limits before writing
         self.check_write_limits(&entries, &path, content.len())?;
 
-        entries.insert(
-            path,
-            FsEntry::File {
-                content: content.to_vec(),
-                metadata: Metadata {
-                    file_type: FileType::File,
-                    size: content.len() as u64,
-                    mode: 0o644,
-                    modified: SystemTime::now(),
-                    created: SystemTime::now(),
+        // Preserve FIFO type when writing to a named pipe
+        let is_fifo = matches!(entries.get(&path), Some(FsEntry::Fifo { .. }));
+        if is_fifo {
+            entries.insert(
+                path,
+                FsEntry::Fifo {
+                    content: content.to_vec(),
+                    metadata: Metadata {
+                        file_type: FileType::Fifo,
+                        size: content.len() as u64,
+                        mode: 0o644,
+                        modified: SystemTime::now(),
+                        created: SystemTime::now(),
+                    },
                 },
-            },
-        );
+            );
+        } else {
+            entries.insert(
+                path,
+                FsEntry::File {
+                    content: content.to_vec(),
+                    metadata: Metadata {
+                        file_type: FileType::File,
+                        size: content.len() as u64,
+                        mode: 0o644,
+                        modified: SystemTime::now(),
+                        created: SystemTime::now(),
+                    },
+                },
+            );
+        }
 
         Ok(())
     }
@@ -907,19 +957,20 @@ impl FileSystem for InMemoryFs {
                 );
                 return Ok(());
             }
-            Some(FsEntry::File { .. }) => {
+            Some(FsEntry::File { .. } | FsEntry::Fifo { .. }) => {
                 // Fall through to append logic below
             }
         }
 
         // File exists - check limits with fresh data under the same write lock
-        let current_file_size = if let Some(FsEntry::File {
-            content: existing, ..
-        }) = entries.get(&path)
-        {
-            existing.len()
-        } else {
-            0
+        let current_file_size = match entries.get(&path) {
+            Some(FsEntry::File {
+                content: existing, ..
+            })
+            | Some(FsEntry::Fifo {
+                content: existing, ..
+            }) => existing.len(),
+            _ => 0,
         };
         let new_file_size = current_file_size + content.len();
 
@@ -931,12 +982,18 @@ impl FileSystem for InMemoryFs {
         // Check total bytes limit
         let mut current_total = 0u64;
         for entry in entries.values() {
-            if let FsEntry::File {
-                content: file_content,
-                ..
-            } = entry
-            {
-                current_total += file_content.len() as u64;
+            match entry {
+                FsEntry::File {
+                    content: file_content,
+                    ..
+                }
+                | FsEntry::Fifo {
+                    content: file_content,
+                    ..
+                } => {
+                    current_total += file_content.len() as u64;
+                }
+                _ => {}
             }
         }
         let new_total = current_total + content.len() as u64;
@@ -949,10 +1006,16 @@ impl FileSystem for InMemoryFs {
         }
 
         // Actually append
-        if let Some(FsEntry::File {
-            content: existing,
-            metadata,
-        }) = entries.get_mut(&path)
+        if let Some(
+            FsEntry::File {
+                content: existing,
+                metadata,
+            }
+            | FsEntry::Fifo {
+                content: existing,
+                metadata,
+            },
+        ) = entries.get_mut(&path)
         {
             existing.extend_from_slice(content);
             metadata.size = existing.len() as u64;
@@ -979,8 +1042,8 @@ impl FileSystem for InMemoryFs {
                     Some(FsEntry::Directory { .. }) => {
                         // Directory exists, continue to next component
                     }
-                    Some(FsEntry::File { .. } | FsEntry::Symlink { .. }) => {
-                        // File or symlink exists at path - cannot create directory
+                    Some(FsEntry::File { .. } | FsEntry::Symlink { .. } | FsEntry::Fifo { .. }) => {
+                        // File, symlink, or fifo exists at path - cannot create directory
                         return Err(IoError::new(ErrorKind::AlreadyExists, "file exists").into());
                     }
                     None => {
@@ -1063,7 +1126,7 @@ impl FileSystem for InMemoryFs {
                     entries.remove(&path);
                 }
             }
-            Some(FsEntry::File { .. }) | Some(FsEntry::Symlink { .. }) => {
+            Some(FsEntry::File { .. } | FsEntry::Symlink { .. } | FsEntry::Fifo { .. }) => {
                 entries.remove(&path);
             }
             None => {
@@ -1084,7 +1147,8 @@ impl FileSystem for InMemoryFs {
         match entries.get(&path) {
             Some(FsEntry::File { metadata, .. })
             | Some(FsEntry::Directory { metadata })
-            | Some(FsEntry::Symlink { metadata, .. }) => Ok(metadata.clone()),
+            | Some(FsEntry::Symlink { metadata, .. })
+            | Some(FsEntry::Fifo { metadata, .. }) => Ok(metadata.clone()),
             None => Err(IoError::new(ErrorKind::NotFound, "not found").into()),
         }
     }
@@ -1110,7 +1174,8 @@ impl FileSystem for InMemoryFs {
                         let metadata = match entry {
                             FsEntry::File { metadata, .. }
                             | FsEntry::Directory { metadata }
-                            | FsEntry::Symlink { metadata, .. } => metadata.clone(),
+                            | FsEntry::Symlink { metadata, .. }
+                            | FsEntry::Fifo { metadata, .. } => metadata.clone(),
                         };
 
                         result.push(DirEntry { name, metadata });
@@ -1149,8 +1214,10 @@ impl FileSystem for InMemoryFs {
             .ok_or_else(|| IoError::new(ErrorKind::NotFound, "not found"))?;
 
         // THREAT[TM-DOS-048]: Reject renaming a file over a directory (POSIX requirement)
-        if matches!(&entry, FsEntry::File { .. } | FsEntry::Symlink { .. })
-            && matches!(entries.get(&to), Some(FsEntry::Directory { .. }))
+        if matches!(
+            &entry,
+            FsEntry::File { .. } | FsEntry::Symlink { .. } | FsEntry::Fifo { .. }
+        ) && matches!(entries.get(&to), Some(FsEntry::Directory { .. }))
         {
             // Put back the source entry
             entries.insert(from, entry);
@@ -1180,7 +1247,7 @@ impl FileSystem for InMemoryFs {
         // THREAT[TM-DOS-047]: Always check write limits, even on overwrite.
         // check_write_limits handles the delta calculation for existing files.
         let entry_size = match &entry {
-            FsEntry::File { content, .. } => content.len() as u64,
+            FsEntry::File { content, .. } | FsEntry::Fifo { content, .. } => content.len() as u64,
             _ => 0,
         };
         self.check_write_limits(&entries, &to, entry_size as usize)?;
@@ -1237,12 +1304,50 @@ impl FileSystem for InMemoryFs {
         match entries.get_mut(&path) {
             Some(FsEntry::File { metadata, .. })
             | Some(FsEntry::Directory { metadata })
-            | Some(FsEntry::Symlink { metadata, .. }) => {
+            | Some(FsEntry::Symlink { metadata, .. })
+            | Some(FsEntry::Fifo { metadata, .. }) => {
                 metadata.mode = mode;
                 Ok(())
             }
             None => Err(IoError::new(ErrorKind::NotFound, "not found").into()),
         }
+    }
+
+    async fn mkfifo(&self, path: &Path, mode: u32) -> Result<()> {
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
+        let path = Self::normalize_path(path);
+        let mut entries = self.entries.write().unwrap();
+
+        // Check parent directory exists
+        if let Some(parent) = path.parent()
+            && !entries.contains_key(parent)
+            && parent != Path::new("/")
+        {
+            return Err(IoError::new(ErrorKind::NotFound, "parent directory not found").into());
+        }
+
+        // Path must not already exist
+        if entries.contains_key(&path) {
+            return Err(IoError::new(ErrorKind::AlreadyExists, "file exists").into());
+        }
+
+        entries.insert(
+            path,
+            FsEntry::Fifo {
+                content: Vec::new(),
+                metadata: Metadata {
+                    file_type: FileType::Fifo,
+                    size: 0,
+                    mode,
+                    modified: SystemTime::now(),
+                    created: SystemTime::now(),
+                },
+            },
+        );
+
+        Ok(())
     }
 
     fn usage(&self) -> FsUsage {

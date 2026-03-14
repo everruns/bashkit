@@ -226,6 +226,7 @@ fn format_long_entry(name: &str, metadata: &crate::fs::Metadata, human: bool) ->
     let file_type = match metadata.file_type {
         FileType::Directory => 'd',
         FileType::Symlink => 'l',
+        FileType::Fifo => 'p',
         FileType::File => '-',
     };
 

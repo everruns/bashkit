@@ -374,6 +374,7 @@ impl Interpreter {
         builtins.insert("readlink".to_string(), Box::new(builtins::Readlink));
         builtins.insert("mkdir".to_string(), Box::new(builtins::Mkdir));
         builtins.insert("mktemp".to_string(), Box::new(builtins::Mktemp));
+        builtins.insert("mkfifo".to_string(), Box::new(builtins::Mkfifo));
         builtins.insert("rm".to_string(), Box::new(builtins::Rm));
         builtins.insert("cp".to_string(), Box::new(builtins::Cp));
         builtins.insert("mv".to_string(), Box::new(builtins::Mv));
@@ -10098,5 +10099,18 @@ echo "count=$COUNT"
         let mut lines: Vec<&str> = result.stdout.trim().lines().collect();
         lines.sort();
         assert_eq!(lines, vec!["/testdir/a.txt", "/testdir/b.txt"]);
+    }
+
+    #[tokio::test]
+    async fn test_mkfifo_creates_fifo_in_vfs() {
+        let result = run_script("mkfifo /tmp/mypipe && test -p /tmp/mypipe && echo ok").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "ok");
+    }
+
+    #[tokio::test]
+    async fn test_mkfifo_test_p_returns_true() {
+        let result = run_script("mkfifo /tmp/mypipe && test -p /tmp/mypipe && echo yes").await;
+        assert_eq!(result.stdout.trim(), "yes");
     }
 }
