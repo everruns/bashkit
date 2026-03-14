@@ -39,7 +39,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | 010-git-support | Sandboxed git operations on VFS |
 | 011-python-builtin | Embedded Python via Monty, security, resource limits |
 | 012-eval | LLM evaluation harness, dataset format, scoring |
-| 012-maintenance | Pre-release maintenance requirements (invoke via `/maintain`) |
+| 012-maintenance | Pre-release maintenance requirements |
 | 013-python-package | Python package, PyPI wheels, platform matrix |
 | 014-scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |
 
@@ -108,12 +108,6 @@ just pre-pr       # Pre-PR checks
 - `ruff check crates/bashkit-python` and `ruff format --check crates/bashkit-python`
 - Tests: `pytest crates/bashkit-python/tests/ -v` (requires `maturin develop` first)
 - CI: `.github/workflows/python.yml` (lint, test on 3.9/3.12/3.13, build wheel)
-
-### Shipping
-
-"Ship" means: implement with extensive test coverage (positive and negative paths), then complete the full Pre-PR Checklist (especially smoke testing impacted functionality), create PR, and merge when CI is green.
-
-Use the `/ship` command (`.claude/commands/ship.md`) to execute the complete shipping workflow. For "fix and ship" requests: implement the fix first, then run `/ship`.
 
 ### Pre-PR Checklist
 
