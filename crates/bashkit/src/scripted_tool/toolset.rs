@@ -4,7 +4,7 @@
 // - Exclusive (default): full schemas in prompt, LLM knows everything upfront.
 // - WithDiscovery: semantic descriptions only, LLM uses discover/help builtins.
 
-use super::{RegisteredTool, ScriptedTool, ToolArgs, ToolDef};
+use super::{RegisteredTool, ScriptedExecutionTrace, ScriptedTool, ToolArgs, ToolDef};
 use crate::ExecutionLimits;
 use crate::tool::{Tool, ToolRequest, ToolResponse, ToolStatus, VERSION};
 use async_trait::async_trait;
@@ -224,6 +224,11 @@ impl ScriptingToolSet {
     /// Current discovery mode.
     pub fn discovery_mode(&self) -> DiscoveryMode {
         self.mode
+    }
+
+    /// Return and clear the trace from the most recent execute call.
+    pub fn take_last_execution_trace(&self) -> Option<ScriptedExecutionTrace> {
+        self.inner.take_last_execution_trace()
     }
 
     /// Build discovery-mode system prompt: semantic descriptions + discover/help instructions.

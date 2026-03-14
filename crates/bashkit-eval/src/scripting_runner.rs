@@ -2,6 +2,7 @@
 // Loads scripting dataset → runs scripted or baseline agent per task → scores → reports.
 
 use anyhow::Result;
+use bashkit::ScriptedCommandKind;
 
 use crate::provider::create_provider;
 use crate::scorer;
@@ -73,14 +74,23 @@ pub async fn run_scripting_eval(
                     .filter(|tc| tc.exit_code == 0)
                     .count();
                 let calls_err = trace.tool_call_count - calls_ok;
+                let inner_total = trace.inner_command_count();
+                let inner_tool = trace.inner_command_count_by_kind(ScriptedCommandKind::Tool);
+                let inner_help = trace.inner_command_count_by_kind(ScriptedCommandKind::Help);
+                let inner_discover =
+                    trace.inner_command_count_by_kind(ScriptedCommandKind::Discover);
                 println!(
-                    "  Score: {:.0}/{:.0} | Turns: {} | Calls: {} ({} ok, {} err) | Tokens: {}in/{}out | Raw output: {} bytes | {:.1}s",
+                    "  Score: {:.0}/{:.0} | Turns: {} | Calls: {} ({} ok, {} err) | Inner: {} ({} tool, {} help, {} discover) | Tokens: {}in/{}out | Raw output: {} bytes | {:.1}s",
                     score.score,
                     score.max_score,
                     trace.turns,
                     trace.tool_call_count,
                     calls_ok,
                     calls_err,
+                    inner_total,
+                    inner_tool,
+                    inner_help,
+                    inner_discover,
                     trace.total_input_tokens,
                     trace.total_output_tokens,
                     trace.raw_tool_output_bytes,

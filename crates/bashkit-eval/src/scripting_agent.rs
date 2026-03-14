@@ -7,7 +7,10 @@
 //   one at a time via individual tool_use blocks.
 
 use anyhow::{Context, Result};
-use bashkit::{ScriptingToolSet, Tool, ToolArgs, ToolDef, ToolRequest};
+use bashkit::{
+    ScriptedCommandInvocation, ScriptedCommandKind, ScriptingToolSet, Tool, ToolArgs, ToolDef,
+    ToolRequest,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,12 +37,30 @@ pub struct ScriptingTrace {
     pub tool_output_sent_bytes: usize,
 }
 
+impl ScriptingTrace {
+    pub fn inner_command_count(&self) -> usize {
+        self.tool_calls
+            .iter()
+            .map(|tc| tc.invocations.len())
+            .sum::<usize>()
+    }
+
+    pub fn inner_command_count_by_kind(&self, kind: ScriptedCommandKind) -> usize {
+        self.tool_calls
+            .iter()
+            .flat_map(|tc| &tc.invocations)
+            .filter(|inv| inv.kind == kind)
+            .count()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScriptingToolCall {
     pub tool_name: String,
     pub input: serde_json::Value,
     pub output: String,
     pub exit_code: i32,
+    pub invocations: Vec<ScriptedCommandInvocation>,
 }
 
 fn format_tool_output(stdout: &str, stderr: &str, exit_code: i32) -> String {
@@ -138,7 +159,7 @@ pub async fn run_scripted_agent(
     if task.discovery_mode {
         builder = builder.with_discovery();
     }
-    let tool: Box<dyn Tool> = Box::new(builder.build());
+    let tool = builder.build();
 
     let tool_def = ToolDefinition {
         name: tool.name().to_string(),
@@ -208,6 +229,10 @@ pub async fn run_scripted_agent(
                     timeout_ms: None,
                 })
                 .await;
+            let invocations = tool
+                .take_last_execution_trace()
+                .map(|trace| trace.invocations)
+                .unwrap_or_default();
 
             let raw_bytes = resp.stdout.len() + resp.stderr.len();
             raw_tool_output_bytes += raw_bytes;
@@ -220,6 +245,7 @@ pub async fn run_scripted_agent(
                 input: (*input).clone(),
                 output: resp.stdout,
                 exit_code: resp.exit_code,
+                invocations,
             });
 
             result_blocks.push(ContentBlock::ToolResult {
@@ -364,6 +390,12 @@ pub async fn run_baseline_agent(
                 input: (*input).clone(),
                 output: stdout,
                 exit_code,
+                invocations: vec![ScriptedCommandInvocation {
+                    name: name.to_string(),
+                    kind: ScriptedCommandKind::Tool,
+                    args: Vec::new(),
+                    exit_code,
+                }],
             });
 
             result_blocks.push(ContentBlock::ToolResult {

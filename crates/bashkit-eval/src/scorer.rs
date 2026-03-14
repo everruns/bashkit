@@ -83,8 +83,6 @@ async fn evaluate_check(
         "file_exists" => check_file_exists(check, weight, check_value, fs).await,
         "dir_exists" => check_dir_exists(check, weight, check_value, fs).await,
         "file_contains" => check_file_contains(check, weight, check_value, fs).await,
-        "tool_calls_min" => check_tool_calls_min(check, weight, check_value, trace),
-        "tool_calls_max" => check_tool_calls_max(check, weight, check_value, trace),
         "llm_judge" => ScoreResult {
             check: check.to_string(),
             passed: true,
@@ -265,28 +263,6 @@ async fn check_file_contains(
     }
 }
 
-fn check_tool_calls_min(check: &str, weight: f64, value: &str, trace: &AgentTrace) -> ScoreResult {
-    let min: usize = value.parse().unwrap_or(0);
-    let actual = trace.tool_call_count;
-    ScoreResult {
-        check: check.to_string(),
-        passed: actual >= min,
-        detail: format!("expected >= {}, got {}", min, actual),
-        weight,
-    }
-}
-
-fn check_tool_calls_max(check: &str, weight: f64, value: &str, trace: &AgentTrace) -> ScoreResult {
-    let max: usize = value.parse().unwrap_or(usize::MAX);
-    let actual = trace.tool_call_count;
-    ScoreResult {
-        check: check.to_string(),
-        passed: actual <= max,
-        detail: format!("expected <= {}, got {}", max, actual),
-        weight,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,26 +317,6 @@ mod tests {
             exit_code: 0,
         }]);
         let r = check_stdout_contains("stdout_contains:hello", 1.0, "hello", &trace);
-        assert!(r.passed);
-    }
-
-    #[test]
-    fn tool_calls_min_pass() {
-        let trace = make_trace(vec![
-            ToolCallResult {
-                commands: "echo 1".into(),
-                stdout: "1\n".into(),
-                stderr: String::new(),
-                exit_code: 0,
-            },
-            ToolCallResult {
-                commands: "echo 2".into(),
-                stdout: "2\n".into(),
-                stderr: String::new(),
-                exit_code: 0,
-            },
-        ]);
-        let r = check_tool_calls_min("tool_calls_min:2", 1.0, "2", &trace);
         assert!(r.passed);
     }
 }

@@ -73,8 +73,6 @@ Fields:
 | file_exists | `file_exists:/path` | VFS path exists |
 | dir_exists | `dir_exists:/path` | VFS directory exists |
 | file_contains | `file_contains:/path:text` | File content contains text |
-| tool_calls_min | `tool_calls_min:N` | At least N tool calls made |
-| tool_calls_max | `tool_calls_max:N` | At most N tool calls made |
 | llm_judge | `llm_judge:prompt` | Stub — not yet implemented |
 
 ## Providers
@@ -136,6 +134,7 @@ Moniker defaults to `{provider}-{model}`, overridable via `--moniker`.
 - **Tasks passed** — count of tasks where all checks pass
 - **Overall score** — aggregate weighted score across all tasks
 - **Tool call success rate** — `tool_calls_ok / total_tool_calls`. Measures how many bash calls the interpreter processed without error. Low rates indicate bashkit compatibility gaps or model issuing invalid commands.
+- **Tool/command count telemetry** — outer tool calls and, for `scripting-tool`, inner command invocations are tracked for historical trend analysis only. They are not scoring checks.
 - **Per-category breakdown** — pass rate per task category
 
 ## Dataset Categories
@@ -205,8 +204,7 @@ Scripting-tool datasets use the same JSONL format with additional fields:
     }
   ],
   "expectations": [
-    {"check": "stdout_contains:Jane"},
-    {"check": "tool_calls_min:3"}
+    {"check": "stdout_contains:Jane"}
   ]
 }
 ```
@@ -251,6 +249,7 @@ bashkit-eval run \
 
 - **Raw tool output bytes** — total bytes of mock tool output
 - **Tool output sent bytes** — bytes actually sent to LLM (after formatting)
+- **Inner command telemetry** — per-task counts of inner scripted commands, split into tool/help/discover
 - **Per-mode comparison** — scripted vs baseline pass rate, token usage, turn count
 
 ## Non-Goals
