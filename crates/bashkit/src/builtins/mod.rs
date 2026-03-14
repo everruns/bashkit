@@ -65,6 +65,7 @@ mod system;
 mod test;
 mod textrev;
 mod timeout;
+mod tree;
 mod vars;
 mod wait;
 mod wc;
@@ -120,6 +121,7 @@ pub use system::{DEFAULT_HOSTNAME, DEFAULT_USERNAME, Hostname, Id, Uname, Whoami
 pub use test::{Bracket, Test};
 pub use textrev::{Rev, Tac};
 pub use timeout::Timeout;
+pub use tree::Tree;
 pub use vars::{Eval, Local, Readonly, Set, Shift, Shopt, Times, Unset};
 pub use wait::Wait;
 pub use wc::Wc;

@@ -453,6 +453,7 @@ impl Interpreter {
         // Directory listing and search
         builtins.insert("ls".to_string(), Box::new(builtins::Ls));
         builtins.insert("find".to_string(), Box::new(builtins::Find));
+        builtins.insert("tree".to_string(), Box::new(builtins::Tree));
         builtins.insert("rmdir".to_string(), Box::new(builtins::Rmdir));
         // File inspection
         builtins.insert("less".to_string(), Box::new(builtins::Less));
