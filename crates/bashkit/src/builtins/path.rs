@@ -418,10 +418,7 @@ mod tests {
 
     use crate::fs::FileSystem;
 
-    async fn run_readlink_with_fs(
-        args: &[&str],
-        fs: Arc<dyn FileSystem>,
-    ) -> ExecResult {
+    async fn run_readlink_with_fs(args: &[&str], fs: Arc<dyn FileSystem>) -> ExecResult {
         let mut variables = HashMap::new();
         let env = HashMap::new();
         let mut cwd = PathBuf::from("/");
@@ -454,7 +451,9 @@ mod tests {
     #[tokio::test]
     async fn test_readlink_raw_symlink() {
         let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
-        fs.symlink(Path::new("/target"), Path::new("/link")).await.unwrap();
+        fs.symlink(Path::new("/target"), Path::new("/link"))
+            .await
+            .unwrap();
         let result = run_readlink_with_fs(&["/link"], fs).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "/target\n");
