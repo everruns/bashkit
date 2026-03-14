@@ -112,6 +112,23 @@ pub enum CompoundCommand {
     Time(TimeCommand),
     /// Conditional expression [[ ... ]]
     Conditional(Vec<Word>),
+    /// Coprocess: `coproc [NAME] command`
+    Coproc(CoprocCommand),
+}
+
+/// Coprocess command - runs a command with bidirectional communication.
+///
+/// In bashkit's sandboxed model, the coprocess runs synchronously and its
+/// stdout is buffered for later reading via the NAME array FDs.
+/// `NAME[0]` = virtual read FD, `NAME[1]` = virtual write FD, `NAME_PID` = virtual PID.
+#[derive(Debug, Clone)]
+pub struct CoprocCommand {
+    /// Coprocess name (defaults to "COPROC")
+    pub name: String,
+    /// The command to run as a coprocess
+    pub body: Box<Command>,
+    /// Source span of this command
+    pub span: Span,
 }
 
 /// Time command - wraps a command and measures its execution time.
