@@ -78,3 +78,37 @@ echo "still running"
 ### expect
 still running
 ### end
+
+### errexit_else_branch_assignment
+# set -e doesn't trigger on variable assignment in else branch
+set -e
+if false; then x=a; else x=b; fi
+echo "x=$x"
+### expect
+x=b
+### end
+
+### errexit_else_branch_assignment_in_loop
+# set -e doesn't trigger on variable assignment in else branch inside loop
+set -e
+for j in 1 2 3; do
+  if [ "$j" -lt 3 ]; then comma=','; else comma=''; fi
+  echo "j=$j comma=$comma"
+done
+echo "done"
+### expect
+j=1 comma=,
+j=2 comma=,
+j=3 comma=
+done
+### end
+
+### errexit_assignment_resets_status
+# Plain variable assignment resets $? to 0
+set -e
+false || true
+if [ 1 -lt 1 ]; then true; else x=b; fi
+echo "survived x=$x"
+### expect
+survived x=b
+### end
