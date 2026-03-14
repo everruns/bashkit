@@ -93,7 +93,7 @@ pyo3 = { version = "0.28.2", features = ["extension-module", "generate-import-li
 pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
 
 # JavaScript/Node.js bindings (NAPI-RS)
-napi = { version = "3.0.0", default-features = false, features = ["napi6", "compat-mode"] }
+napi = { version = "3.0.0", default-features = false, features = ["napi6", "compat-mode", "tokio_rt"] }
 napi-derive = "3.0.0"
 napi-build = "2"
 

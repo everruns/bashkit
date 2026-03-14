@@ -113,6 +113,27 @@ impl Bash {
         })
     }
 
+    /// Execute bash commands asynchronously, returning a Promise.
+    #[napi]
+    pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
+        let inner = self.inner.clone();
+        let mut bash = inner.lock().await;
+        match bash.exec(&commands).await {
+            Ok(result) => Ok(ExecResult {
+                stdout: result.stdout,
+                stderr: result.stderr,
+                exit_code: result.exit_code,
+                error: None,
+            }),
+            Err(e) => Ok(ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 1,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
     /// Reset interpreter to fresh state, preserving configuration.
     #[napi]
     pub fn reset(&self) -> napi::Result<()> {
@@ -230,6 +251,27 @@ impl BashTool {
                 }),
             }
         })
+    }
+
+    /// Execute bash commands asynchronously, returning a Promise.
+    #[napi]
+    pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
+        let inner = self.inner.clone();
+        let mut bash = inner.lock().await;
+        match bash.exec(&commands).await {
+            Ok(result) => Ok(ExecResult {
+                stdout: result.stdout,
+                stderr: result.stderr,
+                exit_code: result.exit_code,
+                error: None,
+            }),
+            Err(e) => Ok(ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 1,
+                error: Some(e.to_string()),
+            }),
+        }
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
