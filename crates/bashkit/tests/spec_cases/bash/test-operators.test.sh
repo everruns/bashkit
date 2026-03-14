@@ -186,6 +186,20 @@ different
 false
 ### end
 
+### test_or_and_precedence
+# -a has higher precedence than -o: [ true -o false -a false ] => true
+[ 1 -eq 1 -o 1 -eq 2 -a 1 -eq 2 ] && echo "correct" || echo "wrong"
+### expect
+correct
+### end
+
+### test_or_and_precedence_reverse
+# -a binds tighter: [ false -a false -o true ] => true
+[ 1 -eq 2 -a 1 -eq 2 -o 1 -eq 1 ] && echo "correct" || echo "wrong"
+### expect
+correct
+### end
+
 ### test_cond_nt
 # [[ ]] also supports -nt
 ### bash_diff

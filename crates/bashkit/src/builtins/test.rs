@@ -95,19 +95,18 @@ fn evaluate_expression<'a>(
             return evaluate_expression(&args[1..args.len() - 1], fs, cwd).await;
         }
 
-        // Look for binary operators
+        // Look for logical operators: -o has lowest precedence, then -a.
+        // Scan for -o first (split at lowest precedence first).
         for (i, arg) in args.iter().enumerate() {
-            match arg.as_str() {
-                // Logical operators (lowest precedence)
-                "-a" if i > 0 => {
-                    return evaluate_expression(&args[..i], fs, cwd).await
-                        && evaluate_expression(&args[i + 1..], fs, cwd).await;
-                }
-                "-o" if i > 0 => {
-                    return evaluate_expression(&args[..i], fs, cwd).await
-                        || evaluate_expression(&args[i + 1..], fs, cwd).await;
-                }
-                _ => {}
+            if arg == "-o" && i > 0 {
+                return evaluate_expression(&args[..i], fs, cwd).await
+                    || evaluate_expression(&args[i + 1..], fs, cwd).await;
+            }
+        }
+        for (i, arg) in args.iter().enumerate() {
+            if arg == "-a" && i > 0 {
+                return evaluate_expression(&args[..i], fs, cwd).await
+                    && evaluate_expression(&args[i + 1..], fs, cwd).await;
             }
         }
 
@@ -787,6 +786,34 @@ mod tests {
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
         let result = Bracket.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
+    }
+
+    // ==================== operator precedence ====================
+
+    #[tokio::test]
+    async fn test_or_and_precedence() {
+        // [ true -o false -a false ] should be true (-a binds tighter than -o)
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec![
+            "1".to_string(),
+            "-eq".to_string(),
+            "1".to_string(),
+            "-o".to_string(),
+            "1".to_string(),
+            "-eq".to_string(),
+            "2".to_string(),
+            "-a".to_string(),
+            "1".to_string(),
+            "-eq".to_string(),
+            "2".to_string(),
+        ];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "-a should have higher precedence than -o"
+        );
     }
 
     #[tokio::test]
