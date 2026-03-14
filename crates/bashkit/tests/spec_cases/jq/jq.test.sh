@@ -838,14 +838,14 @@ ab
 # Version flag outputs version string
 jq --version
 ### expect
-jq-1.7.1
+jq-1.8
 ### end
 
 ### jq_version_short
 # Short version flag outputs version string
 jq -V
 ### expect
-jq-1.7.1
+jq-1.8
 ### end
 
 ### jq_file_input

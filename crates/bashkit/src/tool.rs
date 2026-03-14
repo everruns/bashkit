@@ -1018,6 +1018,47 @@ fn build_bash_system_prompt(tool: &BashTool) -> String {
         ));
     }
 
+    // Operational guidance for LLM agents (issue #608)
+    parts.push(
+        localized(
+            tool.locale(),
+            "Use bash syntax; do not assume /bin/sh portability ($RANDOM, arrays, [[ ]] require bash).",
+            "Використовуйте синтаксис bash; не покладайтеся на /bin/sh ($RANDOM, масиви, [[ ]] потребують bash).",
+        )
+        .to_string(),
+    );
+    parts.push(
+        localized(
+            tool.locale(),
+            "Use `source` only when current-shell state must persist; otherwise run scripts directly.",
+            "Використовуйте `source` лише коли стан оболонки має зберігатися; інакше запускайте скрипти напряму.",
+        )
+        .to_string(),
+    );
+    parts.push(
+        localized(
+            tool.locale(),
+            "For large multi-file writes, prefer incremental batches over one giant script.",
+            "Для масових записів файлів віддавайте перевагу інкрементальним пакетам замість одного великого скрипту.",
+        )
+        .to_string(),
+    );
+
+    // Surface configured limits
+    if let Some(ref limits) = tool.limits {
+        let mut limit_parts = Vec::new();
+        limit_parts.push(format!("max_commands={}", limits.max_commands));
+        limit_parts.push(format!(
+            "max_loop_iterations={}",
+            limits.max_loop_iterations
+        ));
+        parts.push(format!(
+            "{}: {}.",
+            localized(tool.locale(), "Limits", "Ліміти"),
+            limit_parts.join(", ")
+        ));
+    }
+
     if !tool.builtin_hints.is_empty() {
         parts.extend(tool.builtin_hints.iter().cloned());
     }
@@ -1233,10 +1274,22 @@ mod tests {
         assert!(helptext.contains("50 commands"));
         assert!(helptext.contains("API_KEY"));
 
-        // system_prompt should include home
+        // system_prompt should include home and operational guidance
         let sysprompt = tool.system_prompt();
         assert!(sysprompt.starts_with("bashkit:"));
         assert!(sysprompt.contains("Home /home/agent."));
+        assert!(
+            sysprompt.contains("bash syntax"),
+            "system_prompt should warn about bash vs sh"
+        );
+        assert!(
+            sysprompt.contains("incremental batches"),
+            "system_prompt should recommend chunked writes"
+        );
+        assert!(
+            sysprompt.contains("max_commands=50"),
+            "system_prompt should surface configured limits"
+        );
     }
 
     #[test]

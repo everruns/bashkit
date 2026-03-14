@@ -116,6 +116,8 @@ struct AwkState {
     nr: usize,
     nf: usize,
     fnr: usize,
+    /// When true, fields are split per RFC 4180 CSV rules (--csv flag)
+    csv_mode: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -219,22 +221,62 @@ impl Default for AwkState {
             nr: 0,
             nf: 0,
             fnr: 0,
+            csv_mode: false,
         }
     }
 }
 
+/// Parse a CSV line per RFC 4180: handle quoted fields, embedded commas,
+/// and double-quote escaping.
+fn csv_split_fields(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    // Escaped quote
+                    field.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                field.push(c);
+            }
+        } else if c == '"' {
+            in_quotes = true;
+        } else if c == ',' {
+            fields.push(std::mem::take(&mut field));
+        } else {
+            field.push(c);
+        }
+    }
+    fields.push(field);
+    fields
+}
+
 impl AwkState {
+    /// Split a line into fields based on current mode (CSV or FS)
+    fn split_fields(&self, line: &str) -> Vec<String> {
+        if self.csv_mode {
+            csv_split_fields(line)
+        } else if self.fs == " " {
+            line.split_whitespace().map(String::from).collect()
+        } else {
+            line.split(&self.fs).map(String::from).collect()
+        }
+    }
+
     fn set_line(&mut self, line: &str) {
         self.nr += 1;
         self.fnr += 1;
 
         // Split by field separator
-        if self.fs == " " {
-            // Special: split on whitespace, collapse multiple spaces
-            self.fields = line.split_whitespace().map(String::from).collect();
-        } else {
-            self.fields = line.split(&self.fs).map(String::from).collect();
-        }
+        self.fields = self.split_fields(line);
 
         self.nf = self.fields.len();
 
@@ -287,11 +329,7 @@ impl AwkState {
             "$0" => {
                 let s = value.as_string();
                 // Re-split fields when $0 is modified
-                if self.fs == " " {
-                    self.fields = s.split_whitespace().map(String::from).collect();
-                } else {
-                    self.fields = s.split(&self.fs).map(String::from).collect();
-                }
+                self.fields = self.split_fields(&s);
                 self.nf = self.fields.len();
                 self.variables
                     .insert("NF".to_string(), AwkValue::Number(self.nf as f64));
@@ -2837,11 +2875,15 @@ impl Builtin for Awk {
         let mut files: Vec<String> = Vec::new();
         let mut field_sep = " ".to_string();
         let mut pre_vars: Vec<(String, String)> = Vec::new();
+        let mut csv_mode = false;
         let mut i = 0;
 
         while i < ctx.args.len() {
             let arg = &ctx.args[i];
-            if arg == "-F" {
+            if arg == "--csv" || arg == "-k" {
+                csv_mode = true;
+                field_sep = ",".to_string();
+            } else if arg == "-F" {
                 i += 1;
                 if i < ctx.args.len() {
                     field_sep = ctx.args[i].clone();
@@ -2902,6 +2944,10 @@ impl Builtin for Awk {
         let mut interp = AwkInterpreter::new();
         interp.functions = program.functions.clone();
         interp.state.fs = Self::process_escape_sequences(&field_sep);
+        if csv_mode {
+            interp.state.csv_mode = true;
+            interp.state.ofs = ",".to_string();
+        }
 
         // Set pre-assigned variables (-v)
         for (name, value) in &pre_vars {
@@ -3718,5 +3764,78 @@ mod tests {
             err_msg.contains("pipe"),
             "expected pipe error, got: {err_msg}"
         );
+    }
+
+    // ========================================================================
+    // --csv flag (issues #617, #618)
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_awk_csv_basic() {
+        let result = run_awk(&["--csv", "{print $2}"], Some("a,b,c\nd,e,f"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "b\ne\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_csv_quoted_fields() {
+        // Quoted field with embedded comma
+        let result = run_awk(&["--csv", "{print $2}"], Some(r#"1,"hello, world",3"#))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "hello, world\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_csv_escaped_quotes() {
+        // Double-quote escaping per RFC 4180
+        let result = run_awk(&["--csv", "{print $2}"], Some(r#"1,"she said ""hi""",3"#))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "she said \"hi\"\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_csv_nf() {
+        let result = run_awk(&["--csv", "{print NF}"], Some("a,b,c"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "3\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_csv_ofs() {
+        // In CSV mode, OFS defaults to comma
+        let result = run_awk(&["--csv", "{print $1, $3}"], Some("a,b,c"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "a,c\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_csv_empty_fields() {
+        let result = run_awk(&["--csv", "{print NF}"], Some("a,,c,"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "4\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_csv_k_flag_alias() {
+        // -k is an alias for --csv
+        let result = run_awk(&["-k", "{print $2}"], Some("a,b,c")).await.unwrap();
+        assert_eq!(result.stdout, "b\n");
+    }
+
+    #[test]
+    fn test_csv_split_fields_unit() {
+        assert_eq!(csv_split_fields("a,b,c"), vec!["a", "b", "c"]);
+        assert_eq!(
+            csv_split_fields(r#"1,"hello, world",3"#),
+            vec!["1", "hello, world", "3"]
+        );
+        assert_eq!(csv_split_fields(r#""a""b",c"#), vec!["a\"b", "c"]);
+        assert_eq!(csv_split_fields("a,,c,"), vec!["a", "", "c", ""]);
     }
 }

@@ -11,8 +11,7 @@ use bashkit::{Bash as RustBash, BashTool as RustBashTool, ExecutionLimits, Tool}
 use napi_derive::napi;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{LazyLock, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 
 // ============================================================================
@@ -119,12 +118,15 @@ impl Bash {
                     exit_code: result.exit_code,
                     error: None,
                 }),
-                Err(e) => Ok(ExecResult {
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    exit_code: 1,
-                    error: Some(e.to_string()),
-                }),
+                Err(e) => {
+                    let msg = e.to_string();
+                    Ok(ExecResult {
+                        stdout: String::new(),
+                        stderr: msg.clone(),
+                        exit_code: 1,
+                        error: Some(msg),
+                    })
+                }
             }
         })
     }
@@ -141,12 +143,15 @@ impl Bash {
                 exit_code: result.exit_code,
                 error: None,
             }),
-            Err(e) => Ok(ExecResult {
-                stdout: String::new(),
-                stderr: String::new(),
-                exit_code: 1,
-                error: Some(e.to_string()),
-            }),
+            Err(e) => {
+                let msg = e.to_string();
+                Ok(ExecResult {
+                    stdout: String::new(),
+                    stderr: msg.clone(),
+                    exit_code: 1,
+                    error: Some(msg),
+                })
+            }
         }
     }
 
@@ -184,45 +189,8 @@ impl Bash {
 }
 
 // ============================================================================
-// BashTool — handle-based registry pattern
-//
-// napi-rs stores #[napi] structs behind raw pointers.  CodeQL flags transitive
-// pointer chains from those raw pointers (rust/access-invalid-pointer).
-// BashTool stores only a u64 handle; real state lives in a global REGISTRY,
-// so the napi raw pointer never transitively reaches heap-allocated state.
+// BashTool — interpreter + tool-contract metadata
 // ============================================================================
-
-static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
-static REGISTRY: LazyLock<RwLock<HashMap<u64, Arc<BashToolState>>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
-
-struct BashToolState {
-    interpreter: Arc<Mutex<RustBash>>,
-    cancelled: Arc<AtomicBool>,
-    username: Option<String>,
-    hostname: Option<String>,
-    max_commands: Option<u32>,
-    max_loop_iterations: Option<u32>,
-}
-
-fn tool_register(state: Arc<BashToolState>) -> u64 {
-    let handle = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
-    REGISTRY.write().unwrap().insert(handle, state);
-    handle
-}
-
-fn tool_lookup(handle: u64) -> napi::Result<Arc<BashToolState>> {
-    REGISTRY
-        .read()
-        .unwrap()
-        .get(&handle)
-        .cloned()
-        .ok_or_else(|| napi::Error::from_reason("BashTool instance has been disposed"))
-}
-
-fn tool_unregister(handle: u64) {
-    REGISTRY.write().unwrap().remove(&handle);
-}
 
 /// Bash interpreter with tool-contract metadata (`description`, `help`,
 /// `system_prompt`, schemas).
@@ -230,31 +198,31 @@ fn tool_unregister(handle: u64) {
 /// Use this when integrating with AI frameworks that need tool definitions.
 #[napi]
 pub struct BashTool {
-    handle: u64,
-}
-
-impl Drop for BashTool {
-    fn drop(&mut self) {
-        tool_unregister(self.handle);
-    }
+    inner: Arc<Mutex<RustBash>>,
+    rt: tokio::runtime::Runtime,
+    cancelled: Arc<AtomicBool>,
+    username: Option<String>,
+    hostname: Option<String>,
+    max_commands: Option<u32>,
+    max_loop_iterations: Option<u32>,
 }
 
 impl BashTool {
-    fn build_rust_tool(state: &BashToolState) -> RustBashTool {
+    fn build_rust_tool(&self) -> RustBashTool {
         let mut builder = RustBashTool::builder();
 
-        if let Some(ref username) = state.username {
+        if let Some(ref username) = self.username {
             builder = builder.username(username);
         }
-        if let Some(ref hostname) = state.hostname {
+        if let Some(ref hostname) = self.hostname {
             builder = builder.hostname(hostname);
         }
 
         let mut limits = ExecutionLimits::new();
-        if let Some(mc) = state.max_commands {
+        if let Some(mc) = self.max_commands {
             limits = limits.max_commands(mc as usize);
         }
-        if let Some(mli) = state.max_loop_iterations {
+        if let Some(mli) = self.max_loop_iterations {
             limits = limits.max_loop_iterations(mli as usize);
         }
 
@@ -277,70 +245,90 @@ impl BashTool {
         );
         let cancelled = bash.cancellation_token();
 
-        let state = Arc::new(BashToolState {
-            interpreter: Arc::new(Mutex::new(bash)),
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
+
+        Ok(Self {
+            inner: Arc::new(Mutex::new(bash)),
+            rt,
             cancelled,
             username: opts.username,
             hostname: opts.hostname,
             max_commands: opts.max_commands,
             max_loop_iterations: opts.max_loop_iterations,
-        });
-
-        Ok(Self {
-            handle: tool_register(state),
         })
     }
 
     /// Execute bash commands synchronously.
     #[napi]
     pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
-        let state = tool_lookup(self.handle)?;
-        state.cancelled.store(false, Ordering::Relaxed);
-        let interpreter = state.interpreter.clone();
-        let commands_owned = commands;
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
-        rt.block_on(async move {
-            let mut bash = interpreter.lock().await;
-            exec_to_result(&mut bash, &commands_owned).await
+        self.cancelled.store(false, Ordering::Relaxed);
+        let inner = self.inner.clone();
+        self.rt.block_on(async move {
+            let mut bash = inner.lock().await;
+            match bash.exec(&commands).await {
+                Ok(result) => Ok(ExecResult {
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    exit_code: result.exit_code,
+                    error: None,
+                }),
+                Err(e) => {
+                    let msg = e.to_string();
+                    Ok(ExecResult {
+                        stdout: String::new(),
+                        stderr: msg.clone(),
+                        exit_code: 1,
+                        error: Some(msg),
+                    })
+                }
+            }
         })
     }
 
     /// Execute bash commands asynchronously, returning a Promise.
     #[napi]
     pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
-        let state = tool_lookup(self.handle)?;
-        let interpreter = state.interpreter.clone();
-        let mut bash = interpreter.lock().await;
-        exec_to_result(&mut bash, &commands).await
+        let inner = self.inner.clone();
+        let mut bash = inner.lock().await;
+        match bash.exec(&commands).await {
+            Ok(result) => Ok(ExecResult {
+                stdout: result.stdout,
+                stderr: result.stderr,
+                exit_code: result.exit_code,
+                error: None,
+            }),
+            Err(e) => {
+                let msg = e.to_string();
+                Ok(ExecResult {
+                    stdout: String::new(),
+                    stderr: msg.clone(),
+                    exit_code: 1,
+                    error: Some(msg),
+                })
+            }
+        }
     }
 
     /// Cancel the currently running execution.
     #[napi]
     pub fn cancel(&self) {
-        if let Ok(state) = tool_lookup(self.handle) {
-            state.cancelled.store(true, Ordering::Relaxed);
-        }
+        self.cancelled.store(true, Ordering::Relaxed);
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
     #[napi]
     pub fn reset(&self) -> napi::Result<()> {
-        let state = tool_lookup(self.handle)?;
-        let interpreter = state.interpreter.clone();
-        let username = state.username.clone();
-        let hostname = state.hostname.clone();
-        let max_commands = state.max_commands;
-        let max_loop_iterations = state.max_loop_iterations;
+        let inner = self.inner.clone();
+        let username = self.username.clone();
+        let hostname = self.hostname.clone();
+        let max_commands = self.max_commands;
+        let max_loop_iterations = self.max_loop_iterations;
 
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
-        rt.block_on(async move {
-            let mut bash = interpreter.lock().await;
+        self.rt.block_on(async move {
+            let mut bash = inner.lock().await;
             let new_bash = build_bash(
                 username.as_deref(),
                 hostname.as_deref(),
@@ -367,30 +355,26 @@ impl BashTool {
 
     /// Get token-efficient tool description.
     #[napi]
-    pub fn description(&self) -> napi::Result<String> {
-        let state = tool_lookup(self.handle)?;
-        Ok(Self::build_rust_tool(&state).description().to_string())
+    pub fn description(&self) -> String {
+        self.build_rust_tool().description().to_string()
     }
 
     /// Get help as a Markdown document.
     #[napi]
-    pub fn help(&self) -> napi::Result<String> {
-        let state = tool_lookup(self.handle)?;
-        Ok(Self::build_rust_tool(&state).help())
+    pub fn help(&self) -> String {
+        self.build_rust_tool().help()
     }
 
     /// Get compact system-prompt text for orchestration.
     #[napi]
-    pub fn system_prompt(&self) -> napi::Result<String> {
-        let state = tool_lookup(self.handle)?;
-        Ok(Self::build_rust_tool(&state).system_prompt())
+    pub fn system_prompt(&self) -> String {
+        self.build_rust_tool().system_prompt()
     }
 
     /// Get JSON input schema as string.
     #[napi]
     pub fn input_schema(&self) -> napi::Result<String> {
-        let state = tool_lookup(self.handle)?;
-        let schema = Self::build_rust_tool(&state).input_schema();
+        let schema = self.build_rust_tool().input_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| napi::Error::from_reason(format!("Schema serialization failed: {e}")))
     }
@@ -398,8 +382,7 @@ impl BashTool {
     /// Get JSON output schema as string.
     #[napi]
     pub fn output_schema(&self) -> napi::Result<String> {
-        let state = tool_lookup(self.handle)?;
-        let schema = Self::build_rust_tool(&state).output_schema();
+        let schema = self.build_rust_tool().output_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| napi::Error::from_reason(format!("Schema serialization failed: {e}")))
     }
@@ -448,23 +431,6 @@ fn build_bash(
     }
 
     builder.build()
-}
-
-async fn exec_to_result(bash: &mut RustBash, commands: &str) -> napi::Result<ExecResult> {
-    match bash.exec(commands).await {
-        Ok(result) => Ok(ExecResult {
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exit_code: result.exit_code,
-            error: None,
-        }),
-        Err(e) => Ok(ExecResult {
-            stdout: String::new(),
-            stderr: String::new(),
-            exit_code: 1,
-            error: Some(e.to_string()),
-        }),
-    }
 }
 
 /// Get the bashkit version string.
