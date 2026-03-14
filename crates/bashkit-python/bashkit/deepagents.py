@@ -71,6 +71,8 @@ def _make_bash_tool(bash_instance: NativeBashTool):
     def bashkit(command: str) -> str:
         result = bash_instance.execute_sync(command)
         output = result.stdout
+        if result.error:
+            output += f"\nError: {result.error}"
         if result.stderr:
             output += f"\n{result.stderr}"
         if result.exit_code != 0:
@@ -134,7 +136,10 @@ if DEEPAGENTS_AVAILABLE:
         def execute_sync(self, command: str) -> str:
             """Execute command synchronously (for setup scripts)."""
             result = self._bash.execute_sync(command)
-            return result.stdout + (result.stderr or "")
+            output = result.stdout + (result.stderr or "")
+            if result.error and result.error not in output:
+                output += f"\nError: {result.error}"
+            return output
 
         def reset(self) -> None:
             """Reset VFS to initial state."""
@@ -189,6 +194,8 @@ if DEEPAGENTS_AVAILABLE:
         def execute(self, command: str) -> ExecuteResponse:
             result = self._bash.execute_sync(command)
             output = result.stdout + (result.stderr or "")
+            if result.error and result.error not in output:
+                output += f"\nError: {result.error}"
             return ExecuteResponse(output=output, exit_code=result.exit_code, truncated=False)
 
         async def aexecute(self, command: str) -> ExecuteResponse:
@@ -344,7 +351,10 @@ if DEEPAGENTS_AVAILABLE:
         def setup(self, script: str) -> str:
             """Execute setup script."""
             result = self._bash.execute_sync(script)
-            return result.stdout + (result.stderr or "")
+            output = result.stdout + (result.stderr or "")
+            if result.error and result.error not in output:
+                output += f"\nError: {result.error}"
+            return output
 
         def reset(self) -> None:
             """Reset VFS."""

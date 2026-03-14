@@ -157,7 +157,7 @@ impl Builtin for Jq {
         // Check for --version flag first
         for arg in ctx.args {
             if arg == "-V" || arg == "--version" {
-                return Ok(ExecResult::ok("jq-1.7.1\n".to_string()));
+                return Ok(ExecResult::ok("jq-1.8\n".to_string()));
             }
         }
 
@@ -1325,5 +1325,64 @@ mod tests {
         // Cleanup
         // SAFETY: This test is single-threaded (serial_test) so remove_var is safe
         unsafe { std::env::remove_var(unique_key) };
+    }
+
+    // ========================================================================
+    // jq 1.8 builtins (issue #616)
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_jq_version_string() {
+        let result = run_jq_result_with_args(&["--version"], "null")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout.trim(), "jq-1.8");
+    }
+
+    #[tokio::test]
+    async fn test_jq_abs() {
+        assert_eq!(run_jq("abs", "-42").await.unwrap().trim(), "42");
+        assert_eq!(run_jq("abs", "3.14").await.unwrap().trim(), "3.14");
+        assert_eq!(run_jq("abs", "-0.5").await.unwrap().trim(), "0.5");
+    }
+
+    #[tokio::test]
+    async fn test_jq_trim() {
+        assert_eq!(
+            run_jq("trim", r#""  hello  ""#).await.unwrap().trim(),
+            r#""hello""#
+        );
+    }
+
+    #[tokio::test]
+    async fn test_jq_ltrim() {
+        assert_eq!(
+            run_jq("ltrim", r#""  hello  ""#).await.unwrap().trim(),
+            r#""hello  ""#
+        );
+    }
+
+    #[tokio::test]
+    async fn test_jq_rtrim() {
+        assert_eq!(
+            run_jq("rtrim", r#""  hello  ""#).await.unwrap().trim(),
+            r#""  hello""#
+        );
+    }
+
+    #[tokio::test]
+    async fn test_jq_if_without_else() {
+        // jq 1.8: `if COND then EXPR end` without `else` uses identity
+        assert_eq!(
+            run_jq("if . > 0 then . * 2 end", "5").await.unwrap().trim(),
+            "10"
+        );
+        assert_eq!(
+            run_jq("if . > 0 then . * 2 end", "-1")
+                .await
+                .unwrap()
+                .trim(),
+            "-1"
+        );
     }
 }

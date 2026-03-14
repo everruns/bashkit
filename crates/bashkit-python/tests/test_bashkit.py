@@ -954,3 +954,41 @@ def test_deeply_nested_schema_rejected():
     tool = ScriptedTool("deep")
     with pytest.raises(ValueError, match="nesting depth"):
         tool.add_tool("deep", "Deep", callback=lambda p, s=None: "", schema=nested)
+
+
+# ===========================================================================
+# Pre-exec failure stderr surfacing (issue #606)
+# ===========================================================================
+
+
+def test_bash_pre_exec_error_in_stderr():
+    """Pre-exec failures (parse errors) must appear in stderr, not only error field."""
+    bash = Bash()
+    # Unclosed subshell triggers parse error -> Err path in bindings
+    r = bash.execute_sync("echo $(")
+    assert r.exit_code != 0
+    assert r.error is not None
+    # Bug #606: stderr was empty even though error had the message
+    assert r.stderr != "", "stderr must contain the error message, not be empty"
+    assert r.error in r.stderr
+
+
+def test_bashtool_pre_exec_error_in_stderr():
+    """BashTool pre-exec failures must also surface in stderr."""
+    tool = BashTool()
+    r = tool.execute_sync("echo $(")
+    assert r.exit_code != 0
+    assert r.error is not None
+    assert r.stderr != "", "stderr must contain the error message, not be empty"
+    assert r.error in r.stderr
+
+
+@pytest.mark.asyncio
+async def test_bash_pre_exec_error_in_stderr_async():
+    """Async path should also surface pre-exec errors in stderr."""
+    bash = Bash()
+    r = await bash.execute("echo $(")
+    assert r.exit_code != 0
+    assert r.error is not None
+    assert r.stderr != "", "stderr must contain the error message, not be empty"
+    assert r.error in r.stderr
