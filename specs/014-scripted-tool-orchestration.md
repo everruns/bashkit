@@ -115,6 +115,34 @@ Implements the `Tool` trait. On each `execute()`:
 
 Reusable — multiple `execute()` calls share the same `Arc<ToolCallback>` instances.
 
+### Built-in `help` command
+
+Registered automatically alongside user tools. Provides runtime schema introspection:
+
+```bash
+help --list              # List all tool names + descriptions
+help get_user            # Human-readable usage
+help get_user --json     # Machine-readable JSON (pipeable to jq)
+```
+
+JSON output includes `name`, `description`, and `input_schema` — letting LLMs discover
+enum values, required fields, etc. at runtime without loading all schemas into context.
+
+### Compact prompt mode
+
+`ScriptedToolBuilder::compact_prompt(true)` switches `system_prompt()` to a compact form
+that lists only tool names + one-liners, deferring full schemas to `help`:
+
+```rust
+ScriptedTool::builder("api")
+    .compact_prompt(true)
+    .tool(...)
+    .build()
+```
+
+This reduces context window usage for large tool sets (50+). Default: `false` (full
+schemas in prompt, backward compatible).
+
 ### LLM integration
 
 `system_prompt()` generates markdown with available tool commands, input schemas (when present), and tips. Example output:
@@ -184,9 +212,10 @@ Run: `cargo run --example scripted_tool --features scripted_tool`
 
 ## Test coverage
 
-35 unit tests covering:
-- Builder configuration (name, description, defaults)
+40 unit tests covering:
+- Builder configuration (name, description, defaults, compact_prompt)
 - Introspection (help, system_prompt, schemas, schema rendering)
+- Help builtin (--list, human-readable, --json, unknown tool, jq piping, compact vs full prompt)
 - Flag parsing (`--key value`, `--key=value`, boolean flags, type coercion)
 - Single tool execution
 - Pipeline with jq
