@@ -3,7 +3,7 @@ import type {
   Bash as NativeBashType,
   BashTool as NativeBashToolType,
   ExecResult,
-  BashOptions,
+  BashOptions as NativeBashOptions,
 } from "./index.cjs";
 
 const require = createRequire(import.meta.url);
@@ -12,7 +12,103 @@ const NativeBash: typeof NativeBashType = native.Bash;
 const NativeBashTool: typeof NativeBashToolType = native.BashTool;
 const nativeGetVersion: () => string = native.getVersion;
 
-export type { ExecResult, BashOptions };
+export type { ExecResult };
+
+/**
+ * A file value: either a string, a sync function returning a string,
+ * or an async function returning a Promise<string>.
+ *
+ * Function values are resolved lazily on first read and cached.
+ */
+export type FileValue = string | (() => string) | (() => Promise<string>);
+
+/**
+ * Options for creating a Bash or BashTool instance.
+ */
+export interface BashOptions {
+  username?: string;
+  hostname?: string;
+  maxCommands?: number;
+  maxLoopIterations?: number;
+  /**
+   * Files to mount in the virtual filesystem.
+   * Keys are absolute paths, values are content strings or lazy providers.
+   *
+   * String values are mounted immediately. Function values are called on
+   * first read and the result is cached.
+   *
+   * @example
+   * ```typescript
+   * const bash = await Bash.create({
+   *   files: {
+   *     "/data/config.json": '{"key": "value"}',
+   *     "/data/large.json": () => fetchData(),
+   *     "/data/remote.txt": async () => await fetch(url).then(r => r.text()),
+   *   }
+   * });
+   * ```
+   */
+  files?: Record<string, FileValue>;
+}
+
+/**
+ * Resolve file values: sync functions are called immediately,
+ * async functions are awaited. Returns a plain string map.
+ */
+async function resolveFiles(
+  files?: Record<string, FileValue>,
+): Promise<Record<string, string> | undefined> {
+  if (!files) return undefined;
+  const resolved: Record<string, string> = {};
+  for (const [path, value] of Object.entries(files)) {
+    if (typeof value === "string") {
+      resolved[path] = value;
+    } else if (typeof value === "function") {
+      const result = value();
+      resolved[path] =
+        result instanceof Promise ? await result : (result as string);
+    }
+  }
+  return resolved;
+}
+
+/**
+ * Resolve file values synchronously. Throws if any value is async.
+ */
+function resolveFilesSync(
+  files?: Record<string, FileValue>,
+): Record<string, string> | undefined {
+  if (!files) return undefined;
+  const resolved: Record<string, string> = {};
+  for (const [path, value] of Object.entries(files)) {
+    if (typeof value === "string") {
+      resolved[path] = value;
+    } else if (typeof value === "function") {
+      const result = value();
+      if (result instanceof Promise) {
+        throw new Error(
+          `File "${path}" has an async provider. Use Bash.create() instead of new Bash() for async file values.`,
+        );
+      }
+      resolved[path] = result as string;
+    }
+  }
+  return resolved;
+}
+
+function toNativeOptions(
+  options?: BashOptions,
+  resolvedFiles?: Record<string, string>,
+): NativeBashOptions | undefined {
+  if (!options && !resolvedFiles) return undefined;
+  return {
+    username: options?.username,
+    hostname: options?.hostname,
+    maxCommands: options?.maxCommands,
+    maxLoopIterations: options?.maxLoopIterations,
+    files: resolvedFiles,
+  };
+}
 
 /**
  * Error thrown when a bash command execution fails.
@@ -22,7 +118,8 @@ export class BashError extends Error {
   readonly stderr: string;
 
   constructor(result: ExecResult) {
-    const message = result.error ?? result.stderr ?? `Exit code ${result.exitCode}`;
+    const message =
+      result.error ?? result.stderr ?? `Exit code ${result.exitCode}`;
     super(message);
     this.name = "BashError";
     this.exitCode = result.exitCode;
@@ -53,7 +150,29 @@ export class Bash {
   private native: NativeBashType;
 
   constructor(options?: BashOptions) {
-    this.native = new NativeBash(options);
+    const resolved = resolveFilesSync(options?.files);
+    this.native = new NativeBash(toNativeOptions(options, resolved));
+  }
+
+  /**
+   * Create a Bash instance with support for async file providers.
+   *
+   * Use this instead of `new Bash()` when file values are async functions.
+   *
+   * @example
+   * ```typescript
+   * const bash = await Bash.create({
+   *   files: {
+   *     "/data/remote.json": async () => await fetchData(),
+   *   }
+   * });
+   * ```
+   */
+  static async create(options?: BashOptions): Promise<Bash> {
+    const resolved = await resolveFiles(options?.files);
+    const instance = Object.create(Bash.prototype) as Bash;
+    instance.native = new NativeBash(toNativeOptions(options, resolved));
+    return instance;
   }
 
   /**
@@ -130,7 +249,18 @@ export class BashTool {
   private native: NativeBashToolType;
 
   constructor(options?: BashOptions) {
-    this.native = new NativeBashTool(options);
+    const resolved = resolveFilesSync(options?.files);
+    this.native = new NativeBashTool(toNativeOptions(options, resolved));
+  }
+
+  /**
+   * Create a BashTool instance with support for async file providers.
+   */
+  static async create(options?: BashOptions): Promise<BashTool> {
+    const resolved = await resolveFiles(options?.files);
+    const instance = Object.create(BashTool.prototype) as BashTool;
+    instance.native = new NativeBashTool(toNativeOptions(options, resolved));
+    return instance;
   }
 
   /**

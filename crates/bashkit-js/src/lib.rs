@@ -9,6 +9,7 @@
 use bashkit::tool::VERSION;
 use bashkit::{Bash as RustBash, BashTool as RustBashTool, ExecutionLimits, Tool};
 use napi_derive::napi;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -37,6 +38,19 @@ pub struct BashOptions {
     pub hostname: Option<String>,
     pub max_commands: Option<u32>,
     pub max_loop_iterations: Option<u32>,
+    /// Files to mount in the virtual filesystem.
+    /// Keys are absolute paths, values are file content strings.
+    pub files: Option<HashMap<String, String>>,
+}
+
+fn default_opts() -> BashOptions {
+    BashOptions {
+        username: None,
+        hostname: None,
+        max_commands: None,
+        max_loop_iterations: None,
+        files: None,
+    }
 }
 
 // ============================================================================
@@ -61,18 +75,14 @@ pub struct Bash {
 impl Bash {
     #[napi(constructor)]
     pub fn new(options: Option<BashOptions>) -> napi::Result<Self> {
-        let opts = options.unwrap_or(BashOptions {
-            username: None,
-            hostname: None,
-            max_commands: None,
-            max_loop_iterations: None,
-        });
+        let opts = options.unwrap_or_else(default_opts);
 
         let bash = build_bash(
             opts.username.as_deref(),
             opts.hostname.as_deref(),
             opts.max_commands,
             opts.max_loop_iterations,
+            opts.files.as_ref(),
         );
 
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -150,6 +160,7 @@ impl Bash {
                 hostname.as_deref(),
                 max_commands,
                 max_loop_iterations,
+                None,
             );
             Ok(())
         })
@@ -201,18 +212,14 @@ impl BashTool {
 impl BashTool {
     #[napi(constructor)]
     pub fn new(options: Option<BashOptions>) -> napi::Result<Self> {
-        let opts = options.unwrap_or(BashOptions {
-            username: None,
-            hostname: None,
-            max_commands: None,
-            max_loop_iterations: None,
-        });
+        let opts = options.unwrap_or_else(default_opts);
 
         let bash = build_bash(
             opts.username.as_deref(),
             opts.hostname.as_deref(),
             opts.max_commands,
             opts.max_loop_iterations,
+            opts.files.as_ref(),
         );
 
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -290,6 +297,7 @@ impl BashTool {
                 hostname.as_deref(),
                 max_commands,
                 max_loop_iterations,
+                None,
             );
             Ok(())
         })
@@ -357,6 +365,7 @@ fn build_bash(
     hostname: Option<&str>,
     max_commands: Option<u32>,
     max_loop_iterations: Option<u32>,
+    files: Option<&HashMap<String, String>>,
 ) -> RustBash {
     let mut builder = RustBash::builder();
 
@@ -375,6 +384,13 @@ fn build_bash(
         limits = limits.max_loop_iterations(mli as usize);
     }
     builder = builder.limits(limits);
+
+    // Mount files into the virtual filesystem
+    if let Some(files) = files {
+        for (path, content) in files {
+            builder = builder.mount_text(path, content);
+        }
+    }
 
     builder.build()
 }
