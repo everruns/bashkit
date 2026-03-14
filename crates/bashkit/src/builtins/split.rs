@@ -91,10 +91,7 @@ impl Builtin for Split {
                 let end = (pos + chunk_size).min(bytes.len());
                 let suffix = make_suffix(file_index, numeric_suffix);
                 let out_path = resolve_path(ctx.cwd, &format!("{}{}", prefix, suffix));
-                ctx.fs
-                    .write_file(&out_path, &bytes[pos..end])
-                    .await
-                    ?;
+                ctx.fs.write_file(&out_path, &bytes[pos..end]).await?;
                 file_index += 1;
                 pos = end;
             }
@@ -106,10 +103,7 @@ impl Builtin for Split {
                 let end = (pos + size).min(bytes.len());
                 let suffix = make_suffix(file_index, numeric_suffix);
                 let out_path = resolve_path(ctx.cwd, &format!("{}{}", prefix, suffix));
-                ctx.fs
-                    .write_file(&out_path, &bytes[pos..end])
-                    .await
-                    ?;
+                ctx.fs.write_file(&out_path, &bytes[pos..end]).await?;
                 file_index += 1;
                 pos = end;
             }
@@ -130,8 +124,7 @@ impl Builtin for Split {
                 };
                 ctx.fs
                     .write_file(&out_path, chunk_with_newline.as_bytes())
-                    .await
-                    ?;
+                    .await?;
                 file_index += 1;
                 pos = end;
             }
