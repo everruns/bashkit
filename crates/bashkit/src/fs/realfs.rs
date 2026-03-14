@@ -293,6 +293,7 @@ impl FsBackend for RealFs {
             .open(&real)
             .await?;
         file.write_all(content).await?;
+        file.flush().await?;
         Ok(())
     }
 
