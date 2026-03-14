@@ -36,6 +36,21 @@ use crate::error::Result;
 use crate::fs::FileSystem;
 use crate::limits::{ExecutionCounters, ExecutionLimits};
 
+/// A single command history entry.
+#[derive(Debug, Clone)]
+pub struct HistoryEntry {
+    /// The command line as entered
+    pub command: String,
+    /// Unix timestamp when the command was executed
+    pub timestamp: i64,
+    /// Working directory at execution time
+    pub cwd: String,
+    /// Exit code of the command
+    pub exit_code: i32,
+    /// Duration in milliseconds
+    pub duration_ms: u64,
+}
+
 /// Callback for streaming output chunks as they are produced.
 ///
 /// Arguments: `(stdout_chunk, stderr_chunk)`. Called after each loop iteration
@@ -304,6 +319,12 @@ pub struct Interpreter {
     /// Aliases currently being expanded (prevents infinite recursion).
     /// When alias `foo` expands to `foo bar`, the inner `foo` is not re-expanded.
     expanding_aliases: HashSet<String>,
+    /// Command history entries for the current session.
+    history: Vec<HistoryEntry>,
+    /// Optional VFS path for persisting history between sessions.
+    history_file: Option<PathBuf>,
+    /// Whether history has been loaded from VFS (to avoid re-loading on each exec).
+    history_loaded: bool,
 }
 
 impl Interpreter {
@@ -560,6 +581,9 @@ impl Interpreter {
             pipestatus: Vec::new(),
             aliases: HashMap::new(),
             expanding_aliases: HashSet::new(),
+            history: Vec::new(),
+            history_file: None,
+            history_loaded: false,
         }
     }
 
@@ -615,6 +639,104 @@ impl Interpreter {
     /// Set the current working directory.
     pub fn set_cwd(&mut self, cwd: PathBuf) {
         self.cwd = cwd;
+    }
+
+    /// Get the current working directory.
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+
+    /// Record a history entry for the current session.
+    pub fn record_history(
+        &mut self,
+        command: String,
+        timestamp: i64,
+        cwd: String,
+        exit_code: i32,
+        duration_ms: u64,
+    ) {
+        self.history.push(HistoryEntry {
+            command,
+            timestamp,
+            cwd,
+            exit_code,
+            duration_ms,
+        });
+    }
+
+    /// Set the VFS path for persisting history.
+    pub fn set_history_file(&mut self, path: PathBuf) {
+        self.history_file = Some(path);
+    }
+
+    /// Get a reference to the history entries.
+    #[allow(dead_code)]
+    pub fn history(&self) -> &[HistoryEntry] {
+        &self.history
+    }
+
+    /// Clear all history entries.
+    #[allow(dead_code)]
+    pub fn clear_history(&mut self) {
+        self.history.clear();
+    }
+
+    /// Load history from the VFS history file (if configured). No-op after first call.
+    pub async fn load_history(&mut self) {
+        if self.history_loaded {
+            return;
+        }
+        self.history_loaded = true;
+        let path = match &self.history_file {
+            Some(p) => p.clone(),
+            None => return,
+        };
+        let bytes = match self.fs.read_file(&path).await {
+            Ok(b) => b,
+            Err(_) => return, // File doesn't exist yet
+        };
+        let content = String::from_utf8_lossy(&bytes);
+        for line in content.lines() {
+            // Format: timestamp|exit_code|duration_ms|cwd|command
+            let parts: Vec<&str> = line.splitn(5, '|').collect();
+            if parts.len() == 5
+                && let (Ok(ts), Ok(ec), Ok(dur)) = (
+                    parts[0].parse::<i64>(),
+                    parts[1].parse::<i32>(),
+                    parts[2].parse::<u64>(),
+                )
+            {
+                self.history.push(HistoryEntry {
+                    timestamp: ts,
+                    exit_code: ec,
+                    duration_ms: dur,
+                    cwd: parts[3].to_string(),
+                    command: parts[4].to_string(),
+                });
+            }
+        }
+    }
+
+    /// Save history to the VFS history file (if configured).
+    pub async fn save_history(&self) {
+        let path = match &self.history_file {
+            Some(p) => p.clone(),
+            None => return,
+        };
+        let mut content = String::new();
+        for entry in &self.history {
+            use std::fmt::Write;
+            let _ = writeln!(
+                content,
+                "{}|{}|{}|{}|{}",
+                entry.timestamp, entry.exit_code, entry.duration_ms, entry.cwd, entry.command
+            );
+        }
+        // Ensure parent directory exists
+        if let Some(parent) = path.parent() {
+            let _ = self.fs.mkdir(parent, true).await;
+        }
+        let _ = self.fs.write_file(&path, content.as_bytes()).await;
     }
 
     /// Capture the current shell state (variables, env, cwd, options).
@@ -4017,6 +4139,11 @@ impl Interpreter {
             return self.execute_local_builtin(&args, &command.redirects).await;
         }
 
+        // Handle `history` at interpreter level - needs access to history entries
+        if name == "history" {
+            return self.execute_history(&args, &command.redirects).await;
+        }
+
         // Handle `timeout` specially - needs interpreter-level command execution
         if name == "timeout" {
             return self.execute_timeout(&args, stdin, &command.redirects).await;
@@ -4737,6 +4864,182 @@ impl Interpreter {
             }
         }
         Ok(ExecResult::ok(String::new()))
+    }
+
+    /// Execute the `history` builtin with query modes.
+    ///
+    /// Supported syntax:
+    /// - `history` — show all entries
+    /// - `history N` — show last N entries
+    /// - `history -c` — clear history (and VFS file)
+    /// - `history --grep PATTERN` — filter by command substring
+    /// - `history --cwd PATH` — filter by working directory
+    /// - `history --failed` — show only non-zero exit codes
+    /// - `history --since DURATION` — entries newer than duration (e.g. 2d, 1h, 30m)
+    async fn execute_history(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let mut clear = false;
+        let mut count: Option<usize> = None;
+        let mut grep_pattern: Option<String> = None;
+        let mut cwd_filter: Option<String> = None;
+        let mut failed_only = false;
+        let mut since_secs: Option<i64> = None;
+
+        let mut i = 0;
+        while i < args.len() {
+            let arg = &args[i];
+            match arg.as_str() {
+                "-c" => clear = true,
+                "--grep" => {
+                    i += 1;
+                    if i < args.len() {
+                        grep_pattern = Some(args[i].clone());
+                    } else {
+                        let result = ExecResult::err(
+                            "history: --grep requires an argument\n".to_string(),
+                            1,
+                        );
+                        return self.apply_redirections(result, redirects).await;
+                    }
+                }
+                "--cwd" => {
+                    i += 1;
+                    if i < args.len() {
+                        cwd_filter = Some(args[i].clone());
+                    } else {
+                        let result =
+                            ExecResult::err("history: --cwd requires an argument\n".to_string(), 1);
+                        return self.apply_redirections(result, redirects).await;
+                    }
+                }
+                "--failed" => failed_only = true,
+                "--since" => {
+                    i += 1;
+                    if i < args.len() {
+                        match Self::parse_duration_to_secs(&args[i]) {
+                            Some(secs) => since_secs = Some(secs),
+                            None => {
+                                let result = ExecResult::err(
+                                    format!(
+                                        "history: invalid duration '{}' (use e.g. 2d, 1h, 30m, 60s)\n",
+                                        args[i]
+                                    ),
+                                    1,
+                                );
+                                return self.apply_redirections(result, redirects).await;
+                            }
+                        }
+                    } else {
+                        let result = ExecResult::err(
+                            "history: --since requires an argument\n".to_string(),
+                            1,
+                        );
+                        return self.apply_redirections(result, redirects).await;
+                    }
+                }
+                _ => {
+                    if let Some(opt) = arg.strip_prefix("--") {
+                        let result = ExecResult::err(
+                            format!("history: unrecognized option '--{}'\n", opt),
+                            1,
+                        );
+                        return self.apply_redirections(result, redirects).await;
+                    } else if let Some(opt) = arg.strip_prefix('-') {
+                        // Allow -c, reject others
+                        if opt != "c" {
+                            let result = ExecResult::err(
+                                format!("history: invalid option -- '{}'\n", opt),
+                                1,
+                            );
+                            return self.apply_redirections(result, redirects).await;
+                        }
+                    } else if let Ok(n) = arg.parse::<usize>() {
+                        count = Some(n);
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        if clear {
+            self.history.clear();
+            self.save_history().await;
+            let result = ExecResult::ok(String::new());
+            return self.apply_redirections(result, redirects).await;
+        }
+
+        let now = chrono::Utc::now().timestamp();
+
+        // Apply filters
+        let filtered: Vec<(usize, &HistoryEntry)> = self
+            .history
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| {
+                if let Some(ref pat) = grep_pattern
+                    && !entry.command.contains(pat.as_str())
+                {
+                    return false;
+                }
+                if let Some(ref cwd) = cwd_filter
+                    && !entry.cwd.starts_with(cwd.as_str())
+                {
+                    return false;
+                }
+                if failed_only && entry.exit_code == 0 {
+                    return false;
+                }
+                if let Some(secs) = since_secs
+                    && now - entry.timestamp > secs
+                {
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        // Apply count limit (last N entries)
+        let entries: &[(usize, &HistoryEntry)] = if let Some(n) = count {
+            let start = filtered.len().saturating_sub(n);
+            &filtered[start..]
+        } else {
+            &filtered
+        };
+
+        // Format output: bash-style numbered listing
+        let mut output = String::new();
+        for (idx, entry) in entries {
+            use std::fmt::Write;
+            // 1-indexed like bash
+            let _ = writeln!(output, "  {}  {}", idx + 1, entry.command);
+        }
+
+        let result = ExecResult::ok(output);
+        self.apply_redirections(result, redirects).await
+    }
+
+    /// Parse a human-readable duration string to seconds (e.g. "2d", "1h", "30m", "60s").
+    fn parse_duration_to_secs(s: &str) -> Option<i64> {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+        let (num_str, multiplier) = if let Some(n) = s.strip_suffix('d') {
+            (n, 86400)
+        } else if let Some(n) = s.strip_suffix('h') {
+            (n, 3600)
+        } else if let Some(n) = s.strip_suffix('m') {
+            (n, 60)
+        } else if let Some(n) = s.strip_suffix('s') {
+            (n, 1)
+        } else {
+            (s, 1)
+        };
+        let n: i64 = num_str.parse().ok()?;
+        Some(n * multiplier)
     }
 
     /// Execute the `trap` builtin — register/list signal handlers.
