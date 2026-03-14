@@ -22,6 +22,7 @@ doc = false  # Disable to avoid collision with bashkit library docs
 default = ["python"]
 python = ["bashkit/python"]
 realfs = ["bashkit/realfs"]
+scripted_tool = ["bashkit/scripted_tool"]
 
 [dependencies]
 bashkit = { path = "../bashkit", version = "0.1.9", features = ["http_client", "git"] }
