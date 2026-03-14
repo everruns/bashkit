@@ -300,6 +300,18 @@ pub trait FileSystem: Send + Sync {
         FsUsage::default()
     }
 
+    /// Create a named pipe (FIFO) at the given path.
+    ///
+    /// FIFOs are simulated as buffered files in the virtual filesystem.
+    /// Reading from a FIFO returns its buffered content, writing appends to it.
+    ///
+    /// # Default Implementation
+    ///
+    /// Returns "not supported" error. Override in implementations that support FIFOs.
+    async fn mkfifo(&self, _path: &Path, _mode: u32) -> Result<()> {
+        Err(std::io::Error::other("mkfifo not supported").into())
+    }
+
     /// Get filesystem limits.
     ///
     /// Returns the configured limits for this filesystem.
@@ -375,6 +387,8 @@ pub enum FileType {
     Directory,
     /// Symbolic link pointing to another path.
     Symlink,
+    /// Named pipe (FIFO).
+    Fifo,
 }
 
 impl FileType {
@@ -418,6 +432,20 @@ impl FileType {
     /// ```
     pub fn is_symlink(&self) -> bool {
         matches!(self, FileType::Symlink)
+    }
+
+    /// Returns `true` if this is a named pipe (FIFO).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::FileType;
+    ///
+    /// assert!(FileType::Fifo.is_fifo());
+    /// assert!(!FileType::File.is_fifo());
+    /// ```
+    pub fn is_fifo(&self) -> bool {
+        matches!(self, FileType::Fifo)
     }
 }
 
