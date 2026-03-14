@@ -202,7 +202,7 @@ impl McpServer {
     }
 
     fn handle_tools_list(&self, id: serde_json::Value) -> JsonRpcResponse {
-        let mut tools = vec![McpTool {
+        let tools = vec![McpTool {
             name: "bash".to_string(),
             description: "Execute a bash script in a virtual environment".to_string(),
             input_schema: serde_json::json!({
