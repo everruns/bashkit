@@ -633,15 +633,24 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 } else if self.peek_char() == Some('{') {
-                    // ${VAR} format
+                    // ${VAR} format — track nested braces so ${a[${#b[@]}]}
+                    // doesn't stop at the inner }.
                     word.push('{');
                     self.advance();
-                    // Read until closing }
+                    let mut brace_depth = 1i32;
                     while let Some(c) = self.peek_char() {
                         word.push(c);
                         self.advance();
-                        if c == '}' {
-                            break;
+                        if c == '$' && self.peek_char() == Some('{') {
+                            // Nested ${...}
+                            word.push('{');
+                            self.advance();
+                            brace_depth += 1;
+                        } else if c == '}' {
+                            brace_depth -= 1;
+                            if brace_depth == 0 {
+                                break;
+                            }
                         }
                     }
                 } else {
@@ -1783,5 +1792,27 @@ mod tests {
         let mut lexer = Lexer::new("2");
         let token = lexer.next_token();
         assert!(token.is_some());
+    }
+
+    /// Issue #599: Nested ${...} inside unquoted ${...} must be a single token.
+    #[test]
+    fn test_nested_brace_expansion_single_token() {
+        // ${arr[${#arr[@]} - 1]} should be ONE word token, not split at inner }
+        let mut lexer = Lexer::new("${arr[${#arr[@]} - 1]}");
+        let token = lexer.next_token();
+        assert_eq!(
+            token,
+            Some(Token::Word("${arr[${#arr[@]} - 1]}".to_string()))
+        );
+        // No more tokens — everything was consumed
+        assert_eq!(lexer.next_token(), None);
+    }
+
+    /// Simple ${var} still works after brace depth change.
+    #[test]
+    fn test_simple_brace_expansion_unchanged() {
+        let mut lexer = Lexer::new("${foo}");
+        assert_eq!(lexer.next_token(), Some(Token::Word("${foo}".to_string())));
+        assert_eq!(lexer.next_token(), None);
     }
 }
