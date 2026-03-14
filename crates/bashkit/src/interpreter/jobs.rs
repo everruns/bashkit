@@ -1,14 +1,13 @@
 //! Job table for background execution
 //!
-//! Tracks background jobs and their status.
-//!
-//! Note: This module provides infrastructure for background job tracking.
-//! Currently, background commands run synchronously but the job table
-//! is available for future async execution support.
+//! Tracks background jobs spawned with `&` and their exit status.
+//! Background commands execute synchronously for deterministic output
+//! ordering, but their results are stored here so `wait` and `$!` work
+//! correctly.
 
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -26,7 +25,7 @@ pub struct Job {
 /// Job table for tracking background jobs
 pub struct JobTable {
     /// Active jobs indexed by ID
-    jobs: HashMap<usize, JoinHandle<ExecResult>>,
+    jobs: BTreeMap<usize, JoinHandle<ExecResult>>,
     /// Next job ID to assign
     next_id: usize,
     /// Last spawned job ID (for $!)
@@ -43,7 +42,7 @@ impl JobTable {
     /// Create a new empty job table
     pub fn new() -> Self {
         Self {
-            jobs: HashMap::new(),
+            jobs: BTreeMap::new(),
             next_id: 1,
             last_job_id: None,
         }
@@ -84,7 +83,7 @@ impl JobTable {
         let mut last_exit_code = 0;
 
         // Drain all jobs
-        let jobs: Vec<_> = self.jobs.drain().collect();
+        let jobs: Vec<_> = std::mem::take(&mut self.jobs).into_iter().collect();
 
         for (_, handle) in jobs {
             match handle.await {
@@ -94,6 +93,19 @@ impl JobTable {
         }
 
         last_exit_code
+    }
+
+    /// Wait for all jobs and return their results (preserving output).
+    pub async fn wait_all_results(&mut self) -> Vec<ExecResult> {
+        let jobs: Vec<_> = std::mem::take(&mut self.jobs).into_iter().collect();
+        let mut results = Vec::new();
+        for (_, handle) in jobs {
+            match handle.await {
+                Ok(result) => results.push(result),
+                Err(_) => results.push(ExecResult::err("job panicked".to_string(), 1)),
+            }
+        }
+        results
     }
 
     /// Check if there are any active jobs
