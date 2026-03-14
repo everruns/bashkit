@@ -75,10 +75,20 @@ enum AwkExpr {
     FieldAssign(Box<AwkExpr>, Box<AwkExpr>), // $n = val
 }
 
+/// Output target for print/printf redirection (e.g., `> file`, `>> file`).
+/// Pipe (`| cmd`) is not supported and returns a clear error.
+#[derive(Debug, Clone)]
+enum AwkOutputTarget {
+    /// Truncate/create file: `> file`
+    Truncate(AwkExpr),
+    /// Append to file: `>> file`
+    Append(AwkExpr),
+}
+
 #[derive(Debug, Clone)]
 enum AwkAction {
-    Print(Vec<AwkExpr>),
-    Printf(String, Vec<AwkExpr>),
+    Print(Vec<AwkExpr>, Option<AwkOutputTarget>),
+    Printf(String, Vec<AwkExpr>, Option<AwkOutputTarget>),
     Assign(String, AwkExpr),
     ArrayAssign(String, AwkExpr, AwkExpr), // arr[key] = val
     If(AwkExpr, Vec<AwkAction>, Vec<AwkAction>),
@@ -306,6 +316,9 @@ struct AwkParser<'a> {
     pos: usize,
     /// Current recursion depth for expression parsing
     depth: usize,
+    /// When true, `>` and `>>` are output redirection, not comparison ops.
+    /// Set during print/printf argument parsing per POSIX awk semantics.
+    in_print_context: bool,
 }
 
 impl<'a> AwkParser<'a> {
@@ -314,6 +327,7 @@ impl<'a> AwkParser<'a> {
             input,
             pos: 0,
             depth: 0,
+            in_print_context: false,
         }
     }
 
@@ -394,9 +408,10 @@ impl<'a> AwkParser<'a> {
         {
             program.main_rules.push(AwkRule {
                 pattern: None,
-                actions: vec![AwkAction::Print(vec![AwkExpr::Field(Box::new(
-                    AwkExpr::Number(0.0),
-                ))])],
+                actions: vec![AwkAction::Print(
+                    vec![AwkExpr::Field(Box::new(AwkExpr::Number(0.0)))],
+                    None,
+                )],
             });
         }
 
@@ -506,9 +521,10 @@ impl<'a> AwkParser<'a> {
             self.parse_action_block()?
         } else if pattern.is_some() {
             // Default action is print
-            vec![AwkAction::Print(vec![AwkExpr::Field(Box::new(
-                AwkExpr::Number(0.0),
-            ))])]
+            vec![AwkAction::Print(
+                vec![AwkExpr::Field(Box::new(AwkExpr::Number(0.0)))],
+                None,
+            )]
         } else {
             Vec::new()
         };
@@ -669,12 +685,19 @@ impl<'a> AwkParser<'a> {
         self.skip_whitespace();
         let mut args = Vec::new();
 
+        // Enable print context so `>` and `>>` are not parsed as comparison
+        self.in_print_context = true;
+
         loop {
             if self.pos >= self.input.len() {
                 break;
             }
             let c = self.current_char().unwrap();
             if c == '}' || c == ';' {
+                break;
+            }
+            // Stop at output redirection operators
+            if c == '>' || c == '|' {
                 break;
             }
 
@@ -694,11 +717,17 @@ impl<'a> AwkParser<'a> {
             args.push(AwkExpr::Field(Box::new(AwkExpr::Number(0.0))));
         }
 
-        Ok(AwkAction::Print(args))
+        let target = self.parse_output_target()?;
+        self.in_print_context = false;
+
+        Ok(AwkAction::Print(args, target))
     }
 
     fn parse_printf(&mut self) -> Result<AwkAction> {
         self.skip_whitespace();
+
+        // Enable print context so `>` and `>>` are not parsed as comparison
+        self.in_print_context = true;
 
         // Handle optional parenthesized form: printf("format", args)
         let has_parens = self.pos < self.input.len() && self.current_char().unwrap() == '(';
@@ -709,6 +738,7 @@ impl<'a> AwkParser<'a> {
 
         // Parse format string
         if self.pos >= self.input.len() || self.current_char().unwrap() != '"' {
+            self.in_print_context = false;
             return Err(Error::Execution(
                 "awk: printf requires format string".to_string(),
             ));
@@ -730,7 +760,46 @@ impl<'a> AwkParser<'a> {
             self.pos += 1;
         }
 
-        Ok(AwkAction::Printf(format, args))
+        let target = self.parse_output_target()?;
+        self.in_print_context = false;
+
+        Ok(AwkAction::Printf(format, args, target))
+    }
+
+    /// Parse optional output target after print/printf arguments: `> file`, `>> file`, `| cmd`.
+    /// Pipe is unsupported and returns a clear error.
+    fn parse_output_target(&mut self) -> Result<Option<AwkOutputTarget>> {
+        self.skip_whitespace();
+        if self.pos >= self.input.len() {
+            return Ok(None);
+        }
+
+        let c = self.current_char().unwrap();
+        if c == '>' {
+            self.pos += 1;
+            // Check for >>
+            let append = self.pos < self.input.len() && self.current_char().unwrap() == '>';
+            if append {
+                self.pos += 1;
+            }
+            self.skip_whitespace();
+            // Temporarily disable print context to parse the target as a normal expression
+            self.in_print_context = false;
+            let target = self.parse_expression()?;
+            self.in_print_context = true;
+            if append {
+                Ok(Some(AwkOutputTarget::Append(target)))
+            } else {
+                Ok(Some(AwkOutputTarget::Truncate(target)))
+            }
+        } else if c == '|' {
+            // TODO: pipe output (e.g., `print ... | "cmd"`) not yet supported
+            Err(Error::Execution(
+                "awk: pipe output redirection (|) is not supported".to_string(),
+            ))
+        } else {
+            Ok(None)
+        }
     }
 
     /// THREAT[TM-DOS-027]: Track depth for nested if/action blocks
@@ -1178,7 +1247,13 @@ impl<'a> AwkParser<'a> {
             return Ok(AwkExpr::InArray(Box::new(left), arr_name));
         }
 
-        let ops = ["==", "!=", "<=", ">=", "<", ">", "~", "!~"];
+        // In print context, `>` and `>>` are output redirection, not comparison.
+        // `>=` remains a comparison operator even in print context.
+        let ops: &[&str] = if self.in_print_context {
+            &["==", "!=", "<=", ">=", "<", "~", "!~"]
+        } else {
+            &["==", "!=", "<=", ">=", "<", ">", "~", "!~"]
+        };
 
         for op in ops {
             if self.input[self.pos..].starts_with(op) {
@@ -1550,11 +1625,14 @@ impl<'a> AwkParser<'a> {
             return Err(Error::Execution("awk: unterminated regex".to_string()));
         }
 
-        // Parenthesized expression
+        // Parenthesized expression: `>` inside parens is comparison, not redirection
         if c == '(' {
             self.pos += 1;
             self.push_depth()?;
+            let saved_print_ctx = self.in_print_context;
+            self.in_print_context = false;
             let expr = self.parse_expression()?;
+            self.in_print_context = saved_print_ctx;
             self.pop_depth();
             self.skip_whitespace();
             if self.pos >= self.input.len() || self.current_char().unwrap() != ')' {
@@ -1726,6 +1804,13 @@ struct AwkInterpreter {
     functions: HashMap<String, AwkFunctionDef>,
     /// Current function call depth for recursion limiting
     call_depth: usize,
+    /// Buffered file outputs for `>` redirection (path -> content).
+    /// Truncate mode: first write creates entry, subsequent writes append to buffer.
+    /// Flushed to VFS after execution completes.
+    file_outputs: HashMap<String, String>,
+    /// Buffered file outputs for `>>` redirection (path -> content).
+    /// Append mode: content is appended to existing file on flush.
+    file_appends: HashMap<String, String>,
 }
 
 impl AwkInterpreter {
@@ -1736,6 +1821,8 @@ impl AwkInterpreter {
             input_lines: Vec::new(),
             line_index: 0,
             functions: HashMap::new(),
+            file_outputs: HashMap::new(),
+            file_appends: HashMap::new(),
             call_depth: 0,
         }
     }
@@ -2476,24 +2563,41 @@ impl AwkInterpreter {
         result
     }
 
+    /// Write text to stdout buffer or to a file output buffer based on the target.
+    fn write_output(&mut self, text: &str, target: &Option<AwkOutputTarget>) {
+        match target {
+            None => self.output.push_str(text),
+            Some(AwkOutputTarget::Truncate(expr)) => {
+                let path = self.eval_expr(expr).as_string();
+                self.file_outputs.entry(path).or_default().push_str(text);
+            }
+            Some(AwkOutputTarget::Append(expr)) => {
+                let path = self.eval_expr(expr).as_string();
+                self.file_appends.entry(path).or_default().push_str(text);
+            }
+        }
+    }
+
     /// Execute action. Returns flow control signal.
     fn exec_action(&mut self, action: &AwkAction) -> AwkFlow {
         // Limit iterations to prevent infinite loops
         const MAX_LOOP_ITERS: usize = 100_000;
 
         match action {
-            AwkAction::Print(exprs) => {
+            AwkAction::Print(exprs, target) => {
                 let parts: Vec<String> = exprs
                     .iter()
                     .map(|e| self.eval_expr(e).as_string())
                     .collect();
-                self.output.push_str(&parts.join(&self.state.ofs));
-                self.output.push_str(&self.state.ors);
+                let mut text = parts.join(&self.state.ofs);
+                text.push_str(&self.state.ors);
+                self.write_output(&text, target);
                 AwkFlow::Continue
             }
-            AwkAction::Printf(format, args) => {
+            AwkAction::Printf(format, args, target) => {
                 let values: Vec<AwkValue> = args.iter().map(|a| self.eval_expr(a)).collect();
-                self.output.push_str(&self.format_string(format, &values));
+                let text = self.format_string(format, &values);
+                self.write_output(&text, target);
                 AwkFlow::Continue
             }
             AwkAction::Assign(name, expr) => {
@@ -2820,6 +2924,7 @@ impl Builtin for Awk {
                         break;
                     }
                 }
+                Self::flush_file_outputs(&interp, &ctx).await?;
                 return Ok(ExecResult::with_code(interp.output, exit_code.unwrap_or(0)));
             }
         }
@@ -2900,7 +3005,33 @@ impl Builtin for Awk {
             }
         }
 
+        Self::flush_file_outputs(&interp, &ctx).await?;
         Ok(ExecResult::with_code(interp.output, exit_code.unwrap_or(0)))
+    }
+}
+
+impl Awk {
+    /// Flush buffered file outputs to VFS.
+    async fn flush_file_outputs(interp: &AwkInterpreter, ctx: &Context<'_>) -> Result<()> {
+        // Truncate mode: write entire buffer as file content
+        for (path, content) in &interp.file_outputs {
+            let path = if path.starts_with('/') {
+                std::path::PathBuf::from(path)
+            } else {
+                ctx.cwd.join(path)
+            };
+            ctx.fs.write_file(&path, content.as_bytes()).await?;
+        }
+        // Append mode: append buffer to existing file (or create)
+        for (path, content) in &interp.file_appends {
+            let path = if path.starts_with('/') {
+                std::path::PathBuf::from(path)
+            } else {
+                ctx.cwd.join(path)
+            };
+            ctx.fs.append_file(&path, content.as_bytes()).await?;
+        }
+        Ok(())
     }
 }
 
@@ -2908,7 +3039,7 @@ impl Builtin for Awk {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
+    use crate::fs::{FileSystem, InMemoryFs};
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -3484,5 +3615,108 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("a 2"));
         assert!(result.stdout.contains("b 1"));
+    }
+
+    /// Helper that returns the VFS alongside the result for testing file output.
+    async fn run_awk_with_fs(
+        args: &[&str],
+        stdin: Option<&str>,
+    ) -> (Result<ExecResult>, Arc<InMemoryFs>) {
+        let awk = Awk;
+        let fs = Arc::new(InMemoryFs::new());
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let result = awk.execute(ctx).await;
+        (result, fs)
+    }
+
+    #[tokio::test]
+    async fn test_awk_print_redirect_truncate() {
+        // Issue #607: print ... > file should create file with content
+        let (result, fs) = run_awk_with_fs(&[r#"BEGIN{print "hello" > "/tmp/out"}"#], None).await;
+        let result = result.unwrap();
+        assert_eq!(result.exit_code, 0);
+        // stdout should be empty (output went to file)
+        assert_eq!(result.stdout, "");
+        let content = fs
+            .read_file(std::path::Path::new("/tmp/out"))
+            .await
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&content), "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_printf_redirect_truncate() {
+        // Issue #607: printf ... > file should create file with content
+        let (result, fs) = run_awk_with_fs(&[r#"BEGIN{printf "hello" > "/tmp/out"}"#], None).await;
+        let result = result.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "");
+        let content = fs
+            .read_file(std::path::Path::new("/tmp/out"))
+            .await
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&content), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_awk_print_redirect_append() {
+        // Issue #607: print ... >> file should append
+        let (result, fs) = run_awk_with_fs(
+            &[r#"BEGIN{print "a" > "/tmp/out"; print "b" >> "/tmp/out"}"#],
+            None,
+        )
+        .await;
+        let result = result.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let content = fs
+            .read_file(std::path::Path::new("/tmp/out"))
+            .await
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&content), "a\nb\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_print_redirect_multiple_to_same_file() {
+        // Multiple prints to same file with > should accumulate (AWK keeps file open)
+        let (result, fs) = run_awk_with_fs(
+            &[r#"BEGIN{print "line1" > "/tmp/out"; print "line2" > "/tmp/out"}"#],
+            None,
+        )
+        .await;
+        let result = result.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let content = fs
+            .read_file(std::path::Path::new("/tmp/out"))
+            .await
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&content), "line1\nline2\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_print_redirect_pipe_unsupported() {
+        // Pipe output should return clear error
+        let (result, _fs) = run_awk_with_fs(&[r#"BEGIN{print "hello" | "cat"}"#], None).await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("pipe"),
+            "expected pipe error, got: {err_msg}"
+        );
     }
 }
