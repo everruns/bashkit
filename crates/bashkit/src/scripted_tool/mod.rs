@@ -134,7 +134,8 @@ pub use toolset::{DiscoveryMode, ScriptingToolSet, ScriptingToolSetBuilder};
 
 use crate::{ExecutionLimits, Tool, ToolService};
 use schemars::schema_for;
-use std::sync::Arc;
+use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
 
 // ============================================================================
 // ToolDef — OpenAPI-style tool definition
@@ -237,6 +238,33 @@ impl ToolArgs {
 /// Receives parsed [`ToolArgs`] with typed parameters and optional stdin.
 /// Return `Ok(stdout)` on success or `Err(message)` on failure.
 pub type ToolCallback = Arc<dyn Fn(&ToolArgs) -> Result<String, String> + Send + Sync>;
+
+// ============================================================================
+// Execution trace — inner scripted command/builtin usage
+// ============================================================================
+
+/// Kind of inner command invocation recorded during a `ScriptedTool` execute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScriptedCommandKind {
+    Tool,
+    Help,
+    Discover,
+}
+
+/// One builtin/tool invocation inside a scripted tool execute.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptedCommandInvocation {
+    pub name: String,
+    pub kind: ScriptedCommandKind,
+    pub args: Vec<String>,
+    pub exit_code: i32,
+}
+
+/// Inner execution trace captured for the last `ScriptedTool::execute()` call.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ScriptedExecutionTrace {
+    pub invocations: Vec<ScriptedCommandInvocation>,
+}
 
 // ============================================================================
 // RegisteredTool — internal definition + callback pair
@@ -376,6 +404,7 @@ impl ScriptedToolBuilder {
             limits: self.limits.clone(),
             env_vars: self.env_vars.clone(),
             compact_prompt: self.compact_prompt,
+            last_execution_trace: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -446,12 +475,28 @@ pub struct ScriptedTool {
     pub(crate) limits: Option<ExecutionLimits>,
     pub(crate) env_vars: Vec<(String, String)>,
     pub(crate) compact_prompt: bool,
+    pub(crate) last_execution_trace: Arc<Mutex<Option<ScriptedExecutionTrace>>>,
 }
 
 impl ScriptedTool {
     /// Create a builder with the given tool name.
     pub fn builder(name: impl Into<String>) -> ScriptedToolBuilder {
         ScriptedToolBuilder::new(name)
+    }
+
+    /// Return and clear the trace from the most recent execute call.
+    pub fn take_last_execution_trace(&self) -> Option<ScriptedExecutionTrace> {
+        self.last_execution_trace
+            .lock()
+            .expect("scripted execution trace poisoned")
+            .take()
+    }
+
+    pub(crate) fn store_last_execution_trace(&self, trace: ScriptedExecutionTrace) {
+        *self
+            .last_execution_trace
+            .lock()
+            .expect("scripted execution trace poisoned") = Some(trace);
     }
 }
 
@@ -1051,5 +1096,29 @@ mod tests {
             })
             .await;
         assert_eq!(resp2.stdout.trim(), "2");
+    }
+
+    #[tokio::test]
+    async fn test_execution_trace_records_help_discover_and_tool_invocations() {
+        let mut tool = build_test_tool();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --search user\nhelp get_user\nget_user --id 42".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+
+        let trace = tool
+            .take_last_execution_trace()
+            .expect("execution trace should be recorded");
+        assert_eq!(trace.invocations.len(), 3);
+        assert_eq!(trace.invocations[0].name, "discover");
+        assert_eq!(trace.invocations[0].kind, ScriptedCommandKind::Discover);
+        assert_eq!(trace.invocations[1].name, "help");
+        assert_eq!(trace.invocations[1].kind, ScriptedCommandKind::Help);
+        assert_eq!(trace.invocations[2].name, "get_user");
+        assert_eq!(trace.invocations[2].kind, ScriptedCommandKind::Tool);
     }
 }

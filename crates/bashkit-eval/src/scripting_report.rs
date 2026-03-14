@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
+use bashkit::ScriptedCommandKind;
 use serde::{Deserialize, Serialize};
 
 use crate::scorer::TaskScore;
@@ -48,6 +49,11 @@ pub struct ScriptingSummary {
     pub total_duration_ms: u64,
     pub avg_turns_per_task: f64,
     pub avg_tool_calls_per_task: f64,
+    pub total_inner_commands: usize,
+    pub total_inner_tool_calls: usize,
+    pub total_inner_help_calls: usize,
+    pub total_inner_discover_calls: usize,
+    pub avg_inner_commands_per_task: f64,
     pub avg_duration_ms: f64,
     /// Total raw bytes of tool output data.
     pub total_raw_tool_output_bytes: usize,
@@ -65,6 +71,7 @@ pub struct ScriptingCategorySummary {
     pub rate: f64,
     pub avg_turns: f64,
     pub avg_tool_calls: f64,
+    pub avg_inner_commands: f64,
     pub total_raw_output_bytes: usize,
 }
 
@@ -89,6 +96,28 @@ pub fn build_scripting_report(
     let total_output_tokens: u32 = results.iter().map(|r| r.trace.total_output_tokens).sum();
     let total_turns: usize = results.iter().map(|r| r.trace.turns).sum();
     let total_tool_calls: usize = results.iter().map(|r| r.trace.tool_call_count).sum();
+    let total_inner_commands: usize = results.iter().map(|r| r.trace.inner_command_count()).sum();
+    let total_inner_tool_calls: usize = results
+        .iter()
+        .map(|r| {
+            r.trace
+                .inner_command_count_by_kind(ScriptedCommandKind::Tool)
+        })
+        .sum();
+    let total_inner_help_calls: usize = results
+        .iter()
+        .map(|r| {
+            r.trace
+                .inner_command_count_by_kind(ScriptedCommandKind::Help)
+        })
+        .sum();
+    let total_inner_discover_calls: usize = results
+        .iter()
+        .map(|r| {
+            r.trace
+                .inner_command_count_by_kind(ScriptedCommandKind::Discover)
+        })
+        .sum();
     let tool_calls_ok: usize = results
         .iter()
         .flat_map(|r| &r.trace.tool_calls)
@@ -109,6 +138,7 @@ pub fn build_scripting_report(
     let n = total_tasks.max(1) as f64;
     let avg_turns_per_task = total_turns as f64 / n;
     let avg_tool_calls_per_task = total_tool_calls as f64 / n;
+    let avg_inner_commands_per_task = total_inner_commands as f64 / n;
     let avg_duration_ms = total_duration_ms as f64 / n;
 
     let mut by_category: HashMap<String, ScriptingCategorySummary> = HashMap::new();
@@ -124,6 +154,7 @@ pub fn build_scripting_report(
                     rate: 0.0,
                     avg_turns: 0.0,
                     avg_tool_calls: 0.0,
+                    avg_inner_commands: 0.0,
                     total_raw_output_bytes: 0,
                 });
         entry.tasks += 1;
@@ -134,6 +165,7 @@ pub fn build_scripting_report(
         entry.max_score += r.score.max_score;
         entry.avg_turns += r.trace.turns as f64;
         entry.avg_tool_calls += r.trace.tool_call_count as f64;
+        entry.avg_inner_commands += r.trace.inner_command_count() as f64;
         entry.total_raw_output_bytes += r.trace.raw_tool_output_bytes;
     }
     for cat in by_category.values_mut() {
@@ -145,6 +177,7 @@ pub fn build_scripting_report(
         };
         cat.avg_turns /= cn;
         cat.avg_tool_calls /= cn;
+        cat.avg_inner_commands /= cn;
     }
 
     ScriptingEvalReport {
@@ -170,6 +203,11 @@ pub fn build_scripting_report(
             total_duration_ms,
             avg_turns_per_task,
             avg_tool_calls_per_task,
+            total_inner_commands,
+            total_inner_tool_calls,
+            total_inner_help_calls,
+            total_inner_discover_calls,
+            avg_inner_commands_per_task,
             avg_duration_ms,
             total_raw_tool_output_bytes,
             total_tool_output_sent_bytes,
@@ -232,6 +270,14 @@ pub fn print_scripting_terminal_report(report: &ScriptingEvalReport) {
         report.summary.tool_call_success_rate * 100.0
     );
     println!(
+        "  Inner commands: {} total, {:.1} avg/task ({} tool, {} help, {} discover)",
+        report.summary.total_inner_commands,
+        report.summary.avg_inner_commands_per_task,
+        report.summary.total_inner_tool_calls,
+        report.summary.total_inner_help_calls,
+        report.summary.total_inner_discover_calls,
+    );
+    println!(
         "  Tokens: {} input, {} output",
         report.summary.total_input_tokens, report.summary.total_output_tokens
     );
@@ -251,13 +297,14 @@ pub fn print_scripting_terminal_report(report: &ScriptingEvalReport) {
     cats.sort_by_key(|(k, _)| (*k).clone());
     for (cat, summary) in &cats {
         println!(
-            "  {:<25} {}/{} tasks  {:.0}%  ({:.1} turns, {:.1} calls avg)",
+            "  {:<25} {}/{} tasks  {:.0}%  ({:.1} turns, {:.1} calls, {:.1} inner avg)",
             cat,
             summary.passed,
             summary.tasks,
             summary.rate * 100.0,
             summary.avg_turns,
             summary.avg_tool_calls,
+            summary.avg_inner_commands,
         );
     }
     println!();
@@ -325,6 +372,14 @@ fn generate_markdown(report: &ScriptingEvalReport) -> String {
         report.summary.total_tool_calls, report.summary.avg_tool_calls_per_task
     ));
     md.push_str(&format!(
+        "- **Inner commands**: {} total ({:.1} avg/task; {} tool, {} help, {} discover)\n",
+        report.summary.total_inner_commands,
+        report.summary.avg_inner_commands_per_task,
+        report.summary.total_inner_tool_calls,
+        report.summary.total_inner_help_calls,
+        report.summary.total_inner_discover_calls,
+    ));
+    md.push_str(&format!(
         "- **Tool call success**: {} ok, {} error ({:.0}% success rate)\n",
         report.summary.tool_calls_ok,
         report.summary.tool_calls_error,
@@ -353,19 +408,24 @@ fn generate_markdown(report: &ScriptingEvalReport) -> String {
     ));
 
     md.push_str("## By Category\n\n");
-    md.push_str("| Category | Passed | Total | Rate | Avg Turns | Avg Calls | Raw Output |\n");
-    md.push_str("|----------|--------|-------|------|-----------|-----------|------------|\n");
+    md.push_str(
+        "| Category | Passed | Total | Rate | Avg Turns | Avg Calls | Avg Inner | Raw Output |\n",
+    );
+    md.push_str(
+        "|----------|--------|-------|------|-----------|-----------|-----------|------------|\n",
+    );
     let mut cats: Vec<_> = report.summary.by_category.iter().collect();
     cats.sort_by_key(|(k, _)| (*k).clone());
     for (cat, summary) in &cats {
         md.push_str(&format!(
-            "| {} | {} | {} | {:.0}% | {:.1} | {:.1} | {} bytes |\n",
+            "| {} | {} | {} | {:.0}% | {:.1} | {:.1} | {:.1} | {} bytes |\n",
             cat,
             summary.passed,
             summary.tasks,
             summary.rate * 100.0,
             summary.avg_turns,
             summary.avg_tool_calls,
+            summary.avg_inner_commands,
             summary.total_raw_output_bytes,
         ));
     }
@@ -387,6 +447,16 @@ fn generate_markdown(report: &ScriptingEvalReport) -> String {
             .filter(|tc| tc.exit_code == 0)
             .count();
         let calls_err = r.trace.tool_call_count - calls_ok;
+        let inner_total = r.trace.inner_command_count();
+        let inner_tool = r
+            .trace
+            .inner_command_count_by_kind(ScriptedCommandKind::Tool);
+        let inner_help = r
+            .trace
+            .inner_command_count_by_kind(ScriptedCommandKind::Help);
+        let inner_discover = r
+            .trace
+            .inner_command_count_by_kind(ScriptedCommandKind::Discover);
         md.push_str(&format!(
             "- Turns: {} | Tool calls: {} ({} ok, {} err) | Duration: {:.1}s\n",
             r.trace.turns,
@@ -394,6 +464,10 @@ fn generate_markdown(report: &ScriptingEvalReport) -> String {
             calls_ok,
             calls_err,
             r.trace.duration_ms as f64 / 1000.0
+        ));
+        md.push_str(&format!(
+            "- Inner commands: {} ({} tool, {} help, {} discover)\n",
+            inner_total, inner_tool, inner_help, inner_discover
         ));
         md.push_str(&format!(
             "- Tokens: {} input, {} output\n",

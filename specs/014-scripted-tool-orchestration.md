@@ -215,6 +215,25 @@ relevant data into the next script.
 For callback-level persistence, `Arc` state in closures persists across `execute()` calls
 since the same `Arc<ToolCallback>` instances are reused.
 
+### Execution trace access
+
+`ScriptedTool` records inner command invocations from the most recent `execute()` call and
+exposes them via `take_last_execution_trace()`. This trace is for observability and eval
+telemetry, not scoring:
+
+```rust
+let mut tool = ScriptedTool::builder("api").tool(...).build();
+let _resp = tool.execute(ToolRequest::new("discover --search user\nhelp get_user")).await;
+let trace = tool.take_last_execution_trace().unwrap();
+assert_eq!(trace.invocations[0].name, "discover");
+```
+
+Trace entries record:
+- command name
+- kind: `tool`, `help`, or `discover`
+- raw argv tokens
+- exit code
+
 ### MCP integration
 
 `McpServer` in `bashkit-cli` can expose ScriptedTools over MCP's JSON-RPC protocol.

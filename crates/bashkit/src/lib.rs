@@ -432,8 +432,9 @@ pub use tool::{
 
 #[cfg(feature = "scripted_tool")]
 pub use scripted_tool::{
-    DiscoveryMode, ScriptedTool, ScriptedToolBuilder, ScriptingToolSet, ScriptingToolSetBuilder,
-    ToolArgs, ToolCallback, ToolDef,
+    DiscoveryMode, ScriptedCommandInvocation, ScriptedCommandKind, ScriptedExecutionTrace,
+    ScriptedTool, ScriptedToolBuilder, ScriptingToolSet, ScriptingToolSetBuilder, ToolArgs,
+    ToolCallback, ToolDef,
 };
 
 #[cfg(feature = "http_client")]

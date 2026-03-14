@@ -1,6 +1,9 @@
 //! ScriptedTool execution: Tool impl, builtin adapter, flag parser, documentation helpers.
 
-use super::{ScriptedTool, ToolArgs, ToolCallback};
+use super::{
+    ScriptedCommandInvocation, ScriptedCommandKind, ScriptedExecutionTrace, ScriptedTool, ToolArgs,
+    ToolCallback,
+};
 use crate::Bash;
 use crate::builtins::{Builtin, Context};
 use crate::error::Result;
@@ -11,7 +14,25 @@ use crate::tool::{
 };
 use async_trait::async_trait;
 use schemars::schema_for;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+type InvocationLog = Arc<Mutex<Vec<ScriptedCommandInvocation>>>;
+
+fn push_invocation(
+    log: &InvocationLog,
+    name: &str,
+    kind: ScriptedCommandKind,
+    args: &[String],
+    exit_code: i32,
+) {
+    let mut invocations = log.lock().expect("scripted invocation log poisoned");
+    invocations.push(ScriptedCommandInvocation {
+        name: name.to_string(),
+        kind,
+        args: args.to_vec(),
+        exit_code,
+    });
+}
 
 // ============================================================================
 // Flag parser — `--key value` / `--key=value` → JSON object
@@ -124,27 +145,38 @@ fn usage_from_schema(schema: &serde_json::Value) -> Option<String> {
 /// Adapts a [`ToolCallback`] into a [`Builtin`] so the interpreter can execute it.
 /// Parses `--key value` flags from `ctx.args` using the schema for type coercion.
 struct ToolBuiltinAdapter {
+    name: String,
     callback: ToolCallback,
     schema: serde_json::Value,
+    log: InvocationLog,
 }
 
 #[async_trait]
 impl Builtin for ToolBuiltinAdapter {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let params = match parse_flags(ctx.args, &self.schema) {
-            Ok(p) => p,
-            Err(msg) => return Ok(ExecResult::err(msg, 2)),
+        let exit_result = match parse_flags(ctx.args, &self.schema) {
+            Ok(params) => {
+                let tool_args = ToolArgs {
+                    params,
+                    stdin: ctx.stdin.map(String::from),
+                };
+
+                match (self.callback)(&tool_args) {
+                    Ok(stdout) => ExecResult::ok(stdout),
+                    Err(msg) => ExecResult::err(msg, 1),
+                }
+            }
+            Err(msg) => ExecResult::err(msg, 2),
         };
 
-        let tool_args = ToolArgs {
-            params,
-            stdin: ctx.stdin.map(String::from),
-        };
-
-        match (self.callback)(&tool_args) {
-            Ok(stdout) => Ok(ExecResult::ok(stdout)),
-            Err(msg) => Ok(ExecResult::err(msg, 1)),
-        }
+        push_invocation(
+            &self.log,
+            &self.name,
+            ScriptedCommandKind::Tool,
+            ctx.args,
+            exit_result.exit_code,
+        );
+        Ok(exit_result)
     }
 }
 
@@ -170,6 +202,7 @@ struct ToolDefSnapshot {
 /// - `help <tool> --json` — machine-readable JSON schema
 struct HelpBuiltin {
     tools: Vec<ToolDefSnapshot>,
+    log: InvocationLog,
 }
 
 #[async_trait]
@@ -177,50 +210,70 @@ impl Builtin for HelpBuiltin {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         let args = ctx.args;
 
-        if args.is_empty() || (args.len() == 1 && args[0] == "--list") {
+        let result = if args.is_empty() || (args.len() == 1 && args[0] == "--list") {
             // List all tools
             let mut out = String::new();
             for t in &self.tools {
                 out.push_str(&format!("{:<20} {}\n", t.name, t.description));
             }
-            return Ok(ExecResult::ok(out));
-        }
+            ExecResult::ok(out)
+        } else {
+            // Find the tool name (first non-flag arg)
+            let tool_name = args.iter().find(|a| !a.starts_with("--"));
+            let json_mode = args.iter().any(|a| a == "--json");
 
-        // Find the tool name (first non-flag arg)
-        let tool_name = args.iter().find(|a| !a.starts_with("--"));
-        let json_mode = args.iter().any(|a| a == "--json");
+            let Some(tool_name) = tool_name else {
+                let result =
+                    ExecResult::err("usage: help [--list] [<tool>] [--json]".to_string(), 1);
+                push_invocation(
+                    &self.log,
+                    "help",
+                    ScriptedCommandKind::Help,
+                    args,
+                    result.exit_code,
+                );
+                return Ok(result);
+            };
 
-        let Some(tool_name) = tool_name else {
-            return Ok(ExecResult::err(
-                "usage: help [--list] [<tool>] [--json]".to_string(),
-                1,
-            ));
+            let Some(tool) = self.tools.iter().find(|t| t.name == *tool_name) else {
+                let result = ExecResult::err(format!("help: unknown tool: {tool_name}"), 1);
+                push_invocation(
+                    &self.log,
+                    "help",
+                    ScriptedCommandKind::Help,
+                    args,
+                    result.exit_code,
+                );
+                return Ok(result);
+            };
+
+            if json_mode {
+                // Machine-readable JSON output
+                let obj = serde_json::json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "input_schema": tool.input_schema,
+                });
+                let json_str = serde_json::to_string_pretty(&obj).unwrap_or_default();
+                ExecResult::ok(format!("{json_str}\n"))
+            } else {
+                // Human-readable output
+                let mut out = format!("{} - {}\n", tool.name, tool.description);
+                if let Some(usage) = usage_from_schema(&tool.input_schema) {
+                    out.push_str(&format!("Usage: {} {}\n", tool.name, usage));
+                }
+                ExecResult::ok(out)
+            }
         };
 
-        let Some(tool) = self.tools.iter().find(|t| t.name == *tool_name) else {
-            return Ok(ExecResult::err(
-                format!("help: unknown tool: {tool_name}"),
-                1,
-            ));
-        };
-
-        if json_mode {
-            // Machine-readable JSON output
-            let obj = serde_json::json!({
-                "name": tool.name,
-                "description": tool.description,
-                "input_schema": tool.input_schema,
-            });
-            let json_str = serde_json::to_string_pretty(&obj).unwrap_or_default();
-            return Ok(ExecResult::ok(format!("{json_str}\n")));
-        }
-
-        // Human-readable output
-        let mut out = format!("{} - {}\n", tool.name, tool.description);
-        if let Some(usage) = usage_from_schema(&tool.input_schema) {
-            out.push_str(&format!("Usage: {} {}\n", tool.name, usage));
-        }
-        Ok(ExecResult::ok(out))
+        push_invocation(
+            &self.log,
+            "help",
+            ScriptedCommandKind::Help,
+            args,
+            result.exit_code,
+        );
+        Ok(result)
     }
 }
 
@@ -231,6 +284,7 @@ impl Builtin for HelpBuiltin {
 /// Built-in `discover` command for exploring large tool sets.
 struct DiscoverBuiltin {
     tools: Vec<ToolDefSnapshot>,
+    log: InvocationLog,
 }
 
 impl DiscoverBuiltin {
@@ -286,69 +340,80 @@ impl Builtin for DiscoverBuiltin {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         let args = ctx.args;
 
-        if args.is_empty() {
-            return Ok(ExecResult::err(
+        let result = if args.is_empty() {
+            ExecResult::err(
                 "usage: discover --categories | --category <name> | --tag <tag> | --search <keyword> [--json]".to_string(),
                 1,
-            ));
-        }
+            )
+        } else {
+            let json_mode = args.iter().any(|a| a == "--json");
 
-        let json_mode = args.iter().any(|a| a == "--json");
+            // --categories
+            if args.iter().any(|a| a == "--categories") {
+                let mut cats: std::collections::BTreeMap<String, usize> =
+                    std::collections::BTreeMap::new();
+                for t in &self.tools {
+                    if let Some(ref cat) = t.category {
+                        *cats.entry(cat.clone()).or_insert(0) += 1;
+                    }
+                }
+                if json_mode {
+                    let arr: Vec<serde_json::Value> = cats
+                        .iter()
+                        .map(|(name, count)| serde_json::json!({"category": name, "count": count}))
+                        .collect();
+                    let json_str =
+                        serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string());
+                    ExecResult::ok(format!("{json_str}\n"))
+                } else {
+                    let mut out = String::new();
+                    for (name, count) in &cats {
+                        let plural = if *count == 1 { "tool" } else { "tools" };
+                        out.push_str(&format!("{name} ({count} {plural})\n"));
+                    }
+                    ExecResult::ok(out)
+                }
+            } else {
+                let (filtered, _) = self.filter_tools(args);
 
-        // --categories
-        if args.iter().any(|a| a == "--categories") {
-            let mut cats: std::collections::BTreeMap<String, usize> =
-                std::collections::BTreeMap::new();
-            for t in &self.tools {
-                if let Some(ref cat) = t.category {
-                    *cats.entry(cat.clone()).or_insert(0) += 1;
+                if json_mode {
+                    let arr: Vec<serde_json::Value> = filtered
+                        .iter()
+                        .map(|t| {
+                            let mut obj = serde_json::json!({
+                                "name": t.name,
+                                "description": t.description,
+                            });
+                            if !t.tags.is_empty() {
+                                obj["tags"] = serde_json::json!(t.tags);
+                            }
+                            if let Some(ref cat) = t.category {
+                                obj["category"] = serde_json::json!(cat);
+                            }
+                            obj
+                        })
+                        .collect();
+                    let json_str =
+                        serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string());
+                    ExecResult::ok(format!("{json_str}\n"))
+                } else {
+                    let mut out = String::new();
+                    for t in &filtered {
+                        out.push_str(&format!("{:<20} {}\n", t.name, t.description));
+                    }
+                    ExecResult::ok(out)
                 }
             }
-            if json_mode {
-                let arr: Vec<serde_json::Value> = cats
-                    .iter()
-                    .map(|(name, count)| serde_json::json!({"category": name, "count": count}))
-                    .collect();
-                let json_str =
-                    serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string());
-                return Ok(ExecResult::ok(format!("{json_str}\n")));
-            }
-            let mut out = String::new();
-            for (name, count) in &cats {
-                let plural = if *count == 1 { "tool" } else { "tools" };
-                out.push_str(&format!("{name} ({count} {plural})\n"));
-            }
-            return Ok(ExecResult::ok(out));
-        }
+        };
 
-        let (filtered, _) = self.filter_tools(args);
-
-        if json_mode {
-            let arr: Vec<serde_json::Value> = filtered
-                .iter()
-                .map(|t| {
-                    let mut obj = serde_json::json!({
-                        "name": t.name,
-                        "description": t.description,
-                    });
-                    if !t.tags.is_empty() {
-                        obj["tags"] = serde_json::json!(t.tags);
-                    }
-                    if let Some(ref cat) = t.category {
-                        obj["category"] = serde_json::json!(cat);
-                    }
-                    obj
-                })
-                .collect();
-            let json_str = serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string());
-            return Ok(ExecResult::ok(format!("{json_str}\n")));
-        }
-
-        let mut out = String::new();
-        for t in &filtered {
-            out.push_str(&format!("{:<20} {}\n", t.name, t.description));
-        }
-        Ok(ExecResult::ok(out))
+        push_invocation(
+            &self.log,
+            "discover",
+            ScriptedCommandKind::Discover,
+            args,
+            result.exit_code,
+        );
+        Ok(result)
     }
 }
 
@@ -358,7 +423,7 @@ impl Builtin for DiscoverBuiltin {
 
 impl ScriptedTool {
     /// Create a fresh Bash instance with all tool builtins registered.
-    fn create_bash(&self) -> Bash {
+    fn create_bash(&self, log: InvocationLog) -> Bash {
         let mut builder = Bash::builder();
 
         if let Some(ref limits) = self.limits {
@@ -370,8 +435,10 @@ impl ScriptedTool {
         for tool in &self.tools {
             let name = tool.def.name.clone();
             let builtin: Box<dyn Builtin> = Box::new(ToolBuiltinAdapter {
+                name: name.clone(),
                 callback: Arc::clone(&tool.callback),
                 schema: tool.def.input_schema.clone(),
+                log: Arc::clone(&log),
             });
             builder = builder.builtin(name, builtin);
         }
@@ -392,11 +459,15 @@ impl ScriptedTool {
             "help".to_string(),
             Box::new(HelpBuiltin {
                 tools: snapshots.clone(),
+                log: Arc::clone(&log),
             }),
         );
         builder = builder.builtin(
             "discover".to_string(),
-            Box::new(DiscoverBuiltin { tools: snapshots }),
+            Box::new(DiscoverBuiltin {
+                tools: snapshots,
+                log,
+            }),
         );
 
         builder.build()
@@ -470,6 +541,7 @@ impl ScriptedTool {
         stream_sender: Option<tokio::sync::mpsc::UnboundedSender<ToolOutputChunk>>,
     ) -> ToolResponse {
         if req.commands.is_empty() {
+            self.store_last_execution_trace(ScriptedExecutionTrace::default());
             return ToolResponse {
                 stdout: String::new(),
                 stderr: String::new(),
@@ -478,7 +550,8 @@ impl ScriptedTool {
             };
         }
 
-        let mut bash = self.create_bash();
+        let log: InvocationLog = Arc::new(Mutex::new(Vec::new()));
+        let mut bash = self.create_bash(Arc::clone(&log));
 
         let response = if let Some(sender) = stream_sender {
             let output_cb = Box::new(move |stdout_chunk: &str, stderr_chunk: &str| {
@@ -508,7 +581,13 @@ impl ScriptedTool {
                 exit_code: 1,
                 error: Some(err.to_string()),
             },
-        }
+        };
+        let invocations = log
+            .lock()
+            .expect("scripted invocation log poisoned")
+            .clone();
+        self.store_last_execution_trace(ScriptedExecutionTrace { invocations });
+        response
     }
 }
 
