@@ -268,12 +268,15 @@ impl PyBash {
                     exit_code: result.exit_code,
                     error: None,
                 }),
-                Err(e) => Ok(ExecResult {
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    exit_code: 1,
-                    error: Some(e.to_string()),
-                }),
+                Err(e) => {
+                    let msg = e.to_string();
+                    Ok(ExecResult {
+                        stdout: String::new(),
+                        stderr: msg.clone(),
+                        exit_code: 1,
+                        error: Some(msg),
+                    })
+                }
             }
         })
     }
@@ -476,12 +479,15 @@ impl BashTool {
                     exit_code: result.exit_code,
                     error: None,
                 }),
-                Err(e) => Ok(ExecResult {
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    exit_code: 1,
-                    error: Some(e.to_string()),
-                }),
+                Err(e) => {
+                    let msg = e.to_string();
+                    Ok(ExecResult {
+                        stdout: String::new(),
+                        stderr: msg.clone(),
+                        exit_code: 1,
+                        error: Some(msg),
+                    })
+                }
             }
         })
     }

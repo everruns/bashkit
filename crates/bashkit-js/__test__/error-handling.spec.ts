@@ -194,3 +194,25 @@ test("unclosed quote returns non-zero or handles gracefully", (t) => {
   // Should either error or handle gracefully
   t.is(typeof r.exitCode, "number");
 });
+
+// ============================================================================
+// Pre-exec failure stderr surfacing (issue #606)
+// ============================================================================
+
+test("pre-exec parse error surfaces in stderr (Bash)", (t) => {
+  const bash = new Bash();
+  const r = bash.executeSync("echo $(");
+  t.not(r.exitCode, 0);
+  t.truthy(r.error, "error field should contain the parse error");
+  t.truthy(r.stderr, "stderr must not be empty on pre-exec failure");
+  t.true(r.stderr.includes(r.error!), "stderr should contain the error message");
+});
+
+test("pre-exec parse error surfaces in stderr (BashTool)", (t) => {
+  const tool = new BashTool();
+  const r = tool.executeSync("echo $(");
+  t.not(r.exitCode, 0);
+  t.truthy(r.error, "error field should contain the parse error");
+  t.truthy(r.stderr, "stderr must not be empty on pre-exec failure");
+  t.true(r.stderr.includes(r.error!), "stderr should contain the error message");
+});

@@ -73,6 +73,8 @@ def create_bash_tool(
         result = await native.execute(commands)
 
         output = result.stdout
+        if result.error:
+            output += f"\nError: {result.error}"
         if result.stderr:
             output += f"\nSTDERR: {result.stderr}"
         if result.exit_code != 0:
