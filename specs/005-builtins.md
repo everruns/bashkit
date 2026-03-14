@@ -20,6 +20,7 @@ in a virtual environment. All builtins operate on the virtual filesystem.
 - `source`, `.` - Script sourcing (functions, variables, PATH search, positional params)
 - `test`, `[` - Conditionals (see Test Operators below)
 - `read` - Input
+- `alias`, `unalias` - Alias management (gated by `shopt -s expand_aliases`, parser-time first-word expansion, trailing-space chaining, recursion guard)
 
 #### Script Execution by Path
 

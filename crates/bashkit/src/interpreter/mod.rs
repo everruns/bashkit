@@ -482,6 +482,13 @@ impl Interpreter {
         builtins.insert("envsubst".to_string(), Box::new(builtins::Envsubst));
         builtins.insert("join".to_string(), Box::new(builtins::Join));
         builtins.insert("split".to_string(), Box::new(builtins::Split));
+        builtins.insert("assert".to_string(), Box::new(builtins::Assert));
+        builtins.insert("dotenv".to_string(), Box::new(builtins::Dotenv));
+        builtins.insert("glob".to_string(), Box::new(builtins::GlobCmd));
+        builtins.insert("log".to_string(), Box::new(builtins::Log));
+        builtins.insert("retry".to_string(), Box::new(builtins::Retry));
+        builtins.insert("semver".to_string(), Box::new(builtins::Semver));
+        builtins.insert("verify".to_string(), Box::new(builtins::Verify));
 
         // Merge custom builtins (override defaults if same name)
         for (name, builtin) in custom_builtins {

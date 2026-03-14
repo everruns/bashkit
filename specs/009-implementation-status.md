@@ -203,7 +203,6 @@ Features that may be added in the future (not intentionally excluded):
 | Feature | Priority | Notes |
 |---------|----------|-------|
 | Coprocesses `coproc` | Low | Rarely used |
-| `alias` | Low | Interactive feature |
 | History expansion | Out of scope | Interactive only |
 
 ### Partially Implemented
