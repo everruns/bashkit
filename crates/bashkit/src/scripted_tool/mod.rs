@@ -117,6 +117,9 @@
 //! the same `Arc<ToolCallback>` instances are reused across `execute()` calls.
 
 mod execute;
+mod toolset;
+
+pub use toolset::{DiscoveryMode, ScriptingToolSet, ScriptingToolSetBuilder};
 
 use crate::ExecutionLimits;
 use std::sync::Arc;
