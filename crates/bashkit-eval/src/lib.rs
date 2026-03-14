@@ -4,3 +4,7 @@ pub mod provider;
 pub mod report;
 pub mod runner;
 pub mod scorer;
+pub mod scripting_agent;
+pub mod scripting_dataset;
+pub mod scripting_report;
+pub mod scripting_runner;
