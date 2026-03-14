@@ -139,6 +139,30 @@ Output: {stdout, stderr, exit_code}
 - Use variables to pass data between tool calls
 ```
 
+### Shared context across callbacks
+
+Use the standard Rust closure-capture pattern with `Arc` to share resources:
+
+```rust
+let client = Arc::new(build_authenticated_client());
+let c = client.clone();
+builder.tool(ToolDef::new("get_user", "..."), move |args| {
+    let resp = c.get(&format!("/users/{}", args.param_i64("id").unwrap()));
+    Ok(resp.text()?)
+});
+```
+
+For mutable state, use `Arc<Mutex<T>>`. No API change needed — closures handle it naturally.
+
+### State across execute() calls
+
+Each `execute()` creates a fresh Bash interpreter (security: clean sandbox per call).
+The LLM carries state via its context window — it sees stdout from each call and passes
+relevant data into the next script.
+
+For callback-level persistence, `Arc` state in closures persists across `execute()` calls
+since the same `Arc<ToolCallback>` instances are reused.
+
 ## Module location
 
 `crates/bashkit/src/scripted_tool/`
@@ -160,7 +184,7 @@ Run: `cargo run --example scripted_tool --features scripted_tool`
 
 ## Test coverage
 
-31 unit tests covering:
+35 unit tests covering:
 - Builder configuration (name, description, defaults)
 - Introspection (help, system_prompt, schemas, schema rendering)
 - Flag parsing (`--key value`, `--key=value`, boolean flags, type coercion)
@@ -173,6 +197,8 @@ Run: `cargo run --example scripted_tool --features scripted_tool`
 - Environment variables
 - Status callbacks
 - Multiple sequential `execute()` calls (Arc reuse)
+- Shared context: Arc across callbacks, mutable Arc<Mutex<T>>
+- Interpreter isolation: fresh per execute(), Arc callback persistence
 
 ## Security
 
