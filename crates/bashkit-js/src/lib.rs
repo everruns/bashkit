@@ -5,13 +5,24 @@
 //!
 //! Exposes `Bash` (core interpreter), `BashTool` (interpreter + LLM metadata),
 //! and `ExecResult` via napi-rs for use from JavaScript/TypeScript.
+//!
+//! # Safety: handle-based registry pattern
+//!
+//! napi-rs stores `#[napi]` structs behind raw pointers that are dereferenced
+//! on every method call.  CodeQL flags transitive pointer chains reachable from
+//! these raw pointers (`rust/access-invalid-pointer`).
+//!
+//! To eliminate this, both `Bash` and `BashTool` store only a plain `u64`
+//! handle.  All real state lives in a global `REGISTRY` keyed by handle.
+//! Methods look up the `Arc<SharedState>` from the registry, so the napi raw
+//! pointer never transitively reaches heap-allocated interpreter state.
 
 use bashkit::tool::VERSION;
 use bashkit::{Bash as RustBash, BashTool as RustBashTool, ExecutionLimits, Tool};
 use napi_derive::napi;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, RwLock};
 use tokio::sync::Mutex;
 
 // ============================================================================
@@ -55,13 +66,39 @@ fn default_opts() -> BashOptions {
 }
 
 // ============================================================================
-// Shared inner state — all fields behind Arc so methods never hold a raw
-// pointer to the napi-allocated struct across await points or blocking calls.
+// Handle-based registry — keeps all interpreter state outside the napi raw
+// pointer, avoiding CodeQL rust/access-invalid-pointer on transitive chains.
+// ============================================================================
+
+static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
+static REGISTRY: LazyLock<RwLock<HashMap<u64, Arc<SharedState>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+fn register(state: Arc<SharedState>) -> u64 {
+    let handle = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
+    REGISTRY.write().unwrap().insert(handle, state);
+    handle
+}
+
+fn lookup(handle: u64) -> napi::Result<Arc<SharedState>> {
+    REGISTRY
+        .read()
+        .unwrap()
+        .get(&handle)
+        .cloned()
+        .ok_or_else(|| napi::Error::from_reason("Interpreter instance has been disposed"))
+}
+
+fn unregister(handle: u64) {
+    REGISTRY.write().unwrap().remove(&handle);
+}
+
+// ============================================================================
+// Shared interpreter state
 // ============================================================================
 
 struct SharedState {
     interpreter: Arc<Mutex<RustBash>>,
-    rt: Arc<tokio::runtime::Runtime>,
     cancelled: Arc<AtomicBool>,
     username: Option<String>,
     hostname: Option<String>,
@@ -80,14 +117,8 @@ impl SharedState {
         );
         let cancelled = bash.cancellation_token();
 
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
-
         Ok(Arc::new(Self {
             interpreter: Arc::new(Mutex::new(bash)),
-            rt: Arc::new(rt),
             cancelled,
             username: opts.username,
             hostname: opts.hostname,
@@ -100,7 +131,11 @@ impl SharedState {
         self.cancelled.store(false, Ordering::Relaxed);
         let interpreter = self.interpreter.clone();
         let commands = commands.to_owned();
-        self.rt.block_on(async move {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
+        rt.block_on(async move {
             let mut bash = interpreter.lock().await;
             exec_to_result(&mut bash, &commands).await
         })
@@ -123,7 +158,11 @@ impl SharedState {
         let max_commands = self.max_commands;
         let max_loop_iterations = self.max_loop_iterations;
 
-        self.rt.block_on(async move {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
+        rt.block_on(async move {
             let mut bash = interpreter.lock().await;
             let new_bash = build_bash(
                 username.as_deref(),
@@ -148,7 +187,13 @@ impl SharedState {
 /// available in subsequent calls.
 #[napi]
 pub struct Bash {
-    state: Arc<SharedState>,
+    handle: u64,
+}
+
+impl Drop for Bash {
+    fn drop(&mut self) {
+        unregister(self.handle);
+    }
 }
 
 #[napi]
@@ -156,23 +201,22 @@ impl Bash {
     #[napi(constructor)]
     pub fn new(options: Option<BashOptions>) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
+        let state = SharedState::new(opts)?;
         Ok(Self {
-            state: SharedState::new(opts)?,
+            handle: register(state),
         })
     }
 
     /// Execute bash commands synchronously.
     #[napi]
     pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
-        let state = self.state.clone();
-        state.execute_sync(&commands)
+        lookup(self.handle)?.execute_sync(&commands)
     }
 
     /// Execute bash commands asynchronously, returning a Promise.
     #[napi]
     pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
-        let state = self.state.clone();
-        state.execute_async(&commands).await
+        lookup(self.handle)?.execute_async(&commands).await
     }
 
     /// Cancel the currently running execution.
@@ -181,15 +225,15 @@ impl Bash {
     /// command boundary.
     #[napi]
     pub fn cancel(&self) {
-        let state = self.state.clone();
-        state.cancel();
+        if let Ok(state) = lookup(self.handle) {
+            state.cancel();
+        }
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
     #[napi]
     pub fn reset(&self) -> napi::Result<()> {
-        let state = self.state.clone();
-        state.reset()
+        lookup(self.handle)?.reset()
     }
 }
 
@@ -203,7 +247,13 @@ impl Bash {
 /// Use this when integrating with AI frameworks that need tool definitions.
 #[napi]
 pub struct BashTool {
-    state: Arc<SharedState>,
+    handle: u64,
+}
+
+impl Drop for BashTool {
+    fn drop(&mut self) {
+        unregister(self.handle);
+    }
 }
 
 impl BashTool {
@@ -234,37 +284,36 @@ impl BashTool {
     #[napi(constructor)]
     pub fn new(options: Option<BashOptions>) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
+        let state = SharedState::new(opts)?;
         Ok(Self {
-            state: SharedState::new(opts)?,
+            handle: register(state),
         })
     }
 
     /// Execute bash commands synchronously.
     #[napi]
     pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
-        let state = self.state.clone();
-        state.execute_sync(&commands)
+        lookup(self.handle)?.execute_sync(&commands)
     }
 
     /// Execute bash commands asynchronously, returning a Promise.
     #[napi]
     pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
-        let state = self.state.clone();
-        state.execute_async(&commands).await
+        lookup(self.handle)?.execute_async(&commands).await
     }
 
     /// Cancel the currently running execution.
     #[napi]
     pub fn cancel(&self) {
-        let state = self.state.clone();
-        state.cancel();
+        if let Ok(state) = lookup(self.handle) {
+            state.cancel();
+        }
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
     #[napi]
     pub fn reset(&self) -> napi::Result<()> {
-        let state = self.state.clone();
-        state.reset()
+        lookup(self.handle)?.reset()
     }
 
     /// Get tool name.
@@ -281,29 +330,29 @@ impl BashTool {
 
     /// Get token-efficient tool description.
     #[napi]
-    pub fn description(&self) -> String {
-        let state = self.state.clone();
-        Self::build_rust_tool(&state).description().to_string()
+    pub fn description(&self) -> napi::Result<String> {
+        let state = lookup(self.handle)?;
+        Ok(Self::build_rust_tool(&state).description().to_string())
     }
 
     /// Get help as a Markdown document.
     #[napi]
-    pub fn help(&self) -> String {
-        let state = self.state.clone();
-        Self::build_rust_tool(&state).help()
+    pub fn help(&self) -> napi::Result<String> {
+        let state = lookup(self.handle)?;
+        Ok(Self::build_rust_tool(&state).help())
     }
 
     /// Get compact system-prompt text for orchestration.
     #[napi]
-    pub fn system_prompt(&self) -> String {
-        let state = self.state.clone();
-        Self::build_rust_tool(&state).system_prompt()
+    pub fn system_prompt(&self) -> napi::Result<String> {
+        let state = lookup(self.handle)?;
+        Ok(Self::build_rust_tool(&state).system_prompt())
     }
 
     /// Get JSON input schema as string.
     #[napi]
     pub fn input_schema(&self) -> napi::Result<String> {
-        let state = self.state.clone();
+        let state = lookup(self.handle)?;
         let schema = Self::build_rust_tool(&state).input_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| napi::Error::from_reason(format!("Schema serialization failed: {e}")))
@@ -312,7 +361,7 @@ impl BashTool {
     /// Get JSON output schema as string.
     #[napi]
     pub fn output_schema(&self) -> napi::Result<String> {
-        let state = self.state.clone();
+        let state = lookup(self.handle)?;
         let schema = Self::build_rust_tool(&state).output_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| napi::Error::from_reason(format!("Schema serialization failed: {e}")))
