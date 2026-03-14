@@ -11,6 +11,7 @@ use bashkit::{Bash as RustBash, BashTool as RustBashTool, ExecutionLimits, Tool}
 use napi_derive::napi;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 
 // ============================================================================
@@ -65,6 +66,7 @@ fn default_opts() -> BashOptions {
 pub struct Bash {
     inner: Arc<Mutex<RustBash>>,
     rt: tokio::runtime::Runtime,
+    cancelled: Arc<AtomicBool>,
     username: Option<String>,
     hostname: Option<String>,
     max_commands: Option<u32>,
@@ -84,6 +86,7 @@ impl Bash {
             opts.max_loop_iterations,
             opts.files.as_ref(),
         );
+        let cancelled = bash.cancellation_token();
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -93,6 +96,7 @@ impl Bash {
         Ok(Self {
             inner: Arc::new(Mutex::new(bash)),
             rt,
+            cancelled,
             username: opts.username,
             hostname: opts.hostname,
             max_commands: opts.max_commands,
@@ -103,6 +107,7 @@ impl Bash {
     /// Execute bash commands synchronously.
     #[napi]
     pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
+        self.cancelled.store(false, Ordering::Relaxed);
         let inner = self.inner.clone();
         self.rt.block_on(async move {
             let mut bash = inner.lock().await;
@@ -144,6 +149,15 @@ impl Bash {
         }
     }
 
+    /// Cancel the currently running execution.
+    ///
+    /// Safe to call from any thread. Execution will abort at the next
+    /// command boundary.
+    #[napi]
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+
     /// Reset interpreter to fresh state, preserving configuration.
     #[napi]
     pub fn reset(&self) -> napi::Result<()> {
@@ -155,13 +169,14 @@ impl Bash {
 
         self.rt.block_on(async move {
             let mut bash = inner.lock().await;
-            *bash = build_bash(
+            let new_bash = build_bash(
                 username.as_deref(),
                 hostname.as_deref(),
                 max_commands,
                 max_loop_iterations,
                 None,
             );
+            *bash = new_bash;
             Ok(())
         })
     }
@@ -179,6 +194,7 @@ impl Bash {
 pub struct BashTool {
     inner: Arc<Mutex<RustBash>>,
     rt: tokio::runtime::Runtime,
+    cancelled: Arc<AtomicBool>,
     username: Option<String>,
     hostname: Option<String>,
     max_commands: Option<u32>,
@@ -221,6 +237,7 @@ impl BashTool {
             opts.max_loop_iterations,
             opts.files.as_ref(),
         );
+        let cancelled = bash.cancellation_token();
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -230,6 +247,7 @@ impl BashTool {
         Ok(Self {
             inner: Arc::new(Mutex::new(bash)),
             rt,
+            cancelled,
             username: opts.username,
             hostname: opts.hostname,
             max_commands: opts.max_commands,
@@ -240,6 +258,7 @@ impl BashTool {
     /// Execute bash commands synchronously.
     #[napi]
     pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
+        self.cancelled.store(false, Ordering::Relaxed);
         let inner = self.inner.clone();
         self.rt.block_on(async move {
             let mut bash = inner.lock().await;
@@ -281,6 +300,12 @@ impl BashTool {
         }
     }
 
+    /// Cancel the currently running execution.
+    #[napi]
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+
     /// Reset interpreter to fresh state, preserving configuration.
     #[napi]
     pub fn reset(&self) -> napi::Result<()> {
@@ -292,13 +317,14 @@ impl BashTool {
 
         self.rt.block_on(async move {
             let mut bash = inner.lock().await;
-            *bash = build_bash(
+            let new_bash = build_bash(
                 username.as_deref(),
                 hostname.as_deref(),
                 max_commands,
                 max_loop_iterations,
                 None,
             );
+            *bash = new_bash;
             Ok(())
         })
     }

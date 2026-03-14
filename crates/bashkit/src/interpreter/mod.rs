@@ -22,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Monotonic counter for unique process substitution file paths
 static PROC_SUB_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -331,6 +331,9 @@ pub struct Interpreter {
     coproc_buffers: HashMap<i32, Vec<String>>,
     /// Next virtual FD to assign for coproc read ends (starts at 63, like bash).
     coproc_next_fd: i32,
+    /// Cancellation token: when set to `true`, execution aborts at the next
+    /// command boundary with `Error::Cancelled`.
+    cancelled: Arc<AtomicBool>,
 }
 
 impl Interpreter {
@@ -592,6 +595,22 @@ impl Interpreter {
             history_loaded: false,
             coproc_buffers: HashMap::new(),
             coproc_next_fd: 63,
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Return a shared cancellation token. Set it to `true` from any thread
+    /// to abort execution at the next command boundary.
+    pub fn cancellation_token(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancelled)
+    }
+
+    /// Check if cancellation has been requested.
+    fn check_cancelled(&self) -> Result<()> {
+        if self.cancelled.load(Ordering::Relaxed) {
+            Err(crate::error::Error::Cancelled)
+        } else {
+            Ok(())
         }
     }
 
@@ -846,6 +865,7 @@ impl Interpreter {
         let mut exit_code = 0;
 
         for command in &script.commands {
+            self.check_cancelled()?;
             let emit_before = self.output_emit_count;
             let result = self.execute_command(command).await?;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
@@ -936,6 +956,7 @@ impl Interpreter {
         command: &'a Command,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
+            self.check_cancelled()?;
             // Update current line for $LINENO
             self.current_line = Self::command_line(command);
 

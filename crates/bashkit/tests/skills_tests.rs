@@ -299,11 +299,7 @@ parse_test!(parse_jwt_test_setup, "jwt_test_setup.sh");
 
 /// azure generate_deployment_url.sh — tests: while/case arg parsing,
 /// variable expansion, pipes (xxd | base64 | tr), heredoc in usage()
-///
-/// BUG: Hits MaxLoopIterations(100000) — the while/case arg parsing
-/// loop or heredoc processing consumes excessive iterations.
 #[tokio::test]
-#[ignore = "hits MaxLoopIterations — while/case arg parsing loop bug"]
 async fn exec_azure_generate_url() {
     let script = read_fixture("azure_generate_url.sh");
     let mut bash = bash_with_stubs();
@@ -383,12 +379,7 @@ async fn exec_vercel_deploy() {
 
 /// stitch verify-setup.sh — tests: echo -e with ANSI codes, file tests,
 /// grep -q, find, wc -l, array iteration ("${arr[@]}")
-///
-/// BUG: [ -f "components.json" ] returns false even though the file
-/// exists in VFS at /project/components.json and cwd is /project.
-/// Likely a cwd propagation issue into script file execution context.
 #[tokio::test]
-#[ignore = "[ -f ] doesn't see VFS files after cd in script execution"]
 async fn exec_stitch_verify_setup() {
     let script = read_fixture("stitch_verify_setup.sh");
     let mut bash = bash_with_stubs();

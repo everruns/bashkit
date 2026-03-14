@@ -705,6 +705,17 @@ impl Bash {
         result
     }
 
+    /// Return a shared cancellation token.
+    ///
+    /// Set the token to `true` from any thread to abort execution at the next
+    /// command boundary with [`Error::Cancelled`].
+    ///
+    /// The caller is responsible for resetting the flag to `false` before
+    /// calling `exec()` again.
+    pub fn cancellation_token(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        self.interpreter.cancellation_token()
+    }
+
     /// Get a clone of the underlying filesystem.
     ///
     /// Provides direct access to the virtual filesystem for:
