@@ -1,24 +1,24 @@
-# Scripting Tool Eval: openai/gpt-5.2 (scripted)
+# Scripting Tool Eval: openai/gpt-5.4 (scripted)
 
-- **Date**: 2026-03-14T06:23:32Z
+- **Date**: 2026-03-14T17:44:33Z
 - **Mode**: scripted (ScriptedTool)
 - **Max turns**: 10
-- **Turns**: 14 total (4.7 avg/task)
-- **Tool calls**: 12 total (4.0 avg/task)
-- **Tool call success**: 7 ok, 5 error (58% success rate)
-- **Tokens**: 11631 input, 896 output
-- **Tool output**: 1530 bytes raw, 1637 bytes sent
-- **Duration**: 16.9s total (5.6s avg/task)
+- **Turns**: 7 total (2.3 avg/task)
+- **Tool calls**: 4 total (1.3 avg/task)
+- **Tool call success**: 3 ok, 1 error (75% success rate)
+- **Tokens**: 5250 input, 540 output
+- **Tool output**: 4732 bytes raw, 4753 bytes sent
+- **Duration**: 10.8s total (3.6s avg/task)
 
 ## Summary
 
-**2/3 tasks passed (80%)**
+**3/3 tasks passed (100%)**
 
 ## By Category
 
 | Category | Passed | Total | Rate | Avg Turns | Avg Calls | Raw Output |
 |----------|--------|-------|------|-----------|-----------|------------|
-| large_output | 2 | 3 | 80% | 4.7 | 4.0 | 1530 bytes |
+| large_output | 3 | 3 | 100% | 2.3 | 1.3 | 4732 bytes |
 
 ## Task Details
 
@@ -27,8 +27,8 @@
 Sum failed USD transactions from a large JSON array of 50 transaction records
 
 - Tools: 1
-- Turns: 2 | Tool calls: 1 (1 ok, 0 err) | Duration: 1.7s
-- Tokens: 1071 input, 60 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 err) | Duration: 2.2s
+- Tokens: 1077 input, 66 output
 - Tool output: 6 bytes raw, 6 bytes sent
 - Score: 2/2
 
@@ -42,9 +42,9 @@ Sum failed USD transactions from a large JSON array of 50 transaction records
 Extract and count ERROR lines from verbose log output of ~100 lines
 
 - Tools: 1
-- Turns: 2 | Tool calls: 1 (1 ok, 0 err) | Duration: 4.3s
-- Tokens: 1373 input, 373 output
-- Tool output: 838 bytes raw, 838 bytes sent
+- Turns: 2 | Tool calls: 1 (1 ok, 0 err) | Duration: 4.6s
+- Tokens: 1342 input, 340 output
+- Tool output: 833 bytes raw, 833 bytes sent
 - Score: 5/5
 
 | Check | Result | Detail |
@@ -55,19 +55,19 @@ Extract and count ERROR lines from verbose log output of ~100 lines
 | stdout_contains:Circuit breaker | PASS | found |
 | exit_code:0 | PASS | expected 0, got 0 |
 
-### [FAIL] lo-nested-config (large_output)
+### [PASS] lo-nested-config (large_output)
 
 Extract specific values from a deeply nested JSON configuration object
 
 - Tools: 1
-- Turns: 10 | Tool calls: 10 (5 ok, 5 err) | Duration: 10.9s
-- Tokens: 9187 input, 463 output
-- Tool output: 686 bytes raw, 793 bytes sent
-- Score: 1/3
+- Turns: 3 | Tool calls: 2 (1 ok, 1 err) | Duration: 4.0s
+- Tokens: 2831 input, 134 output
+- Tool output: 3893 bytes raw, 3914 bytes sent
+- Score: 3/3
 
 | Check | Result | Detail |
 |-------|--------|--------|
-| stdout_contains:postgresql://prod:secret@db.internal:5432/maindb | FAIL | 'postgresql://prod:secret@db.internal:5432/maindb' not found in any tool output |
-| stdout_contains:25 | FAIL | '25' not found in any tool output |
+| stdout_contains:postgresql://prod:secret@db.internal:5432/maindb | PASS | found |
+| stdout_contains:25 | PASS | found |
 | exit_code:0 | PASS | expected 0, got 0 |
 

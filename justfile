@@ -124,15 +124,15 @@ eval-save dataset="crates/bashkit-eval/data/eval-tasks.jsonl" provider="anthropi
     cargo run -p bashkit-eval --release -- run --dataset {{dataset}} --provider {{provider}} --model {{model}} --save
 
 # Run scripting-tool eval (scripted mode)
-eval-scripting dataset="crates/bashkit-eval/data/scripting-tool/many-tools.jsonl" provider="openai" model="gpt-5.2":
+eval-scripting dataset="crates/bashkit-eval/data/scripting-tool/many-tools.jsonl" provider="openai" model="gpt-5.4":
     cargo run -p bashkit-eval --release -- run --eval-type scripting-tool --dataset {{dataset}} --provider {{provider}} --model {{model}}
 
 # Run scripting-tool eval (baseline mode — individual tools, no ScriptedTool)
-eval-scripting-baseline dataset="crates/bashkit-eval/data/scripting-tool/many-tools.jsonl" provider="openai" model="gpt-5.2":
+eval-scripting-baseline dataset="crates/bashkit-eval/data/scripting-tool/many-tools.jsonl" provider="openai" model="gpt-5.4":
     cargo run -p bashkit-eval --release -- run --eval-type scripting-tool --baseline --dataset {{dataset}} --provider {{provider}} --model {{model}}
 
 # Run scripting-tool eval and save results
-eval-scripting-save dataset="crates/bashkit-eval/data/scripting-tool/many-tools.jsonl" provider="openai" model="gpt-5.2":
+eval-scripting-save dataset="crates/bashkit-eval/data/scripting-tool/many-tools.jsonl" provider="openai" model="gpt-5.4":
     cargo run -p bashkit-eval --release -- run --eval-type scripting-tool --dataset {{dataset}} --provider {{provider}} --model {{model}} --save
 
 # === Security ===

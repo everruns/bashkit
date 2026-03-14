@@ -232,6 +232,18 @@ impl ScriptingToolSet {
         prompt.push_str("- `help <tool> --json` — machine-readable schema\n");
 
         prompt.push_str(
+            "\n## Workflow\n\n\
+             IMPORTANT: Always run `help <tool>` before calling a tool for the first time \
+             to learn the exact parameter names. Do not guess parameter names.\n\n\
+             Example:\n\
+             ```bash\n\
+             discover --search weather    # find relevant tools\n\
+             help get_forecast            # learn exact parameters\n\
+             get_forecast --city \"NYC\"    # call with correct flags\n\
+             ```\n",
+        );
+
+        prompt.push_str(
             "\n## Tips\n\n\
              - Pass arguments as `--key value` or `--key=value` flags\n\
              - Pipe tool output through `jq` for JSON processing\n\
