@@ -111,6 +111,18 @@ function toNativeOptions(
 }
 
 /**
+ * Generate a heredoc write command with a randomized delimiter to prevent injection.
+ */
+function buildWriteCmd(filePath: string, content: string): string {
+  const hex = Array.from(crypto.getRandomValues(new Uint8Array(8)))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  const delimiter = `BASHKIT_EOF_${hex}`;
+  // Single-quote the delimiter to prevent expansion inside the heredoc
+  return `mkdir -p "$(dirname '${filePath.replace(/'/g, "'\\''")}')" && cat > '${filePath.replace(/'/g, "'\\''")}' << '${delimiter}'\n${content}\n${delimiter}`;
+}
+
+/**
  * Error thrown when a bash command execution fails.
  */
 export class BashError extends Error {
@@ -248,6 +260,59 @@ export class Bash {
   reset(): void {
     this.native.reset();
   }
+
+  // ==========================================================================
+  // VFS file helpers
+  // ==========================================================================
+
+  /**
+   * Check whether a path exists in the virtual filesystem.
+   */
+  exists(path: string): boolean {
+    return this.executeSync(`test -e '${path.replace(/'/g, "'\\''")}'`).exitCode === 0;
+  }
+
+  /**
+   * Read file contents from the virtual filesystem.
+   * Throws `BashError` if the file does not exist.
+   */
+  readFile(path: string): string {
+    const result = this.executeSyncOrThrow(`cat '${path.replace(/'/g, "'\\''")}'`);
+    return result.stdout;
+  }
+
+  /**
+   * Write content to a file in the virtual filesystem.
+   * Creates parent directories as needed.
+   */
+  writeFile(path: string, content: string): void {
+    this.executeSyncOrThrow(buildWriteCmd(path, content));
+  }
+
+  /**
+   * List entries in a directory. Returns empty array if directory does not exist.
+   */
+  ls(path?: string): string[] {
+    const target = path ?? ".";
+    const result = this.executeSync(`ls '${target.replace(/'/g, "'\\''")}'`);
+    if (result.exitCode !== 0) return [];
+    return result.stdout
+      .split("\n")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }
+
+  /**
+   * Find files matching a name pattern. Returns absolute paths.
+   */
+  glob(pattern: string): string[] {
+    const result = this.executeSync(`find / -name '${pattern.replace(/'/g, "'\\''")}' -type f 2>/dev/null`);
+    if (result.exitCode !== 0) return [];
+    return result.stdout
+      .split("\n")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }
 }
 
 /**
@@ -347,6 +412,59 @@ export class BashTool {
    */
   reset(): void {
     this.native.reset();
+  }
+
+  // ==========================================================================
+  // VFS file helpers
+  // ==========================================================================
+
+  /**
+   * Check whether a path exists in the virtual filesystem.
+   */
+  exists(path: string): boolean {
+    return this.executeSync(`test -e '${path.replace(/'/g, "'\\''")}'`).exitCode === 0;
+  }
+
+  /**
+   * Read file contents from the virtual filesystem.
+   * Throws `BashError` if the file does not exist.
+   */
+  readFile(path: string): string {
+    const result = this.executeSyncOrThrow(`cat '${path.replace(/'/g, "'\\''")}'`);
+    return result.stdout;
+  }
+
+  /**
+   * Write content to a file in the virtual filesystem.
+   * Creates parent directories as needed.
+   */
+  writeFile(path: string, content: string): void {
+    this.executeSyncOrThrow(buildWriteCmd(path, content));
+  }
+
+  /**
+   * List entries in a directory. Returns empty array if directory does not exist.
+   */
+  ls(path?: string): string[] {
+    const target = path ?? ".";
+    const result = this.executeSync(`ls '${target.replace(/'/g, "'\\''")}'`);
+    if (result.exitCode !== 0) return [];
+    return result.stdout
+      .split("\n")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }
+
+  /**
+   * Find files matching a name pattern. Returns absolute paths.
+   */
+  glob(pattern: string): string[] {
+    const result = this.executeSync(`find / -name '${pattern.replace(/'/g, "'\\''")}' -type f 2>/dev/null`);
+    if (result.exitCode !== 0) return [];
+    return result.stdout
+      .split("\n")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
   }
 
   /** Tool name. */
