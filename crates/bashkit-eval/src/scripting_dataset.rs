@@ -52,10 +52,6 @@ pub struct ScriptingEvalTask {
     pub tools: Vec<MockToolDef>,
     #[serde(default)]
     pub files: HashMap<String, String>,
-    /// Use compact_prompt mode: hide schemas from system prompt, require `help`
-    /// to discover params. Superseded by `discovery_mode` for new tasks.
-    #[serde(default)]
-    pub compact_prompt: bool,
     /// Use ScriptingToolSet with WithDiscovery mode: tool names hidden from
     /// system prompt, LLM must use `discover` and `help` builtins.
     #[serde(default)]

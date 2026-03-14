@@ -7,7 +7,7 @@
 //   one at a time via individual tool_use blocks.
 
 use anyhow::{Context, Result};
-use bashkit::{ScriptedTool, ScriptingToolSet, Tool, ToolArgs, ToolDef, ToolRequest};
+use bashkit::{ScriptingToolSet, Tool, ToolArgs, ToolDef, ToolRequest};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -126,29 +126,19 @@ pub async fn run_scripted_agent(
     task: &ScriptingEvalTask,
     max_turns: usize,
 ) -> Result<ScriptingTrace> {
-    // Build tool as either ScriptingToolSet (discovery) or ScriptedTool (default).
-    let mut tool: Box<dyn Tool> = if task.discovery_mode {
-        let mut builder = ScriptingToolSet::builder(&task.id);
-        builder = builder.short_description("Scripted tool eval");
-        for mock_tool in &task.tools {
-            let def = build_tool_def(mock_tool);
-            let callback = make_mock_callback(mock_tool.mock.clone());
-            builder = builder.tool(def, move |args: &ToolArgs| callback(args));
-        }
-        Box::new(builder.with_discovery().build())
-    } else {
-        let mut builder = ScriptedTool::builder(&task.id);
-        builder = builder.short_description("Scripted tool eval");
-        for mock_tool in &task.tools {
-            let def = build_tool_def(mock_tool);
-            let callback = make_mock_callback(mock_tool.mock.clone());
-            builder = builder.tool(def, move |args: &ToolArgs| callback(args));
-        }
-        if task.compact_prompt {
-            builder = builder.compact_prompt(true);
-        }
-        Box::new(builder.build())
-    };
+    // Always use ScriptingToolSet. WithDiscovery hides tool names (LLM must use
+    // discover/help builtins); Exclusive shows full schemas in system prompt.
+    let mut builder = ScriptingToolSet::builder(&task.id);
+    builder = builder.short_description("Scripted tool eval");
+    for mock_tool in &task.tools {
+        let def = build_tool_def(mock_tool);
+        let callback = make_mock_callback(mock_tool.mock.clone());
+        builder = builder.tool(def, move |args: &ToolArgs| callback(args));
+    }
+    if task.discovery_mode {
+        builder = builder.with_discovery();
+    }
+    let mut tool: Box<dyn Tool> = Box::new(builder.build());
 
     let tool_def = ToolDefinition {
         name: tool.name().to_string(),
