@@ -394,7 +394,12 @@ pub use git::GitConfig;
 pub use interpreter::{ControlFlow, ExecResult, OutputCallback, ShellState};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
-pub use tool::{BashTool, BashToolBuilder, Tool, ToolRequest, ToolResponse, ToolStatus, VERSION};
+pub use tool::{
+    BashTool, BashToolBuilder, Tool, ToolError, ToolExecution, ToolImage, ToolOutput,
+    ToolOutputChunk, ToolOutputMetadata, ToolRequest, ToolResponse, ToolService, ToolStatus,
+    VERSION,
+};
+pub use tool::BashToolBuilder as ToolBuilder;
 
 #[cfg(feature = "scripted_tool")]
 pub use scripted_tool::{

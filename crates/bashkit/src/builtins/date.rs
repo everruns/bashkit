@@ -122,16 +122,16 @@ fn parse_base_date(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTime<
 
     // Try ISO-like formats: YYYY-MM-DD HH:MM:SS, YYYY-MM-DD
     if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
-        return Ok(Utc.from_utc_datetime(&dt));
+        return local_naive_to_utc(dt, s);
     }
     if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Ok(Utc.from_utc_datetime(&dt));
+        return local_naive_to_utc(dt, s);
     }
     if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
         let dt = d
             .and_hms_opt(0, 0, 0)
             .ok_or_else(|| format!("invalid date '{}'", s))?;
-        return Ok(Utc.from_utc_datetime(&dt));
+        return local_naive_to_utc(dt, s);
     }
 
     // Try "Mon DD, YYYY" format
@@ -139,7 +139,7 @@ fn parse_base_date(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTime<
         let dt = d
             .and_hms_opt(0, 0, 0)
             .ok_or_else(|| format!("invalid date '{}'", s))?;
-        return Ok(Utc.from_utc_datetime(&dt));
+        return local_naive_to_utc(dt, s);
     }
 
     Err(format!("date: invalid date '{}'", s))
@@ -185,6 +185,18 @@ fn parse_date_string(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTim
     }
 
     parse_base_date(s, now)
+}
+
+fn local_naive_to_utc(
+    dt: NaiveDateTime,
+    original: &str,
+) -> std::result::Result<DateTime<Utc>, String> {
+    Local
+        .from_local_datetime(&dt)
+        .single()
+        .or_else(|| Local.from_local_datetime(&dt).earliest())
+        .map(|local_dt| local_dt.with_timezone(&Utc))
+        .ok_or_else(|| format!("date: invalid date '{}'", original))
 }
 
 /// Parse relative date expressions like "30 days ago", "+2 weeks", "-1 month"
@@ -632,7 +644,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_date_d_epoch() {
-        let result = run_date(&["-d", "@0", "+%Y-%m-%d"]).await;
+        let result = run_date(&["-u", "-d", "@0", "+%Y-%m-%d"]).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "1970-01-01");
     }

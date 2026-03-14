@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Build the orchestrator with tool definitions + callbacks.
     // In production the callbacks would call real APIs.
-    let mut tool = ScriptedTool::builder("ecommerce_api")
+    let tool = ScriptedTool::builder("ecommerce_api")
         .short_description("E-commerce API orchestrator with user, order, and inventory tools")
         .tool(fakes::get_user_def(), fakes::get_user)
         .tool(fakes::list_orders_def(), fakes::list_orders)

@@ -18,6 +18,7 @@ readme = "../../README.md"
 tokio = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
+tower = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

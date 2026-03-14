@@ -5,7 +5,10 @@ use crate::Bash;
 use crate::builtins::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
-use crate::tool::{Tool, ToolRequest, ToolResponse, ToolStatus, VERSION};
+use crate::tool::{
+    Tool, ToolError, ToolExecution, ToolOutputChunk, ToolRequest, ToolResponse, ToolStatus,
+    VERSION, localized, tool_output_from_response, tool_request_from_value,
+};
 use async_trait::async_trait;
 use schemars::schema_for;
 use std::sync::Arc;
@@ -399,112 +402,117 @@ impl ScriptedTool {
         builder.build()
     }
 
-    fn build_description(&self) -> String {
-        let mut desc = format!(
-            "Scripted tool. Available tool-commands: {}",
-            self.tools
-                .iter()
-                .map(|t| t.def.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        desc.push_str(". Also supports standard bash builtins (echo, jq, grep, sed, awk, etc.).");
-        desc
-    }
-
     fn build_help(&self) -> String {
         let mut doc = format!(
-            "{name}(1)                       Tool Commands                       {name}(1)\n\n\
-             NAME\n\
-             \x20      {name} - {short_desc}\n\n\
-             SYNOPSIS\n\
-             \x20      {{\"commands\": \"<bash script using tool commands>\"}}\n\n\
-             DESCRIPTION\n\
-             \x20      Executes a bash script with access to tool-specific commands\n\
-             \x20      and standard bash builtins. Use pipes, variables, loops, and\n\
-             \x20      conditionals to orchestrate multiple tool calls in one request.\n\
-             \x20      Arguments are passed as --key value or --key=value flags.\n\n\
-             TOOL COMMANDS\n",
-            name = self.name,
-            short_desc = self.short_desc,
+            "# {}\n\n{}\n\n**Version:** {}\n**Name:** `{}`\n**Locale:** `{}`\n\n## Parameters\n\n| Name | Type | Required | Default | Description |\n|------|------|----------|---------|-------------|\n| `commands` | string | yes | — | Bash script that may call the registered tool commands |\n| `timeout_ms` | integer | no | — | Per-call timeout in milliseconds |\n\n## Tool Commands\n\n| Name | Description | Usage |\n|------|-------------|-------|\n",
+            self.display_name, self.description, VERSION, self.name, self.locale
         );
 
         for t in &self.tools {
             let usage = usage_from_schema(&t.def.input_schema)
-                .map(|u| format!(" ({})", u))
-                .unwrap_or_default();
+                .map(|u| format!("`{} {}`", t.def.name, u))
+                .unwrap_or_else(|| format!("`{}`", t.def.name));
             doc.push_str(&format!(
-                "       {:<20} {}{}\n",
+                "| `{}` | {} | {} |\n",
                 t.def.name, t.def.description, usage
             ));
         }
 
         doc.push_str(
-            "\nBASH BUILTINS\n\
-             \x20      echo, cat, grep, sed, awk, jq, head, tail, sort, uniq, cut, tr,\n\
-             \x20      wc, printf, test, [, true, false, cd, pwd, ls, find, xargs\n\n\
-             INPUT\n\
-             \x20      commands    Bash script to execute\n\n\
-             OUTPUT\n\
-             \x20      stdout      Combined standard output\n\
-             \x20      stderr      Errors from tool commands or bash\n\
-             \x20      exit_code   0 on success\n\n\
-             EXAMPLES\n\
-             \x20      Single tool call:\n\
-             \x20          {{\"commands\": \"get_user --id 42\"}}\n\n\
-             \x20      Pipeline:\n\
-             \x20          {{\"commands\": \"get_user --id 42 | jq '.name'\"}}\n\n\
-             \x20      Multi-step orchestration:\n\
-             \x20          {{\"commands\": \"user=$(get_user --id 42)\\necho $user | jq -r '.name'\"}}\n",
+            "\n## Result\n\n| Field | Type | Description |\n|------|------|-------------|\n| `stdout` | string | Combined standard output |\n| `stderr` | string | Tool or bash errors |\n| `exit_code` | integer | Shell exit code |\n| `error` | string | Error category when execution fails |\n\n## Examples\n\n```json\n{\"commands\":\"get_user --id 42\"}\n```\n\n```json\n{\"commands\":\"user=$(get_user --id 42)\\necho \\\"$user\\\" | jq -r '.name'\"}\n```\n\n## Notes\n\n- Pass arguments as `--key value` or `--key=value`.\n- Standard bash builtins like `echo`, `jq`, `grep`, `sed`, and `awk` are available.\n- Use `help <tool> --json` inside the tool for runtime schema inspection.\n",
         );
 
         doc
     }
 
     fn build_system_prompt(&self) -> String {
-        let mut prompt = format!("# {}\n\n", self.name);
-        prompt.push_str(&format!("{}\n\n", self.short_desc));
+        let mut parts = vec![format!(
+            "{}: {}.",
+            self.name,
+            localized(
+                self.locale.as_str(),
+                "run bash scripts that orchestrate registered tool commands",
+                "виконує bash-скрипти для оркестрації зареєстрованих команд",
+            )
+        )];
 
-        prompt.push_str("Input: {\"commands\": \"<bash script>\"}\n");
-        prompt.push_str("Output: {stdout, stderr, exit_code}\n\n");
-
-        prompt.push_str("## Available tool commands\n\n");
-
-        if self.compact_prompt {
-            // Compact mode: names + one-liners, defer details to `help`
-            for t in &self.tools {
-                prompt.push_str(&format!(
-                    "- `{}`: {} (use `help {}` for params)\n",
-                    t.def.name, t.def.description, t.def.name
-                ));
-            }
-        } else {
-            // Full mode: include usage hints from schema
-            for t in &self.tools {
-                prompt.push_str(&format!("- `{}`: {}\n", t.def.name, t.def.description));
-                if let Some(usage) = usage_from_schema(&t.def.input_schema) {
-                    prompt.push_str(&format!("  Usage: `{} {}`\n", t.def.name, usage));
+        let tools = self
+            .tools
+            .iter()
+            .map(|tool| {
+                if self.compact_prompt {
+                    format!("{} ({})", tool.def.name, tool.def.description)
+                } else if let Some(usage) = usage_from_schema(&tool.def.input_schema) {
+                    format!("{} [{}]", tool.def.name, usage)
+                } else {
+                    tool.def.name.clone()
                 }
-            }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(format!(
+            "{}: {}.",
+            localized(
+                self.locale.as_str(),
+                "Commands",
+                "Команди"
+            ),
+            tools
+        ));
+        parts.push(localized(
+            self.locale.as_str(),
+            "Pass args as --key value or --key=value. Use help/discover builtins for runtime details.",
+            "Передавайте аргументи як --key value або --key=value. Використовуйте help/discover для деталей.",
+        ).to_string());
+
+        parts.join(" ")
+    }
+
+    async fn run_request_with_stream(
+        &self,
+        req: ToolRequest,
+        stream_sender: Option<tokio::sync::mpsc::UnboundedSender<ToolOutputChunk>>,
+    ) -> ToolResponse {
+        if req.commands.is_empty() {
+            return ToolResponse {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+                error: None,
+            };
         }
 
-        prompt.push_str(
-            "\n## Tips\n\n\
-             - Pass arguments as `--key value` or `--key=value` flags\n\
-             - Pipe tool output through `jq` for JSON processing\n\
-             - Use variables to pass data between tool calls\n\
-             - Use `set -e` to stop on first error\n\
-             - Standard builtins (echo, grep, sed, awk, etc.) are available\n",
-        );
+        let mut bash = self.create_bash();
 
-        if self.compact_prompt {
-            prompt.push_str(
-                "- Use `help <tool>` for full usage, `help <tool> --json` for schema\n\
-                 - Use `help --list` to see all available tools\n",
-            );
+        let response = if let Some(sender) = stream_sender {
+            let output_cb = Box::new(move |stdout_chunk: &str, stderr_chunk: &str| {
+                if !stdout_chunk.is_empty() {
+                    let _ = sender.send(ToolOutputChunk {
+                        data: serde_json::json!(stdout_chunk),
+                        kind: "stdout".to_string(),
+                    });
+                }
+                if !stderr_chunk.is_empty() {
+                    let _ = sender.send(ToolOutputChunk {
+                        data: serde_json::json!(stderr_chunk),
+                        kind: "stderr".to_string(),
+                    });
+                }
+            });
+            bash.exec_streaming(&req.commands, output_cb).await
+        } else {
+            bash.exec(&req.commands).await
+        };
+
+        match response {
+            Ok(result) => result.into(),
+            Err(err) => ToolResponse {
+                stdout: String::new(),
+                stderr: err.to_string(),
+                exit_code: 1,
+                error: Some(err.to_string()),
+            },
         }
-
-        prompt
     }
 }
 
@@ -518,12 +526,16 @@ impl Tool for ScriptedTool {
         &self.name
     }
 
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
     fn short_description(&self) -> &str {
         &self.short_desc
     }
 
-    fn description(&self) -> String {
-        self.build_description()
+    fn description(&self) -> &str {
+        &self.description
     }
 
     fn help(&self) -> String {
@@ -532,6 +544,10 @@ impl Tool for ScriptedTool {
 
     fn system_prompt(&self) -> String {
         self.build_system_prompt()
+    }
+
+    fn locale(&self) -> &str {
+        &self.locale
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -548,31 +564,25 @@ impl Tool for ScriptedTool {
         VERSION
     }
 
-    async fn execute(&mut self, req: ToolRequest) -> ToolResponse {
-        if req.commands.is_empty() {
-            return ToolResponse {
-                stdout: String::new(),
-                stderr: String::new(),
-                exit_code: 0,
-                error: None,
-            };
-        }
+    fn execution(
+        &self,
+        args: serde_json::Value,
+    ) -> std::result::Result<ToolExecution, ToolError> {
+        let req = tool_request_from_value(self.locale(), args)?;
+        let tool = self.clone();
+        Ok(ToolExecution::new(move |stream_sender| async move {
+            let start = std::time::Instant::now();
+            let response = tool.run_request_with_stream(req, stream_sender).await;
+            tool_output_from_response(response, start.elapsed())
+        }))
+    }
 
-        let mut bash = self.create_bash();
-
-        match bash.exec(&req.commands).await {
-            Ok(result) => result.into(),
-            Err(e) => ToolResponse {
-                stdout: String::new(),
-                stderr: e.to_string(),
-                exit_code: 1,
-                error: Some(e.to_string()),
-            },
-        }
+    async fn execute(&self, req: ToolRequest) -> ToolResponse {
+        self.run_request_with_stream(req, None).await
     }
 
     async fn execute_with_status(
-        &mut self,
+        &self,
         req: ToolRequest,
         mut status_callback: Box<dyn FnMut(ToolStatus) + Send>,
     ) -> ToolResponse {
@@ -589,18 +599,8 @@ impl Tool for ScriptedTool {
         }
 
         status_callback(ToolStatus::new("parse").with_percent(10.0));
-        let mut bash = self.create_bash();
         status_callback(ToolStatus::new("execute").with_percent(20.0));
-
-        let response = match bash.exec(&req.commands).await {
-            Ok(result) => result.into(),
-            Err(e) => ToolResponse {
-                stdout: String::new(),
-                stderr: e.to_string(),
-                exit_code: 1,
-                error: Some(e.to_string()),
-            },
-        };
+        let response = self.run_request_with_stream(req, None).await;
 
         status_callback(ToolStatus::new("complete").with_percent(100.0));
         response
@@ -733,7 +733,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_help_list() {
-        let mut tool = build_help_test_tool();
+        let tool = build_help_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "help --list".to_string(),
@@ -748,7 +748,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_help_tool_human_readable() {
-        let mut tool = build_help_test_tool();
+        let tool = build_help_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "help get_user".to_string(),
@@ -762,7 +762,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_help_tool_json() {
-        let mut tool = build_help_test_tool();
+        let tool = build_help_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "help get_user --json".to_string(),
@@ -779,7 +779,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_help_unknown_tool() {
-        let mut tool = build_help_test_tool();
+        let tool = build_help_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "help nonexistent".to_string(),
@@ -792,7 +792,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_help_no_args_lists_all() {
-        let mut tool = build_help_test_tool();
+        let tool = build_help_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "help".to_string(),
@@ -806,7 +806,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_help_json_pipe_jq() {
-        let mut tool = build_help_test_tool();
+        let tool = build_help_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "help get_user --json | jq -r '.name'".to_string(),
@@ -830,9 +830,8 @@ mod tests {
             )
             .build();
         let sp = tool.system_prompt();
-        assert!(sp.contains("use `help get_user` for params"));
-        assert!(!sp.contains("Usage: `get_user --id <integer>`"));
-        assert!(sp.contains("help <tool> --json"));
+        assert!(sp.contains("help/discover"));
+        assert!(!sp.contains("Usage:"));
     }
 
     #[tokio::test]
@@ -847,8 +846,7 @@ mod tests {
             )
             .build();
         let sp = tool.system_prompt();
-        assert!(sp.contains("Usage: `get_user --id <integer>`"));
-        assert!(!sp.contains("use `help get_user` for params"));
+        assert!(sp.contains("--id <integer>"));
     }
 
     #[tokio::test]
@@ -857,7 +855,7 @@ mod tests {
         use crate::ToolDef;
         use crate::tool::Tool;
 
-        let mut tool = ScriptedTool::builder("test")
+        let tool = ScriptedTool::builder("test")
             .short_description("test")
             .tool(
                 ToolDef::new("fail", "Always fails"),
@@ -916,7 +914,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discover_categories() {
-        let mut tool = build_discover_test_tool();
+        let tool = build_discover_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "discover --categories".to_string(),
@@ -931,7 +929,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discover_category_filter() {
-        let mut tool = build_discover_test_tool();
+        let tool = build_discover_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "discover --category payments".to_string(),
@@ -946,7 +944,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discover_tag_filter() {
-        let mut tool = build_discover_test_tool();
+        let tool = build_discover_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "discover --tag admin".to_string(),
@@ -960,7 +958,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discover_search() {
-        let mut tool = build_discover_test_tool();
+        let tool = build_discover_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "discover --search user".to_string(),
@@ -975,7 +973,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discover_search_case_insensitive() {
-        let mut tool = build_discover_test_tool();
+        let tool = build_discover_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "discover --search REFUND".to_string(),
@@ -988,7 +986,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discover_categories_json() {
-        let mut tool = build_discover_test_tool();
+        let tool = build_discover_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "discover --categories --json".to_string(),
@@ -1006,7 +1004,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discover_category_json() {
-        let mut tool = build_discover_test_tool();
+        let tool = build_discover_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "discover --category payments --json".to_string(),
@@ -1022,7 +1020,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discover_no_args_shows_usage() {
-        let mut tool = build_discover_test_tool();
+        let tool = build_discover_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "discover".to_string(),
@@ -1035,7 +1033,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discover_tag_json() {
-        let mut tool = build_discover_test_tool();
+        let tool = build_discover_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "discover --tag billing --json".to_string(),

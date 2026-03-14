@@ -121,7 +121,8 @@ mod toolset;
 
 pub use toolset::{DiscoveryMode, ScriptingToolSet, ScriptingToolSetBuilder};
 
-use crate::ExecutionLimits;
+use crate::{ExecutionLimits, Tool, ToolService};
+use schemars::schema_for;
 use std::sync::Arc;
 
 // ============================================================================
@@ -133,6 +134,7 @@ use std::sync::Arc;
 /// Describes a sub-tool registered with [`ScriptedToolBuilder`].
 /// The `input_schema` is optional JSON Schema for documentation / LLM prompts
 /// and for type coercion of `--key value` flags.
+#[derive(Clone)]
 pub struct ToolDef {
     /// Command name used as bash builtin (e.g. `"get_user"`).
     pub name: String,
@@ -230,6 +232,7 @@ pub type ToolCallback = Arc<dyn Fn(&ToolArgs) -> Result<String, String> + Send +
 // ============================================================================
 
 /// A registered tool: definition + callback.
+#[derive(Clone)]
 pub(crate) struct RegisteredTool {
     pub(crate) def: ToolDef,
     pub(crate) callback: ToolCallback,
@@ -260,6 +263,7 @@ pub(crate) struct RegisteredTool {
 /// ```
 pub struct ScriptedToolBuilder {
     name: String,
+    locale: String,
     short_desc: Option<String>,
     tools: Vec<RegisteredTool>,
     limits: Option<ExecutionLimits>,
@@ -271,12 +275,19 @@ impl ScriptedToolBuilder {
     pub(crate) fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            locale: "en-US".to_string(),
             short_desc: None,
             tools: Vec::new(),
             limits: None,
             env_vars: Vec::new(),
             compact_prompt: false,
         }
+    }
+
+    /// Set locale for descriptions, help, prompts, and user-facing errors.
+    pub fn locale(mut self, locale: &str) -> Self {
+        self.locale = locale.to_string();
+        self
     }
 
     /// One-line description for tool listings.
@@ -324,19 +335,75 @@ impl ScriptedToolBuilder {
     }
 
     /// Build the [`ScriptedTool`].
-    pub fn build(self) -> ScriptedTool {
+    pub fn build(&self) -> ScriptedTool {
         let short_desc = self
             .short_desc
+            .clone()
             .unwrap_or_else(|| format!("ScriptedTool: {}", self.name));
+        let tool_names = self
+            .tools
+            .iter()
+            .map(|tool| tool.def.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
 
         ScriptedTool {
-            name: self.name,
+            name: self.name.clone(),
+            locale: self.locale.clone(),
+            display_name: self.name.clone(),
             short_desc,
-            tools: self.tools,
-            limits: self.limits,
-            env_vars: self.env_vars,
+            description: format!(
+                "{}: {}",
+                super::tool::localized(
+                    self.locale.as_str(),
+                    "Compose tool callbacks through bash scripts",
+                    "Компонує виклики інструментів через bash-скрипти",
+                ),
+                tool_names
+            ),
+            tools: self.tools.clone(),
+            limits: self.limits.clone(),
+            env_vars: self.env_vars.clone(),
             compact_prompt: self.compact_prompt,
         }
+    }
+
+    /// Build a `tower::Service<Value, Response = Value, Error = ToolError>`.
+    pub fn build_service(&self) -> ToolService {
+        let tool = self.build();
+        tower::util::BoxCloneService::new(tower::service_fn(move |args| {
+            let tool = tool.clone();
+            async move {
+                let execution = tool.execution(args)?;
+                let output = execution.execute().await?;
+                Ok(output.result)
+            }
+        }))
+    }
+
+    /// Build an OpenAI-compatible tool definition.
+    pub fn build_tool_definition(&self) -> serde_json::Value {
+        let tool = self.build();
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": tool.name(),
+                "description": tool.description(),
+                "parameters": self.build_input_schema(),
+            }
+        })
+    }
+
+    /// Build the input schema without constructing the full tool.
+    pub fn build_input_schema(&self) -> serde_json::Value {
+        let schema = schema_for!(crate::tool::ToolRequest);
+        serde_json::to_value(schema).unwrap_or_default()
+    }
+
+    /// Build the output schema for `ToolOutput::result`.
+    pub fn build_output_schema(&self) -> serde_json::Value {
+        let schema = schema_for!(crate::tool::ToolResponse);
+        serde_json::to_value(schema).unwrap_or_default()
     }
 }
 
@@ -357,9 +424,13 @@ impl ScriptedToolBuilder {
 /// Bash interpreter with the same set of tool builtins.
 ///
 /// Create via [`ScriptedTool::builder`].
+#[derive(Clone)]
 pub struct ScriptedTool {
     pub(crate) name: String,
+    pub(crate) locale: String,
+    pub(crate) display_name: String,
     pub(crate) short_desc: String,
+    pub(crate) description: String,
     pub(crate) tools: Vec<RegisteredTool>,
     pub(crate) limits: Option<ExecutionLimits>,
     pub(crate) env_vars: Vec<(String, String)>,
@@ -461,7 +532,7 @@ mod tests {
     fn test_help_has_tool_commands_section() {
         let tool = build_test_tool();
         let help = tool.help();
-        assert!(help.contains("TOOL COMMANDS"));
+        assert!(help.contains("## Tool Commands"));
         assert!(help.contains("get_user"));
         assert!(help.contains("Fetch user by id"));
     }
@@ -470,9 +541,9 @@ mod tests {
     fn test_system_prompt_lists_tools() {
         let tool = build_test_tool();
         let sp = tool.system_prompt();
-        assert!(sp.contains("# test_api"));
-        assert!(sp.contains("- `get_user`:"));
-        assert!(sp.contains("- `get_orders`:"));
+        assert!(sp.starts_with("test_api:"));
+        assert!(sp.contains("get_user"));
+        assert!(sp.contains("get_orders"));
         assert!(sp.contains("--key value"));
     }
 
@@ -491,8 +562,7 @@ mod tests {
             )
             .build();
         let sp = tool.system_prompt();
-        assert!(sp.contains("--id"), "system prompt should show flags");
-        assert!(sp.contains("integer"));
+        assert!(sp.contains("--id <integer>"), "system prompt should show flags");
     }
 
     #[test]
@@ -505,6 +575,55 @@ mod tests {
     }
 
     #[test]
+    fn test_builder_contract_helpers() {
+        let builder = ScriptedTool::builder("test_api").tool(
+            ToolDef::new("ping", "Ping"),
+            |_args: &ToolArgs| Ok("pong\n".to_string()),
+        );
+        let definition = builder.build_tool_definition();
+        let input_schema = builder.build_input_schema();
+        let output_schema = builder.build_output_schema();
+
+        assert_eq!(definition["type"], "function");
+        assert_eq!(definition["function"]["name"], "test_api");
+        assert_eq!(definition["function"]["parameters"], input_schema);
+        assert!(output_schema["properties"]["stdout"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_builder_service_executes() {
+        use tower::ServiceExt;
+
+        let service = ScriptedTool::builder("test_api")
+            .tool(
+                ToolDef::new("ping", "Ping"),
+                |_args: &ToolArgs| Ok("pong\n".to_string()),
+            )
+            .build_service();
+
+        let result = service
+            .oneshot(serde_json::json!({"commands": "ping"}))
+            .await
+            .unwrap_or_else(|err| panic!("service should execute: {err}"));
+
+        assert_eq!(result["stdout"], "pong\n");
+        assert_eq!(result["exit_code"], 0);
+    }
+
+    #[test]
+    fn test_locale_localizes_description() {
+        let tool = ScriptedTool::builder("ua_api")
+            .locale("uk-UA")
+            .tool(ToolDef::new("ping", "Ping"), |_args: &ToolArgs| {
+                Ok("pong\n".to_string())
+            })
+            .build();
+
+        assert!(tool.description().contains("Компонує"));
+        assert_eq!(tool.locale(), "uk-UA");
+    }
+
+    #[test]
     fn test_version() {
         let tool = build_test_tool();
         assert_eq!(tool.version(), VERSION);
@@ -514,7 +633,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_empty() {
-        let mut tool = build_test_tool();
+        let tool = build_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: String::new(),
@@ -527,7 +646,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_single_tool() {
-        let mut tool = build_test_tool();
+        let tool = build_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "get_user --id 42".to_string(),
@@ -541,7 +660,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_key_equals_value() {
-        let mut tool = build_test_tool();
+        let tool = build_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "get_user --id=42".to_string(),
@@ -554,7 +673,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_pipeline_with_jq() {
-        let mut tool = build_test_tool();
+        let tool = build_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "get_user --id 42 | jq -r '.name'".to_string(),
@@ -567,7 +686,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_multi_step() {
-        let mut tool = build_test_tool();
+        let tool = build_test_tool();
         let script = r#"
             user=$(get_user --id 1)
             name=$(echo "$user" | jq -r '.name')
@@ -587,7 +706,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_tool_failure() {
-        let mut tool = build_test_tool();
+        let tool = build_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "fail_tool".to_string(),
@@ -600,7 +719,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_tool_failure_with_fallback() {
-        let mut tool = build_test_tool();
+        let tool = build_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "fail_tool || echo 'fallback'".to_string(),
@@ -613,7 +732,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_stdin_pipe() {
-        let mut tool = build_test_tool();
+        let tool = build_test_tool();
         let resp = tool
             .execute(ToolRequest {
                 commands: "echo hello | from_stdin".to_string(),
@@ -626,7 +745,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_loop_over_tools() {
-        let mut tool = build_test_tool();
+        let tool = build_test_tool();
         let script = r#"
             for uid in 1 2 3; do
                 get_user --id $uid | jq -r '.name'
@@ -644,7 +763,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_conditional() {
-        let mut tool = build_test_tool();
+        let tool = build_test_tool();
         let script = r#"
             user=$(get_user --id 5)
             name=$(echo "$user" | jq -r '.name')
@@ -666,7 +785,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_env() {
-        let mut tool = ScriptedTool::builder("env_test")
+        let tool = ScriptedTool::builder("env_test")
             .env("API_BASE", "https://api.example.com")
             .tool(ToolDef::new("noop", "No-op"), |_args: &ToolArgs| {
                 Ok("ok\n".to_string())
@@ -687,7 +806,7 @@ mod tests {
     async fn test_execute_with_status_callback() {
         use std::sync::{Arc, Mutex};
 
-        let mut tool = build_test_tool();
+        let tool = build_test_tool();
         let phases = Arc::new(Mutex::new(Vec::new()));
         let phases_clone = phases.clone();
 
@@ -715,7 +834,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_execute_calls() {
-        let mut tool = build_test_tool();
+        let tool = build_test_tool();
 
         let resp1 = tool
             .execute(ToolRequest {
@@ -736,7 +855,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_boolean_flag() {
-        let mut tool = ScriptedTool::builder("bool_test")
+        let tool = ScriptedTool::builder("bool_test")
             .tool(
                 ToolDef::new("search", "Search").with_schema(serde_json::json!({
                     "type": "object",
@@ -765,7 +884,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_schema_treats_as_strings() {
-        let mut tool = ScriptedTool::builder("str_test")
+        let tool = ScriptedTool::builder("str_test")
             .tool(
                 ToolDef::new("echo_args", "Echo params as JSON"),
                 |args: &ToolArgs| Ok(format!("{}\n", args.params)),
@@ -799,7 +918,7 @@ mod tests {
         let s2 = shared.clone();
         let log2 = call_log.clone();
 
-        let mut tool = ScriptedTool::builder("ctx_test")
+        let tool = ScriptedTool::builder("ctx_test")
             .tool(
                 ToolDef::new("tool_a", "First tool"),
                 move |_args: &ToolArgs| {
@@ -834,7 +953,7 @@ mod tests {
         let counter = Arc::new(Mutex::new(0u64));
         let c = counter.clone();
 
-        let mut tool = ScriptedTool::builder("mut_test")
+        let tool = ScriptedTool::builder("mut_test")
             .tool(
                 ToolDef::new("increment", "Bump counter"),
                 move |_args: &ToolArgs| {
@@ -859,7 +978,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fresh_interpreter_per_execute() {
-        let mut tool = ScriptedTool::builder("isolation_test")
+        let tool = ScriptedTool::builder("isolation_test")
             .tool(ToolDef::new("noop", "No-op"), |_args: &ToolArgs| {
                 Ok("ok\n".to_string())
             })
@@ -891,7 +1010,7 @@ mod tests {
         let counter = Arc::new(Mutex::new(0u64));
         let c = counter.clone();
 
-        let mut tool = ScriptedTool::builder("persist_test")
+        let tool = ScriptedTool::builder("persist_test")
             .tool(
                 ToolDef::new("count", "Count calls"),
                 move |_args: &ToolArgs| {
