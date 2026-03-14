@@ -295,6 +295,13 @@ def test_system_prompt():
     assert len(sp) > 0
 
 
+def test_system_prompt_reflects_configured_home_path():
+    tool = BashTool(username="agent", hostname="sandbox")
+    sp = tool.system_prompt()
+    assert "agent" in sp
+    assert "/home/agent" in sp
+
+
 def test_input_schema():
     tool = BashTool()
     schema = tool.input_schema()
@@ -573,7 +580,7 @@ async def test_scripted_tool_async_execute():
 def test_scripted_tool_system_prompt():
     tool = _make_echo_tool()
     sp = tool.system_prompt()
-    assert "# test_api" in sp
+    assert sp.startswith("test_api:")
     assert "greet" in sp
     assert "--name" in sp
 
@@ -587,7 +594,7 @@ def test_scripted_tool_description():
 def test_scripted_tool_help():
     tool = _make_echo_tool()
     h = tool.help()
-    assert "TOOL COMMANDS" in h
+    assert "# test_api" in h
     assert "greet" in h
 
 

@@ -22,11 +22,13 @@ console.log(result.stdout); // Hello, World!\n
 bash.executeSync('X=42');
 bash.executeSync('echo $X'); // stdout: 42\n
 
-// With LLM tool metadata
+// With tool-contract metadata
 const tool = new BashTool();
 console.log(tool.name);           // "bashkit"
 console.log(tool.inputSchema());  // JSON schema for LLM tool-use
-console.log(tool.systemPrompt()); // System prompt for LLMs
+console.log(tool.description());  // Token-efficient tool description
+console.log(tool.help());         // Markdown help document
+console.log(tool.systemPrompt()); // Compact system prompt
 
 const r = tool.executeSync('echo hello');
 console.log(r.stdout); // hello\n
@@ -45,15 +47,15 @@ Core interpreter with virtual filesystem.
 
 ### `BashTool`
 
-Interpreter + LLM tool metadata.
+Interpreter + tool-contract metadata.
 
 - All `Bash` methods, plus:
 - `name` — tool name (`"bashkit"`)
 - `version` — version string
 - `shortDescription` — one-liner
-- `description()` — full description
-- `help()` — help text
-- `systemPrompt()` — system prompt for LLMs
+- `description()` — token-efficient tool description
+- `help()` — Markdown help document
+- `systemPrompt()` — compact system prompt for LLM orchestration
 - `inputSchema()` — JSON input schema
 - `outputSchema()` — JSON output schema
 

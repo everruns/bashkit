@@ -8,7 +8,18 @@
 //! This example simulates an e-commerce API with tools for users, orders, and
 //! inventory. The ScriptedTool lets an agent compose these in one call.
 
-use bashkit::{ScriptedTool, Tool, ToolRequest};
+use bashkit::{ScriptedTool, Tool};
+
+async fn run_script(tool: &ScriptedTool, commands: &str) -> anyhow::Result<String> {
+    let output = tool
+        .execution(serde_json::json!({ "commands": commands }))?
+        .execute()
+        .await?;
+    Ok(output.result["stdout"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string())
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -16,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Build the orchestrator with tool definitions + callbacks.
     // In production the callbacks would call real APIs.
-    let mut tool = ScriptedTool::builder("ecommerce_api")
+    let tool = ScriptedTool::builder("ecommerce_api")
         .short_description("E-commerce API orchestrator with user, order, and inventory tools")
         .tool(fakes::get_user_def(), fakes::get_user)
         .tool(fakes::list_orders_def(), fakes::list_orders)
@@ -32,27 +43,20 @@ async fn main() -> anyhow::Result<()> {
     println!("--- System prompt (what goes in LLM system message) ---");
     println!("{}", tool.system_prompt());
 
+    println!("--- Markdown help (what the host can show) ---");
+    println!("{}", tool.help());
+
     // ---- Demo 1: Simple single tool call ----
     println!("--- Demo 1: Single tool call ---");
-    let resp = tool
-        .execute(ToolRequest {
-            commands: "get_user --id 1".to_string(),
-            timeout_ms: None,
-        })
-        .await;
+    let resp = run_script(&tool, "get_user --id 1").await?;
     println!("$ get_user --id 1");
-    println!("{}", resp.stdout);
+    println!("{}", resp);
 
     // ---- Demo 2: Pipeline with jq ----
     println!("--- Demo 2: Pipeline with jq ---");
-    let resp = tool
-        .execute(ToolRequest {
-            commands: "get_user --id 1 | jq -r '.name'".to_string(),
-            timeout_ms: None,
-        })
-        .await;
+    let resp = run_script(&tool, "get_user --id 1 | jq -r '.name'").await?;
     println!("$ get_user --id 1 | jq -r '.name'");
-    println!("{}", resp.stdout);
+    println!("{}", resp);
 
     // ---- Demo 3: Multi-step orchestration ----
     println!("--- Demo 3: Multi-step orchestration ---");
@@ -66,14 +70,9 @@ async fn main() -> anyhow::Result<()> {
         echo "Customer: $name (tier: $tier)"
         echo "Orders: $count, Estimated total: $total"
     "#;
-    let resp = tool
-        .execute(ToolRequest {
-            commands: script.to_string(),
-            timeout_ms: None,
-        })
-        .await;
+    let resp = run_script(&tool, script).await?;
     println!("$ <multi-step script>");
-    print!("{}", resp.stdout);
+    print!("{}", resp);
     println!();
 
     // ---- Demo 4: Loop + conditional ----
@@ -91,14 +90,9 @@ async fn main() -> anyhow::Result<()> {
             fi
         done
     "#;
-    let resp = tool
-        .execute(ToolRequest {
-            commands: script.to_string(),
-            timeout_ms: None,
-        })
-        .await;
+    let resp = run_script(&tool, script).await?;
     println!("$ <loop with conditional>");
-    print!("{}", resp.stdout);
+    print!("{}", resp);
     println!();
 
     // ---- Demo 5: Inventory check with error handling ----
@@ -114,14 +108,9 @@ async fn main() -> anyhow::Result<()> {
             fi
         done
     "#;
-    let resp = tool
-        .execute(ToolRequest {
-            commands: script.to_string(),
-            timeout_ms: None,
-        })
-        .await;
+    let resp = run_script(&tool, script).await?;
     println!("$ <inventory check>");
-    print!("{}", resp.stdout);
+    print!("{}", resp);
     println!();
 
     // ---- Demo 6: Data aggregation ----
@@ -135,14 +124,9 @@ async fn main() -> anyhow::Result<()> {
             echo "$name: $count orders"
         done
     "#;
-    let resp = tool
-        .execute(ToolRequest {
-            commands: script.to_string(),
-            timeout_ms: None,
-        })
-        .await;
+    let resp = run_script(&tool, script).await?;
     println!("$ <aggregate report>");
-    print!("{}", resp.stdout);
+    print!("{}", resp);
 
     println!("\n=== Demo Complete ===");
     Ok(())

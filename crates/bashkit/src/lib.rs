@@ -162,6 +162,35 @@
 //! # }
 //! ```
 //!
+//! # LLM Tool Integration
+//!
+//! Use [`BashTool`] when the host needs schemas, Markdown help, a compact system prompt,
+//! and validated single-use executions.
+//!
+//! ```rust
+//! use bashkit::{BashTool, Tool};
+//!
+//! # #[tokio::main]
+//! # async fn main() -> anyhow::Result<()> {
+//! let tool = BashTool::builder()
+//!     .username("agent")
+//!     .hostname("sandbox")
+//!     .build();
+//!
+//! let output = tool
+//!     .execution(serde_json::json!({
+//!         "commands": "echo hello from bashkit",
+//!         "timeout_ms": 1000
+//!     }))?
+//!     .execute()
+//!     .await?;
+//!
+//! assert_eq!(output.result["stdout"], "hello from bashkit\n");
+//! assert!(tool.help().contains("## Parameters"));
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! # Custom Builtins
 //!
 //! Register custom commands to extend Bashkit with domain-specific functionality:
@@ -394,7 +423,12 @@ pub use git::GitConfig;
 pub use interpreter::{ControlFlow, ExecResult, OutputCallback, ShellState};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
-pub use tool::{BashTool, BashToolBuilder, Tool, ToolRequest, ToolResponse, ToolStatus, VERSION};
+pub use tool::BashToolBuilder as ToolBuilder;
+pub use tool::{
+    BashTool, BashToolBuilder, Tool, ToolError, ToolExecution, ToolImage, ToolOutput,
+    ToolOutputChunk, ToolOutputMetadata, ToolRequest, ToolResponse, ToolService, ToolStatus,
+    VERSION,
+};
 
 #[cfg(feature = "scripted_tool")]
 pub use scripted_tool::{

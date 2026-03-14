@@ -3,304 +3,216 @@
 ## Status
 Implemented
 
-## Overview
+## Summary
 
-The `Tool` trait defines the public contract for LLM tool integration. This is a **public library contract** - any breaking changes require a major version bump.
+`bashkit` follows the Everruns toolkit library contract from
+`everruns/specs/toolkit-library-contract.md`.
 
-## Decision
+Public shape:
 
-### Tool Trait (Public Contract)
+```text
+ToolBuilder (config) -> Tool (metadata) -> ToolExecution (single-use runtime)
+```
+
+`BashToolBuilder` is the primary builder. `ScriptedToolBuilder` and
+`ScriptingToolSetBuilder` mirror the same contract for orchestration tools.
+
+## Public API
+
+### Builders
+
+All tool builders expose:
+
+```rust
+pub fn new() -> Self;
+pub fn locale(self, locale: &str) -> Self;
+pub fn build(&self) -> ToolImpl;
+pub fn build_service(&self) -> ToolService;
+pub fn build_tool_definition(&self) -> serde_json::Value;
+pub fn build_input_schema(&self) -> serde_json::Value;
+pub fn build_output_schema(&self) -> serde_json::Value;
+```
+
+Notes:
+
+- `build()` is non-consuming.
+- `build_service()` returns `tower::Service<Value, Response = Value, Error = ToolError>`.
+- `build_tool_definition()` emits OpenAI-compatible function JSON.
+- `build_input_schema()` and `build_output_schema()` match the built tool metadata.
+
+### Tool metadata
+
+All tool implementations conform to the shared `Tool` trait:
 
 ```rust
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
+    fn display_name(&self) -> &str;
     fn short_description(&self) -> &str;
-    fn description(&self) -> String;
+    fn description(&self) -> &str;
     fn help(&self) -> String;
     fn system_prompt(&self) -> String;
+    fn locale(&self) -> &str;
     fn input_schema(&self) -> serde_json::Value;
     fn output_schema(&self) -> serde_json::Value;
     fn version(&self) -> &str;
-    async fn execute(&mut self, req: ToolRequest) -> ToolResponse;
+    fn execution(&self, args: serde_json::Value) -> Result<ToolExecution, ToolError>;
+    async fn execute(&self, req: ToolRequest) -> ToolResponse;
     async fn execute_with_status(
-        &mut self,
+        &self,
         req: ToolRequest,
         status_callback: Box<dyn FnMut(ToolStatus) + Send>,
     ) -> ToolResponse;
 }
 ```
 
-### Method Purposes
+Contract notes:
 
-| Method | Purpose | Dynamic |
-|--------|---------|---------|
-| `name()` | Tool identifier for registries | No |
-| `short_description()` | One-liner for tool listings | No |
-| `description()` | Full description with supported tools | Yes |
-| `help()` | Man-page style docs for LLMs | Yes |
-| `system_prompt()` | Structured prompt header | Yes |
-| `input_schema()` | JSON Schema for validation | No |
-| `output_schema()` | JSON Schema for output | No |
-| `version()` | Library version | No |
-| `execute()` | Run the tool | - |
-| `execute_with_status()` | Run with progress callbacks | - |
+- `description()` is token-efficient, one sentence, locale-aware.
+- `system_prompt()` is terse plain text that starts with the tool name.
+- `help()` is Markdown, not man-page text.
+- `execution()` validates JSON args before returning a runnable execution.
+- Legacy `execute()` / `execute_with_status()` stay available as convenience helpers.
 
-### Real Outputs
-
-#### `name()`
-```
-bashkit
-```
-
-#### `short_description()`
-```
-Virtual bash interpreter with virtual filesystem
-```
-
-#### `description()`
-```
-Virtual bash interpreter with virtual filesystem. Supported tools: echo cat grep sed awk jq curl head tail sort uniq cut tr wc date sleep mkdir rm cp mv touch chmod printf test [ true false exit cd pwd ls find xargs basename dirname env export read
-```
-
-#### `system_prompt()`
-```
-# Bash Tool
-
-Virtual bash interpreter with virtual filesystem.
-
-Input: {"commands": "<bash commands>"}
-Output: {stdout, stderr, exit_code}
-```
-
-With username configured:
-```
-# Bash Tool
-
-Virtual bash interpreter with virtual filesystem.
-Home: /home/agent
-
-Input: {"commands": "<bash commands>"}
-Output: {stdout, stderr, exit_code}
-```
-
-#### `help()` (man-page format)
-```
-BASH(1)                          User Commands                         BASH(1)
-
-NAME
-       bashkit - virtual bash interpreter with virtual filesystem
-
-SYNOPSIS
-       {"commands": "<bash commands>"}
-
-DESCRIPTION
-       Bashkit executes bash commands in a virtual environment with a virtual
-       filesystem. All file operations are contained within the virtual environment.
-
-       Supports full bash syntax including variables, pipelines, redirects,
-       loops, conditionals, functions, and arrays.
-
-BUILTINS
-       echo, cat, grep, sed, awk, jq, curl, head, tail, sort, uniq, cut, tr,
-       wc, date, sleep, mkdir, rm, cp, mv, touch, chmod, printf, test, [,
-       true, false, exit, cd, pwd, ls, find, xargs, basename, dirname, env,
-       export, read
-
-INPUT
-       commands    Bash commands to execute (like bash -c "commands")
-
-OUTPUT
-       stdout      Standard output from the commands
-       stderr      Standard error from the commands
-       exit_code   Exit status (0 = success)
-
-EXAMPLES
-       Simple echo:
-           {"commands": "echo 'Hello, World!'"}
-
-       Arithmetic:
-           {"commands": "x=5; y=3; echo $((x + y))"}
-
-       Pipeline:
-           {"commands": "echo -e 'apple\nbanana' | grep a"}
-
-       JSON processing:
-           {"commands": "echo '{\"n\":1}' | jq '.n'"}
-
-       File operations (virtual):
-           {"commands": "echo data > /tmp/f.txt && cat /tmp/f.txt"}
-
-       Run script from VFS:
-           {"commands": "source /path/to/script.sh"}
-
-EXIT STATUS
-       0      Success
-       1-125  Command-specific error
-       126    Command not executable
-       127    Command not found
-
-SEE ALSO
-       bash(1), sh(1)
-```
-
-With configuration, appends:
-```
-CONFIGURATION
-       User: agent (whoami)
-       Host: sandbox (hostname)
-       Limits: 500 commands, 10000 iterations, 100 depth
-       Environment: API_KEY
-```
-
-### Request/Response
+### Tool execution
 
 ```rust
-pub struct ToolRequest {
-    pub commands: String,           // Like bash -c "commands"
-    pub timeout_ms: Option<u64>,    // Per-call timeout (exit 124 on expiry)
+pub struct ToolExecution {
+    pub fn output_stream(&self) -> Option<ToolOutputStream>;
+    pub async fn execute(self) -> Result<ToolOutput, ToolError>;
 }
 
-pub struct ToolResponse {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-    pub error: Option<String>,  // Error category if failed
+pub struct ToolOutput {
+    pub result: serde_json::Value,
+    pub images: Vec<ToolImage>,
+    pub metadata: ToolOutputMetadata,
+}
+
+pub struct ToolOutputMetadata {
+    pub duration: std::time::Duration,
+    pub extra: serde_json::Value,
+}
+
+pub struct ToolOutputChunk {
+    pub data: serde_json::Value,
+    pub kind: String,
 }
 ```
 
-### BashTool Implementation
+Rules:
 
-`BashTool` is the virtual bash interpreter implementing the `Tool` trait.
+- `ToolExecution` is single-use.
+- `output_stream()` must be called before `execute()`.
+- Final truth is `ToolOutput`, not concatenated streamed chunks.
+- `images` is empty for bashkit today.
 
-```rust
-let mut tool = BashTool::builder()
-    .username("agent")
-    .hostname("sandbox")
-    .limits(ExecutionLimits::new().max_commands(1000))
-    .env("API_KEY", "secret")
-    .builtin("custom_cmd", Box::new(MyBuiltin))
-    .build();
-
-let response = tool.execute(ToolRequest {
-    commands: "echo hello".to_string(),
-    timeout_ms: None,
-}).await;
-```
-
-### Dynamic Documentation
-
-When configured, outputs automatically include:
-
-- `description()`: Appends custom builtin names to supported tools
-- `system_prompt()`: Adds `Home: /home/<username>` if username set
-- `help()`: Adds CONFIGURATION section with user, host, limits, env vars
-
-### Streaming Output
-
-`execute_with_status()` emits incremental output via `ToolStatus` events with `phase: "output"`.
+### Errors
 
 ```rust
-pub struct ToolStatus {
-    pub phase: String,           // "validate" | "parse" | "execute" | "output" | "complete"
-    pub message: Option<String>,
-    pub percent_complete: Option<f32>,
-    pub eta_ms: Option<u64>,
-    pub output: Option<String>,  // Chunk content (when phase == "output")
-    pub stream: Option<String>,  // "stdout" or "stderr"
+pub enum ToolError {
+    UserFacing(String),
+    Internal(String),
 }
 ```
 
-Constructors: `ToolStatus::stdout("chunk")`, `ToolStatus::stderr("chunk")`.
+Rules:
 
-At the `Bash` level, `exec_streaming()` provides the same capability:
+- `UserFacing` is safe for LLMs and localized.
+- `Internal` is for logs/diagnostics and stays English.
+- `ToolError::is_user_facing()` drives consumer mapping.
 
-```rust
-let chunks = Arc::new(Mutex::new(Vec::new()));
-let chunks_cb = chunks.clone();
-let result = bash.exec_streaming(
-    "for i in 1 2 3; do echo $i; done",
-    Box::new(move |stdout, _stderr| {
-        chunks_cb.lock().unwrap().push(stdout.to_string());
-    }),
-).await?;
-// result.stdout == "1\n2\n3\n"  (complete)
-// chunks == ["1\n", "2\n", "3\n"]  (incremental)
+## BashTool specifics
+
+### Names
+
+- `name()`: `bashkit`
+- `display_name()`: localized `Bash` / `Баш`
+
+### Input schema
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "commands": { "type": "string" },
+    "timeout_ms": { "type": ["integer", "null"] }
+  },
+  "required": ["commands"]
+}
 ```
 
-#### Emission granularity
+### Output schema
 
-Output is emitted after each:
-- Loop iteration (`for`, `while`, `until`, arithmetic `for`)
-- Command in a list (`cmd1; cmd2 && cmd3`)
-- Command in a sequence (loop body, if branch)
-- Top-level script command
+`ToolOutput::result` matches:
 
-A dedup counter prevents double-emission when inner constructs already emitted.
-Pipeline intermediate output is not emitted (only the final pipeline stage).
+```json
+{
+  "stdout": "string",
+  "stderr": "string",
+  "exit_code": 0,
+  "error": "string|null"
+}
+```
 
-#### Backward compatibility
+### Streaming
 
-- `ToolResponse` unchanged — always returns complete buffered output
-- `execute()` unaffected — no streaming without `execute_with_status()`
-- `ToolStatus.output` and `.stream` are `Option` + `skip_serializing_if`
-- `OutputCallback` type: `Box<dyn FnMut(&str, &str) + Send + Sync>`
+`BashTool::execution(...).output_stream()` emits:
 
-## Design Rationale
+- `kind = "stdout"` for stdout chunks
+- `kind = "stderr"` for stderr chunks
 
-### Why a trait?
+Chunk data is JSON string content.
 
-Allows multiple tool implementations to share the same interface. Future tools (calculator, file search, etc.) can implement `Tool` for uniform LLM integration.
+### Metadata
 
-### Why `commands` not `script`?
+`ToolOutput.metadata.extra` currently includes:
 
-Aligns with `bash -c "commands"` semantics. Clearer that it's inline commands, not a script file.
+```json
+{ "exit_code": 0 }
+```
 
-### Why `timeout_ms` on `ToolRequest`?
+## Scripted tool specifics
 
-Per-call timeouts let orchestrating systems (LangChain, CrewAI) enforce limits without wrapping every command in `timeout`. Returns exit code 124 (matching bash `timeout` convention). The `timeout` builtin still works for per-command granularity.
+`ScriptedToolBuilder` and `ScriptingToolSetBuilder` follow the same contract:
 
-### Why man-page format for `help()`?
+- locale-aware metadata
+- OpenAI tool definition helpers
+- `tower::Service` helper
+- `ToolExecution` runtime path
 
-- Universal format familiar to developers
-- Structured sections (NAME, SYNOPSIS, DESCRIPTION, EXAMPLES)
-- Works well with LLM context windows
+`ScriptedTool` keeps `help` and `discover` builtins for runtime schema discovery.
 
-### Why `system_prompt()` separate from `help()`?
+## Locale
 
-- `help()`: Full docs with examples, for tool discovery and help
-- `system_prompt()`: Minimal tokens, for embedding in system prompts
+Current localized strings are implemented for:
+
+- `en-US`
+- `uk-UA`
+
+Unsupported locales fall back to English.
+
+Locale affects:
+
+- `display_name()`
+- `description()`
+- `help()`
+- `system_prompt()`
+- `ToolError::UserFacing`
+
+Locale does not affect:
+
+- `name()`
+- JSON property names and schemas
+- `version()`
 
 ## Verification
 
-```bash
-cargo test tool::
-cargo run --example show_tool_output
-```
+The contract is enforced by unit tests covering:
 
-## Snapshot/Restore
-
-For multi-turn agent conversations, bashkit provides snapshot/restore:
-
-- **VFS Snapshot**: `InMemoryFs::snapshot()` / `InMemoryFs::restore(&snapshot)` — captures all files, dirs, symlinks
-- **Shell State**: `Bash::shell_state()` / `Bash::restore_shell_state(&state)` — captures variables, env, cwd, arrays, aliases, traps, options
-- Both types implement `serde::Serialize` + `serde::Deserialize` for persistence
-
-Usage pattern:
-```rust
-let fs = Arc::new(InMemoryFs::new());
-let mut bash = Bash::builder().fs(fs.clone()).build();
-
-// After turn N
-let vfs_snap = fs.snapshot();
-let shell_snap = bash.shell_state();
-
-// Before turn N+1 (or rollback)
-fs.restore(&vfs_snap);
-bash.restore_shell_state(&shell_snap);
-```
-
-## See Also
-
-- [001-architecture.md](001-architecture.md) - Overall architecture
-- [005-builtins.md](005-builtins.md) - Builtin implementation
+- builder helper methods
+- OpenAI tool definition output
+- `tower::Service` execution
+- JSON-arg validation via `execution()`
+- streamed output chunks
+- locale-aware metadata

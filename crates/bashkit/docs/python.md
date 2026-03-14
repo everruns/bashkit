@@ -161,7 +161,7 @@ let tool = BashTool::builder()
     .build();
 
 // help() and system_prompt() automatically document Python limitations
-let help = tool.help();  // Includes NOTES section with Python hints
+let help = tool.help();  // Includes a Markdown Notes section with Python hints
 # }
 ```
 

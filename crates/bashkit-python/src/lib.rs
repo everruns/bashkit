@@ -1,7 +1,8 @@
 //! Bashkit Python package
 //!
 //! Primary interface: `Bash` — the core interpreter with virtual filesystem.
-//! Convenience wrapper: `BashTool` — adds LLM tool metadata (schema, description, system_prompt).
+//! Convenience wrapper: `BashTool` — adds contract metadata (`description`,
+//! `help`, `system_prompt`, JSON schemas) on top of the core interpreter.
 //! Orchestration: `ScriptedTool` — composes Python callbacks as bash builtins.
 
 use bashkit::tool::VERSION;
@@ -335,10 +336,11 @@ impl PyBash {
 }
 
 // ============================================================================
-// BashTool — interpreter + LLM tool metadata
+// BashTool — interpreter + tool-contract metadata
 // ============================================================================
 
-/// Bash interpreter with LLM tool metadata (schema, description, system_prompt).
+/// Bash interpreter with tool-contract metadata (`description`, `help`,
+/// `system_prompt`, schemas).
 ///
 /// Extends `Bash` with methods required by LLM tool-use protocols.
 /// Use this when integrating with LangChain, PydanticAI, or similar frameworks.
@@ -373,6 +375,29 @@ pub struct BashTool {
     hostname: Option<String>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
+}
+
+impl BashTool {
+    fn build_rust_tool(&self) -> RustBashTool {
+        let mut builder = RustBashTool::builder();
+
+        if let Some(ref username) = self.username {
+            builder = builder.username(username);
+        }
+        if let Some(ref hostname) = self.hostname {
+            builder = builder.hostname(hostname);
+        }
+
+        let mut limits = ExecutionLimits::new();
+        if let Some(mc) = self.max_commands {
+            limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
+        }
+        if let Some(mli) = self.max_loop_iterations {
+            limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
+        }
+
+        builder.limits(limits).build()
+    }
 }
 
 #[pymethods]
@@ -506,34 +531,29 @@ impl BashTool {
 
     #[getter]
     fn short_description(&self) -> &str {
-        "Virtual bash interpreter with virtual filesystem"
+        "Run bash commands in an isolated virtual filesystem"
     }
 
     fn description(&self) -> PyResult<String> {
-        let tool = RustBashTool::default();
-        Ok(tool.description())
+        Ok(self.build_rust_tool().description().to_string())
     }
 
     fn help(&self) -> PyResult<String> {
-        let tool = RustBashTool::default();
-        Ok(tool.help())
+        Ok(self.build_rust_tool().help())
     }
 
     fn system_prompt(&self) -> PyResult<String> {
-        let tool = RustBashTool::default();
-        Ok(tool.system_prompt())
+        Ok(self.build_rust_tool().system_prompt())
     }
 
     fn input_schema(&self) -> PyResult<String> {
-        let tool = RustBashTool::default();
-        let schema = tool.input_schema();
+        let schema = self.build_rust_tool().input_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| PyValueError::new_err(format!("Schema serialization failed: {}", e)))
     }
 
     fn output_schema(&self) -> PyResult<String> {
-        let tool = RustBashTool::default();
-        let schema = tool.output_schema();
+        let schema = self.build_rust_tool().output_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| PyValueError::new_err(format!("Schema serialization failed: {}", e)))
     }
@@ -727,7 +747,7 @@ impl ScriptedTool {
 
     /// Execute a bash script asynchronously.
     fn execute<'py>(&self, py: Python<'py>, commands: String) -> PyResult<Bound<'py, PyAny>> {
-        let mut tool = self.build_rust_tool();
+        let tool = self.build_rust_tool();
         future_into_py(py, async move {
             let resp = tool
                 .execute(ToolRequest {
@@ -747,7 +767,7 @@ impl ScriptedTool {
     /// Execute a bash script synchronously (blocking).
     /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
     fn execute_sync(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
-        let mut tool = self.build_rust_tool();
+        let tool = self.build_rust_tool();
 
         let resp = py.detach(|| {
             self.rt.block_on(async move {
@@ -785,17 +805,17 @@ impl ScriptedTool {
         self.tools.len()
     }
 
-    /// Get the full description.
+    /// Get the token-efficient description.
     fn description(&self) -> String {
-        self.build_rust_tool().description()
+        self.build_rust_tool().description().to_string()
     }
 
-    /// Get help text (man-page format).
+    /// Get help as a Markdown document.
     fn help(&self) -> String {
         self.build_rust_tool().help()
     }
 
-    /// Get system prompt for LLMs (token-efficient).
+    /// Get compact system-prompt text for orchestration.
     fn system_prompt(&self) -> String {
         self.build_rust_tool().system_prompt()
     }

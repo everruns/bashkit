@@ -94,6 +94,10 @@ fn strip_surrounding_quotes(s: &str) -> &str {
     }
 }
 
+fn uses_epoch_input(s: &str) -> bool {
+    strip_surrounding_quotes(s).starts_with('@')
+}
+
 /// Parse a base date expression (no compound modifiers).
 fn parse_base_date(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTime<Utc>, String> {
     let lower = s.to_lowercase();
@@ -122,16 +126,16 @@ fn parse_base_date(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTime<
 
     // Try ISO-like formats: YYYY-MM-DD HH:MM:SS, YYYY-MM-DD
     if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
-        return Ok(Utc.from_utc_datetime(&dt));
+        return local_naive_to_utc(dt, s);
     }
     if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Ok(Utc.from_utc_datetime(&dt));
+        return local_naive_to_utc(dt, s);
     }
     if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
         let dt = d
             .and_hms_opt(0, 0, 0)
             .ok_or_else(|| format!("invalid date '{}'", s))?;
-        return Ok(Utc.from_utc_datetime(&dt));
+        return local_naive_to_utc(dt, s);
     }
 
     // Try "Mon DD, YYYY" format
@@ -139,7 +143,7 @@ fn parse_base_date(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTime<
         let dt = d
             .and_hms_opt(0, 0, 0)
             .ok_or_else(|| format!("invalid date '{}'", s))?;
-        return Ok(Utc.from_utc_datetime(&dt));
+        return local_naive_to_utc(dt, s);
     }
 
     Err(format!("date: invalid date '{}'", s))
@@ -185,6 +189,18 @@ fn parse_date_string(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTim
     }
 
     parse_base_date(s, now)
+}
+
+fn local_naive_to_utc(
+    dt: NaiveDateTime,
+    original: &str,
+) -> std::result::Result<DateTime<Utc>, String> {
+    Local
+        .from_local_datetime(&dt)
+        .single()
+        .or_else(|| Local.from_local_datetime(&dt).earliest())
+        .map(|local_dt| local_dt.with_timezone(&Utc))
+        .ok_or_else(|| format!("date: invalid date '{}'", original))
 }
 
 /// Parse relative date expressions like "30 days ago", "+2 weeks", "-1 month"
@@ -343,6 +359,7 @@ impl Builtin for Date {
         // Get the datetime to format
         // THREAT[TM-INF-018]: Use virtual time if configured
         let now = self.now();
+        let epoch_input = date_str.as_deref().is_some_and(uses_epoch_input);
         let dt_utc = if let Some(ref ds) = date_str {
             match parse_date_string(ds, now) {
                 Ok(dt) => dt,
@@ -392,7 +409,7 @@ impl Builtin for Date {
 
         // Format the date, handling potential errors gracefully.
         let mut output = String::new();
-        let format_result = if utc {
+        let format_result = if utc || epoch_input {
             write!(output, "{}", dt_utc.format(&format))
         } else {
             let local_dt: DateTime<Local> = dt_utc.into();
@@ -632,6 +649,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_date_d_epoch() {
+        let result = run_date(&["-u", "-d", "@0", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "1970-01-01");
+    }
+
+    #[tokio::test]
+    async fn test_date_d_epoch_defaults_to_utc() {
         let result = run_date(&["-d", "@0", "+%Y-%m-%d"]).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "1970-01-01");

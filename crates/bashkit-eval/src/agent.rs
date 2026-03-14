@@ -77,7 +77,7 @@ pub async fn run_agent_loop(
         .build();
     let tool_def = ToolDefinition {
         name: "bash".to_string(),
-        description: tool.description(),
+        description: tool.description().to_string(),
         input_schema: tool.input_schema(),
     };
 

@@ -53,6 +53,41 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
+## LLM Tool Contract
+
+`BashTool` follows the toolkit-library contract: builder for reusable config,
+immutable tool metadata for discovery, and single-use executions for each call.
+
+```rust
+use bashkit::{BashTool, Tool};
+use futures::StreamExt;
+
+# #[tokio::main]
+# async fn main() -> anyhow::Result<()> {
+let tool = BashTool::builder()
+    .username("agent")
+    .hostname("sandbox")
+    .build();
+
+println!("{}", tool.description());
+println!("{}", tool.system_prompt());
+
+let execution = tool.execution(serde_json::json!({
+    "commands": "printf 'hello\nworld\n'"
+}))?;
+let mut stream = execution.output_stream().expect("stream available");
+
+let handle = tokio::spawn(async move { execution.execute().await });
+while let Some(chunk) = stream.next().await {
+    println!("{}: {}", chunk.kind, chunk.data);
+}
+
+let output = handle.await??;
+assert_eq!(output.result["stdout"], "hello\nworld\n");
+# Ok(())
+# }
+```
+
 ## Overview
 
 <div align="center">
@@ -264,6 +299,8 @@ Python bindings with LangChain integration are available in [crates/bashkit-pyth
 from bashkit import BashTool
 
 tool = BashTool()
+print(tool.description())
+print(tool.help())
 result = await tool.execute("echo 'Hello, World!'")
 print(result.stdout)
 ```
