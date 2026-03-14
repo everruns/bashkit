@@ -1,9 +1,17 @@
 //! Scripted tool
 //!
 //! Compose tool definitions + callbacks into a single [`Tool`] that accepts bash
-//! scripts. Each tool becomes a builtin command inside the interpreter, so an LLM
-//! can orchestrate many tools in one call using pipes, variables, loops, and
-//! conditionals.
+//! scripts. Each registered tool becomes a builtin command inside the interpreter,
+//! so an LLM can orchestrate many operations in one call using pipes, variables,
+//! loops, and conditionals.
+//!
+//! This module follows the same contract surface as [`crate::tool`]:
+//!
+//! - [`ScriptedToolBuilder::build`] -> immutable metadata object
+//! - [`ScriptedToolBuilder::build_service`] -> `tower::Service<Value, Value>`
+//! - [`Tool::execution`] -> validated, single-use [`crate::ToolExecution`]
+//! - [`Tool::help`] -> Markdown docs
+//! - [`Tool::system_prompt`] -> terse plain-text instructions
 //!
 //! # Architecture
 //!
@@ -23,10 +31,10 @@
 //! # Example
 //!
 //! ```rust
-//! use bashkit::{ScriptedTool, ToolArgs, ToolDef, Tool, ToolRequest};
+//! use bashkit::{ScriptedTool, Tool, ToolArgs, ToolDef};
 //!
 //! # tokio_test::block_on(async {
-//! let mut tool = ScriptedTool::builder("api")
+//! let tool = ScriptedTool::builder("api")
 //!     .tool(
 //!         ToolDef::new("greet", "Greet a user")
 //!             .with_schema(serde_json::json!({
@@ -40,12 +48,15 @@
 //!     )
 //!     .build();
 //!
-//! let resp = tool.execute(ToolRequest {
-//!     commands: "greet --name Alice".to_string(),
-//!     timeout_ms: None,
-//! }).await;
+//! let output = tool
+//!     .execution(serde_json::json!({"commands": "greet --name Alice"}))
+//!     .expect("valid args")
+//!     .execute()
+//!     .await
+//!     .expect("execution succeeds");
 //!
-//! assert_eq!(resp.stdout.trim(), "hello Alice");
+//! assert_eq!(output.result["stdout"], "hello Alice\n");
+//! assert!(tool.help().contains("## Tool Commands"));
 //! # });
 //! ```
 //!
@@ -562,7 +573,10 @@ mod tests {
             )
             .build();
         let sp = tool.system_prompt();
-        assert!(sp.contains("--id <integer>"), "system prompt should show flags");
+        assert!(
+            sp.contains("--id <integer>"),
+            "system prompt should show flags"
+        );
     }
 
     #[test]
@@ -576,10 +590,10 @@ mod tests {
 
     #[test]
     fn test_builder_contract_helpers() {
-        let builder = ScriptedTool::builder("test_api").tool(
-            ToolDef::new("ping", "Ping"),
-            |_args: &ToolArgs| Ok("pong\n".to_string()),
-        );
+        let builder = ScriptedTool::builder("test_api")
+            .tool(ToolDef::new("ping", "Ping"), |_args: &ToolArgs| {
+                Ok("pong\n".to_string())
+            });
         let definition = builder.build_tool_definition();
         let input_schema = builder.build_input_schema();
         let output_schema = builder.build_output_schema();
@@ -595,10 +609,9 @@ mod tests {
         use tower::ServiceExt;
 
         let service = ScriptedTool::builder("test_api")
-            .tool(
-                ToolDef::new("ping", "Ping"),
-                |_args: &ToolArgs| Ok("pong\n".to_string()),
-            )
+            .tool(ToolDef::new("ping", "Ping"), |_args: &ToolArgs| {
+                Ok("pong\n".to_string())
+            })
             .build_service();
 
         let result = service

@@ -281,7 +281,10 @@ impl Tool for ScriptingToolSet {
         VERSION
     }
 
-    fn execution(&self, args: serde_json::Value) -> Result<crate::tool::ToolExecution, crate::tool::ToolError> {
+    fn execution(
+        &self,
+        args: serde_json::Value,
+    ) -> Result<crate::tool::ToolExecution, crate::tool::ToolError> {
         self.inner.execution(args)
     }
 
@@ -362,7 +365,10 @@ mod tests {
         let toolset = make_tools().build();
         let sp = toolset.system_prompt();
         assert!(sp.contains("get_user [--id <integer>]"), "prompt: {sp}");
-        assert!(sp.contains("list_orders [--user_id <integer>]"), "prompt: {sp}");
+        assert!(
+            sp.contains("list_orders [--user_id <integer>]"),
+            "prompt: {sp}"
+        );
     }
 
     #[test]

@@ -128,9 +128,9 @@ tool.reset()
 # LLM metadata
 tool.name              # "bashkit"
 tool.short_description # str
-tool.description()     # full description
-tool.help()            # LLM help text
-tool.system_prompt()   # system prompt
+tool.description()     # token-efficient description
+tool.help()            # Markdown help document
+tool.system_prompt()   # compact system prompt
 tool.input_schema()    # JSON schema string
 tool.output_schema()   # JSON schema string
 tool.version           # from Rust crate

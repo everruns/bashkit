@@ -136,10 +136,11 @@ impl Bash {
 }
 
 // ============================================================================
-// BashTool — interpreter + LLM tool metadata
+// BashTool — interpreter + tool-contract metadata
 // ============================================================================
 
-/// Bash interpreter with LLM tool metadata (schema, description, system_prompt).
+/// Bash interpreter with tool-contract metadata (`description`, `help`,
+/// `system_prompt`, schemas).
 ///
 /// Use this when integrating with AI frameworks that need tool definitions.
 #[napi]
@@ -150,6 +151,29 @@ pub struct BashTool {
     hostname: Option<String>,
     max_commands: Option<u32>,
     max_loop_iterations: Option<u32>,
+}
+
+impl BashTool {
+    fn build_rust_tool(&self) -> RustBashTool {
+        let mut builder = RustBashTool::builder();
+
+        if let Some(ref username) = self.username {
+            builder = builder.username(username);
+        }
+        if let Some(ref hostname) = self.hostname {
+            builder = builder.hostname(hostname);
+        }
+
+        let mut limits = ExecutionLimits::new();
+        if let Some(mc) = self.max_commands {
+            limits = limits.max_commands(mc as usize);
+        }
+        if let Some(mli) = self.max_loop_iterations {
+            limits = limits.max_loop_iterations(mli as usize);
+        }
+
+        builder.limits(limits).build()
+    }
 }
 
 #[napi]
@@ -238,35 +262,31 @@ impl BashTool {
     /// Get short description.
     #[napi(getter)]
     pub fn short_description(&self) -> &str {
-        "Virtual bash interpreter with virtual filesystem"
+        "Run bash commands in an isolated virtual filesystem"
     }
 
-    /// Get full description.
+    /// Get token-efficient tool description.
     #[napi]
     pub fn description(&self) -> String {
-        let tool = RustBashTool::default();
-        tool.description()
+        self.build_rust_tool().description().to_string()
     }
 
-    /// Get help text.
+    /// Get help as a Markdown document.
     #[napi]
     pub fn help(&self) -> String {
-        let tool = RustBashTool::default();
-        tool.help()
+        self.build_rust_tool().help()
     }
 
-    /// Get system prompt for LLMs.
+    /// Get compact system-prompt text for orchestration.
     #[napi]
     pub fn system_prompt(&self) -> String {
-        let tool = RustBashTool::default();
-        tool.system_prompt()
+        self.build_rust_tool().system_prompt()
     }
 
     /// Get JSON input schema as string.
     #[napi]
     pub fn input_schema(&self) -> napi::Result<String> {
-        let tool = RustBashTool::default();
-        let schema = tool.input_schema();
+        let schema = self.build_rust_tool().input_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| napi::Error::from_reason(format!("Schema serialization failed: {e}")))
     }
@@ -274,8 +294,7 @@ impl BashTool {
     /// Get JSON output schema as string.
     #[napi]
     pub fn output_schema(&self) -> napi::Result<String> {
-        let tool = RustBashTool::default();
-        let schema = tool.output_schema();
+        let schema = self.build_rust_tool().output_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| napi::Error::from_reason(format!("Schema serialization failed: {e}")))
     }

@@ -1,34 +1,62 @@
-//! Tool trait and BashTool implementation
+//! Tool contract and `BashTool` implementation.
 //!
 //! # Public Library Contract
 //!
-//! The `Tool` trait is a **public contract** - breaking changes require a major version bump.
-//! See `specs/009-tool-contract.md` for the full specification.
+//! `bashkit` follows the Everruns toolkit-library contract:
+//!
+//! ```text
+//! ToolBuilder (config) -> Tool (metadata) -> ToolExecution (single-use runtime)
+//! ```
+//!
+//! [`BashToolBuilder`] configures a reusable tool definition. [`BashTool`] exposes
+//! locale-aware metadata plus [`Tool::execution`] for validated, single-use runs.
+//! [`ToolExecution`] returns structured [`ToolOutput`] and can optionally stream
+//! [`ToolOutputChunk`] values during execution.
 //!
 //! # Architecture
 //!
-//! - [`Tool`] trait: Contract that all tools must implement
-//! - [`BashTool`]: Virtual bash interpreter implementing Tool
-//! - [`BashToolBuilder`]: Builder pattern for configuring BashTool
+//! - [`Tool`] trait: shared metadata + execution contract
+//! - [`BashToolBuilder`]: reusable builder for config, schemas, OpenAI tool JSON,
+//!   and `tower::Service` integration
+//! - [`BashTool`]: immutable metadata object implementing [`Tool`]
+//! - [`ToolExecution`]: validated, single-use runtime for one call
 //!
-//! # Example
+//! # Builder Example
 //!
 //! ```
-//! use bashkit::{BashTool, Tool, ToolRequest};
+//! use bashkit::{BashTool, Tool};
+//!
+//! let builder = BashTool::builder()
+//!     .locale("en-US")
+//!     .username("agent")
+//!     .hostname("sandbox");
+//!
+//! let tool = builder.build();
+//! assert_eq!(tool.name(), "bashkit");
+//! assert_eq!(tool.display_name(), "Bash");
+//! assert!(builder.build_tool_definition()["function"]["parameters"].is_object());
+//! ```
+//!
+//! # Execution Example
+//!
+//! ```
+//! use bashkit::{BashTool, Tool};
+//! use futures::StreamExt;
 //!
 //! # tokio_test::block_on(async {
-//! let mut tool = BashTool::default();
+//! let tool = BashTool::default();
+//! let execution = tool
+//!     .execution(serde_json::json!({"commands": "printf 'a\nb\n'"}))
+//!     .expect("valid args");
+//! let mut stream = execution.output_stream().expect("stream available");
 //!
-//! // Introspection
-//! assert_eq!(tool.name(), "bashkit");
-//! assert!(!tool.help().is_empty());
+//! let handle = tokio::spawn(async move { execution.execute().await.expect("execution succeeds") });
+//! let first = stream.next().await.expect("first chunk");
+//! assert_eq!(first.kind, "stdout");
+//! assert_eq!(first.data, serde_json::json!("a\n"));
 //!
-//! // Execution
-//! let resp = tool.execute(ToolRequest {
-//!     commands: "echo hello".to_string(),
-//!     timeout_ms: None,
-//! }).await;
-//! assert_eq!(resp.stdout, "hello\n");
+//! let output = handle.await.expect("join");
+//! assert_eq!(output.result["stdout"], "a\nb\n");
 //! # });
 //! ```
 
@@ -45,8 +73,10 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 type ToolExecutionFuture = Pin<Box<dyn Future<Output = Result<ToolOutput, ToolError>> + Send>>;
-type ToolExecutionRunner =
-    Box<dyn FnOnce(Option<tokio::sync::mpsc::UnboundedSender<ToolOutputChunk>>) -> ToolExecutionFuture + Send>;
+type ToolExecutionRunner = Box<
+    dyn FnOnce(Option<tokio::sync::mpsc::UnboundedSender<ToolOutputChunk>>) -> ToolExecutionFuture
+        + Send,
+>;
 
 /// Library version from Cargo.toml
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -56,6 +86,10 @@ pub type ToolService =
     tower::util::BoxCloneService<serde_json::Value, serde_json::Value, ToolError>;
 
 /// Tool execution error.
+///
+/// The split between [`ToolError::UserFacing`] and [`ToolError::Internal`] lets
+/// consumers decide what is safe to send back to the LLM. User-facing errors
+/// should be short, actionable, and locale-aware. Internal errors are for logs.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum ToolError {
     /// Safe to show to the LLM/user.
@@ -74,6 +108,9 @@ impl ToolError {
 }
 
 /// Image payload returned by a tool.
+///
+/// `bashkit` does not currently emit images, but the contract keeps parity with
+/// other toolkit crates that may return screenshots or rendered assets.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolImage {
     pub base64: String,
@@ -81,6 +118,9 @@ pub struct ToolImage {
 }
 
 /// Consumer-facing metadata that never goes to the LLM.
+///
+/// Use [`ToolOutputMetadata::extra`] for kit-specific diagnostics such as exit
+/// codes, command counts, or bytes transferred.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolOutputMetadata {
     #[serde(with = "duration_millis")]
@@ -89,6 +129,9 @@ pub struct ToolOutputMetadata {
 }
 
 /// Structured execution result.
+///
+/// [`ToolOutput::result`] is the JSON payload intended for the LLM tool result.
+/// [`ToolOutput::metadata`] is reserved for the host application.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolOutput {
     pub result: serde_json::Value,
@@ -98,6 +141,9 @@ pub struct ToolOutput {
 }
 
 /// Incremental tool output chunk.
+///
+/// `kind` is consumer-routable (`stdout`, `stderr`, `progress`, ...). `data`
+/// stays JSON so non-text chunks can be added later without changing the type.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolOutputChunk {
     pub data: serde_json::Value,
@@ -105,6 +151,9 @@ pub struct ToolOutputChunk {
 }
 
 /// Stream returned by [`ToolExecution::output_stream`].
+///
+/// This stream is informational. The final authoritative result still comes
+/// from [`ToolExecution::execute`].
 pub struct ToolOutputStream {
     receiver: tokio::sync::mpsc::UnboundedReceiver<ToolOutputChunk>,
 }
@@ -124,6 +173,9 @@ struct ToolExecutionStreamState {
 }
 
 /// Stateful, single-use tool execution.
+///
+/// Build one with [`Tool::execution`]. Call [`ToolExecution::output_stream`]
+/// before [`ToolExecution::execute`] if you need live updates.
 pub struct ToolExecution {
     runner: Option<ToolExecutionRunner>,
     stream_state: Arc<Mutex<ToolExecutionStreamState>>,
@@ -154,7 +206,10 @@ impl ToolExecution {
             state.sender = Some(sender);
             state.receiver = Some(receiver);
         }
-        state.receiver.take().map(|receiver| ToolOutputStream { receiver })
+        state
+            .receiver
+            .take()
+            .map(|receiver| ToolOutputStream { receiver })
     }
 
     /// Run the execution to completion.
@@ -775,9 +830,7 @@ impl Tool for BashTool {
 
         Ok(ToolExecution::new(move |stream_sender| async move {
             let start = std::time::Instant::now();
-            let response = tool
-                .run_request_with_stream(req, stream_sender)
-                .await;
+            let response = tool.run_request_with_stream(req, stream_sender).await;
             tool_output_from_response(response, start.elapsed())
         }))
     }
@@ -926,7 +979,11 @@ fn build_bash_description(locale: &str, builtin_names: &[String]) -> String {
     .to_string();
     if !builtin_names.is_empty() {
         desc.push_str(". ");
-        desc.push_str(localized(locale, "Custom commands", "Користувацькі команди"));
+        desc.push_str(localized(
+            locale,
+            "Custom commands",
+            "Користувацькі команди",
+        ));
         desc.push_str(": ");
         desc.push_str(&builtin_names.join(", "));
     }
@@ -944,12 +1001,14 @@ fn build_bash_system_prompt(tool: &BashTool) -> String {
         )
     )];
 
-    parts.push(localized(
-        tool.locale(),
-        "Returns JSON with stdout, stderr, exit_code.",
-        "Повертає JSON з stdout, stderr, exit_code.",
-    )
-    .to_string());
+    parts.push(
+        localized(
+            tool.locale(),
+            "Returns JSON with stdout, stderr, exit_code.",
+            "Повертає JSON з stdout, stderr, exit_code.",
+        )
+        .to_string(),
+    );
 
     if let Some(username) = &tool.username {
         parts.push(format!(
@@ -1001,7 +1060,9 @@ fn build_bash_help(tool: &BashTool) -> String {
     doc.push_str("```\n\n");
 
     doc.push_str("```json\n");
-    doc.push_str("{\"commands\":\"echo data > /tmp/f.txt && cat /tmp/f.txt\",\"timeout_ms\":5000}\n");
+    doc.push_str(
+        "{\"commands\":\"echo data > /tmp/f.txt && cat /tmp/f.txt\",\"timeout_ms\":5000}\n",
+    );
     doc.push_str("```\n\n");
 
     doc.push_str("## Behavior\n\n");
@@ -1068,8 +1129,12 @@ pub(crate) fn tool_request_from_value(
 
     let Some(commands) = obj.get("commands").and_then(|value| value.as_str()) else {
         return Err(ToolError::UserFacing(
-            localized(locale, "`commands` is required", "поле `commands` є обов'язковим")
-                .to_string(),
+            localized(
+                locale,
+                "`commands` is required",
+                "поле `commands` є обов'язковим",
+            )
+            .to_string(),
         ));
     };
 
@@ -1222,7 +1287,10 @@ mod tests {
             .execution(serde_json::json!({"timeout_ms": 10}))
             .err()
             .unwrap_or_else(|| panic!("execution should reject missing commands"));
-        assert_eq!(err, ToolError::UserFacing("`commands` is required".to_string()));
+        assert_eq!(
+            err,
+            ToolError::UserFacing("`commands` is required".to_string())
+        );
     }
 
     #[tokio::test]
@@ -1348,7 +1416,10 @@ mod tests {
 
         // Hint should appear in help
         let helptext = tool.help();
-        assert!(helptext.contains("## Notes"), "help should have Notes section");
+        assert!(
+            helptext.contains("## Notes"),
+            "help should have Notes section"
+        );
         assert!(
             helptext.contains("mycommand: Processes CSV"),
             "help should contain the hint"

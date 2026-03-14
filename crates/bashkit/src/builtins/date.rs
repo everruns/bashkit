@@ -94,6 +94,10 @@ fn strip_surrounding_quotes(s: &str) -> &str {
     }
 }
 
+fn uses_epoch_input(s: &str) -> bool {
+    strip_surrounding_quotes(s).starts_with('@')
+}
+
 /// Parse a base date expression (no compound modifiers).
 fn parse_base_date(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTime<Utc>, String> {
     let lower = s.to_lowercase();
@@ -355,6 +359,7 @@ impl Builtin for Date {
         // Get the datetime to format
         // THREAT[TM-INF-018]: Use virtual time if configured
         let now = self.now();
+        let epoch_input = date_str.as_deref().is_some_and(uses_epoch_input);
         let dt_utc = if let Some(ref ds) = date_str {
             match parse_date_string(ds, now) {
                 Ok(dt) => dt,
@@ -404,7 +409,7 @@ impl Builtin for Date {
 
         // Format the date, handling potential errors gracefully.
         let mut output = String::new();
-        let format_result = if utc {
+        let format_result = if utc || epoch_input {
             write!(output, "{}", dt_utc.format(&format))
         } else {
             let local_dt: DateTime<Local> = dt_utc.into();
@@ -645,6 +650,13 @@ mod tests {
     #[tokio::test]
     async fn test_date_d_epoch() {
         let result = run_date(&["-u", "-d", "@0", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "1970-01-01");
+    }
+
+    #[tokio::test]
+    async fn test_date_d_epoch_defaults_to_utc() {
+        let result = run_date(&["-d", "@0", "+%Y-%m-%d"]).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "1970-01-01");
     }

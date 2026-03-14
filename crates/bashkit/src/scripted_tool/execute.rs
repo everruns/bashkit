@@ -452,11 +452,7 @@ impl ScriptedTool {
             .join(", ");
         parts.push(format!(
             "{}: {}.",
-            localized(
-                self.locale.as_str(),
-                "Commands",
-                "Команди"
-            ),
+            localized(self.locale.as_str(), "Commands", "Команди"),
             tools
         ));
         parts.push(localized(
@@ -564,10 +560,7 @@ impl Tool for ScriptedTool {
         VERSION
     }
 
-    fn execution(
-        &self,
-        args: serde_json::Value,
-    ) -> std::result::Result<ToolExecution, ToolError> {
+    fn execution(&self, args: serde_json::Value) -> std::result::Result<ToolExecution, ToolError> {
         let req = tool_request_from_value(self.locale(), args)?;
         let tool = self.clone();
         Ok(ToolExecution::new(move |stream_sender| async move {
