@@ -48,7 +48,7 @@
 //!
 //! ```rust,no_run
 //! use bashkit::PosixFs;
-//! use bashkit::fs::{RealFs, RealFsMode};
+//! use bashkit::{RealFs, RealFsMode};
 //! use std::sync::Arc;
 //!
 //! let backend = RealFs::new("/tmp", RealFsMode::ReadOnly).unwrap();
@@ -95,7 +95,7 @@ pub enum RealFsMode {
 /// # Example
 ///
 /// ```rust,no_run
-/// use bashkit::fs::{RealFs, RealFsMode};
+/// use bashkit::{RealFs, RealFsMode};
 /// use bashkit::PosixFs;
 /// use std::sync::Arc;
 ///

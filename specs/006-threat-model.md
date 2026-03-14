@@ -259,6 +259,20 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 | TM-DOS-031 | ExtGlob exponential blowup | `+(a\|aa)` against long string causes O(n!) recursion in `glob_match_impl` | — | **OPEN** |
 | TM-DOS-032 | Tokio runtime exhaustion (Python) | Rapid `execute_sync()` calls each create new tokio runtime, exhausting OS threads | — | **OPEN** |
 | TM-DOS-033 | AWK unbounded loops | `BEGIN { while(1){} }` has no iteration limit in AWK interpreter | Timeout (30s) backstop | **PARTIAL** |
+| TM-DOS-051 | YAML parser unbounded recursion | `yaml get key` on deeply nested YAML input causes stack overflow in `parse_yaml_block`/`parse_yaml_map`/`parse_yaml_list` | `catch_unwind` (TM-INT-001) catches panic; no depth limit | **OPEN** |
+| TM-DOS-052 | Template engine unbounded recursion | `{{#if}}` and `{{#each}}` blocks call `render_template` recursively with no depth limit | `catch_unwind` catches stack overflow; no depth cap | **OPEN** |
+| TM-DOS-053 | Template `{{#each}}` output explosion | `{{#each arr}}` on large JSON array produces O(n * body) output | Bounded by JSON data file size (max_file_size) | **MITIGATED** |
+| TM-DOS-054 | `glob --files` inherits ExtGlob blowup | `glob --files "+(a|aa)" /dir` dispatches to `glob_match` with same exponential cost as TM-DOS-031 | Same as TM-DOS-031 | **OPEN** |
+| TM-DOS-055 | `split` file count amplification | `split -l 1 bigfile` creates one output file per line; bounded by `max_file_count` FS limit | FS limits (TM-DOS-006) | **MITIGATED** |
+
+**TM-DOS-051**: `builtins/yaml.rs` — `parse_yaml_block`, `parse_yaml_map`, `parse_yaml_list` recurse
+on nested YAML structures with no depth counter. Crafted YAML with 1000+ nesting levels causes stack
+overflow. `catch_unwind` (TM-INT-001) prevents process crash but returns unhelpful error.
+Fix: add depth parameter, bail at 100 levels.
+
+**TM-DOS-052**: `builtins/template.rs:render_template()` recurses for `{{#if}}` and `{{#each}}`
+blocks. Template `{{#if a}}{{#if b}}...{{/if}}{{/if}}` with 1000+ nesting levels causes stack
+overflow. Fix: add depth parameter, bail at 50 levels.
 
 **Current Risk**: MEDIUM - Three open DoS vectors (TM-DOS-029, TM-DOS-030, TM-DOS-031) need remediation
 
@@ -385,6 +399,8 @@ All execution stays within the virtual interpreter — no OS subprocess is spawn
 | TM-INF-014 | Real PID leak via $$ | `$$` now returns virtual PID (1) instead of real process ID | — | **FIXED** (2026-03 audit verified) |
 | TM-INF-015 | URL credentials in errors | Allowlist "blocked" error echoes full URL including credentials | — | **OPEN** |
 | TM-INF-016 | Internal state in error messages | `std::io::Error`, reqwest errors, Debug-formatted errors leak host paths/IPs/TLS info | — | **OPEN** |
+| TM-INF-019 | `envsubst` exposes all env vars | `envsubst` substitutes `$VAR`/`${VAR}` from `ctx.env` — scripts can probe any env var | Same as TM-INF-001 (caller controls env) | **CALLER RISK** |
+| TM-INF-020 | `template` exposes env vars via `{{var}}` | Template builtin looks up variables from env as fallback after shell vars and JSON data | Same as TM-INF-001 (caller controls env) | **CALLER RISK** |
 
 **TM-INF-013**: The jq builtin (`builtins/jq.rs:414-421`) calls `std::env::set_var()` to expose
 shell variables to jaq's `env` function. This also makes host process env vars (API keys, tokens)
@@ -471,10 +487,16 @@ Bash::builder()
 | TM-INJ-009 | Internal variable namespace injection | Set `_NAMEREF_`, `_READONLY_`, etc. directly | — | **OPEN** |
 
 | TM-INJ-011 | Cyclic nameref silent resolution | Cyclic namerefs (a→b→a) silently resolve after 10 iterations instead of erroring | — | **OPEN** |
+| TM-INJ-018 | `dotenv` internal variable prefix injection | `.env` file with `_NAMEREF_x=target` sets internal interpreter variables via `ctx.variables.insert()` | — | **OPEN** |
 
 **TM-INJ-011**: `interpreter/mod.rs:7547-7560` — cyclic namerefs silently resolve to whatever
 variable is current after 10 iterations. Real bash errors with `circular name reference`. Can
 be exploited to read/write unintended variables. Fix: detect cycles (track visited names), error.
+
+**TM-INJ-018**: `builtins/dotenv.rs:142` — `dotenv` inserts parsed key-value pairs directly into
+`ctx.variables` without checking `is_internal_variable()`. A `.env` file containing
+`_NAMEREF_x=target` or `_READONLY_x=1` manipulates interpreter internals. Same class as
+TM-INJ-012–015. Fix: add `is_internal_variable()` check before `ctx.variables.insert()`.
 
 **TM-INJ-009**: The interpreter uses magic variable prefixes as internal control signals:
 `_NAMEREF_<name>` (nameref), `_READONLY_<name>` (readonly), `_SHIFT_COUNT`, `_SET_POSITIONAL`,
@@ -499,11 +521,18 @@ echo $user_input
 | TM-INJ-005 | Path traversal | `../../../../etc/passwd` | Path normalization | **MITIGATED** |
 | TM-INJ-006 | Encoding bypass | URL/unicode encoding | PathBuf handles | **MITIGATED** |
 | TM-INJ-010 | Tar path traversal within VFS | `tar -xf` with `../../../etc/passwd` entry names | — | **OPEN** |
+| TM-INJ-017 | Unzip path traversal within VFS | `unzip` with `../../../etc/passwd` entry names in custom BKZIP format | — | **OPEN** |
 
 **TM-INJ-010**: Tar entry names like `../../../etc/passwd` pass through `resolve_path()` which
 normalizes `..` but can write to arbitrary VFS locations outside the extraction directory. A
 crafted tar can overwrite any file in the VFS. Fix: validate resolved paths stay within
 `extract_base`; reject entries with `..` or leading `/`.
+
+**TM-INJ-017**: `builtins/zip_cmd.rs:341-342` — `unzip` joins entry path directly with
+`extract_base` via `extract_base.join(entry_path)`. Entry path `../../etc/passwd` resolves
+outside the extraction directory within VFS. Leading `/` is stripped but `..` is not rejected.
+Same class as TM-INJ-010. Fix: validate resolved path starts with `extract_base`; reject
+entries containing `..` components.
 
 **Current Risk**: LOW - Rust's type system prevents most attacks; tar traversal is VFS-contained
 
@@ -961,6 +990,65 @@ let config = LogConfig::new()
     .redact_env("INTERNAL_TOKEN");
 ```
 
+### 10. Builtin-Specific Threat Coverage
+
+This section documents the security assessment of builtins that do not have individual
+TM entries because their risk is fully covered by existing controls or is inherently low.
+
+#### 10.1 Pure Computation Builtins (No Additional Risk)
+
+These builtins operate on in-memory data with no resource access beyond what the
+interpreter already controls. Their risk is bounded by existing limits (input size,
+command count, timeout, `catch_unwind`).
+
+| Builtin | Function | Why Low Risk |
+|---------|----------|-------------|
+| `base64` | Encode/decode base64 | Pure byte transformation; output bounded by input size |
+| `md5sum`, `sha1sum`, `sha256sum` | Compute checksums | Hash computation on VFS file data; O(n) CPU, bounded by `max_file_size` |
+| `verify` | Compute/verify file hashes | Same as checksum builtins; reads VFS files only |
+| `iconv` | Encoding conversion | Pure byte transformation between UTF-8/ASCII/Latin1/UTF-16 |
+| `hextools` (`od`, `xxd`, `hexdump`) | Byte-level inspection | Format VFS file bytes as hex/octal; output bounded by input size |
+| `semver` | Version string parsing | Pure string comparison; no recursion or resource access |
+| `strings` | Extract printable strings | Linear scan of byte data; output bounded by input |
+| `fc` | History listing | Lists virtual session history; no re-execution in VFS environment |
+| `log` | Structured logging output | Formats message to stdout; reads `LOG_LEVEL`/`LOG_FORMAT` from env (caller-controlled) |
+| `parallel` | GNU parallel stub (dry-run only) | Reports planned commands; does not actually execute them in VFS |
+| `retry` | Retry stub (dry-run only) | Reports planned retry config; does not actually re-execute in VFS |
+| `inspect` (`less`, `file`, `stat`) | File inspection | Reads VFS files; bounded by `max_file_size`; `less` acts as `cat` |
+
+#### 10.2 VFS-Bounded Builtins (Covered by FS Limits)
+
+These builtins read/write VFS files. Their resource consumption is bounded by existing
+filesystem limits (`max_file_size`, `max_file_count`, `max_total_bytes`).
+
+| Builtin | Function | Covering Controls |
+|---------|----------|-------------------|
+| `patch` | Apply unified diffs to VFS files | VFS path normalization (TM-ESC-001), FS limits (TM-DOS-005/006) |
+| `zip` | Create BKZIP archives in VFS | FS limits (TM-DOS-005); archive size bounded by `max_file_size` |
+| `split` | Split file into pieces | FS limits (TM-DOS-006 `max_file_count`); see TM-DOS-055 |
+| `csv` | Parse/query CSV data | Input bounded by `max_file_size`; linear parsing |
+| `tomlq` | Query TOML data | Input bounded by `max_file_size`; TOML structure typically shallow |
+| `dotenv` | Load .env files | VFS read; variable injection risk covered by TM-INJ-018 |
+
+#### 10.3 Pattern Matching Builtins (Regex/Glob Risk)
+
+| Builtin | Function | Covering Controls |
+|---------|----------|-------------------|
+| `rg` | Recursive grep (ripgrep-like) | Uses `regex` crate with internal backtrack limits (TM-DOS-025); VFS-only search |
+| `glob` | Glob pattern matching | Uses `glob_match` — inherits ExtGlob blowup risk (TM-DOS-031, TM-DOS-054) |
+
+#### 10.4 Builtins with Specific Threat Entries
+
+| Builtin | Threat IDs | Summary |
+|---------|------------|---------|
+| `yaml` | TM-DOS-051 | Unbounded recursion in custom YAML parser |
+| `template` | TM-DOS-052, TM-DOS-053, TM-INF-020 | Recursive rendering; env var exposure |
+| `json` | (covered by serde_json) | Uses serde_json with 128-level recursion limit; no custom parser recursion risk |
+| `unzip` | TM-INJ-017 | Path traversal in archive entry names |
+| `dotenv` | TM-INJ-018 | Internal variable prefix injection |
+| `envsubst` | TM-INF-019 | Env var exposure via substitution (caller risk) |
+| `timeout` | (covered by existing limits) | Caps timeout at 300s (`MAX_TIMEOUT_SECONDS`); within execution timeout (TM-DOS-023) |
+
 ---
 
 ## Vulnerability Summary
@@ -1007,6 +1095,11 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 
 | Threat ID | Vulnerability | Impact | Recommendation |
 |-----------|---------------|--------|----------------|
+| TM-DOS-051 | YAML parser unbounded recursion | Stack overflow on deeply nested YAML | Add depth parameter to parse_yaml_block/map/list |
+| TM-DOS-052 | Template engine unbounded recursion | Stack overflow on deeply nested templates | Add depth parameter to render_template |
+| TM-DOS-054 | `glob --files` ExtGlob blowup | CPU exhaustion (same as TM-DOS-031) | Fix TM-DOS-031 covers this |
+| TM-INJ-017 | Unzip path traversal within VFS | Arbitrary VFS file overwrite | Validate paths stay within extract_base |
+| TM-INJ-018 | Dotenv internal variable injection | Bypass readonly, manipulate interpreter | Add is_internal_variable() check |
 | TM-INF-001 | Env vars may leak secrets | Information disclosure | Document caller responsibility |
 | TM-INJ-008 | Terminal escapes in output | UI manipulation | Document sanitization need |
 | TM-INJ-010 | Tar path traversal within VFS | Arbitrary VFS file overwrite | Validate paths stay within extract_base |
@@ -1156,6 +1249,10 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | VFS copy/rename semantic bugs | TM-DOS-047, TM-DOS-048 | Fix limit check in copy(), type check in rename() | **NEEDED** |
 | Date time info leak | TM-INF-018 | Configurable time source | **NEEDED** |
 | Python BashTool.reset() drops limits | TM-PY-028 | Preserve config on reset (match PyBash.reset()) | **NEEDED** |
+| YAML parser depth limit | TM-DOS-051 | Depth parameter in `parse_yaml_block`/`parse_yaml_map`/`parse_yaml_list` | **NEEDED** |
+| Template engine depth limit | TM-DOS-052 | Depth parameter in `render_template` | **NEEDED** |
+| Unzip path traversal validation | TM-INJ-017 | Validate resolved path stays within `extract_base` | **NEEDED** |
+| Dotenv internal variable guard | TM-INJ-018 | `is_internal_variable()` check in dotenv insert | **NEEDED** |
 
 ---
 
@@ -1193,7 +1290,7 @@ FsLimits::new()
 
 | Responsibility | Related Threats | Description |
 |---------------|-----------------|-------------|
-| Sanitize env vars | TM-INF-001 | Don't pass secrets to untrusted scripts |
+| Sanitize env vars | TM-INF-001, TM-INF-019, TM-INF-020 | Don't pass secrets to untrusted scripts (envsubst/template also expose env) |
 | Use network allowlist | TM-INF-010, TM-NET-* | Default denies all network access |
 | Sanitize output | TM-INJ-008 | Filter terminal escapes if displaying output |
 | Set appropriate limits | TM-DOS-* | Tune limits for your use case |

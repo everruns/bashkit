@@ -16,7 +16,7 @@ stateless, virtual execution model or pose security risks.
 | Feature | Rationale | Threat ID |
 |---------|-----------|-----------|
 | `exec` builtin | Cannot replace shell process in sandbox; breaks containment | TM-ESC-005 |
-| Background execution (`&`) | Stateless model - no persistent processes between commands | TM-ESC-007 |
+| ~~Background execution (`&`)~~ | ~~Stateless model~~ | Implemented: `&` and `wait` now supported |
 | Job control (`bg`, `fg`, `jobs`) | Requires process state; interactive feature | - |
 | Symlink following | Prevents symlink loop attacks and sandbox escape | TM-DOS-011 |
 | Process spawning | External commands run as builtins, not subprocesses | - |
@@ -98,22 +98,22 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | `&&` | Implemented | AND list |
 | `\|\|` | Implemented | OR list |
 | `;` | Implemented | Sequential execution |
-| `&` | Parsed only | Runs synchronously (stateless model) |
+| `&` | Implemented | Background execution with `wait` |
 | `!` | Implemented | Pipeline negation |
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1723 (1586 pass, 137 skip)
+**Total spec test cases:** 1852 (1824 pass, 28 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 1305 | Yes | 1181 | 124 | `bash_spec_tests` in CI |
-| AWK | 96 | Yes | 96 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
-| Grep | 76 | Yes | 76 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
+| Bash (core) | 1424 | Yes | 1399 | 25 | `bash_spec_tests` in CI |
+| AWK | 98 | Yes | 98 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
+| Grep | 82 | Yes | 82 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
-| JQ | 114 | Yes | 109 | 5 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
-| Python | 57 | Yes | 49 | 8 | embedded Python (Monty) |
-| **Total** | **1723** | **Yes** | **1586** | **137** | |
+| JQ | 116 | Yes | 115 | 1 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
+| Python | 57 | Yes | 55 | 2 | embedded Python (Monty) |
+| **Total** | **1852** | **Yes** | **1824** | **28** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -135,32 +135,41 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | column.test.sh | 5 | column alignment |
 | command.test.sh | 9 | `command -v`, `-V`, function bypass |
 | command-not-found.test.sh | 9 | unknown command handling |
-| command-subst.test.sh | 22 | includes backtick substitution, nested quotes in `$()` |
+| cmd-suggestions.test.sh | 4 | command suggestions on typos |
+| command-subst.test.sh | 25 | includes backtick substitution, nested quotes in `$()` |
 | conditional.test.sh | 24 | `[[ ]]` conditionals, `=~` regex, BASH_REMATCH, glob `==`/`!=` |
 | control-flow.test.sh | 58 | if/elif/else, for, while, case `;;`/`;&`/`;;&`, select, trap ERR, `[[ =~ ]]` BASH_REMATCH, compound input redirects |
-| cuttr.test.sh | 32 | cut and tr commands, `-z` zero-terminated |
+| comm.test.sh | 6 | comm column comparison |
+| cuttr.test.sh | 39 | cut and tr commands, `-z` zero-terminated |
 | date.test.sh | 37 | format specifiers, `-d` relative/compound/epoch, `-R`, `-I`, `%N` (2 skipped) |
 | declare.test.sh | 23 | `declare`/`typeset`, `-i`, `-r`, `-x`, `-a`, `-p`, `-n` nameref, `-l`/`-u` case conversion |
+| df.test.sh | 3 | disk free reporting |
 | diff.test.sh | 4 | line diffs |
+| du.test.sh | 4 | disk usage reporting |
 | dirstack.test.sh | 12 | `pushd`, `popd`, `dirs` directory stack operations |
 | echo.test.sh | 24 | escape sequences |
 | empty-bodies.test.sh | 8 | empty loop/function bodies (5 skipped) |
+| env.test.sh | 3 | environment variable operations |
 | errexit.test.sh | 8 | set -e tests |
 | eval-bugs.test.sh | 4 | regression tests for eval/script bugs |
 | exit-status.test.sh | 18 | exit code propagation |
 | expr.test.sh | 13 | `expr` arithmetic, string ops, pattern matching, exit codes |
 | extglob.test.sh | 15 | `@()`, `?()`, `*()`, `+()`, `!()` extended globs |
+| file.test.sh | 8 | file type detection |
 | fileops.test.sh | 28 | `mktemp`, `-d`, `-p`, template |
-| find.test.sh | 8 | file search |
+| find.test.sh | 10 | file search |
 | functions.test.sh | 26 | local dynamic scoping, nested writes, FUNCNAME call stack, `caller` builtin |
 | getopts.test.sh | 9 | POSIX option parsing, combined flags, silent mode |
 | glob-options.test.sh | 13 | dotglob, nocaseglob, failglob, nullglob, noglob, globstar |
 | globs.test.sh | 9 | for-loop glob expansion, recursive `**` |
+| gzip.test.sh | 2 | gzip/gunzip compression |
 | headtail.test.sh | 14 | |
-| heredoc.test.sh | 10 | heredoc variable expansion, quoted delimiters, file redirects, `<<-` tab strip |
+| heredoc.test.sh | 13 | heredoc variable expansion, quoted delimiters, file redirects, `<<-` tab strip |
 | heredoc-edge.test.sh | 15 | heredoc edge cases (6 skipped) |
 | herestring.test.sh | 8 | here-string `<<<` |
 | hextools.test.sh | 4 | od/xxd/hexdump (3 skipped) |
+| history.test.sh | 2 | history builtin |
+| less.test.sh | 3 | less pager |
 | ln.test.sh | 5 | `ln -s`, `-f`, symlink creation |
 | nameref.test.sh | 14 | nameref variables (14 skipped) |
 | negative-tests.test.sh | 13 | error conditions |
@@ -169,19 +178,24 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | parse-errors.test.sh | 18 | syntax error detection (13 skipped) |
 | paste.test.sh | 4 | line merging with `-s` serial and `-d` delimiter |
 | path.test.sh | 18 | basename, dirname, `realpath` canonical path resolution |
-| pipes-redirects.test.sh | 19 | includes stderr redirects |
+| pipes-redirects.test.sh | 26 | includes stderr redirects |
+| printenv.test.sh | 2 | printenv builtin |
 | printf.test.sh | 32 | format specifiers, array expansion, `-v` variable assignment, `%q` shell quoting |
-| procsub.test.sh | 6 | |
+| procsub.test.sh | 11 | process substitution |
 | quote.test.sh | 35 | quoting edge cases (2 skipped) |
 | read-builtin.test.sh | 10 | `read` builtin, IFS splitting, `-r`, `-a` (array), `-n` (nchars), here-string |
 | script-exec.test.sh | 10 | script execution by path, $PATH search, exit codes |
 | seq.test.sh | 12 | `seq` numeric sequences, `-w`, `-s`, decrement, negative |
 | shell-grammar.test.sh | 23 | shell grammar edge cases |
-| sleep.test.sh | 6 | |
+| sleep.test.sh | 9 | sleep timing |
 | sortuniq.test.sh | 32 | sort `-f`/`-n`/`-r`/`-u`/`-V`/`-t`/`-k`/`-s`/`-c`/`-h`/`-M`/`-m`/`-z`/`-o`, uniq `-c`/`-d`/`-u`/`-i`/`-f` |
 | source.test.sh | 19 | source/., function loading, PATH search, positional params |
+| stat.test.sh | 7 | stat file information |
 | string-ops.test.sh | 14 | string replacement (prefix/suffix anchored), `${var:?}`, case conversion |
+| strings.test.sh | 6 | strings extraction |
 | subshell.test.sh | 13 | subshell execution (4 skipped) |
+| tar.test.sh | 8 | tar archive operations |
+| tee.test.sh | 6 | tee output splitting |
 | temp-binding.test.sh | 10 | temporary variable bindings `VAR=val cmd` |
 | test-operators.test.sh | 27 | file/string tests, `-nt`/`-ot`/`-ef` file comparisons |
 | textrev.test.sh | 14 | `tac` reverse line order, `rev` reverse characters, `yes` repeated output |
@@ -191,8 +205,11 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | unicode.test.sh | 17 | unicode handling (3 skipped) |
 | var-op-test.test.sh | 21 | variable operations (16 skipped) |
 | variables.test.sh | 97 | includes special vars, prefix env, PIPESTATUS, trap EXIT, `${var@Q}`, `\<newline>` line continuation, PWD/HOME/USER/HOSTNAME/BASH_VERSION/SECONDS, `set -x` xtrace, `shopt` builtin, nullglob, `set -o`/`set +o` display, `trap -p` |
+| wait.test.sh | 2 | wait builtin |
+| watch.test.sh | 2 | watch command |
 | wc.test.sh | 20 | word count |
 | word-split.test.sh | 39 | IFS word splitting (36 skipped) |
+| xargs.test.sh | 7 | xargs command |
 
 ## Shell Features
 
@@ -202,8 +219,11 @@ Features that may be added in the future (not intentionally excluded):
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| ~~Coprocesses `coproc`~~ | ~~Low~~ | Implemented: `coproc [NAME] cmd` with NAME array FDs + `read -u` support |
 | History expansion | Out of scope | Interactive only |
+
+**Recently Implemented (moved from this table):**
+- Coprocesses `coproc`: `coproc [NAME] cmd` with NAME array FDs + `read -u` support
+- Background execution `&`: async execution with `wait` builtin
 
 ### Partially Implemented
 
@@ -224,22 +244,28 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-**106 core builtins + 3 feature-gated = 109 total**
+**145 core builtins + 3 feature-gated = 148 total**
 
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,
 `continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`,
-`basename`, `dirname`, `realpath`, `mkdir`, `mktemp`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `wc`,
+`basename`, `dirname`, `realpath`, `readlink`, `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`,
+`touch`, `chmod`, `chown`, `ln`, `wc`,
 `sort`, `uniq`, `cut`, `tr`, `paste`, `column`, `diff`, `comm`, `date`,
 `wait`, `curl`, `wget`, `timeout`, `command`, `getopts`,
 `type`, `which`, `hash`, `declare`, `typeset`, `let`, `kill`, `shopt`,
 `trap`, `caller`, `seq`, `tac`, `rev`, `yes`, `expr`,
 `time` (keyword), `whoami`, `hostname`, `uname`, `id`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
 `:` (colon), `eval`, `readonly`, `times`, `bash`, `sh`,
-`od`, `xxd`, `hexdump`, `strings`,
+`od`, `xxd`, `hexdump`, `strings`, `base64`, `md5sum`, `sha1sum`, `sha256sum`,
 `tar`, `gzip`, `gunzip`, `file`, `less`, `stat`, `watch`,
 `env`, `printenv`, `history`, `df`, `du`,
-`pushd`, `popd`, `dirs`, `bc`,
+`pushd`, `popd`, `dirs`, `bc`, `tree`,
+`clear`, `fold`, `expand`, `unexpand`, `envsubst`, `join`, `split`,
+`assert`, `dotenv`, `glob`, `log`, `retry`, `semver`, `verify`,
+`compgen`, `csv`, `fc`, `help`, `http`, `iconv`, `json`,
+`parallel`, `patch`, `rg`, `template`, `tomlq`, `yaml`, `zip`, `unzip`,
+`alias`, `unalias`,
 `git` (requires `git` feature, see [010-git-support.md](010-git-support.md)),
 `python`, `python3` (requires `python` feature, see [011-python-builtin.md](011-python-builtin.md))
 
@@ -312,13 +338,11 @@ None currently tracked.
 
 ### JQ Limitations
 
-**Skipped Tests (5):**
+**Skipped Tests (1):**
 
 | Feature | Count | Notes |
 |---------|-------|-------|
 | Alternative `//` | 1 | jaq errors on `.foo` applied to null instead of returning null |
-| Path functions | 2 | `setpath`, `leaf_paths` not in jaq standard library |
-| Regex functions | 2 | `match` (jaq omits capture `name` field), `scan` (jaq needs explicit `"g"` flag) |
 
 **Recently Fixed:**
 - `try`/`catch` expressions now work (jaq handles runtime errors)

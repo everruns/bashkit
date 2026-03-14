@@ -203,4 +203,4 @@ All Python execution runs in a virtual environment:
 
 See threat IDs TM-PY-001 through TM-PY-026 in the [threat model](./threat-model.md).
 
-[spec]: https://github.com/anthropics/bashkit/blob/main/specs/011-python-builtin.md
+[spec]: https://github.com/everruns/bashkit/blob/main/specs/011-python-builtin.md

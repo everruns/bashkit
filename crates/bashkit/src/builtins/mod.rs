@@ -227,42 +227,8 @@ pub fn resolve_path(cwd: &Path, path_str: &str) -> PathBuf {
     normalize_path(&joined)
 }
 
-/// Normalize a path by resolving `.` and `..` components.
-///
-/// This ensures paths like `/.` become `/` and `/tmp/../home` becomes `/home`.
-/// Used internally to ensure filesystem implementations receive clean paths.
-fn normalize_path(path: &Path) -> PathBuf {
-    use std::path::Component;
-
-    let mut result = PathBuf::new();
-
-    for component in path.components() {
-        match component {
-            Component::RootDir => {
-                result.push("/");
-            }
-            Component::Normal(name) => {
-                result.push(name);
-            }
-            Component::ParentDir => {
-                result.pop();
-            }
-            Component::CurDir => {
-                // Skip . components
-            }
-            Component::Prefix(_) => {
-                // Windows prefix, ignore
-            }
-        }
-    }
-
-    // Ensure we return "/" for empty result (e.g., from "/..")
-    if result.as_os_str().is_empty() {
-        result.push("/");
-    }
-
-    result
-}
+// Re-export shared normalize_path for use by builtins
+use crate::fs::normalize_path;
 
 /// Execution context for builtin commands.
 ///
