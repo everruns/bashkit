@@ -1950,4 +1950,26 @@ mod tests {
         let exists = fs.exists(Path::new("/dev/urandom")).await.unwrap();
         assert!(exists, "/dev/urandom should exist in VFS");
     }
+
+    #[tokio::test]
+    async fn test_dev_urandom_write_succeeds() {
+        let fs = InMemoryFs::new();
+        // Writing to /dev/urandom should succeed (like real device)
+        let result = fs.write_file(Path::new("/dev/urandom"), b"ignored").await;
+        assert!(result.is_ok());
+        // But reads still return random data, not what was written
+        let content = fs.read_file(Path::new("/dev/urandom")).await.unwrap();
+        assert_eq!(content.len(), 8192);
+    }
+
+    #[tokio::test]
+    async fn test_dev_urandom_path_normalization() {
+        let fs = InMemoryFs::new();
+        // Path traversal attempt should still resolve to /dev/urandom
+        let content = fs
+            .read_file(Path::new("/dev/../dev/urandom"))
+            .await
+            .unwrap();
+        assert_eq!(content.len(), 8192);
+    }
 }

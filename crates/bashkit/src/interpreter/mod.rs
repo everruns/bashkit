@@ -10596,4 +10596,22 @@ echo "count=$COUNT"
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "ok");
     }
+
+    #[tokio::test]
+    async fn test_dev_urandom_input_redirect() {
+        // Input redirect from /dev/urandom should provide data to stdin
+        let result = run_script("od -An -N4 -tx1 < /dev/urandom").await;
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            !result.stdout.trim().is_empty(),
+            "should produce hex output"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dev_random_also_works() {
+        let result = run_script("od -An -N4 -tx1 /dev/random").await;
+        assert_eq!(result.exit_code, 0);
+        assert!(!result.stdout.trim().is_empty());
+    }
 }
