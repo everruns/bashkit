@@ -412,7 +412,30 @@ pub use traits::{DirEntry, FileSystem, FileType, Metadata, fs_errors};
 
 use crate::error::Result;
 use std::io::{Error as IoError, ErrorKind};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Normalize a virtual filesystem path by resolving `.` and `..` components.
+///
+/// Returns a canonical absolute path. If the result would be empty (e.g., from
+/// `/../..`), returns `/`.
+pub fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::RootDir => result.push("/"),
+            Component::Normal(name) => result.push(name),
+            Component::ParentDir => {
+                result.pop();
+            }
+            Component::CurDir | Component::Prefix(_) => {}
+        }
+    }
+    if result.as_os_str().is_empty() {
+        result.push("/");
+    }
+    result
+}
 
 /// Verify that a filesystem implementation meets minimum requirements for Bashkit.
 ///

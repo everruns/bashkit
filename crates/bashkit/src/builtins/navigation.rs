@@ -72,28 +72,4 @@ impl Builtin for Pwd {
     }
 }
 
-fn normalize_path(path: &std::path::Path) -> PathBuf {
-    let mut result = PathBuf::new();
-
-    for component in path.components() {
-        match component {
-            std::path::Component::RootDir => {
-                result.push("/");
-            }
-            std::path::Component::Normal(name) => {
-                result.push(name);
-            }
-            std::path::Component::ParentDir => {
-                result.pop();
-            }
-            std::path::Component::CurDir => {}
-            std::path::Component::Prefix(_) => {}
-        }
-    }
-
-    if result.as_os_str().is_empty() {
-        result.push("/");
-    }
-
-    result
-}
+use crate::fs::normalize_path;
