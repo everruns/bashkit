@@ -146,6 +146,210 @@ impl Builtin for ToolBuiltinAdapter {
 }
 
 // ============================================================================
+// HelpBuiltin — runtime schema introspection
+// ============================================================================
+
+/// Snapshot of a tool definition for the `help` and `discover` builtins.
+#[derive(Clone)]
+struct ToolDefSnapshot {
+    name: String,
+    description: String,
+    input_schema: serde_json::Value,
+    tags: Vec<String>,
+    category: Option<String>,
+}
+
+/// Built-in `help` command for runtime tool schema introspection.
+///
+/// Modes:
+/// - `help --list` — list all tool names + descriptions
+/// - `help <tool>` — human-readable usage
+/// - `help <tool> --json` — machine-readable JSON schema
+struct HelpBuiltin {
+    tools: Vec<ToolDefSnapshot>,
+}
+
+#[async_trait]
+impl Builtin for HelpBuiltin {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        let args = ctx.args;
+
+        if args.is_empty() || (args.len() == 1 && args[0] == "--list") {
+            // List all tools
+            let mut out = String::new();
+            for t in &self.tools {
+                out.push_str(&format!("{:<20} {}\n", t.name, t.description));
+            }
+            return Ok(ExecResult::ok(out));
+        }
+
+        // Find the tool name (first non-flag arg)
+        let tool_name = args.iter().find(|a| !a.starts_with("--"));
+        let json_mode = args.iter().any(|a| a == "--json");
+
+        let Some(tool_name) = tool_name else {
+            return Ok(ExecResult::err(
+                "usage: help [--list] [<tool>] [--json]".to_string(),
+                1,
+            ));
+        };
+
+        let Some(tool) = self.tools.iter().find(|t| t.name == *tool_name) else {
+            return Ok(ExecResult::err(
+                format!("help: unknown tool: {tool_name}"),
+                1,
+            ));
+        };
+
+        if json_mode {
+            // Machine-readable JSON output
+            let obj = serde_json::json!({
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.input_schema,
+            });
+            let json_str = serde_json::to_string_pretty(&obj).unwrap_or_default();
+            return Ok(ExecResult::ok(format!("{json_str}\n")));
+        }
+
+        // Human-readable output
+        let mut out = format!("{} - {}\n", tool.name, tool.description);
+        if let Some(usage) = usage_from_schema(&tool.input_schema) {
+            out.push_str(&format!("Usage: {} {}\n", tool.name, usage));
+        }
+        Ok(ExecResult::ok(out))
+    }
+}
+
+// ============================================================================
+// DiscoverBuiltin — progressive tool discovery
+// ============================================================================
+
+/// Built-in `discover` command for exploring large tool sets.
+struct DiscoverBuiltin {
+    tools: Vec<ToolDefSnapshot>,
+}
+
+impl DiscoverBuiltin {
+    fn filter_tools(&self, args: &[String]) -> (Vec<&ToolDefSnapshot>, bool) {
+        let json_mode = args.iter().any(|a| a == "--json");
+
+        if args.iter().any(|a| a == "--categories") {
+            return (Vec::new(), json_mode);
+        }
+
+        if let Some(pos) = args.iter().position(|a| a == "--category") {
+            let cat = args.get(pos + 1).map(|s| s.as_str()).unwrap_or("");
+            let filtered: Vec<&ToolDefSnapshot> = self
+                .tools
+                .iter()
+                .filter(|t| t.category.as_deref() == Some(cat))
+                .collect();
+            return (filtered, json_mode);
+        }
+
+        if let Some(pos) = args.iter().position(|a| a == "--tag") {
+            let tag = args.get(pos + 1).map(|s| s.as_str()).unwrap_or("");
+            let filtered: Vec<&ToolDefSnapshot> = self
+                .tools
+                .iter()
+                .filter(|t| t.tags.iter().any(|tg| tg == tag))
+                .collect();
+            return (filtered, json_mode);
+        }
+
+        if let Some(pos) = args.iter().position(|a| a == "--search") {
+            let keyword = args
+                .get(pos + 1)
+                .map(|s| s.to_lowercase())
+                .unwrap_or_default();
+            let filtered: Vec<&ToolDefSnapshot> = self
+                .tools
+                .iter()
+                .filter(|t| {
+                    t.name.to_lowercase().contains(&keyword)
+                        || t.description.to_lowercase().contains(&keyword)
+                })
+                .collect();
+            return (filtered, json_mode);
+        }
+
+        (self.tools.iter().collect(), json_mode)
+    }
+}
+
+#[async_trait]
+impl Builtin for DiscoverBuiltin {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        let args = ctx.args;
+
+        if args.is_empty() {
+            return Ok(ExecResult::err(
+                "usage: discover --categories | --category <name> | --tag <tag> | --search <keyword> [--json]".to_string(),
+                1,
+            ));
+        }
+
+        let json_mode = args.iter().any(|a| a == "--json");
+
+        // --categories
+        if args.iter().any(|a| a == "--categories") {
+            let mut cats: std::collections::BTreeMap<String, usize> =
+                std::collections::BTreeMap::new();
+            for t in &self.tools {
+                if let Some(ref cat) = t.category {
+                    *cats.entry(cat.clone()).or_insert(0) += 1;
+                }
+            }
+            if json_mode {
+                let arr: Vec<serde_json::Value> = cats
+                    .iter()
+                    .map(|(name, count)| serde_json::json!({"category": name, "count": count}))
+                    .collect();
+                let json_str =
+                    serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string());
+                return Ok(ExecResult::ok(format!("{json_str}\n")));
+            }
+            let mut out = String::new();
+            for (name, count) in &cats {
+                let plural = if *count == 1 { "tool" } else { "tools" };
+                out.push_str(&format!("{name} ({count} {plural})\n"));
+            }
+            return Ok(ExecResult::ok(out));
+        }
+
+        let (filtered, _) = self.filter_tools(args);
+
+        if json_mode {
+            let arr: Vec<serde_json::Value> = filtered
+                .iter()
+                .map(|t| {
+                    let mut obj = serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                    });
+                    if !t.tags.is_empty() {
+                        obj["tags"] = serde_json::json!(t.tags);
+                    }
+                    if let Some(ref cat) = t.category {
+                        obj["category"] = serde_json::json!(cat);
+                    }
+                    obj
+                })
+                .collect();
+            let json_str = serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string());
+            return Ok(ExecResult::ok(format!("{json_str}\n")));
+        }
+
+        let mut out = String::new();
+        for t in &filtered {
+            out.push_str(&format!("{:<20} {}\n", t.name, t.description));
+        }
+        Ok(ExecResult::ok(out))
+    }
+}
+
+// ============================================================================
 // ScriptedTool — internal helpers
 // ============================================================================
 
@@ -168,6 +372,29 @@ impl ScriptedTool {
             });
             builder = builder.builtin(name, builtin);
         }
+
+        // Register the help and discover builtins
+        let snapshots: Vec<ToolDefSnapshot> = self
+            .tools
+            .iter()
+            .map(|t| ToolDefSnapshot {
+                name: t.def.name.clone(),
+                description: t.def.description.clone(),
+                input_schema: t.def.input_schema.clone(),
+                tags: t.def.tags.clone(),
+                category: t.def.category.clone(),
+            })
+            .collect();
+        builder = builder.builtin(
+            "help".to_string(),
+            Box::new(HelpBuiltin {
+                tools: snapshots.clone(),
+            }),
+        );
+        builder = builder.builtin(
+            "discover".to_string(),
+            Box::new(DiscoverBuiltin { tools: snapshots }),
+        );
 
         builder.build()
     }
@@ -242,10 +469,22 @@ impl ScriptedTool {
         prompt.push_str("Output: {stdout, stderr, exit_code}\n\n");
 
         prompt.push_str("## Available tool commands\n\n");
-        for t in &self.tools {
-            prompt.push_str(&format!("- `{}`: {}\n", t.def.name, t.def.description));
-            if let Some(usage) = usage_from_schema(&t.def.input_schema) {
-                prompt.push_str(&format!("  Usage: `{} {}`\n", t.def.name, usage));
+
+        if self.compact_prompt {
+            // Compact mode: names + one-liners, defer details to `help`
+            for t in &self.tools {
+                prompt.push_str(&format!(
+                    "- `{}`: {} (use `help {}` for params)\n",
+                    t.def.name, t.def.description, t.def.name
+                ));
+            }
+        } else {
+            // Full mode: include usage hints from schema
+            for t in &self.tools {
+                prompt.push_str(&format!("- `{}`: {}\n", t.def.name, t.def.description));
+                if let Some(usage) = usage_from_schema(&t.def.input_schema) {
+                    prompt.push_str(&format!("  Usage: `{} {}`\n", t.def.name, usage));
+                }
             }
         }
 
@@ -257,6 +496,13 @@ impl ScriptedTool {
              - Use `set -e` to stop on first error\n\
              - Standard builtins (echo, grep, sed, awk, etc.) are available\n",
         );
+
+        if self.compact_prompt {
+            prompt.push_str(
+                "- Use `help <tool>` for full usage, `help <tool> --json` for schema\n\
+                 - Use `help --list` to see all available tools\n",
+            );
+        }
 
         prompt
     }
@@ -364,6 +610,7 @@ impl Tool for ScriptedTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ToolDef;
 
     #[test]
     fn test_parse_flags_key_value() {
@@ -455,6 +702,155 @@ mod tests {
         );
     }
 
+    // -- HelpBuiltin tests --
+
+    fn build_help_test_tool() -> ScriptedTool {
+        ScriptedTool::builder("test_api")
+            .short_description("Test API")
+            .tool(
+                ToolDef::new("get_user", "Fetch user by ID").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"}
+                    }
+                })),
+                |_args: &super::ToolArgs| Ok("{\"id\":1}\n".to_string()),
+            )
+            .tool(
+                ToolDef::new("list_orders", "List orders for user").with_schema(
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "user_id": {"type": "integer"},
+                            "limit": {"type": "integer"}
+                        }
+                    }),
+                ),
+                |_args: &super::ToolArgs| Ok("[]\n".to_string()),
+            )
+            .build()
+    }
+
+    #[tokio::test]
+    async fn test_help_list() {
+        let mut tool = build_help_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "help --list".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("get_user"));
+        assert!(resp.stdout.contains("Fetch user by ID"));
+        assert!(resp.stdout.contains("list_orders"));
+    }
+
+    #[tokio::test]
+    async fn test_help_tool_human_readable() {
+        let mut tool = build_help_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "help get_user".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("get_user - Fetch user by ID"));
+        assert!(resp.stdout.contains("--id <integer>"));
+    }
+
+    #[tokio::test]
+    async fn test_help_tool_json() {
+        let mut tool = build_help_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "help get_user --json".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        let parsed: serde_json::Value =
+            serde_json::from_str(resp.stdout.trim()).expect("should be valid JSON");
+        assert_eq!(parsed["name"], "get_user");
+        assert_eq!(parsed["description"], "Fetch user by ID");
+        assert!(parsed["input_schema"]["properties"]["id"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_help_unknown_tool() {
+        let mut tool = build_help_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "help nonexistent".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_ne!(resp.exit_code, 0);
+        assert!(resp.stderr.contains("unknown tool"));
+    }
+
+    #[tokio::test]
+    async fn test_help_no_args_lists_all() {
+        let mut tool = build_help_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "help".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("get_user"));
+        assert!(resp.stdout.contains("list_orders"));
+    }
+
+    #[tokio::test]
+    async fn test_help_json_pipe_jq() {
+        let mut tool = build_help_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "help get_user --json | jq -r '.name'".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout.trim(), "get_user");
+    }
+
+    #[tokio::test]
+    async fn test_compact_prompt_omits_usage() {
+        let tool = ScriptedTool::builder("compact_test")
+            .compact_prompt(true)
+            .tool(
+                ToolDef::new("get_user", "Fetch user").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "id": {"type": "integer"} }
+                })),
+                |_args: &super::ToolArgs| Ok("ok\n".to_string()),
+            )
+            .build();
+        let sp = tool.system_prompt();
+        assert!(sp.contains("use `help get_user` for params"));
+        assert!(!sp.contains("Usage: `get_user --id <integer>`"));
+        assert!(sp.contains("help <tool> --json"));
+    }
+
+    #[tokio::test]
+    async fn test_non_compact_prompt_has_usage() {
+        let tool = ScriptedTool::builder("full_test")
+            .tool(
+                ToolDef::new("get_user", "Fetch user").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "id": {"type": "integer"} }
+                })),
+                |_args: &super::ToolArgs| Ok("ok\n".to_string()),
+            )
+            .build();
+        let sp = tool.system_prompt();
+        assert!(sp.contains("Usage: `get_user --id <integer>`"));
+        assert!(!sp.contains("use `help get_user` for params"));
+    }
+
     #[tokio::test]
     async fn test_error_uses_display_not_debug() {
         use super::ScriptedTool;
@@ -480,5 +876,190 @@ mod tests {
                 "error should use Display not Debug: {err}",
             );
         }
+    }
+
+    // -- DiscoverBuiltin tests --
+
+    fn build_discover_test_tool() -> ScriptedTool {
+        ScriptedTool::builder("big_api")
+            .short_description("Big API")
+            .tool(
+                ToolDef::new("create_charge", "Create a payment charge")
+                    .with_category("payments")
+                    .with_tags(&["billing", "write"]),
+                |_args: &super::ToolArgs| Ok("ok\n".to_string()),
+            )
+            .tool(
+                ToolDef::new("refund", "Issue a refund")
+                    .with_category("payments")
+                    .with_tags(&["billing", "write"]),
+                |_args: &super::ToolArgs| Ok("ok\n".to_string()),
+            )
+            .tool(
+                ToolDef::new("get_user", "Fetch user by ID")
+                    .with_category("users")
+                    .with_tags(&["read"]),
+                |_args: &super::ToolArgs| Ok("ok\n".to_string()),
+            )
+            .tool(
+                ToolDef::new("delete_user", "Delete a user account")
+                    .with_category("users")
+                    .with_tags(&["admin", "write"]),
+                |_args: &super::ToolArgs| Ok("ok\n".to_string()),
+            )
+            .tool(
+                ToolDef::new("get_inventory", "Check inventory levels").with_category("inventory"),
+                |_args: &super::ToolArgs| Ok("ok\n".to_string()),
+            )
+            .build()
+    }
+
+    #[tokio::test]
+    async fn test_discover_categories() {
+        let mut tool = build_discover_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --categories".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("payments (2 tools)"));
+        assert!(resp.stdout.contains("users (2 tools)"));
+        assert!(resp.stdout.contains("inventory (1 tool)"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_category_filter() {
+        let mut tool = build_discover_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --category payments".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("create_charge"));
+        assert!(resp.stdout.contains("refund"));
+        assert!(!resp.stdout.contains("get_user"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_tag_filter() {
+        let mut tool = build_discover_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --tag admin".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("delete_user"));
+        assert!(!resp.stdout.contains("create_charge"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_search() {
+        let mut tool = build_discover_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --search user".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("get_user"));
+        assert!(resp.stdout.contains("delete_user"));
+        assert!(!resp.stdout.contains("create_charge"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_search_case_insensitive() {
+        let mut tool = build_discover_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --search REFUND".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("refund"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_categories_json() {
+        let mut tool = build_discover_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --categories --json".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        let arr: Vec<serde_json::Value> =
+            serde_json::from_str(resp.stdout.trim()).expect("valid JSON");
+        assert!(
+            arr.iter()
+                .any(|v| v["category"] == "payments" && v["count"] == 2)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_discover_category_json() {
+        let mut tool = build_discover_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --category payments --json".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        let arr: Vec<serde_json::Value> =
+            serde_json::from_str(resp.stdout.trim()).expect("valid JSON");
+        assert_eq!(arr.len(), 2);
+        assert!(arr.iter().any(|v| v["name"] == "create_charge"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_no_args_shows_usage() {
+        let mut tool = build_discover_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_ne!(resp.exit_code, 0);
+        assert!(resp.stderr.contains("usage:"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_tag_json() {
+        let mut tool = build_discover_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "discover --tag billing --json".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        let arr: Vec<serde_json::Value> =
+            serde_json::from_str(resp.stdout.trim()).expect("valid JSON");
+        assert_eq!(arr.len(), 2);
+        assert!(arr.iter().all(|v| {
+            v["tags"]
+                .as_array()
+                .expect("tags array")
+                .contains(&serde_json::json!("billing"))
+        }));
+    }
+
+    #[tokio::test]
+    async fn test_tooldef_with_tags_and_category() {
+        let def = ToolDef::new("test", "A test tool")
+            .with_tags(&["admin", "billing"])
+            .with_category("payments");
+        assert_eq!(def.tags, vec!["admin", "billing"]);
+        assert_eq!(def.category.as_deref(), Some("payments"));
     }
 }

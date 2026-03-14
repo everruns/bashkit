@@ -137,6 +137,10 @@ pub struct ToolDef {
     pub description: String,
     /// JSON Schema describing accepted arguments. Empty object if unspecified.
     pub input_schema: serde_json::Value,
+    /// Categorical tags for discovery (e.g. `["admin", "billing"]`).
+    pub tags: Vec<String>,
+    /// Grouping category for discovery (e.g. `"payments"`).
+    pub category: Option<String>,
 }
 
 impl ToolDef {
@@ -146,12 +150,26 @@ impl ToolDef {
             name: name.into(),
             description: description.into(),
             input_schema: serde_json::Value::Object(Default::default()),
+            tags: Vec::new(),
+            category: None,
         }
     }
 
     /// Attach a JSON Schema for the tool's input parameters.
     pub fn with_schema(mut self, schema: serde_json::Value) -> Self {
         self.input_schema = schema;
+        self
+    }
+
+    /// Add categorical tags for discovery filtering.
+    pub fn with_tags(mut self, tags: &[&str]) -> Self {
+        self.tags = tags.iter().map(|s| s.to_string()).collect();
+        self
+    }
+
+    /// Set the grouping category for discovery.
+    pub fn with_category(mut self, category: &str) -> Self {
+        self.category = Some(category.to_string());
         self
     }
 }
@@ -243,6 +261,7 @@ pub struct ScriptedToolBuilder {
     tools: Vec<RegisteredTool>,
     limits: Option<ExecutionLimits>,
     env_vars: Vec<(String, String)>,
+    compact_prompt: bool,
 }
 
 impl ScriptedToolBuilder {
@@ -253,6 +272,7 @@ impl ScriptedToolBuilder {
             tools: Vec::new(),
             limits: None,
             env_vars: Vec::new(),
+            compact_prompt: false,
         }
     }
 
@@ -290,6 +310,16 @@ impl ScriptedToolBuilder {
         self
     }
 
+    /// Emit compact `system_prompt()` that omits full schemas and adds help tip.
+    ///
+    /// When enabled, `system_prompt()` lists only tool names + one-liners and
+    /// instructs the LLM to use `help <tool>` / `help <tool> --json` for details.
+    /// Default: `false` (full schemas in prompt, backward compatible).
+    pub fn compact_prompt(mut self, compact: bool) -> Self {
+        self.compact_prompt = compact;
+        self
+    }
+
     /// Build the [`ScriptedTool`].
     pub fn build(self) -> ScriptedTool {
         let short_desc = self
@@ -302,6 +332,7 @@ impl ScriptedToolBuilder {
             tools: self.tools,
             limits: self.limits,
             env_vars: self.env_vars,
+            compact_prompt: self.compact_prompt,
         }
     }
 }
@@ -329,6 +360,7 @@ pub struct ScriptedTool {
     pub(crate) tools: Vec<RegisteredTool>,
     pub(crate) limits: Option<ExecutionLimits>,
     pub(crate) env_vars: Vec<(String, String)>,
+    pub(crate) compact_prompt: bool,
 }
 
 impl ScriptedTool {
