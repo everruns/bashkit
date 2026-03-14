@@ -41,7 +41,7 @@ through configurable limits.
 | Missing validate_path (TM-DOS-039) | VFS methods skip path checks | Add to all methods | **OPEN** |
 | Diff algorithm DoS (TM-DOS-028) | `diff` on large unrelated files | LCS matrix cap (10M cells) | [`builtins/diff.rs`][diff] |
 | Arithmetic overflow (TM-DOS-029) | `$(( 2 ** -1 ))` | Use wrapping arithmetic | **OPEN** |
-| Parser limit bypass (TM-DOS-030) | eval/source ignore limits | Use `Parser::with_limits()` | **OPEN** |
+| Parser limit bypass (TM-DOS-030) | eval/source ignore limits | Use `Parser::with_limits()` | **FIXED** |
 | ExtGlob blowup (TM-DOS-031) | `+(a\|aa)` exponential | Add depth limit | **OPEN** |
 
 **Configuration:**
