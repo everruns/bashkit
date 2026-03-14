@@ -664,3 +664,28 @@ echo x | awk 'BEGIN{printf("["); printf("%s", "hi"); printf("]"); print ""}'
 ### expect
 [hi]
 ### end
+
+### awk_print_redirect_truncate
+# Issue #607: print with > creates file
+awk 'BEGIN{print "hello" > "/tmp/awk_redir.txt"}'
+cat /tmp/awk_redir.txt
+### expect
+hello
+### end
+
+### awk_printf_redirect_truncate
+# Issue #607: printf with > creates file
+awk 'BEGIN{printf "hello\n" > "/tmp/awk_redir2.txt"}'
+cat /tmp/awk_redir2.txt
+### expect
+hello
+### end
+
+### awk_print_redirect_append
+# Issue #607: print with >> appends to file
+awk 'BEGIN{print "a" > "/tmp/awk_redir3.txt"; print "b" >> "/tmp/awk_redir3.txt"}'
+cat /tmp/awk_redir3.txt
+### expect
+a
+b
+### end
