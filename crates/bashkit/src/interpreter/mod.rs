@@ -475,6 +475,11 @@ impl Interpreter {
         builtins.insert("tee".to_string(), Box::new(builtins::Tee));
         builtins.insert("watch".to_string(), Box::new(builtins::Watch));
         builtins.insert("shopt".to_string(), Box::new(builtins::Shopt));
+        builtins.insert("clear".to_string(), Box::new(builtins::Clear));
+        builtins.insert("fold".to_string(), Box::new(builtins::Fold));
+        builtins.insert("expand".to_string(), Box::new(builtins::Expand));
+        builtins.insert("unexpand".to_string(), Box::new(builtins::Unexpand));
+        builtins.insert("envsubst".to_string(), Box::new(builtins::Envsubst));
 
         // Merge custom builtins (override defaults if same name)
         for (name, builtin) in custom_builtins {
