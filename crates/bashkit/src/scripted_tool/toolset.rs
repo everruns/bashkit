@@ -458,13 +458,16 @@ mod tests {
                     timeout_ms: None,
                 },
                 Box::new(move |status| {
-                    phases_clone.lock().unwrap().push(status.phase.clone());
+                    phases_clone
+                        .lock()
+                        .expect("lock poisoned")
+                        .push(status.phase.clone());
                 }),
             )
             .await;
 
         assert_eq!(resp.exit_code, 0);
-        let phases = phases.lock().unwrap();
+        let phases = phases.lock().expect("lock poisoned");
         assert!(phases.contains(&"validate".to_string()));
         assert!(phases.contains(&"complete".to_string()));
     }
