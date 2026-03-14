@@ -1,5 +1,7 @@
 // Decision: enable http, git, python by default for CLI users.
 // Provide --no-http, --no-git, --no-python to disable individually.
+// Decision: keep one-shot CLI on a current-thread runtime; reserve multi-thread
+// runtime for MCP only so cold-start work stays off the common path.
 
 //! Bashkit CLI - Command line interface for virtual bash execution
 //!
@@ -14,6 +16,7 @@ mod mcp;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use tokio::runtime::Builder;
 
 /// Bashkit - Virtual bash interpreter
 #[derive(Parser, Debug)]
@@ -75,6 +78,21 @@ enum SubCmd {
     Mcp,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CliMode {
+    Mcp,
+    Command,
+    Script,
+    Interactive,
+}
+
+#[derive(Debug)]
+struct RunOutput {
+    stdout: String,
+    stderr: String,
+    exit_code: i32,
+}
+
 fn build_bash(args: &Args) -> bashkit::Bash {
     let mut builder = bashkit::Bash::builder();
 
@@ -97,6 +115,18 @@ fn build_bash(args: &Args) -> bashkit::Bash {
     }
 
     builder.build()
+}
+
+fn cli_mode(args: &Args) -> CliMode {
+    if matches!(args.subcommand, Some(SubCmd::Mcp)) {
+        CliMode::Mcp
+    } else if args.command.is_some() {
+        CliMode::Command
+    } else if args.script.is_some() {
+        CliMode::Script
+    } else {
+        CliMode::Interactive
+    }
 }
 
 /// Parse mount specs (HOST_PATH or HOST_PATH:VFS_PATH) and apply to builder.
@@ -123,47 +153,69 @@ fn apply_real_mounts(
     builder
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Handle subcommands first
-    if let Some(SubCmd::Mcp) = args.subcommand {
-        return mcp::run().await;
-    }
-
-    let mut bash = build_bash(&args);
-
-    // Execute command string if provided
-    if let Some(cmd) = args.command {
-        let result = bash.exec(&cmd).await.context("Failed to execute command")?;
-        print!("{}", result.stdout);
-        if !result.stderr.is_empty() {
-            eprint!("{}", result.stderr);
+    match cli_mode(&args) {
+        CliMode::Mcp => run_mcp(),
+        CliMode::Command | CliMode::Script => {
+            let output = run_oneshot(args)?;
+            print!("{}", output.stdout);
+            if !output.stderr.is_empty() {
+                eprint!("{}", output.stderr);
+            }
+            std::process::exit(output.exit_code);
         }
-        std::process::exit(result.exit_code);
-    }
-
-    // Execute script file if provided
-    if let Some(script_path) = args.script {
-        let script = std::fs::read_to_string(&script_path)
-            .with_context(|| format!("Failed to read script: {}", script_path.display()))?;
-
-        let result = bash
-            .exec(&script)
-            .await
-            .context("Failed to execute script")?;
-        print!("{}", result.stdout);
-        if !result.stderr.is_empty() {
-            eprint!("{}", result.stderr);
+        CliMode::Interactive => {
+            eprintln!("bashkit: interactive mode not yet implemented");
+            eprintln!("Usage: bashkit -c 'command' or bashkit script.sh or bashkit mcp");
+            std::process::exit(1);
         }
-        std::process::exit(result.exit_code);
     }
+}
 
-    // Interactive REPL (not yet implemented)
-    eprintln!("bashkit: interactive mode not yet implemented");
-    eprintln!("Usage: bashkit -c 'command' or bashkit script.sh or bashkit mcp");
-    std::process::exit(1);
+fn run_mcp() -> Result<()> {
+    Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("Failed to build MCP runtime")?
+        .block_on(mcp::run())
+}
+
+fn run_oneshot(args: Args) -> Result<RunOutput> {
+    Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("Failed to build CLI runtime")?
+        .block_on(async move {
+            let mut bash = build_bash(&args);
+
+            if let Some(cmd) = args.command {
+                let result = bash.exec(&cmd).await.context("Failed to execute command")?;
+                return Ok(RunOutput {
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    exit_code: result.exit_code,
+                });
+            }
+
+            if let Some(script_path) = args.script {
+                let script = std::fs::read_to_string(&script_path)
+                    .with_context(|| format!("Failed to read script: {}", script_path.display()))?;
+
+                let result = bash
+                    .exec(&script)
+                    .await
+                    .context("Failed to execute script")?;
+                return Ok(RunOutput {
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    exit_code: result.exit_code,
+                });
+            }
+
+            unreachable!("run_oneshot called for non-executable mode");
+        })
 }
 
 #[cfg(test)]
@@ -192,6 +244,30 @@ mod tests {
         assert!(!args.no_http);
         assert!(!args.no_git);
         assert!(!args.no_python);
+    }
+
+    #[test]
+    fn cli_mode_prefers_mcp() {
+        let args = Args::parse_from(["bashkit", "mcp"]);
+        assert_eq!(cli_mode(&args), CliMode::Mcp);
+    }
+
+    #[test]
+    fn cli_mode_detects_command() {
+        let args = Args::parse_from(["bashkit", "-c", "echo hi"]);
+        assert_eq!(cli_mode(&args), CliMode::Command);
+    }
+
+    #[test]
+    fn cli_mode_detects_script() {
+        let args = Args::parse_from(["bashkit", "script.sh"]);
+        assert_eq!(cli_mode(&args), CliMode::Script);
+    }
+
+    #[test]
+    fn cli_mode_falls_back_to_interactive() {
+        let args = Args::parse_from(["bashkit"]);
+        assert_eq!(cli_mode(&args), CliMode::Interactive);
     }
 
     #[cfg(feature = "python")]
@@ -259,6 +335,15 @@ mod tests {
         let result = bash.exec("echo works").await.expect("exec");
         assert_eq!(result.stdout, "works\n");
         assert_eq!(result.exit_code, 0);
+    }
+
+    #[test]
+    fn run_oneshot_executes_command_on_current_thread_runtime() {
+        let args = Args::parse_from(["bashkit", "--no-http", "--no-git", "-c", "echo works"]);
+        let output = run_oneshot(args).expect("run");
+        assert_eq!(output.stdout, "works\n");
+        assert_eq!(output.stderr, "");
+        assert_eq!(output.exit_code, 0);
     }
 
     #[cfg(feature = "realfs")]
