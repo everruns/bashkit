@@ -15,25 +15,28 @@
 //! - **Experimental: Git** - Virtual git operations on the VFS (`git` feature)
 //! - **Experimental: Python** - Embedded Python via [Monty](https://github.com/pydantic/monty) (`python` feature)
 //!
-//! # Built-in Commands (100+)
+//! # Built-in Commands (148)
 //!
 //! | Category | Commands |
 //! |----------|----------|
-//! | Core | `echo`, `printf`, `cat`, `nl`, `read` |
-//! | Navigation | `cd`, `pwd`, `ls`, `find`, `pushd`, `popd`, `dirs` |
-//! | Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[` |
-//! | Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times`, `declare`, `typeset`, `let` |
-//! | Shell | `bash`, `sh` (virtual re-invocation), `:`, `trap`, `caller`, `getopts`, `shopt` |
-//! | Text processing | `grep`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr` |
-//! | File operations | `mkdir`, `mktemp`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath` |
+//! | Core | `echo`, `printf`, `cat`, `nl`, `read`, `log` |
+//! | Navigation | `cd`, `pwd`, `ls`, `find`, `tree`, `pushd`, `popd`, `dirs` |
+//! | Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[`, `assert` |
+//! | Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times`, `declare`, `typeset`, `let`, `dotenv`, `envsubst` |
+//! | Shell | `bash`, `sh` (virtual re-invocation), `:`, `trap`, `caller`, `getopts`, `shopt`, `alias`, `unalias`, `compgen`, `fc`, `help` |
+//! | Text processing | `grep`, `rg`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr`, `fold`, `expand`, `unexpand`, `join`, `split`, `iconv`, `template` |
+//! | File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `glob`, `patch` |
 //! | File inspection | `file`, `stat`, `less` |
-//! | Archives | `tar`, `gzip`, `gunzip` |
-//! | Byte tools | `od`, `xxd`, `hexdump` |
-//! | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill` |
+//! | Archives | `tar`, `gzip`, `gunzip`, `zip`, `unzip` |
+//! | Byte tools | `od`, `xxd`, `hexdump`, `base64` |
+//! | Checksums | `md5sum`, `sha1sum`, `sha256sum`, `verify` |
+//! | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `clear`, `retry`, `parallel` |
 //! | Disk | `df`, `du` |
 //! | Pipeline | `xargs`, `tee` |
 //! | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
-//! | Network | `curl`, `wget` (requires [`NetworkAllowlist`])
+//! | Structured data | `json`, `csv`, `yaml`, `tomlq`, `semver` |
+//! | Network | `curl`, `wget`, `http` (requires [`NetworkAllowlist`])
+//! | Arithmetic | `bc` |
 //! | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature)
 //!
 //! # Shell Features
