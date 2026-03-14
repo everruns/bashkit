@@ -55,17 +55,13 @@ fn default_opts() -> BashOptions {
 }
 
 // ============================================================================
-// Bash — core interpreter
+// Shared inner state — all fields behind Arc so methods never hold a raw
+// pointer to the napi-allocated struct across await points or blocking calls.
 // ============================================================================
 
-/// Core bash interpreter with virtual filesystem.
-///
-/// State persists between calls — files created in one `execute()` are
-/// available in subsequent calls.
-#[napi]
-pub struct Bash {
-    inner: Arc<Mutex<RustBash>>,
-    rt: tokio::runtime::Runtime,
+struct SharedState {
+    interpreter: Arc<Mutex<RustBash>>,
+    rt: Arc<tokio::runtime::Runtime>,
     cancelled: Arc<AtomicBool>,
     username: Option<String>,
     hostname: Option<String>,
@@ -73,12 +69,8 @@ pub struct Bash {
     max_loop_iterations: Option<u32>,
 }
 
-#[napi]
-impl Bash {
-    #[napi(constructor)]
-    pub fn new(options: Option<BashOptions>) -> napi::Result<Self> {
-        let opts = options.unwrap_or_else(default_opts);
-
+impl SharedState {
+    fn new(opts: BashOptions) -> napi::Result<Arc<Self>> {
         let bash = build_bash(
             opts.username.as_deref(),
             opts.hostname.as_deref(),
@@ -93,82 +85,46 @@ impl Bash {
             .build()
             .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
 
-        Ok(Self {
-            inner: Arc::new(Mutex::new(bash)),
-            rt,
+        Ok(Arc::new(Self {
+            interpreter: Arc::new(Mutex::new(bash)),
+            rt: Arc::new(rt),
             cancelled,
             username: opts.username,
             hostname: opts.hostname,
             max_commands: opts.max_commands,
             max_loop_iterations: opts.max_loop_iterations,
-        })
+        }))
     }
 
-    /// Execute bash commands synchronously.
-    #[napi]
-    pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
+    fn execute_sync(&self, commands: &str) -> napi::Result<ExecResult> {
         self.cancelled.store(false, Ordering::Relaxed);
-        let inner = self.inner.clone();
+        let interpreter = self.interpreter.clone();
+        let commands = commands.to_owned();
         self.rt.block_on(async move {
-            let mut bash = inner.lock().await;
-            match bash.exec(&commands).await {
-                Ok(result) => Ok(ExecResult {
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    exit_code: result.exit_code,
-                    error: None,
-                }),
-                Err(e) => Ok(ExecResult {
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    exit_code: 1,
-                    error: Some(e.to_string()),
-                }),
-            }
+            let mut bash = interpreter.lock().await;
+            exec_to_result(&mut bash, &commands).await
         })
     }
 
-    /// Execute bash commands asynchronously, returning a Promise.
-    #[napi]
-    pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
-        let inner = self.inner.clone();
-        let mut bash = inner.lock().await;
-        match bash.exec(&commands).await {
-            Ok(result) => Ok(ExecResult {
-                stdout: result.stdout,
-                stderr: result.stderr,
-                exit_code: result.exit_code,
-                error: None,
-            }),
-            Err(e) => Ok(ExecResult {
-                stdout: String::new(),
-                stderr: String::new(),
-                exit_code: 1,
-                error: Some(e.to_string()),
-            }),
-        }
+    async fn execute_async(&self, commands: &str) -> napi::Result<ExecResult> {
+        let interpreter = self.interpreter.clone();
+        let mut bash = interpreter.lock().await;
+        exec_to_result(&mut bash, commands).await
     }
 
-    /// Cancel the currently running execution.
-    ///
-    /// Safe to call from any thread. Execution will abort at the next
-    /// command boundary.
-    #[napi]
-    pub fn cancel(&self) {
+    fn cancel(&self) {
         self.cancelled.store(true, Ordering::Relaxed);
     }
 
-    /// Reset interpreter to fresh state, preserving configuration.
-    #[napi]
-    pub fn reset(&self) -> napi::Result<()> {
-        let inner = self.inner.clone();
+    fn reset(&self) -> napi::Result<()> {
+        let interpreter = self.interpreter.clone();
         let username = self.username.clone();
         let hostname = self.hostname.clone();
         let max_commands = self.max_commands;
         let max_loop_iterations = self.max_loop_iterations;
 
         self.rt.block_on(async move {
-            let mut bash = inner.lock().await;
+            let mut bash = interpreter.lock().await;
             let new_bash = build_bash(
                 username.as_deref(),
                 hostname.as_deref(),
@@ -179,6 +135,61 @@ impl Bash {
             *bash = new_bash;
             Ok(())
         })
+    }
+}
+
+// ============================================================================
+// Bash — core interpreter
+// ============================================================================
+
+/// Core bash interpreter with virtual filesystem.
+///
+/// State persists between calls — files created in one `execute()` are
+/// available in subsequent calls.
+#[napi]
+pub struct Bash {
+    state: Arc<SharedState>,
+}
+
+#[napi]
+impl Bash {
+    #[napi(constructor)]
+    pub fn new(options: Option<BashOptions>) -> napi::Result<Self> {
+        let opts = options.unwrap_or_else(default_opts);
+        Ok(Self {
+            state: SharedState::new(opts)?,
+        })
+    }
+
+    /// Execute bash commands synchronously.
+    #[napi]
+    pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
+        let state = self.state.clone();
+        state.execute_sync(&commands)
+    }
+
+    /// Execute bash commands asynchronously, returning a Promise.
+    #[napi]
+    pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
+        let state = self.state.clone();
+        state.execute_async(&commands).await
+    }
+
+    /// Cancel the currently running execution.
+    ///
+    /// Safe to call from any thread. Execution will abort at the next
+    /// command boundary.
+    #[napi]
+    pub fn cancel(&self) {
+        let state = self.state.clone();
+        state.cancel();
+    }
+
+    /// Reset interpreter to fresh state, preserving configuration.
+    #[napi]
+    pub fn reset(&self) -> napi::Result<()> {
+        let state = self.state.clone();
+        state.reset()
     }
 }
 
@@ -192,31 +203,25 @@ impl Bash {
 /// Use this when integrating with AI frameworks that need tool definitions.
 #[napi]
 pub struct BashTool {
-    inner: Arc<Mutex<RustBash>>,
-    rt: tokio::runtime::Runtime,
-    cancelled: Arc<AtomicBool>,
-    username: Option<String>,
-    hostname: Option<String>,
-    max_commands: Option<u32>,
-    max_loop_iterations: Option<u32>,
+    state: Arc<SharedState>,
 }
 
 impl BashTool {
-    fn build_rust_tool(&self) -> RustBashTool {
+    fn build_rust_tool(state: &SharedState) -> RustBashTool {
         let mut builder = RustBashTool::builder();
 
-        if let Some(ref username) = self.username {
+        if let Some(ref username) = state.username {
             builder = builder.username(username);
         }
-        if let Some(ref hostname) = self.hostname {
+        if let Some(ref hostname) = state.hostname {
             builder = builder.hostname(hostname);
         }
 
         let mut limits = ExecutionLimits::new();
-        if let Some(mc) = self.max_commands {
+        if let Some(mc) = state.max_commands {
             limits = limits.max_commands(mc as usize);
         }
-        if let Some(mli) = self.max_loop_iterations {
+        if let Some(mli) = state.max_loop_iterations {
             limits = limits.max_loop_iterations(mli as usize);
         }
 
@@ -229,104 +234,37 @@ impl BashTool {
     #[napi(constructor)]
     pub fn new(options: Option<BashOptions>) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
-
-        let bash = build_bash(
-            opts.username.as_deref(),
-            opts.hostname.as_deref(),
-            opts.max_commands,
-            opts.max_loop_iterations,
-            opts.files.as_ref(),
-        );
-        let cancelled = bash.cancellation_token();
-
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
-
         Ok(Self {
-            inner: Arc::new(Mutex::new(bash)),
-            rt,
-            cancelled,
-            username: opts.username,
-            hostname: opts.hostname,
-            max_commands: opts.max_commands,
-            max_loop_iterations: opts.max_loop_iterations,
+            state: SharedState::new(opts)?,
         })
     }
 
     /// Execute bash commands synchronously.
     #[napi]
     pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
-        self.cancelled.store(false, Ordering::Relaxed);
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let mut bash = inner.lock().await;
-            match bash.exec(&commands).await {
-                Ok(result) => Ok(ExecResult {
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    exit_code: result.exit_code,
-                    error: None,
-                }),
-                Err(e) => Ok(ExecResult {
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    exit_code: 1,
-                    error: Some(e.to_string()),
-                }),
-            }
-        })
+        let state = self.state.clone();
+        state.execute_sync(&commands)
     }
 
     /// Execute bash commands asynchronously, returning a Promise.
     #[napi]
     pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
-        let inner = self.inner.clone();
-        let mut bash = inner.lock().await;
-        match bash.exec(&commands).await {
-            Ok(result) => Ok(ExecResult {
-                stdout: result.stdout,
-                stderr: result.stderr,
-                exit_code: result.exit_code,
-                error: None,
-            }),
-            Err(e) => Ok(ExecResult {
-                stdout: String::new(),
-                stderr: String::new(),
-                exit_code: 1,
-                error: Some(e.to_string()),
-            }),
-        }
+        let state = self.state.clone();
+        state.execute_async(&commands).await
     }
 
     /// Cancel the currently running execution.
     #[napi]
     pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Relaxed);
+        let state = self.state.clone();
+        state.cancel();
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
     #[napi]
     pub fn reset(&self) -> napi::Result<()> {
-        let inner = self.inner.clone();
-        let username = self.username.clone();
-        let hostname = self.hostname.clone();
-        let max_commands = self.max_commands;
-        let max_loop_iterations = self.max_loop_iterations;
-
-        self.rt.block_on(async move {
-            let mut bash = inner.lock().await;
-            let new_bash = build_bash(
-                username.as_deref(),
-                hostname.as_deref(),
-                max_commands,
-                max_loop_iterations,
-                None,
-            );
-            *bash = new_bash;
-            Ok(())
-        })
+        let state = self.state.clone();
+        state.reset()
     }
 
     /// Get tool name.
@@ -344,25 +282,29 @@ impl BashTool {
     /// Get token-efficient tool description.
     #[napi]
     pub fn description(&self) -> String {
-        self.build_rust_tool().description().to_string()
+        let state = self.state.clone();
+        Self::build_rust_tool(&state).description().to_string()
     }
 
     /// Get help as a Markdown document.
     #[napi]
     pub fn help(&self) -> String {
-        self.build_rust_tool().help()
+        let state = self.state.clone();
+        Self::build_rust_tool(&state).help()
     }
 
     /// Get compact system-prompt text for orchestration.
     #[napi]
     pub fn system_prompt(&self) -> String {
-        self.build_rust_tool().system_prompt()
+        let state = self.state.clone();
+        Self::build_rust_tool(&state).system_prompt()
     }
 
     /// Get JSON input schema as string.
     #[napi]
     pub fn input_schema(&self) -> napi::Result<String> {
-        let schema = self.build_rust_tool().input_schema();
+        let state = self.state.clone();
+        let schema = Self::build_rust_tool(&state).input_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| napi::Error::from_reason(format!("Schema serialization failed: {e}")))
     }
@@ -370,7 +312,8 @@ impl BashTool {
     /// Get JSON output schema as string.
     #[napi]
     pub fn output_schema(&self) -> napi::Result<String> {
-        let schema = self.build_rust_tool().output_schema();
+        let state = self.state.clone();
+        let schema = Self::build_rust_tool(&state).output_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| napi::Error::from_reason(format!("Schema serialization failed: {e}")))
     }
@@ -419,6 +362,23 @@ fn build_bash(
     }
 
     builder.build()
+}
+
+async fn exec_to_result(bash: &mut RustBash, commands: &str) -> napi::Result<ExecResult> {
+    match bash.exec(commands).await {
+        Ok(result) => Ok(ExecResult {
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exit_code: result.exit_code,
+            error: None,
+        }),
+        Err(e) => Ok(ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 1,
+            error: Some(e.to_string()),
+        }),
+    }
 }
 
 /// Get the bashkit version string.
