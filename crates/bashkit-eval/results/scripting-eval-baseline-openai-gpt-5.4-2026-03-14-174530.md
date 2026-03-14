@@ -1,14 +1,14 @@
-# Scripting Tool Eval: openai/gpt-5.2 (baseline)
+# Scripting Tool Eval: openai/gpt-5.4 (baseline)
 
-- **Date**: 2026-03-14T06:24:36Z
+- **Date**: 2026-03-14T17:45:30Z
 - **Mode**: baseline (individual tools)
 - **Max turns**: 10
 - **Turns**: 6 total (2.0 avg/task)
 - **Tool calls**: 3 total (1.0 avg/task)
 - **Tool call success**: 3 ok, 0 error (100% success rate)
-- **Tokens**: 8019 input, 344 output
+- **Tokens**: 8019 input, 336 output
 - **Tool output**: 17830 bytes raw, 17830 bytes sent
-- **Duration**: 5.8s total (1.9s avg/task)
+- **Duration**: 8.7s total (2.9s avg/task)
 
 ## Summary
 
@@ -27,7 +27,7 @@
 Sum failed USD transactions from a large JSON array of 50 transaction records
 
 - Tools: 1
-- Turns: 2 | Tool calls: 1 (1 ok, 0 err) | Duration: 1.2s
+- Turns: 2 | Tool calls: 1 (1 ok, 0 err) | Duration: 2.4s
 - Tokens: 3239 input, 19 output
 - Tool output: 6907 bytes raw, 6907 bytes sent
 - Score: 1/2
@@ -42,8 +42,8 @@ Sum failed USD transactions from a large JSON array of 50 transaction records
 Extract and count ERROR lines from verbose log output of ~100 lines
 
 - Tools: 1
-- Turns: 2 | Tool calls: 1 (1 ok, 0 err) | Duration: 3.1s
-- Tokens: 3449 input, 272 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 err) | Duration: 4.8s
+- Tokens: 3449 input, 271 output
 - Tool output: 8384 bytes raw, 8384 bytes sent
 - Score: 5/5
 
@@ -60,8 +60,8 @@ Extract and count ERROR lines from verbose log output of ~100 lines
 Extract specific values from a deeply nested JSON configuration object
 
 - Tools: 1
-- Turns: 2 | Tool calls: 1 (1 ok, 0 err) | Duration: 1.5s
-- Tokens: 1331 input, 53 output
+- Turns: 2 | Tool calls: 1 (1 ok, 0 err) | Duration: 1.4s
+- Tokens: 1331 input, 46 output
 - Tool output: 2539 bytes raw, 2539 bytes sent
 - Score: 3/3
 
