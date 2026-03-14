@@ -325,6 +325,10 @@ pub struct Interpreter {
     history_file: Option<PathBuf>,
     /// Whether history has been loaded from VFS (to avoid re-loading on each exec).
     history_loaded: bool,
+    /// Monotonic counter incremented on each command substitution execution.
+    /// Used to detect whether assignment value expansion ran a command substitution
+    /// (for correct exit code: plain assignment → 0, assignment with subst → subst's exit code).
+    subst_generation: u64,
     /// Coprocess read buffers: maps virtual FD number to remaining lines.
     /// When a coproc runs, its stdout is split into lines and stored here
     /// so `read -u FD` or `read <&FD` can consume them one at a time.
@@ -593,6 +597,7 @@ impl Interpreter {
             history: Vec::new(),
             history_file: None,
             history_loaded: false,
+            subst_generation: 0,
             coproc_buffers: HashMap::new(),
             coproc_next_fd: 63,
             cancelled: Arc::new(AtomicBool::new(false)),
@@ -3857,6 +3862,11 @@ impl Interpreter {
             .map(|a| (a.name.clone(), self.variables.get(&a.name).cloned()))
             .collect();
 
+        // Track whether command substitutions run during assignment expansion.
+        // Bash returns 0 for plain assignments (x=hello) but propagates the
+        // exit code of command substitutions in the value (x=$(false) → $?=1).
+        let pre_assign_subst_gen = self.subst_generation;
+
         // Process variable assignments first
         for assignment in &command.assignments {
             match &assignment.value {
@@ -4054,7 +4064,7 @@ impl Interpreter {
         // If name is empty after expansion, behavior depends on context:
         // - Quoted empty string ('', "", "$empty") -> "command not found" (exit 127)
         // - Unquoted expansion that vanished ($empty, $(true)) -> no-op, preserve $?
-        // - Assignment-only (VAR=val) -> no-op, preserve $?
+        // - Assignment-only (VAR=val) -> exit 0 (or command substitution's exit code)
         if name.is_empty() {
             if command.name.quoted && command.assignments.is_empty() {
                 // Bash: '' as a command is "command not found"
@@ -4064,10 +4074,22 @@ impl Interpreter {
                     127,
                 ));
             }
+            // Assignment-only: bash returns 0 for plain assignments (x=hello),
+            // or the exit code of the last command substitution in the value
+            // (x=$(false) → 1). If no command substitution ran during assignment
+            // expansion, the exit code is 0.
+            let exit_code = if !command.assignments.is_empty()
+                && self.subst_generation == pre_assign_subst_gen
+            {
+                0
+            } else {
+                self.last_exit_code
+            };
+            self.last_exit_code = exit_code;
             return Ok(ExecResult {
                 stdout: String::new(),
                 stderr: String::new(),
-                exit_code: self.last_exit_code,
+                exit_code,
                 control_flow: crate::interpreter::ControlFlow::None,
             });
         }
@@ -6531,6 +6553,7 @@ impl Interpreter {
                         // Propagate exit code from last command in substitution
                         self.last_exit_code = cmd_result.exit_code;
                     }
+                    self.subst_generation += 1;
                     // Remove trailing newline (bash behavior)
                     let trimmed = stdout.trim_end_matches('\n');
                     result.push_str(trimmed);
