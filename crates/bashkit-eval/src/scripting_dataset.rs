@@ -53,9 +53,13 @@ pub struct ScriptingEvalTask {
     #[serde(default)]
     pub files: HashMap<String, String>,
     /// Use compact_prompt mode: hide schemas from system prompt, require `help`
-    /// to discover params.
+    /// to discover params. Superseded by `discovery_mode` for new tasks.
     #[serde(default)]
     pub compact_prompt: bool,
+    /// Use ScriptingToolSet with WithDiscovery mode: tool names hidden from
+    /// system prompt, LLM must use `discover` and `help` builtins.
+    #[serde(default)]
+    pub discovery_mode: bool,
     pub expectations: Vec<Expectation>,
 }
 
@@ -110,10 +114,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_tags_category_compact() {
-        let json = r#"{"id":"t3","category":"discovery","description":"d","prompt":"p","compact_prompt":true,"tools":[{"name":"get_user","description":"Fetch user","schema":{},"tags":["read","users"],"category":"users","mock":"ok"}],"expectations":[{"check":"exit_code:0"}]}"#;
+    fn parse_tags_category_discovery() {
+        let json = r#"{"id":"t3","category":"discovery","description":"d","prompt":"p","discovery_mode":true,"tools":[{"name":"get_user","description":"Fetch user","schema":{},"tags":["read","users"],"category":"users","mock":"ok"}],"expectations":[{"check":"exit_code:0"}]}"#;
         let task: ScriptingEvalTask = serde_json::from_str(json).unwrap();
-        assert!(task.compact_prompt);
+        assert!(task.discovery_mode);
         assert_eq!(task.tools[0].tags, vec!["read", "users"]);
         assert_eq!(task.tools[0].category.as_deref(), Some("users"));
     }
@@ -122,7 +126,7 @@ mod tests {
     fn parse_discovery_dataset() {
         let tasks = load_scripting_dataset("data/scripting-tool/discovery.jsonl").unwrap();
         assert_eq!(tasks.len(), 4);
-        assert!(tasks.iter().all(|t| t.compact_prompt));
+        assert!(tasks.iter().all(|t| t.discovery_mode));
         assert!(tasks.iter().all(|t| t.category == "discovery"));
         // All tools should have categories
         for task in &tasks {
