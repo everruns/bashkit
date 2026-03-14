@@ -7,9 +7,10 @@
 //! and `ExecResult` via napi-rs for use from JavaScript/TypeScript.
 
 use bashkit::tool::VERSION;
-use bashkit::{Bash as RustBash, BashTool as RustBashTool, ExecutionLimits, Tool};
+use bashkit::{Bash as RustBash, BashTool as RustBashTool, ExecutionLimits, FileSystem, Tool};
 use napi_derive::napi;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{LazyLock, RwLock};
@@ -179,6 +180,79 @@ impl Bash {
             );
             *bash = new_bash;
             Ok(())
+        })
+    }
+
+    // ========================================================================
+    // VFS — direct filesystem access
+    // ========================================================================
+
+    /// Read a file from the virtual filesystem. Returns contents as a UTF-8 string.
+    #[napi]
+    pub fn read_file(&self, path: String) -> napi::Result<String> {
+        let inner = self.inner.clone();
+        self.rt.block_on(async move {
+            let bash = inner.lock().await;
+            let bytes = bash
+                .fs()
+                .read_file(Path::new(&path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            String::from_utf8(bytes)
+                .map_err(|e| napi::Error::from_reason(format!("Invalid UTF-8: {e}")))
+        })
+    }
+
+    /// Write a string to a file in the virtual filesystem.
+    /// Creates the file if it doesn't exist, replaces contents if it does.
+    #[napi]
+    pub fn write_file(&self, path: String, content: String) -> napi::Result<()> {
+        let inner = self.inner.clone();
+        self.rt.block_on(async move {
+            let bash = inner.lock().await;
+            bash.fs()
+                .write_file(Path::new(&path), content.as_bytes())
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Create a directory. If recursive is true, creates parent directories as needed.
+    #[napi]
+    pub fn mkdir(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
+        let inner = self.inner.clone();
+        self.rt.block_on(async move {
+            let bash = inner.lock().await;
+            bash.fs()
+                .mkdir(Path::new(&path), recursive.unwrap_or(false))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Check if a path exists in the virtual filesystem.
+    #[napi]
+    pub fn exists(&self, path: String) -> napi::Result<bool> {
+        let inner = self.inner.clone();
+        self.rt.block_on(async move {
+            let bash = inner.lock().await;
+            bash.fs()
+                .exists(Path::new(&path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Remove a file or directory. If recursive is true, removes directory contents.
+    #[napi]
+    pub fn remove(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
+        let inner = self.inner.clone();
+        self.rt.block_on(async move {
+            let bash = inner.lock().await;
+            bash.fs()
+                .remove(Path::new(&path), recursive.unwrap_or(false))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
 }
