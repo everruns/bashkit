@@ -489,6 +489,21 @@ impl Interpreter {
         builtins.insert("retry".to_string(), Box::new(builtins::Retry));
         builtins.insert("semver".to_string(), Box::new(builtins::Semver));
         builtins.insert("verify".to_string(), Box::new(builtins::Verify));
+        builtins.insert("compgen".to_string(), Box::new(builtins::Compgen));
+        builtins.insert("csv".to_string(), Box::new(builtins::Csv));
+        builtins.insert("fc".to_string(), Box::new(builtins::Fc));
+        builtins.insert("help".to_string(), Box::new(builtins::Help));
+        builtins.insert("http".to_string(), Box::new(builtins::Http));
+        builtins.insert("iconv".to_string(), Box::new(builtins::Iconv));
+        builtins.insert("json".to_string(), Box::new(builtins::Json));
+        builtins.insert("parallel".to_string(), Box::new(builtins::Parallel));
+        builtins.insert("patch".to_string(), Box::new(builtins::Patch));
+        builtins.insert("rg".to_string(), Box::new(builtins::Rg));
+        builtins.insert("template".to_string(), Box::new(builtins::Template));
+        builtins.insert("tomlq".to_string(), Box::new(builtins::Tomlq));
+        builtins.insert("yaml".to_string(), Box::new(builtins::Yaml));
+        builtins.insert("zip".to_string(), Box::new(builtins::Zip));
+        builtins.insert("unzip".to_string(), Box::new(builtins::Unzip));
 
         // Merge custom builtins (override defaults if same name)
         for (name, builtin) in custom_builtins {
