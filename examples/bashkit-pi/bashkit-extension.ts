@@ -28,7 +28,7 @@ const require_ext = createRequire(resolve(__dirname_ext, "node_modules") + "/");
 const { Bash, BashTool } = require_ext("@everruns/bashkit");
 
 // Single bashkit instance — state persists across all tool calls
-const bash = new Bash({ username: "user", hostname: "pi-sandbox" });
+const bash = new Bash({ username: "user", hostname: "pi-sandbox", maxCommands: 1_000_000 });
 
 // BashTool for generic system prompt and tool metadata
 const bashTool = new BashTool({ username: "user", hostname: "pi-sandbox" });
