@@ -480,6 +480,8 @@ impl Interpreter {
         builtins.insert("expand".to_string(), Box::new(builtins::Expand));
         builtins.insert("unexpand".to_string(), Box::new(builtins::Unexpand));
         builtins.insert("envsubst".to_string(), Box::new(builtins::Envsubst));
+        builtins.insert("join".to_string(), Box::new(builtins::Join));
+        builtins.insert("split".to_string(), Box::new(builtins::Split));
 
         // Merge custom builtins (override defaults if same name)
         for (name, builtin) in custom_builtins {
