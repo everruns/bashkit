@@ -161,6 +161,20 @@ match
 diff
 ### end
 
+### cond_or_and_precedence
+# && has higher precedence than || in [[: [[ true || false && false ]] => true
+[[ -n "a" || -z "b" && -z "c" ]] && echo "correct" || echo "wrong"
+### expect
+correct
+### end
+
+### cond_or_and_precedence_reverse
+# && binds tighter: [[ false && false || true ]] => true
+[[ -z "a" && -z "b" || -n "c" ]] && echo "correct" || echo "wrong"
+### expect
+correct
+### end
+
 ### cond_exact_match_no_glob
 # [[ == ]] exact match with no glob chars
 [[ "hello" == "hello" ]] && echo yes || echo no
