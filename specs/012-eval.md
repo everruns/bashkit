@@ -193,7 +193,7 @@ Scripting-tool datasets use the same JSONL format with additional fields:
   "category": "many_tools",
   "description": "E-commerce API: look up user, order, product, shipping",
   "prompt": "Look up user 42 and summarize their last order",
-  "compact_prompt": false,
+  "discovery_mode": false,
   "tools": [
     {
       "name": "get_user",
@@ -220,8 +220,8 @@ Additional mock tool fields:
 - `category` — string for `discover --category` filtering (e.g. `"payments"`)
 
 Task-level fields:
-- `compact_prompt` — boolean, default false. When true, schemas are hidden from the
-  system prompt and the LLM must use `help <tool>` to discover parameters.
+- `discovery_mode` — boolean, default false. When true, uses `ScriptingToolSet::with_discovery()`:
+  tool names are hidden from the system prompt and the LLM must use `discover` and `help` builtins.
 
 ### Dataset Categories
 
@@ -230,7 +230,7 @@ Task-level fields:
 | large_output | `large-output.jsonl` | 3 | Tool output handling with large JSON, logs, nested configs |
 | many_tools | `many-tools.jsonl` | 4 | Orchestrating 15-20 tools (e-commerce, CRM, analytics, DevOps) |
 | paginated_responses | `paginated.jsonl` | 3 | Paginated API traversal (users, logs, inventory) |
-| discovery | `discovery.jsonl` | 4 | Tool discovery via `discover`/`help` builtins with compact_prompt |
+| discovery | `discovery.jsonl` | 4 | Tool discovery via `discover`/`help` builtins with discovery_mode |
 
 ### CLI
 
