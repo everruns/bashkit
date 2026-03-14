@@ -22,6 +22,8 @@ Benchmark tool for comparing bashkit against bash and just-bash across multiple 
 
 96 benchmarks across 12 categories. All runners: **0 errors, 100% output match**.
 
+![Summary](results/chart-summary.png)
+
 | Runner | Avg/Case (ms) | Total (ms) | vs bashkit |
 |--------|--------------|-----------|------------|
 | bashkit | 0.345 | 33.11 | 1x |
@@ -40,6 +42,18 @@ bashkit-js (0.65ms) vs just-bash-inproc (4.46ms) — bashkit is **6.9x faster** 
 **Subprocess (cold start):**
 bashkit-cli (8.19ms) vs bash (8.20ms) — **roughly equivalent**; both dominated by process spawn overhead.
 bashkit-cli (8.19ms) vs just-bash (367.5ms) — bashkit is **44.9x faster**; just-bash pays ~360ms Node.js boot per invocation.
+
+### Speedup over bash
+
+![Speedup](results/chart-speedup-vs-bash.png)
+
+### Performance by category
+
+![By Category](results/chart-by-category.png)
+
+### Large benchmarks (compute-heavy)
+
+![Large Benchmarks](results/chart-large-benchmarks.png)
 
 ### Highlights
 
