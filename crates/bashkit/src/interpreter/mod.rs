@@ -1838,6 +1838,24 @@ impl Interpreter {
 
     /// Execute a while loop
     async fn execute_while(&mut self, while_cmd: &WhileCommand) -> Result<ExecResult> {
+        self.execute_condition_loop(&while_cmd.condition, &while_cmd.body, false)
+            .await
+    }
+
+    /// Execute an until loop
+    async fn execute_until(&mut self, until_cmd: &UntilCommand) -> Result<ExecResult> {
+        self.execute_condition_loop(&until_cmd.condition, &until_cmd.body, true)
+            .await
+    }
+
+    /// Shared implementation for while/until loops.
+    /// `break_on_zero`: false = while (break when condition fails), true = until (break when condition succeeds)
+    async fn execute_condition_loop(
+        &mut self,
+        condition: &[Command],
+        body: &[Command],
+        break_on_zero: bool,
+    ) -> Result<ExecResult> {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
@@ -1851,9 +1869,7 @@ impl Interpreter {
 
             // Check condition (no errexit - conditions are expected to fail)
             let emit_before_cond = self.output_emit_count;
-            let condition_result = self
-                .execute_condition_sequence(&while_cmd.condition)
-                .await?;
+            let condition_result = self.execute_condition_sequence(condition).await?;
             // Condition commands produce visible output (e.g., `while cat <<EOF; do ... done`)
             self.maybe_emit_output(
                 &condition_result.stdout,
@@ -1862,107 +1878,18 @@ impl Interpreter {
             );
             stdout.push_str(&condition_result.stdout);
             stderr.push_str(&condition_result.stderr);
-            if condition_result.exit_code != 0 {
+            let should_break = if break_on_zero {
+                condition_result.exit_code == 0
+            } else {
+                condition_result.exit_code != 0
+            };
+            if should_break {
                 break;
             }
 
             // Execute body
             let emit_before = self.output_emit_count;
-            let result = self.execute_command_sequence(&while_cmd.body).await?;
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-            stdout.push_str(&result.stdout);
-            stderr.push_str(&result.stderr);
-            exit_code = result.exit_code;
-
-            // Check for break/continue
-            match result.control_flow {
-                ControlFlow::Break(n) => {
-                    if n <= 1 {
-                        break;
-                    } else {
-                        return Ok(ExecResult {
-                            stdout,
-                            stderr,
-                            exit_code,
-                            control_flow: ControlFlow::Break(n - 1),
-                        });
-                    }
-                }
-                ControlFlow::Continue(n) => {
-                    if n <= 1 {
-                        continue;
-                    } else {
-                        return Ok(ExecResult {
-                            stdout,
-                            stderr,
-                            exit_code,
-                            control_flow: ControlFlow::Continue(n - 1),
-                        });
-                    }
-                }
-                ControlFlow::Return(code) => {
-                    return Ok(ExecResult {
-                        stdout,
-                        stderr,
-                        exit_code: code,
-                        control_flow: ControlFlow::Return(code),
-                    });
-                }
-                ControlFlow::None => {
-                    // Check if errexit caused early return from body
-                    if self.is_errexit_enabled() && exit_code != 0 {
-                        return Ok(ExecResult {
-                            stdout,
-                            stderr,
-                            exit_code,
-                            control_flow: ControlFlow::None,
-                        });
-                    }
-                }
-            }
-        }
-
-        Ok(ExecResult {
-            stdout,
-            stderr,
-            exit_code,
-            control_flow: ControlFlow::None,
-        })
-    }
-
-    /// Execute an until loop
-    async fn execute_until(&mut self, until_cmd: &UntilCommand) -> Result<ExecResult> {
-        let mut stdout = String::new();
-        let mut stderr = String::new();
-        let mut exit_code = 0;
-
-        // Reset loop counter for this loop
-        self.counters.reset_loop();
-
-        loop {
-            // Check loop iteration limit
-            self.counters.tick_loop(&self.limits)?;
-
-            // Check condition (no errexit - conditions are expected to fail)
-            let emit_before_cond = self.output_emit_count;
-            let condition_result = self
-                .execute_condition_sequence(&until_cmd.condition)
-                .await?;
-            // Condition commands produce visible output
-            self.maybe_emit_output(
-                &condition_result.stdout,
-                &condition_result.stderr,
-                emit_before_cond,
-            );
-            stdout.push_str(&condition_result.stdout);
-            stderr.push_str(&condition_result.stderr);
-            if condition_result.exit_code == 0 {
-                break;
-            }
-
-            // Execute body
-            let emit_before = self.output_emit_count;
-            let result = self.execute_command_sequence(&until_cmd.body).await?;
+            let result = self.execute_command_sequence(body).await?;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
             stdout.push_str(&result.stdout);
             stderr.push_str(&result.stderr);

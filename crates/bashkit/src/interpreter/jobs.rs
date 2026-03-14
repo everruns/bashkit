@@ -5,22 +5,12 @@
 //! ordering, but their results are stored here so `wait` and `$!` work
 //! correctly.
 
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use crate::interpreter::ExecResult;
-
-/// A background job
-pub struct Job {
-    /// Job ID (used with $!)
-    pub id: usize,
-    /// The task handle
-    pub handle: JoinHandle<ExecResult>,
-}
 
 /// Job table for tracking background jobs
 pub struct JobTable {
@@ -80,19 +70,11 @@ impl JobTable {
     ///
     /// Returns the exit code of the last job
     pub async fn wait_all(&mut self) -> i32 {
-        let mut last_exit_code = 0;
-
-        // Drain all jobs
-        let jobs: Vec<_> = std::mem::take(&mut self.jobs).into_iter().collect();
-
-        for (_, handle) in jobs {
-            match handle.await {
-                Ok(result) => last_exit_code = result.exit_code,
-                Err(_) => last_exit_code = 1,
-            }
-        }
-
-        last_exit_code
+        self.wait_all_results()
+            .await
+            .last()
+            .map(|r| r.exit_code)
+            .unwrap_or(0)
     }
 
     /// Wait for all jobs and return their results (preserving output).
