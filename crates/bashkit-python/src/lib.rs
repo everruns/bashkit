@@ -15,6 +15,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 
 // ============================================================================
@@ -193,6 +194,7 @@ pub struct PyBash {
     /// Shared tokio runtime — reused across all sync calls to avoid
     /// per-call OS thread/fd exhaustion (issue #414).
     rt: tokio::runtime::Runtime,
+    cancelled: Arc<AtomicBool>,
     username: Option<String>,
     hostname: Option<String>,
     max_commands: Option<u64>,
@@ -228,6 +230,7 @@ impl PyBash {
         builder = builder.limits(limits);
 
         let bash = builder.build();
+        let cancelled = bash.cancellation_token();
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -237,11 +240,20 @@ impl PyBash {
         Ok(Self {
             inner: Arc::new(Mutex::new(bash)),
             rt,
+            cancelled,
             username,
             hostname,
             max_commands,
             max_loop_iterations,
         })
+    }
+
+    /// Cancel the currently running execution.
+    ///
+    /// Safe to call from any thread. Execution will abort at the next
+    /// command boundary.
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
     }
 
     /// Execute commands asynchronously.
@@ -371,6 +383,7 @@ pub struct BashTool {
     /// Shared tokio runtime — reused across all sync calls to avoid
     /// per-call OS thread/fd exhaustion (issue #414).
     rt: tokio::runtime::Runtime,
+    cancelled: Arc<AtomicBool>,
     username: Option<String>,
     hostname: Option<String>,
     max_commands: Option<u64>,
@@ -429,6 +442,7 @@ impl BashTool {
         builder = builder.limits(limits);
 
         let bash = builder.build();
+        let cancelled = bash.cancellation_token();
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -438,11 +452,17 @@ impl BashTool {
         Ok(Self {
             inner: Arc::new(Mutex::new(bash)),
             rt,
+            cancelled,
             username,
             hostname,
             max_commands,
             max_loop_iterations,
         })
+    }
+
+    /// Cancel the currently running execution.
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
     }
 
     fn execute<'py>(&self, py: Python<'py>, commands: String) -> PyResult<Bound<'py, PyAny>> {

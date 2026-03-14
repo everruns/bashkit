@@ -53,6 +53,10 @@ pub enum Error {
     #[error("regex error: {0}")]
     Regex(#[from] regex::Error),
 
+    /// Execution was cancelled via the cancellation token.
+    #[error("execution cancelled")]
+    Cancelled,
+
     /// Internal error for unexpected failures.
     ///
     /// THREAT[TM-INT-002]: Unexpected internal failures should not crash the interpreter.

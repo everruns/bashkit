@@ -177,8 +177,24 @@ export class Bash {
 
   /**
    * Execute bash commands synchronously and return the result.
+   *
+   * If `signal` is provided, the execution will be cancelled when the signal
+   * is aborted. The result will have `error: "execution cancelled"`.
    */
-  executeSync(commands: string): ExecResult {
+  executeSync(commands: string, options?: { signal?: AbortSignal }): ExecResult {
+    if (options?.signal) {
+      const signal = options.signal;
+      if (signal.aborted) {
+        return { stdout: "", stderr: "", exitCode: 1, error: "execution cancelled" };
+      }
+      const onAbort = () => this.native.cancel();
+      signal.addEventListener("abort", onAbort, { once: true });
+      try {
+        return this.native.executeSync(commands);
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+      }
+    }
     return this.native.executeSync(commands);
   }
 
@@ -200,8 +216,8 @@ export class Bash {
   /**
    * Execute bash commands synchronously. Throws `BashError` on non-zero exit.
    */
-  executeSyncOrThrow(commands: string): ExecResult {
-    const result = this.native.executeSync(commands);
+  executeSyncOrThrow(commands: string, options?: { signal?: AbortSignal }): ExecResult {
+    const result = this.executeSync(commands, options);
     if (result.exitCode !== 0) {
       throw new BashError(result);
     }
@@ -217,6 +233,13 @@ export class Bash {
       throw new BashError(result);
     }
     return result;
+  }
+
+  /**
+   * Cancel the currently running execution.
+   */
+  cancel(): void {
+    this.native.cancel();
   }
 
   /**
@@ -266,7 +289,20 @@ export class BashTool {
   /**
    * Execute bash commands synchronously and return the result.
    */
-  executeSync(commands: string): ExecResult {
+  executeSync(commands: string, options?: { signal?: AbortSignal }): ExecResult {
+    if (options?.signal) {
+      const signal = options.signal;
+      if (signal.aborted) {
+        return { stdout: "", stderr: "", exitCode: 1, error: "execution cancelled" };
+      }
+      const onAbort = () => this.native.cancel();
+      signal.addEventListener("abort", onAbort, { once: true });
+      try {
+        return this.native.executeSync(commands);
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+      }
+    }
     return this.native.executeSync(commands);
   }
 
@@ -280,8 +316,8 @@ export class BashTool {
   /**
    * Execute bash commands synchronously. Throws `BashError` on non-zero exit.
    */
-  executeSyncOrThrow(commands: string): ExecResult {
-    const result = this.native.executeSync(commands);
+  executeSyncOrThrow(commands: string, options?: { signal?: AbortSignal }): ExecResult {
+    const result = this.executeSync(commands, options);
     if (result.exitCode !== 0) {
       throw new BashError(result);
     }
@@ -297,6 +333,13 @@ export class BashTool {
       throw new BashError(result);
     }
     return result;
+  }
+
+  /**
+   * Cancel the currently running execution.
+   */
+  cancel(): void {
+    this.native.cancel();
   }
 
   /**

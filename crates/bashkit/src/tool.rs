@@ -950,6 +950,7 @@ fn error_kind(e: &Error) -> String {
         Error::Network(_) => "network_error".to_string(),
         Error::Regex(_) => "regex_error".to_string(),
         Error::Internal(_) => "internal_error".to_string(),
+        Error::Cancelled => "cancelled".to_string(),
     }
 }
 
