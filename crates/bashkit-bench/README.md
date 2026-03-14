@@ -1,43 +1,93 @@
-# Bashkit Benchmark
+# bashkit-bench
 
-Benchmark tool for comparing Bashkit against native bash and just-bash interpreters.
+Benchmark tool for comparing bashkit against bash and just-bash across multiple execution models.
 
-## Overview
+## Runners
 
-This tool measures and compares:
-- **Performance**: Execution time for various shell operations
-- **Start time**: Interpreter startup overhead
-- **Error rates**: Correctness compared to bash output
+| Runner | Type | Description |
+|--------|------|-------------|
+| `bashkit` | in-process | Rust library call, no fork/exec |
+| `bashkit-cli` | subprocess | bashkit binary, new process per run |
+| `bashkit-js` | persistent child | Node.js + @everruns/bashkit, warm interpreter |
+| `bashkit-py` | persistent child | Python + bashkit package, warm interpreter |
+| `bash` | subprocess | /bin/bash, new process per run |
+| `just-bash` | subprocess | just-bash CLI, new process per run |
+| `just-bash-inproc` | persistent child | Node.js + just-bash library, warm interpreter |
+
+**In-process**: interpreter runs inside the benchmark process (fastest, no IPC overhead).
+**Persistent child**: long-lived child process communicates via JSON lines over stdin/stdout; interpreter startup paid once.
+**Subprocess**: new process spawned per benchmark run; measures full startup + execution.
+
+## Latest Results
+
+96 benchmarks across 12 categories. All runners: **0 errors, 100% output match**.
+
+| Runner | Avg/Case (ms) | Total (ms) | vs bashkit |
+|--------|--------------|-----------|------------|
+| bashkit | 0.345 | 33.11 | 1x |
+| bashkit-py | 0.513 | 49.28 | 1.5x |
+| bashkit-js | 0.646 | 61.97 | 1.9x |
+| just-bash-inproc | 4.458 | 428.01 | 12.9x |
+| bashkit-cli | 8.186 | 785.83 | 23.7x |
+| bash | 8.204 | 787.61 | 23.8x |
+| just-bash | 367.538 | 35,283.69 | 1,065x |
+
+### Apples-to-apples comparisons
+
+**In-process (warm interpreter):**
+bashkit-js (0.65ms) vs just-bash-inproc (4.46ms) — bashkit is **6.9x faster** in the same execution model (Node.js persistent child).
+
+**Subprocess (cold start):**
+bashkit-cli (8.19ms) vs bash (8.20ms) — **roughly equivalent**; both dominated by process spawn overhead.
+bashkit-cli (8.19ms) vs just-bash (367.5ms) — bashkit is **44.9x faster**; just-bash pays ~360ms Node.js boot per invocation.
+
+### Highlights
+
+| Benchmark | bashkit | bash | just-bash-inproc | Description |
+|-----------|---------|------|-----------------|-------------|
+| startup_echo | 0.06ms | 1.47ms | 1.54ms | Minimal overhead |
+| large_fibonacci_12 | 5.96ms | 284ms | 97ms | Recursive computation |
+| large_loop_1000 | 4.93ms | 3.72ms | 56ms | Sustained iteration |
+| large_function_calls_500 | 4.26ms | 224ms | 48ms | Function call overhead |
+| complex_pipeline_text | 0.19ms | 2.86ms | 1.63ms | grep + sed pipeline |
+
+## Benchmark Categories
+
+| Category | Cases | Description |
+|----------|-------|-------------|
+| `startup` | 4 | Interpreter startup overhead |
+| `variables` | 8 | Variable assignment and expansion |
+| `arithmetic` | 6 | Math operations |
+| `control` | 9 | Loops, conditionals, functions |
+| `strings` | 8 | String manipulation |
+| `arrays` | 6 | Array operations |
+| `pipes` | 6 | Pipelines and redirections |
+| `tools` | 21 | grep, sed, awk, jq |
+| `complex` | 7 | Real-world scripts |
+| `large` | 9 | Sustained execution, large scripts |
+| `subshell` | 6 | Subshell isolation and nesting |
+| `io` | 6 | File I/O and redirections |
 
 ## Usage
 
 ```bash
-# Run benchmarks (bashkit vs bash)
+# Build
+cargo build -p bashkit-bench --release
+
+# Run with all runners
+cargo run -p bashkit-bench --release -- \
+  --runners bashkit,bashkit-cli,bashkit-js,bashkit-py,bash,just-bash,just-bash-inproc \
+  --save --verbose
+
+# Run with default runners (bashkit + bash)
 cargo run -p bashkit-bench --release
 
-# Auto-generate results with system identifier
-cargo run -p bashkit-bench --release -- --save
-
-# Use custom moniker for CI environments
-cargo run -p bashkit-bench --release -- --save --moniker ci-4cpu-8gb
-
-# Save to specific file
-cargo run -p bashkit-bench --release -- --save my-results
-
-# Run with all available interpreters
-cargo run -p bashkit-bench --release -- --runners bashkit,bash,just-bash
-
-# Run specific category
-cargo run -p bashkit-bench --release -- --category tools
-
-# Filter by benchmark name
-cargo run -p bashkit-bench --release -- --filter grep
+# Filter by category or name
+cargo run -p bashkit-bench --release -- --category large --verbose
+cargo run -p bashkit-bench --release -- --filter fibonacci --verbose
 
 # High accuracy run
 cargo run -p bashkit-bench --release -- --iterations 50 --warmup 5
-
-# Skip prewarming phase
-cargo run -p bashkit-bench --release -- --no-prewarm
 
 # List available benchmarks
 cargo run -p bashkit-bench --release -- --list
@@ -47,9 +97,9 @@ cargo run -p bashkit-bench --release -- --list
 
 | Option | Description |
 |--------|-------------|
-| `--save [file]` | Save results to JSON and Markdown. Auto-generates filename with moniker if not provided |
-| `--moniker <id>` | Custom system identifier (e.g., `ci-4cpu-8gb`, `macbook-m1`) |
-| `--runners <list>` | Comma-separated runners: `bashkit`, `bash`, `just-bash` (default: `bashkit,bash`) |
+| `--save [file]` | Save results to JSON and Markdown (auto-generates filename if not provided) |
+| `--moniker <id>` | Custom system identifier (e.g., `ci-4cpu-8gb`) |
+| `--runners <list>` | Comma-separated runners (default: `bashkit,bash`) |
 | `--filter <name>` | Run only benchmarks matching substring |
 | `--category <cat>` | Run only specific category |
 | `--iterations <n>` | Iterations per benchmark (default: 10) |
@@ -58,127 +108,32 @@ cargo run -p bashkit-bench --release -- --list
 | `--verbose` | Show per-benchmark timing details |
 | `--list` | List available benchmarks |
 
-## Benchmark Categories
+## Prerequisites
 
-| Category | Description | Cases |
-|----------|-------------|-------|
-| `startup` | Interpreter startup overhead | 4 |
-| `variables` | Variable assignment, expansion, defaults | 8 |
-| `arithmetic` | Math operations, loops | 6 |
-| `control` | if/else, for, while, case, functions | 9 |
-| `strings` | Printf, concatenation, case conversion | 8 |
-| `arrays` | Array creation, iteration, slicing | 6 |
-| `pipes` | Pipelines, heredocs, redirects | 6 |
-| `tools` | grep, sed, awk, jq operations | 21 |
-| `complex` | Fibonacci, JSON transforms, pipelines | 7 |
+| Runner | Setup |
+|--------|-------|
+| `bashkit` | Built automatically (in-process) |
+| `bashkit-cli` | `cargo build -p bashkit-cli --release` |
+| `bashkit-js` | `cd crates/bashkit-js && npm install && npm run build` |
+| `bashkit-py` | `maturin build --release && pip install target/wheels/bashkit-*.whl` |
+| `bash` | Pre-installed on most systems |
+| `just-bash` | `npm install -g just-bash` |
+| `just-bash-inproc` | Same as just-bash (uses library API) |
+
+## Methodology
+
+- Times measured in nanoseconds using `std::time::Instant`, displayed in milliseconds
+- Each benchmark: warmup iterations (not timed) → timed iterations → statistics (mean, stddev, min, max)
+- Prewarm phase runs first 3 cases to warm up JIT/compilation before actual benchmarks
+- Output compared against bash reference output; mismatches flagged but don't affect timing
+- Benchmarks run sequentially — no parallel execution competing for resources
+- Execution failures count as errors with 1000ms penalty time
 
 ## Output Files
 
-When using `--save`, two files are generated:
+When using `--save`, two files are generated in the working directory:
 
-1. **JSON** (`bench-{system}-{timestamp}.json`): Machine-readable results with all timing data
-2. **Markdown** (`bench-{system}-{timestamp}.md`): Human-readable report with tables and summary
+1. **JSON** (`bench-{moniker}-{timestamp}.json`): Machine-readable results
+2. **Markdown** (`bench-{moniker}-{timestamp}.md`): Human-readable report
 
-The system moniker includes hostname, OS, and architecture (e.g., `myhost-linux-x86_64`).
-
-## Assumptions & Methodology
-
-### Timing
-- Times are measured in nanoseconds using `std::time::Instant`
-- Each benchmark runs `warmup` iterations (not timed) followed by `iterations` timed runs
-- Statistics include mean, stddev, min, and max
-
-### Output Matching
-- When bash is available, its output is used as the reference
-- Bashkit output is compared after normalizing whitespace
-- Mismatches are flagged but don't affect timing
-
-### Error Handling
-- Execution failures count as errors with 1000ms penalty time
-- Exit code mismatches count as errors
-- Up to 3 error messages are captured per benchmark
-
-### Performance Context
-- **Bashkit runs in-process**: No fork/exec overhead, shared memory
-- **Bash spawns subprocess**: ~8-10ms startup per invocation
-- This explains why Bashkit appears 100-1000x faster for simple operations
-
-### What This Measures
-- Bashkit: Pure interpreter performance (parsing + execution)
-- Bash: Full process lifecycle (fork + exec + parsing + execution + exit)
-
-### What This Doesn't Measure
-- Real-world script performance with I/O
-- Memory usage
-- Concurrent execution
-- Long-running scripts (resource limits apply)
-
-## Known Limitations
-
-Some bash features are not implemented in Bashkit:
-- `:` (null command) - use `true` instead
-- `set -e` (errexit)
-- `trap` signal handling
-- Brace expansion `{a,b,c}`
-- Process substitution `<(cmd)`
-
-Benchmarks are designed to use compatible subset of features.
-
-## Interpreters
-
-### Bashkit
-The Rust-based virtual interpreter being benchmarked. Runs in-process without subprocess overhead.
-
-### Bash
-System bash (`/bin/bash` or similar). Spawns a new process for each benchmark, which includes fork/exec overhead.
-
-### just-bash
-[Vercel's just-bash](https://github.com/vercel-labs/just-bash) virtual interpreter. Optional - will be skipped if not installed.
-
-Install via: `npm install -g just-bash`
-
-## Example Output
-
-```
-Running 75 benchmarks with 2 runner(s): bashkit, bash
-  System: myhost (linux-x86_64, 8 CPUs)
-  Iterations: 10, Warmup: 2
-
-  ▶ [startup] startup_empty
-  ▶ [startup] startup_echo
-  ...
-
-Results:
-+----------+---------------+---------+-----------+--------+-------+
-| Category | Benchmark     | Runner  | Mean (ms) | StdDev | Match |
-+----------+---------------+---------+-----------+--------+-------+
-| startup  | startup_empty | bashkit | 0.004     | ±0.001 | ✓     |
-| startup  | startup_empty | bash    | 9.123     | ±0.456 | ✓     |
-+----------+---------------+---------+-----------+--------+-------+
-
-Summary:
-  bashkit:
-    Total time:      1.23 ms
-    Avg per case:    0.016 ms
-    Error rate:      0.0%
-    Output match:    100.0%
-
-  bash:
-    Total time:      891.45 ms
-    Avg per case:    11.886 ms
-    Error rate:      0.0%
-    Output match:    100.0%
-```
-
-## Development
-
-```bash
-# Build
-cargo build -p bashkit-bench --release
-
-# Run tests (if any)
-cargo test -p bashkit-bench
-
-# Format
-cargo fmt -p bashkit-bench
-```
+Historical results are stored in `results/`.
