@@ -104,15 +104,31 @@ pub async fn run_scripted_agent(
     let mut builder = ScriptedTool::builder(&task.id);
 
     for mock_tool in &task.tools {
-        let def =
+        let mut def =
             if mock_tool.schema.is_object() && !mock_tool.schema.as_object().unwrap().is_empty() {
                 ToolDef::new(&mock_tool.name, &mock_tool.description)
                     .with_schema(mock_tool.schema.clone())
             } else {
                 ToolDef::new(&mock_tool.name, &mock_tool.description)
             };
+        if !mock_tool.tags.is_empty() {
+            def = def.with_tags(
+                &mock_tool
+                    .tags
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>(),
+            );
+        }
+        if let Some(ref cat) = mock_tool.category {
+            def = def.with_category(cat);
+        }
         let callback = make_mock_callback(mock_tool.mock.clone());
         builder = builder.tool(def, move |args: &ToolArgs| callback(args));
+    }
+
+    if task.compact_prompt {
+        builder = builder.compact_prompt(true);
     }
 
     let mut scripted_tool = builder.short_description("Scripted tool eval").build();

@@ -193,11 +193,14 @@ Scripting-tool datasets use the same JSONL format with additional fields:
   "category": "many_tools",
   "description": "E-commerce API: look up user, order, product, shipping",
   "prompt": "Look up user 42 and summarize their last order",
+  "compact_prompt": false,
   "tools": [
     {
       "name": "get_user",
       "description": "Fetch user by ID",
       "schema": {"type": "object", "properties": {"id": {"type": "integer"}}},
+      "tags": ["read", "users"],
+      "category": "users",
       "mock": {"param": "id", "responses": {"42": "{\"name\": \"Jane\"}"}}
     }
   ],
@@ -212,6 +215,14 @@ Mock behaviors:
 - **Static** — `"mock": "fixed response string"`
 - **ByParam** — `"mock": {"param": "key", "responses": {"val": "resp"}, "default": "fallback"}`
 
+Additional mock tool fields:
+- `tags` — string array for `discover --tag` filtering (e.g. `["read", "billing"]`)
+- `category` — string for `discover --category` filtering (e.g. `"payments"`)
+
+Task-level fields:
+- `compact_prompt` — boolean, default false. When true, schemas are hidden from the
+  system prompt and the LLM must use `help <tool>` to discover parameters.
+
 ### Dataset Categories
 
 | Category | Dataset | Tasks | Tests |
@@ -219,6 +230,7 @@ Mock behaviors:
 | large_output | `large-output.jsonl` | 3 | Tool output handling with large JSON, logs, nested configs |
 | many_tools | `many-tools.jsonl` | 4 | Orchestrating 15-20 tools (e-commerce, CRM, analytics, DevOps) |
 | paginated_responses | `paginated.jsonl` | 3 | Paginated API traversal (users, logs, inventory) |
+| discovery | `discovery.jsonl` | 4 | Tool discovery via `discover`/`help` builtins with compact_prompt |
 
 ### CLI
 

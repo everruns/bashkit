@@ -15,6 +15,12 @@ pub struct MockToolDef {
     pub description: String,
     #[serde(default)]
     pub schema: serde_json::Value,
+    /// Tags for discover --tag filtering.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Category for discover --category filtering.
+    #[serde(default)]
+    pub category: Option<String>,
     /// Mock response behavior.
     pub mock: MockBehavior,
 }
@@ -46,6 +52,10 @@ pub struct ScriptingEvalTask {
     pub tools: Vec<MockToolDef>,
     #[serde(default)]
     pub files: HashMap<String, String>,
+    /// Use compact_prompt mode: hide schemas from system prompt, require `help`
+    /// to discover params.
+    #[serde(default)]
+    pub compact_prompt: bool,
     pub expectations: Vec<Expectation>,
 }
 
@@ -96,6 +106,34 @@ mod tests {
                 assert_eq!(default.as_deref(), Some("empty"));
             }
             _ => panic!("expected ByParam"),
+        }
+    }
+
+    #[test]
+    fn parse_tags_category_compact() {
+        let json = r#"{"id":"t3","category":"discovery","description":"d","prompt":"p","compact_prompt":true,"tools":[{"name":"get_user","description":"Fetch user","schema":{},"tags":["read","users"],"category":"users","mock":"ok"}],"expectations":[{"check":"exit_code:0"}]}"#;
+        let task: ScriptingEvalTask = serde_json::from_str(json).unwrap();
+        assert!(task.compact_prompt);
+        assert_eq!(task.tools[0].tags, vec!["read", "users"]);
+        assert_eq!(task.tools[0].category.as_deref(), Some("users"));
+    }
+
+    #[test]
+    fn parse_discovery_dataset() {
+        let tasks = load_scripting_dataset("data/scripting-tool/discovery.jsonl").unwrap();
+        assert_eq!(tasks.len(), 4);
+        assert!(tasks.iter().all(|t| t.compact_prompt));
+        assert!(tasks.iter().all(|t| t.category == "discovery"));
+        // All tools should have categories
+        for task in &tasks {
+            for tool in &task.tools {
+                assert!(
+                    tool.category.is_some(),
+                    "tool {} in task {} missing category",
+                    tool.name,
+                    task.id
+                );
+            }
         }
     }
 }
