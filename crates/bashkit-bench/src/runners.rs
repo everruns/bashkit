@@ -227,9 +227,9 @@ async fn which_just_bash() -> Result<String> {
 
 async fn run_just_bash_subprocess(path: &str, script: &str) -> Result<(String, String, i32)> {
     let (cmd, args): (&str, Vec<&str>) = if path == "npx:just-bash" {
-        ("npx", vec!["--yes", "just-bash", "-c"])
+        ("npx", vec!["--yes", "just-bash", "--allow-write", "-c"])
     } else {
-        (path, vec!["-c"])
+        (path, vec!["--allow-write", "-c"])
     };
 
     run_subprocess(cmd, &args, script).await
