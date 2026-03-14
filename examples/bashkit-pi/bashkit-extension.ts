@@ -25,10 +25,13 @@ const __dirname_ext =
 
 // Load bashkit native bindings from the bashkit-js crate (or node_modules)
 const require_ext = createRequire(resolve(__dirname_ext, "node_modules") + "/");
-const { Bash } = require_ext("@everruns/bashkit");
+const { Bash, BashTool } = require_ext("@everruns/bashkit");
 
 // Single bashkit instance — state persists across all tool calls
 const bash = new Bash({ username: "user", hostname: "pi-sandbox" });
+
+// BashTool for generic system prompt and tool metadata
+const bashTool = new BashTool({ username: "user", hostname: "pi-sandbox" });
 
 // Resolve relative paths against bashkit home
 function resolvePath(userPath: string): string {
@@ -44,57 +47,26 @@ function ensureParentDir(filePath: string): void {
 	}
 }
 
-// System prompt snippet explaining bashkit environment to the LLM
-const BASHKIT_SYSTEM_PROMPT = `
-## Bashkit Virtual Environment
+// PI-specific system prompt additions (on top of bashkit's generic system prompt)
+const PI_SYSTEM_PROMPT_ADDITIONS = `
+### PI environment
 
-**IMPORTANT**: You are running inside a **bashkit** sandboxed environment. All tools (bash, read, write, edit) operate on a virtual in-memory filesystem — nothing touches the real host filesystem.
-
-### Your environment identity
-
-- **Your working directory is \`/home/user\`** — this is where you start and where relative paths resolve.
-- **Ignore any host paths** from runtime context (e.g. \`/Users/...\`, \`/home/...\`, \`C:\\...\`). Those refer to the machine running the harness, NOT your environment. Never reference, display, or use host paths in your responses.
-- **You have no access to any project on the host machine.** If the user asks about files, they mean files in YOUR virtual filesystem at \`/home/user\`. If no files exist yet, say so.
-- When the user mentions a "current working directory" or "project", it refers to what's inside your virtual filesystem, not the host.
-
-### Key differences from real bash
-
-- **No network access**: \`curl\` and \`wget\` are simulated but do not make real HTTP requests.
-- **No package managers**: \`apt\`, \`pip\`, \`npm\`, \`cargo\` etc. are not available. Do not try to install packages.
-- **No interpreters**: \`python\`, \`python3\`, \`perl\`, \`node\`, \`ruby\` are not available. Write bash-native solutions using the available builtins.
-- **No \`git\`**: Version control commands are not available.
-- **No \`sudo\`**: Everything runs as a regular user. Permission commands (\`chmod\`, \`chown\`) are accepted but have no real OS effect.
-- **Virtual filesystem**: All paths (e.g. \`/home/user\`, \`/tmp\`) exist in memory only. Files persist across tool calls within the same session but are gone when the session ends.
-- **State persists**: Shell variables, functions, cwd, and files carry over between bash tool calls.
-
-### Available builtins (100+)
-
-**Core I/O**: echo, printf, cat, read
-**Text processing**: grep, sed, awk, jq, head, tail, sort, uniq, cut, tr, wc, nl, paste, column, comm, diff, strings, tac, rev
-**File operations**: cd, pwd, ls, find, mkdir, mktemp, rm, rmdir, cp, mv, touch, chmod, chown, ln
-**File inspection**: file, stat, less, tar, gzip, gunzip, du, df
-**Flow control**: test, [, true, false, exit, return, break, continue
-**Shell/variables**: export, set, unset, local, shift, source, eval, declare, typeset, readonly, shopt, getopts
-**Utilities**: sleep, date, seq, expr, yes, wait, timeout, xargs, tee, watch, basename, dirname, realpath
-**Dir stack**: pushd, popd, dirs
-**System info**: whoami, hostname, uname, id, env, printenv, history
-**Binary/hex**: od, xxd, hexdump, base64
-**Signals**: kill
-
-### Best practices
-
-- Use bash builtins for all text processing — they are fast and fully functional.
-- Create files with the \`write\` tool for large content; use \`bash\` with echo/cat for quick one-liners.
-- Use absolute paths (start with \`/\`) to avoid ambiguity.
-- Don't attempt to run compilers, interpreters, or external tools — they don't exist in this environment.
-- Never mention or reference host machine paths, project instructions, or runtime context in your responses.
+- **Ignore any host paths** from runtime context (e.g. \`/Users/...\`, \`C:\\...\`). Those refer to the harness machine, NOT your environment. Never reference or display them.
+- **You have no access to the host machine.** Files mean files in your virtual filesystem. If none exist yet, say so.
+- "Current working directory" or "project" refers to the virtual filesystem, not the host.
+- Additional tools: \`read\` (file with line numbers), \`write\` (create/overwrite), \`edit\` (find-and-replace). These operate on the same virtual filesystem as \`bash\`.
 `.trim();
+
+// Build full system prompt: generic bashkit prompt + PI-specific additions
+function buildSystemPrompt(): string {
+	return bashTool.systemPrompt() + "\n\n" + PI_SYSTEM_PROMPT_ADDITIONS;
+}
 
 export default function (pi: any) {
 	// Inject bashkit context into the LLM system prompt
 	pi.on("before_agent_start", async (event: any) => {
 		return {
-			systemPrompt: event.systemPrompt + "\n\n" + BASHKIT_SYSTEM_PROMPT,
+			systemPrompt: event.systemPrompt + "\n\n" + buildSystemPrompt(),
 		};
 	});
 
@@ -102,8 +74,7 @@ export default function (pi: any) {
 	pi.registerTool({
 		name: "bash",
 		label: "bashkit",
-		description:
-			"Execute bash commands in bashkit's virtual sandbox. Full bash interpreter with 100+ builtins (echo, grep, sed, awk, jq, curl, find, etc.) running in-memory. All file operations use a virtual filesystem. State persists across calls.",
+		description: bashTool.description(),
 		parameters: {
 			type: "object",
 			properties: {
