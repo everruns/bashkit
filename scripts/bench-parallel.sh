@@ -27,8 +27,20 @@ else
     echo "Using cached output from /tmp/criterion-output.txt"
 fi
 
-# Parse Criterion output into markdown
-OUTPUT=$(cat /tmp/criterion-output.txt)
+# Extract median time from Criterion output for lines matching a pattern
+# Usage: extract_times <grep_pattern> >> output_file
+extract_times() {
+    local pattern="$1"
+    grep -A2 "$pattern" /tmp/criterion-output.txt | \
+        awk -v pat="$pattern" '
+            $0 ~ pat {name=$1}
+            /time:/ {
+                match($0, /\[.*\]/)
+                bracket = substr($0, RSTART+1, RLENGTH-2)
+                split(bracket, vals, " ")
+                printf "| %s | %s %s |\n", name, vals[3], vals[4]
+            }'
+}
 
 BASE="criterion-parallel-${MONIKER}-${TIMESTAMP}"
 MD_PATH="${RESULTS_DIR}/${BASE}.md"
@@ -47,40 +59,21 @@ cat > "$MD_PATH" <<EOF
 
 ## Workload Comparison (50 sessions)
 
-| Benchmark | Time | Throughput |
-|-----------|------|------------|
+| Benchmark | Time |
+|-----------|------|
 EOF
 
-# Extract workload_types results
-grep -A2 '^workload_types/' /tmp/criterion-output.txt | \
-    awk '/^workload_types\// {name=$1}
-         /time:/ {
-             # Extract median (second value in brackets)
-             match($0, /\[.*\]/)
-             bracket = substr($0, RSTART+1, RLENGTH-2)
-             split(bracket, vals, " ")
-             median = vals[3] " " vals[4]
-             printf "| %s | %s |\n", name, median
-         }' >> "$MD_PATH"
+extract_times '^workload_types/' >> "$MD_PATH"
 
 cat >> "$MD_PATH" <<EOF
 
 ## Parallel Scaling (medium workload)
 
-| Benchmark | Time | Throughput |
-|-----------|------|------------|
+| Benchmark | Time |
+|-----------|------|
 EOF
 
-# Extract parallel_scaling results
-grep -A2 '^parallel_scaling/' /tmp/criterion-output.txt | \
-    awk '/^parallel_scaling\// {name=$1}
-         /time:/ {
-             match($0, /\[.*\]/)
-             bracket = substr($0, RSTART+1, RLENGTH-2)
-             split(bracket, vals, " ")
-             median = vals[3] " " vals[4]
-             printf "| %s | %s |\n", name, median
-         }' >> "$MD_PATH"
+extract_times '^parallel_scaling/' >> "$MD_PATH"
 
 cat >> "$MD_PATH" <<EOF
 
@@ -90,16 +83,7 @@ cat >> "$MD_PATH" <<EOF
 |-----------|------|
 EOF
 
-# Extract single_* results
-grep -A2 '^single_' /tmp/criterion-output.txt | \
-    awk '/^single_/ {name=$1}
-         /time:/ {
-             match($0, /\[.*\]/)
-             bracket = substr($0, RSTART+1, RLENGTH-2)
-             split(bracket, vals, " ")
-             median = vals[3] " " vals[4]
-             printf "| %s | %s |\n", name, median
-         }' >> "$MD_PATH"
+extract_times '^single_' >> "$MD_PATH"
 
 cat >> "$MD_PATH" <<EOF
 
