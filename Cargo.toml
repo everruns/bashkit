@@ -41,7 +41,7 @@ grep-regex = "0.1"
 grep-searcher = "0.1"
 
 # HTTP client (for curl and API calls)
-reqwest = { version = "0.13", features = ["stream", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
 
 # Glob matching
 globset = "0.4"
