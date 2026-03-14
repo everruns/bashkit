@@ -22,6 +22,7 @@ env:
   MACOSX_DEPLOYMENT_TARGET: "10.13"
   CARGO_INCREMENTAL: "1"
   DEBUG: "napi:*"
+  DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
 
 jobs:
   # ============================================================================
@@ -196,14 +197,17 @@ jobs:
             ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
           fi
 
+      - name: Install Doppler CLI
+        if: env.DOPPLER_TOKEN != ''
+        uses: dopplerhq/cli-action@v3
+
       - name: Run AI examples
+        if: env.DOPPLER_TOKEN != ''
         shell: bash
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          node examples/openai_tool.mjs
-          node examples/vercel_ai_tool.mjs
-          node examples/langchain_agent.mjs
+          doppler run -- node examples/openai_tool.mjs
+          doppler run -- node examples/vercel_ai_tool.mjs
+          doppler run -- node examples/langchain_agent.mjs
 
   # ============================================================================
   # Test bindings on Linux
@@ -292,13 +296,16 @@ jobs:
           mkdir -p node_modules/@everruns
           ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
 
+      - name: Install Doppler CLI
+        if: env.DOPPLER_TOKEN != ''
+        uses: dopplerhq/cli-action@v3
+
       - name: Run AI examples
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        if: env.DOPPLER_TOKEN != ''
         run: >
           docker run --rm -v ${{ github.workspace }}:${{ github.workspace }}
           -w ${{ github.workspace }}
-          -e OPENAI_API_KEY
+          -e OPENAI_API_KEY=$(doppler secrets get OPENAI_API_KEY --plain)
           --platform ${{ steps.docker.outputs.PLATFORM }}
           ${{ steps.docker.outputs.IMAGE }}
           sh -c "node examples/openai_tool.mjs && node examples/vercel_ai_tool.mjs && node examples/langchain_agent.mjs"

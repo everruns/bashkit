@@ -10,6 +10,10 @@ criteria = "safe-to-deploy"
 [policy.bashkit-cli]
 criteria = "safe-to-deploy"
 
+[policy.bashkit-js]
+audit-as-crates-io = false
+criteria = "safe-to-deploy"
+
 [policy.bashkit-python]
 audit-as-crates-io = false
 criteria = "safe-to-deploy"
@@ -270,6 +274,10 @@ criteria = "safe-to-deploy"
 version = "0.15.11"
 criteria = "safe-to-run"
 
+[[exemptions.convert_case]]
+version = "0.11.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.core-foundation]]
 version = "0.9.4"
 criteria = "safe-to-deploy"
@@ -322,6 +330,14 @@ criteria = "safe-to-run"
 version = "0.1.7"
 criteria = "safe-to-deploy"
 
+[[exemptions.ctor]]
+version = "0.6.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.ctor-proc-macro]]
+version = "0.0.7"
+criteria = "safe-to-deploy"
+
 [[exemptions.derive-where]]
 version = "1.6.0"
 criteria = "safe-to-deploy"
@@ -340,6 +356,14 @@ criteria = "safe-to-deploy"
 
 [[exemptions.displaydoc]]
 version = "0.2.5"
+criteria = "safe-to-deploy"
+
+[[exemptions.dtor]]
+version = "0.1.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.dtor-proc-macro]]
+version = "0.0.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.dunce]]
@@ -690,6 +714,10 @@ criteria = "safe-to-deploy"
 version = "0.2.183"
 criteria = "safe-to-deploy"
 
+[[exemptions.libloading]]
+version = "0.9.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.libm]]
 version = "0.2.16"
 criteria = "safe-to-deploy"
@@ -752,6 +780,30 @@ criteria = "safe-to-deploy"
 
 [[exemptions.nalgebra]]
 version = "0.33.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.napi]]
+version = "3.8.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.napi-build]]
+version = "2.3.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.napi-derive]]
+version = "3.5.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.napi-derive-backend]]
+version = "5.0.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.napi-sys]]
+version = "3.2.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.nohash-hasher]]
+version = "0.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.num-bigint]]
@@ -1416,6 +1468,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.unicode-normalization]]
 version = "0.1.25"
+criteria = "safe-to-deploy"
+
+[[exemptions.unicode-segmentation]]
+version = "1.12.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.unicode-width]]

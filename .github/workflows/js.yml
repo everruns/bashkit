@@ -29,6 +29,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
 
 jobs:
   build-and-test:
@@ -84,13 +85,16 @@ jobs:
           mkdir -p node_modules/@everruns
           ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
 
+      - name: Install Doppler CLI
+        if: env.DOPPLER_TOKEN != ''
+        uses: dopplerhq/cli-action@v3
+
       - name: Run AI examples
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        if: env.DOPPLER_TOKEN != ''
         run: |
-          node examples/openai_tool.mjs
-          node examples/vercel_ai_tool.mjs
-          node examples/langchain_agent.mjs
+          doppler run -- node examples/openai_tool.mjs
+          doppler run -- node examples/vercel_ai_tool.mjs
+          doppler run -- node examples/langchain_agent.mjs
 
   # Gate job for branch protection
   js-check:
