@@ -78,7 +78,13 @@ async fn execute_git(ctx: Context<'_>, git_client: &crate::git::GitClient) -> Re
              \tclone     Clone a repository (URL validation only)\n\
              \tfetch     Fetch from remote (URL validation only)\n\
              \tpush      Push to remote (URL validation only)\n\
-             \tpull      Pull from remote (URL validation only)\n"
+             \tpull      Pull from remote (URL validation only)\n\
+             \tshow      Show commit or file content\n\
+             \tls-files  List tracked files\n\
+             \trev-parse Resolve refs and repo metadata\n\
+             \trestore   Restore working tree or index files\n\
+             \tmerge-base Find merge base between commits\n\
+             \tgrep      Search tracked file contents\n"
                 .to_string(),
             1,
         ));
@@ -103,6 +109,12 @@ async fn execute_git(ctx: Context<'_>, git_client: &crate::git::GitClient) -> Re
         "checkout" => git_checkout(ctx, git_client, subargs).await,
         "diff" => git_diff(ctx, git_client, subargs).await,
         "reset" => git_reset(ctx, git_client, subargs).await,
+        "show" => git_show(ctx, git_client, subargs).await,
+        "ls-files" => git_ls_files(ctx, git_client).await,
+        "rev-parse" => git_rev_parse(ctx, git_client, subargs).await,
+        "restore" => git_restore(ctx, git_client, subargs).await,
+        "merge-base" => git_merge_base(ctx, git_client, subargs).await,
+        "grep" => git_grep(ctx, git_client, subargs).await,
         _ => Ok(ExecResult::err(
             format!(
                 "git: '{}' is not a git command. See 'git --help'.\n",
@@ -563,6 +575,131 @@ async fn git_reset(
 
     match git_client.reset(&ctx.fs, ctx.cwd, mode, target).await {
         Ok(output) => Ok(ExecResult::ok(output)),
+        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+    }
+}
+
+#[cfg(feature = "git")]
+async fn git_show(
+    ctx: Context<'_>,
+    git_client: &crate::git::GitClient,
+    args: &[String],
+) -> Result<ExecResult> {
+    let target = args.first().map(|s| s.as_str());
+    match git_client.show(&ctx.fs, ctx.cwd, target).await {
+        Ok(output) => Ok(ExecResult::ok(output)),
+        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+    }
+}
+
+#[cfg(feature = "git")]
+async fn git_ls_files(ctx: Context<'_>, git_client: &crate::git::GitClient) -> Result<ExecResult> {
+    match git_client.ls_files(&ctx.fs, ctx.cwd).await {
+        Ok(files) => {
+            let output: String = files.iter().map(|f| format!("{}\n", f)).collect();
+            Ok(ExecResult::ok(output))
+        }
+        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+    }
+}
+
+#[cfg(feature = "git")]
+async fn git_rev_parse(
+    ctx: Context<'_>,
+    git_client: &crate::git::GitClient,
+    args: &[String],
+) -> Result<ExecResult> {
+    if args.is_empty() {
+        return Ok(ExecResult::err(
+            "usage: git rev-parse [<options>] [<args>...]\n".to_string(),
+            129,
+        ));
+    }
+    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    match git_client.rev_parse(&ctx.fs, ctx.cwd, &refs).await {
+        Ok(output) => Ok(ExecResult::ok(output)),
+        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+    }
+}
+
+#[cfg(feature = "git")]
+async fn git_restore(
+    ctx: Context<'_>,
+    git_client: &crate::git::GitClient,
+    args: &[String],
+) -> Result<ExecResult> {
+    if args.is_empty() {
+        return Ok(ExecResult::err(
+            "usage: git restore [--staged] <pathspec>...\n".to_string(),
+            129,
+        ));
+    }
+
+    let staged = args.iter().any(|a| a == "--staged");
+    let paths: Vec<&str> = args
+        .iter()
+        .filter(|a| !a.starts_with('-'))
+        .map(|s| s.as_str())
+        .collect();
+
+    if paths.is_empty() {
+        return Ok(ExecResult::err(
+            "error: you must specify path(s) to restore\n".to_string(),
+            128,
+        ));
+    }
+
+    match git_client.restore(&ctx.fs, ctx.cwd, &paths, staged).await {
+        Ok(output) => Ok(ExecResult::ok(output)),
+        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+    }
+}
+
+#[cfg(feature = "git")]
+async fn git_merge_base(
+    ctx: Context<'_>,
+    git_client: &crate::git::GitClient,
+    args: &[String],
+) -> Result<ExecResult> {
+    if args.len() < 2 {
+        return Ok(ExecResult::err(
+            "usage: git merge-base <commit> <commit>\n".to_string(),
+            129,
+        ));
+    }
+    match git_client
+        .merge_base(&ctx.fs, ctx.cwd, &args[0], &args[1])
+        .await
+    {
+        Ok(output) => Ok(ExecResult::ok(output)),
+        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 1)),
+    }
+}
+
+#[cfg(feature = "git")]
+async fn git_grep(
+    ctx: Context<'_>,
+    git_client: &crate::git::GitClient,
+    args: &[String],
+) -> Result<ExecResult> {
+    if args.is_empty() {
+        return Ok(ExecResult::err(
+            "usage: git grep <pattern> [<pathspec>...]\n".to_string(),
+            129,
+        ));
+    }
+
+    let pattern = &args[0];
+    let paths: Vec<&str> = args[1..].iter().map(|s| s.as_str()).collect();
+
+    match git_client.grep(&ctx.fs, ctx.cwd, pattern, &paths).await {
+        Ok(output) => {
+            if output.is_empty() {
+                Ok(ExecResult::with_code(String::new(), 1))
+            } else {
+                Ok(ExecResult::ok(output))
+            }
+        }
         Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
     }
 }
