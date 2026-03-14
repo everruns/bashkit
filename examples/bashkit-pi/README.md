@@ -50,13 +50,13 @@ pi --provider openai --model gpt-5.4 \
 
 ```
 pi (LLM agent)
-  ├── bash tool  ──→ @everruns/bashkit (NAPI) ──→ bashkit virtual bash
-  ├── read tool  ──→ bashkit VFS via bash cat
-  ├── write tool ──→ bashkit VFS via bash heredoc
-  └── edit tool  ──→ bashkit VFS read + modify + write
+  ├── bash tool  ──→ Bash.executeSync()  ──→ bashkit virtual bash
+  ├── read tool  ──→ Bash.readFile()     ──→ bashkit VFS (direct)
+  ├── write tool ──→ Bash.writeFile()    ──→ bashkit VFS (direct)
+  └── edit tool  ──→ Bash.readFile() + writeFile()  ──→ bashkit VFS (direct)
 ```
 
-Single `Bash` instance shared across all tools. No subprocess — bashkit runs in-process via native Node.js bindings.
+Single `Bash` instance shared across all tools. read/write/edit use direct VFS APIs (no shell quoting). bash tool uses `executeSync()`. Both share the same VFS — files created by any tool are visible to all others.
 
 ## How It Works
 

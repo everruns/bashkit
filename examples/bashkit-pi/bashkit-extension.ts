@@ -5,6 +5,10 @@
  * All operations run against bashkit's in-memory virtual filesystem.
  * State (variables, files, cwd) persists across tool calls within a session.
  *
+ * read/write/edit use direct VFS APIs (readFile, writeFile, mkdir, exists).
+ * bash tool uses executeSync for shell commands.
+ * Both share the same Bash instance so VFS and shell state are always in sync.
+ *
  * Usage:
  *   cd examples/bashkit-pi && npm install
  *   pi -e examples/bashkit-pi/bashkit-extension.ts
@@ -26,56 +30,18 @@ const { Bash } = require_ext("@everruns/bashkit");
 // Single bashkit instance — state persists across all tool calls
 const bash = new Bash({ username: "user", hostname: "pi-sandbox" });
 
-// Helper: execute bash and return stdout/stderr
-function execBash(command: string): {
-	stdout: string;
-	stderr: string;
-	exitCode: number;
-} {
-	const result = bash.executeSync(command);
-	return {
-		stdout: result.stdout ?? "",
-		stderr: result.stderr ?? "",
-		exitCode: result.exitCode ?? 0,
-	};
-}
-
-// Helper: read file via bash cat (uses the shared VFS)
-function vfsRead(path: string): string {
-	const result = bash.executeSync(`cat '${path.replace(/'/g, "'\\''")}'`);
-	if (result.exitCode !== 0) {
-		throw new Error(result.stderr || `Failed to read ${path}`);
-	}
-	return result.stdout ?? "";
-}
-
-// Helper: write file via bash (uses the shared VFS)
-function vfsWrite(path: string, content: string): void {
-	// Ensure parent dir exists
-	const dir = path.replace(/\/[^/]*$/, "");
-	if (dir && dir !== path) {
-		bash.executeSync(`mkdir -p '${dir.replace(/'/g, "'\\''")}'`);
-	}
-	// Use heredoc to write content safely
-	const marker = `__BASHKIT_EOF_${Date.now()}__`;
-	const result = bash.executeSync(`cat > '${path.replace(/'/g, "'\\''")}' <<'${marker}'\n${content}\n${marker}`);
-	if (result.exitCode !== 0) {
-		throw new Error(result.stderr || `Failed to write ${path}`);
-	}
-}
-
-// Helper: check if file exists
-function vfsExists(path: string): boolean {
-	const result = bash.executeSync(
-		`test -e '${path.replace(/'/g, "'\\''")}'`,
-	);
-	return result.exitCode === 0;
-}
-
 // Resolve relative paths against bashkit home
 function resolvePath(userPath: string): string {
 	if (userPath.startsWith("/")) return userPath;
 	return `/home/user/${userPath}`;
+}
+
+// Ensure parent directory exists for a file path
+function ensureParentDir(filePath: string): void {
+	const dir = filePath.replace(/\/[^/]*$/, "");
+	if (dir && dir !== filePath && !bash.exists(dir)) {
+		bash.mkdir(dir, true);
+	}
 }
 
 export default function (pi: any) {
@@ -103,7 +69,7 @@ export default function (pi: any) {
 			_toolCallId: string,
 			params: { command: string; timeout?: number },
 		) {
-			const result = execBash(params.command);
+			const result = bash.executeSync(params.command);
 			let output = "";
 			if (result.stdout) output += result.stdout;
 			if (result.stderr) output += result.stderr;
@@ -119,7 +85,7 @@ export default function (pi: any) {
 		},
 	});
 
-	// --- read tool ---
+	// --- read tool (direct VFS) ---
 	pi.registerTool({
 		name: "read",
 		label: "bashkit-read",
@@ -145,10 +111,10 @@ export default function (pi: any) {
 			params: { path: string; offset?: number; limit?: number },
 		) {
 			const absPath = resolvePath(params.path);
-			const content = vfsRead(absPath);
+			const content = bash.readFile(absPath);
 			let lines = content.split("\n");
 
-			// Remove trailing empty line from cat output
+			// Remove trailing empty line if file ends with newline
 			if (lines.length > 0 && lines[lines.length - 1] === "") {
 				lines.pop();
 			}
@@ -168,7 +134,7 @@ export default function (pi: any) {
 		},
 	});
 
-	// --- write tool ---
+	// --- write tool (direct VFS) ---
 	pi.registerTool({
 		name: "write",
 		label: "bashkit-write",
@@ -190,7 +156,8 @@ export default function (pi: any) {
 			params: { path: string; content: string },
 		) {
 			const absPath = resolvePath(params.path);
-			vfsWrite(absPath, params.content);
+			ensureParentDir(absPath);
+			bash.writeFile(absPath, params.content);
 			return {
 				content: [
 					{
@@ -203,7 +170,7 @@ export default function (pi: any) {
 		},
 	});
 
-	// --- edit tool ---
+	// --- edit tool (direct VFS) ---
 	pi.registerTool({
 		name: "edit",
 		label: "bashkit-edit",
@@ -227,7 +194,7 @@ export default function (pi: any) {
 			params: { path: string; oldText: string; newText: string },
 		) {
 			const absPath = resolvePath(params.path);
-			const content = vfsRead(absPath);
+			const content = bash.readFile(absPath);
 
 			const count = content.split(params.oldText).length - 1;
 			if (count === 0) {
@@ -242,7 +209,7 @@ export default function (pi: any) {
 			}
 
 			const newContent = content.replace(params.oldText, params.newText);
-			vfsWrite(absPath, newContent);
+			bash.writeFile(absPath, newContent);
 
 			return {
 				content: [{ type: "text", text: `Edited ${absPath}` }],
