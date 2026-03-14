@@ -109,6 +109,10 @@ bench-list:
 bench-all:
     cargo run -p bashkit-bench --release -- --runners bashkit,bash,just-bash
 
+# Run Criterion parallel_execution benchmark and save results
+bench-parallel:
+    ./scripts/bench-parallel.sh
+
 # === Eval ===
 
 # Run LLM eval (requires ANTHROPIC_API_KEY or OPENAI_API_KEY)
