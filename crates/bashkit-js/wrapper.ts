@@ -83,7 +83,7 @@ export class Bash {
 }
 
 /**
- * Bash interpreter with LLM tool metadata (schema, description, system_prompt).
+ * Bash interpreter with tool-contract metadata.
  *
  * Use this when integrating with AI frameworks that need tool definitions.
  *
@@ -94,6 +94,7 @@ export class Bash {
  * const tool = new BashTool();
  * console.log(tool.name);           // "bashkit"
  * console.log(tool.inputSchema());  // JSON schema string
+ * console.log(tool.help());         // Markdown help document
  *
  * const result = tool.executeSync('echo hello');
  * console.log(result.stdout);       // hello\n
@@ -141,17 +142,17 @@ export class BashTool {
     return this.native.shortDescription;
   }
 
-  /** Full description. */
+  /** Token-efficient tool description. */
   description(): string {
     return this.native.description();
   }
 
-  /** Help text. */
+  /** Markdown help document. */
   help(): string {
     return this.native.help();
   }
 
-  /** System prompt for LLMs. */
+  /** Compact system prompt for orchestration. */
   systemPrompt(): string {
     return this.native.systemPrompt();
   }

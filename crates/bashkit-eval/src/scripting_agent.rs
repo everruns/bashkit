@@ -138,11 +138,11 @@ pub async fn run_scripted_agent(
     if task.discovery_mode {
         builder = builder.with_discovery();
     }
-    let mut tool: Box<dyn Tool> = Box::new(builder.build());
+    let tool: Box<dyn Tool> = Box::new(builder.build());
 
     let tool_def = ToolDefinition {
         name: tool.name().to_string(),
-        description: tool.description(),
+        description: tool.description().to_string(),
         input_schema: tool.input_schema(),
     };
 

@@ -8,6 +8,8 @@ Implemented
 
 Compose tool definitions (`ToolDef`) + execution callbacks into a single `ScriptedTool` that accepts bash scripts. Each sub-tool becomes a builtin command, letting LLMs orchestrate N tools in one call using pipes, variables, loops, and conditionals.
 
+`ScriptedToolBuilder` and `ScriptingToolSetBuilder` also implement the shared toolkit-library contract from [spec 009](./009-tool-contract.md): locale-aware metadata, `build_service()`, `build_tool_definition()`, `build_input_schema()`, `build_output_schema()`, and single-use `ToolExecution`.
+
 ## Feature flag
 
 `scripted_tool` — the entire module is gated behind `#[cfg(feature = "scripted_tool")]`.
@@ -92,6 +94,7 @@ Two arguments per tool: definition + callback.
 
 ```rust
 ScriptedTool::builder("api_name")
+    .locale("en-US")
     .short_description("...")
     .tool(
         ToolDef::new("get_user", "Fetch user by ID")

@@ -141,6 +141,13 @@ test("BashTool: metadata unchanged after reset", (t) => {
   t.is(tool.description(), descBefore);
 });
 
+test("BashTool: systemPrompt reflects configured home path", (t) => {
+  const tool = new BashTool({ username: "agent", hostname: "sandbox" });
+  const prompt = tool.systemPrompt();
+  t.true(prompt.includes("agent"));
+  t.true(prompt.includes("/home/agent"));
+});
+
 // ============================================================================
 // BashTool — execution (basic coverage, deep tests in basic.spec.ts)
 // ============================================================================

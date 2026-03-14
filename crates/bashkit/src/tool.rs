@@ -1,34 +1,62 @@
-//! Tool trait and BashTool implementation
+//! Tool contract and `BashTool` implementation.
 //!
 //! # Public Library Contract
 //!
-//! The `Tool` trait is a **public contract** - breaking changes require a major version bump.
-//! See `specs/009-tool-contract.md` for the full specification.
+//! `bashkit` follows the Everruns toolkit-library contract:
+//!
+//! ```text
+//! ToolBuilder (config) -> Tool (metadata) -> ToolExecution (single-use runtime)
+//! ```
+//!
+//! [`BashToolBuilder`] configures a reusable tool definition. [`BashTool`] exposes
+//! locale-aware metadata plus [`Tool::execution`] for validated, single-use runs.
+//! [`ToolExecution`] returns structured [`ToolOutput`] and can optionally stream
+//! [`ToolOutputChunk`] values during execution.
 //!
 //! # Architecture
 //!
-//! - [`Tool`] trait: Contract that all tools must implement
-//! - [`BashTool`]: Virtual bash interpreter implementing Tool
-//! - [`BashToolBuilder`]: Builder pattern for configuring BashTool
+//! - [`Tool`] trait: shared metadata + execution contract
+//! - [`BashToolBuilder`]: reusable builder for config, schemas, OpenAI tool JSON,
+//!   and `tower::Service` integration
+//! - [`BashTool`]: immutable metadata object implementing [`Tool`]
+//! - [`ToolExecution`]: validated, single-use runtime for one call
 //!
-//! # Example
+//! # Builder Example
 //!
 //! ```
-//! use bashkit::{BashTool, Tool, ToolRequest};
+//! use bashkit::{BashTool, Tool};
+//!
+//! let builder = BashTool::builder()
+//!     .locale("en-US")
+//!     .username("agent")
+//!     .hostname("sandbox");
+//!
+//! let tool = builder.build();
+//! assert_eq!(tool.name(), "bashkit");
+//! assert_eq!(tool.display_name(), "Bash");
+//! assert!(builder.build_tool_definition()["function"]["parameters"].is_object());
+//! ```
+//!
+//! # Execution Example
+//!
+//! ```
+//! use bashkit::{BashTool, Tool};
+//! use futures::StreamExt;
 //!
 //! # tokio_test::block_on(async {
-//! let mut tool = BashTool::default();
+//! let tool = BashTool::default();
+//! let execution = tool
+//!     .execution(serde_json::json!({"commands": "printf 'a\nb\n'"}))
+//!     .expect("valid args");
+//! let mut stream = execution.output_stream().expect("stream available");
 //!
-//! // Introspection
-//! assert_eq!(tool.name(), "bashkit");
-//! assert!(!tool.help().is_empty());
+//! let handle = tokio::spawn(async move { execution.execute().await.expect("execution succeeds") });
+//! let first = stream.next().await.expect("first chunk");
+//! assert_eq!(first.kind, "stdout");
+//! assert!(first.data.as_str().is_some_and(|chunk| chunk.starts_with("a\n")));
 //!
-//! // Execution
-//! let resp = tool.execute(ToolRequest {
-//!     commands: "echo hello".to_string(),
-//!     timeout_ms: None,
-//! }).await;
-//! assert_eq!(resp.stdout, "hello\n");
+//! let output = handle.await.expect("join");
+//! assert_eq!(output.result["stdout"], "a\nb\n");
 //! # });
 //! ```
 
@@ -36,13 +64,188 @@ use crate::builtins::Builtin;
 use crate::error::Error;
 use crate::{Bash, ExecResult, ExecutionLimits, OutputCallback};
 use async_trait::async_trait;
+use futures::Stream;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
+type ToolExecutionFuture = Pin<Box<dyn Future<Output = Result<ToolOutput, ToolError>> + Send>>;
+type ToolExecutionRunner = Box<
+    dyn FnOnce(Option<tokio::sync::mpsc::UnboundedSender<ToolOutputChunk>>) -> ToolExecutionFuture
+        + Send,
+>;
 
 /// Library version from Cargo.toml
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Standard `tower::Service` type for toolkit integrations.
+pub type ToolService =
+    tower::util::BoxCloneService<serde_json::Value, serde_json::Value, ToolError>;
+
+/// Tool execution error.
+///
+/// The split between [`ToolError::UserFacing`] and [`ToolError::Internal`] lets
+/// consumers decide what is safe to send back to the LLM. User-facing errors
+/// should be short, actionable, and locale-aware. Internal errors are for logs.
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum ToolError {
+    /// Safe to show to the LLM/user.
+    #[error("{0}")]
+    UserFacing(String),
+    /// Internal failure for logs/diagnostics only.
+    #[error("{0}")]
+    Internal(String),
+}
+
+impl ToolError {
+    /// Whether the message is safe to show to the LLM.
+    pub fn is_user_facing(&self) -> bool {
+        matches!(self, Self::UserFacing(_))
+    }
+}
+
+/// Image payload returned by a tool.
+///
+/// `bashkit` does not currently emit images, but the contract keeps parity with
+/// other toolkit crates that may return screenshots or rendered assets.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolImage {
+    pub base64: String,
+    pub media_type: String,
+}
+
+/// Consumer-facing metadata that never goes to the LLM.
+///
+/// Use [`ToolOutputMetadata::extra`] for kit-specific diagnostics such as exit
+/// codes, command counts, or bytes transferred.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolOutputMetadata {
+    #[serde(with = "duration_millis")]
+    pub duration: Duration,
+    pub extra: serde_json::Value,
+}
+
+/// Structured execution result.
+///
+/// [`ToolOutput::result`] is the JSON payload intended for the LLM tool result.
+/// [`ToolOutput::metadata`] is reserved for the host application.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolOutput {
+    pub result: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ToolImage>,
+    pub metadata: ToolOutputMetadata,
+}
+
+/// Incremental tool output chunk.
+///
+/// `kind` is consumer-routable (`stdout`, `stderr`, `progress`, ...). `data`
+/// stays JSON so non-text chunks can be added later without changing the type.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolOutputChunk {
+    pub data: serde_json::Value,
+    pub kind: String,
+}
+
+/// Stream returned by [`ToolExecution::output_stream`].
+///
+/// This stream is informational. The final authoritative result still comes
+/// from [`ToolExecution::execute`].
+pub struct ToolOutputStream {
+    receiver: tokio::sync::mpsc::UnboundedReceiver<ToolOutputChunk>,
+}
+
+impl Stream for ToolOutputStream {
+    type Item = ToolOutputChunk;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.receiver.poll_recv(cx)
+    }
+}
+
+#[derive(Default)]
+struct ToolExecutionStreamState {
+    sender: Option<tokio::sync::mpsc::UnboundedSender<ToolOutputChunk>>,
+    receiver: Option<tokio::sync::mpsc::UnboundedReceiver<ToolOutputChunk>>,
+}
+
+/// Stateful, single-use tool execution.
+///
+/// Build one with [`Tool::execution`]. Call [`ToolExecution::output_stream`]
+/// before [`ToolExecution::execute`] if you need live updates.
+pub struct ToolExecution {
+    runner: Option<ToolExecutionRunner>,
+    stream_state: Arc<Mutex<ToolExecutionStreamState>>,
+}
+
+impl ToolExecution {
+    pub(crate) fn new<F, Fut>(runner: F) -> Self
+    where
+        F: FnOnce(Option<tokio::sync::mpsc::UnboundedSender<ToolOutputChunk>>) -> Fut
+            + Send
+            + 'static,
+        Fut: Future<Output = Result<ToolOutput, ToolError>> + Send + 'static,
+    {
+        Self {
+            runner: Some(Box::new(move |sender| Box::pin(runner(sender)))),
+            stream_state: Arc::new(Mutex::new(ToolExecutionStreamState::default())),
+        }
+    }
+
+    /// Stream incremental output. Must be called before [`Self::execute`].
+    pub fn output_stream(&self) -> Option<ToolOutputStream> {
+        let mut state = match self.stream_state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if state.receiver.is_none() {
+            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+            state.sender = Some(sender);
+            state.receiver = Some(receiver);
+        }
+        state
+            .receiver
+            .take()
+            .map(|receiver| ToolOutputStream { receiver })
+    }
+
+    /// Run the execution to completion.
+    pub async fn execute(mut self) -> Result<ToolOutput, ToolError> {
+        let sender = match self.stream_state.lock() {
+            Ok(state) => state.sender.clone(),
+            Err(poisoned) => poisoned.into_inner().sender.clone(),
+        };
+        let Some(runner) = self.runner.take() else {
+            return Err(ToolError::Internal(
+                "tool execution may only be run once".to_string(),
+            ));
+        };
+        runner(sender).await
+    }
+}
+
+mod duration_millis {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::time::Duration;
+
+    pub fn serialize<S>(value: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u64(value.as_millis() as u64)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let millis = u64::deserialize(deserializer)?;
+        Ok(Duration::from_millis(millis))
+    }
+}
 
 /// List of built-in commands (organized by category)
 const BUILTINS: &str = "\
@@ -59,79 +262,6 @@ whoami hostname uname id env printenv history \
 curl wget \
 od xxd hexdump base64 \
 kill";
-
-/// Base help documentation template (generic help format)
-const BASE_HELP: &str = r#"BASH(1)                          User Commands                         BASH(1)
-
-NAME
-       bashkit - virtual bash interpreter with virtual filesystem
-
-SYNOPSIS
-       {"commands": "<bash commands>"}
-
-DESCRIPTION
-       Bashkit executes bash commands in a virtual environment with a virtual
-       filesystem. All file operations are contained within the virtual environment.
-
-       Supports full bash syntax including variables, pipelines, redirects,
-       loops, conditionals, functions, and arrays.
-
-BUILTINS
-   Core I/O:        echo, printf, cat, read
-   Text Processing: grep, sed, awk, jq, head, tail, sort, uniq, cut, tr, wc,
-                     nl, paste, column, comm, diff, strings, tac, rev
-   File Operations: cd, pwd, ls, find, mkdir, mktemp, rm, rmdir, cp, mv,
-                     touch, chmod, chown, ln
-   File Inspection: file, stat, less, tar, gzip, gunzip, du, df
-   Flow Control:    test, [, true, false, exit, return, break, continue
-   Shell/Variables:  export, set, unset, local, shift, source, eval, declare,
-                     typeset, readonly, shopt, getopts
-   Utilities:       sleep, date, seq, expr, yes, wait, timeout, xargs, tee,
-                     watch, basename, dirname, realpath
-   Dir Stack:       pushd, popd, dirs
-   System Info:     whoami, hostname, uname, id, env, printenv, history
-   Network:         curl, wget
-   Binary/Hex:      od, xxd, hexdump, base64
-   Signals:         kill
-
-INPUT
-       commands    Bash commands to execute (like bash -c "commands")
-
-OUTPUT
-       stdout      Standard output from the commands
-       stderr      Standard error from the commands
-       exit_code   Exit status (0 = success)
-
-EXAMPLES
-       Simple echo:
-           {"commands": "echo 'Hello, World!'"}
-
-       Arithmetic:
-           {"commands": "x=5; y=3; echo $((x + y))"}
-
-       Pipeline:
-           {"commands": "echo -e 'apple\nbanana' | grep a"}
-
-       JSON processing:
-           {"commands": "echo '{\"n\":1}' | jq '.n'"}
-
-       File operations (virtual):
-           {"commands": "echo data > /tmp/f.txt && cat /tmp/f.txt"}
-
-       Run script from VFS:
-           {"commands": "source /path/to/script.sh"}
-
-EXIT STATUS
-       0      Success
-       1-125  Command-specific error
-       126    Command not executable
-       127    Command not found
-
-SEE ALSO
-       bash(1), sh(1)
-"#;
-
-// Note: system_prompt() is built dynamically in build_system_prompt()
 
 /// Request to execute bash commands
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -280,17 +410,23 @@ pub trait Tool: Send + Sync {
     /// Tool identifier (e.g., "bashkit", "calculator")
     fn name(&self) -> &str;
 
+    /// Human-readable display name for UI.
+    fn display_name(&self) -> &str;
+
     /// One-line description for tool listings
     fn short_description(&self) -> &str;
 
-    /// Full description, may include dynamic config info
-    fn description(&self) -> String;
+    /// Token-efficient description for LLMs.
+    fn description(&self) -> &str;
 
-    /// Full documentation for LLMs (human readable, with examples)
+    /// Full documentation for LLMs (markdown, with examples)
     fn help(&self) -> String;
 
     /// Condensed description for system prompts (token-efficient)
     fn system_prompt(&self) -> String;
+
+    /// Locale used for user-facing text.
+    fn locale(&self) -> &str;
 
     /// JSON Schema for input validation
     fn input_schema(&self) -> serde_json::Value;
@@ -301,12 +437,15 @@ pub trait Tool: Send + Sync {
     /// Library/tool version
     fn version(&self) -> &str;
 
+    /// Create a single-use execution.
+    fn execution(&self, args: serde_json::Value) -> Result<ToolExecution, ToolError>;
+
     /// Execute the tool
-    async fn execute(&mut self, req: ToolRequest) -> ToolResponse;
+    async fn execute(&self, req: ToolRequest) -> ToolResponse;
 
     /// Execute with status callbacks for progress tracking
     async fn execute_with_status(
-        &mut self,
+        &self,
         req: ToolRequest,
         status_callback: Box<dyn FnMut(ToolStatus) + Send>,
     ) -> ToolResponse;
@@ -319,6 +458,8 @@ pub trait Tool: Send + Sync {
 /// Builder for configuring BashTool
 #[derive(Default)]
 pub struct BashToolBuilder {
+    /// Locale for user-facing text.
+    locale: String,
     /// Custom username for virtual identity
     username: Option<String>,
     /// Custom hostname for virtual identity
@@ -334,7 +475,16 @@ pub struct BashToolBuilder {
 impl BashToolBuilder {
     /// Create a new tool builder with defaults
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            locale: "en-US".to_string(),
+            ..Self::default()
+        }
+    }
+
+    /// Set locale for descriptions, prompts, help, and user-facing errors.
+    pub fn locale(mut self, locale: &str) -> Self {
+        self.locale = locale.to_string();
+        self
     }
 
     /// Set custom username for virtual identity
@@ -392,7 +542,7 @@ impl BashToolBuilder {
     }
 
     /// Build the BashTool
-    pub fn build(self) -> BashTool {
+    pub fn build(&self) -> BashTool {
         let builtin_names: Vec<String> = self.builtins.iter().map(|(n, _)| n.clone()).collect();
 
         // Collect LLM hints from builtins, deduplicated
@@ -404,21 +554,75 @@ impl BashToolBuilder {
         builtin_hints.sort();
         builtin_hints.dedup();
 
+        let locale = self.locale.clone();
+        let display_name = localized(locale.as_str(), "Bash", "Баш");
+
         BashTool {
-            username: self.username,
-            hostname: self.hostname,
-            limits: self.limits,
-            env_vars: self.env_vars,
-            builtins: self.builtins,
+            locale,
+            display_name: display_name.to_string(),
+            short_desc: localized(
+                self.locale.as_str(),
+                "Run bash commands in an isolated virtual filesystem",
+                "Виконує bash-команди в ізольованій віртуальній файловій системі",
+            )
+            .to_string(),
+            description: build_bash_description(self.locale.as_str(), &builtin_names),
+            username: self.username.clone(),
+            hostname: self.hostname.clone(),
+            limits: self.limits.clone(),
+            env_vars: self.env_vars.clone(),
+            builtins: self.builtins.clone(),
             builtin_names,
             builtin_hints,
         }
     }
+
+    /// Build a `tower::Service<Value, Response = Value, Error = ToolError>`.
+    pub fn build_service(&self) -> ToolService {
+        let tool = self.build();
+        tower::util::BoxCloneService::new(tower::service_fn(move |args| {
+            let tool = tool.clone();
+            async move {
+                let execution = tool.execution(args)?;
+                let output = execution.execute().await?;
+                Ok(output.result)
+            }
+        }))
+    }
+
+    /// Build an OpenAI-compatible tool definition.
+    pub fn build_tool_definition(&self) -> serde_json::Value {
+        let tool = self.build();
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": tool.name(),
+                "description": tool.description(),
+                "parameters": self.build_input_schema(),
+            }
+        })
+    }
+
+    /// Build the input schema without constructing a full tool.
+    pub fn build_input_schema(&self) -> serde_json::Value {
+        let schema = schema_for!(ToolRequest);
+        serde_json::to_value(schema).unwrap_or_default()
+    }
+
+    /// Build the output schema for `ToolOutput::result`.
+    pub fn build_output_schema(&self) -> serde_json::Value {
+        let schema = schema_for!(ToolResponse);
+        serde_json::to_value(schema).unwrap_or_default()
+    }
 }
 
 /// Virtual bash interpreter implementing the Tool trait
-#[derive(Default)]
+#[derive(Clone)]
 pub struct BashTool {
+    locale: String,
+    display_name: String,
+    short_desc: String,
+    description: String,
     username: Option<String>,
     hostname: Option<String>,
     limits: Option<ExecutionLimits>,
@@ -437,7 +641,7 @@ impl BashTool {
     }
 
     /// Create a Bash instance with configured settings
-    fn create_bash(&mut self) -> Bash {
+    fn create_bash(&self) -> Bash {
         let mut builder = Bash::builder();
 
         if let Some(ref username) = self.username {
@@ -460,74 +664,9 @@ impl BashTool {
         builder.build()
     }
 
-    /// Build dynamic description with supported tools
-    fn build_description(&self) -> String {
-        let mut desc =
-            String::from("Virtual bash interpreter with virtual filesystem. Supported tools: ");
-        desc.push_str(BUILTINS);
-        if !self.builtin_names.is_empty() {
-            desc.push(' ');
-            desc.push_str(&self.builtin_names.join(" "));
-        }
-        desc
-    }
-
     /// Build dynamic help with configuration
     fn build_help(&self) -> String {
-        let mut doc = BASE_HELP.to_string();
-
-        // Append configuration section if any dynamic config exists
-        let has_config = !self.builtin_names.is_empty()
-            || self.username.is_some()
-            || self.hostname.is_some()
-            || self.limits.is_some()
-            || !self.env_vars.is_empty();
-
-        if has_config {
-            doc.push_str("\nCONFIGURATION\n");
-
-            if !self.builtin_names.is_empty() {
-                doc.push_str("       Custom commands: ");
-                doc.push_str(&self.builtin_names.join(", "));
-                doc.push('\n');
-            }
-
-            if let Some(ref username) = self.username {
-                doc.push_str(&format!("       User: {} (whoami)\n", username));
-            }
-            if let Some(ref hostname) = self.hostname {
-                doc.push_str(&format!("       Host: {} (hostname)\n", hostname));
-            }
-
-            if let Some(ref limits) = self.limits {
-                doc.push_str(&format!(
-                    "       Limits: {} commands, {} iterations, {} depth\n",
-                    limits.max_commands, limits.max_loop_iterations, limits.max_function_depth
-                ));
-            }
-
-            if !self.env_vars.is_empty() {
-                doc.push_str("       Environment: ");
-                let keys: Vec<&str> = self.env_vars.iter().map(|(k, _)| k.as_str()).collect();
-                doc.push_str(&keys.join(", "));
-                doc.push('\n');
-            }
-        }
-
-        // Append builtin hints (capabilities/limitations for LLMs)
-        if !self.builtin_hints.is_empty() {
-            doc.push_str("\nNOTES\n");
-            for hint in &self.builtin_hints {
-                doc.push_str(&format!("       {hint}\n"));
-            }
-        }
-
-        // Append language interpreter warning
-        if let Some(warning) = self.language_warning() {
-            doc.push_str(&format!("\nWARNINGS\n       {warning}\n"));
-        }
-
-        doc
+        build_bash_help(self)
     }
 
     /// Single-line warning listing language interpreters not registered as builtins.
@@ -557,36 +696,73 @@ impl BashTool {
 
     /// Build dynamic system prompt
     fn build_system_prompt(&self) -> String {
-        let mut prompt = String::from("# Bash Tool\n\n");
+        build_bash_system_prompt(self)
+    }
 
-        // Description with workspace info
-        prompt.push_str("Virtual bash interpreter with virtual filesystem.\n");
-
-        // Home directory info if username is set
-        if let Some(ref username) = self.username {
-            prompt.push_str(&format!("Home: /home/{}\n", username));
+    async fn run_request_with_stream(
+        &self,
+        req: ToolRequest,
+        stream_sender: Option<tokio::sync::mpsc::UnboundedSender<ToolOutputChunk>>,
+    ) -> ToolResponse {
+        if req.commands.is_empty() {
+            return ToolResponse {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+                error: None,
+            };
         }
 
-        prompt.push('\n');
+        let tool = self.clone();
+        let mut bash = tool.create_bash();
 
-        // Input/Output format
-        prompt.push_str("Input: {\"commands\": \"<bash commands>\"}\n");
-        prompt.push_str("Output: {stdout, stderr, exit_code}\n");
+        let fut = async {
+            let result = if let Some(sender) = stream_sender {
+                let output_cb: OutputCallback = Box::new(move |stdout_chunk, stderr_chunk| {
+                    if !stdout_chunk.is_empty() {
+                        let _ = sender.send(ToolOutputChunk {
+                            data: serde_json::json!(stdout_chunk),
+                            kind: "stdout".to_string(),
+                        });
+                    }
+                    if !stderr_chunk.is_empty() {
+                        let _ = sender.send(ToolOutputChunk {
+                            data: serde_json::json!(stderr_chunk),
+                            kind: "stderr".to_string(),
+                        });
+                    }
+                });
+                bash.exec_streaming(&req.commands, output_cb).await
+            } else {
+                bash.exec(&req.commands).await
+            };
 
-        // Builtin hints (capabilities/limitations)
-        if !self.builtin_hints.is_empty() {
-            prompt.push('\n');
-            for hint in &self.builtin_hints {
-                prompt.push_str(&format!("Note: {hint}\n"));
+            match result {
+                Ok(result) => result.into(),
+                Err(err) => ToolResponse {
+                    stdout: String::new(),
+                    stderr: err.to_string(),
+                    exit_code: 1,
+                    error: Some(error_kind(&err)),
+                },
             }
-        }
+        };
 
-        // Language interpreter warning
-        if let Some(warning) = self.language_warning() {
-            prompt.push_str(&format!("\nWarning: {warning}\n"));
+        if let Some(ms) = req.timeout_ms {
+            let duration = Duration::from_millis(ms);
+            match tokio::time::timeout(duration, fut).await {
+                Ok(response) => response,
+                Err(_) => timeout_response(duration),
+            }
+        } else {
+            fut.await
         }
+    }
+}
 
-        prompt
+impl Default for BashTool {
+    fn default() -> Self {
+        BashToolBuilder::new().build()
     }
 }
 
@@ -596,12 +772,16 @@ impl Tool for BashTool {
         "bashkit"
     }
 
-    fn short_description(&self) -> &str {
-        "Virtual bash interpreter with virtual filesystem"
+    fn display_name(&self) -> &str {
+        &self.display_name
     }
 
-    fn description(&self) -> String {
-        self.build_description()
+    fn short_description(&self) -> &str {
+        &self.short_desc
+    }
+
+    fn description(&self) -> &str {
+        &self.description
     }
 
     fn help(&self) -> String {
@@ -612,21 +792,50 @@ impl Tool for BashTool {
         self.build_system_prompt()
     }
 
+    fn locale(&self) -> &str {
+        &self.locale
+    }
+
     fn input_schema(&self) -> serde_json::Value {
-        let schema = schema_for!(ToolRequest);
-        serde_json::to_value(schema).unwrap_or_default()
+        BashToolBuilder {
+            locale: self.locale.clone(),
+            username: self.username.clone(),
+            hostname: self.hostname.clone(),
+            limits: self.limits.clone(),
+            env_vars: self.env_vars.clone(),
+            builtins: self.builtins.clone(),
+        }
+        .build_input_schema()
     }
 
     fn output_schema(&self) -> serde_json::Value {
-        let schema = schema_for!(ToolResponse);
-        serde_json::to_value(schema).unwrap_or_default()
+        BashToolBuilder {
+            locale: self.locale.clone(),
+            username: self.username.clone(),
+            hostname: self.hostname.clone(),
+            limits: self.limits.clone(),
+            env_vars: self.env_vars.clone(),
+            builtins: self.builtins.clone(),
+        }
+        .build_output_schema()
     }
 
     fn version(&self) -> &str {
         VERSION
     }
 
-    async fn execute(&mut self, req: ToolRequest) -> ToolResponse {
+    fn execution(&self, args: serde_json::Value) -> Result<ToolExecution, ToolError> {
+        let req = tool_request_from_value(self.locale(), args)?;
+        let tool = self.clone();
+
+        Ok(ToolExecution::new(move |stream_sender| async move {
+            let start = std::time::Instant::now();
+            let response = tool.run_request_with_stream(req, stream_sender).await;
+            tool_output_from_response(response, start.elapsed())
+        }))
+    }
+
+    async fn execute(&self, req: ToolRequest) -> ToolResponse {
         if req.commands.is_empty() {
             return ToolResponse {
                 stdout: String::new(),
@@ -662,7 +871,7 @@ impl Tool for BashTool {
     }
 
     async fn execute_with_status(
-        &mut self,
+        &self,
         req: ToolRequest,
         mut status_callback: Box<dyn FnMut(ToolStatus) + Send>,
     ) -> ToolResponse {
@@ -757,6 +966,215 @@ fn timeout_response(dur: Duration) -> ToolResponse {
     }
 }
 
+pub(crate) fn localized<'a>(locale: &str, en: &'a str, uk: &'a str) -> &'a str {
+    if locale.starts_with("uk") { uk } else { en }
+}
+
+fn build_bash_description(locale: &str, builtin_names: &[String]) -> String {
+    let mut desc = localized(
+        locale,
+        "Run bash commands in an isolated virtual filesystem",
+        "Виконує bash-команди в ізольованій віртуальній файловій системі",
+    )
+    .to_string();
+    if !builtin_names.is_empty() {
+        desc.push_str(". ");
+        desc.push_str(localized(
+            locale,
+            "Custom commands",
+            "Користувацькі команди",
+        ));
+        desc.push_str(": ");
+        desc.push_str(&builtin_names.join(", "));
+    }
+    desc
+}
+
+fn build_bash_system_prompt(tool: &BashTool) -> String {
+    let mut parts = vec![format!(
+        "{}: {}.",
+        tool.name(),
+        localized(
+            tool.locale(),
+            "run bash commands in an isolated virtual filesystem",
+            "виконує bash-команди в ізольованій віртуальній файловій системі",
+        )
+    )];
+
+    parts.push(
+        localized(
+            tool.locale(),
+            "Returns JSON with stdout, stderr, exit_code.",
+            "Повертає JSON з stdout, stderr, exit_code.",
+        )
+        .to_string(),
+    );
+
+    if let Some(username) = &tool.username {
+        parts.push(format!(
+            "{} /home/{username}.",
+            localized(tool.locale(), "Home", "Домівка")
+        ));
+    }
+
+    if !tool.builtin_hints.is_empty() {
+        parts.extend(tool.builtin_hints.iter().cloned());
+    }
+
+    if let Some(warning) = tool.language_warning() {
+        parts.push(warning);
+    }
+
+    parts.join(" ")
+}
+
+fn build_bash_help(tool: &BashTool) -> String {
+    let mut doc = String::new();
+    doc.push_str(&format!("# {}\n\n", tool.display_name()));
+    doc.push_str(tool.description());
+    doc.push_str(".\n\n");
+    doc.push_str(&format!(
+        "**Version:** {}\n**Name:** `{}`\n**Locale:** `{}`\n\n",
+        tool.version(),
+        tool.name(),
+        tool.locale()
+    ));
+
+    doc.push_str("## Parameters\n\n");
+    doc.push_str("| Name | Type | Required | Default | Description |\n");
+    doc.push_str("|------|------|----------|---------|-------------|\n");
+    doc.push_str("| `commands` | string | yes | — | Bash commands to execute |\n");
+    doc.push_str("| `timeout_ms` | integer | no | — | Per-call timeout in milliseconds |\n\n");
+
+    doc.push_str("## Result\n\n");
+    doc.push_str("| Field | Type | Description |\n");
+    doc.push_str("|------|------|-------------|\n");
+    doc.push_str("| `stdout` | string | Standard output |\n");
+    doc.push_str("| `stderr` | string | Standard error |\n");
+    doc.push_str("| `exit_code` | integer | Shell exit code |\n");
+    doc.push_str("| `error` | string | Error category when execution fails |\n\n");
+
+    doc.push_str("## Examples\n\n");
+    doc.push_str("```json\n");
+    doc.push_str("{\"commands\":\"echo hello\"}\n");
+    doc.push_str("```\n\n");
+
+    doc.push_str("```json\n");
+    doc.push_str(
+        "{\"commands\":\"echo data > /tmp/f.txt && cat /tmp/f.txt\",\"timeout_ms\":5000}\n",
+    );
+    doc.push_str("```\n\n");
+
+    doc.push_str("## Behavior\n\n");
+    doc.push_str("- Filesystem is virtual and isolated per execution.\n");
+    doc.push_str("- Standard bash syntax is supported, including pipes, redirects, loops, functions, and arrays.\n");
+    doc.push_str("- Builtins available by default: `");
+    doc.push_str(BUILTINS);
+    doc.push_str("`\n");
+    if !tool.builtin_names.is_empty() {
+        doc.push_str("- Custom commands: `");
+        doc.push_str(&tool.builtin_names.join("`, `"));
+        doc.push_str("`\n");
+    }
+    if let Some(username) = &tool.username {
+        doc.push_str(&format!("- User: `{username}`\n"));
+    }
+    if let Some(hostname) = &tool.hostname {
+        doc.push_str(&format!("- Host: `{hostname}`\n"));
+    }
+    if let Some(limits) = &tool.limits {
+        doc.push_str(&format!(
+            "- Limits: {} commands, {} loop iterations, {} function depth\n",
+            limits.max_commands, limits.max_loop_iterations, limits.max_function_depth
+        ));
+    }
+    if !tool.env_vars.is_empty() {
+        let env_keys: Vec<&str> = tool.env_vars.iter().map(|(key, _)| key.as_str()).collect();
+        doc.push_str("- Environment variables: `");
+        doc.push_str(&env_keys.join("`, `"));
+        doc.push_str("`\n");
+    }
+    if !tool.builtin_hints.is_empty() {
+        doc.push_str("\n## Notes\n\n");
+        for hint in &tool.builtin_hints {
+            doc.push_str("- ");
+            doc.push_str(hint);
+            doc.push('\n');
+        }
+    }
+    if let Some(warning) = tool.language_warning() {
+        doc.push_str("\n## Warnings\n\n");
+        doc.push_str("- ");
+        doc.push_str(&warning);
+        doc.push('\n');
+    }
+
+    doc
+}
+
+pub(crate) fn tool_request_from_value(
+    locale: &str,
+    args: serde_json::Value,
+) -> Result<ToolRequest, ToolError> {
+    let Some(obj) = args.as_object() else {
+        return Err(ToolError::UserFacing(
+            localized(
+                locale,
+                "tool arguments must be a JSON object",
+                "аргументи інструмента мають бути JSON-об'єктом",
+            )
+            .to_string(),
+        ));
+    };
+
+    let Some(commands) = obj.get("commands").and_then(|value| value.as_str()) else {
+        return Err(ToolError::UserFacing(
+            localized(
+                locale,
+                "`commands` is required",
+                "поле `commands` є обов'язковим",
+            )
+            .to_string(),
+        ));
+    };
+
+    let timeout_ms = match obj.get("timeout_ms") {
+        Some(value) => Some(value.as_u64().ok_or_else(|| {
+            ToolError::UserFacing(
+                localized(
+                    locale,
+                    "`timeout_ms` must be an integer",
+                    "поле `timeout_ms` має бути цілим числом",
+                )
+                .to_string(),
+            )
+        })?),
+        None => None,
+    };
+
+    Ok(ToolRequest {
+        commands: commands.to_string(),
+        timeout_ms,
+    })
+}
+
+pub(crate) fn tool_output_from_response(
+    response: ToolResponse,
+    duration: Duration,
+) -> Result<ToolOutput, ToolError> {
+    let exit_code = response.exit_code;
+    let result = serde_json::to_value(response)
+        .map_err(|err| ToolError::Internal(format!("failed to serialize tool response: {err}")))?;
+    Ok(ToolOutput {
+        result,
+        images: Vec::new(),
+        metadata: ToolOutputMetadata {
+            duration,
+            extra: serde_json::json!({ "exit_code": exit_code }),
+        },
+    })
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -782,15 +1200,19 @@ mod tests {
 
         // Test trait methods
         assert_eq!(tool.name(), "bashkit");
+        assert_eq!(tool.display_name(), "Bash");
         assert_eq!(
             tool.short_description(),
-            "Virtual bash interpreter with virtual filesystem"
+            "Run bash commands in an isolated virtual filesystem"
         );
-        assert!(tool.description().contains("Virtual bash interpreter"));
-        assert!(tool.description().contains("Supported tools:"));
-        assert!(tool.help().contains("BASH(1)"));
-        assert!(tool.help().contains("SYNOPSIS"));
-        assert!(tool.system_prompt().contains("# Bash Tool"));
+        assert_eq!(
+            tool.description(),
+            "Run bash commands in an isolated virtual filesystem"
+        );
+        assert_eq!(tool.locale(), "en-US");
+        assert!(tool.help().contains("# Bash"));
+        assert!(tool.help().contains("## Parameters"));
+        assert!(tool.system_prompt().starts_with("bashkit:"));
         assert_eq!(tool.version(), VERSION);
     }
 
@@ -803,18 +1225,17 @@ mod tests {
             .limits(ExecutionLimits::new().max_commands(50))
             .build();
 
-        // helptext should include configuration in man-page style
+        // helptext should include configuration in markdown
         let helptext = tool.help();
-        assert!(helptext.contains("CONFIGURATION"));
-        assert!(helptext.contains("User: agent"));
-        assert!(helptext.contains("Host: sandbox"));
+        assert!(helptext.contains("User: `agent`"));
+        assert!(helptext.contains("Host: `sandbox`"));
         assert!(helptext.contains("50 commands"));
         assert!(helptext.contains("API_KEY"));
 
         // system_prompt should include home
         let sysprompt = tool.system_prompt();
-        assert!(sysprompt.contains("# Bash Tool"));
-        assert!(sysprompt.contains("Home: /home/agent"));
+        assert!(sysprompt.starts_with("bashkit:"));
+        assert!(sysprompt.contains("Home /home/agent."));
     }
 
     #[test]
@@ -833,6 +1254,107 @@ mod tests {
     }
 
     #[test]
+    fn test_builder_contract_helpers() {
+        let builder = BashTool::builder().username("agent");
+        let definition = builder.build_tool_definition();
+        let input_schema = builder.build_input_schema();
+        let output_schema = builder.build_output_schema();
+
+        assert_eq!(definition["type"], "function");
+        assert_eq!(definition["function"]["name"], "bashkit");
+        assert_eq!(definition["function"]["parameters"], input_schema);
+        assert!(output_schema["properties"]["stdout"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_builder_service_executes() {
+        use tower::ServiceExt;
+
+        let service = BashTool::builder().build_service();
+        let result = service
+            .oneshot(serde_json::json!({"commands": "echo hello"}))
+            .await
+            .unwrap_or_else(|err| panic!("service should execute: {err}"));
+
+        assert_eq!(result["stdout"], "hello\n");
+        assert_eq!(result["exit_code"], 0);
+    }
+
+    #[test]
+    fn test_execution_rejects_invalid_args() {
+        let tool = BashTool::default();
+        let err = tool
+            .execution(serde_json::json!({"timeout_ms": 10}))
+            .err()
+            .unwrap_or_else(|| panic!("execution should reject missing commands"));
+        assert_eq!(
+            err,
+            ToolError::UserFacing("`commands` is required".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execution_returns_tool_output() {
+        let tool = BashTool::default();
+        let execution = tool
+            .execution(serde_json::json!({"commands": "echo hello"}))
+            .unwrap_or_else(|err| panic!("execution should be created: {err}"));
+        let output = execution
+            .execute()
+            .await
+            .unwrap_or_else(|err| panic!("execution should succeed: {err}"));
+
+        assert_eq!(output.result["stdout"], "hello\n");
+        assert_eq!(output.metadata.extra["exit_code"], 0);
+        assert!(output.metadata.duration >= Duration::from_millis(0));
+    }
+
+    #[tokio::test]
+    async fn test_execution_stream_emits_output_chunks() {
+        use futures::StreamExt;
+
+        let tool = BashTool::default();
+        let execution = tool
+            .execution(serde_json::json!({"commands": "for i in 1 2; do echo $i; done"}))
+            .unwrap_or_else(|err| panic!("execution should be created: {err}"));
+        let mut stream = execution
+            .output_stream()
+            .unwrap_or_else(|| panic!("stream should be available"));
+
+        let handle = tokio::spawn(async move {
+            execution
+                .execute()
+                .await
+                .unwrap_or_else(|err| panic!("execution should succeed: {err}"))
+        });
+
+        let mut chunks = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            chunks.push(chunk);
+        }
+
+        let output = handle
+            .await
+            .unwrap_or_else(|err| panic!("join should succeed: {err}"));
+
+        assert_eq!(output.result["stdout"], "1\n2\n");
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].kind, "stdout");
+        assert_eq!(chunks[0].data, serde_json::json!("1\n"));
+    }
+
+    #[test]
+    fn test_locale_localizes_user_facing_text() {
+        let tool = BashTool::builder().locale("uk-UA").build();
+        assert_eq!(tool.display_name(), "Баш");
+        assert_eq!(
+            tool.description(),
+            "Виконує bash-команди в ізольованій віртуальній файловій системі"
+        );
+        assert!(tool.system_prompt().starts_with("bashkit:"));
+    }
+
+    #[test]
     fn test_tool_status() {
         let status = ToolStatus::new("execute")
             .with_message("Running commands")
@@ -847,7 +1369,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_execute_empty() {
-        let mut tool = BashTool::default();
+        let tool = BashTool::default();
         let req = ToolRequest {
             commands: String::new(),
             timeout_ms: None,
@@ -859,7 +1381,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_execute_echo() {
-        let mut tool = BashTool::default();
+        let tool = BashTool::default();
         let req = ToolRequest {
             commands: "echo hello".to_string(),
             timeout_ms: None,
@@ -894,7 +1416,10 @@ mod tests {
 
         // Hint should appear in help
         let helptext = tool.help();
-        assert!(helptext.contains("NOTES"), "help should have NOTES section");
+        assert!(
+            helptext.contains("## Notes"),
+            "help should have Notes section"
+        );
         assert!(
             helptext.contains("mycommand: Processes CSV"),
             "help should contain the hint"
@@ -914,14 +1439,14 @@ mod tests {
 
         let helptext = tool.help();
         assert!(
-            !helptext.contains("NOTES"),
-            "help should not have NOTES without hinted builtins"
+            !helptext.contains("## Notes"),
+            "help should not have Notes without hinted builtins"
         );
 
         let sysprompt = tool.system_prompt();
         assert!(
-            !sysprompt.contains("Note:"),
-            "system_prompt should not have notes without hinted builtins"
+            !sysprompt.contains("Processes CSV"),
+            "system_prompt should not have hints without hinted builtins"
         );
     }
 
@@ -931,14 +1456,14 @@ mod tests {
 
         let sysprompt = tool.system_prompt();
         assert!(
-            sysprompt.contains("Warning: perl, python/python3 not available."),
+            sysprompt.contains("perl, python/python3 not available."),
             "system_prompt should have single combined warning"
         );
 
         let helptext = tool.help();
         assert!(
-            helptext.contains("WARNINGS"),
-            "help should have WARNINGS section"
+            helptext.contains("## Warnings"),
+            "help should have Warnings section"
         );
         assert!(
             helptext.contains("perl, python/python3 not available."),
@@ -968,14 +1493,14 @@ mod tests {
 
         let sysprompt = tool.system_prompt();
         assert!(
-            !sysprompt.contains("Warning:"),
+            !sysprompt.contains("not available"),
             "no warning when all languages registered"
         );
 
         let helptext = tool.help();
         assert!(
-            !helptext.contains("WARNINGS"),
-            "no WARNINGS section when all languages registered"
+            !helptext.contains("## Warnings"),
+            "no Warnings section when all languages registered"
         );
     }
 
@@ -1001,7 +1526,7 @@ mod tests {
 
         let sysprompt = tool.system_prompt();
         assert!(
-            sysprompt.contains("Warning: perl not available."),
+            sysprompt.contains("perl not available."),
             "should warn about perl only"
         );
         assert!(
@@ -1075,7 +1600,7 @@ mod tests {
     async fn test_tool_execute_with_status() {
         use std::sync::{Arc, Mutex};
 
-        let mut tool = BashTool::default();
+        let tool = BashTool::default();
         let req = ToolRequest {
             commands: "echo test".to_string(),
             timeout_ms: None,
@@ -1104,7 +1629,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_status_streams_output() {
-        let mut tool = BashTool::default();
+        let tool = BashTool::default();
         let req = ToolRequest {
             commands: "for i in a b c; do echo $i; done".to_string(),
             timeout_ms: None,
@@ -1141,7 +1666,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_status_streams_list_commands() {
-        let mut tool = BashTool::default();
+        let tool = BashTool::default();
         let req = ToolRequest {
             commands: "echo start; echo end".to_string(),
             timeout_ms: None,
@@ -1174,7 +1699,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_status_no_duplicate_output() {
-        let mut tool = BashTool::default();
+        let tool = BashTool::default();
         // mix of list + loop: should get 5 distinct events, no duplicates
         let req = ToolRequest {
             commands: "echo start; for i in 1 2 3; do echo $i; done; echo end".to_string(),
@@ -1227,7 +1752,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_execute_timeout() {
-        let mut tool = BashTool::default();
+        let tool = BashTool::default();
         let req = ToolRequest {
             commands: "sleep 10".to_string(),
             timeout_ms: Some(100),
@@ -1240,7 +1765,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_execute_no_timeout() {
-        let mut tool = BashTool::default();
+        let tool = BashTool::default();
         let req = ToolRequest {
             commands: "echo fast".to_string(),
             timeout_ms: Some(5000),
@@ -1289,7 +1814,7 @@ mod tests {
             }
         }
 
-        let mut tool = BashToolBuilder::new()
+        let tool = BashToolBuilder::new()
             .builtin("testcmd", Box::new(TestBuiltin))
             .build();
 
