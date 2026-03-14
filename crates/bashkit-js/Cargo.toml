@@ -1,0 +1,25 @@
+# Bashkit JavaScript/TypeScript bindings via NAPI-RS
+# Version synced from workspace Cargo.toml via build.rs
+
+[package]
+name = "bashkit-js"
+description = "JavaScript/TypeScript bindings for the Bashkit sandboxed bash interpreter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bashkit = { path = "../bashkit", features = ["scripted_tool"] }
+napi = { workspace = true }
+napi-derive = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[build-dependencies]
+napi-build = { workspace = true }

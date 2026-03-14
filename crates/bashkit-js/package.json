@@ -1,0 +1,76 @@
+{
+  "name": "@everruns/bashkit",
+  "version": "0.1.9",
+  "description": "Sandboxed bash interpreter for JavaScript/TypeScript",
+  "main": "wrapper.js",
+  "types": "wrapper.d.ts",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/everruns/bashkit"
+  },
+  "keywords": [
+    "bash",
+    "interpreter",
+    "sandbox",
+    "ai",
+    "agent",
+    "tool"
+  ],
+  "napi": {
+    "binaryName": "bashkit",
+    "targets": [
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-pc-windows-msvc",
+      "wasm32-wasip1-threads"
+    ]
+  },
+  "files": [
+    "wrapper.js",
+    "wrapper.d.ts",
+    "index.cjs",
+    "index.d.ts",
+    "index.d.cts",
+    "bashkit.*.node",
+    "bashkit.*.wasm"
+  ],
+  "scripts": {
+    "build": "npm run build:napi && npm run build:cjs && npm run build:ts",
+    "build:napi": "napi build --platform --release",
+    "build:cjs": "node -e \"const fs=require('fs'); if(fs.existsSync('index.js')){fs.renameSync('index.js','index.cjs')}; if(fs.existsSync('index.d.ts')){fs.copyFileSync('index.d.ts','index.d.cts')}\"",
+    "build:ts": "tsc",
+    "artifacts": "napi artifacts",
+    "test": "ava",
+    "lint": "oxlint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "type-check": "tsc --noEmit",
+    "version": "napi version"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0",
+    "@types/node": "^25.5.0",
+    "ava": "^6.2.0",
+    "oxlint": "^0.16.0",
+    "prettier": "^3.4.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0"
+  },
+  "ava": {
+    "extensions": {
+      "ts": "module"
+    },
+    "timeout": "2m",
+    "workerThreads": false,
+    "nodeArguments": [
+      "--import=tsx"
+    ]
+  },
+  "engines": {
+    "node": ">= 18"
+  }
+}

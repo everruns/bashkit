@@ -76,5 +76,6 @@ jobs:
         run: |
           gh workflow run publish.yml
           gh workflow run publish-python.yml
+          gh workflow run publish-js.yml
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
