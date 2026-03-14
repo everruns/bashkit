@@ -140,12 +140,9 @@ impl BashkitPyRunner {
             );
         }
         // Run from /tmp to avoid Python importing local bashkit source dir
-        let child = PersistentChild::spawn_with_cwd(
-            "python3",
-            &[script_path.to_str().unwrap()],
-            "/tmp",
-        )
-        .await?;
+        let child =
+            PersistentChild::spawn_with_cwd("python3", &[script_path.to_str().unwrap()], "/tmp")
+                .await?;
         Ok(Runner::BashkitPy(child))
     }
 }
@@ -316,7 +313,11 @@ impl PersistentChild {
         let mut line = String::new();
         pc.reader.read_line(&mut line).await?;
         let ready: serde_json::Value = serde_json::from_str(line.trim())?;
-        if !ready.get("ready").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if !ready
+            .get("ready")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             anyhow::bail!("Child process did not send ready signal");
         }
 
@@ -350,10 +351,7 @@ impl PersistentChild {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let exit_code = resp
-            .get("exitCode")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(-1) as i32;
+        let exit_code = resp.get("exitCode").and_then(|v| v.as_i64()).unwrap_or(-1) as i32;
 
         Ok((stdout, stderr, exit_code))
     }

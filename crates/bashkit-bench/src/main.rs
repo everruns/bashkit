@@ -690,11 +690,15 @@ fn generate_markdown_report(report: &BenchReport) -> String {
     md.push_str("|--------|------|-------------|\n");
     md.push_str("| bashkit | in-process | Rust library call, no fork/exec |\n");
     md.push_str("| bashkit-cli | subprocess | bashkit binary, new process per run |\n");
-    md.push_str("| bashkit-js | persistent child | Node.js + @everruns/bashkit, warm interpreter |\n");
+    md.push_str(
+        "| bashkit-js | persistent child | Node.js + @everruns/bashkit, warm interpreter |\n",
+    );
     md.push_str("| bashkit-py | persistent child | Python + bashkit package, warm interpreter |\n");
     md.push_str("| bash | subprocess | /bin/bash, new process per run |\n");
     md.push_str("| just-bash | subprocess | just-bash CLI, new process per run |\n");
-    md.push_str("| just-bash-inproc | persistent child | Node.js + just-bash library, warm interpreter |\n");
+    md.push_str(
+        "| just-bash-inproc | persistent child | Node.js + just-bash library, warm interpreter |\n",
+    );
     md.push('\n');
     md.push_str("## Assumptions & Notes\n\n");
     md.push_str("- Times measured in nanoseconds, displayed in milliseconds\n");
