@@ -64,10 +64,36 @@ export class Bash {
   }
 
   /**
+   * Execute bash commands asynchronously, returning a Promise.
+   *
+   * Non-blocking for the Node.js event loop.
+   *
+   * @example
+   * ```typescript
+   * const result = await bash.execute('echo hello');
+   * console.log(result.stdout); // hello\n
+   * ```
+   */
+  async execute(commands: string): Promise<ExecResult> {
+    return this.native.execute(commands);
+  }
+
+  /**
    * Execute bash commands synchronously. Throws `BashError` on non-zero exit.
    */
   executeSyncOrThrow(commands: string): ExecResult {
     const result = this.native.executeSync(commands);
+    if (result.exitCode !== 0) {
+      throw new BashError(result);
+    }
+    return result;
+  }
+
+  /**
+   * Execute bash commands asynchronously. Throws `BashError` on non-zero exit.
+   */
+  async executeOrThrow(commands: string): Promise<ExecResult> {
+    const result = await this.native.execute(commands);
     if (result.exitCode !== 0) {
       throw new BashError(result);
     }
@@ -115,10 +141,28 @@ export class BashTool {
   }
 
   /**
+   * Execute bash commands asynchronously, returning a Promise.
+   */
+  async execute(commands: string): Promise<ExecResult> {
+    return this.native.execute(commands);
+  }
+
+  /**
    * Execute bash commands synchronously. Throws `BashError` on non-zero exit.
    */
   executeSyncOrThrow(commands: string): ExecResult {
     const result = this.native.executeSync(commands);
+    if (result.exitCode !== 0) {
+      throw new BashError(result);
+    }
+    return result;
+  }
+
+  /**
+   * Execute bash commands asynchronously. Throws `BashError` on non-zero exit.
+   */
+  async executeOrThrow(commands: string): Promise<ExecResult> {
+    const result = await this.native.execute(commands);
     if (result.exitCode !== 0) {
       throw new BashError(result);
     }
