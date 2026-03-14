@@ -420,7 +420,7 @@ pub use fs::{
 #[cfg(feature = "realfs")]
 pub use fs::{RealFs, RealFsMode};
 pub use git::GitConfig;
-pub use interpreter::{ControlFlow, ExecResult, OutputCallback, ShellState};
+pub use interpreter::{ControlFlow, ExecResult, HistoryEntry, OutputCallback, ShellState};
 pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
 pub use network::NetworkAllowlist;
 pub use tool::BashToolBuilder as ToolBuilder;
@@ -613,7 +613,32 @@ impl Bash {
         #[cfg(feature = "logging")]
         tracing::debug!(target: "bashkit::interpreter", "Starting interpretation");
 
+        // Load persisted history on first exec (no-op if already loaded)
+        self.interpreter.load_history().await;
+
+        let exec_start = std::time::Instant::now();
         let result = self.interpreter.execute(&ast).await;
+        let duration_ms = exec_start.elapsed().as_millis() as u64;
+
+        // Record history entry for each line of the script
+        if let Ok(ref exec_result) = result {
+            let cwd = self.interpreter.cwd().to_string_lossy().to_string();
+            let timestamp = chrono::Utc::now().timestamp();
+            for line in script.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    self.interpreter.record_history(
+                        trimmed.to_string(),
+                        timestamp,
+                        cwd.clone(),
+                        exec_result.exit_code,
+                        duration_ms,
+                    );
+                }
+            }
+            // Persist history to VFS if configured
+            self.interpreter.save_history().await;
+        }
 
         #[cfg(feature = "logging")]
         match &result {
@@ -831,6 +856,8 @@ pub struct BashBuilder {
     /// Real host directories to mount in the VFS
     #[cfg(feature = "realfs")]
     real_mounts: Vec<MountedRealDir>,
+    /// Optional VFS path for persistent history
+    history_file: Option<PathBuf>,
 }
 
 impl BashBuilder {
@@ -881,6 +908,15 @@ impl BashBuilder {
     /// When set, `date` returns this fixed time instead of the real clock.
     pub fn fixed_epoch(mut self, epoch: i64) -> Self {
         self.fixed_epoch = Some(epoch);
+        self
+    }
+
+    /// Enable persistent history stored at the given VFS path.
+    ///
+    /// History entries are loaded from this file at startup and saved after each
+    /// `exec()` call. The file is stored in the virtual filesystem.
+    pub fn history_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.history_file = Some(path.into());
         self
     }
 
@@ -1367,6 +1403,7 @@ impl BashBuilder {
             self.cwd,
             self.limits,
             self.custom_builtins,
+            self.history_file,
             #[cfg(feature = "http_client")]
             self.network_allowlist,
             #[cfg(feature = "logging")]
@@ -1447,6 +1484,7 @@ impl BashBuilder {
         cwd: Option<PathBuf>,
         limits: ExecutionLimits,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
+        history_file: Option<PathBuf>,
         #[cfg(feature = "http_client")] network_allowlist: Option<NetworkAllowlist>,
         #[cfg(feature = "logging")] log_config: Option<logging::LogConfig>,
         #[cfg(feature = "git")] git_config: Option<GitConfig>,
@@ -1501,6 +1539,11 @@ impl BashBuilder {
         if let Some(config) = git_config {
             let client = git::GitClient::new(config);
             interpreter.set_git_client(client);
+        }
+
+        // Configure persistent history file
+        if let Some(hf) = history_file {
+            interpreter.set_history_file(hf);
         }
 
         let parser_timeout = limits.parser_timeout;
