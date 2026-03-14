@@ -633,15 +633,24 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 } else if self.peek_char() == Some('{') {
-                    // ${VAR} format
+                    // ${VAR} format — track nested braces so ${a[${#b[@]}]}
+                    // doesn't stop at the inner }.
                     word.push('{');
                     self.advance();
-                    // Read until closing }
+                    let mut brace_depth = 1i32;
                     while let Some(c) = self.peek_char() {
                         word.push(c);
                         self.advance();
-                        if c == '}' {
-                            break;
+                        if c == '$' && self.peek_char() == Some('{') {
+                            // Nested ${...}
+                            word.push('{');
+                            self.advance();
+                            brace_depth += 1;
+                        } else if c == '}' {
+                            brace_depth -= 1;
+                            if brace_depth == 0 {
+                                break;
+                            }
                         }
                     }
                 } else {

@@ -2388,10 +2388,35 @@ impl<'a> Parser<'a> {
                         if chars.peek() == Some(&'[') {
                             chars.next(); // consume '['
                             let mut index = String::new();
+                            // Track nesting so nested ${...} containing
+                            // brackets (e.g. ${#arr[@]}) don't prematurely
+                            // close the subscript.
+                            let mut bracket_depth: i32 = 0;
+                            let mut brace_depth: i32 = 0;
                             while let Some(&c) = chars.peek() {
-                                if c == ']' {
+                                if c == ']' && bracket_depth == 0 && brace_depth == 0 {
                                     chars.next();
                                     break;
+                                }
+                                match c {
+                                    '[' => bracket_depth += 1,
+                                    ']' => bracket_depth -= 1,
+                                    '$' => {
+                                        index.push(chars.next().unwrap());
+                                        if chars.peek() == Some(&'{') {
+                                            brace_depth += 1;
+                                            index.push(chars.next().unwrap());
+                                            continue;
+                                        }
+                                        continue;
+                                    }
+                                    '{' => brace_depth += 1,
+                                    '}' => {
+                                        if brace_depth > 0 {
+                                            brace_depth -= 1;
+                                        }
+                                    }
+                                    _ => {}
                                 }
                                 index.push(chars.next().unwrap());
                             }

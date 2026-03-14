@@ -7312,26 +7312,56 @@ impl Interpreter {
         while let Some(ch) = chars.next() {
             if ch == '$' {
                 in_numeric_literal = false;
-                // Handle $var syntax (common in arithmetic)
-                let mut name = String::new();
-                while let Some(&c) = chars.peek() {
-                    if c.is_ascii_alphanumeric() || c == '_' {
-                        name.push(chars.next().unwrap());
-                    } else {
-                        break;
+                if chars.peek() == Some(&'{') {
+                    // Handle ${...} syntax inside arithmetic
+                    chars.next(); // consume '{'
+                    let mut brace_content = String::new();
+                    let mut brace_depth = 1i32;
+                    while let Some(&c) = chars.peek() {
+                        chars.next();
+                        if c == '{' {
+                            brace_depth += 1;
+                            brace_content.push(c);
+                        } else if c == '}' {
+                            brace_depth -= 1;
+                            if brace_depth == 0 {
+                                break;
+                            }
+                            brace_content.push(c);
+                        } else {
+                            brace_content.push(c);
+                        }
                     }
-                }
-                if !name.is_empty() {
-                    // $var is direct text substitution — no recursive arithmetic eval.
-                    // Only bare names (without $) get recursive resolution.
-                    let value = self.expand_variable(&name);
-                    if value.is_empty() {
+                    // Re-parse as a word to expand the ${...} properly
+                    let expansion = format!("${{{}}}", brace_content);
+                    let expanded = self.expand_string_for_arithmetic(&expansion);
+                    if expanded.is_empty() {
                         result.push('0');
                     } else {
-                        result.push_str(&value);
+                        result.push_str(&expanded);
                     }
                 } else {
-                    result.push(ch);
+                    // Handle $var syntax (common in arithmetic)
+                    let mut name = String::new();
+                    while let Some(&c) = chars.peek() {
+                        if c.is_ascii_alphanumeric() || c == '_' {
+                            name.push(chars.next().unwrap());
+                        } else {
+                            break;
+                        }
+                    }
+                    if !name.is_empty() {
+                        // $var is direct text substitution — no recursive arithmetic eval.
+                        // Only bare names (without $) get recursive resolution.
+                        let value = self.expand_variable(&name);
+                        if value.is_empty() {
+                            result.push('0');
+                        } else {
+                            result.push_str(&value);
+                        }
+                    } else {
+                        result.push(ch);
+                    }
                 }
             } else if ch == '#' {
                 // base#value syntax: digits before # are base, chars after are literal digits
@@ -7410,6 +7440,69 @@ impl Interpreter {
         }
 
         result
+    }
+
+    /// Expand a `${...}` expression encountered inside arithmetic context.
+    /// Handles common patterns: `${var}`, `${#arr[@]}`, `${#arr[*]}`,
+    /// `${arr[idx]}`, `${#var}`.
+    fn expand_string_for_arithmetic(&self, expr: &str) -> String {
+        // Strip outer ${ and }
+        let inner = expr
+            .strip_prefix("${")
+            .and_then(|s| s.strip_suffix('}'))
+            .unwrap_or(expr);
+
+        // ${#arr[@]} or ${#arr[*]} — array length
+        if let Some(rest) = inner.strip_prefix('#') {
+            if let Some(bracket) = rest.find('[') {
+                let arr_name = &rest[..bracket];
+                let idx = &rest[bracket + 1..rest.len().saturating_sub(1)]; // strip ]
+                if idx == "@" || idx == "*" {
+                    // Array length
+                    if let Some(arr) = self.arrays.get(arr_name) {
+                        return arr.len().to_string();
+                    }
+                    if let Some(arr) = self.assoc_arrays.get(arr_name) {
+                        return arr.len().to_string();
+                    }
+                    return "0".to_string();
+                }
+                // ${#arr[n]} — length of element
+                let idx_val = self.evaluate_arithmetic(idx);
+                let idx_usize: usize = idx_val.try_into().unwrap_or(0);
+                if let Some(arr) = self.arrays.get(arr_name) {
+                    return arr
+                        .get(&idx_usize)
+                        .map(|v| v.len().to_string())
+                        .unwrap_or_else(|| "0".to_string());
+                }
+                return "0".to_string();
+            }
+            // ${#var} — string length
+            let val = self.expand_variable(rest);
+            return val.len().to_string();
+        }
+
+        // ${arr[idx]} — array access
+        if let Some(bracket) = inner.find('[')
+            && inner.ends_with(']')
+        {
+            let arr_name = &inner[..bracket];
+            let idx_str = &inner[bracket + 1..inner.len() - 1];
+            if let Some(arr) = self.assoc_arrays.get(arr_name) {
+                let key = self.expand_variable_or_literal(idx_str);
+                return arr.get(&key).cloned().unwrap_or_default();
+            }
+            if let Some(arr) = self.arrays.get(arr_name) {
+                let idx_val = self.evaluate_arithmetic(idx_str);
+                let idx_usize: usize = idx_val.try_into().unwrap_or(0);
+                return arr.get(&idx_usize).cloned().unwrap_or_default();
+            }
+            return String::new();
+        }
+
+        // ${var} — plain variable
+        self.expand_variable(inner)
     }
 
     /// Parse and evaluate a simple arithmetic expression with depth tracking.

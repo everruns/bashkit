@@ -65,6 +65,10 @@ struct Args {
     #[cfg_attr(feature = "realfs", arg(long, value_name = "PATH"))]
     mount_rw: Vec<String>,
 
+    /// Maximum number of commands to execute (default: 10000)
+    #[arg(long)]
+    max_commands: Option<usize>,
+
     #[command(subcommand)]
     subcommand: Option<SubCmd>,
 }
@@ -94,6 +98,10 @@ fn build_bash(args: &Args) -> bashkit::Bash {
     #[cfg(feature = "realfs")]
     {
         builder = apply_real_mounts(builder, &args.mount_ro, &args.mount_rw);
+    }
+
+    if let Some(max_cmds) = args.max_commands {
+        builder = builder.limits(bashkit::ExecutionLimits::new().max_commands(max_cmds));
     }
 
     builder.build()
