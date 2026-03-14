@@ -1517,8 +1517,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_count_limit() {
-        // Note: InMemoryFs starts with /dev/null as 1 file
-        let limits = FsLimits::new().max_file_count(4); // 1 existing + 3 new
+        // Note: InMemoryFs starts with 3 files: /dev/null, /dev/urandom, /dev/random
+        let limits = FsLimits::new().max_file_count(6); // 3 existing + 3 new
         let fs = InMemoryFs::with_limits(limits);
 
         // Should succeed - under limit
@@ -1532,7 +1532,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Should fail - at limit (4 files: /dev/null + 3 new)
+        // Should fail - at limit (6 files: 3 dev + 3 new)
         let result = fs.write_file(Path::new("/tmp/file4.txt"), b"4").await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -1541,8 +1541,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_overwrite_does_not_increase_count() {
-        // Note: InMemoryFs starts with /dev/null as 1 file
-        let limits = FsLimits::new().max_file_count(3); // 1 existing + 2 new
+        // Note: InMemoryFs starts with 3 files: /dev/null, /dev/urandom, /dev/random
+        let limits = FsLimits::new().max_file_count(5); // 3 existing + 2 new
         let fs = InMemoryFs::with_limits(limits);
 
         // Create two files
@@ -1558,7 +1558,7 @@ mod tests {
             .await
             .unwrap();
 
-        // New file should fail (we're at 3: /dev/null + 2 files)
+        // New file should fail (we're at 5: 3 dev + 2 files)
         let result = fs.write_file(Path::new("/tmp/file3.txt"), b"new").await;
         assert!(result.is_err());
     }
@@ -1592,7 +1592,7 @@ mod tests {
         // Initial usage (only default directories)
         let usage = fs.usage();
         assert_eq!(usage.total_bytes, 0); // No file content yet
-        assert_eq!(usage.file_count, 1); // /dev/null
+        assert_eq!(usage.file_count, 3); // /dev/null + /dev/urandom + /dev/random
 
         // Add a file
         fs.write_file(Path::new("/tmp/test.txt"), b"hello")
@@ -1601,7 +1601,7 @@ mod tests {
 
         let usage = fs.usage();
         assert_eq!(usage.total_bytes, 5);
-        assert_eq!(usage.file_count, 2); // /dev/null + test.txt
+        assert_eq!(usage.file_count, 4); // 3 dev files + test.txt
     }
 
     #[tokio::test]

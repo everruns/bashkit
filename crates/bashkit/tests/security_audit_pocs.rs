@@ -379,9 +379,9 @@ mod overlay_symlink_bypass {
     #[tokio::test]
     async fn security_audit_overlay_symlink_enforces_limit() {
         let lower: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
-        // Both lower and upper InMemoryFs have /dev/null (1 file each = 2 base).
-        // limit=7 allows 5 new symlinks (2 + 5 = 7).
-        let limits = FsLimits::new().max_file_count(7);
+        // Both lower and upper InMemoryFs have 3 files each
+        // (/dev/null, /dev/urandom, /dev/random). limit=11 allows 5 new symlinks (6 + 5 = 11).
+        let limits = FsLimits::new().max_file_count(11);
         let overlay = OverlayFs::with_limits(lower, limits);
 
         for i in 0..5 {
@@ -392,7 +392,7 @@ mod overlay_symlink_bypass {
                 .unwrap();
         }
 
-        // 6th must fail (7 total = 2 existing + 5 symlinks = at limit)
+        // 6th must fail (11 total = 6 existing + 5 symlinks = at limit)
         let result = overlay
             .symlink(Path::new("/target"), Path::new("/link_overflow"))
             .await;
