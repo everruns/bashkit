@@ -212,6 +212,23 @@ relevant data into the next script.
 For callback-level persistence, `Arc` state in closures persists across `execute()` calls
 since the same `Arc<ToolCallback>` instances are reused.
 
+### MCP integration
+
+`McpServer` in `bashkit-cli` can expose ScriptedTools over MCP's JSON-RPC protocol.
+Each registered ScriptedTool appears as a separate MCP tool in `tools/list`:
+
+```rust
+let mut server = McpServer::new();
+server.register_scripted_tool(my_tool);
+server.run().await?;
+```
+
+- `tools/list` returns the default `bash` tool plus all registered ScriptedTools
+- `tools/call` routes by tool name: ScriptedTool names go to `ScriptedTool::execute()`,
+  `bash` goes to the default handler
+- Gated behind `scripted_tool` feature flag on `bashkit-cli`
+- Existing `bash` tool unaffected (backward compatible)
+
 ## Module location
 
 `crates/bashkit/src/scripted_tool/`
