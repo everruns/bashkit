@@ -1566,17 +1566,18 @@ impl Interpreter {
                 return self.evaluate_conditional(&args[1..args.len() - 1]).await;
             }
 
-            // Look for logical operators (lowest precedence, right to left)
-            for i in (0..args.len()).rev() {
-                if args[i] == "&&" && i > 0 {
-                    return self.evaluate_conditional(&args[..i]).await
-                        && self.evaluate_conditional(&args[i + 1..]).await;
-                }
-            }
+            // Look for logical operators: || has lowest precedence, then &&.
+            // Scan for || first (split at lowest precedence first).
             for i in (0..args.len()).rev() {
                 if args[i] == "||" && i > 0 {
                     return self.evaluate_conditional(&args[..i]).await
                         || self.evaluate_conditional(&args[i + 1..]).await;
+                }
+            }
+            for i in (0..args.len()).rev() {
+                if args[i] == "&&" && i > 0 {
+                    return self.evaluate_conditional(&args[..i]).await
+                        && self.evaluate_conditional(&args[i + 1..]).await;
                 }
             }
 
