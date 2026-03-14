@@ -7,7 +7,7 @@
 //   one at a time via individual tool_use blocks.
 
 use anyhow::{Context, Result};
-use bashkit::{ScriptedTool, Tool, ToolArgs, ToolDef, ToolRequest};
+use bashkit::{ScriptingToolSet, Tool, ToolArgs, ToolDef, ToolRequest};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -95,38 +95,58 @@ fn make_mock_callback(mock: MockBehavior) -> MockCallback {
     }
 }
 
+/// Build a ToolDef from a MockToolDef, applying schema/tags/category.
+fn build_tool_def(mock_tool: &crate::scripting_dataset::MockToolDef) -> ToolDef {
+    let mut def = if mock_tool.schema.is_object()
+        && !mock_tool.schema.as_object().unwrap().is_empty()
+    {
+        ToolDef::new(&mock_tool.name, &mock_tool.description).with_schema(mock_tool.schema.clone())
+    } else {
+        ToolDef::new(&mock_tool.name, &mock_tool.description)
+    };
+    if !mock_tool.tags.is_empty() {
+        def = def.with_tags(
+            &mock_tool
+                .tags
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+        );
+    }
+    if let Some(ref cat) = mock_tool.category {
+        def = def.with_category(cat);
+    }
+    def
+}
+
 /// Run scripting eval in **scripted** mode: single ScriptedTool wrapping all mock tools.
+/// Uses ScriptingToolSet with WithDiscovery mode when task sets `discovery_mode: true`.
 pub async fn run_scripted_agent(
     provider: &dyn Provider,
     task: &ScriptingEvalTask,
     max_turns: usize,
 ) -> Result<ScriptingTrace> {
-    let mut builder = ScriptedTool::builder(&task.id);
-
+    // Always use ScriptingToolSet. WithDiscovery hides tool names (LLM must use
+    // discover/help builtins); Exclusive shows full schemas in system prompt.
+    let mut builder = ScriptingToolSet::builder(&task.id);
+    builder = builder.short_description("Scripted tool eval");
     for mock_tool in &task.tools {
-        let def =
-            if mock_tool.schema.is_object() && !mock_tool.schema.as_object().unwrap().is_empty() {
-                ToolDef::new(&mock_tool.name, &mock_tool.description)
-                    .with_schema(mock_tool.schema.clone())
-            } else {
-                ToolDef::new(&mock_tool.name, &mock_tool.description)
-            };
+        let def = build_tool_def(mock_tool);
         let callback = make_mock_callback(mock_tool.mock.clone());
         builder = builder.tool(def, move |args: &ToolArgs| callback(args));
     }
-
-    let mut scripted_tool = builder.short_description("Scripted tool eval").build();
+    if task.discovery_mode {
+        builder = builder.with_discovery();
+    }
+    let mut tool: Box<dyn Tool> = Box::new(builder.build());
 
     let tool_def = ToolDefinition {
-        name: scripted_tool.name().to_string(),
-        description: scripted_tool.description(),
-        input_schema: scripted_tool.input_schema(),
+        name: tool.name().to_string(),
+        description: tool.description(),
+        input_schema: tool.input_schema(),
     };
 
-    let system = task
-        .system
-        .clone()
-        .unwrap_or_else(|| scripted_tool.system_prompt());
+    let system = task.system.clone().unwrap_or_else(|| tool.system_prompt());
 
     let mut messages = vec![Message {
         role: Role::User,
@@ -182,7 +202,7 @@ pub async fn run_scripted_agent(
                 .or_else(|| input["script"].as_str())
                 .unwrap_or("");
 
-            let resp = scripted_tool
+            let resp = tool
                 .execute(ToolRequest {
                     commands: commands.to_string(),
                     timeout_ms: None,
@@ -196,7 +216,7 @@ pub async fn run_scripted_agent(
             tool_output_sent_bytes += content.len();
 
             all_tool_calls.push(ScriptingToolCall {
-                tool_name: scripted_tool.name().to_string(),
+                tool_name: tool.name().to_string(),
                 input: (*input).clone(),
                 output: resp.stdout,
                 exit_code: resp.exit_code,
