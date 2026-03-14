@@ -23,6 +23,9 @@ pub enum Category {
     Pipes,
     Tools,
     Complex,
+    Large,
+    Subshell,
+    Io,
 }
 
 impl Category {
@@ -37,6 +40,9 @@ impl Category {
             Category::Pipes => "pipes",
             Category::Tools => "tools",
             Category::Complex => "complex",
+            Category::Large => "large",
+            Category::Subshell => "subshell",
+            Category::Io => "io",
         }
     }
 }
@@ -88,6 +94,9 @@ pub fn all_cases() -> Vec<BenchCase> {
     cases.extend(pipe_cases());
     cases.extend(tool_cases());
     cases.extend(complex_cases());
+    cases.extend(large_cases());
+    cases.extend(subshell_cases());
+    cases.extend(io_cases());
 
     cases
 }
@@ -771,5 +780,330 @@ echo -e "apple\nbanana\napricot\ncherry" | grep "^a" | sed 's/a/A/g'
 "#,
         )
         .with_expected("Apple\nApricot\n"),
+    ]
+}
+
+// === Large Script Cases ===
+// These test sustained execution over many iterations to stress the interpreter
+fn large_cases() -> Vec<BenchCase> {
+    vec![
+        BenchCase::new(
+            "large_loop_1000",
+            Category::Large,
+            "Counting loop to 1000",
+            r#"
+sum=0
+for ((i=1; i<=1000; i++)); do
+    sum=$((sum + i))
+done
+echo $sum
+"#,
+        )
+        .with_expected("500500\n"),
+        BenchCase::new(
+            "large_string_append_100",
+            Category::Large,
+            "String append 100 times",
+            r#"
+s=""
+for ((i=0; i<100; i++)); do
+    s="${s}x"
+done
+echo ${#s}
+"#,
+        )
+        .with_expected("100\n"),
+        BenchCase::new(
+            "large_array_fill_200",
+            Category::Large,
+            "Fill array with 200 elements",
+            r#"
+arr=()
+for ((i=0; i<200; i++)); do
+    arr+=($i)
+done
+echo ${#arr[@]}
+"#,
+        )
+        .with_expected("200\n"),
+        BenchCase::new(
+            "large_nested_loops",
+            Category::Large,
+            "Nested loops 20x20",
+            r#"
+sum=0
+for ((i=0; i<20; i++)); do
+    for ((j=0; j<20; j++)); do
+        sum=$((sum + i * j))
+    done
+done
+echo $sum
+"#,
+        )
+        .with_expected("36100\n"),
+        BenchCase::new(
+            "large_fibonacci_12",
+            Category::Large,
+            "Recursive fibonacci(12)",
+            r#"
+fib() {
+    local n=$1
+    if [ $n -le 1 ]; then
+        echo $n
+    else
+        local a=$(fib $((n-1)))
+        local b=$(fib $((n-2)))
+        echo $((a + b))
+    fi
+}
+fib 12
+"#,
+        )
+        .with_expected("144\n"),
+        BenchCase::new(
+            "large_function_calls_500",
+            Category::Large,
+            "500 function calls",
+            r#"
+inc() { echo $(($1 + 1)); }
+n=0
+for ((i=0; i<500; i++)); do
+    n=$(inc $n)
+done
+echo $n
+"#,
+        )
+        .with_expected("500\n"),
+        BenchCase::new(
+            "large_multiline_script",
+            Category::Large,
+            "50-line multi-operation script",
+            r#"
+# Variable assignments
+a=hello; b=world; c="$a $b"
+d=1; e=2; f=$((d + e))
+
+# Array operations
+arr=(alpha beta gamma delta epsilon)
+result=""
+for item in "${arr[@]}"; do
+    upper=${item^^}
+    result="$result$upper "
+done
+
+# Arithmetic sequence
+sum=0
+for ((i=1; i<=50; i++)); do
+    sum=$((sum + i * i))
+done
+
+# String processing
+text="The quick brown fox jumps over the lazy dog"
+words=0
+for w in $text; do
+    words=$((words + 1))
+done
+
+# Conditional logic
+if [ $sum -gt 1000 ]; then
+    status="large"
+else
+    status="small"
+fi
+
+# Output
+echo "vars: $c $f"
+echo "array: $result"
+echo "sum: $sum"
+echo "words: $words"
+echo "status: $status"
+"#,
+        )
+        .with_expected(
+            "vars: hello world 3\narray: ALPHA BETA GAMMA DELTA EPSILON \nsum: 42925\nwords: 9\nstatus: large\n",
+        ),
+        BenchCase::new(
+            "large_pipeline_chain",
+            Category::Large,
+            "Multi-stage pipeline with data generation",
+            r#"
+for ((i=1; i<=100; i++)); do
+    echo "line $i value $((i * 7 % 31))"
+done | grep "value [12][0-9]" | sed 's/line /L/g' | awk '{sum+=$3} END {print NR, sum}'
+"#,
+        ),
+        BenchCase::new(
+            "large_assoc_array",
+            Category::Large,
+            "Associative array operations",
+            r#"
+declare -A m
+m[name]=alice
+m[age]=30
+m[city]=nyc
+echo "${m[name]} ${m[age]} ${m[city]}"
+"#,
+        )
+        .with_expected("alice 30 nyc\n"),
+    ]
+}
+
+// === Subshell Cases ===
+fn subshell_cases() -> Vec<BenchCase> {
+    vec![
+        BenchCase::new(
+            "subshell_simple",
+            Category::Subshell,
+            "Simple subshell",
+            "(echo hello)",
+        )
+        .with_expected("hello\n"),
+        BenchCase::new(
+            "subshell_isolation",
+            Category::Subshell,
+            "Subshell variable isolation",
+            r#"
+x=outer
+(x=inner; echo $x)
+echo $x
+"#,
+        )
+        .with_expected("inner\nouter\n"),
+        BenchCase::new(
+            "subshell_nested",
+            Category::Subshell,
+            "Nested subshells 4 deep",
+            r#"
+echo $(echo $(echo $(echo $(echo deep))))
+"#,
+        )
+        .with_expected("deep\n"),
+        BenchCase::new(
+            "subshell_pipeline",
+            Category::Subshell,
+            "Subshell in pipeline",
+            r#"
+(echo -e "c\na\nb") | sort
+"#,
+        )
+        .with_expected("a\nb\nc\n"),
+        BenchCase::new(
+            "subshell_capture_loop",
+            Category::Subshell,
+            "Command substitution in loop",
+            r#"
+result=""
+for i in 1 2 3 4 5; do
+    val=$(echo $((i * i)))
+    result="$result $val"
+done
+echo $result
+"#,
+        )
+        .with_expected("1 4 9 16 25\n"),
+        BenchCase::new(
+            "subshell_process_subst",
+            Category::Subshell,
+            "Process substitution with diff-like comparison",
+            r#"
+a=$(echo -e "1\n2\n3")
+b=$(echo -e "1\n2\n3")
+if [ "$a" = "$b" ]; then
+    echo same
+else
+    echo different
+fi
+"#,
+        )
+        .with_expected("same\n"),
+    ]
+}
+
+// === I/O Cases ===
+fn io_cases() -> Vec<BenchCase> {
+    vec![
+        BenchCase::new(
+            "io_redirect_write",
+            Category::Io,
+            "Write to file and read back",
+            r#"
+echo "hello world" > /tmp/bench_test.txt
+cat /tmp/bench_test.txt
+rm /tmp/bench_test.txt
+"#,
+        )
+        .with_expected("hello world\n"),
+        BenchCase::new(
+            "io_append",
+            Category::Io,
+            "Append to file",
+            r#"
+echo "line1" > /tmp/bench_append.txt
+echo "line2" >> /tmp/bench_append.txt
+echo "line3" >> /tmp/bench_append.txt
+cat /tmp/bench_append.txt
+rm /tmp/bench_append.txt
+"#,
+        )
+        .with_expected("line1\nline2\nline3\n"),
+        BenchCase::new(
+            "io_dev_null",
+            Category::Io,
+            "Redirect to /dev/null",
+            r#"
+echo "discarded" > /dev/null
+echo "kept"
+"#,
+        )
+        .with_expected("kept\n"),
+        BenchCase::new(
+            "io_stderr_redirect",
+            Category::Io,
+            "Stderr redirect",
+            r#"
+echo "out"
+echo "err" >&2
+"#,
+        )
+        .with_expected("out\n"),
+        BenchCase::new(
+            "io_read_lines",
+            Category::Io,
+            "Read lines from here-doc",
+            r#"
+count=0
+while IFS= read -r line; do
+    count=$((count + 1))
+done <<EOF
+alpha
+beta
+gamma
+delta
+epsilon
+EOF
+echo $count
+"#,
+        )
+        .with_expected("5\n"),
+        BenchCase::new(
+            "io_multiline_heredoc",
+            Category::Io,
+            "Large heredoc processing",
+            r#"
+cat <<'EOF' | wc -l
+line1
+line2
+line3
+line4
+line5
+line6
+line7
+line8
+line9
+line10
+EOF
+"#,
+        )
+        .with_expected("10\n"),
     ]
 }

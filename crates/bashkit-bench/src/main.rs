@@ -25,7 +25,10 @@ mod cases;
 mod runners;
 
 use cases::BenchCase;
-use runners::{BashRunner, BashkitRunner, JustBashRunner, Runner};
+use runners::{
+    BashRunner, BashkitCliRunner, BashkitJsRunner, BashkitPyRunner, BashkitRunner,
+    JustBashInprocRunner, JustBashRunner, Runner,
+};
 
 /// Number of prewarm cases to run before actual benchmarks
 const PREWARM_CASES: usize = 3;
@@ -42,7 +45,7 @@ struct Args {
     #[arg(long)]
     moniker: Option<String>,
 
-    /// Runners to use (comma-separated: bashkit,bash,just-bash)
+    /// Runners to use (comma-separated: bashkit,bashkit-cli,bashkit-js,bashkit-py,bash,just-bash,just-bash-inproc)
     #[arg(long, default_value = "bashkit,bash")]
     runners: String,
 
@@ -251,25 +254,22 @@ async fn main() -> Result<()> {
     let mut runners: Vec<Runner> = Vec::new();
 
     for name in &runner_names {
-        match *name {
-            "bashkit" => {
-                runners.push(BashkitRunner::create().await?);
+        let result: Result<Runner> = match *name {
+            "bashkit" => BashkitRunner::create().await,
+            "bashkit-cli" => BashkitCliRunner::create().await,
+            "bashkit-js" => BashkitJsRunner::create().await,
+            "bashkit-py" => BashkitPyRunner::create().await,
+            "bash" => BashRunner::create().await,
+            "just-bash" => JustBashRunner::create().await,
+            "just-bash-inproc" => JustBashInprocRunner::create().await,
+            _ => {
+                eprintln!("{}: unknown runner '{}'", "Warning".yellow(), name);
+                continue;
             }
-            "bash" => {
-                if let Ok(r) = BashRunner::create().await {
-                    runners.push(r);
-                } else {
-                    eprintln!("{}: bash not available", "Warning".yellow());
-                }
-            }
-            "just-bash" => {
-                if let Ok(r) = JustBashRunner::create().await {
-                    runners.push(r);
-                } else {
-                    eprintln!("{}: just-bash not available", "Warning".yellow());
-                }
-            }
-            _ => eprintln!("{}: unknown runner '{}'", "Warning".yellow(), name),
+        };
+        match result {
+            Ok(r) => runners.push(r),
+            Err(e) => eprintln!("{}: {} not available: {}", "Warning".yellow(), name, e),
         }
     }
 
@@ -312,7 +312,7 @@ async fn main() -> Result<()> {
             prewarm_count
         );
         for case in cases.iter().take(prewarm_count) {
-            for runner in &runners {
+            for runner in &mut runners {
                 // Run each prewarm case with warmup + a few iterations
                 for _ in 0..(args.warmup + 2) {
                     let _ = runner.run(&case.script).await;
@@ -323,7 +323,7 @@ async fn main() -> Result<()> {
     }
 
     // Get reference output from bash if available
-    let bash_runner = runners.iter().find(|r| r.name() == "bash");
+    let bash_idx = runners.iter().position(|r| r.name() == "bash");
 
     // Run benchmarks
     let mut results: Vec<BenchResult> = Vec::new();
@@ -337,8 +337,8 @@ async fn main() -> Result<()> {
         );
 
         // Get expected output from bash (if available) or use case.expected
-        let expected_output = if let Some(bash) = bash_runner {
-            match bash.run(&case.script).await {
+        let expected_output = if let Some(idx) = bash_idx {
+            match runners[idx].run(&case.script).await {
                 Ok((out, _, _)) => Some(out),
                 Err(_) => case.expected.clone(),
             }
@@ -346,7 +346,7 @@ async fn main() -> Result<()> {
             case.expected.clone()
         };
 
-        for runner in &runners {
+        for runner in &mut runners {
             let result = run_benchmark(runner, case, &expected_output, &args).await;
 
             let status = if result.errors > 0 {
@@ -420,7 +420,7 @@ async fn main() -> Result<()> {
 }
 
 async fn run_benchmark(
-    runner: &Runner,
+    runner: &mut Runner,
     case: &BenchCase,
     expected: &Option<String>,
     args: &Args,
@@ -685,13 +685,26 @@ fn generate_markdown_report(report: &BenchReport) -> String {
     }
 
     // Assumptions
+    md.push_str("## Runner Descriptions\n\n");
+    md.push_str("| Runner | Type | Description |\n");
+    md.push_str("|--------|------|-------------|\n");
+    md.push_str("| bashkit | in-process | Rust library call, no fork/exec |\n");
+    md.push_str("| bashkit-cli | subprocess | bashkit binary, new process per run |\n");
+    md.push_str("| bashkit-js | persistent child | Node.js + @everruns/bashkit, warm interpreter |\n");
+    md.push_str("| bashkit-py | persistent child | Python + bashkit package, warm interpreter |\n");
+    md.push_str("| bash | subprocess | /bin/bash, new process per run |\n");
+    md.push_str("| just-bash | subprocess | just-bash CLI, new process per run |\n");
+    md.push_str("| just-bash-inproc | persistent child | Node.js + just-bash library, warm interpreter |\n");
+    md.push('\n');
     md.push_str("## Assumptions & Notes\n\n");
     md.push_str("- Times measured in nanoseconds, displayed in milliseconds\n");
     md.push_str("- Prewarm phase runs first few cases to warm up JIT/compilation\n");
     md.push_str("- Per-benchmark warmup iterations excluded from timing\n");
     md.push_str("- Output match compares against bash output when available\n");
     md.push_str("- Errors include execution failures and exit code mismatches\n");
-    md.push_str("- Bashkit runs in-process (no fork), bash spawns subprocess\n");
+    md.push_str("- In-process: interpreter runs inside the benchmark process\n");
+    md.push_str("- Subprocess: new process spawned per benchmark run\n");
+    md.push_str("- Persistent child: long-lived child process, amortizes startup cost\n");
     md.push('\n');
 
     md
