@@ -59,6 +59,22 @@ echo ${#arr[@]}
 4
 ### end
 
+### read_ifs_empty_fields
+# IFS=: with consecutive delimiters preserves empty fields
+IFS=: read a b c d <<< "one::three:"
+echo "a=$a b=$b c=$c d=$d"
+### expect
+a=one b= c=three d=
+### end
+
+### read_ifs_empty_fields_leading
+# Leading delimiter produces empty first field
+IFS=: read a b c <<< ":two:three"
+echo "a=$a b=$b c=$c"
+### expect
+a= b=two c=three
+### end
+
 ### read_nchars
 # read -n N reads N characters
 read -n 3 var <<< "hello"
