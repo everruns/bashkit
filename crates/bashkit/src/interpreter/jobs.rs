@@ -69,6 +69,7 @@ impl JobTable {
     /// Wait for all jobs to complete
     ///
     /// Returns the exit code of the last job
+    #[allow(dead_code)]
     pub async fn wait_all(&mut self) -> i32 {
         self.wait_all_results()
             .await
@@ -91,11 +92,13 @@ impl JobTable {
     }
 
     /// Check if there are any active jobs
+    #[allow(dead_code)]
     pub fn has_jobs(&self) -> bool {
         !self.jobs.is_empty()
     }
 
     /// Get the number of active jobs
+    #[allow(dead_code)]
     pub fn job_count(&self) -> usize {
         self.jobs.len()
     }
