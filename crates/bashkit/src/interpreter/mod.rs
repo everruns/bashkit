@@ -372,6 +372,7 @@ impl Interpreter {
         builtins.insert("basename".to_string(), Box::new(builtins::Basename));
         builtins.insert("dirname".to_string(), Box::new(builtins::Dirname));
         builtins.insert("realpath".to_string(), Box::new(builtins::Realpath));
+        builtins.insert("readlink".to_string(), Box::new(builtins::Readlink));
         builtins.insert("mkdir".to_string(), Box::new(builtins::Mkdir));
         builtins.insert("mktemp".to_string(), Box::new(builtins::Mktemp));
         builtins.insert("rm".to_string(), Box::new(builtins::Rm));

@@ -106,7 +106,7 @@ pub use ls::{Find, Ls, Rmdir};
 pub use navigation::{Cd, Pwd};
 pub use nl::Nl;
 pub use paste::Paste;
-pub use path::{Basename, Dirname, Realpath};
+pub use path::{Basename, Dirname, Readlink, Realpath};
 pub use pipeline::{Tee, Watch, Xargs};
 pub use printf::Printf;
 pub use read::Read;
