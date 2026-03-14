@@ -25,15 +25,22 @@ pub struct ToolDef {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,  // JSON Schema, empty object if unset
+    pub tags: Vec<String>,               // categorical tags for discovery
+    pub category: Option<String>,        // grouping category for discovery
 }
 
 impl ToolDef {
     pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self;
     pub fn with_schema(self, schema: serde_json::Value) -> Self;
+    pub fn with_tags(self, tags: &[&str]) -> Self;
+    pub fn with_category(self, category: &str) -> Self;
 }
 ```
 
 Standard OpenAPI fields: `name`, `description`, `input_schema`. Schema is optional — defaults to `{}`.
+
+Tags and category are optional metadata for progressive discovery. Tags are free-form labels
+(e.g. `["admin", "billing"]`), category is a grouping key (e.g. `"payments"`).
 
 ### ToolArgs — parsed arguments passed to callbacks
 
@@ -143,6 +150,20 @@ ScriptedTool::builder("api")
 This reduces context window usage for large tool sets (50+). Default: `false` (full
 schemas in prompt, backward compatible).
 
+### Built-in `discover` command
+
+Registered automatically alongside `help`. Provides progressive tool discovery for large tool sets:
+
+```bash
+discover --categories           # List all categories with tool counts
+discover --category payments    # List tools in a category
+discover --tag admin            # Filter by tag
+discover --search user          # Search name + description (case-insensitive)
+discover --category payments --json  # Any mode supports --json output
+```
+
+Tools must have `tags` and/or `category` set via `ToolDef::with_tags()` / `ToolDef::with_category()` to appear in filtered results.
+
 ### LLM integration
 
 `system_prompt()` generates markdown with available tool commands, input schemas (when present), and tips. Example output:
@@ -212,10 +233,11 @@ Run: `cargo run --example scripted_tool --features scripted_tool`
 
 ## Test coverage
 
-40 unit tests covering:
+50 unit tests covering:
 - Builder configuration (name, description, defaults, compact_prompt)
 - Introspection (help, system_prompt, schemas, schema rendering)
 - Help builtin (--list, human-readable, --json, unknown tool, jq piping, compact vs full prompt)
+- Discover builtin (--categories, --category, --tag, --search, --json, no-args usage, case-insensitive search, tag JSON, ToolDef with_tags/with_category)
 - Flag parsing (`--key value`, `--key=value`, boolean flags, type coercion)
 - Single tool execution
 - Pipeline with jq

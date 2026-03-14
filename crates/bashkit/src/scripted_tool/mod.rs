@@ -137,6 +137,10 @@ pub struct ToolDef {
     pub description: String,
     /// JSON Schema describing accepted arguments. Empty object if unspecified.
     pub input_schema: serde_json::Value,
+    /// Categorical tags for discovery (e.g. `["admin", "billing"]`).
+    pub tags: Vec<String>,
+    /// Grouping category for discovery (e.g. `"payments"`).
+    pub category: Option<String>,
 }
 
 impl ToolDef {
@@ -146,12 +150,26 @@ impl ToolDef {
             name: name.into(),
             description: description.into(),
             input_schema: serde_json::Value::Object(Default::default()),
+            tags: Vec::new(),
+            category: None,
         }
     }
 
     /// Attach a JSON Schema for the tool's input parameters.
     pub fn with_schema(mut self, schema: serde_json::Value) -> Self {
         self.input_schema = schema;
+        self
+    }
+
+    /// Add categorical tags for discovery filtering.
+    pub fn with_tags(mut self, tags: &[&str]) -> Self {
+        self.tags = tags.iter().map(|s| s.to_string()).collect();
+        self
+    }
+
+    /// Set the grouping category for discovery.
+    pub fn with_category(mut self, category: &str) -> Self {
+        self.category = Some(category.to_string());
         self
     }
 }
