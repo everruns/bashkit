@@ -353,6 +353,23 @@ impl InMemoryFs {
             },
         );
 
+        // /dev/urandom and /dev/random - random byte sources (bounded reads)
+        for dev in &["/dev/urandom", "/dev/random"] {
+            entries.insert(
+                PathBuf::from(dev),
+                FsEntry::File {
+                    content: Vec::new(),
+                    metadata: Metadata {
+                        file_type: FileType::File,
+                        size: 0,
+                        mode: 0o666,
+                        modified: SystemTime::now(),
+                        created: SystemTime::now(),
+                    },
+                },
+            );
+        }
+
         // /dev/fd - directory for process substitution file descriptors
         entries.insert(
             PathBuf::from("/dev/fd"),
@@ -371,6 +388,23 @@ impl InMemoryFs {
             entries: RwLock::new(entries),
             limits,
         }
+    }
+
+    /// THREAT[TM-DOS-003]: Generate bounded random bytes for /dev/urandom.
+    /// Returns exactly 8192 bytes to prevent unbounded reads while
+    /// supporting common patterns like `od -N8 -tx1 /dev/urandom`.
+    fn generate_random_bytes() -> Vec<u8> {
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+
+        const SIZE: usize = 8192;
+        let mut buf = Vec::with_capacity(SIZE);
+        while buf.len() < SIZE {
+            let h = RandomState::new().build_hasher().finish();
+            buf.extend_from_slice(&h.to_ne_bytes());
+        }
+        buf.truncate(SIZE);
+        buf
     }
 
     /// Compute current usage statistics.
@@ -778,6 +812,12 @@ impl FileSystem for InMemoryFs {
         });
 
         let path = Self::normalize_path(path);
+
+        // /dev/urandom and /dev/random: return bounded random bytes
+        if path == Path::new("/dev/urandom") || path == Path::new("/dev/random") {
+            return Ok(Self::generate_random_bytes());
+        }
+
         let entries = self.entries.read().unwrap();
 
         match entries.get(&path) {
@@ -1877,5 +1917,37 @@ mod tests {
         let deep = Path::new("/a/b/c/d/e/f.txt");
         let result = fs.chmod(deep, 0o755).await;
         assert!(result.is_err(), "chmod on deep path should be rejected");
+    }
+
+    // ==================== /dev/urandom tests ====================
+
+    #[tokio::test]
+    async fn test_dev_urandom_returns_bytes() {
+        let fs = InMemoryFs::new();
+        let content = fs.read_file(Path::new("/dev/urandom")).await.unwrap();
+        assert_eq!(content.len(), 8192);
+    }
+
+    #[tokio::test]
+    async fn test_dev_random_returns_bytes() {
+        let fs = InMemoryFs::new();
+        let content = fs.read_file(Path::new("/dev/random")).await.unwrap();
+        assert_eq!(content.len(), 8192);
+    }
+
+    #[tokio::test]
+    async fn test_dev_urandom_returns_different_data() {
+        let fs = InMemoryFs::new();
+        let a = fs.read_file(Path::new("/dev/urandom")).await.unwrap();
+        let b = fs.read_file(Path::new("/dev/urandom")).await.unwrap();
+        // Extremely unlikely to be equal
+        assert_ne!(a, b);
+    }
+
+    #[tokio::test]
+    async fn test_dev_urandom_exists_in_fs() {
+        let fs = InMemoryFs::new();
+        let exists = fs.exists(Path::new("/dev/urandom")).await.unwrap();
+        assert!(exists, "/dev/urandom should exist in VFS");
     }
 }

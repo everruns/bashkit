@@ -31,7 +31,7 @@ through configurable limits.
 |--------|---------------|------------|--------|
 | Large input (TM-DOS-001) | 1GB script | `max_input_bytes` limit (10MB) | MITIGATED |
 | Output flooding (TM-DOS-002) | `yes \| head -n 1000000000` | Command limit stops loop | MITIGATED |
-| Variable explosion (TM-DOS-003) | `x=$(cat /dev/urandom)` | No /dev/urandom in VFS | MITIGATED |
+| Variable explosion (TM-DOS-003) | `x=$(cat /dev/urandom)` | /dev/urandom returns bounded 8KB | MITIGATED |
 | Array growth (TM-DOS-004) | `arr+=(element)` in loop | Command limit | MITIGATED |
 
 **Filesystem Exhaustion:**

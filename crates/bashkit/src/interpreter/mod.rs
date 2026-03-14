@@ -10577,4 +10577,23 @@ echo "count=$COUNT"
         let result = run_script("mkfifo /tmp/mypipe && test -p /tmp/mypipe && echo yes").await;
         assert_eq!(result.stdout.trim(), "yes");
     }
+
+    // /dev/urandom integration tests
+
+    #[tokio::test]
+    async fn test_od_dev_urandom() {
+        let result = run_script("od -An -N8 -tx1 /dev/urandom").await;
+        assert_eq!(result.exit_code, 0);
+        // Should produce hex output - 8 bytes = 8 hex pairs
+        let trimmed = result.stdout.trim();
+        assert!(!trimmed.is_empty(), "od /dev/urandom should produce output");
+    }
+
+    #[tokio::test]
+    async fn test_dev_urandom_read_succeeds() {
+        // Reading /dev/urandom should succeed (not error with "file not found")
+        let result = run_script("cat /dev/urandom > /dev/null && echo ok").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "ok");
+    }
 }

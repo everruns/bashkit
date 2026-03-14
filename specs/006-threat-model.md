@@ -99,7 +99,7 @@ embedded in rustdoc. It contains:
 |----|--------|--------------|------------|--------|
 | TM-DOS-001 | Large script input | `Bash::exec(huge_string)` | `max_input_bytes` limit (10MB) | **MITIGATED** |
 | TM-DOS-002 | Output flooding | `yes \| head -n 1000000000` | Command limit stops loop | Mitigated |
-| TM-DOS-003 | Variable explosion | `x=$(cat /dev/urandom)` | No /dev/urandom in VFS | Mitigated |
+| TM-DOS-003 | Variable explosion | `x=$(cat /dev/urandom)` | /dev/urandom returns bounded 8KB | Mitigated |
 | TM-DOS-004 | Array growth | `arr+=(element)` in loop | Command limit | Mitigated |
 
 **Current Risk**: LOW - Input size and command limits prevent unbounded memory consumption
