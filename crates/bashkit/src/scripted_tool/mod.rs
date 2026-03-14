@@ -1100,7 +1100,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execution_trace_records_help_discover_and_tool_invocations() {
-        let mut tool = build_test_tool();
+        let tool = build_test_tool();
 
         let resp = tool
             .execute(ToolRequest {

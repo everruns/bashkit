@@ -573,7 +573,7 @@ impl ScriptedTool {
             bash.exec(&req.commands).await
         };
 
-        match response {
+        let response = match response {
             Ok(result) => result.into(),
             Err(err) => ToolResponse {
                 stdout: String::new(),
