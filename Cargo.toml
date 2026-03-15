@@ -18,7 +18,9 @@ categories = ["command-line-utilities", "parser-implementations"]
 
 [workspace.dependencies]
 # Async runtime
-tokio = { version = "1", features = ["full"] }
+# Base features are WASM-compatible; crates needing more (rt-multi-thread, fs, net, process)
+# add them in their own Cargo.toml or via [target.'cfg(...)'.dependencies].
+tokio = { version = "1", features = ["sync", "macros", "io-util", "rt", "time"] }
 async-trait = "0.1"
 futures = "0.3"
 

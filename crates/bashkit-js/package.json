@@ -5,6 +5,12 @@
   "main": "wrapper.js",
   "types": "wrapper.d.ts",
   "type": "module",
+  "exports": {
+    ".": {
+      "browser": "./bashkit.wasi-browser.js",
+      "default": "./wrapper.js"
+    }
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -34,7 +40,12 @@
     "index.cjs",
     "index.d.ts",
     "index.d.cts",
-    "bashkit.*.node"
+    "bashkit.*.node",
+    "bashkit.wasi-browser.js",
+    "bashkit.wasi.cjs",
+    "bashkit.wasm32-wasi.wasm",
+    "wasi-worker.mjs",
+    "wasi-worker-browser.mjs"
   ],
   "scripts": {
     "build": "npm run build:napi && npm run build:cjs && npm run build:ts",
@@ -48,6 +59,9 @@
     "format:check": "prettier --check .",
     "type-check": "tsc --noEmit",
     "version": "napi version"
+  },
+  "optionalDependencies": {
+    "@napi-rs/wasm-runtime": "^0.2.9"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0",
