@@ -51,9 +51,11 @@ jobs:
           - host: windows-latest
             target: x86_64-pc-windows-msvc
             build: npm run build:napi -- --target x86_64-pc-windows-msvc && npm run build:cjs && npm run build:ts
-          - host: ubuntu-latest
-            target: wasm32-wasip1-threads
-            build: npm run build:napi -- --target wasm32-wasip1-threads && npm run build:cjs && npm run build:ts
+          # TODO: WASM disabled — tokio "full" features (from bashkit core) are
+          # unsupported on wasm32. Needs architectural fix to gate tokio features.
+          # - host: ubuntu-latest
+          #   target: wasm32-wasip1-threads
+          #   build: npm run build:napi -- --target wasm32-wasip1-threads && npm run build:cjs && npm run build:ts
 
     steps:
       - uses: actions/checkout@v6
@@ -311,43 +313,39 @@ jobs:
           sh -c "node examples/openai_tool.mjs && node examples/vercel_ai_tool.mjs && node examples/langchain_agent.mjs"
 
   # ============================================================================
-  # Test WASI target
+  # Test WASI target — disabled until tokio feature gating is resolved
+  # TODO: Re-enable when bashkit core gates tokio "full" behind a feature flag
   # ============================================================================
-  test-js-wasi:
-    name: Test WASI target
-    needs: [build-js]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: crates/bashkit-js/package-lock.json
-
-      - name: Install dependencies
-        run: npm install --cpu wasm32
-        working-directory: crates/bashkit-js
-
-      - name: Download native binding
-        uses: actions/download-artifact@v8
-        with:
-          name: js-bindings-wasm32-wasip1-threads
-          path: crates/bashkit-js
-
-      - name: Download JS stubs
-        uses: actions/download-artifact@v8
-        with:
-          name: js-stubs
-          path: crates/bashkit-js
-
-      - name: Test bindings
-        run: npm test
-        env:
-          NAPI_RS_FORCE_WASI: 1
-        working-directory: crates/bashkit-js
+  # test-js-wasi:
+  #   name: Test WASI target
+  #   needs: [build-js]
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - name: Setup node
+  #       uses: actions/setup-node@v6
+  #       with:
+  #         node-version: 24
+  #         cache: npm
+  #         cache-dependency-path: crates/bashkit-js/package-lock.json
+  #     - name: Install dependencies
+  #       run: npm install --cpu wasm32
+  #       working-directory: crates/bashkit-js
+  #     - name: Download native binding
+  #       uses: actions/download-artifact@v8
+  #       with:
+  #         name: js-bindings-wasm32-wasip1-threads
+  #         path: crates/bashkit-js
+  #     - name: Download JS stubs
+  #       uses: actions/download-artifact@v8
+  #       with:
+  #         name: js-stubs
+  #         path: crates/bashkit-js
+  #     - name: Test bindings
+  #       run: npm test
+  #       env:
+  #         NAPI_RS_FORCE_WASI: 1
+  #       working-directory: crates/bashkit-js
 
   # ============================================================================
   # Publish to npm
@@ -358,7 +356,6 @@ jobs:
     needs:
       - test-js-macos-windows
       - test-js-linux
-      - test-js-wasi
 
     if: success()
 
