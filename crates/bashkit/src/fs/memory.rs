@@ -353,6 +353,23 @@ impl InMemoryFs {
             },
         );
 
+        // /dev/urandom and /dev/random - random byte sources (bounded reads)
+        for dev in &["/dev/urandom", "/dev/random"] {
+            entries.insert(
+                PathBuf::from(dev),
+                FsEntry::File {
+                    content: Vec::new(),
+                    metadata: Metadata {
+                        file_type: FileType::File,
+                        size: 0,
+                        mode: 0o666,
+                        modified: SystemTime::now(),
+                        created: SystemTime::now(),
+                    },
+                },
+            );
+        }
+
         // /dev/fd - directory for process substitution file descriptors
         entries.insert(
             PathBuf::from("/dev/fd"),
@@ -371,6 +388,23 @@ impl InMemoryFs {
             entries: RwLock::new(entries),
             limits,
         }
+    }
+
+    /// THREAT[TM-DOS-003]: Generate bounded random bytes for /dev/urandom.
+    /// Returns exactly 8192 bytes to prevent unbounded reads while
+    /// supporting common patterns like `od -N8 -tx1 /dev/urandom`.
+    fn generate_random_bytes() -> Vec<u8> {
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+
+        const SIZE: usize = 8192;
+        let mut buf = Vec::with_capacity(SIZE);
+        while buf.len() < SIZE {
+            let h = RandomState::new().build_hasher().finish();
+            buf.extend_from_slice(&h.to_ne_bytes());
+        }
+        buf.truncate(SIZE);
+        buf
     }
 
     /// Compute current usage statistics.
@@ -778,6 +812,12 @@ impl FileSystem for InMemoryFs {
         });
 
         let path = Self::normalize_path(path);
+
+        // /dev/urandom and /dev/random: return bounded random bytes
+        if path == Path::new("/dev/urandom") || path == Path::new("/dev/random") {
+            return Ok(Self::generate_random_bytes());
+        }
+
         let entries = self.entries.read().unwrap();
 
         match entries.get(&path) {
@@ -1477,8 +1517,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_count_limit() {
-        // Note: InMemoryFs starts with /dev/null as 1 file
-        let limits = FsLimits::new().max_file_count(4); // 1 existing + 3 new
+        // Note: InMemoryFs starts with 3 files: /dev/null, /dev/urandom, /dev/random
+        let limits = FsLimits::new().max_file_count(6); // 3 existing + 3 new
         let fs = InMemoryFs::with_limits(limits);
 
         // Should succeed - under limit
@@ -1492,7 +1532,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Should fail - at limit (4 files: /dev/null + 3 new)
+        // Should fail - at limit (6 files: 3 dev + 3 new)
         let result = fs.write_file(Path::new("/tmp/file4.txt"), b"4").await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -1501,8 +1541,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_overwrite_does_not_increase_count() {
-        // Note: InMemoryFs starts with /dev/null as 1 file
-        let limits = FsLimits::new().max_file_count(3); // 1 existing + 2 new
+        // Note: InMemoryFs starts with 3 files: /dev/null, /dev/urandom, /dev/random
+        let limits = FsLimits::new().max_file_count(5); // 3 existing + 2 new
         let fs = InMemoryFs::with_limits(limits);
 
         // Create two files
@@ -1518,7 +1558,7 @@ mod tests {
             .await
             .unwrap();
 
-        // New file should fail (we're at 3: /dev/null + 2 files)
+        // New file should fail (we're at 5: 3 dev + 2 files)
         let result = fs.write_file(Path::new("/tmp/file3.txt"), b"new").await;
         assert!(result.is_err());
     }
@@ -1552,7 +1592,7 @@ mod tests {
         // Initial usage (only default directories)
         let usage = fs.usage();
         assert_eq!(usage.total_bytes, 0); // No file content yet
-        assert_eq!(usage.file_count, 1); // /dev/null
+        assert_eq!(usage.file_count, 3); // /dev/null + /dev/urandom + /dev/random
 
         // Add a file
         fs.write_file(Path::new("/tmp/test.txt"), b"hello")
@@ -1561,7 +1601,7 @@ mod tests {
 
         let usage = fs.usage();
         assert_eq!(usage.total_bytes, 5);
-        assert_eq!(usage.file_count, 2); // /dev/null + test.txt
+        assert_eq!(usage.file_count, 4); // 3 dev files + test.txt
     }
 
     #[tokio::test]
@@ -1877,5 +1917,59 @@ mod tests {
         let deep = Path::new("/a/b/c/d/e/f.txt");
         let result = fs.chmod(deep, 0o755).await;
         assert!(result.is_err(), "chmod on deep path should be rejected");
+    }
+
+    // ==================== /dev/urandom tests ====================
+
+    #[tokio::test]
+    async fn test_dev_urandom_returns_bytes() {
+        let fs = InMemoryFs::new();
+        let content = fs.read_file(Path::new("/dev/urandom")).await.unwrap();
+        assert_eq!(content.len(), 8192);
+    }
+
+    #[tokio::test]
+    async fn test_dev_random_returns_bytes() {
+        let fs = InMemoryFs::new();
+        let content = fs.read_file(Path::new("/dev/random")).await.unwrap();
+        assert_eq!(content.len(), 8192);
+    }
+
+    #[tokio::test]
+    async fn test_dev_urandom_returns_different_data() {
+        let fs = InMemoryFs::new();
+        let a = fs.read_file(Path::new("/dev/urandom")).await.unwrap();
+        let b = fs.read_file(Path::new("/dev/urandom")).await.unwrap();
+        // Extremely unlikely to be equal
+        assert_ne!(a, b);
+    }
+
+    #[tokio::test]
+    async fn test_dev_urandom_exists_in_fs() {
+        let fs = InMemoryFs::new();
+        let exists = fs.exists(Path::new("/dev/urandom")).await.unwrap();
+        assert!(exists, "/dev/urandom should exist in VFS");
+    }
+
+    #[tokio::test]
+    async fn test_dev_urandom_write_succeeds() {
+        let fs = InMemoryFs::new();
+        // Writing to /dev/urandom should succeed (like real device)
+        let result = fs.write_file(Path::new("/dev/urandom"), b"ignored").await;
+        assert!(result.is_ok());
+        // But reads still return random data, not what was written
+        let content = fs.read_file(Path::new("/dev/urandom")).await.unwrap();
+        assert_eq!(content.len(), 8192);
+    }
+
+    #[tokio::test]
+    async fn test_dev_urandom_path_normalization() {
+        let fs = InMemoryFs::new();
+        // Path traversal attempt should still resolve to /dev/urandom
+        let content = fs
+            .read_file(Path::new("/dev/../dev/urandom"))
+            .await
+            .unwrap();
+        assert_eq!(content.len(), 8192);
     }
 }
