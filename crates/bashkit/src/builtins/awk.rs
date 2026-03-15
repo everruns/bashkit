@@ -1795,17 +1795,61 @@ impl<'a> AwkParser<'a> {
                 if self.pos < self.input.len() {
                     let escaped = self.current_char().unwrap();
                     match escaped {
-                        'n' => result.push('\n'),
-                        't' => result.push('\t'),
-                        'r' => result.push('\r'),
-                        '\\' => result.push('\\'),
-                        '"' => result.push('"'),
+                        'n' => {
+                            result.push('\n');
+                            self.advance();
+                        }
+                        't' => {
+                            result.push('\t');
+                            self.advance();
+                        }
+                        'r' => {
+                            result.push('\r');
+                            self.advance();
+                        }
+                        '\\' => {
+                            result.push('\\');
+                            self.advance();
+                        }
+                        '"' => {
+                            result.push('"');
+                            self.advance();
+                        }
+                        'u' => {
+                            // gawk 5.3+ Unicode escape: \u followed by 1-8 hex digits
+                            self.advance(); // skip 'u'
+                            let mut hex = String::new();
+                            while hex.len() < 8
+                                && self.pos < self.input.len()
+                                && self.current_char().is_some_and(|c| c.is_ascii_hexdigit())
+                            {
+                                hex.push(self.current_char().unwrap());
+                                self.pos += 1; // hex digits are ASCII
+                            }
+                            if hex.is_empty() {
+                                result.push('\\');
+                                result.push('u');
+                            } else if let Ok(cp) = u32::from_str_radix(&hex, 16) {
+                                if let Some(ch) = char::from_u32(cp) {
+                                    result.push(ch);
+                                } else {
+                                    // Invalid Unicode code point — keep literal
+                                    result.push('\\');
+                                    result.push('u');
+                                    result.push_str(&hex);
+                                }
+                            } else {
+                                result.push('\\');
+                                result.push('u');
+                                result.push_str(&hex);
+                            }
+                        }
                         _ => {
                             result.push('\\');
                             result.push(escaped);
+                            self.advance();
                         }
                     }
-                    self.advance(); // escaped char may be multi-byte
                 }
             } else {
                 result.push(c);
@@ -3837,5 +3881,46 @@ mod tests {
         );
         assert_eq!(csv_split_fields(r#""a""b",c"#), vec!["a\"b", "c"]);
         assert_eq!(csv_split_fields("a,,c,"), vec!["a", "", "c", ""]);
+    }
+
+    // ========================================================================
+    // gawk 5.3+ Unicode escape sequences (issue #617)
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_awk_unicode_escape_basic() {
+        // \u followed by hex digits → Unicode character
+        let result = run_awk(&[r#"BEGIN{print "\u0041"}"#], None).await.unwrap();
+        assert_eq!(result.stdout, "A\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_unicode_escape_multibyte() {
+        // \u00E9 → é (Latin small e with acute)
+        let result = run_awk(&[r#"BEGIN{print "\u00E9"}"#], None).await.unwrap();
+        assert_eq!(result.stdout, "é\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_unicode_escape_emoji() {
+        // \u1F600 → 😀 (grinning face, 5 hex digits)
+        let result = run_awk(&[r#"BEGIN{print "\u1F600"}"#], None).await.unwrap();
+        assert_eq!(result.stdout, "😀\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_unicode_escape_bare_u() {
+        // \u with no hex digits → literal \u
+        let result = run_awk(&[r#"BEGIN{print "\u "}"#], None).await.unwrap();
+        assert_eq!(result.stdout, "\\u \n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_unicode_escape_mixed() {
+        // Mix of Unicode escapes and regular text
+        let result = run_awk(&[r#"BEGIN{print "caf\u00E9"}"#], None)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "café\n");
     }
 }

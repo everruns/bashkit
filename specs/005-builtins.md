@@ -85,7 +85,7 @@ execution → $PATH search → "command not found".
 - `head`, `tail` - First/last N lines
 - `grep` - Pattern matching (`-i`, `-v`, `-c`, `-n`, `-o`, `-l`, `-w`, `-E`, `-F`, `-P`, `-q`, `-m`, `-x`, `-A`, `-B`, `-C`, `-e`, `-f`, `-H`, `-h`, `-b`, `-a`, `-z`, `-r`)
 - `sed` - Stream editing (s/pat/repl/, d, p, a, i; `-E`, `-e`, `-i`, `-n`; nth occurrence, `!` negation)
-- `awk` - Text processing (print, -F, variables)
+- `awk` - Text processing (print, -F, variables, `--csv`/`-k`, `\u` Unicode escapes)
 - `jq` - JSON processing (file arguments, `-s`, `-r`, `-c`, `-n`, `-S`, `-e`, `--tab`, `-j`, `--arg`, `--argjson`, `-V`/`--version`, combined short flags)
 - `sort` - Sort lines (`-r`, `-n`, `-u`)
 - `uniq` - Filter duplicates (`-c`, `-d`, `-u`)

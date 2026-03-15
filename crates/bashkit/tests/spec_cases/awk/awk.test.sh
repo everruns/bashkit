@@ -689,3 +689,17 @@ cat /tmp/awk_redir3.txt
 a
 b
 ### end
+
+### awk_unicode_escape
+# Issue #617: gawk 5.3+ Unicode escape sequences
+awk 'BEGIN{print "\u0048\u0065\u006C\u006C\u006F"}'
+### expect
+Hello
+### end
+
+### awk_unicode_escape_multibyte
+# Issue #617: multibyte Unicode escape
+awk 'BEGIN{print "caf\u00E9"}'
+### expect
+café
+### end
