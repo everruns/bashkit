@@ -1,0 +1,16 @@
+{
+  "name": "bashkit-browser-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@everruns/bashkit": "latest"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}
