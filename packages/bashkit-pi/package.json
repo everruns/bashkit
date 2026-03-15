@@ -1,0 +1,37 @@
+{
+  "name": "@everruns/bashkit-pi",
+  "version": "0.1.0",
+  "description": "Run pi coding agent with bashkit's sandboxed virtual bash + VFS",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "bashkit-pi": "./bin/bashkit-pi.mjs"
+  },
+  "files": [
+    "bin/",
+    "extension/"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/everruns/bashkit",
+    "directory": "packages/bashkit-pi"
+  },
+  "keywords": [
+    "bash",
+    "pi",
+    "coding-agent",
+    "sandbox",
+    "bashkit"
+  ],
+  "dependencies": {
+    "@everruns/bashkit": "^0.1.10"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@mariozechner/pi-coding-agent": {
+      "optional": true
+    }
+  }
+}

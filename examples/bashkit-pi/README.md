@@ -2,6 +2,14 @@
 
 Run [pi](https://pi.dev/) (terminal coding agent) with bashkit's virtual bash interpreter and virtual filesystem instead of real shell/filesystem access.
 
+## Quick Start (from GitHub)
+
+```bash
+npx @everruns/bashkit-pi --provider openai --model gpt-5.4 --api-key "$OPENAI_API_KEY"
+```
+
+No clone needed. See [`packages/bashkit-pi`](../../packages/bashkit-pi/) for details.
+
 ## What This Does
 
 Replaces all four of pi's core tools (bash, read, write, edit) with bashkit-backed virtual implementations:
