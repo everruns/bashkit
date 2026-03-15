@@ -1,0 +1,10 @@
+{
+  "name": "bashkit-pi-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Pi coding agent with bashkit virtual bash + VFS",
+  "dependencies": {
+    "@everruns/bashkit": "file:../../crates/bashkit-js"
+  }
+}

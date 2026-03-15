@@ -261,32 +261,31 @@ export class Bash {
     this.native.reset();
   }
 
-  // ==========================================================================
-  // VFS file helpers
-  // ==========================================================================
+  // VFS — direct filesystem access
 
-  /**
-   * Check whether a path exists in the virtual filesystem.
-   */
-  exists(path: string): boolean {
-    return this.executeSync(`test -e '${path.replace(/'/g, "'\\''")}'`).exitCode === 0;
-  }
-
-  /**
-   * Read file contents from the virtual filesystem.
-   * Throws `BashError` if the file does not exist.
-   */
+  /** Read a file from the virtual filesystem as a UTF-8 string. */
   readFile(path: string): string {
-    const result = this.executeSyncOrThrow(`cat '${path.replace(/'/g, "'\\''")}'`);
-    return result.stdout;
+    return this.native.readFile(path);
   }
 
-  /**
-   * Write content to a file in the virtual filesystem.
-   * Creates parent directories as needed.
-   */
+  /** Write a string to a file in the virtual filesystem. */
   writeFile(path: string, content: string): void {
-    this.executeSyncOrThrow(buildWriteCmd(path, content));
+    this.native.writeFile(path, content);
+  }
+
+  /** Create a directory. If recursive is true, creates parents as needed. */
+  mkdir(path: string, recursive?: boolean): void {
+    this.native.mkdir(path, recursive);
+  }
+
+  /** Check if a path exists in the virtual filesystem. */
+  exists(path: string): boolean {
+    return this.native.exists(path);
+  }
+
+  /** Remove a file or directory. If recursive is true, removes contents. */
+  remove(path: string, recursive?: boolean): void {
+    this.native.remove(path, recursive);
   }
 
   /**
