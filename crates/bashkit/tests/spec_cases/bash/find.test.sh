@@ -100,6 +100,54 @@ find /tmp/md2test -mindepth 2 -type f | sort
 /tmp/md2test/a/mid.txt
 ### end
 
+### find_printf_filename
+# find -printf '%f\n' should print basenames
+mkdir -p /tmp/pf1
+touch /tmp/pf1/alpha.txt
+touch /tmp/pf1/beta.txt
+find /tmp/pf1 -type f -printf '%f\n' | sort
+### expect
+alpha.txt
+beta.txt
+### end
+
+### find_printf_path
+# find -printf '%p\n' should print full paths (same as -print)
+mkdir -p /tmp/pf2
+touch /tmp/pf2/file.txt
+find /tmp/pf2 -type f -printf '%p\n'
+### expect
+/tmp/pf2/file.txt
+### end
+
+### find_printf_type
+# find -printf '%y' should print type chars
+mkdir -p /tmp/pf3/sub
+touch /tmp/pf3/sub/file.txt
+find /tmp/pf3 -maxdepth 1 -printf '%y %f\n' | sort
+### expect
+d pf3
+d sub
+### end
+
+### find_printf_size
+# find -printf '%s' should print file size
+mkdir -p /tmp/pf4
+echo -n "hello" > /tmp/pf4/five.txt
+find /tmp/pf4 -type f -printf '%f %s\n'
+### expect
+five.txt 5
+### end
+
+### find_printf_escapes
+# find -printf should handle escape sequences
+mkdir -p /tmp/pf5
+touch /tmp/pf5/a.txt
+find /tmp/pf5 -type f -printf '%f\t%y\n'
+### expect
+a.txt	f
+### end
+
 ### ls_recursive
 # ls -R should list nested directories
 mkdir -p /tmp/lsrec/a/b

@@ -2465,8 +2465,10 @@ impl Interpreter {
         let mut name_pattern: Option<String> = None;
         let mut type_filter: Option<char> = None;
         let mut max_depth: Option<usize> = None;
+        let mut min_depth: Option<usize> = None;
         let mut exec_args: Vec<String> = Vec::new();
         let mut exec_batch = false;
+        let mut printf_format: Option<String> = None;
 
         // Parse arguments
         let mut i = 0;
@@ -2516,7 +2518,35 @@ impl Interpreter {
                         }
                     }
                 }
+                "-mindepth" => {
+                    i += 1;
+                    if i >= args.len() {
+                        return Ok(ExecResult::err(
+                            "find: missing argument to '-mindepth'\n".to_string(),
+                            1,
+                        ));
+                    }
+                    match args[i].parse::<usize>() {
+                        Ok(n) => min_depth = Some(n),
+                        Err(_) => {
+                            return Ok(ExecResult::err(
+                                format!("find: invalid mindepth value '{}'\n", args[i]),
+                                1,
+                            ));
+                        }
+                    }
+                }
                 "-print" | "-print0" => {}
+                "-printf" => {
+                    i += 1;
+                    if i >= args.len() {
+                        return Ok(ExecResult::err(
+                            "find: missing argument to '-printf'\n".to_string(),
+                            1,
+                        ));
+                    }
+                    printf_format = Some(args[i].clone());
+                }
                 "-exec" | "-execdir" => {
                     i += 1;
                     while i < args.len() {
@@ -2570,6 +2600,43 @@ impl Interpreter {
                 &mut matched_paths,
             )
             .await?;
+        }
+
+        // Filter by mindepth
+        if let Some(min) = min_depth {
+            matched_paths.retain(|p| {
+                let depth = if search_paths.len() == 1 {
+                    let base = &search_paths[0];
+                    if p == base {
+                        0
+                    } else {
+                        let suffix = p.strip_prefix(base).unwrap_or(p);
+                        let suffix = suffix.strip_prefix('/').unwrap_or(suffix);
+                        if suffix.is_empty() {
+                            0
+                        } else {
+                            suffix.matches('/').count() + 1
+                        }
+                    }
+                } else {
+                    0
+                };
+                depth >= min
+            });
+        }
+
+        // Handle -printf output
+        if let Some(ref fmt) = printf_format {
+            let mut output = String::new();
+            for found_path in &matched_paths {
+                let resolved = self.resolve_path(found_path);
+                let formatted = self
+                    .find_printf_format(fmt, found_path, &resolved, &search_paths)
+                    .await;
+                output.push_str(&formatted);
+            }
+            let result = ExecResult::ok(output);
+            return self.apply_redirections(result, redirects).await;
         }
 
         // Execute commands for matched paths
@@ -2737,6 +2804,156 @@ impl Interpreter {
 
             Ok(())
         })
+    }
+
+    /// Format a single path using a `-printf` format string.
+    ///
+    /// Supported specifiers: `%f` (filename), `%p` (full path), `%P` (relative path),
+    /// `%s` (size), `%m` (octal mode), `%M` (symbolic mode), `%T@` (mtime epoch),
+    /// `%y` (type char), `%d` (depth). Escapes: `\n`, `\t`, `\0`, `\\`.
+    async fn find_printf_format(
+        &self,
+        fmt: &str,
+        display_path: &str,
+        resolved_path: &Path,
+        search_paths: &[String],
+    ) -> String {
+        let meta = self.fs.stat(resolved_path).await.ok();
+
+        let mut out = String::new();
+        let chars: Vec<char> = fmt.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            match chars[i] {
+                '\\' => {
+                    i += 1;
+                    if i < chars.len() {
+                        match chars[i] {
+                            'n' => out.push('\n'),
+                            't' => out.push('\t'),
+                            '0' => out.push('\0'),
+                            '\\' => out.push('\\'),
+                            c => {
+                                out.push('\\');
+                                out.push(c);
+                            }
+                        }
+                    }
+                }
+                '%' => {
+                    i += 1;
+                    if i >= chars.len() {
+                        out.push('%');
+                        continue;
+                    }
+                    match chars[i] {
+                        'f' => {
+                            // Filename (basename)
+                            let name = Path::new(display_path)
+                                .file_name()
+                                .map(|s| s.to_string_lossy().to_string())
+                                .unwrap_or_else(|| display_path.to_string());
+                            out.push_str(&name);
+                        }
+                        'p' => {
+                            out.push_str(display_path);
+                        }
+                        'P' => {
+                            // Path relative to search root (strip search path prefix)
+                            let base = search_paths.first().map(|s| s.as_str()).unwrap_or(".");
+                            let rel = display_path
+                                .strip_prefix(base)
+                                .unwrap_or(display_path)
+                                .trim_start_matches('/');
+                            out.push_str(rel);
+                        }
+                        's' => {
+                            let size = meta.as_ref().map(|m| m.size).unwrap_or(0);
+                            out.push_str(&size.to_string());
+                        }
+                        'm' => {
+                            let mode = meta.as_ref().map(|m| m.mode).unwrap_or(0);
+                            out.push_str(&format!("{:o}", mode & 0o7777));
+                        }
+                        'M' => {
+                            // Symbolic mode like ls -l (e.g., -rw-r--r--)
+                            let m = meta.as_ref();
+                            let ft = m.map(|m| &m.file_type);
+                            let mode = m.map(|m| m.mode).unwrap_or(0);
+                            let type_ch = match ft {
+                                Some(ft) if ft.is_dir() => 'd',
+                                Some(ft) if ft.is_symlink() => 'l',
+                                _ => '-',
+                            };
+                            out.push(type_ch);
+                            for shift in [6, 3, 0] {
+                                let bits = (mode >> shift) & 7;
+                                out.push(if bits & 4 != 0 { 'r' } else { '-' });
+                                out.push(if bits & 2 != 0 { 'w' } else { '-' });
+                                out.push(if bits & 1 != 0 { 'x' } else { '-' });
+                            }
+                        }
+                        'y' => {
+                            let ch = match meta.as_ref().map(|m| &m.file_type) {
+                                Some(ft) if ft.is_dir() => 'd',
+                                Some(ft) if ft.is_symlink() => 'l',
+                                Some(ft) if ft.is_file() => 'f',
+                                _ => 'f',
+                            };
+                            out.push(ch);
+                        }
+                        'd' => {
+                            // Depth relative to search root
+                            let base = search_paths.first().map(|s| s.as_str()).unwrap_or(".");
+                            let depth = if display_path == base {
+                                0
+                            } else {
+                                let suffix = display_path
+                                    .strip_prefix(base)
+                                    .unwrap_or(display_path)
+                                    .trim_start_matches('/');
+                                if suffix.is_empty() {
+                                    0
+                                } else {
+                                    suffix.matches('/').count() + 1
+                                }
+                            };
+                            out.push_str(&depth.to_string());
+                        }
+                        'T' => {
+                            // %T@ = mtime as seconds since epoch
+                            i += 1;
+                            if i < chars.len() && chars[i] == '@' {
+                                let secs = meta
+                                    .as_ref()
+                                    .and_then(|m| {
+                                        m.modified
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .ok()
+                                            .map(|d| d.as_secs())
+                                    })
+                                    .unwrap_or(0);
+                                out.push_str(&secs.to_string());
+                            } else {
+                                out.push_str("%T");
+                                // re-process current char
+                                continue;
+                            }
+                        }
+                        '%' => {
+                            out.push('%');
+                        }
+                        c => {
+                            out.push('%');
+                            out.push(c);
+                        }
+                    }
+                }
+                c => out.push(c),
+            }
+            i += 1;
+        }
+        out
     }
 
     /// Execute `bash` or `sh` command - interpret scripts using this interpreter.
@@ -10613,5 +10830,56 @@ echo "count=$COUNT"
         let result = run_script("od -An -N4 -tx1 /dev/random").await;
         assert_eq!(result.exit_code, 0);
         assert!(!result.stdout.trim().is_empty());
+    }
+
+    // find -printf tests
+
+    #[tokio::test]
+    async fn test_find_printf_filename() {
+        let result = run_script(
+            r#"mkdir -p /tmp/fp1 && touch /tmp/fp1/hello.txt && find /tmp/fp1 -type f -printf '%f\n'"#,
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "hello.txt");
+    }
+
+    #[tokio::test]
+    async fn test_find_printf_path() {
+        let result = run_script(
+            r#"mkdir -p /tmp/fp2 && touch /tmp/fp2/a.txt && find /tmp/fp2 -type f -printf '%p\n'"#,
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "/tmp/fp2/a.txt");
+    }
+
+    #[tokio::test]
+    async fn test_find_printf_size() {
+        let result = run_script(
+            r#"mkdir -p /tmp/fp3 && echo -n "hello" > /tmp/fp3/five.txt && find /tmp/fp3 -type f -printf '%s\n'"#,
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "5");
+    }
+
+    #[tokio::test]
+    async fn test_find_printf_type() {
+        let result =
+            run_script(r#"mkdir -p /tmp/fp4/sub && find /tmp/fp4 -maxdepth 0 -printf '%y\n'"#)
+                .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "d");
+    }
+
+    #[tokio::test]
+    async fn test_find_printf_combined() {
+        let result = run_script(
+            r#"mkdir -p /tmp/fp5 && touch /tmp/fp5/x.txt && find /tmp/fp5 -type f -printf '%f %y\n'"#,
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "x.txt f");
     }
 }
