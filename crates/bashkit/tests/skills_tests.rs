@@ -319,12 +319,7 @@ async fn exec_azure_generate_url() {
 
 /// azure query_capacity.sh — tests: set -euo pipefail, ${1:?}, ${2:-},
 /// if/elif, variable expansion, printf, brace expansion {1..60}, for loop
-///
-/// BUG: Exits with code 1 under set -euo pipefail. A command in the
-/// pipeline fails (likely jq or az stub output not matching expected
-/// format), causing pipefail to abort.
 #[tokio::test]
-#[ignore = "pipefail triggers on az/jq stub output mismatch"]
 async fn exec_azure_query_capacity() {
     let script = read_fixture("azure_query_capacity.sh");
     let mut bash = bash_with_stubs();
