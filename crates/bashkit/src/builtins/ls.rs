@@ -297,11 +297,12 @@ struct FindOptions {
     type_filter: Option<char>,
     max_depth: Option<usize>,
     min_depth: Option<usize>,
+    printf_format: Option<String>,
 }
 
 /// The find builtin - search for files.
 ///
-/// Usage: find [PATH...] [-name PATTERN] [-type TYPE] [-maxdepth N] [-mindepth N] [-exec CMD {} \;]
+/// Usage: find [PATH...] [-name PATTERN] [-type TYPE] [-maxdepth N] [-mindepth N] [-printf FMT] [-exec CMD {} \;]
 ///
 /// Options:
 ///   -name PATTERN      Match filename against PATTERN (supports * and ?)
@@ -309,6 +310,7 @@ struct FindOptions {
 ///   -maxdepth N        Descend at most N levels
 ///   -mindepth N        Do not apply tests at levels less than N
 ///   -print             Print matching paths (default)
+///   -printf FMT        Print using format string (%f %p %P %s %m %M %y %d %T@)
 ///   -exec CMD {} \;    Execute CMD for each match ({} = path)
 ///   -exec CMD {} +     Execute CMD once with all matches
 pub struct Find;
@@ -322,6 +324,7 @@ impl Builtin for Find {
             type_filter: None,
             max_depth: None,
             min_depth: None,
+            printf_format: None,
         };
 
         // Parse arguments
@@ -393,6 +396,16 @@ impl Builtin for Find {
                 }
                 "-print" | "-print0" => {
                     // Default action, ignore
+                }
+                "-printf" => {
+                    i += 1;
+                    if i >= ctx.args.len() {
+                        return Ok(ExecResult::err(
+                            "find: missing argument to '-printf'\n".to_string(),
+                            1,
+                        ));
+                    }
+                    opts.printf_format = Some(ctx.args[i].clone());
                 }
                 "-exec" | "-execdir" => {
                     // -exec is handled at interpreter level (execute_find);
@@ -484,8 +497,12 @@ fn find_recursive<'a>(
 
         // Output if matches (or if no filters, show everything)
         if type_matches && name_matches && above_min_depth {
-            output.push_str(display_path);
-            output.push('\n');
+            if let Some(ref fmt) = opts.printf_format {
+                output.push_str(&find_printf_format(fmt, display_path, &metadata));
+            } else {
+                output.push_str(display_path);
+                output.push('\n');
+            }
         }
 
         // Recurse into directories
@@ -523,6 +540,115 @@ fn find_recursive<'a>(
 
         Ok(())
     })
+}
+
+/// Format a path using find's -printf format string.
+fn find_printf_format(fmt: &str, display_path: &str, metadata: &crate::fs::Metadata) -> String {
+    let mut out = String::new();
+    let chars: Vec<char> = fmt.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => {
+                i += 1;
+                if i < chars.len() {
+                    match chars[i] {
+                        'n' => out.push('\n'),
+                        't' => out.push('\t'),
+                        '0' => out.push('\0'),
+                        '\\' => out.push('\\'),
+                        c => {
+                            out.push('\\');
+                            out.push(c);
+                        }
+                    }
+                }
+            }
+            '%' => {
+                i += 1;
+                if i >= chars.len() {
+                    out.push('%');
+                    continue;
+                }
+                match chars[i] {
+                    'f' => {
+                        let name = std::path::Path::new(display_path)
+                            .file_name()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| display_path.to_string());
+                        out.push_str(&name);
+                    }
+                    'p' => out.push_str(display_path),
+                    'P' => {
+                        // In builtin context, display_path is already relative
+                        let rel = display_path.strip_prefix("./").unwrap_or(display_path);
+                        out.push_str(rel);
+                    }
+                    's' => out.push_str(&metadata.size.to_string()),
+                    'm' => out.push_str(&format!("{:o}", metadata.mode & 0o7777)),
+                    'M' => {
+                        let type_ch = if metadata.file_type.is_dir() {
+                            'd'
+                        } else if metadata.file_type.is_symlink() {
+                            'l'
+                        } else {
+                            '-'
+                        };
+                        out.push(type_ch);
+                        for shift in [6, 3, 0] {
+                            let bits = (metadata.mode >> shift) & 7;
+                            out.push(if bits & 4 != 0 { 'r' } else { '-' });
+                            out.push(if bits & 2 != 0 { 'w' } else { '-' });
+                            out.push(if bits & 1 != 0 { 'x' } else { '-' });
+                        }
+                    }
+                    'y' => {
+                        let ch = if metadata.file_type.is_dir() {
+                            'd'
+                        } else if metadata.file_type.is_symlink() {
+                            'l'
+                        } else {
+                            'f'
+                        };
+                        out.push(ch);
+                    }
+                    'd' => {
+                        // Approximate depth from display_path
+                        let base = display_path.strip_prefix("./").unwrap_or(display_path);
+                        let depth = if base == "." || base.is_empty() {
+                            0
+                        } else {
+                            base.matches('/').count() + 1
+                        };
+                        out.push_str(&depth.to_string());
+                    }
+                    'T' => {
+                        i += 1;
+                        if i < chars.len() && chars[i] == '@' {
+                            let secs = metadata
+                                .modified
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .ok()
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+                            out.push_str(&secs.to_string());
+                        } else {
+                            out.push_str("%T");
+                            continue;
+                        }
+                    }
+                    '%' => out.push('%'),
+                    c => {
+                        out.push('%');
+                        out.push(c);
+                    }
+                }
+            }
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    out
 }
 
 /// Simple glob pattern matching for find -name
