@@ -420,21 +420,30 @@ use std::path::{Path, PathBuf};
 /// `/../..`), returns `/`.
 pub fn normalize_path(path: &Path) -> PathBuf {
     use std::path::Component;
-    let mut result = PathBuf::new();
+    // Build path as String with forward slashes to ensure Unix-style paths
+    // on all platforms (the VFS is always Unix-style, even on Windows).
+    let mut segments: Vec<&str> = Vec::new();
     for component in path.components() {
         match component {
-            Component::RootDir => result.push("/"),
-            Component::Normal(name) => result.push(name),
+            Component::RootDir => {
+                segments.clear();
+            }
+            Component::Normal(name) => {
+                if let Some(s) = name.to_str() {
+                    segments.push(s);
+                }
+            }
             Component::ParentDir => {
-                result.pop();
+                segments.pop();
             }
             Component::CurDir | Component::Prefix(_) => {}
         }
     }
-    if result.as_os_str().is_empty() {
-        result.push("/");
+    if segments.is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(format!("/{}", segments.join("/")))
     }
-    result
 }
 
 /// Verify that a filesystem implementation meets minimum requirements for Bashkit.
