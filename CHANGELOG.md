@@ -2,9 +2,82 @@
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-03-15
+
+### Highlights
+
+- **Node.js native bindings** (`@everruns/bashkit`): Full npm package with NAPI-RS, async execute API, VFS file helpers, lazy file values — 6 platforms, tested on Node 20/22/24, with 200+ tests and 6 examples including OpenAI, Vercel AI, and LangChain integrations
+- **Pi coding agent integration**: Bashkit extension for [pi.dev](https://pi.dev/) terminal coding agent — replaces shell, read, write, and edit tools with bashkit-backed virtual implementations, zero real filesystem access
+- **39 new builtins** (109→148): rg, patch, zip/unzip, iconv, compgen, json, csv, tomlq, yaml, template, parallel, http, help, fc, tree, readlink, clear, fold, expand/unexpand, envsubst, join, split, and more
+- **Performance**: Criterion benchmark harness with auto-save, 7-runner comparison suite, lazy-init HTTP client, trimmed CLI one-shot startup path
+- **Coprocess & background execution**: `coproc` support with named FD pairs, background `&` execution with `wait` builtin, cancellation via AtomicBool token
+
+### New Tools & Builtins
+
+- 14 new builtins batch 2: rg, patch, zip/unzip, iconv, compgen, json, csv, tomlq, yaml, template, parallel, http, help, fc
+- 7 non-standard builtins + alias/unalias docs
+- join and split commands
+- clear, fold, expand/unexpand, envsubst
+- tree, readlink
+- ScriptingToolSet with exclusive/discovery modes
+- MCP: expose ScriptedTool as MCP tool
+- help builtin for runtime schema introspection
+
 ### What's Changed
 
+* feat(pi-integration): add Pi coding agent extension with bashkit VFS ([#638](https://github.com/everruns/bashkit/pull/638))
+* feat(find): add -printf format flag support ([#637](https://github.com/everruns/bashkit/pull/637))
+* test: un-ignore exec_azure_query_capacity, now passing ([#636](https://github.com/everruns/bashkit/pull/636))
+* feat(awk): add Unicode \u escape sequences ([#635](https://github.com/everruns/bashkit/pull/635))
+* feat(jq): upgrade jaq crates to latest stable versions ([#634](https://github.com/everruns/bashkit/pull/634))
+* feat(vfs): add /dev/urandom and /dev/random to virtual filesystem ([#632](https://github.com/everruns/bashkit/pull/632))
+* feat: fix bindings stderr, agent prompt, jq 1.8, awk --csv ([#631](https://github.com/everruns/bashkit/pull/631))
+* fix(errexit): assignment-only commands now return exit code 0 ([#630](https://github.com/everruns/bashkit/pull/630))
+* chore: pre-release maintenance pass ([#627](https://github.com/everruns/bashkit/pull/627))
+* fix(awk): implement output redirection for print/printf ([#626](https://github.com/everruns/bashkit/pull/626))
+* feat(js): expose VFS file helpers for agent integrations ([#624](https://github.com/everruns/bashkit/pull/624))
+* fix(builtins): preserve empty fields in read IFS splitting ([#623](https://github.com/everruns/bashkit/pull/623))
+* fix(interpreter): correct &&/|| operator precedence in [[ ]] conditional ([#622](https://github.com/everruns/bashkit/pull/622))
+* fix(js): prevent invalid pointer access in napi bindings ([#621](https://github.com/everruns/bashkit/pull/621))
+* fix(builtins): correct -a/-o operator precedence in test/[ builtin ([#620](https://github.com/everruns/bashkit/pull/620))
+* refactor(net): lazy-init http client ([#613](https://github.com/everruns/bashkit/pull/613))
+* feat(cancel): add cancellation support via AtomicBool token ([#612](https://github.com/everruns/bashkit/pull/612))
+* fix(eval): stop scoring tool-call trajectory ([#611](https://github.com/everruns/bashkit/pull/611))
+* refactor(cli): trim one-shot startup path ([#609](https://github.com/everruns/bashkit/pull/609))
+* fix(parser): track bracket/brace depth in array subscript reader ([#603](https://github.com/everruns/bashkit/pull/603))
+* fix(lexer): track brace depth in unquoted ${...} tokenization ([#602](https://github.com/everruns/bashkit/pull/602))
+* fix(interpreter): expand ${...} syntax in arithmetic contexts ([#601](https://github.com/everruns/bashkit/pull/601))
+* feat(js): support lazy file values in VFS ([#598](https://github.com/everruns/bashkit/pull/598))
+* feat(js): add async execute API ([#597](https://github.com/everruns/bashkit/pull/597))
+* feat(history): persistent searchable history across Bash instances ([#596](https://github.com/everruns/bashkit/pull/596))
+* feat(git): add show/ls-files/rev-parse/restore/merge-base/grep ([#595](https://github.com/everruns/bashkit/pull/595))
+* feat(interpreter): implement coproc (coprocess) support ([#594](https://github.com/everruns/bashkit/pull/594))
+* feat(eval): improve discovery prompts and bump to gpt-5.4 ([#593](https://github.com/everruns/bashkit/pull/593))
+* fix(tool): align toolkit library contract ([#592](https://github.com/everruns/bashkit/pull/592))
+* feat(vfs): add mkfifo and named pipe (FIFO) support ([#591](https://github.com/everruns/bashkit/pull/591))
+* feat(interpreter): implement background execution with & and wait ([#590](https://github.com/everruns/bashkit/pull/590))
+* feat(bench): add Criterion parallel bench with auto-save ([#589](https://github.com/everruns/bashkit/pull/589))
+* feat(builtins): add 14 new builtins batch 2 ([#588](https://github.com/everruns/bashkit/pull/588))
+* feat(eval): improve scripted tool evals with ScriptingToolSet ([#587](https://github.com/everruns/bashkit/pull/587))
+* fix(fs): flush RealFs append to prevent data loss race ([#586](https://github.com/everruns/bashkit/pull/586))
+* feat(builtins): add 7 non-standard builtins + alias/unalias docs ([#585](https://github.com/everruns/bashkit/pull/585))
+* feat(builtins): add join and split commands ([#584](https://github.com/everruns/bashkit/pull/584))
+* feat(bench): 7-runner benchmark comparison with expanded test suite ([#583](https://github.com/everruns/bashkit/pull/583))
+* feat(builtins): add clear, fold, expand/unexpand, envsubst commands ([#582](https://github.com/everruns/bashkit/pull/582))
+* feat(builtins): add tree command ([#581](https://github.com/everruns/bashkit/pull/581))
+* chore(maintenance): extract /maintain skill, add simplification ([#580](https://github.com/everruns/bashkit/pull/580))
+* feat(builtins): add readlink command ([#579](https://github.com/everruns/bashkit/pull/579))
+* feat(scripted_tool): add ScriptingToolSet with discovery mode support ([#534](https://github.com/everruns/bashkit/pull/534))
+* chore(agents): clarify worktree sync and commit identity ([#533](https://github.com/everruns/bashkit/pull/533))
+* feat(mcp): expose ScriptedTool as MCP tool ([#532](https://github.com/everruns/bashkit/pull/532))
+* docs(scripted_tool): shared context and state patterns ([#530](https://github.com/everruns/bashkit/pull/530))
+* feat(scripted_tool): help builtin for runtime schema introspection ([#529](https://github.com/everruns/bashkit/pull/529))
+* feat(js): add JavaScript/TypeScript package with npm publishing ([#528](https://github.com/everruns/bashkit/pull/528))
+* feat: upgrade to Rust edition 2024 + add doppler to cloud setup ([#527](https://github.com/everruns/bashkit/pull/527))
+* feat(eval): add scripting tool evals with multi-dataset support ([#525](https://github.com/everruns/bashkit/pull/525))
 * fix: prevent fuzz-found panics on multi-byte input ([#513](https://github.com/everruns/bashkit/pull/513))
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.9...v0.1.10
 
 ## [0.1.9] - 2026-03-04
 
