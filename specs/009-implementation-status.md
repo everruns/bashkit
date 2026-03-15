@@ -415,6 +415,35 @@ Default limits (configurable):
 | Input size | 10MB |
 | AST depth | 100 |
 
+## Language Bindings
+
+### JavaScript/Node.js (`@everruns/bashkit`)
+
+NAPI-RS bindings in `crates/bashkit-js/`. TypeScript wrapper in `wrapper.ts`.
+
+| Class | Methods | Notes |
+|-------|---------|-------|
+| `Bash` | `executeSync`, `execute`, `cancel`, `reset` | Core interpreter |
+| `Bash` (VFS) | `readFile`, `writeFile`, `mkdir`, `exists`, `remove` | Direct VFS access via NAPI |
+| `Bash` (helpers) | `ls`, `glob` | Shell-based convenience wrappers |
+| `BashTool` | `executeSync`, `execute`, `cancel`, `reset` | Interpreter + tool metadata |
+| `BashTool` (metadata) | `name`, `shortDescription`, `description`, `help`, `systemPrompt`, `inputSchema`, `outputSchema`, `version` | LLM tool contract |
+| `BashTool` (helpers) | `readFile`, `writeFile`, `exists`, `ls`, `glob` | Shell-based VFS wrappers |
+
+**Platform matrix:** macOS (x86_64, aarch64), Linux (x86_64, aarch64), Windows (x86_64), WASM
+
+**Tests:** `crates/bashkit-js/__test__/` — VFS roundtrip, interop, error handling
+
+### Python (`bashkit`)
+
+PyO3 bindings in `crates/bashkit-python/`. See [013-python-package.md](013-python-package.md).
+
+### Examples
+
+| Example | Description |
+|---------|-------------|
+| `examples/bashkit-pi/` | Pi coding agent extension — replaces bash/read/write/edit tools with bashkit VFS |
+
 ## Testing
 
 ### Security Tests
