@@ -1,11 +1,19 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.9"
+# dependencies = [
+#     "bashkit",
+# ]
+# ///
 """Basic usage of the Bash interface.
 
 Demonstrates core Bash features: command execution, pipelines, variables,
 loops, virtual filesystem persistence, and resource limits.
 
-Run directly:
-    cd crates/bashkit-python && maturin develop && python examples/bash_basics.py
+Run:
+    uv run crates/bashkit-python/examples/bash_basics.py
+
+uv automatically installs bashkit from PyPI (pre-built wheels, no Rust needed).
 """
 
 from __future__ import annotations
