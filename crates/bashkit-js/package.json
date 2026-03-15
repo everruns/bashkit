@@ -1,6 +1,6 @@
 {
   "name": "@everruns/bashkit",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Sandboxed bash interpreter for JavaScript/TypeScript",
   "main": "wrapper.js",
   "types": "wrapper.d.ts",
