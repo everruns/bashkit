@@ -1385,4 +1385,29 @@ mod tests {
             "-1"
         );
     }
+
+    #[tokio::test]
+    async fn test_jq_paths_with_filter() {
+        // jaq 2.x: paths/1 returns paths matching a filter
+        let result = run_jq("[paths(numbers)]", r#"{"a":1,"b":{"c":2},"d":"x"}"#)
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(result.trim()).unwrap();
+        let arr = parsed.as_array().unwrap();
+        // Should contain ["a"] and ["b","c"]
+        assert!(arr.iter().any(|v| v == &serde_json::json!(["a"])));
+        assert!(arr.iter().any(|v| v == &serde_json::json!(["b", "c"])));
+    }
+
+    #[tokio::test]
+    async fn test_jq_getpath() {
+        // jaq 2.x: getpath/1
+        assert_eq!(
+            run_jq(r#"getpath(["a","b"])"#, r#"{"a":{"b":42}}"#)
+                .await
+                .unwrap()
+                .trim(),
+            "42"
+        );
+    }
 }
