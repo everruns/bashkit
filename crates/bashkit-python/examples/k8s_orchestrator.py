@@ -1,12 +1,18 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.9"
+# dependencies = [
+#     "bashkit",
+# ]
+# ///
 """Kubernetes API orchestrator using Bashkit ScriptedTool.
 
 Demonstrates composing 12 fake k8s API tools into a single ScriptedTool that
 an LLM agent can call with bash scripts. Each tool becomes a bash builtin;
 the agent writes one script to orchestrate them all.
 
-Run directly:
-    cd crates/bashkit-python && maturin develop && python examples/k8s_orchestrator.py
+Run:
+    uv run crates/bashkit-python/examples/k8s_orchestrator.py
 
 With LangChain (optional):
     pip install 'bashkit[langchain]'

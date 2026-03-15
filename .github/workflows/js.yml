@@ -10,6 +10,7 @@ on:
       - "crates/bashkit-js/**"
       - "crates/bashkit/src/**"
       - "examples/*.mjs"
+      - "examples/package.json"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/js.yml"
@@ -19,6 +20,7 @@ on:
       - "crates/bashkit-js/**"
       - "crates/bashkit/src/**"
       - "examples/*.mjs"
+      - "examples/package.json"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/js.yml"
@@ -66,24 +68,20 @@ jobs:
         run: npm test
         working-directory: crates/bashkit-js
 
-      - name: Link package for examples
+      - name: Install example dependencies and link local build
+        working-directory: examples
         run: |
+          npm install
+          rm -rf node_modules/@everruns/bashkit
           mkdir -p node_modules/@everruns
           ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
 
       - name: Run examples (self-contained)
+        working-directory: examples
         run: |
-          node examples/bash_basics.mjs
-          node examples/data_pipeline.mjs
-          node examples/llm_tool.mjs
-
-      - name: Install AI SDK dependencies and re-link
-        run: |
-          echo '{"type":"module","private":true}' > package.json
-          npm install --no-save openai ai @ai-sdk/openai @langchain/core @langchain/langgraph @langchain/openai zod
-          rm -rf node_modules/@everruns/bashkit
-          mkdir -p node_modules/@everruns
-          ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
+          node bash_basics.mjs
+          node data_pipeline.mjs
+          node llm_tool.mjs
 
       - name: Install Doppler CLI
         if: env.DOPPLER_TOKEN != ''
@@ -91,10 +89,11 @@ jobs:
 
       - name: Run AI examples
         if: env.DOPPLER_TOKEN != ''
+        working-directory: examples
         run: |
-          doppler run -- node examples/openai_tool.mjs
-          doppler run -- node examples/vercel_ai_tool.mjs
-          doppler run -- node examples/langchain_agent.mjs
+          doppler run -- node openai_tool.mjs
+          doppler run -- node vercel_ai_tool.mjs
+          doppler run -- node langchain_agent.mjs
 
   # Gate job for branch protection
   js-check:

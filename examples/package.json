@@ -1,0 +1,23 @@
+{
+  "name": "bashkit-examples",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Bashkit usage examples — installs from npm by default",
+  "dependencies": {
+    "@everruns/bashkit": "latest"
+  },
+  "devDependencies": {
+    "openai": "^5",
+    "ai": "^4",
+    "@ai-sdk/openai": "^1",
+    "@langchain/core": "^0.3",
+    "@langchain/langgraph": "^0.2",
+    "@langchain/openai": "^0.5",
+    "zod": "^3"
+  },
+  "scripts": {
+    "examples": "node bash_basics.mjs && node data_pipeline.mjs && node llm_tool.mjs",
+    "examples:ai": "node openai_tool.mjs && node vercel_ai_tool.mjs && node langchain_agent.mjs"
+  }
+}

@@ -15,6 +15,15 @@ bash examples/realfs_mount.sh
 Python examples use [PEP 723](https://peps.python.org/pep-0723/) inline script metadata.
 `uv run` resolves dependencies automatically — bashkit installs from PyPI as a pre-built wheel (no Rust toolchain needed).
 
+### bash_basics.py / k8s_orchestrator.py
+
+Core features and ScriptedTool orchestration:
+
+```bash
+uv run crates/bashkit-python/examples/bash_basics.py
+uv run crates/bashkit-python/examples/k8s_orchestrator.py
+```
+
 ### treasure_hunt_agent.py
 
 LangChain agent with Bashkit sandbox.
@@ -35,15 +44,11 @@ uv run examples/deepagent_coding_agent.py
 
 ## JavaScript / TypeScript
 
-JS examples import `@everruns/bashkit`. Install from npm or build locally:
+JS examples install `@everruns/bashkit` from npm. All dependencies are in
+`examples/package.json`:
 
 ```bash
-# From npm
-npm install @everruns/bashkit
-
-# Or build locally
-cd crates/bashkit-js && npm install && npm run build
-# Then run with NODE_PATH=crates/bashkit-js
+cd examples && npm install
 ```
 
 ### bash_basics.mjs
@@ -75,7 +80,6 @@ node examples/llm_tool.mjs
 OpenAI function calling with manual tool-call loop.
 
 ```bash
-npm install openai
 export OPENAI_API_KEY=sk-...
 node examples/openai_tool.mjs
 ```
@@ -85,7 +89,6 @@ node examples/openai_tool.mjs
 Vercel AI SDK `tool()` + `generateText()` with automatic tool-call loop.
 
 ```bash
-npm install ai @ai-sdk/openai zod
 export OPENAI_API_KEY=sk-...
 node examples/vercel_ai_tool.mjs
 ```
@@ -95,7 +98,6 @@ node examples/vercel_ai_tool.mjs
 LangChain.js ReAct agent with `DynamicStructuredTool`.
 
 ```bash
-npm install @langchain/core @langchain/langgraph @langchain/openai zod
 export OPENAI_API_KEY=sk-...
 node examples/langchain_agent.mjs
 ```
