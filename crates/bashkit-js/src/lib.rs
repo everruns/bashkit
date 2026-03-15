@@ -7,7 +7,7 @@
 //! and `ExecResult` via napi-rs for use from JavaScript/TypeScript.
 
 use bashkit::tool::VERSION;
-use bashkit::{Bash as RustBash, BashTool as RustBashTool, ExecutionLimits, FileSystem, Tool};
+use bashkit::{Bash as RustBash, BashTool as RustBashTool, ExecutionLimits, Tool};
 use napi_derive::napi;
 use std::collections::HashMap;
 use std::path::Path;
