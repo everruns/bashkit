@@ -554,6 +554,7 @@ impl Bash {
             )));
         }
 
+        #[cfg(not(target_family = "wasm"))]
         let parser_timeout = self.parser_timeout;
         let max_ast_depth = self.max_ast_depth;
         let max_parser_operations = self.max_parser_operations;
@@ -568,50 +569,63 @@ impl Bash {
             "Parsing script"
         );
 
-        // Parse with timeout using spawn_blocking since parsing is sync
-        let parse_result = tokio::time::timeout(parser_timeout, async {
-            tokio::task::spawn_blocking(move || {
-                let parser =
-                    Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations);
-                parser.parse()
-            })
-            .await
-        })
-        .await;
+        // On WASM, tokio::task::spawn_blocking and tokio::time::timeout don't
+        // work (no blocking thread pool, timer driver unreliable). Parse inline.
+        #[cfg(target_family = "wasm")]
+        let ast = {
+            let parser =
+                Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations);
+            parser.parse()?
+        };
 
-        let ast = match parse_result {
-            Ok(Ok(result)) => {
-                match &result {
-                    Ok(_) => {
-                        #[cfg(feature = "logging")]
-                        tracing::debug!(target: "bashkit::parser", "Parse completed successfully");
+        // On native targets, parse with timeout using spawn_blocking since
+        // parsing is sync and we don't want to block the async runtime.
+        #[cfg(not(target_family = "wasm"))]
+        let ast = {
+            let parse_result = tokio::time::timeout(parser_timeout, async {
+                tokio::task::spawn_blocking(move || {
+                    let parser =
+                        Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations);
+                    parser.parse()
+                })
+                .await
+            })
+            .await;
+
+            match parse_result {
+                Ok(Ok(result)) => {
+                    match &result {
+                        Ok(_) => {
+                            #[cfg(feature = "logging")]
+                            tracing::debug!(target: "bashkit::parser", "Parse completed successfully");
+                        }
+                        Err(_e) => {
+                            #[cfg(feature = "logging")]
+                            tracing::warn!(target: "bashkit::parser", error = %_e, "Parse error");
+                        }
                     }
-                    Err(_e) => {
-                        #[cfg(feature = "logging")]
-                        tracing::warn!(target: "bashkit::parser", error = %_e, "Parse error");
-                    }
+                    result?
                 }
-                result?
-            }
-            Ok(Err(join_error)) => {
-                #[cfg(feature = "logging")]
-                tracing::error!(
-                    target: "bashkit::parser",
-                    error = %join_error,
-                    "Parser task failed"
-                );
-                return Err(Error::Parse(format!("parser task failed: {}", join_error)));
-            }
-            Err(_elapsed) => {
-                #[cfg(feature = "logging")]
-                tracing::error!(
-                    target: "bashkit::parser",
-                    timeout_ms = parser_timeout.as_millis() as u64,
-                    "Parser timeout exceeded"
-                );
-                return Err(Error::ResourceLimit(LimitExceeded::ParserTimeout(
-                    parser_timeout,
-                )));
+                Ok(Err(join_error)) => {
+                    #[cfg(feature = "logging")]
+                    tracing::error!(
+                        target: "bashkit::parser",
+                        error = %join_error,
+                        "Parser task failed"
+                    );
+                    return Err(Error::Parse(format!("parser task failed: {}", join_error)));
+                }
+                Err(_elapsed) => {
+                    #[cfg(feature = "logging")]
+                    tracing::error!(
+                        target: "bashkit::parser",
+                        timeout_ms = parser_timeout.as_millis() as u64,
+                        "Parser timeout exceeded"
+                    );
+                    return Err(Error::ResourceLimit(LimitExceeded::ParserTimeout(
+                        parser_timeout,
+                    )));
+                }
             }
         };
 
