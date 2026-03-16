@@ -264,6 +264,9 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 | TM-DOS-053 | Template `{{#each}}` output explosion | `{{#each arr}}` on large JSON array produces O(n * body) output | Bounded by JSON data file size (max_file_size) | **MITIGATED** |
 | TM-DOS-054 | `glob --files` inherits ExtGlob blowup | `glob --files "+(a|aa)" /dir` dispatches to `glob_match` with same exponential cost as TM-DOS-031 | Same as TM-DOS-031 | **OPEN** |
 | TM-DOS-055 | `split` file count amplification | `split -l 1 bigfile` creates one output file per line; bounded by `max_file_count` FS limit | FS limits (TM-DOS-006) | **MITIGATED** |
+| TM-DOS-056 | `source` self-recursion stack overflow | Script that sources itself causes unbounded recursion; function depth limit doesn't apply to `source` | — | **OPEN** |
+| TM-DOS-057 | `sleep` bypasses execution timeout | `sleep`, `(sleep N)`, `echo x \| sleep N`, `sleep N & wait`, `timeout N sleep N` all ignore `ExecutionLimits::timeout` | — | **OPEN** |
+| TM-DOS-058 | Single-builtin unbounded output | `seq 1 1000000` produces 1M lines despite command limit; single builtin call generates unbounded output (see also #648) | — | **OPEN** |
 
 **TM-DOS-051**: `builtins/yaml.rs` — `parse_yaml_block`, `parse_yaml_map`, `parse_yaml_list` recurse
 on nested YAML structures with no depth counter. Crafted YAML with 1000+ nesting levels causes stack
@@ -487,6 +490,9 @@ Bash::builder()
 
 | TM-INJ-011 | Cyclic nameref silent resolution | Cyclic namerefs (a→b→a) silently resolve after 10 iterations instead of erroring | — | **OPEN** |
 | TM-INJ-018 | `dotenv` internal variable prefix injection | `.env` file with `_NAMEREF_x=target` sets internal interpreter variables via `ctx.variables.insert()` | — | **OPEN** |
+| TM-INJ-019 | `unset` removes readonly variables | `readonly X=v; unset X` removes the variable despite readonly attribute | — | **OPEN** |
+| TM-INJ-020 | `declare` overwrites readonly variables | `readonly X=v; declare X=new` overwrites without error | — | **OPEN** |
+| TM-INJ-021 | `export` overwrites readonly variables | `readonly X=v; export X=new` overwrites without error | — | **OPEN** |
 
 **TM-INJ-011**: `interpreter/mod.rs:7547-7560` — cyclic namerefs silently resolve to whatever
 variable is current after 10 iterations. Real bash errors with `circular name reference`. Can
@@ -778,6 +784,9 @@ Only exact domain matches are allowed (TM-NET-017).
 | TM-ISO-004 | Cross-session env pollution via jq | `std::env::set_var()` in jq modifies process-wide env, visible to concurrent sessions | Custom `$__bashkit_env__` jaq context variable replaces `std::env` access | **FIXED** |
 | TM-ISO-005 | Session-level cumulative counter bypass | Repeated `exec()` calls each reset `ExecutionCounters`, giving unbounded aggregate resources | — | **OPEN** |
 | TM-ISO-006 | No per-instance variable/memory budget | Unbounded `HashMap` growth in variables, arrays, functions exhausts process memory | — | **OPEN** |
+| TM-ISO-021 | EXIT trap leaks across `exec()` calls | EXIT trap set in one `exec()` fires in subsequent `exec()` calls on same Bash instance | — | **OPEN** |
+| TM-ISO-022 | `$?` leaks across `exec()` calls | Exit code from one `exec()` visible as `$?` in next `exec()` instead of resetting to 0 | — | **OPEN** |
+| TM-ISO-023 | `set -e` leaks across `exec()` calls | Shell options (`set -e`, etc.) persist across `exec()` calls, causing unexpected abort behavior | — | **OPEN** |
 
 **TM-ISO-004**: Fixed. The jq builtin now injects shell variables via a custom jaq context variable
 (`$__bashkit_env__`) and overrides the `env` filter to read from it instead of `std::env`.
@@ -825,6 +834,7 @@ let session_b = Bash::builder()
 | TM-INT-001 | Builtin panic crash | Invalid input triggers panic in builtin | `catch_unwind` wrapper on all builtins | **MITIGATED** |
 | TM-INT-002 | Panic info leak | Panic message reveals sensitive data | Sanitized error messages (no panic details) | **MITIGATED** |
 | TM-INT-003 | Date format panic | Invalid strftime format causes chrono panic | Pre-validation with `StrftimeItems` | **MITIGATED** |
+| TM-INT-007 | `/dev/urandom` empty with `head -c` | `head -c 16 /dev/urandom` returns empty output; pipe from virtual device to builtin loses data | — | **OPEN** |
 
 **Current Risk**: LOW - All builtin panics are caught and converted to sanitized errors
 
@@ -1183,6 +1193,22 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-049 | `collect_dirs_recursive` has no depth limit | Deep recursion on VFS trees (mitigated by `max_path_depth`) | Add explicit depth parameter at `interpreter/mod.rs:8352` |
 | TM-DOS-050 | `parse_word_string` uses default parser limits | Caller-configured tighter limits ignored for parameter expansion | Propagate limits through `parse_word_string()` at `parser/mod.rs:109` |
 | TM-PY-028 | BashTool.reset() in Python drops security config | Resource limits silently removed after reset | Preserve limits like `PyBash.reset()` does (see `bashkit-python/src/lib.rs:470`) |
+
+### Open (From 2026-03 Blackbox Security Testing)
+
+| Threat ID | Vulnerability | Impact | Recommendation |
+|-----------|---------------|--------|----------------|
+| TM-DOS-056 | `source` self-recursion stack overflow | Process crash (SIGABRT) via script that sources itself | Track source depth like function depth; apply `max_function_depth` limit |
+| TM-DOS-057 | `sleep` bypasses execution timeout | CPU/time exhaustion; `sleep`, subshell sleep, pipeline sleep, background sleep, `timeout` builtin all ignore `ExecutionLimits::timeout` | Implement timeout as tokio::time::timeout wrapper around exec(), not cooperative check |
+| TM-DOS-058 | Single-builtin unbounded output | OOM via `seq 1 1000000` producing 1M lines despite command limit of 50 | Add `max_stdout_bytes` / `max_stderr_bytes` to ExecutionLimits (see #648) |
+| TM-INJ-019 | `unset` removes readonly variables | Integrity bypass — readonly protection defeated | Check readonly attribute in unset before removal |
+| TM-INJ-020 | `declare` overwrites readonly variables | Integrity bypass — `declare X=new` overwrites `readonly X=old` | Check readonly attribute in declare assignment path |
+| TM-INJ-021 | `export` overwrites readonly variables | Integrity bypass — `export X=new` overwrites `readonly X=old` | Check readonly attribute in export assignment path |
+| TM-ISO-021 | EXIT trap leaks across `exec()` calls | Cross-invocation interference — trap from exec N fires in exec N+1 | Reset traps in `reset_for_execution()` |
+| TM-ISO-022 | `$?` leaks across `exec()` calls | State pollution — exit code from previous exec visible to next exec | Reset `last_exit_code` in `reset_for_execution()` |
+| TM-ISO-023 | `set -e` leaks across `exec()` calls | Unexpected abort — shell options from previous exec affect next exec | Reset shell options in `reset_for_execution()` |
+| TM-INT-007 | `/dev/urandom` empty with `head -c` | Weak randomness — `head -c 16 /dev/urandom` returns empty string | Fix virtual device pipe handling in head builtin |
+| TM-DOS-044 | Nested `$()` stack overflow (regression) | Process crash (SIGABRT) at depth ~50 despite #492 fix | Interpreter execution path may need separate depth tracking from lexer fix |
 
 ### Accepted (Low Priority)
 
