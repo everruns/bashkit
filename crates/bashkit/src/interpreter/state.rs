@@ -24,6 +24,10 @@ pub struct ExecResult {
     pub exit_code: i32,
     /// Control flow signal (break, continue, return)
     pub control_flow: ControlFlow,
+    /// Whether stdout was truncated due to output size limits
+    pub stdout_truncated: bool,
+    /// Whether stderr was truncated due to output size limits
+    pub stderr_truncated: bool,
 }
 
 impl ExecResult {
@@ -34,6 +38,8 @@ impl ExecResult {
             stderr: String::new(),
             exit_code: 0,
             control_flow: ControlFlow::None,
+            stdout_truncated: false,
+            stderr_truncated: false,
         }
     }
 
@@ -44,6 +50,8 @@ impl ExecResult {
             stderr: stderr.into(),
             exit_code,
             control_flow: ControlFlow::None,
+            stdout_truncated: false,
+            stderr_truncated: false,
         }
     }
 
@@ -54,6 +62,8 @@ impl ExecResult {
             stderr: String::new(),
             exit_code,
             control_flow: ControlFlow::None,
+            stdout_truncated: false,
+            stderr_truncated: false,
         }
     }
 
@@ -64,6 +74,8 @@ impl ExecResult {
             stderr: String::new(),
             exit_code: 0,
             control_flow,
+            stdout_truncated: false,
+            stderr_truncated: false,
         }
     }
 
@@ -127,6 +139,8 @@ mod tests {
         assert_eq!(r.stderr, "");
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.control_flow, ControlFlow::None);
+        assert!(!r.stdout_truncated);
+        assert!(!r.stderr_truncated);
     }
 
     #[test]
@@ -246,6 +260,8 @@ mod tests {
         assert_eq!(r.stderr, "");
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.control_flow, ControlFlow::None);
+        assert!(!r.stdout_truncated);
+        assert!(!r.stderr_truncated);
         assert!(r.is_success());
     }
 

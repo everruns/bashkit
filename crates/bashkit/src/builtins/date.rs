@@ -404,6 +404,7 @@ impl Builtin for Date {
                 stderr: format!("date: {}\n", e),
                 exit_code: 1,
                 control_flow: crate::interpreter::ControlFlow::None,
+                ..Default::default()
             });
         }
 

@@ -286,7 +286,7 @@ impl ToolRequest {
 }
 
 /// Response from executing a bash script
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ToolResponse {
     /// Standard output from the script
     pub stdout: String,
@@ -297,6 +297,12 @@ pub struct ToolResponse {
     /// Error message if execution failed before running
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Whether stdout was truncated due to output size limits
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stdout_truncated: bool,
+    /// Whether stderr was truncated due to output size limits
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stderr_truncated: bool,
 }
 
 impl From<ExecResult> for ToolResponse {
@@ -306,6 +312,8 @@ impl From<ExecResult> for ToolResponse {
             stderr: result.stderr,
             exit_code: result.exit_code,
             error: None,
+            stdout_truncated: result.stdout_truncated,
+            stderr_truncated: result.stderr_truncated,
         }
     }
 }
@@ -710,6 +718,7 @@ impl BashTool {
                 stderr: String::new(),
                 exit_code: 0,
                 error: None,
+                ..Default::default()
             };
         }
 
@@ -744,6 +753,7 @@ impl BashTool {
                     stderr: err.to_string(),
                     exit_code: 1,
                     error: Some(error_kind(&err)),
+                    ..Default::default()
                 },
             }
         };
@@ -842,6 +852,7 @@ impl Tool for BashTool {
                 stderr: String::new(),
                 exit_code: 0,
                 error: None,
+                ..Default::default()
             };
         }
 
@@ -855,6 +866,7 @@ impl Tool for BashTool {
                     stderr: e.to_string(),
                     exit_code: 1,
                     error: Some(error_kind(&e)),
+                    ..Default::default()
                 },
             }
         };
@@ -884,6 +896,7 @@ impl Tool for BashTool {
                 stderr: String::new(),
                 exit_code: 0,
                 error: None,
+                ..Default::default()
             };
         }
 
@@ -917,6 +930,7 @@ impl Tool for BashTool {
                     stderr: e.to_string(),
                     exit_code: 1,
                     error: Some(error_kind(&e)),
+                    ..Default::default()
                 },
             };
 
@@ -964,6 +978,7 @@ fn timeout_response(dur: Duration) -> ToolResponse {
         ),
         exit_code: 124,
         error: Some("timeout".to_string()),
+        ..Default::default()
     }
 }
 

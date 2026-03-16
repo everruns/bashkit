@@ -260,6 +260,7 @@ async fn create_tar(
             stderr: verbose_output,
             exit_code: 0,
             control_flow: crate::interpreter::ControlFlow::None,
+            ..Default::default()
         });
     }
 
@@ -271,6 +272,7 @@ async fn create_tar(
         stderr: verbose_output,
         exit_code: 0,
         control_flow: crate::interpreter::ControlFlow::None,
+        ..Default::default()
     })
 }
 
@@ -593,6 +595,7 @@ async fn extract_tar(
         stderr: verbose_output,
         exit_code: 0,
         control_flow: crate::interpreter::ControlFlow::None,
+        ..Default::default()
     })
 }
 

@@ -483,6 +483,7 @@ impl Builtin for Shopt {
                     stderr: String::new(),
                     exit_code: if all_on { 0 } else { 1 },
                     control_flow: crate::interpreter::ControlFlow::None,
+                    ..Default::default()
                 })
             }
             Some('p') => {
@@ -536,6 +537,7 @@ impl Builtin for Shopt {
                         stderr: output,
                         exit_code: 1,
                         control_flow: crate::interpreter::ControlFlow::None,
+                        ..Default::default()
                     })
                 } else {
                     Ok(ExecResult::ok(output))

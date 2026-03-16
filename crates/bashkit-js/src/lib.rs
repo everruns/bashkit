@@ -27,6 +27,8 @@ pub struct ExecResult {
     pub stderr: String,
     pub exit_code: i32,
     pub error: Option<String>,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
 }
 
 // ============================================================================
@@ -118,6 +120,8 @@ impl Bash {
                     stderr: result.stderr,
                     exit_code: result.exit_code,
                     error: None,
+                    stdout_truncated: result.stdout_truncated,
+                    stderr_truncated: result.stderr_truncated,
                 }),
                 Err(e) => {
                     let msg = e.to_string();
@@ -126,6 +130,8 @@ impl Bash {
                         stderr: msg.clone(),
                         exit_code: 1,
                         error: Some(msg),
+                        stdout_truncated: false,
+                        stderr_truncated: false,
                     })
                 }
             }
@@ -143,6 +149,8 @@ impl Bash {
                 stderr: result.stderr,
                 exit_code: result.exit_code,
                 error: None,
+                stdout_truncated: result.stdout_truncated,
+                stderr_truncated: result.stderr_truncated,
             }),
             Err(e) => {
                 let msg = e.to_string();
@@ -151,6 +159,8 @@ impl Bash {
                     stderr: msg.clone(),
                     exit_code: 1,
                     error: Some(msg),
+                    stdout_truncated: false,
+                    stderr_truncated: false,
                 })
             }
         }
@@ -348,6 +358,8 @@ impl BashTool {
                     stderr: result.stderr,
                     exit_code: result.exit_code,
                     error: None,
+                    stdout_truncated: result.stdout_truncated,
+                    stderr_truncated: result.stderr_truncated,
                 }),
                 Err(e) => {
                     let msg = e.to_string();
@@ -356,6 +368,8 @@ impl BashTool {
                         stderr: msg.clone(),
                         exit_code: 1,
                         error: Some(msg),
+                        stdout_truncated: false,
+                        stderr_truncated: false,
                     })
                 }
             }
@@ -373,6 +387,8 @@ impl BashTool {
                 stderr: result.stderr,
                 exit_code: result.exit_code,
                 error: None,
+                stdout_truncated: result.stdout_truncated,
+                stderr_truncated: result.stderr_truncated,
             }),
             Err(e) => {
                 let msg = e.to_string();
@@ -381,6 +397,8 @@ impl BashTool {
                     stderr: msg.clone(),
                     exit_code: 1,
                     error: Some(msg),
+                    stdout_truncated: false,
+                    stderr_truncated: false,
                 })
             }
         }

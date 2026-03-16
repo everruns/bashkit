@@ -460,6 +460,7 @@ async fn execute_curl_request(
                         ),
                         exit_code: 22,
                         control_flow: crate::interpreter::ControlFlow::None,
+                        ..Default::default()
                     });
                 }
 
@@ -963,6 +964,7 @@ async fn execute_wget_request(
                 stderr: stderr_msg,
                 exit_code: 0,
                 control_flow: crate::interpreter::ControlFlow::None,
+                ..Default::default()
             })
         }
         Err(e) => {
