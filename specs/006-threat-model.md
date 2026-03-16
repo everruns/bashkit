@@ -752,15 +752,30 @@ Only exact domain matches are allowed (TM-NET-017).
 
 ### 6. Multi-Tenant Isolation
 
-#### 6.1 Cross-Tenant Access
+#### 6.1 Cross-Session Access
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-ISO-001 | Shared filesystem | Access other tenant files | Separate Bash instances | **MITIGATED** |
-| TM-ISO-002 | Shared memory | Read other tenant data | Rust memory safety | **MITIGATED** |
-| TM-ISO-003 | Resource starvation | One tenant exhausts limits | Per-instance limits | **MITIGATED** |
+| TM-ISO-001 | Shared filesystem | Access other session's files | Separate Bash instances with separate FS | **MITIGATED** |
+| TM-ISO-002 | Shared memory | Read other session's data | Rust memory safety, per-instance state | **MITIGATED** |
+| TM-ISO-003 | Resource starvation | One session exhausts limits | Per-instance limits | **MITIGATED** |
+| TM-ISO-004 | Cross-session env pollution via jq | `std::env::set_var()` in jq | Custom jaq global variable (`$__bashkit_env__`) | **MITIGATED** |
+| TM-ISO-007 | Alias leakage | Aliases defined in session A visible in session B | Per-instance alias HashMap | **MITIGATED** |
+| TM-ISO-008 | Trap handler leakage | Trap from session A fires in session B | Per-instance trap HashMap | **MITIGATED** |
+| TM-ISO-009 | Shell option leakage | `set -e` in session A affects session B | Per-instance ShellOptions | **MITIGATED** |
+| TM-ISO-010 | Exported env var leakage | `export` in session A visible in session B | Per-instance env HashMap | **MITIGATED** |
+| TM-ISO-011 | Array leakage | Indexed/associative arrays cross sessions | Per-instance array HashMaps | **MITIGATED** |
+| TM-ISO-012 | Working directory leakage | `cd` in session A changes session B's cwd | Per-instance `cwd: PathBuf` | **MITIGATED** |
+| TM-ISO-013 | Exit code leakage | `$?` from session A visible in session B | Per-instance `last_exit_code` | **MITIGATED** |
+| TM-ISO-014 | Concurrent variable leakage | Race condition leaks vars between parallel sessions | Per-instance state, no shared mutables | **MITIGATED** |
+| TM-ISO-015 | Concurrent FS leakage | Race condition leaks files between parallel sessions | Separate `Arc<FileSystem>` per instance | **MITIGATED** |
+| TM-ISO-016 | Snapshot/restore side effects | `restore_shell_state()` affects other sessions | Snapshot is per-instance, no shared state | **MITIGATED** |
+| TM-ISO-017 | Adversarial variable probing | Script enumerates common secret var names | Default-empty env, no host env inheritance | **MITIGATED** |
+| TM-ISO-018 | /proc /sys probing | Script reads `/proc/self/environ` etc. | VFS has no real /proc or /etc | **MITIGATED** |
+| TM-ISO-019 | jq cross-session env | `jq 'env.X'` sees other session's vars | jaq reads from injected global, not `std::env` | **MITIGATED** |
+| TM-ISO-020 | Subshell mutation leakage | Subshell vars leak to parent or sibling sessions | Snapshot/restore in subshell + per-instance state | **MITIGATED** |
 
-| TM-ISO-004 | Cross-tenant env pollution via jq | `std::env::set_var()` in jq modifies process-wide env, visible to concurrent tenants | Custom `$__bashkit_env__` jaq context variable replaces `std::env` access | **FIXED** |
+| TM-ISO-004 | Cross-session env pollution via jq | `std::env::set_var()` in jq modifies process-wide env, visible to concurrent sessions | Custom `$__bashkit_env__` jaq context variable replaces `std::env` access | **FIXED** |
 | TM-ISO-005 | Session-level cumulative counter bypass | Repeated `exec()` calls each reset `ExecutionCounters`, giving unbounded aggregate resources | — | **OPEN** |
 | TM-ISO-006 | No per-instance variable/memory budget | Unbounded `HashMap` growth in variables, arrays, functions exhausts process memory | — | **OPEN** |
 
@@ -778,19 +793,24 @@ and CPU time. Fix: add session-level cumulative counters that persist across `ex
 and OOM-ing the process. Fix: add `MemoryLimits` with caps on variable count, total bytes, array
 entries, and function count/size. See issue #656.
 
+**Note**: `PROC_SUB_COUNTER` (`AtomicU64`) is a global monotonic counter for process substitution
+paths (`/dev/fd/proc_sub_N`). This is a minor timing side-channel (reveals approximate execution
+ordering across concurrent sessions) but does not leak data since paths are resolved within each
+session's isolated VFS.
+
 **Current Risk**: MEDIUM - cumulative resource bypass (TM-ISO-005) and memory exhaustion (TM-ISO-006)
 
-**Implementation**: Each tenant gets separate instance with isolated state:
+**Implementation**: Each session gets separate instance with isolated state:
 ```rust
-// Each tenant gets isolated instance (TM-ISO-001, TM-ISO-002, TM-ISO-003)
-let tenant_a = Bash::builder()
+// Each session gets isolated instance (TM-ISO-001 through TM-ISO-020)
+let session_a = Bash::builder()
     .fs(Arc::new(InMemoryFs::new()))
-    .limits(tenant_limits)
+    .limits(session_limits)
     .build();
 
-let tenant_b = Bash::builder()
+let session_b = Bash::builder()
     .fs(Arc::new(InMemoryFs::new()))  // Separate FS
-    .limits(tenant_limits)
+    .limits(session_limits)
     .build();
 ```
 
@@ -1099,7 +1119,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-PY-023 | Shell injection in deepagents.py | Command injection within VFS | Use shlex.quote() or direct API |
 | TM-PY-024 | Heredoc content injection in write() | Command injection within VFS | Random delimiter or direct API |
 | TM-PY-025 | GIL deadlock in execute_sync | Python process deadlock | py.allow_threads() |
-| TM-ISO-004 | ~~Cross-tenant env pollution via jq~~ | ~~Tenant isolation breach~~ | ~~Same fix as TM-INF-013~~ (**FIXED**) |
+| TM-ISO-004 | ~~Cross-session env pollution via jq~~ | ~~Session isolation breach~~ | ~~Same fix as TM-INF-013~~ (**FIXED**) |
 | TM-ESC-013 | OverlayFs upper() exposes unlimited FS | VFS limit bypass | Restrict upper() visibility |
 
 ### Open (Medium Priority)
