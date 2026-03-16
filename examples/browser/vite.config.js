@@ -1,4 +1,8 @@
 import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   server: {
@@ -6,6 +10,13 @@ export default defineConfig({
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
       "Cross-Origin-Embedder-Policy": "require-corp",
+    },
+    fs: {
+      // The bashkit package is symlinked from node_modules into
+      // crates/bashkit-js/. Vite follows symlinks and resolves @fs/ URLs
+      // which are blocked by default. Allow the project root so the WASM
+      // binary and worker files are accessible.
+      allow: [path.resolve(__dirname, "../..")],
     },
   },
   build: {
