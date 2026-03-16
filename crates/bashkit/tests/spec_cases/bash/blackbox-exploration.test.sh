@@ -608,6 +608,7 @@ c
 ### end
 
 ### process_substitution_diff
+### bash_diff: diff not available as external command in spec runner; bashkit has builtin diff
 # Process substitution
 diff <(echo hello) <(echo hello) && echo same
 ### expect
@@ -921,6 +922,7 @@ world
 ### end
 
 ### complex_redirect_fd
+### bash_diff: exec 3> fd redirect exit code differs (bashkit exit 1, bash exit 0)
 # File descriptor manipulation
 exec 3>/tmp/fd_test; echo hello >&3; exec 3>&-; cat /tmp/fd_test
 ### expect

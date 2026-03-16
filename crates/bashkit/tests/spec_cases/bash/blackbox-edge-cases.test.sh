@@ -94,6 +94,7 @@ printf '%o\n' 255
 ### end
 
 ### read_n_chars
+### bash_diff: pipe creates subshell in real bash, read -n result lost; bashkit keeps it
 # Read specific number of characters
 echo "hello" | read -n 3 x; echo "$x"
 ### expect
@@ -662,6 +663,7 @@ Hello, World!
 ### end
 
 ### redirect_stderr_to_stdout
+### bash_diff: bashkit captures stderr to stdout; real bash sends >&2 to terminal
 # 2>&1 redirect
 echo "out"; echo "err" >&2 2>&1
 ### expect
