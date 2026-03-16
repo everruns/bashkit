@@ -576,8 +576,7 @@ impl Bash {
         // work (no blocking thread pool, timer driver unreliable). Parse inline.
         #[cfg(target_family = "wasm")]
         let ast = {
-            let parser =
-                Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations);
+            let parser = Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations);
             parser.parse()?
         };
 
