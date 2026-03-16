@@ -2510,3 +2510,163 @@ cat /tmp/data.txt
         );
     }
 }
+
+// =============================================================================
+// TM-INJ-009 / TM-INJ-018: Variable namespace injection via builtins
+// =============================================================================
+
+mod variable_namespace_injection {
+    use bashkit::Bash;
+
+    async fn exec(script: &str) -> bashkit::ExecResult {
+        let mut bash = Bash::builder().build();
+        bash.exec(script).await.unwrap()
+    }
+
+    /// All internal prefixes that must be blocked
+    const INTERNAL_PREFIXES: &[&str] = &[
+        "_NAMEREF_x",
+        "_READONLY_x",
+        "_UPPER_x",
+        "_LOWER_x",
+        "_ARRAY_READ_x",
+        "_EVAL_CMD",
+        "_SHIFT_COUNT",
+        "_SET_POSITIONAL",
+    ];
+
+    // --- local builtin ---
+
+    #[tokio::test]
+    async fn tm_inj_009_local_rejects_internal_prefixes() {
+        for prefix in INTERNAL_PREFIXES {
+            let result = exec(&format!(
+                "myfn() {{ local {prefix}=injected; echo ${{{prefix}:-blocked}}; }}; myfn"
+            ))
+            .await;
+            assert!(
+                result.stdout.contains("blocked"),
+                "local should block {prefix}: got {:?}",
+                result.stdout
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn tm_inj_009_local_allows_normal_vars() {
+        let result = exec("myfn() { local MY_VAR=hello; echo $MY_VAR; }; myfn").await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("hello"));
+    }
+
+    // --- printf -v ---
+
+    #[tokio::test]
+    async fn tm_inj_009_printf_v_rejects_internal_prefixes() {
+        for prefix in INTERNAL_PREFIXES {
+            let result = exec(&format!(
+                "printf -v {prefix} injected; echo ${{{prefix}:-blocked}}"
+            ))
+            .await;
+            assert!(
+                result.stdout.contains("blocked"),
+                "printf -v should block {prefix}: got {:?}",
+                result.stdout
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn tm_inj_009_printf_v_allows_normal_vars() {
+        let result = exec("printf -v MY_VAR 'hello'; echo $MY_VAR").await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("hello"));
+    }
+
+    // --- read ---
+
+    #[tokio::test]
+    async fn tm_inj_009_read_rejects_internal_prefixes() {
+        for prefix in INTERNAL_PREFIXES {
+            let result = exec(&format!(
+                "echo injected | read {prefix}; echo ${{{prefix}:-blocked}}"
+            ))
+            .await;
+            assert!(
+                result.stdout.contains("blocked"),
+                "read should block {prefix}: got {:?}",
+                result.stdout
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn tm_inj_009_read_allows_normal_vars() {
+        let result = exec("echo hello | read MY_VAR; echo $MY_VAR").await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn tm_inj_009_read_array_rejects_internal_prefixes() {
+        let result = exec("echo 'a b c' | read -a _NAMEREF_x; echo ${_NAMEREF_x:-blocked}").await;
+        assert!(
+            result.stdout.contains("blocked"),
+            "read -a should block _NAMEREF_x: got {:?}",
+            result.stdout
+        );
+    }
+
+    // --- dotenv ---
+
+    #[tokio::test]
+    async fn tm_inj_018_dotenv_rejects_internal_prefixes() {
+        let result = exec(
+            r#"
+echo '_NAMEREF_x=injected' > /tmp/.env
+echo '_READONLY_y=injected' >> /tmp/.env
+echo 'NORMAL=ok' >> /tmp/.env
+dotenv /tmp/.env
+echo ${_NAMEREF_x:-blocked1} ${_READONLY_y:-blocked2} $NORMAL
+"#,
+        )
+        .await;
+        assert!(
+            result.stdout.contains("blocked1"),
+            "dotenv should block _NAMEREF_x: got {:?}",
+            result.stdout
+        );
+        assert!(
+            result.stdout.contains("blocked2"),
+            "dotenv should block _READONLY_y: got {:?}",
+            result.stdout
+        );
+        assert!(
+            result.stdout.contains("ok"),
+            "dotenv should allow normal vars: got {:?}",
+            result.stdout
+        );
+    }
+
+    // --- Cross-builtin: injected markers from one builtin don't affect another ---
+
+    #[tokio::test]
+    async fn tm_inj_cross_builtin_no_state_corruption() {
+        // Attempt to inject _READONLY_ via local, verify readonly check isn't affected
+        let result = exec(
+            r#"
+myfn() { local _READONLY_FOO=1; }
+myfn
+FOO=bar
+echo $FOO
+"#,
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result.stdout.contains("bar"),
+            "Cross-builtin injection should not affect state: got {:?}",
+            result.stdout
+        );
+    }
+}

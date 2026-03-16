@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context};
 use crate::error::Result;
-use crate::interpreter::ExecResult;
+use crate::interpreter::{ExecResult, is_internal_variable};
 
 /// printf builtin - formatted string output
 pub struct Printf;
@@ -48,6 +48,10 @@ impl Builtin for Printf {
         }
 
         if let Some(name) = var_name {
+            // THREAT[TM-INJ-009]: Block internal variable prefix injection via printf -v
+            if is_internal_variable(&name) {
+                return Ok(ExecResult::ok(String::new()));
+            }
             // -v: assign to variable instead of printing
             ctx.variables.insert(name, output);
             Ok(ExecResult::ok(String::new()))
