@@ -22,6 +22,7 @@ async fn run_script(script: &str) -> ExecResult {
         stderr: e.to_string(),
         exit_code: 1,
         control_flow: ControlFlow::None,
+        ..Default::default()
     })
 }
 
@@ -33,6 +34,7 @@ async fn run_script_with_limits(script: &str, limits: ExecutionLimits) -> ExecRe
         stderr: e.to_string(),
         exit_code: 1,
         control_flow: ControlFlow::None,
+        ..Default::default()
     })
 }
 

@@ -868,14 +868,47 @@ impl Interpreter {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
+        let mut stdout_truncated = false;
+        let mut stderr_truncated = false;
+        let max_stdout = self.limits.max_stdout_bytes;
+        let max_stderr = self.limits.max_stderr_bytes;
 
         for command in &script.commands {
             self.check_cancelled()?;
             let emit_before = self.output_emit_count;
             let result = self.execute_command(command).await?;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-            stdout.push_str(&result.stdout);
-            stderr.push_str(&result.stderr);
+
+            // Accumulate stdout with truncation
+            if !stdout_truncated {
+                let remaining = max_stdout.saturating_sub(stdout.len());
+                if remaining == 0 {
+                    if !result.stdout.is_empty() {
+                        stdout_truncated = true;
+                    }
+                } else if result.stdout.len() <= remaining {
+                    stdout.push_str(&result.stdout);
+                } else {
+                    stdout.push_str(&result.stdout[..remaining]);
+                    stdout_truncated = true;
+                }
+            }
+
+            // Accumulate stderr with truncation
+            if !stderr_truncated {
+                let remaining = max_stderr.saturating_sub(stderr.len());
+                if remaining == 0 {
+                    if !result.stderr.is_empty() {
+                        stderr_truncated = true;
+                    }
+                } else if result.stderr.len() <= remaining {
+                    stderr.push_str(&result.stderr);
+                } else {
+                    stderr.push_str(&result.stderr[..remaining]);
+                    stderr_truncated = true;
+                }
+            }
+
             exit_code = result.exit_code;
             self.last_exit_code = exit_code;
 
@@ -930,6 +963,8 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            stdout_truncated,
+            stderr_truncated,
         })
     }
 
@@ -983,6 +1018,7 @@ impl Interpreter {
                             stderr: "injected failure".to_string(),
                             exit_code: 127,
                             control_flow: ControlFlow::None,
+                            ..Default::default()
                         });
                     }
                     _ => {}
@@ -1216,6 +1252,7 @@ impl Interpreter {
                             stderr,
                             exit_code,
                             control_flow: ControlFlow::Break(n - 1),
+                            ..Default::default()
                         });
                     }
                 }
@@ -1229,6 +1266,7 @@ impl Interpreter {
                             stderr,
                             exit_code,
                             control_flow: ControlFlow::Continue(n - 1),
+                            ..Default::default()
                         });
                     }
                 }
@@ -1239,6 +1277,7 @@ impl Interpreter {
                         stderr,
                         exit_code: code,
                         control_flow: ControlFlow::Return(code),
+                        ..Default::default()
                     });
                 }
                 ControlFlow::None => {
@@ -1249,6 +1288,7 @@ impl Interpreter {
                             stderr,
                             exit_code,
                             control_flow: ControlFlow::None,
+                            ..Default::default()
                         });
                     }
                 }
@@ -1260,6 +1300,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         })
     }
 
@@ -1305,6 +1346,7 @@ impl Interpreter {
                 stderr,
                 exit_code,
                 control_flow: ControlFlow::None,
+                ..Default::default()
             });
         }
 
@@ -1395,6 +1437,7 @@ impl Interpreter {
                             stderr,
                             exit_code,
                             control_flow: ControlFlow::Break(n - 1),
+                            ..Default::default()
                         });
                     }
                 }
@@ -1407,6 +1450,7 @@ impl Interpreter {
                             stderr,
                             exit_code,
                             control_flow: ControlFlow::Continue(n - 1),
+                            ..Default::default()
                         });
                     }
                 }
@@ -1416,6 +1460,7 @@ impl Interpreter {
                         stderr,
                         exit_code: code,
                         control_flow: ControlFlow::Return(code),
+                        ..Default::default()
                     });
                 }
                 ControlFlow::None => {}
@@ -1427,6 +1472,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         })
     }
 
@@ -1478,6 +1524,7 @@ impl Interpreter {
                             stderr,
                             exit_code,
                             control_flow: ControlFlow::Break(n - 1),
+                            ..Default::default()
                         });
                     }
                 }
@@ -1488,6 +1535,7 @@ impl Interpreter {
                             stderr,
                             exit_code,
                             control_flow: ControlFlow::Continue(n - 1),
+                            ..Default::default()
                         });
                     }
                     // n <= 1: continue to next iteration (after step)
@@ -1498,6 +1546,7 @@ impl Interpreter {
                         stderr,
                         exit_code: code,
                         control_flow: ControlFlow::Return(code),
+                        ..Default::default()
                     });
                 }
                 ControlFlow::None => {
@@ -1508,6 +1557,7 @@ impl Interpreter {
                             stderr,
                             exit_code,
                             control_flow: ControlFlow::None,
+                            ..Default::default()
                         });
                     }
                 }
@@ -1524,6 +1574,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         })
     }
 
@@ -1546,6 +1597,7 @@ impl Interpreter {
             stderr: String::new(),
             exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         })
     }
 
@@ -1728,6 +1780,7 @@ impl Interpreter {
             stderr: String::new(),
             exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         })
     }
 
@@ -1911,6 +1964,7 @@ impl Interpreter {
                             stderr,
                             exit_code,
                             control_flow: ControlFlow::Break(n - 1),
+                            ..Default::default()
                         });
                     }
                 }
@@ -1923,6 +1977,7 @@ impl Interpreter {
                             stderr,
                             exit_code,
                             control_flow: ControlFlow::Continue(n - 1),
+                            ..Default::default()
                         });
                     }
                 }
@@ -1932,6 +1987,7 @@ impl Interpreter {
                         stderr,
                         exit_code: code,
                         control_flow: ControlFlow::Return(code),
+                        ..Default::default()
                     });
                 }
                 ControlFlow::None => {
@@ -1942,6 +1998,7 @@ impl Interpreter {
                             stderr,
                             exit_code,
                             control_flow: ControlFlow::None,
+                            ..Default::default()
                         });
                     }
                 }
@@ -1953,6 +2010,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         })
     }
 
@@ -1993,6 +2051,7 @@ impl Interpreter {
                             stderr,
                             exit_code,
                             control_flow: r.control_flow,
+                            ..Default::default()
                         });
                     }
                     CaseTerminator::FallThrough => {
@@ -2010,6 +2069,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         })
     }
 
@@ -2443,6 +2503,7 @@ impl Interpreter {
             stderr: combined_stderr,
             exit_code: last_exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         };
 
         result = self.apply_redirections(result, redirects).await?;
@@ -2724,6 +2785,7 @@ impl Interpreter {
             stderr: combined_stderr,
             exit_code: last_exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         };
 
         result = self.apply_redirections(result, redirects).await?;
@@ -3703,6 +3765,7 @@ impl Interpreter {
                     stderr,
                     exit_code,
                     control_flow: result.control_flow,
+                    ..Default::default()
                 });
             }
 
@@ -3713,6 +3776,7 @@ impl Interpreter {
                     stderr,
                     exit_code,
                     control_flow: ControlFlow::None,
+                    ..Default::default()
                 });
             }
         }
@@ -3722,6 +3786,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         })
     }
 
@@ -3866,6 +3931,7 @@ impl Interpreter {
                     stderr,
                     exit_code,
                     control_flow,
+                    ..Default::default()
                 });
             }
 
@@ -3921,6 +3987,7 @@ impl Interpreter {
                     stderr,
                     exit_code,
                     control_flow: ControlFlow::None,
+                    ..Default::default()
                 });
             }
 
@@ -3960,6 +4027,7 @@ impl Interpreter {
                             stderr,
                             exit_code,
                             control_flow,
+                            ..Default::default()
                         });
                     }
 
@@ -3981,6 +4049,7 @@ impl Interpreter {
                 stderr,
                 exit_code,
                 control_flow: ControlFlow::None,
+                ..Default::default()
             });
         }
 
@@ -3989,6 +4058,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         })
     }
 
@@ -4122,6 +4192,7 @@ impl Interpreter {
                 stderr: err_msg,
                 exit_code: 1,
                 control_flow: ControlFlow::Return(1),
+                ..Default::default()
             });
         }
 
@@ -4235,6 +4306,7 @@ impl Interpreter {
                 stderr: String::new(),
                 exit_code,
                 control_flow: crate::interpreter::ControlFlow::None,
+                ..Default::default()
             });
         }
 
@@ -4364,6 +4436,7 @@ impl Interpreter {
                 stderr: err_msg,
                 exit_code: 1,
                 control_flow: ControlFlow::Return(1),
+                ..Default::default()
             });
         }
 
@@ -5393,6 +5466,7 @@ impl Interpreter {
             stderr: String::new(),
             exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         };
         self.apply_redirections(result, redirects).await
     }
@@ -5525,6 +5599,7 @@ impl Interpreter {
             stderr,
             exit_code: last_exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         };
         result = self.apply_redirections(result, redirects).await?;
         Ok(result)
@@ -5580,6 +5655,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         };
         self.apply_redirections(result, redirects).await
     }
@@ -5619,6 +5695,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         };
         self.apply_redirections(result, redirects).await
     }
@@ -5718,6 +5795,7 @@ impl Interpreter {
                 stderr: String::new(),
                 exit_code: 1,
                 control_flow: crate::interpreter::ControlFlow::None,
+                ..Default::default()
             });
         }
 
@@ -5735,6 +5813,7 @@ impl Interpreter {
                 stderr: String::new(),
                 exit_code: 1,
                 control_flow: crate::interpreter::ControlFlow::None,
+                ..Default::default()
             });
         }
 
@@ -5760,6 +5839,7 @@ impl Interpreter {
                 stderr: String::new(),
                 exit_code: 1,
                 control_flow: crate::interpreter::ControlFlow::None,
+                ..Default::default()
             });
         }
 
@@ -5910,6 +5990,7 @@ impl Interpreter {
                         stderr: String::new(),
                         exit_code: 1,
                         control_flow: crate::interpreter::ControlFlow::None,
+                        ..Default::default()
                     }
                 };
                 result = self.apply_redirections(result, redirects).await?;
@@ -6074,6 +6155,7 @@ impl Interpreter {
             stderr: String::new(),
             exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         };
         result = self.apply_redirections(result, redirects).await?;
         Ok(result)
@@ -6114,6 +6196,7 @@ impl Interpreter {
             stderr: String::new(),
             exit_code,
             control_flow: ControlFlow::None,
+            ..Default::default()
         };
         result = self.apply_redirections(result, redirects).await?;
         Ok(result)

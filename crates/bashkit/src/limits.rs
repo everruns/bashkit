@@ -73,6 +73,16 @@ pub struct ExecutionLimits {
     /// Default: 100,000
     /// Protects against parser DoS attacks that could otherwise cause CPU exhaustion.
     pub max_parser_operations: usize,
+
+    /// Maximum stdout capture size in bytes
+    /// Default: 1MB (1,048,576 bytes)
+    /// Prevents unbounded output accumulation from runaway commands.
+    pub max_stdout_bytes: usize,
+
+    /// Maximum stderr capture size in bytes
+    /// Default: 1MB (1,048,576 bytes)
+    /// Prevents unbounded error output accumulation.
+    pub max_stderr_bytes: usize,
 }
 
 impl Default for ExecutionLimits {
@@ -87,6 +97,8 @@ impl Default for ExecutionLimits {
             max_input_bytes: 10_000_000, // 10MB
             max_ast_depth: 100,
             max_parser_operations: 100_000,
+            max_stdout_bytes: 1_048_576, // 1MB
+            max_stderr_bytes: 1_048_576, // 1MB
         }
     }
 }
@@ -149,6 +161,18 @@ impl ExecutionLimits {
     /// Set maximum parser operations
     pub fn max_parser_operations(mut self, ops: usize) -> Self {
         self.max_parser_operations = ops;
+        self
+    }
+
+    /// Set maximum stdout capture size in bytes
+    pub fn max_stdout_bytes(mut self, bytes: usize) -> Self {
+        self.max_stdout_bytes = bytes;
+        self
+    }
+
+    /// Set maximum stderr capture size in bytes
+    pub fn max_stderr_bytes(mut self, bytes: usize) -> Self {
+        self.max_stderr_bytes = bytes;
         self
     }
 }
@@ -345,6 +369,8 @@ mod tests {
         assert_eq!(limits.max_input_bytes, 10_000_000);
         assert_eq!(limits.max_ast_depth, 100);
         assert_eq!(limits.max_parser_operations, 100_000);
+        assert_eq!(limits.max_stdout_bytes, 1_048_576);
+        assert_eq!(limits.max_stderr_bytes, 1_048_576);
     }
 
     #[test]

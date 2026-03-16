@@ -132,14 +132,23 @@ pub struct ExecResult {
     pub exit_code: i32,
     #[pyo3(get)]
     pub error: Option<String>,
+    #[pyo3(get)]
+    pub stdout_truncated: bool,
+    #[pyo3(get)]
+    pub stderr_truncated: bool,
 }
 
 #[pymethods]
 impl ExecResult {
     fn __repr__(&self) -> String {
         format!(
-            "ExecResult(stdout={:?}, stderr={:?}, exit_code={}, error={:?})",
-            self.stdout, self.stderr, self.exit_code, self.error
+            "ExecResult(stdout={:?}, stderr={:?}, exit_code={}, error={:?}, stdout_truncated={}, stderr_truncated={})",
+            self.stdout,
+            self.stderr,
+            self.exit_code,
+            self.error,
+            self.stdout_truncated,
+            self.stderr_truncated
         )
     }
 
@@ -165,6 +174,8 @@ impl ExecResult {
             dict.set_item("stderr", &self.stderr)?;
             dict.set_item("exit_code", self.exit_code)?;
             dict.set_item("error", &self.error)?;
+            dict.set_item("stdout_truncated", self.stdout_truncated)?;
+            dict.set_item("stderr_truncated", self.stderr_truncated)?;
             Ok(dict.into())
         })
     }
@@ -267,6 +278,8 @@ impl PyBash {
                     stderr: result.stderr,
                     exit_code: result.exit_code,
                     error: None,
+                    stdout_truncated: result.stdout_truncated,
+                    stderr_truncated: result.stderr_truncated,
                 }),
                 Err(e) => {
                     let msg = e.to_string();
@@ -275,6 +288,8 @@ impl PyBash {
                         stderr: msg.clone(),
                         exit_code: 1,
                         error: Some(msg),
+                        stdout_truncated: false,
+                        stderr_truncated: false,
                     })
                 }
             }
@@ -295,6 +310,8 @@ impl PyBash {
                         stderr: result.stderr,
                         exit_code: result.exit_code,
                         error: None,
+                        stdout_truncated: result.stdout_truncated,
+                        stderr_truncated: result.stderr_truncated,
                     }),
                     Err(e) => {
                         let msg = e.to_string();
@@ -303,6 +320,8 @@ impl PyBash {
                             stderr: msg.clone(),
                             exit_code: 1,
                             error: Some(msg),
+                            stdout_truncated: false,
+                            stderr_truncated: false,
                         })
                     }
                 }
@@ -481,6 +500,8 @@ impl BashTool {
                     stderr: result.stderr,
                     exit_code: result.exit_code,
                     error: None,
+                    stdout_truncated: result.stdout_truncated,
+                    stderr_truncated: result.stderr_truncated,
                 }),
                 Err(e) => {
                     let msg = e.to_string();
@@ -489,6 +510,8 @@ impl BashTool {
                         stderr: msg.clone(),
                         exit_code: 1,
                         error: Some(msg),
+                        stdout_truncated: false,
+                        stderr_truncated: false,
                     })
                 }
             }
@@ -508,6 +531,8 @@ impl BashTool {
                         stderr: result.stderr,
                         exit_code: result.exit_code,
                         error: None,
+                        stdout_truncated: result.stdout_truncated,
+                        stderr_truncated: result.stderr_truncated,
                     }),
                     Err(e) => {
                         let msg = e.to_string();
@@ -516,6 +541,8 @@ impl BashTool {
                             stderr: msg.clone(),
                             exit_code: 1,
                             error: Some(msg),
+                            stdout_truncated: false,
+                            stderr_truncated: false,
                         })
                     }
                 }
@@ -792,6 +819,8 @@ impl ScriptedTool {
                 stderr: resp.stderr,
                 exit_code: resp.exit_code,
                 error: resp.error,
+                stdout_truncated: resp.stdout_truncated,
+                stderr_truncated: resp.stderr_truncated,
             })
         })
     }
@@ -815,6 +844,8 @@ impl ScriptedTool {
             stderr: resp.stderr,
             exit_code: resp.exit_code,
             error: resp.error,
+            stdout_truncated: resp.stdout_truncated,
+            stderr_truncated: resp.stderr_truncated,
         })
     }
 

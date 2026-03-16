@@ -547,6 +547,7 @@ impl ScriptedTool {
                 stderr: String::new(),
                 exit_code: 0,
                 error: None,
+                ..Default::default()
             };
         }
 
@@ -580,6 +581,7 @@ impl ScriptedTool {
                 stderr: err.to_string(),
                 exit_code: 1,
                 error: Some(err.to_string()),
+                ..Default::default()
             },
         };
         let invocations = log
@@ -667,6 +669,7 @@ impl Tool for ScriptedTool {
                 stderr: String::new(),
                 exit_code: 0,
                 error: None,
+                ..Default::default()
             };
         }
 
