@@ -49,7 +49,7 @@ through configurable limits.
 | Long filenames (TM-DOS-013) | 10KB filename | `max_filename_length` (255) + `max_path_length` (4096) | MITIGATED |
 | Many dir entries (TM-DOS-014) | 1M files in one dir | `max_file_count` | MITIGATED |
 | Unicode path attacks (TM-DOS-015) | RTL override in filename | `validate_path()` rejects control/bidi chars | MITIGATED |
-| TOCTOU append (TM-DOS-034) | Concurrent appends bypass limits | Single write lock | **OPEN** |
+| TOCTOU append (TM-DOS-034) | Concurrent appends bypass limits | Single write lock | **FIXED** |
 | OverlayFs upper-only check (TM-DOS-035) | `check_write_limits()` ignores lower layer | Combined limit accounting | **OPEN** |
 | OverlayFs double-count (TM-DOS-036) | `compute_usage()` counts overwritten files | Subtract overrides | **OPEN** |
 | OverlayFs chmod CoW bypass (TM-DOS-037) | chmod writes to unlimited upper | Route through `check_write_limits()` | **OPEN** |
@@ -146,7 +146,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 | Mount escape (TM-ESC-004) | Mount real paths | MountableFs controlled by caller | MITIGATED |
 | VFS limit bypass (TM-ESC-012) | `add_file()` skips limits | Restrict API visibility | **OPEN** |
 | OverlayFs upper() exposed (TM-ESC-013) | `upper()` returns unlimited FS | Restrict visibility | **OPEN** |
-| Custom builtins lost (TM-ESC-014) | `std::mem::take` empties builtins | Clone/Arc builtins | **OPEN** |
+| Custom builtins lost (TM-ESC-014) | `std::mem::take` empties builtins | Arc-cloned builtins | **FIXED** |
 
 **Process Escape:**
 
@@ -398,7 +398,9 @@ echo $user_input
 | Shared filesystem (TM-ISO-001) | Access other tenant files | Separate Bash instances | MITIGATED |
 | Shared memory (TM-ISO-002) | Read other tenant data | Rust memory safety | MITIGATED |
 | Resource starvation (TM-ISO-003) | One tenant exhausts limits | Per-instance limits | MITIGATED |
-| Cross-tenant jq env (TM-ISO-004) | `std::env::set_var()` in jq | Same fix as TM-INF-013 | **OPEN** |
+| Cross-tenant jq env (TM-ISO-004) | `std::env::set_var()` in jq | Custom jaq context variable | **FIXED** |
+| Cumulative counter bypass (TM-ISO-005) | Repeated `exec()` resets counters | Session-level counters | **OPEN** |
+| Memory budget exhaustion (TM-ISO-006) | Unbounded variable/array growth | Per-instance MemoryLimits | **OPEN** |
 
 Each [`Bash`] instance is fully isolated. For multi-tenant environments, create
 separate instances per tenant:

@@ -125,7 +125,7 @@ the session-level backstop.
 | TM-DOS-008 | Tar bomb | `tar -xf bomb.tar` (many files / large files) | FS limits | **MITIGATED** |
 | TM-DOS-009 | Recursive copy | `cp -r /tmp /tmp/copy` | FS limits | **MITIGATED** |
 | TM-DOS-010 | Append flood | `while true; do echo x >> file; done` | FS limits + loop limit | **MITIGATED** |
-| TM-DOS-034 | TOCTOU in append_file | Concurrent appends between read-lock and write-lock bypass size checks | — | **OPEN** |
+| TM-DOS-034 | TOCTOU in append_file | Concurrent appends between read-lock and write-lock bypass size checks | Single write lock for entire read-check-write | **FIXED** |
 | TM-DOS-035 | OverlayFs limit check upper-only | `check_write_limits()` ignores lower layer usage, allowing combined usage to exceed limits | — | **OPEN** |
 | TM-DOS-036 | OverlayFs usage double-count | `compute_usage()` double-counts overwritten/whited-out files | — | **OPEN** |
 | TM-DOS-037 | OverlayFs chmod CoW bypass | `chmod` copy-on-write writes to unlimited upper layer, bypassing overlay limits | — | **OPEN** |
@@ -133,8 +133,8 @@ the session-level backstop.
 | TM-DOS-039 | Missing validate_path in VFS methods | `remove`, `stat`, `read_dir`, `copy`, `rename`, `symlink`, `chmod` skip `validate_path()` | — | **OPEN** |
 | TM-DOS-040 | Integer truncation on 32-bit | `u64 as usize` casts in network/Python extension silently truncate on 32-bit, bypassing size checks | — | **OPEN** |
 
-**TM-DOS-034**: `InMemoryFs::append_file()` (line 816-896) reads under a read lock, drops it,
-checks limits with stale data, then acquires write lock. Fix: single write lock for whole operation.
+**TM-DOS-034**: Fixed. `InMemoryFs::append_file()` now uses a single write lock for the entire
+read-check-write operation, preventing TOCTOU races. See `fs/memory.rs:940-942`.
 
 **TM-DOS-035**: `OverlayFs::check_write_limits()` (line 263-293) checks only upper layer bytes.
 With 80MB in lower and 100MB limit, upper gets another full 100MB (180MB total). Fix: use
@@ -323,7 +323,7 @@ max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
 
 | TM-ESC-012 | VFS limit bypass via public API | `add_file()` / `restore()` skip `validate_path()` and `check_write_limits()` | — | **OPEN** |
 | TM-ESC-013 | OverlayFs upper() exposes unlimited FS | `OverlayFs::upper()` returns `InMemoryFs` with `FsLimits::unlimited()` | — | **OPEN** |
-| TM-ESC-014 | BashTool custom builtins lost after first call | `std::mem::take` empties builtins on first `execute()`, removing security wrappers | — | **OPEN** |
+| TM-ESC-014 | BashTool custom builtins lost after first call | `std::mem::take` empties builtins on first `execute()`, removing security wrappers | Arc-cloned builtins survive across calls | **FIXED** |
 
 **TM-ESC-012**: `InMemoryFs::add_file()` is `pub` and does not call `validate_path()` or
 `check_write_limits()`. `restore()` deserializes without validation. Any code with `InMemoryFs`
@@ -333,9 +333,8 @@ access can bypass all limits. Fix: add limit checks or restrict visibility to `p
 write unlimited data via `overlay.upper().write_file()`. Fix: don't expose `upper()` publicly,
 or return a view that enforces the overlay's limits.
 
-**TM-ESC-014**: `BashTool::create_bash()` (`tool.rs:456`) uses `std::mem::take(&mut self.builtins)`,
-emptying the builtin map on first `execute()`. Subsequent calls get no custom builtins. If custom
-builtins enforce security wrappers, those are silently removed. Fix: clone or use `Arc`.
+**TM-ESC-014**: Fixed. `BashTool::create_bash()` now clones `Arc`-wrapped builtins instead of
+taking ownership via `std::mem::take`. Custom builtins persist across multiple calls. See `tool.rs:659-662`.
 
 #### 2.2 Process Escape
 
@@ -761,13 +760,25 @@ Only exact domain matches are allowed (TM-NET-017).
 | TM-ISO-002 | Shared memory | Read other tenant data | Rust memory safety | **MITIGATED** |
 | TM-ISO-003 | Resource starvation | One tenant exhausts limits | Per-instance limits | **MITIGATED** |
 
-| TM-ISO-004 | Cross-tenant env pollution via jq | `std::env::set_var()` in jq modifies process-wide env, visible to concurrent tenants | — | **OPEN** |
+| TM-ISO-004 | Cross-tenant env pollution via jq | `std::env::set_var()` in jq modifies process-wide env, visible to concurrent tenants | Custom `$__bashkit_env__` jaq context variable replaces `std::env` access | **FIXED** |
+| TM-ISO-005 | Session-level cumulative counter bypass | Repeated `exec()` calls each reset `ExecutionCounters`, giving unbounded aggregate resources | — | **OPEN** |
+| TM-ISO-006 | No per-instance variable/memory budget | Unbounded `HashMap` growth in variables, arrays, functions exhausts process memory | — | **OPEN** |
 
-**TM-ISO-004**: The jq builtin's `std::env::set_var()` call (also tracked as TM-INF-013) is a
-process-global mutation. Concurrent jq invocations across tenants corrupt each other's environment.
-Fix: same as TM-INF-013 — avoid mutating process env.
+**TM-ISO-004**: Fixed. The jq builtin now injects shell variables via a custom jaq context variable
+(`$__bashkit_env__`) and overrides the `env` filter to read from it instead of `std::env`.
+See `builtins/jq.rs:321-339`.
 
-**Current Risk**: MEDIUM - jq process env mutation breaks isolation between concurrent tenants
+**TM-ISO-005**: `ExecutionCounters::reset_for_execution()` zeros all counters at each `exec()` entry.
+A tenant splitting work across many `exec()` calls gets unlimited aggregate commands, loop iterations,
+and CPU time. Fix: add session-level cumulative counters that persist across `exec()` calls within a
+`Bash` instance. See issue #655.
+
+**TM-ISO-006**: Interpreter stores state in unbounded `HashMap` collections (`variables`, `arrays`,
+`assoc_arrays`, `functions`). A script can create millions of entries, consuming arbitrary heap memory
+and OOM-ing the process. Fix: add `MemoryLimits` with caps on variable count, total bytes, array
+entries, and function count/size. See issue #656.
+
+**Current Risk**: MEDIUM - cumulative resource bypass (TM-ISO-005) and memory exhaustion (TM-ISO-006)
 
 **Implementation**: Each tenant gets separate instance with isolated state:
 ```rust
@@ -1088,7 +1099,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-PY-023 | Shell injection in deepagents.py | Command injection within VFS | Use shlex.quote() or direct API |
 | TM-PY-024 | Heredoc content injection in write() | Command injection within VFS | Random delimiter or direct API |
 | TM-PY-025 | GIL deadlock in execute_sync | Python process deadlock | py.allow_threads() |
-| TM-ISO-004 | Cross-tenant env pollution via jq | Tenant isolation breach | Same fix as TM-INF-013 |
+| TM-ISO-004 | ~~Cross-tenant env pollution via jq~~ | ~~Tenant isolation breach~~ | ~~Same fix as TM-INF-013~~ (**FIXED**) |
 | TM-ESC-013 | OverlayFs upper() exposes unlimited FS | VFS limit bypass | Restrict upper() visibility |
 
 ### Open (Medium Priority)
@@ -1107,13 +1118,15 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-INF-014 | Real PID leak via $$ | Host information disclosure | Return virtual PID |
 | TM-INF-015 | URL credentials in error messages | Credential leak | Apply URL redaction |
 | TM-INF-016 | Internal state in error messages | Info leak (paths, IPs, TLS) | Consistent Display format |
-| TM-DOS-034 | TOCTOU in append_file | VFS size limit bypass | Single write lock |
+| TM-DOS-034 | ~~TOCTOU in append_file~~ | ~~VFS size limit bypass~~ | ~~Single write lock~~ (**FIXED**) |
+| TM-ISO-005 | Session-level cumulative counter bypass | Unbounded aggregate resources across exec() calls | Session-level counters |
+| TM-ISO-006 | No per-instance variable/memory budget | Process OOM via unbounded HashMap growth | MemoryLimits struct |
 | TM-DOS-035 | OverlayFs limit check upper-only | Combined size limit bypass | Use compute_usage() |
 | TM-DOS-036 | OverlayFs usage double-count | Premature limit rejections | Subtract overrides |
 | TM-DOS-037 | OverlayFs chmod CoW bypass | Limit bypass via chmod | Route through check_write_limits |
 | TM-DOS-038 | OverlayFs incomplete whiteout | Deleted files remain visible | Check ancestor whiteouts |
 | TM-DOS-039 | Missing validate_path in VFS | Path validation gaps | Add to all methods |
-| TM-ESC-014 | Custom builtins lost after first call | Security wrappers silently removed | Clone or Arc builtins |
+| TM-ESC-014 | ~~Custom builtins lost after first call~~ | ~~Security wrappers silently removed~~ | ~~Clone or Arc builtins~~ (**FIXED**) |
 | TM-PY-026 | reset() discards security config | DoS protections removed | Preserve config on reset |
 | TM-INJ-011 | Cyclic nameref silent resolution | Read/write unintended variables | Detect cycles, error |
 | TM-PY-027 | py_to_json unbounded recursion | Stack overflow | Add depth counter |
@@ -1214,7 +1227,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 |---------|------------|------------------|--------|
 | Wrapping arithmetic | TM-DOS-029 | `wrapping_*` ops, clamp shift/exponent | **NEEDED** |
 | VFS limit enforcement on public API | TM-ESC-012, TM-ESC-013 | `validate_path()` + `check_write_limits()` in `add_file()` | **NEEDED** |
-| Custom jaq env function | TM-INF-013, TM-ISO-004 | Read from `ctx.env`/`ctx.variables`, not `std::env` | **NEEDED** |
+| Custom jaq env function | TM-INF-013, TM-ISO-004 | Read from `ctx.env`/`ctx.variables`, not `std::env` | **DONE** |
 | Internal variable namespace isolation | TM-INJ-009 | Separate HashMap or prefix rejection | **NEEDED** |
 | Parser limit propagation | TM-DOS-030 | `Parser::with_limits()` in eval/source/trap/alias | **NEEDED** |
 | ExtGlob depth limit | TM-DOS-031 | Depth parameter in `glob_match_impl` | **NEEDED** |
@@ -1222,12 +1235,12 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Tar path validation | TM-INJ-010 | Check resolved path starts with extract_base | **NEEDED** |
 | Git branch name validation | TM-GIT-014 | Reject `..`, control chars, trailing `.lock` | **NEEDED** |
 | GIL release in execute_sync | TM-PY-025 | `py.allow_threads()` wrapper | **NEEDED** |
-| TOCTOU fix in append_file | TM-DOS-034 | Single write lock for read-check-write | **NEEDED** |
+| TOCTOU fix in append_file | TM-DOS-034 | Single write lock for read-check-write | **DONE** |
 | OverlayFs combined limit accounting | TM-DOS-035, TM-DOS-036 | Use combined usage for limit checks, subtract overrides | **NEEDED** |
 | OverlayFs chmod CoW limits | TM-DOS-037 | Route copy-on-write through `check_write_limits()` | **NEEDED** |
 | OverlayFs recursive whiteout | TM-DOS-038 | Check ancestor whiteouts in `is_whiteout()` | **NEEDED** |
 | VFS-wide path validation | TM-DOS-039 | `validate_path()` in all path-accepting methods | **NEEDED** |
-| Custom builtin preservation | TM-ESC-014 | Clone builtins instead of `std::mem::take` | **NEEDED** |
+| Custom builtin preservation | TM-ESC-014 | Clone builtins instead of `std::mem::take` | **DONE** |
 | Python config preservation on reset | TM-PY-026 | Store and reapply builder config | **NEEDED** |
 | JSON conversion depth limit | TM-PY-027 | Depth counter in `py_to_json`/`json_to_py` | **NEEDED** |
 | Cyclic nameref detection | TM-INJ-011 | Track visited names, emit error on cycle | **NEEDED** |
@@ -1253,6 +1266,8 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Template engine depth limit | TM-DOS-052 | Depth parameter in `render_template` | **NEEDED** |
 | Unzip path traversal validation | TM-INJ-017 | Validate resolved path stays within `extract_base` | **NEEDED** |
 | Dotenv internal variable guard | TM-INJ-018 | `is_internal_variable()` check in dotenv insert | **NEEDED** |
+| Session-level cumulative counters | TM-ISO-005 | Persistent counters across `exec()` calls within a `Bash` instance | **NEEDED** |
+| Per-instance memory budget | TM-ISO-006 | `MemoryLimits` capping variable count, total bytes, array entries, function count | **NEEDED** |
 
 ---
 
