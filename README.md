@@ -309,6 +309,11 @@ print(result.stdout)
 
 Bashkit is designed as a virtual interpreter with sandboxed execution for untrusted scripts. See the [security policy](SECURITY.md) for reporting vulnerabilities and the [threat model](specs/006-threat-model.md) for detailed analysis of 60+ identified threats.
 
+## Other Virtual Bash Implementations
+
+- **[gbash](https://github.com/ewhauser/gbash)** (Go) — Deterministic, sandbox-only bash runtime for AI agents. Delegates parsing to `mvdan/sh`. Registry-backed commands, policy enforcement, structured tracing, JSON-RPC server mode.
+- **[just-bash](https://github.com/vercel-labs/just-bash)** (JavaScript) — Virtual bash interpreter for AI-powered environments by Vercel Labs. Runs in Node.js with sandboxed execution.
+
 ## Acknowledgments
 
 Bashkit is an independent implementation that draws design inspiration from several open source projects:
