@@ -261,11 +261,10 @@ arr=($(echo a b c d)); echo ${#arr[@]} ${arr[2]}
 ### end
 
 ### assoc_array_default
-### bash_diff: ${m[key]:-default} expansion broken for associative arrays — outputs raw text (#674)
-# Associative array default value — bash: "default", bashkit: ":-default}"
+# Associative array default value
 declare -A m; echo "${m[nokey]:-default}"
 ### expect
-:-default}
+default
 ### end
 
 ### assoc_array_check_key
