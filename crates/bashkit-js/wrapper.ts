@@ -197,7 +197,7 @@ export class Bash {
     if (options?.signal) {
       const signal = options.signal;
       if (signal.aborted) {
-        return { stdout: "", stderr: "", exitCode: 1, error: "execution cancelled", stdoutTruncated: false, stderrTruncated: false };
+        return { stdout: "", stderr: "", exitCode: 1, error: "execution cancelled", stdoutTruncated: false, stderrTruncated: false, finalEnv: undefined };
       }
       const onAbort = () => this.native.cancel();
       signal.addEventListener("abort", onAbort, { once: true });
@@ -357,7 +357,7 @@ export class BashTool {
     if (options?.signal) {
       const signal = options.signal;
       if (signal.aborted) {
-        return { stdout: "", stderr: "", exitCode: 1, error: "execution cancelled", stdoutTruncated: false, stderrTruncated: false };
+        return { stdout: "", stderr: "", exitCode: 1, error: "execution cancelled", stdoutTruncated: false, stderrTruncated: false, finalEnv: undefined };
       }
       const onAbort = () => this.native.cancel();
       signal.addEventListener("abort", onAbort, { once: true });

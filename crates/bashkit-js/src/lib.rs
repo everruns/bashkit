@@ -29,6 +29,7 @@ pub struct ExecResult {
     pub error: Option<String>,
     pub stdout_truncated: bool,
     pub stderr_truncated: bool,
+    pub final_env: Option<HashMap<String, String>>,
 }
 
 // ============================================================================
@@ -122,6 +123,7 @@ impl Bash {
                     error: None,
                     stdout_truncated: result.stdout_truncated,
                     stderr_truncated: result.stderr_truncated,
+                    final_env: result.final_env,
                 }),
                 Err(e) => {
                     let msg = e.to_string();
@@ -132,6 +134,7 @@ impl Bash {
                         error: Some(msg),
                         stdout_truncated: false,
                         stderr_truncated: false,
+                        final_env: None,
                     })
                 }
             }
@@ -151,6 +154,7 @@ impl Bash {
                 error: None,
                 stdout_truncated: result.stdout_truncated,
                 stderr_truncated: result.stderr_truncated,
+                final_env: result.final_env,
             }),
             Err(e) => {
                 let msg = e.to_string();
@@ -161,6 +165,7 @@ impl Bash {
                     error: Some(msg),
                     stdout_truncated: false,
                     stderr_truncated: false,
+                    final_env: None,
                 })
             }
         }
@@ -360,6 +365,7 @@ impl BashTool {
                     error: None,
                     stdout_truncated: result.stdout_truncated,
                     stderr_truncated: result.stderr_truncated,
+                    final_env: result.final_env,
                 }),
                 Err(e) => {
                     let msg = e.to_string();
@@ -370,6 +376,7 @@ impl BashTool {
                         error: Some(msg),
                         stdout_truncated: false,
                         stderr_truncated: false,
+                        final_env: None,
                     })
                 }
             }
@@ -389,6 +396,7 @@ impl BashTool {
                 error: None,
                 stdout_truncated: result.stdout_truncated,
                 stderr_truncated: result.stderr_truncated,
+                final_env: result.final_env,
             }),
             Err(e) => {
                 let msg = e.to_string();
@@ -399,6 +407,7 @@ impl BashTool {
                     error: Some(msg),
                     stdout_truncated: false,
                     stderr_truncated: false,
+                    final_env: None,
                 })
             }
         }

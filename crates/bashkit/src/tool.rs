@@ -303,6 +303,9 @@ pub struct ToolResponse {
     /// Whether stderr was truncated due to output size limits
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stderr_truncated: bool,
+    /// Final environment state after execution (opt-in via `capture_final_env`)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub final_env: Option<std::collections::HashMap<String, String>>,
 }
 
 impl From<ExecResult> for ToolResponse {
@@ -314,6 +317,7 @@ impl From<ExecResult> for ToolResponse {
             error: None,
             stdout_truncated: result.stdout_truncated,
             stderr_truncated: result.stderr_truncated,
+            final_env: result.final_env,
         }
     }
 }

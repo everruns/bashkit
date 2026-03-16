@@ -83,6 +83,10 @@ pub struct ExecutionLimits {
     /// Default: 1MB (1,048,576 bytes)
     /// Prevents unbounded error output accumulation.
     pub max_stderr_bytes: usize,
+
+    /// Whether to capture the final environment state in ExecResult.
+    /// Default: false (opt-in to avoid cloning cost when not needed)
+    pub capture_final_env: bool,
 }
 
 impl Default for ExecutionLimits {
@@ -99,6 +103,7 @@ impl Default for ExecutionLimits {
             max_parser_operations: 100_000,
             max_stdout_bytes: 1_048_576, // 1MB
             max_stderr_bytes: 1_048_576, // 1MB
+            capture_final_env: false,
         }
     }
 }
@@ -173,6 +178,12 @@ impl ExecutionLimits {
     /// Set maximum stderr capture size in bytes
     pub fn max_stderr_bytes(mut self, bytes: usize) -> Self {
         self.max_stderr_bytes = bytes;
+        self
+    }
+
+    /// Enable capturing final environment state in ExecResult
+    pub fn capture_final_env(mut self, capture: bool) -> Self {
+        self.capture_final_env = capture;
         self
     }
 }
@@ -371,6 +382,7 @@ mod tests {
         assert_eq!(limits.max_parser_operations, 100_000);
         assert_eq!(limits.max_stdout_bytes, 1_048_576);
         assert_eq!(limits.max_stderr_bytes, 1_048_576);
+        assert!(!limits.capture_final_env);
     }
 
     #[test]

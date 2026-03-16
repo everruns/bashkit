@@ -359,7 +359,16 @@ def test_exec_result_to_dict_contract():
     bash = Bash()
     r = bash.execute_sync("echo hello")
     d = r.to_dict()
-    assert set(d.keys()) == {"stdout", "stderr", "exit_code", "error", "stdout_truncated", "stderr_truncated"}
+    expected_keys = {
+        "stdout",
+        "stderr",
+        "exit_code",
+        "error",
+        "stdout_truncated",
+        "stderr_truncated",
+        "final_env",
+    }
+    assert set(d.keys()) == expected_keys
     assert isinstance(d["stdout"], str)
     assert isinstance(d["stderr"], str)
     assert isinstance(d["exit_code"], int)
