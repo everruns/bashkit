@@ -360,8 +360,13 @@ def test_exec_result_to_dict_contract():
     r = bash.execute_sync("echo hello")
     d = r.to_dict()
     expected_keys = {
-        "stdout", "stderr", "exit_code", "error",
-        "stdout_truncated", "stderr_truncated", "final_env",
+        "stdout",
+        "stderr",
+        "exit_code",
+        "error",
+        "stdout_truncated",
+        "stderr_truncated",
+        "final_env",
     }
     assert set(d.keys()) == expected_keys
     assert isinstance(d["stdout"], str)
