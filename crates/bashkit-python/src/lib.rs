@@ -136,19 +136,22 @@ pub struct ExecResult {
     pub stdout_truncated: bool,
     #[pyo3(get)]
     pub stderr_truncated: bool,
+    #[pyo3(get)]
+    pub final_env: Option<std::collections::HashMap<String, String>>,
 }
 
 #[pymethods]
 impl ExecResult {
     fn __repr__(&self) -> String {
         format!(
-            "ExecResult(stdout={:?}, stderr={:?}, exit_code={}, error={:?}, stdout_truncated={}, stderr_truncated={})",
+            "ExecResult(stdout={:?}, stderr={:?}, exit_code={}, error={:?}, stdout_truncated={}, stderr_truncated={}, final_env={:?})",
             self.stdout,
             self.stderr,
             self.exit_code,
             self.error,
             self.stdout_truncated,
-            self.stderr_truncated
+            self.stderr_truncated,
+            self.final_env
         )
     }
 
@@ -176,6 +179,7 @@ impl ExecResult {
             dict.set_item("error", &self.error)?;
             dict.set_item("stdout_truncated", self.stdout_truncated)?;
             dict.set_item("stderr_truncated", self.stderr_truncated)?;
+            dict.set_item("final_env", &self.final_env)?;
             Ok(dict.into())
         })
     }
@@ -280,6 +284,7 @@ impl PyBash {
                     error: None,
                     stdout_truncated: result.stdout_truncated,
                     stderr_truncated: result.stderr_truncated,
+                    final_env: result.final_env,
                 }),
                 Err(e) => {
                     let msg = e.to_string();
@@ -290,6 +295,7 @@ impl PyBash {
                         error: Some(msg),
                         stdout_truncated: false,
                         stderr_truncated: false,
+                        final_env: None,
                     })
                 }
             }
@@ -312,6 +318,7 @@ impl PyBash {
                         error: None,
                         stdout_truncated: result.stdout_truncated,
                         stderr_truncated: result.stderr_truncated,
+                        final_env: result.final_env,
                     }),
                     Err(e) => {
                         let msg = e.to_string();
@@ -322,6 +329,7 @@ impl PyBash {
                             error: Some(msg),
                             stdout_truncated: false,
                             stderr_truncated: false,
+                            final_env: None,
                         })
                     }
                 }
@@ -502,6 +510,7 @@ impl BashTool {
                     error: None,
                     stdout_truncated: result.stdout_truncated,
                     stderr_truncated: result.stderr_truncated,
+                    final_env: result.final_env,
                 }),
                 Err(e) => {
                     let msg = e.to_string();
@@ -512,6 +521,7 @@ impl BashTool {
                         error: Some(msg),
                         stdout_truncated: false,
                         stderr_truncated: false,
+                        final_env: None,
                     })
                 }
             }
@@ -533,6 +543,7 @@ impl BashTool {
                         error: None,
                         stdout_truncated: result.stdout_truncated,
                         stderr_truncated: result.stderr_truncated,
+                        final_env: result.final_env,
                     }),
                     Err(e) => {
                         let msg = e.to_string();
@@ -543,6 +554,7 @@ impl BashTool {
                             error: Some(msg),
                             stdout_truncated: false,
                             stderr_truncated: false,
+                            final_env: None,
                         })
                     }
                 }
@@ -821,6 +833,7 @@ impl ScriptedTool {
                 error: resp.error,
                 stdout_truncated: resp.stdout_truncated,
                 stderr_truncated: resp.stderr_truncated,
+                final_env: resp.final_env,
             })
         })
     }
@@ -846,6 +859,7 @@ impl ScriptedTool {
             error: resp.error,
             stdout_truncated: resp.stdout_truncated,
             stderr_truncated: resp.stderr_truncated,
+            final_env: resp.final_env,
         })
     }
 

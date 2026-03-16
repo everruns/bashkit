@@ -963,6 +963,12 @@ impl Interpreter {
             }
         }
 
+        let final_env = if self.limits.capture_final_env {
+            Some(self.variables.clone())
+        } else {
+            None
+        };
+
         Ok(ExecResult {
             stdout,
             stderr,
@@ -970,6 +976,7 @@ impl Interpreter {
             control_flow: ControlFlow::None,
             stdout_truncated,
             stderr_truncated,
+            final_env,
         })
     }
 
