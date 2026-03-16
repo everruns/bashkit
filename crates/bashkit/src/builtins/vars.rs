@@ -221,9 +221,17 @@ impl Builtin for Local {
                         1,
                     ));
                 }
+                // THREAT[TM-INJ-009]: Block internal variable prefix injection via local
+                if is_internal_variable(name) {
+                    continue;
+                }
                 // Mark as local by setting it
                 ctx.variables.insert(name.to_string(), value.to_string());
             } else {
+                // THREAT[TM-INJ-009]: Block internal variable prefix injection via local
+                if is_internal_variable(arg) {
+                    continue;
+                }
                 // Just declare without value
                 ctx.variables.insert(arg.to_string(), String::new());
             }

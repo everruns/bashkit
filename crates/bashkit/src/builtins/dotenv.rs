@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
-use crate::interpreter::ExecResult;
+use crate::interpreter::{ExecResult, is_internal_variable};
 
 /// dotenv builtin - load environment from .env files
 pub struct Dotenv;
@@ -137,6 +137,10 @@ impl Builtin for Dotenv {
                     continue;
                 }
 
+                // THREAT[TM-INJ-018]: Block internal variable prefix injection via dotenv
+                if is_internal_variable(&full_key) {
+                    continue;
+                }
                 // Only set if not already set, unless --override
                 if override_existing || !ctx.variables.contains_key(&full_key) {
                     ctx.variables.insert(full_key, value);

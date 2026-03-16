@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context};
 use crate::error::Result;
-use crate::interpreter::ExecResult;
+use crate::interpreter::{ExecResult, is_internal_variable};
 
 /// read builtin - read a line of input into variables
 pub struct Read;
@@ -139,6 +139,10 @@ impl Builtin for Read {
         if array_mode {
             // -a: read all words into array variable
             let arr_name = var_args.first().copied().unwrap_or("REPLY");
+            // THREAT[TM-INJ-009]: Block internal variable prefix injection via read -a
+            if is_internal_variable(arr_name) {
+                return Ok(ExecResult::ok(String::new()));
+            }
             // Store as _ARRAY_<name>_<idx> for the interpreter to pick up
             ctx.variables.insert(
                 format!("_ARRAY_READ_{}", arr_name),
@@ -156,6 +160,10 @@ impl Builtin for Read {
 
         // Assign words to variables
         for (i, var_name) in var_names.iter().enumerate() {
+            // THREAT[TM-INJ-009]: Block internal variable prefix injection via read
+            if is_internal_variable(var_name) {
+                continue;
+            }
             if i == var_names.len() - 1 {
                 // Last variable gets all remaining words
                 let remaining: Vec<&str> = words.iter().skip(i).copied().collect();
