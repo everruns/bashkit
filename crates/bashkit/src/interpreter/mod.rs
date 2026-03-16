@@ -5404,18 +5404,25 @@ impl Interpreter {
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         let mut unset_nameref = false;
+        let mut unset_function = false;
         let mut var_args: Vec<&String> = Vec::new();
         for arg in args {
             if arg == "-n" {
                 unset_nameref = true;
-            } else if arg == "-v" || arg == "-f" {
-                // -v (variable, default) and -f (function) flags - skip
+            } else if arg == "-f" {
+                unset_function = true;
+            } else if arg == "-v" {
+                // -v (variable, default) - explicit variable mode
             } else {
                 var_args.push(arg);
             }
         }
 
         for arg in &var_args {
+            if unset_function {
+                self.functions.remove(arg.as_str());
+                continue;
+            }
             if let Some(bracket) = arg.find('[')
                 && arg.ends_with(']')
             {
