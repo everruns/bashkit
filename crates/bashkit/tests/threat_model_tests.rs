@@ -486,17 +486,17 @@ mod network_security {
 }
 
 // =============================================================================
-// 6. MULTI-TENANT ISOLATION TESTS
+// 6. SESSION ISOLATION TESTS
 // =============================================================================
 
-mod multi_tenant {
+mod session_isolation {
     use super::*;
     use bashkit::InMemoryFs;
     use std::sync::Arc;
 
     /// Test that separate instances have isolated filesystems
     #[tokio::test]
-    async fn threat_tenant_fs_isolation() {
+    async fn threat_isolation_fs_isolation() {
         let fs_a = Arc::new(InMemoryFs::new());
         let fs_b = Arc::new(InMemoryFs::new());
 
@@ -517,7 +517,7 @@ mod multi_tenant {
 
     /// Test that separate instances have isolated variables
     #[tokio::test]
-    async fn threat_tenant_variable_isolation() {
+    async fn threat_isolation_variable_isolation() {
         let mut tenant_a = Bash::new();
         let mut tenant_b = Bash::new();
 
@@ -529,7 +529,7 @@ mod multi_tenant {
 
     /// Test that separate instances have isolated functions
     #[tokio::test]
-    async fn threat_tenant_function_isolation() {
+    async fn threat_isolation_function_isolation() {
         let mut tenant_a = Bash::new();
         let mut tenant_b = Bash::new();
 
@@ -545,7 +545,7 @@ mod multi_tenant {
 
     /// Test that limits are per-instance
     #[tokio::test]
-    async fn threat_tenant_limits_isolation() {
+    async fn threat_isolation_limits_isolation() {
         let limits_strict = ExecutionLimits::new().max_commands(5);
         let limits_relaxed = ExecutionLimits::new().max_commands(100);
 
@@ -563,6 +563,318 @@ mod multi_tenant {
             .exec("true; true; true; true; true; true; true")
             .await;
         assert!(result.is_ok());
+    }
+
+    /// TM-ISO-019: Aliases defined in one session must not leak to another
+    #[tokio::test]
+    async fn threat_isolation_alias_isolation() {
+        let mut tenant_a = Bash::new();
+        let mut tenant_b = Bash::new();
+
+        tenant_a
+            .exec("alias secret_cmd='echo LEAKED'")
+            .await
+            .unwrap();
+
+        // Tenant B should not have tenant A's alias
+        let result = tenant_b.exec("secret_cmd").await.unwrap();
+        assert_eq!(result.exit_code, 127);
+        assert!(!result.stdout.contains("LEAKED"));
+    }
+
+    /// TM-ISO-020: Trap handlers in one session must not fire in another
+    #[tokio::test]
+    async fn threat_isolation_trap_isolation() {
+        let mut tenant_a = Bash::new();
+        let mut tenant_b = Bash::new();
+
+        tenant_a.exec("trap 'echo TRAP_LEAKED' EXIT").await.unwrap();
+
+        // Tenant B's EXIT trap should not produce tenant A's output
+        let result = tenant_b.exec("true").await.unwrap();
+        assert!(!result.stdout.contains("TRAP_LEAKED"));
+    }
+
+    /// TM-ISO-019: Shell options (set -e, set -o pipefail, etc.) must not leak
+    #[tokio::test]
+    async fn threat_isolation_shell_options_isolation() {
+        let mut tenant_a = Bash::new();
+        let mut tenant_b = Bash::new();
+
+        tenant_a.exec("set -e").await.unwrap();
+        tenant_a.exec("set -o pipefail").await.unwrap();
+
+        // Tenant B should still have default options (errexit off)
+        // If errexit leaked, `false` would abort and we'd get an error
+        let result = tenant_b.exec("false; echo STILL_RUNNING").await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("STILL_RUNNING"));
+    }
+
+    /// TM-ISO-020: Exported environment variables must not cross sessions
+    #[tokio::test]
+    async fn threat_isolation_export_isolation() {
+        let mut tenant_a = Bash::new();
+        let mut tenant_b = Bash::new();
+
+        tenant_a.exec("export DB_PASSWORD=s3cret").await.unwrap();
+
+        // Tenant B must not see tenant A's exported var
+        let result = tenant_b.exec("echo \"[$DB_PASSWORD]\"").await.unwrap();
+        assert_eq!(result.stdout.trim(), "[]");
+    }
+
+    /// TM-ISO-019: Indexed and associative arrays must not leak between sessions
+    #[tokio::test]
+    async fn threat_isolation_array_isolation() {
+        let mut tenant_a = Bash::new();
+        let mut tenant_b = Bash::new();
+
+        tenant_a
+            .exec("SECRET_ARR=(one two three); declare -A SECRET_MAP; SECRET_MAP[key]=val")
+            .await
+            .unwrap();
+
+        // Tenant B must not see tenant A's arrays
+        let result = tenant_b
+            .exec("echo \"${SECRET_ARR[0]}\" \"${SECRET_MAP[key]}\"")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout.trim(), "");
+    }
+
+    /// TM-ISO-020: Working directory changes must not leak between sessions
+    #[tokio::test]
+    async fn threat_isolation_cwd_isolation() {
+        let fs_a = Arc::new(InMemoryFs::new());
+        let mut tenant_a = Bash::builder().fs(fs_a).build();
+        let mut tenant_b = Bash::new();
+
+        tenant_a
+            .exec("mkdir -p /opt/secret && cd /opt/secret")
+            .await
+            .unwrap();
+
+        // Tenant B should still be at default cwd, not /opt/secret
+        let result = tenant_b.exec("pwd").await.unwrap();
+        assert!(!result.stdout.contains("/opt/secret"));
+    }
+
+    /// TM-ISO-019: Exit codes from one session must not affect another
+    #[tokio::test]
+    async fn threat_isolation_exit_code_isolation() {
+        let mut tenant_a = Bash::new();
+        let mut tenant_b = Bash::new();
+
+        // Tenant A ends with failure
+        tenant_a.exec("false").await.unwrap();
+
+        // Tenant B should start with clean exit code (0)
+        let result = tenant_b.exec("echo $?").await.unwrap();
+        assert_eq!(result.stdout.trim(), "0");
+    }
+
+    /// TM-ISO-020: Concurrent sessions must not interfere with each other
+    #[tokio::test]
+    async fn threat_isolation_concurrent_isolation() {
+        use tokio::task::JoinSet;
+
+        let mut tasks = JoinSet::new();
+
+        for i in 0..10 {
+            tasks.spawn(async move {
+                let mut bash = Bash::new();
+                let secret = format!("TENANT_{}_SECRET", i);
+                bash.exec(&format!("MY_SECRET={}", secret)).await.unwrap();
+
+                // Each session should only see its own variable
+                let result = bash.exec("echo $MY_SECRET").await.unwrap();
+                assert_eq!(result.stdout.trim(), secret);
+
+                // Try to probe for other tenants' variables
+                for j in 0..10 {
+                    if j != i {
+                        let other = format!("TENANT_{}_SECRET", j);
+                        let probe = bash.exec("echo $MY_SECRET").await.unwrap();
+                        assert!(!probe.stdout.contains(&other));
+                    }
+                }
+            });
+        }
+
+        while let Some(result) = tasks.join_next().await {
+            result.unwrap();
+        }
+    }
+
+    /// TM-ISO-019: Concurrent filesystem writes must not cross-contaminate
+    #[tokio::test]
+    async fn threat_isolation_concurrent_fs_isolation() {
+        use tokio::task::JoinSet;
+
+        let mut tasks = JoinSet::new();
+
+        for i in 0..10 {
+            tasks.spawn(async move {
+                let fs = Arc::new(InMemoryFs::new());
+                let mut bash = Bash::builder().fs(fs).build();
+
+                let secret = format!("FS_SECRET_{}", i);
+                bash.exec(&format!("echo '{}' > /tmp/data.txt", secret))
+                    .await
+                    .unwrap();
+
+                let result = bash.exec("cat /tmp/data.txt").await.unwrap();
+                assert!(
+                    result.stdout.contains(&secret),
+                    "Tenant {} should see its own secret",
+                    i
+                );
+
+                // Verify no other tenant's data leaked in
+                for j in 0..10 {
+                    if j != i {
+                        let other_secret = format!("FS_SECRET_{}", j);
+                        assert!(
+                            !result.stdout.contains(&other_secret),
+                            "Tenant {} saw tenant {}'s data!",
+                            i,
+                            j
+                        );
+                    }
+                }
+            });
+        }
+
+        while let Some(result) = tasks.join_next().await {
+            result.unwrap();
+        }
+    }
+
+    /// TM-ISO-020: Session state snapshot/restore must not affect other sessions
+    #[tokio::test]
+    async fn threat_isolation_snapshot_isolation() {
+        let mut tenant_a = Bash::new();
+        let mut tenant_b = Bash::new();
+
+        tenant_a.exec("SNAPSHOT_SECRET=before").await.unwrap();
+        let snapshot = tenant_a.shell_state();
+
+        // Mutate tenant_a
+        tenant_a.exec("SNAPSHOT_SECRET=after").await.unwrap();
+
+        // Restore snapshot on tenant_a
+        tenant_a.restore_shell_state(&snapshot);
+
+        // Tenant B should be unaffected by any of this
+        let result = tenant_b.exec("echo \"[$SNAPSHOT_SECRET]\"").await.unwrap();
+        assert_eq!(result.stdout.trim(), "[]");
+    }
+
+    /// TM-ISO-019: Adversarial probing — script tries to discover other sessions
+    /// by iterating common paths and variable names
+    #[tokio::test]
+    async fn threat_isolation_adversarial_probing() {
+        let mut victim = Bash::new();
+        victim.exec("API_KEY=sk-live-12345").await.unwrap();
+        victim
+            .exec("export DATABASE_URL=postgres://secret@db/prod")
+            .await
+            .unwrap();
+
+        let mut attacker = Bash::new();
+
+        // Try common secret variable names
+        let probe_script = r#"
+echo "$API_KEY"
+echo "$DATABASE_URL"
+echo "$AWS_SECRET_ACCESS_KEY"
+echo "$GITHUB_TOKEN"
+echo "$PASSWORD"
+echo "$SECRET"
+echo "$PRIVATE_KEY"
+"#;
+        let result = attacker.exec(probe_script).await.unwrap();
+        assert!(!result.stdout.contains("sk-live"));
+        assert!(!result.stdout.contains("postgres://"));
+
+        // Try to enumerate env via env/printenv/set
+        let result = attacker
+            .exec("env 2>/dev/null; printenv 2>/dev/null")
+            .await
+            .unwrap();
+        assert!(!result.stdout.contains("sk-live"));
+        assert!(!result.stdout.contains("postgres://"));
+    }
+
+    /// TM-ISO-020: Adversarial script tries to read /proc, /sys, /dev for leaks
+    #[tokio::test]
+    async fn threat_isolation_proc_probing() {
+        let mut bash = Bash::new();
+
+        // These should not expose host information
+        let probes = vec![
+            "cat /proc/self/environ 2>/dev/null",
+            "cat /proc/self/cmdline 2>/dev/null",
+            "cat /proc/1/environ 2>/dev/null",
+            "ls /proc 2>/dev/null",
+            "cat /etc/passwd 2>/dev/null",
+            "cat /etc/shadow 2>/dev/null",
+        ];
+
+        for probe in probes {
+            let result = bash.exec(probe).await.unwrap();
+            // VFS shouldn't have real /proc or /etc content
+            assert!(
+                result.stdout.trim().is_empty() || result.exit_code != 0,
+                "Probe '{}' returned unexpected data: {}",
+                probe,
+                result.stdout
+            );
+        }
+    }
+
+    /// TM-ISO-019: jq env isolation — jq in one session must not see
+    /// environment variables from another concurrent session
+    #[tokio::test]
+    async fn threat_isolation_jq_env_cross_session() {
+        let mut tenant_a = Bash::new();
+        let mut tenant_b = Bash::new();
+
+        tenant_a
+            .exec("export JQ_SECRET=tenant_a_secret")
+            .await
+            .unwrap();
+
+        // Tenant B's jq should not see tenant A's env
+        let result = tenant_b
+            .exec("jq -n 'env.JQ_SECRET // \"none\"'")
+            .await
+            .unwrap();
+        assert!(
+            !result.stdout.contains("tenant_a_secret"),
+            "jq leaked cross-session env: {}",
+            result.stdout
+        );
+    }
+
+    /// TM-ISO-020: Subshell isolation — mutations in subshell must not
+    /// leak to parent, and parent state must not leak to sibling sessions
+    #[tokio::test]
+    async fn threat_isolation_subshell_isolation() {
+        let mut bash = Bash::new();
+
+        bash.exec("OUTER=original").await.unwrap();
+        bash.exec("(OUTER=mutated; INNER=leaked)").await.unwrap();
+
+        // Parent should not see subshell mutations
+        let result = bash.exec("echo $OUTER $INNER").await.unwrap();
+        assert_eq!(result.stdout.trim(), "original");
+
+        // Separate session should see neither
+        let mut other = Bash::new();
+        let result = other.exec("echo \"[$OUTER][$INNER]\"").await.unwrap();
+        assert_eq!(result.stdout.trim(), "[][]");
     }
 }
 
