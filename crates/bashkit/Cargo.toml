@@ -134,3 +134,7 @@ required-features = ["realfs"]
 [[example]]
 name = "realfs_readwrite"
 required-features = ["realfs"]
+
+# Additional tokio features needed only on native (not WASM)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "fs"] }

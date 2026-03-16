@@ -24,7 +24,7 @@ pyo3 = { workspace = true }
 pyo3-async-runtimes = { workspace = true }
 
 # Async runtime
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 # Serialization
 serde_json = { workspace = true }

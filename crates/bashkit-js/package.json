@@ -3,8 +3,15 @@
   "version": "0.1.10",
   "description": "Sandboxed bash interpreter for JavaScript/TypeScript",
   "main": "wrapper.js",
+  "browser": "bashkit.wasi-browser.js",
   "types": "wrapper.d.ts",
   "type": "module",
+  "exports": {
+    ".": {
+      "browser": "./bashkit.wasi-browser.js",
+      "default": "./wrapper.js"
+    }
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -34,11 +41,17 @@
     "index.cjs",
     "index.d.ts",
     "index.d.cts",
-    "bashkit.*.node"
+    "bashkit.*.node",
+    "bashkit.wasi-browser.js",
+    "bashkit.wasi.cjs",
+    "bashkit.wasm32-wasi.wasm",
+    "wasi-worker.mjs",
+    "wasi-worker-browser.mjs"
   ],
   "scripts": {
     "build": "npm run build:napi && npm run build:cjs && npm run build:ts",
     "build:napi": "napi build --platform --release",
+    "build:wasm": "napi build --platform --target wasm32-wasip1-threads --release",
     "build:cjs": "node -e \"const fs=require('fs'); if(fs.existsSync('index.js')){fs.renameSync('index.js','index.cjs')}; if(fs.existsSync('index.d.ts')){fs.copyFileSync('index.d.ts','index.d.cts')}\"",
     "build:ts": "tsc",
     "artifacts": "napi artifacts",
@@ -48,6 +61,9 @@
     "format:check": "prettier --check .",
     "type-check": "tsc --noEmit",
     "version": "napi version"
+  },
+  "optionalDependencies": {
+    "@napi-rs/wasm-runtime": "^1.1.1"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0",

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bashkit — Browser Terminal</title>
+  <style>
+    :root {
+      --bg: #1e1e2e;
+      --fg: #cdd6f4;
+      --prompt: #a6e3a1;
+      --error: #f38ba8;
+      --border: #45475a;
+      --input-bg: #313244;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+      background: var(--bg);
+      color: var(--fg);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    header h1 {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    header .version {
+      font-size: 12px;
+      opacity: 0.5;
+    }
+
+    #output {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    #output .stdout { color: var(--fg); }
+    #output .stderr { color: var(--error); }
+    #output .prompt-line { color: var(--prompt); }
+    #output .info { opacity: 0.5; font-style: italic; }
+
+    #input-row {
+      display: flex;
+      align-items: center;
+      padding: 8px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--input-bg);
+    }
+
+    #input-row .prompt-symbol {
+      color: var(--prompt);
+      margin-right: 8px;
+      font-weight: bold;
+      user-select: none;
+    }
+
+    #cmd {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--fg);
+      font: inherit;
+      font-size: 13px;
+    }
+
+    #cmd::placeholder { color: var(--border); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Bashkit Terminal</h1>
+    <span class="version" id="version"></span>
+  </header>
+  <div id="output"></div>
+  <div id="input-row">
+    <span class="prompt-symbol">$</span>
+    <input id="cmd" type="text" placeholder="Type a bash command…" autofocus autocomplete="off" spellcheck="false" />
+  </div>
+
+  <script type="module">
+    import { Bash, getVersion } from "@everruns/bashkit";
+
+    const output = document.getElementById("output");
+    const cmd = document.getElementById("cmd");
+    const versionEl = document.getElementById("version");
+
+    // Command history
+    const history = [];
+    let historyIndex = -1;
+
+    // Initialize interpreter
+    const bash = new Bash({
+      username: "user",
+      hostname: "browser",
+      files: {
+        "/home/user/welcome.txt": "Welcome to Bashkit running in your browser!\nThis is a sandboxed Bash interpreter compiled to WebAssembly.\n",
+        "/home/user/demo.sh": '#!/bin/bash\nfor i in 1 2 3; do\n  echo "iteration $i"\ndone\necho "done!"',
+      },
+    });
+
+    versionEl.textContent = `v${getVersion()}`;
+
+    function appendLine(text, className) {
+      const span = document.createElement("span");
+      span.className = className;
+      span.textContent = text + "\n";
+      output.appendChild(span);
+      output.scrollTop = output.scrollHeight;
+    }
+
+    // Startup message
+    appendLine("Bashkit — sandboxed Bash interpreter in the browser", "info");
+    appendLine(`Version: ${getVersion()}`, "info");
+    appendLine("Type 'cat /home/user/welcome.txt' or 'bash /home/user/demo.sh' to get started.\n", "info");
+
+    async function runCommand(command) {
+      appendLine(`$ ${command}`, "prompt-line");
+
+      const result = await bash.execute(command);
+
+      if (result.stdout) {
+        appendLine(result.stdout.replace(/\n$/, ""), "stdout");
+      }
+      if (result.stderr) {
+        appendLine(result.stderr.replace(/\n$/, ""), "stderr");
+      }
+      if (result.exitCode !== 0 && !result.stderr) {
+        appendLine(`exit code: ${result.exitCode}`, "stderr");
+      }
+    }
+
+    cmd.addEventListener("keydown", async (e) => {
+      if (e.key === "Enter") {
+        const command = cmd.value.trim();
+        cmd.value = "";
+        historyIndex = -1;
+
+        if (!command) return;
+
+        history.push(command);
+
+        if (command === "clear") {
+          output.innerHTML = "";
+          return;
+        }
+
+        cmd.disabled = true;
+        try {
+          await runCommand(command);
+        } catch (err) {
+          appendLine(`Error: ${err.message}`, "stderr");
+        }
+        cmd.disabled = false;
+        cmd.focus();
+      }
+
+      // History navigation
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (history.length === 0) return;
+        if (historyIndex === -1) historyIndex = history.length;
+        if (historyIndex > 0) {
+          historyIndex--;
+          cmd.value = history[historyIndex];
+        }
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (historyIndex === -1) return;
+        if (historyIndex < history.length - 1) {
+          historyIndex++;
+          cmd.value = history[historyIndex];
+        } else {
+          historyIndex = -1;
+          cmd.value = "";
+        }
+      }
+    });
+  </script>
+</body>
+</html>
