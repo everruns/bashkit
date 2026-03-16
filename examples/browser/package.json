@@ -8,7 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@everruns/bashkit": "latest",
+    "@everruns/bashkit": "file:../../crates/bashkit-js",
     "@napi-rs/wasm-runtime": "^0.2.9"
   },
   "devDependencies": {

@@ -1,8 +1,28 @@
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import fs from "node:fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Resolve the WASM browser entry point. The package may be symlinked (local
+// dev) or installed from npm (published with WASM). Either way, we need the
+// resolved absolute path so Vite can serve it.
+function resolveBashkitBrowserEntry() {
+  const symlink = path.resolve(
+    __dirname,
+    "node_modules/@everruns/bashkit/bashkit.wasi-browser.js",
+  );
+  try {
+    const real = fs.realpathSync(symlink);
+    if (fs.existsSync(real)) return real;
+  } catch {
+    // symlink broken or missing — fall through
+  }
+  return undefined;
+}
+
+const browserEntry = resolveBashkitBrowserEntry();
 
 export default defineConfig({
   server: {
@@ -18,6 +38,12 @@ export default defineConfig({
       // binary and worker files are accessible.
       allow: [path.resolve(__dirname, "../..")],
     },
+  },
+  resolve: {
+    // Force the browser entry for @everruns/bashkit. Without this, Vite may
+    // load wrapper.js (Node-only, uses createRequire) instead of the WASM
+    // browser loader when optimizeDeps.exclude is set.
+    ...(browserEntry ? { alias: { "@everruns/bashkit": browserEntry } } : {}),
   },
   build: {
     // bashkit.wasi-browser.js uses top-level await
