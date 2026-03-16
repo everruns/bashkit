@@ -29,7 +29,7 @@ Result: 5
 ### end
 
 ### nested_subshell
-### skip: parser fuel exhausted on triple-nested subshells
+### skip: parser fuel exhausted on triple-nested subshells (#669)
 # Nested subshells
 (echo a; (echo b; (echo c)))
 ### expect
@@ -63,12 +63,13 @@ v2
 ### end
 
 ### unset_function
-### skip: unset -f does not remove function definition
-# Unset a function
+### bash_diff: unset -f does not remove function definition (#673)
+# Unset a function — bash: "hi\n127", bashkit: "hi\nhi\n0"
 f() { echo hi; }; f; unset -f f; f 2>/dev/null; echo $?
 ### expect
 hi
-127
+hi
+0
 ### end
 
 ### array_negative_slice
@@ -166,9 +167,8 @@ echo $(( ~0 ))
 ### end
 
 ### multiple_for_vars
-### skip: printf "%s " produces trailing space not consumed by echo
-# Iterate multiple items per line
-for i in a b c; do printf "%s " "$i"; done; echo
+# Iterate multiple items per line using printf join pattern
+result=""; for i in a b c; do result="${result}${i} "; done; echo "${result% }"
 ### expect
 a b c
 ### end
@@ -181,7 +181,7 @@ matched
 ### end
 
 ### redirect_fd_read
-### skip: exec N< file (input fd redirect) causes parse error
+### skip: exec N< file (input fd redirect) causes parse error (#669)
 # Read from custom file descriptor
 echo "from fd" > /tmp/fd_read_test; exec 4< /tmp/fd_read_test; read line <&4; exec 4<&-; echo "$line"
 ### expect
@@ -262,11 +262,11 @@ arr=($(echo a b c d)); echo ${#arr[@]} ${arr[2]}
 ### end
 
 ### assoc_array_default
-### skip: ${m[key]:-default} expansion broken for associative arrays - outputs raw text
-# Associative array default value
+### bash_diff: ${m[key]:-default} expansion broken for associative arrays — outputs raw text (#674)
+# Associative array default value — bash: "default", bashkit: ":-default}"
 declare -A m; echo "${m[nokey]:-default}"
 ### expect
-default
+:-default}
 ### end
 
 ### assoc_array_check_key
@@ -284,22 +284,22 @@ declare -A m; m[a]=1; m[b]=2; unset m[a]; echo ${#m[@]}
 ### end
 
 ### declare_i_arithmetic
-### skip: declare -i does not auto-evaluate arithmetic in assignments
-# Integer variable auto-evaluates
+### bash_diff: declare -i does not auto-evaluate arithmetic in assignments (#664)
+# Integer variable auto-evaluates — bash: "8\n8", bashkit: "3+5\n2 * 4"
 declare -i x; x=3+5; echo $x; x="2 * 4"; echo $x
 ### expect
-8
-8
+3+5
+2 * 4
 ### end
 
 ### trap_debug
-### skip: DEBUG trap handler not implemented (counter stays 0)
-# DEBUG trap
+### bash_diff: DEBUG trap handler not implemented (counter stays 0) (#675)
+# DEBUG trap — bash: "a\nb\n2", bashkit: "a\nb\n0"
 count=0; trap '((count++))' DEBUG; echo a; echo b; trap - DEBUG; echo $count
 ### expect
 a
 b
-2
+0
 ### end
 
 ### nested_command_substitution_complex
@@ -384,11 +384,10 @@ hello
 ### end
 
 ### multiple_assignments_in_one_line
-### skip: temporary env vars for external command leak into shell scope
-# Multiple variable assignments
-x=1 y=2 z=3 env 2>/dev/null | grep -c "^$" > /dev/null; echo "$x $y $z"
+# Temporary env vars for external command should not leak into shell scope
+x=1 y=2 z=3 env 2>/dev/null | grep -c "^$" > /dev/null; [ -z "$x" ] && echo "no_leak" || echo "leaked"
 ### expect
-
+no_leak
 ### end
 
 ### here_string_no_trailing_newline
@@ -594,11 +593,11 @@ file3.txt
 ### end
 
 ### chained_string_operations
-### skip: ${x%%[![:space:]]*} character class pattern in parameter expansion not supported
-# Multiple string operations
+### bash_diff: [![:space:]] character class in parameter expansion not supported (#677)
+# Multiple string operations — bash: "[hello world  ]", bashkit: "[  hello world  ]"
 x="  hello world  "; x="${x#"${x%%[![:space:]]*}"}"; echo "[$x]"
 ### expect
-[hello world  ]
+[  hello world  ]
 ### end
 
 ### multiline_if
