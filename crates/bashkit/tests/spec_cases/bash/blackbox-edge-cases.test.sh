@@ -63,13 +63,11 @@ v2
 ### end
 
 ### unset_function
-### bash_diff: unset -f does not remove function definition (#673)
-# Unset a function — bash: "hi\n127", bashkit: "hi\nhi\n0"
+# Unset a function
 f() { echo hi; }; f; unset -f f; f 2>/dev/null; echo $?
 ### expect
 hi
-hi
-0
+127
 ### end
 
 ### array_negative_slice
