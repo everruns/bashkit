@@ -8960,15 +8960,15 @@ impl Interpreter {
         results
     }
 
-    /// Try to expand a range like 1..5 or a..z
+    /// Try to expand a range like 1..5, a..z, or 1..10..2
     /// THREAT[TM-DOS-041]: Cap range size to prevent OOM from {1..999999999}
     fn try_expand_range(&self, content: &str) -> Option<Vec<String>> {
         /// Maximum number of elements in a brace range expansion
         const MAX_BRACE_RANGE: u64 = 10_000;
 
-        // Check for .. separator
+        // Check for .. separator: accept {start..end} or {start..end..step}
         let parts: Vec<&str> = content.split("..").collect();
-        if parts.len() != 2 {
+        if parts.len() != 2 && parts.len() != 3 {
             return None;
         }
 
@@ -8977,18 +8977,45 @@ impl Interpreter {
 
         // Try numeric range
         if let (Ok(start_num), Ok(end_num)) = (start.parse::<i64>(), end.parse::<i64>()) {
-            let range_size = (end_num as i128 - start_num as i128).unsigned_abs() + 1;
+            // Parse optional step (default: 1 or -1 based on direction)
+            let step: i64 = if parts.len() == 3 {
+                match parts[2].parse::<i64>() {
+                    Ok(0) => return None, // step=0 is invalid
+                    Ok(s) => s,
+                    Err(_) => return None,
+                }
+            } else if start_num <= end_num {
+                1
+            } else {
+                -1
+            };
+
+            let abs_step = step.unsigned_abs() as u128;
+            let abs_diff = (end_num as i128 - start_num as i128).unsigned_abs();
+            let range_size = abs_diff / abs_step + 1;
             if range_size > MAX_BRACE_RANGE as u128 {
                 return None; // Treat as literal — too large
             }
+
             let mut results = Vec::new();
-            if start_num <= end_num {
-                for i in start_num..=end_num {
+            // Bash behavior: direction is determined by start/end,
+            // step sign determines actual increment direction
+            let effective_step = if start_num <= end_num {
+                step.abs()
+            } else {
+                -(step.abs())
+            };
+
+            let mut i = start_num;
+            if effective_step > 0 {
+                while i <= end_num {
                     results.push(i.to_string());
+                    i += effective_step;
                 }
             } else {
-                for i in (end_num..=start_num).rev() {
+                while i >= end_num {
                     results.push(i.to_string());
+                    i += effective_step;
                 }
             }
             return Some(results);
@@ -9000,17 +9027,38 @@ impl Interpreter {
             let end_char = end.chars().next().unwrap();
 
             if start_char.is_ascii_alphabetic() && end_char.is_ascii_alphabetic() {
+                let step: i64 = if parts.len() == 3 {
+                    match parts[2].parse::<i64>() {
+                        Ok(0) => return None,
+                        Ok(s) => s,
+                        Err(_) => return None,
+                    }
+                } else {
+                    1
+                };
+                let abs_step = step.unsigned_abs() as u8;
+
                 let mut results = Vec::new();
                 let start_byte = start_char as u8;
                 let end_byte = end_char as u8;
 
                 if start_byte <= end_byte {
-                    for b in start_byte..=end_byte {
+                    let mut b = start_byte;
+                    while b <= end_byte {
                         results.push((b as char).to_string());
+                        b = match b.checked_add(abs_step) {
+                            Some(v) => v,
+                            None => break,
+                        };
                     }
                 } else {
-                    for b in (end_byte..=start_byte).rev() {
+                    let mut b = start_byte;
+                    while b >= end_byte {
                         results.push((b as char).to_string());
+                        b = match b.checked_sub(abs_step) {
+                            Some(v) => v,
+                            None => break,
+                        };
                     }
                 }
                 return Some(results);

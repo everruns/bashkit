@@ -454,11 +454,10 @@ a b c d e
 ### end
 
 ### brace_expansion_step
-### bash_diff: brace expansion with step increment not implemented (#665)
-# Brace expansion with step — bash: 0 2 4 6 8 10, bashkit: literal
+# Brace expansion with step
 echo {0..10..2}
 ### expect
-{0..10..2}
+0 2 4 6 8 10
 ### end
 
 ### brace_expansion_combo
