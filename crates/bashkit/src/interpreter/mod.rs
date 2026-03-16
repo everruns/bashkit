@@ -7211,6 +7211,30 @@ impl Interpreter {
             return (false, String::new());
         }
 
+        // Check for array element subscript: name[key]
+        if let Some(bracket) = name.find('[')
+            && name.ends_with(']')
+        {
+            let arr_name = &name[..bracket];
+            let key = &name[bracket + 1..name.len() - 1];
+            if let Some(arr) = self.assoc_arrays.get(arr_name) {
+                let expanded_key = self.expand_variable_or_literal(key);
+                return match arr.get(&expanded_key) {
+                    Some(v) => (true, v.clone()),
+                    None => (false, String::new()),
+                };
+            }
+            if let Some(arr) = self.arrays.get(arr_name)
+                && let Ok(idx) = key.parse::<usize>()
+            {
+                return match arr.get(&idx) {
+                    Some(v) => (true, v.clone()),
+                    None => (false, String::new()),
+                };
+            }
+            return (false, String::new());
+        }
+
         // Special parameters @ and *
         if name == "@" || name == "*" {
             if let Some(frame) = self.call_stack.last() {

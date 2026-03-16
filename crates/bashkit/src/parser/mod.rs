@@ -2477,7 +2477,7 @@ impl<'a> Parser<'a> {
                             }
                             // After ], check for operators on array subscripts
                             if let Some(&next_c) = chars.peek() {
-                                if next_c == ':' && (index == "@" || index == "*") {
+                                if next_c == ':' {
                                     // Peek ahead to distinguish param ops (:- := :+ :?) from slice (:N)
                                     let mut lookahead = chars.clone();
                                     lookahead.next(); // skip ':'
