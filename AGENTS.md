@@ -45,11 +45,12 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 
 ### Documentation
 
-- Guides live in `crates/bashkit/docs/` as markdown files
-- Embedded into rustdoc via `include_str!` (see `specs/008-documentation.md`)
+- **Public docs** live in `docs/` — user-facing articles (security, guides, etc.)
+- **Rustdoc guides** live in `crates/bashkit/docs/` as markdown files
+- Rustdoc guides embedded via `include_str!` (see `specs/008-documentation.md`)
 - Edit `crates/bashkit/docs/*.md`, not the doc modules in `lib.rs`
 - Add "See also" cross-links when creating new guides
-- Run `cargo doc --open` to preview changes
+- Run `cargo doc --open` to preview rustdoc changes
 
 ### Bashkit Principles
 
