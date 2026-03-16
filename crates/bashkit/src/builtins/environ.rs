@@ -113,6 +113,7 @@ impl Builtin for Printenv {
             stderr: String::new(),
             exit_code,
             control_flow: crate::interpreter::ControlFlow::None,
+            ..Default::default()
         })
     }
 }
