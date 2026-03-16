@@ -28,6 +28,8 @@ pub struct ExecResult {
     pub stdout_truncated: bool,
     /// Whether stderr was truncated due to output size limits
     pub stderr_truncated: bool,
+    /// Final environment state after execution (opt-in via `capture_final_env`)
+    pub final_env: Option<std::collections::HashMap<String, String>>,
 }
 
 impl ExecResult {
@@ -37,9 +39,7 @@ impl ExecResult {
             stdout: stdout.into(),
             stderr: String::new(),
             exit_code: 0,
-            control_flow: ControlFlow::None,
-            stdout_truncated: false,
-            stderr_truncated: false,
+            ..Default::default()
         }
     }
 
@@ -49,9 +49,7 @@ impl ExecResult {
             stdout: String::new(),
             stderr: stderr.into(),
             exit_code,
-            control_flow: ControlFlow::None,
-            stdout_truncated: false,
-            stderr_truncated: false,
+            ..Default::default()
         }
     }
 
@@ -61,21 +59,15 @@ impl ExecResult {
             stdout: stdout.into(),
             stderr: String::new(),
             exit_code,
-            control_flow: ControlFlow::None,
-            stdout_truncated: false,
-            stderr_truncated: false,
+            ..Default::default()
         }
     }
 
     /// Create a result with a control flow signal
     pub fn with_control_flow(control_flow: ControlFlow) -> Self {
         Self {
-            stdout: String::new(),
-            stderr: String::new(),
-            exit_code: 0,
             control_flow,
-            stdout_truncated: false,
-            stderr_truncated: false,
+            ..Default::default()
         }
     }
 
@@ -262,6 +254,7 @@ mod tests {
         assert_eq!(r.control_flow, ControlFlow::None);
         assert!(!r.stdout_truncated);
         assert!(!r.stderr_truncated);
+        assert!(r.final_env.is_none());
         assert!(r.is_success());
     }
 
