@@ -50,6 +50,7 @@ dependency rot, or security gaps ship in a release.
 - Python docs (`crates/bashkit-python/README.md`) match current bindings and exports
 - Python docstrings match behavior
 - `README.md` feature list matches implemented builtins
+- Public docs (`docs/`) match current code: CLI flags, security boundaries, feature descriptions, test counts, and examples all reflect reality
 - `CONTRIBUTING.md` instructions accurate
 - `CHANGELOG.md` has entries for all changes since last release
 
