@@ -51,6 +51,7 @@
   "scripts": {
     "build": "npm run build:napi && npm run build:cjs && npm run build:ts",
     "build:napi": "napi build --platform --release",
+    "build:wasm": "napi build --platform --target wasm32-wasip1-threads --release",
     "build:cjs": "node -e \"const fs=require('fs'); if(fs.existsSync('index.js')){fs.renameSync('index.js','index.cjs')}; if(fs.existsSync('index.d.ts')){fs.copyFileSync('index.d.ts','index.d.cts')}\"",
     "build:ts": "tsc",
     "artifacts": "napi artifacts",
@@ -62,7 +63,7 @@
     "version": "napi version"
   },
   "optionalDependencies": {
-    "@napi-rs/wasm-runtime": "^0.2.9"
+    "@napi-rs/wasm-runtime": "^1.1.1"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0",
