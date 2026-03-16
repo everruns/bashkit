@@ -85,7 +85,7 @@ jobs:
 
       - name: Install Doppler CLI
         if: env.DOPPLER_TOKEN != ''
-        uses: dopplerhq/cli-action@v3
+        uses: dopplerhq/cli-action@v4
 
       - name: Run AI examples
         if: env.DOPPLER_TOKEN != ''
