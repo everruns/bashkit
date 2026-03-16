@@ -30,15 +30,13 @@ Go-based bash-like runtime. Delegates parsing to `mvdan/sh` (mature Go shell par
 
 3. **Static budget validation** (#650) — Analyze parsed AST before execution to reject obviously expensive scripts (literal loop bounds, brace expansion size). gbash does this plus loop budget instrumentation via AST callbacks.
 
+4. **Structured execution traces** (#657) — Library-level tracing with `TraceMode::Off/Redacted/Full`. Events returned as `result.events` and optionally streamed via callback. Event types: command start/exit, file access/mutation, policy denied. Zero overhead when off.
+
+5. **Searchable FS** (#658) — Optional `SearchCapable` trait on `FileSystem` with pluggable `SearchProvider`. Builtins like `grep`/`rg` check for it and use indexed search when available, linear scan otherwise. Fully optional — existing VFS implementations unchanged.
+
 ### Under Discussion
 
-4. **Structured traces** — gbash has `TraceConfig{Mode: TraceRedacted}` with events returned as `result.Events`. Event types: `command.start`, `command.exit`, `file.access`, `file.mutation`, `policy.denied`. Also has `OnEvent` callback for real-time streaming. This is a library feature (like `result.get_events()`), not a logging framework.
-
-5. **Policy trait** — Pluggable `Policy` interface with `AllowCommand()`, `AllowBuiltin()`, `AllowPath(action, target)`, `Limits()`, `SymlinkMode()`. Gives embedders fine-grained per-path and per-command access control.
-
-6. **CommandSpec framework** — Declarative CLI option system shared across all commands. Our 133+ builtins each parse args ad-hoc. A shared framework would reduce boilerplate.
-
-7. **Searchable FS** — `SearchCapable` trait on `FileSystem` with pluggable `SearchProvider`. FS mutations auto-update index. Commands like `grep`/`rg` check if FS implements `SearchCapable` and use index. Should live on the VFS interface side — implementers of custom VFS backends provide fast search primitives.
+6. **Policy trait** — Pluggable `Policy` interface with `AllowCommand()`, `AllowBuiltin()`, `AllowPath(action, target)`, `Limits()`, `SymlinkMode()`. Gives embedders fine-grained per-path and per-command access control.
 
 ### Declined
 
