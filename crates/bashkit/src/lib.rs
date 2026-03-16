@@ -480,6 +480,7 @@ pub struct Bash {
     fs: Arc<dyn FileSystem>,
     interpreter: Interpreter,
     /// Parser timeout (stored separately for use before interpreter runs)
+    #[cfg(not(target_family = "wasm"))]
     parser_timeout: std::time::Duration,
     /// Maximum input script size in bytes
     max_input_bytes: usize,
@@ -503,6 +504,7 @@ impl Bash {
     pub fn new() -> Self {
         let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
         let interpreter = Interpreter::new(Arc::clone(&fs));
+        #[cfg(not(target_family = "wasm"))]
         let parser_timeout = ExecutionLimits::default().parser_timeout;
         let max_input_bytes = ExecutionLimits::default().max_input_bytes;
         let max_ast_depth = ExecutionLimits::default().max_ast_depth;
@@ -510,6 +512,7 @@ impl Bash {
         Self {
             fs,
             interpreter,
+            #[cfg(not(target_family = "wasm"))]
             parser_timeout,
             max_input_bytes,
             max_ast_depth,
@@ -1576,6 +1579,7 @@ impl BashBuilder {
             interpreter.set_history_file(hf);
         }
 
+        #[cfg(not(target_family = "wasm"))]
         let parser_timeout = limits.parser_timeout;
         let max_input_bytes = limits.max_input_bytes;
         let max_ast_depth = limits.max_ast_depth;
@@ -1585,6 +1589,7 @@ impl BashBuilder {
         Bash {
             fs,
             interpreter,
+            #[cfg(not(target_family = "wasm"))]
             parser_timeout,
             max_input_bytes,
             max_ast_depth,
