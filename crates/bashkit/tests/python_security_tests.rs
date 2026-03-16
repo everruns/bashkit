@@ -104,16 +104,16 @@ mod blackbox_builtins {
             .exec("python3 -c \"eval('__import__(\\\"os\\\").system(\\\"echo hacked\\\")')\"")
             .await
             .unwrap();
-        assert!(!r.stdout.contains("hacked"), "eval must not allow shell escape");
+        assert!(
+            !r.stdout.contains("hacked"),
+            "eval must not allow shell escape"
+        );
     }
 
     #[tokio::test]
     async fn no_exec() {
         let mut bash = bash_python();
-        let r = bash
-            .exec("python3 -c \"exec('import os')\"")
-            .await
-            .unwrap();
+        let r = bash.exec("python3 -c \"exec('import os')\"").await.unwrap();
         // Either exec itself fails or the inner import fails
         assert!(!r.stdout.contains("hacked"));
     }
@@ -169,10 +169,7 @@ mod blackbox_builtins {
     #[tokio::test]
     async fn no_breakpoint() {
         let mut bash = bash_python();
-        let r = bash
-            .exec("python3 -c \"breakpoint()\"")
-            .await
-            .unwrap();
+        let r = bash.exec("python3 -c \"breakpoint()\"").await.unwrap();
         assert_ne!(r.exit_code, 0, "breakpoint() should not be available");
     }
 
@@ -306,7 +303,10 @@ mod whitebox_resource_limits {
             .exec("python3 -c \"x = 'A' * 100000000\"")
             .await
             .unwrap();
-        assert_ne!(r.exit_code, 0, "String multiplication should hit memory limit");
+        assert_ne!(
+            r.exit_code, 0,
+            "String multiplication should hit memory limit"
+        );
     }
 
     #[tokio::test]
@@ -383,7 +383,10 @@ mod whitebox_vfs_escape {
             .exec("python3 -c \"from pathlib import Path\nprint(Path('/home/user/../../../../etc/passwd').read_text())\"")
             .await
             .unwrap();
-        assert!(!r.stdout.contains("root:"), "Path traversal must not read real fs");
+        assert!(
+            !r.stdout.contains("root:"),
+            "Path traversal must not read real fs"
+        );
     }
 
     #[tokio::test]
@@ -497,7 +500,10 @@ mod whitebox_vfs_escape {
             .await
             .unwrap();
         assert_eq!(r.exit_code, 0);
-        assert!(r.stdout.contains("canary"), "Python write should be readable from bash");
+        assert!(
+            r.stdout.contains("canary"),
+            "Python write should be readable from bash"
+        );
     }
 
     #[tokio::test]
@@ -634,20 +640,23 @@ mod whitebox_error_leakage {
             .await
             .unwrap();
         assert_eq!(r.exit_code, 1);
-        assert!(r.stdout.contains("before"), "Output before error should be preserved");
+        assert!(
+            r.stdout.contains("before"),
+            "Output before error should be preserved"
+        );
         assert!(r.stderr.contains("ZeroDivisionError"));
     }
 
     #[tokio::test]
     async fn syntax_error_no_source_leak() {
         let mut bash = bash_python();
-        let r = bash
-            .exec("python3 -c \"def f(:\n    pass\"")
-            .await
-            .unwrap();
+        let r = bash.exec("python3 -c \"def f(:\n    pass\"").await.unwrap();
         assert_ne!(r.exit_code, 0);
         // Should not leak internal Rust/monty source paths
-        assert!(!r.stderr.contains(".rs:"), "Should not leak Rust source paths");
+        assert!(
+            !r.stderr.contains(".rs:"),
+            "Should not leak Rust source paths"
+        );
     }
 
     #[tokio::test]
@@ -683,7 +692,9 @@ mod whitebox_state_isolation {
             .unwrap();
         // Second execution should not see it
         let r = bash
-            .exec("python3 -c \"try:\n    print(secret)\nexcept NameError:\n    print('isolated')\"")
+            .exec(
+                "python3 -c \"try:\n    print(secret)\nexcept NameError:\n    print('isolated')\"",
+            )
             .await
             .unwrap();
         assert!(
@@ -738,7 +749,10 @@ mod whitebox_state_isolation {
             .exec("python3 -c \"x = list(range(100))\nprint('ok')\"")
             .await
             .unwrap();
-        assert_eq!(r2.exit_code, 0, "Each execution should get fresh resource budget");
+        assert_eq!(
+            r2.exit_code, 0,
+            "Each execution should get fresh resource budget"
+        );
     }
 }
 
@@ -900,7 +914,10 @@ mod whitebox_interop {
             .exec("if python3 -c \"1/0\" 2>/dev/null; then\n    echo bad\nelse\n    echo good\nfi")
             .await
             .unwrap();
-        assert!(r.stdout.contains("good"), "Failed python should trigger else branch");
+        assert!(
+            r.stdout.contains("good"),
+            "Failed python should trigger else branch"
+        );
     }
 
     #[tokio::test]
@@ -1114,10 +1131,7 @@ mod blackbox_language_edge_cases {
     #[tokio::test]
     async fn only_comments() {
         let mut bash = bash_python();
-        let r = bash
-            .exec("python3 -c \"# just a comment\"")
-            .await
-            .unwrap();
+        let r = bash.exec("python3 -c \"# just a comment\"").await.unwrap();
         // Empty program with comment is valid Python
         // Should succeed or fail gracefully
         assert!(!r.stderr.contains("panic"));
@@ -1126,10 +1140,7 @@ mod blackbox_language_edge_cases {
     #[tokio::test]
     async fn unicode_identifiers() {
         let mut bash = bash_python();
-        let r = bash
-            .exec("python3 -c \"x = 42\nprint(x)\"")
-            .await
-            .unwrap();
+        let r = bash.exec("python3 -c \"x = 42\nprint(x)\"").await.unwrap();
         if r.exit_code == 0 {
             assert_eq!(r.stdout.trim(), "42");
         }
@@ -1145,7 +1156,10 @@ mod blackbox_language_edge_cases {
             .exec("python3 -c \"x = 10 ** 10000000\ny = x * x\"")
             .await
             .unwrap();
-        assert_ne!(r.exit_code, 0, "Huge integer chain should hit memory limits");
+        assert_ne!(
+            r.exit_code, 0,
+            "Huge integer chain should hit memory limits"
+        );
     }
 
     #[tokio::test]
@@ -1220,10 +1234,7 @@ mod whitebox_stdin_injection {
     #[tokio::test]
     async fn stdin_code_execution() {
         let mut bash = bash_python();
-        let r = bash
-            .exec("echo 'print(42)' | python3 -")
-            .await
-            .unwrap();
+        let r = bash.exec("echo 'print(42)' | python3 -").await.unwrap();
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.stdout.trim(), "42");
     }
@@ -1235,7 +1246,10 @@ mod whitebox_stdin_injection {
             .exec("echo 'import os; os.system(\"echo hacked\")' | python3 -")
             .await
             .unwrap();
-        assert!(!r.stdout.contains("hacked"), "Malicious stdin code must not escape sandbox");
+        assert!(
+            !r.stdout.contains("hacked"),
+            "Malicious stdin code must not escape sandbox"
+        );
     }
 
     #[tokio::test]
@@ -1278,10 +1292,7 @@ mod whitebox_arg_parsing {
     #[tokio::test]
     async fn double_dash_c() {
         let mut bash = bash_python();
-        let r = bash
-            .exec("python3 -c -c \"print('test')\"")
-            .await
-            .unwrap();
+        let r = bash.exec("python3 -c -c \"print('test')\"").await.unwrap();
         // -c with "-c" as code string — should try to parse "-c" as python
         // and likely fail
         assert_ne!(r.exit_code, 0);
