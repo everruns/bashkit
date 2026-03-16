@@ -28,7 +28,7 @@ Key tools: `just test`, `just check-bash-compat`
 
 ### 4. Documentation matches reality
 
-All docs (rustdoc, guides, Python, README, CONTRIBUTING, CHANGELOG) accurately reflect current code. Command counts, feature lists, API signatures, and examples are correct.
+All docs (rustdoc, guides, public docs in `docs/`, Python, README, CONTRIBUTING, CHANGELOG) accurately reflect current code. Command counts, feature lists, CLI flags, security boundaries, API signatures, and examples are correct.
 
 Fix any drift — update the docs, not the code (unless the code is wrong).
 
