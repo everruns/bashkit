@@ -311,8 +311,8 @@ Bashkit is designed as a virtual interpreter with sandboxed execution for untrus
 
 ## Other Virtual Bash Implementations
 
-- **[gbash](https://github.com/ewhauser/gbash)** (Go) — Deterministic, sandbox-only bash runtime for AI agents. Delegates parsing to `mvdan/sh`. Registry-backed commands, policy enforcement, structured tracing, JSON-RPC server mode.
-- **[just-bash](https://github.com/vercel-labs/just-bash)** (JavaScript) — Virtual bash interpreter for AI-powered environments by Vercel Labs. Runs in Node.js with sandboxed execution.
+- **[just-bash](https://github.com/vercel-labs/just-bash)** (TypeScript, Apache-2.0) — Virtual bash interpreter for AI agents by Vercel Labs. Custom recursive descent parser, 75+ reimplemented commands (including full awk/sed/jq), in-memory VFS, defense-in-depth sandboxing, AST transform plugins. Runs in Node.js and browser.
+- **[gbash](https://github.com/ewhauser/gbash)** (Go, Apache-2.0) — Deterministic, sandbox-only bash runtime for AI agents. Delegates parsing to `mvdan/sh`. Registry-backed commands, policy enforcement, structured tracing, JSON-RPC server mode.
 
 ## Acknowledgments
 
