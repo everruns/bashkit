@@ -459,12 +459,16 @@ mod brace_expansion_dos {
             .timeout(Duration::from_secs(10));
         let mut bash = Bash::builder().limits(limits).build();
 
-        // {1..1000000} exceeds cap — treated as literal, not expanded to 1M strings
-        let result = bash.exec("echo {1..1000000}").await.unwrap();
-        assert_eq!(
-            result.stdout.trim(),
-            "{1..1000000}",
-            "Brace expansion with 1M elements must be treated as literal"
+        // {1..1000000} exceeds static budget — rejected before execution
+        let result = bash.exec("echo {1..1000000}").await;
+        assert!(
+            result.is_err(),
+            "Brace expansion with 1M elements must be rejected"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("brace range too large"),
+            "Expected budget validation error, got: {err}"
         );
 
         // {1..100} is within cap — should expand normally

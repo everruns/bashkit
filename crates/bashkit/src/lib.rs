@@ -634,6 +634,10 @@ impl Bash {
         #[cfg(feature = "logging")]
         tracing::debug!(target: "bashkit::interpreter", "Starting interpretation");
 
+        // Static budget validation: reject obviously expensive scripts before execution
+        parser::validate_budget(&ast, self.interpreter.limits())
+            .map_err(|e| Error::Execution(format!("budget validation failed: {e}")))?;
+
         // Load persisted history on first exec (no-op if already loaded)
         self.interpreter.load_history().await;
 

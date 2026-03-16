@@ -14,11 +14,13 @@
 #![allow(clippy::unwrap_used)]
 
 mod ast;
+pub mod budget;
 mod lexer;
 mod span;
 mod tokens;
 
 pub use ast::*;
+pub use budget::{BudgetError, validate as validate_budget};
 pub use lexer::{Lexer, SpannedToken};
 pub use span::{Position, Span};
 

@@ -658,6 +658,11 @@ impl Interpreter {
         self.limits = limits;
     }
 
+    /// Get execution limits.
+    pub fn limits(&self) -> &ExecutionLimits {
+        &self.limits
+    }
+
     /// Set an environment variable.
     pub fn set_env(&mut self, key: &str, value: &str) {
         self.env.insert(key.to_string(), value.to_string());
