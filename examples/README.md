@@ -101,3 +101,18 @@ LangChain.js ReAct agent with `DynamicStructuredTool`.
 export OPENAI_API_KEY=sk-...
 node examples/langchain_agent.mjs
 ```
+
+### browser/
+
+Bashkit running in the browser via WebAssembly. A minimal terminal UI that
+lets you type bash commands and see output — all executed client-side in a
+sandboxed WASM interpreter.
+
+Requires `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy`
+headers for `SharedArrayBuffer` support (Vite config handles this).
+
+```bash
+cd examples/browser
+npm install
+npm run dev
+```

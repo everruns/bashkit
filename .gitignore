@@ -34,3 +34,6 @@ dist/
 
 # Node
 node_modules/
+
+# WASM build artifacts
+*.wasm

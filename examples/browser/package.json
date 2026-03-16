@@ -1,0 +1,19 @@
+{
+  "name": "bashkit-browser-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "npm run build:wasm && vite",
+    "build:wasm": "cd ../../crates/bashkit-js && npm run build:wasm",
+    "dev": "vite",
+    "build": "npm run build:wasm && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@everruns/bashkit": "file:../../crates/bashkit-js",
+    "@napi-rs/wasm-runtime": "^1.1.1"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}
