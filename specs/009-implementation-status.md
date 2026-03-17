@@ -432,7 +432,7 @@ NAPI-RS bindings in `crates/bashkit-js/`. TypeScript wrapper in `wrapper.ts`.
 
 **Platform matrix:** macOS (x86_64, aarch64), Linux (x86_64, aarch64), Windows (x86_64), WASM
 
-**Tests:** `crates/bashkit-js/__test__/` — VFS roundtrip, interop, error handling
+**Tests:** `crates/bashkit-js/__test__/` — VFS roundtrip, interop, error handling, security (90+ white/black-box tests covering TM-DOS, TM-ESC, TM-INF, TM-INT, TM-ISO, TM-UNI, TM-INJ, TM-NET)
 
 ### Python (`bashkit`)
 
