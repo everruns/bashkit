@@ -5,6 +5,13 @@
 //!
 //! Exposes `Bash` (core interpreter), `BashTool` (interpreter + LLM metadata),
 //! and `ExecResult` via napi-rs for use from JavaScript/TypeScript.
+//!
+//! # Safety: Arc<SharedState> pattern
+//!
+//! Both `Bash` and `BashTool` wrap all mutable state in `Arc<SharedState>`.
+//! Every `#[napi]` method clones the `Arc` *before* doing any blocking or async
+//! work. This prevents CodeQL `rust/access-invalid-pointer` alerts caused by
+//! holding a raw-pointer-derived `&self` across `block_on` or `.await` points.
 
 use bashkit::tool::VERSION;
 use bashkit::{Bash as RustBash, BashTool as RustBashTool, ExecutionLimits, Tool};
@@ -59,6 +66,33 @@ fn default_opts() -> BashOptions {
 }
 
 // ============================================================================
+// SharedState — all mutable state behind Arc to avoid raw pointer issues
+// ============================================================================
+
+struct SharedState {
+    inner: Mutex<RustBash>,
+    rt: Mutex<tokio::runtime::Runtime>,
+    cancelled: Arc<AtomicBool>,
+    username: Option<String>,
+    hostname: Option<String>,
+    max_commands: Option<u32>,
+    max_loop_iterations: Option<u32>,
+}
+
+/// Clone `Arc<SharedState>`, then use the runtime to block on a future that
+/// captures only the cloned Arc. This avoids holding raw `&self` across
+/// `block_on` boundaries.
+fn block_on_with<Fut, T>(state: &Arc<SharedState>, f: impl FnOnce(Arc<SharedState>) -> Fut) -> T
+where
+    Fut: std::future::Future<Output = T>,
+{
+    let s = state.clone();
+    let rt_guard = s.rt.blocking_lock();
+    let s2 = state.clone();
+    rt_guard.block_on(f(s2))
+}
+
+// ============================================================================
 // Bash — core interpreter
 // ============================================================================
 
@@ -68,13 +102,7 @@ fn default_opts() -> BashOptions {
 /// available in subsequent calls.
 #[napi]
 pub struct Bash {
-    inner: Arc<Mutex<RustBash>>,
-    rt: tokio::runtime::Runtime,
-    cancelled: Arc<AtomicBool>,
-    username: Option<String>,
-    hostname: Option<String>,
-    max_commands: Option<u32>,
-    max_loop_iterations: Option<u32>,
+    state: Arc<SharedState>,
 }
 
 #[napi]
@@ -98,23 +126,24 @@ impl Bash {
             .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
 
         Ok(Self {
-            inner: Arc::new(Mutex::new(bash)),
-            rt,
-            cancelled,
-            username: opts.username,
-            hostname: opts.hostname,
-            max_commands: opts.max_commands,
-            max_loop_iterations: opts.max_loop_iterations,
+            state: Arc::new(SharedState {
+                inner: Mutex::new(bash),
+                rt: Mutex::new(rt),
+                cancelled,
+                username: opts.username,
+                hostname: opts.hostname,
+                max_commands: opts.max_commands,
+                max_loop_iterations: opts.max_loop_iterations,
+            }),
         })
     }
 
     /// Execute bash commands synchronously.
     #[napi]
     pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
-        self.cancelled.store(false, Ordering::Relaxed);
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let mut bash = inner.lock().await;
+        self.state.cancelled.store(false, Ordering::Relaxed);
+        block_on_with(&self.state, |s| async move {
+            let mut bash = s.inner.lock().await;
             match bash.exec(&commands).await {
                 Ok(result) => Ok(ExecResult {
                     stdout: result.stdout,
@@ -144,8 +173,8 @@ impl Bash {
     /// Execute bash commands asynchronously, returning a Promise.
     #[napi]
     pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
-        let inner = self.inner.clone();
-        let mut bash = inner.lock().await;
+        let s = self.state.clone();
+        let mut bash = s.inner.lock().await;
         match bash.exec(&commands).await {
             Ok(result) => Ok(ExecResult {
                 stdout: result.stdout,
@@ -177,25 +206,19 @@ impl Bash {
     /// command boundary.
     #[napi]
     pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Relaxed);
+        self.state.cancelled.store(true, Ordering::Relaxed);
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
     #[napi]
     pub fn reset(&self) -> napi::Result<()> {
-        let inner = self.inner.clone();
-        let username = self.username.clone();
-        let hostname = self.hostname.clone();
-        let max_commands = self.max_commands;
-        let max_loop_iterations = self.max_loop_iterations;
-
-        self.rt.block_on(async move {
-            let mut bash = inner.lock().await;
+        block_on_with(&self.state, |s| async move {
+            let mut bash = s.inner.lock().await;
             let new_bash = build_bash(
-                username.as_deref(),
-                hostname.as_deref(),
-                max_commands,
-                max_loop_iterations,
+                s.username.as_deref(),
+                s.hostname.as_deref(),
+                s.max_commands,
+                s.max_loop_iterations,
                 None,
             );
             *bash = new_bash;
@@ -210,9 +233,8 @@ impl Bash {
     /// Read a file from the virtual filesystem. Returns contents as a UTF-8 string.
     #[napi]
     pub fn read_file(&self, path: String) -> napi::Result<String> {
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let bash = inner.lock().await;
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
             let bytes = bash
                 .fs()
                 .read_file(Path::new(&path))
@@ -227,9 +249,8 @@ impl Bash {
     /// Creates the file if it doesn't exist, replaces contents if it does.
     #[napi]
     pub fn write_file(&self, path: String, content: String) -> napi::Result<()> {
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let bash = inner.lock().await;
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
             bash.fs()
                 .write_file(Path::new(&path), content.as_bytes())
                 .await
@@ -240,9 +261,8 @@ impl Bash {
     /// Create a directory. If recursive is true, creates parent directories as needed.
     #[napi]
     pub fn mkdir(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let bash = inner.lock().await;
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
             bash.fs()
                 .mkdir(Path::new(&path), recursive.unwrap_or(false))
                 .await
@@ -253,9 +273,8 @@ impl Bash {
     /// Check if a path exists in the virtual filesystem.
     #[napi]
     pub fn exists(&self, path: String) -> napi::Result<bool> {
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let bash = inner.lock().await;
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
             bash.fs()
                 .exists(Path::new(&path))
                 .await
@@ -266,9 +285,8 @@ impl Bash {
     /// Remove a file or directory. If recursive is true, removes directory contents.
     #[napi]
     pub fn remove(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let bash = inner.lock().await;
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
             bash.fs()
                 .remove(Path::new(&path), recursive.unwrap_or(false))
                 .await
@@ -302,31 +320,25 @@ impl Bash {
 /// Use this when integrating with AI frameworks that need tool definitions.
 #[napi]
 pub struct BashTool {
-    inner: Arc<Mutex<RustBash>>,
-    rt: tokio::runtime::Runtime,
-    cancelled: Arc<AtomicBool>,
-    username: Option<String>,
-    hostname: Option<String>,
-    max_commands: Option<u32>,
-    max_loop_iterations: Option<u32>,
+    state: Arc<SharedState>,
 }
 
 impl BashTool {
-    fn build_rust_tool(&self) -> RustBashTool {
+    fn build_rust_tool(state: &SharedState) -> RustBashTool {
         let mut builder = RustBashTool::builder();
 
-        if let Some(ref username) = self.username {
+        if let Some(ref username) = state.username {
             builder = builder.username(username);
         }
-        if let Some(ref hostname) = self.hostname {
+        if let Some(ref hostname) = state.hostname {
             builder = builder.hostname(hostname);
         }
 
         let mut limits = ExecutionLimits::new();
-        if let Some(mc) = self.max_commands {
+        if let Some(mc) = state.max_commands {
             limits = limits.max_commands(mc as usize);
         }
-        if let Some(mli) = self.max_loop_iterations {
+        if let Some(mli) = state.max_loop_iterations {
             limits = limits.max_loop_iterations(mli as usize);
         }
 
@@ -355,23 +367,24 @@ impl BashTool {
             .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
 
         Ok(Self {
-            inner: Arc::new(Mutex::new(bash)),
-            rt,
-            cancelled,
-            username: opts.username,
-            hostname: opts.hostname,
-            max_commands: opts.max_commands,
-            max_loop_iterations: opts.max_loop_iterations,
+            state: Arc::new(SharedState {
+                inner: Mutex::new(bash),
+                rt: Mutex::new(rt),
+                cancelled,
+                username: opts.username,
+                hostname: opts.hostname,
+                max_commands: opts.max_commands,
+                max_loop_iterations: opts.max_loop_iterations,
+            }),
         })
     }
 
     /// Execute bash commands synchronously.
     #[napi]
     pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
-        self.cancelled.store(false, Ordering::Relaxed);
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let mut bash = inner.lock().await;
+        self.state.cancelled.store(false, Ordering::Relaxed);
+        block_on_with(&self.state, |s| async move {
+            let mut bash = s.inner.lock().await;
             match bash.exec(&commands).await {
                 Ok(result) => Ok(ExecResult {
                     stdout: result.stdout,
@@ -401,8 +414,8 @@ impl BashTool {
     /// Execute bash commands asynchronously, returning a Promise.
     #[napi]
     pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
-        let inner = self.inner.clone();
-        let mut bash = inner.lock().await;
+        let s = self.state.clone();
+        let mut bash = s.inner.lock().await;
         match bash.exec(&commands).await {
             Ok(result) => Ok(ExecResult {
                 stdout: result.stdout,
@@ -431,25 +444,19 @@ impl BashTool {
     /// Cancel the currently running execution.
     #[napi]
     pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Relaxed);
+        self.state.cancelled.store(true, Ordering::Relaxed);
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
     #[napi]
     pub fn reset(&self) -> napi::Result<()> {
-        let inner = self.inner.clone();
-        let username = self.username.clone();
-        let hostname = self.hostname.clone();
-        let max_commands = self.max_commands;
-        let max_loop_iterations = self.max_loop_iterations;
-
-        self.rt.block_on(async move {
-            let mut bash = inner.lock().await;
+        block_on_with(&self.state, |s| async move {
+            let mut bash = s.inner.lock().await;
             let new_bash = build_bash(
-                username.as_deref(),
-                hostname.as_deref(),
-                max_commands,
-                max_loop_iterations,
+                s.username.as_deref(),
+                s.hostname.as_deref(),
+                s.max_commands,
+                s.max_loop_iterations,
                 None,
             );
             *bash = new_bash;
@@ -472,25 +479,25 @@ impl BashTool {
     /// Get token-efficient tool description.
     #[napi]
     pub fn description(&self) -> String {
-        self.build_rust_tool().description().to_string()
+        Self::build_rust_tool(&self.state).description().to_string()
     }
 
     /// Get help as a Markdown document.
     #[napi]
     pub fn help(&self) -> String {
-        self.build_rust_tool().help()
+        Self::build_rust_tool(&self.state).help()
     }
 
     /// Get compact system-prompt text for orchestration.
     #[napi]
     pub fn system_prompt(&self) -> String {
-        self.build_rust_tool().system_prompt()
+        Self::build_rust_tool(&self.state).system_prompt()
     }
 
     /// Get JSON input schema as string.
     #[napi]
     pub fn input_schema(&self) -> napi::Result<String> {
-        let schema = self.build_rust_tool().input_schema();
+        let schema = Self::build_rust_tool(&self.state).input_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| napi::Error::from_reason(format!("Schema serialization failed: {e}")))
     }
@@ -498,7 +505,7 @@ impl BashTool {
     /// Get JSON output schema as string.
     #[napi]
     pub fn output_schema(&self) -> napi::Result<String> {
-        let schema = self.build_rust_tool().output_schema();
+        let schema = Self::build_rust_tool(&self.state).output_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| napi::Error::from_reason(format!("Schema serialization failed: {e}")))
     }
