@@ -211,11 +211,10 @@ global
 ### end
 
 ### function_recursion
-### bash_diff: recursive command substitution in arithmetic returns 0 instead of actual value (#667)
-# Recursive function — bash: 120, bashkit: 0
+# Recursive function
 factorial() { if [ $1 -le 1 ]; then echo 1; else echo $(( $1 * $(factorial $(( $1 - 1 ))) )); fi; }; factorial 5
 ### expect
-0
+120
 ### end
 
 ### function_args

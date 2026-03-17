@@ -4789,7 +4789,9 @@ impl Interpreter {
                     RedirectKind::DupInput => {
                         // exec N<&- closes fd N
                         let target = self.expand_word(&redirect.target).await?;
-                        if target == "-" && let Some(fd) = redirect.fd {
+                        if target == "-"
+                            && let Some(fd) = redirect.fd
+                        {
                             self.coproc_buffers.remove(&fd);
                         }
                     }
@@ -7268,9 +7270,16 @@ impl Interpreter {
                     result.push_str(trimmed);
                 }
                 WordPart::ArithmeticExpansion(expr) => {
+                    // Expand command substitutions within the arithmetic expr
+                    // (e.g., $(( $1 * $(func ...) )) — the $(func) must run first)
+                    let expanded_expr = if expr.contains("$(") {
+                        self.expand_command_subs_in_arithmetic(expr).await?
+                    } else {
+                        expr.to_string()
+                    };
                     // Handle assignment: VAR = expr (must be checked before
                     // variable expansion so the LHS name is preserved)
-                    let value = self.evaluate_arithmetic_with_assign(expr);
+                    let value = self.evaluate_arithmetic_with_assign(&expanded_expr);
                     result.push_str(&value.to_string());
                 }
                 WordPart::Length(name) => {
@@ -9365,6 +9374,69 @@ impl Interpreter {
             }
         }
         current
+    }
+
+    /// Expand command substitutions `$(...)` within an arithmetic expression string.
+    /// Parses the expr, executes any embedded command subs, and replaces them with output.
+    async fn expand_command_subs_in_arithmetic(&mut self, expr: &str) -> Result<String> {
+        let mut result = String::new();
+        let mut chars = expr.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '$' && chars.peek() == Some(&'(') {
+                // Check it's not $(( ... )) (arithmetic)
+                let remaining: String = chars.clone().collect();
+                if remaining.starts_with("((") {
+                    // $(( ... )) — keep as-is for arithmetic eval
+                    result.push('$');
+                    continue;
+                }
+                // $( ... ) — command substitution, find matching close paren
+                chars.next(); // consume '('
+                let mut depth = 1i32;
+                let mut cmd = String::new();
+                for c in chars.by_ref() {
+                    if c == '(' {
+                        depth += 1;
+                        cmd.push(c);
+                    } else if c == ')' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        cmd.push(c);
+                    } else {
+                        cmd.push(c);
+                    }
+                }
+                // Execute the command and substitute
+                let parser = Parser::with_limits(
+                    &cmd,
+                    self.limits.max_ast_depth,
+                    self.limits.max_parser_operations,
+                );
+                match parser.parse() {
+                    Ok(script) => {
+                        if self.counters.push_function(&self.limits).is_err() {
+                            result.push('0');
+                        } else {
+                            let cmd_result =
+                                self.execute_command_sequence(&script.commands).await?;
+                            self.counters.pop_function();
+                            let trimmed = cmd_result.stdout.trim_end_matches('\n');
+                            if trimmed.is_empty() {
+                                result.push('0');
+                            } else {
+                                result.push_str(trimmed);
+                            }
+                        }
+                    }
+                    Err(_) => result.push('0'),
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+        Ok(result)
     }
 
     /// Get the separator for `[*]` array joins: first char of IFS, or space if IFS unset.
