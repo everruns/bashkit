@@ -1468,11 +1468,11 @@ echo "!!"
 ### end
 
 ### nul_byte_handling
-### bash_diff: NUL bytes in printf not stripped — wc counts literal \x00 chars (#676)
-# printf with NUL bytes — bash: 2, bashkit: 6 (counts "\x00" as 4 chars)
+### bash_diff: NUL bytes stripped in VFS string context — bash outputs 3 bytes, bashkit outputs 2
+# printf with NUL bytes — bash: 3 (includes NUL byte), bashkit: 2 (NUL stripped)
 printf "a\x00b" | wc -c
 ### expect
-6
+2
 ### end
 
 ### very_long_pipeline
