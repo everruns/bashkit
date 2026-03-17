@@ -7099,6 +7099,12 @@ impl Interpreter {
                     }
                 }
                 WordPart::CommandSubstitution(commands) => {
+                    // THREAT[TM-DOS-044]: Track substitution depth to prevent stack overflow
+                    if self.counters.push_function(&self.limits).is_err() {
+                        return Err(crate::error::Error::Execution(
+                            "maximum nesting depth exceeded in command substitution".to_string(),
+                        ));
+                    }
                     // Execute the commands and capture stdout
                     let mut stdout = String::new();
                     for cmd in commands {
@@ -7107,6 +7113,7 @@ impl Interpreter {
                         // Propagate exit code from last command in substitution
                         self.last_exit_code = cmd_result.exit_code;
                     }
+                    self.counters.pop_function();
                     self.subst_generation += 1;
                     // Remove trailing newline (bash behavior)
                     let trimmed = stdout.trim_end_matches('\n');

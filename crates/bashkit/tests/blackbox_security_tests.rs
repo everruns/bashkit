@@ -53,12 +53,9 @@ fn dos_bash() -> Bash {
 mod finding_nested_cmd_subst_stack_overflow {
     use super::*;
 
-    /// TM-DOS-044 regression: depth-50 nested command substitution crashes.
-    /// REPRODUCER: Generates `echo $(echo $(echo ... ))` 50 levels deep.
-    /// Expected: error or truncated result. Actual: SIGABRT (stack overflow).
+    /// TM-DOS-044: depth-50 nested command substitution is bounded.
     #[tokio::test]
-    #[ignore] // FINDING: stack overflow — crashes the process
-    async fn depth_50_crashes() {
+    async fn depth_50_is_bounded() {
         let mut bash = tight_bash();
         let depth = 50;
         let mut cmd = "echo hello".to_string();
