@@ -138,87 +138,87 @@ mod finding_source_recursion_stack_overflow {
 mod finding_timeout_bypass {
     use super::*;
 
-    /// TM-DOS-057: sleep in subshell ignores 2s timeout, runs 60s+.
+    /// TM-DOS-057: sleep in subshell respects execution timeout.
     #[tokio::test]
-    #[ignore] // FINDING: timeout bypass — runs for 60s+
-    async fn subshell_sleep_bypasses_timeout() {
+    async fn subshell_sleep_respects_timeout() {
         let mut bash = Bash::builder()
             .limits(ExecutionLimits::new().timeout(Duration::from_secs(2)))
             .build();
         let start = Instant::now();
-        let _ = bash.exec("(sleep 100)").await;
+        let result = bash.exec("(sleep 100)").await;
         let elapsed = start.elapsed();
+        assert!(result.is_err(), "Should return timeout error");
         assert!(
             elapsed < Duration::from_secs(5),
-            "Subshell sleep bypassed timeout: took {:?}",
+            "Subshell sleep should respect timeout: took {:?}",
             elapsed
         );
     }
 
-    /// TM-DOS-057: sleep in pipeline ignores timeout.
+    /// TM-DOS-057: sleep in pipeline respects execution timeout.
     #[tokio::test]
-    #[ignore] // FINDING: timeout bypass — runs for 60s+
-    async fn pipeline_sleep_bypasses_timeout() {
+    async fn pipeline_sleep_respects_timeout() {
         let mut bash = Bash::builder()
             .limits(ExecutionLimits::new().timeout(Duration::from_secs(2)))
             .build();
         let start = Instant::now();
-        let _ = bash.exec("echo x | sleep 100").await;
+        let result = bash.exec("echo x | sleep 100").await;
         let elapsed = start.elapsed();
+        assert!(result.is_err(), "Should return timeout error");
         assert!(
             elapsed < Duration::from_secs(5),
-            "Pipeline sleep bypassed timeout: took {:?}",
+            "Pipeline sleep should respect timeout: took {:?}",
             elapsed
         );
     }
 
-    /// TM-DOS-057: sleep in background + wait ignores timeout.
+    /// TM-DOS-057: sleep in background + wait respects execution timeout.
     #[tokio::test]
-    #[ignore] // FINDING: timeout bypass — runs for 60s+
-    async fn background_sleep_wait_bypasses_timeout() {
+    async fn background_sleep_wait_respects_timeout() {
         let mut bash = Bash::builder()
             .limits(ExecutionLimits::new().timeout(Duration::from_secs(2)))
             .build();
         let start = Instant::now();
-        let _ = bash.exec("sleep 100 &\nwait").await;
+        let result = bash.exec("sleep 100 &\nwait").await;
         let elapsed = start.elapsed();
+        assert!(result.is_err(), "Should return timeout error");
         assert!(
             elapsed < Duration::from_secs(5),
-            "Background sleep+wait bypassed timeout: took {:?}",
+            "Background sleep+wait should respect timeout: took {:?}",
             elapsed
         );
     }
 
-    /// TM-DOS-057: timeout builtin overrides execution timeout.
+    /// TM-DOS-057: timeout builtin cannot override execution timeout.
     #[tokio::test]
-    #[ignore] // FINDING: timeout bypass — runs for 60s+
-    async fn timeout_builtin_overrides_execution_timeout() {
+    async fn timeout_builtin_cannot_override_execution_timeout() {
         let mut bash = Bash::builder()
             .limits(ExecutionLimits::new().timeout(Duration::from_secs(3)))
             .build();
         let start = Instant::now();
-        let _ = bash.exec("timeout 3600 sleep 3600").await;
+        let result = bash.exec("timeout 3600 sleep 3600").await;
         let elapsed = start.elapsed();
+        assert!(result.is_err(), "Should return timeout error");
         assert!(
             elapsed < Duration::from_secs(6),
-            "timeout builtin overrode execution timeout: {:?}",
+            "timeout builtin should not override execution timeout: {:?}",
             elapsed
         );
     }
 
-    /// TM-DOS-057: even a direct `sleep 100` ignores the 2s execution timeout.
+    /// TM-DOS-057: direct sleep respects execution timeout.
     #[tokio::test]
-    #[ignore] // FINDING: direct sleep also bypasses timeout
-    async fn direct_sleep_bypasses_timeout() {
+    async fn direct_sleep_respects_timeout() {
         let mut bash = Bash::builder()
             .limits(ExecutionLimits::new().timeout(Duration::from_secs(2)))
             .build();
         let start = Instant::now();
-        let _ = bash.exec("sleep 100").await;
+        let result = bash.exec("sleep 100").await;
         let elapsed = start.elapsed();
+        assert!(result.is_err(), "Should return timeout error");
         assert!(
             elapsed < Duration::from_secs(5),
-            "Direct sleep bypassed timeout: took {:?}",
+            "Direct sleep should respect timeout: took {:?}",
             elapsed
         );
     }
