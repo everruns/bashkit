@@ -282,6 +282,50 @@ The `FileSystem` trait requires 15 async methods and offers 4 optional ones. Met
 
 ---
 
+## 17. Git Builtin: 20+ Identical Error Wrapping Lines
+
+**Severity: LOW-MEDIUM | Type: Boilerplate Duplication**
+
+`builtins/git.rs` repeats `Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128))` over 20 times — one per git subcommand dispatch. A single `fn git_error(e: impl Display) -> Result<ExecResult>` helper would eliminate this.
+
+---
+
+## 18. Manual Arg Parsing: 63 Index-Tracking Loops Across Builtins
+
+**Severity: LOW-MEDIUM | Type: Missing Utility / Duplication**
+
+17 builtins implement their own `parse_*_args()` function, all following the same manual-index pattern:
+```rust
+let mut i = 0;
+while i < args.len() {
+    match args[i].as_str() { ... }
+    i += 1;
+}
+```
+
+This appears 63 times across builtins instead of using iterators or a shared arg-parsing helper. Some builtins use `resolve_path()` for path resolution, others duplicate the manual `if file.starts_with('/') { PathBuf::from(file) } else { cwd.join(file) }` check inline.
+
+---
+
+## 19. Repeated File-Read-to-String Pattern (63 occurrences)
+
+**Severity: LOW | Type: Missing Utility**
+
+Nearly every file-reading builtin repeats:
+```rust
+match ctx.fs.read_file(&path).await {
+    Ok(content) => {
+        let text = String::from_utf8_lossy(&content);
+        // ...
+    }
+    Err(e) => Ok(ExecResult::err(format!("cmd: {}: {}\n", file, e), 1)),
+}
+```
+
+A shared helper like `async fn read_text_file(fs, path, cmd_name) -> Result<String, ExecResult>` would eliminate boilerplate across 55+ builtins.
+
+---
+
 ## Summary by Priority
 
 | # | Issue | Severity | Type | Effort |
@@ -302,6 +346,9 @@ The `FileSystem` trait requires 15 async methods and offers 4 optional ones. Met
 | 14 | 7 monster functions (250-539 lines each) | MEDIUM | Accumulated complexity | Large |
 | 15 | Redundant Error enum variants (9 where 3 suffice) | LOW | Over-engineering | Small |
 | 16 | FileSystem trait too broad (19 methods) | LOW | Over-engineering | Medium |
+| 17 | Git builtin: 20+ identical error wrapping lines | LOW-MED | Boilerplate | Trivial |
+| 18 | 63 manual arg-parsing index loops | LOW-MED | Missing utility | Medium |
+| 19 | 63 repeated file-read-to-string patterns | LOW | Missing utility | Small |
 
 ### Root Cause Pattern
 
