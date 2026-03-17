@@ -5802,6 +5802,13 @@ impl Interpreter {
                 self.variables.remove(&format!("_NAMEREF_{}", arg));
             } else {
                 let resolved = self.resolve_nameref(arg).to_string();
+                // THREAT[TM-INJ-019]: Refuse to unset readonly variables
+                if self
+                    .variables
+                    .contains_key(&format!("_READONLY_{}", resolved))
+                {
+                    continue;
+                }
                 self.variables.remove(&resolved);
                 self.arrays.remove(&resolved);
                 self.assoc_arrays.remove(&resolved);
@@ -6648,6 +6655,14 @@ impl Interpreter {
 
                 // THREAT[TM-INJ-012]: Block internal variable prefix injection via declare
                 if is_internal_variable(var_name) {
+                    continue;
+                }
+
+                // THREAT[TM-INJ-020]: Refuse to overwrite readonly variables
+                if self
+                    .variables
+                    .contains_key(&format!("_READONLY_{}", var_name))
+                {
                     continue;
                 }
 
@@ -8955,6 +8970,13 @@ impl Interpreter {
         }
         // Resolve nameref: if `name` is a nameref, assign to the target instead
         let resolved = self.resolve_nameref(&name).to_string();
+        // THREAT[TM-INJ-019/020/021]: Block assignment to readonly variables
+        if self
+            .variables
+            .contains_key(&format!("_READONLY_{}", resolved))
+        {
+            return;
+        }
         // Apply integer attribute (declare -i): evaluate as arithmetic
         let value = if self
             .variables
