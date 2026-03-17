@@ -26,7 +26,7 @@ mod runners;
 
 use cases::BenchCase;
 use runners::{
-    BashRunner, BashkitCliRunner, BashkitJsRunner, BashkitPyRunner, BashkitRunner,
+    BashRunner, BashkitCliRunner, BashkitJsRunner, BashkitPyRunner, BashkitRunner, GoshRunner,
     JustBashInprocRunner, JustBashRunner, Runner,
 };
 
@@ -45,7 +45,7 @@ struct Args {
     #[arg(long)]
     moniker: Option<String>,
 
-    /// Runners to use (comma-separated: bashkit,bashkit-cli,bashkit-js,bashkit-py,bash,just-bash,just-bash-inproc)
+    /// Runners to use (comma-separated: bashkit,bashkit-cli,bashkit-js,bashkit-py,bash,gosh,just-bash,just-bash-inproc)
     #[arg(long, default_value = "bashkit,bash")]
     runners: String,
 
@@ -260,6 +260,7 @@ async fn main() -> Result<()> {
             "bashkit-js" => BashkitJsRunner::create().await,
             "bashkit-py" => BashkitPyRunner::create().await,
             "bash" => BashRunner::create().await,
+            "gosh" => GoshRunner::create().await,
             "just-bash" => JustBashRunner::create().await,
             "just-bash-inproc" => JustBashInprocRunner::create().await,
             _ => {

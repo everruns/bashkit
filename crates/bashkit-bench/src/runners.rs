@@ -25,6 +25,7 @@ pub enum Runner {
     BashkitJs(PersistentChild),
     BashkitPy(PersistentChild),
     NativeBash(String),
+    Gosh(String),
     JustBash(String),
     JustBashInproc(PersistentChild),
 }
@@ -37,6 +38,7 @@ impl Runner {
             Runner::BashkitJs(_) => "bashkit-js",
             Runner::BashkitPy(_) => "bashkit-py",
             Runner::NativeBash(_) => "bash",
+            Runner::Gosh(_) => "gosh",
             Runner::JustBash(_) => "just-bash",
             Runner::JustBashInproc(_) => "just-bash-inproc",
         }
@@ -49,6 +51,7 @@ impl Runner {
             Runner::BashkitJs(child) => child.run(script).await,
             Runner::BashkitPy(child) => child.run(script).await,
             Runner::NativeBash(path) => run_subprocess(path, &["-c"], script).await,
+            Runner::Gosh(path) => run_subprocess(path, &["-c"], script).await,
             Runner::JustBash(path) => run_just_bash_subprocess(path, script).await,
             Runner::JustBashInproc(child) => child.run(script).await,
         }
@@ -174,6 +177,46 @@ async fn which_bash() -> Result<String> {
     }
 
     anyhow::bail!("bash not found")
+}
+
+// === Gosh - Go shell interpreter (out-of-process) ===
+
+pub struct GoshRunner;
+
+impl GoshRunner {
+    pub async fn create() -> Result<Runner> {
+        let path = which_gosh().await?;
+        Ok(Runner::Gosh(path))
+    }
+}
+
+async fn which_gosh() -> Result<String> {
+    // Try GOPATH/bin
+    if let Ok(gopath) = std::env::var("GOPATH") {
+        let p = PathBuf::from(&gopath).join("bin/gosh");
+        if p.exists() {
+            return Ok(p.to_string_lossy().to_string());
+        }
+    }
+
+    // Try ~/go/bin (default GOPATH)
+    if let Ok(home) = std::env::var("HOME") {
+        let p = PathBuf::from(&home).join("go/bin/gosh");
+        if p.exists() {
+            return Ok(p.to_string_lossy().to_string());
+        }
+    }
+
+    // Try PATH
+    let output = Command::new("which").arg("gosh").output().await?;
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Ok(path);
+        }
+    }
+
+    anyhow::bail!("gosh not found (install via: go install mvdan.cc/sh/v3/cmd/gosh@latest)")
 }
 
 // === Just-bash (out-of-process) ===
