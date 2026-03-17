@@ -323,6 +323,16 @@ pub trait FileSystem: Send + Sync {
     fn limits(&self) -> FsLimits {
         FsLimits::unlimited()
     }
+
+    /// Returns a reference to this filesystem as a [`SearchCapable`](super::SearchCapable)
+    /// implementation, if supported.
+    ///
+    /// Builtins like `grep` call this to check for optimized search support.
+    /// Returns `None` by default — override in implementations that provide
+    /// indexed search.
+    fn as_search_capable(&self) -> Option<&dyn super::SearchCapable> {
+        None
+    }
 }
 
 /// File or directory metadata.
