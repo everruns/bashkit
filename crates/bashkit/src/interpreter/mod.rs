@@ -905,6 +905,17 @@ impl Interpreter {
             .check_session_limits(&self.session_limits)
             .map_err(|e| crate::error::Error::Execution(e.to_string()))?;
 
+        self.execute_script_body(script, true).await
+    }
+
+    /// Inner script execution — runs commands without resetting counters.
+    /// Used by `execute_source` to preserve function/source depth tracking.
+    /// `run_exit_trap`: only the top-level `execute` runs the EXIT trap.
+    async fn execute_script_body(
+        &mut self,
+        script: &Script,
+        run_exit_trap: bool,
+    ) -> Result<ExecResult> {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
@@ -978,8 +989,10 @@ impl Interpreter {
             }
         }
 
-        // Run EXIT trap if registered
-        if let Some(trap_cmd) = self.traps.get("EXIT").cloned() {
+        // Run EXIT trap if registered (only for top-level execute)
+        if run_exit_trap
+            && let Some(trap_cmd) = self.traps.get("EXIT").cloned()
+        {
             // THREAT[TM-DOS-030]: Propagate interpreter parser limits
             if let Ok(trap_script) = Parser::with_limits(
                 &trap_cmd,
@@ -989,9 +1002,14 @@ impl Interpreter {
             .parse()
             {
                 let emit_before = self.output_emit_count;
-                if let Ok(trap_result) = self.execute_command_sequence(&trap_script.commands).await
+                if let Ok(trap_result) =
+                    self.execute_command_sequence(&trap_script.commands).await
                 {
-                    self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
+                    self.maybe_emit_output(
+                        &trap_result.stdout,
+                        &trap_result.stderr,
+                        emit_before,
+                    );
                     stdout.push_str(&trap_result.stdout);
                     stderr.push_str(&trap_result.stderr);
                 }
@@ -5136,8 +5154,22 @@ impl Interpreter {
             None
         };
 
-        // Execute the script commands in the current shell context
-        let mut result = self.execute(&script).await?;
+        // THREAT[TM-DOS-056]: Check source depth (uses function depth limit)
+        self.counters.push_function(&self.limits).map_err(|_| {
+            crate::error::Error::Execution(format!(
+                "source: {}: maximum source depth exceeded",
+                filename
+            ))
+        })?;
+
+        // Execute the script commands in the current shell context.
+        // Use execute_script_body (not execute) to preserve depth counters.
+        let exec_result = self.execute_script_body(&script, false).await;
+
+        // Pop source depth (always, even on error)
+        self.counters.pop_function();
+
+        let mut result = exec_result?;
 
         // Restore positional parameters
         if has_source_args {
