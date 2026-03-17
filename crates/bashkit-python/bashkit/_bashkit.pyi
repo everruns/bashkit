@@ -1,6 +1,16 @@
 """Type stubs for bashkit native module."""
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any, Protocol
+
+class ExternalHandler(Protocol):
+    """Protocol for the external function handler passed to Bash.
+
+    Called when Monty Python code invokes a registered external function.
+    Must be an async callable with this exact signature.
+    """
+
+    async def __call__(self, fn_name: str, args: list[Any], kwargs: dict[str, Any]) -> Any: ...
 
 class Bash:
     """Core bash interpreter with virtual filesystem.
@@ -8,11 +18,21 @@ class Bash:
     State persists between calls — files created in one execute() are
     available in subsequent calls.
 
-    Example:
+    Example (basic):
         >>> bash = Bash()
         >>> result = await bash.execute("echo 'Hello!'")
         >>> print(result.stdout)
         Hello!
+
+    Example (Python execution with external function handler):
+        >>> async def handler(fn_name: str, args: list, kwargs: dict) -> Any:
+        ...     return await tool_executor.call(fn_name, kwargs)
+        >>> bash = Bash(
+        ...     python=True,
+        ...     external_functions=["api_request"],
+        ...     external_handler=handler,
+        ... )
+        >>> result = await bash.execute("python3 -c 'print(api_request(url=\"/data\"))'")
     """
 
     def __init__(
@@ -21,9 +41,13 @@ class Bash:
         hostname: str | None = None,
         max_commands: int | None = None,
         max_loop_iterations: int | None = None,
+        python: bool = False,
+        external_functions: list[str] | None = None,
+        external_handler: ExternalHandler | None = None,
     ) -> None: ...
     async def execute(self, commands: str) -> ExecResult: ...
     def execute_sync(self, commands: str) -> ExecResult: ...
+    def cancel(self) -> None: ...
     def reset(self) -> None: ...
 
 class ExecResult:

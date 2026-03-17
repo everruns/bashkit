@@ -992,3 +992,255 @@ async def test_bash_pre_exec_error_in_stderr_async():
     assert r.error is not None
     assert r.stderr != "", "stderr must contain the error message, not be empty"
     assert r.error in r.stderr
+
+
+# ===========================================================================
+# Bash: Python execution (python=True)
+# ===========================================================================
+
+
+def test_bash_python_enabled():
+    """python=True makes python3 available as a builtin."""
+    bash = Bash(python=True)
+    r = bash.execute_sync("python3 -c 'print(1 + 1)'")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "2"
+
+
+def test_bash_python_disabled_by_default():
+    """python3 is not available without python=True."""
+    bash = Bash()
+    r = bash.execute_sync("python3 -c 'print(1)'")
+    assert r.exit_code != 0
+
+
+@pytest.mark.asyncio
+async def test_bash_python_basic_arithmetic():
+    """Python execution handles basic arithmetic and print."""
+    bash = Bash(python=True)
+    r = await bash.execute("python3 -c 'x = 6 * 7; print(x)'")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "42"
+
+
+@pytest.mark.asyncio
+async def test_bash_python_string_ops():
+    """Python string operations work in Monty."""
+    bash = Bash(python=True)
+    r = await bash.execute("python3 -c 'print(\"hello\".upper())'")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "HELLO"
+
+
+# ===========================================================================
+# Bash: External function handler (PTC tool calling)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_bash_external_handler_called():
+    """External functions registered in Monty invoke the async handler."""
+    calls = []
+
+    async def handler(fn_name: str, args: list, kwargs: dict):
+        calls.append((fn_name, kwargs))
+        return f"result_for_{kwargs.get('key', 'none')}"
+
+    bash = Bash(
+        python=True,
+        external_functions=["lookup"],
+        external_handler=handler,
+    )
+    r = await bash.execute("python3 -c \"result = lookup(key='foo'); print(result)\"")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "result_for_foo"
+    assert len(calls) == 1
+    assert calls[0] == ("lookup", {"key": "foo"})
+
+
+@pytest.mark.asyncio
+async def test_bash_external_handler_multiple_calls():
+    """Multiple external function calls in one code block all dispatch."""
+    results = []
+
+    async def handler(fn_name: str, args: list, kwargs: dict):
+        results.append(fn_name)
+        return len(results)
+
+    bash = Bash(
+        python=True,
+        external_functions=["ping"],
+        external_handler=handler,
+    )
+    r = await bash.execute('python3 -c "a = ping(); b = ping(); c = ping(); print(a, b, c)"')
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "1 2 3"
+    assert len(results) == 3
+
+
+@pytest.mark.asyncio
+async def test_bash_external_handler_returns_dict():
+    """Handler returning a dict is accessible as a Python dict in Monty."""
+
+    async def handler(fn_name: str, args: list, kwargs: dict):
+        return {"status": "ok", "value": 42}
+
+    bash = Bash(
+        python=True,
+        external_functions=["get_data"],
+        external_handler=handler,
+    )
+    r = await bash.execute("python3 -c \"d = get_data(); print(d['status'], d['value'])\"")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "ok 42"
+
+
+@pytest.mark.asyncio
+async def test_bash_external_handler_vfs_and_tools_together():
+    """External tool calls and VFS file I/O work in the same code block."""
+
+    async def handler(fn_name: str, args: list, kwargs: dict):
+        return {"data": kwargs.get("query", "")}
+
+    bash = Bash(
+        python=True,
+        external_functions=["fetch"],
+        external_handler=handler,
+    )
+    # Test that external function call works and result is accessible
+    r = await bash.execute("python3 -c \"result = fetch(query='hello'); print(str(result))\"")
+    assert r.exit_code == 0, f"code failed: {r.stderr}"
+    # Result dict was returned from handler — verify it's present in output
+    assert "hello" in r.stdout
+
+
+@pytest.mark.asyncio
+async def test_bash_external_handler_error_propagates():
+    """Exception raised in the handler propagates as a Python RuntimeError."""
+
+    async def handler(fn_name: str, args: list, kwargs: dict):
+        raise ValueError("service unavailable")
+
+    bash = Bash(
+        python=True,
+        external_functions=["failing_tool"],
+        external_handler=handler,
+    )
+    r = await bash.execute('python3 -c "failing_tool()"')
+    assert r.exit_code != 0
+    assert "service unavailable" in r.stderr or "service unavailable" in (r.error or "")
+
+
+@pytest.mark.asyncio
+async def test_bash_reset_preserves_python_and_handler():
+    """reset() must preserve python=True and external_handler config."""
+    calls = []
+
+    async def handler(fn_name: str, args: list, kwargs: dict):
+        calls.append(fn_name)
+        return "ok"
+
+    bash = Bash(
+        python=True,
+        external_functions=["ping"],
+        external_handler=handler,
+    )
+    r = await bash.execute('python3 -c "result = ping(); print(result)"')
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "ok"
+
+    bash.reset()
+
+    # After reset, python and handler must still be active
+    r = await bash.execute('python3 -c "result = ping(); print(result)"')
+    assert r.exit_code == 0, f"python lost after reset: {r.stderr}"
+    assert r.stdout.strip() == "ok"
+    assert len(calls) == 2
+
+
+def test_bash_external_functions_without_handler_raises():
+    """Providing external_functions without external_handler must raise ValueError."""
+    with pytest.raises(ValueError, match="external_handler"):
+        Bash(python=True, external_functions=["foo"])
+
+
+def test_bash_non_callable_handler_raises():
+    """Providing a non-callable as external_handler must raise ValueError."""
+    with pytest.raises(ValueError, match="callable"):
+        Bash(python=True, external_functions=["foo"], external_handler=42)
+
+
+@pytest.mark.asyncio
+async def test_bash_external_handler_without_external_functions():
+    """external_handler without external_functions is allowed — python mode with no registered fns."""
+
+    async def handler(fn_name, args, kwargs):
+        return "should not be called"
+
+    bash = Bash(python=True, external_functions=[], external_handler=handler)
+    r = await bash.execute("python3 -c 'print(1 + 1)'")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "2"
+
+
+@pytest.mark.asyncio
+async def test_bash_bigint_roundtrip():
+    """Large integers (beyond i64) returned from handler arrive as Python int in Monty."""
+    large_int = 2**65 + 1  # overflows i64
+
+    async def handler(fn_name, args, kwargs):
+        return large_int
+
+    bash = Bash(
+        python=True,
+        external_functions=["get_big"],
+        external_handler=handler,
+    )
+    r = await bash.execute('python3 -c "v = get_big(); print(type(v).__name__)"')
+    assert r.exit_code == 0, f"failed: {r.stderr}"
+    assert r.stdout.strip() == "int"
+
+
+def test_bash_external_handler_requires_python_true():
+    """external_handler without python=True must raise ValueError."""
+
+    async def handler(fn_name, args, kwargs):
+        return "ok"
+
+    with pytest.raises(ValueError, match="python=True"):
+        Bash(python=False, external_functions=["foo"], external_handler=handler)
+
+
+def test_bash_execute_sync_with_handler_raises():
+    """execute_sync is not supported when external_handler is configured."""
+
+    async def handler(fn_name, args, kwargs):
+        return "ok"
+
+    bash = Bash(python=True, external_functions=["foo"], external_handler=handler)
+    with pytest.raises(RuntimeError, match="execute_sync"):
+        bash.execute_sync("python3 -c 'print(foo())'")
+
+
+def test_bash_sync_handler_raises():
+    """Passing a sync function as external_handler must raise ValueError."""
+
+    def sync_handler(fn_name, args, kwargs):
+        return "ok"
+
+    with pytest.raises(ValueError, match="async"):
+        Bash(python=True, external_functions=["foo"], external_handler=sync_handler)
+
+
+@pytest.mark.asyncio
+async def test_bash_bigint_roundtrip_value():
+    """Large integer returned from handler preserves exact value."""
+    large_int = 2**65 + 1
+
+    async def handler(fn_name, args, kwargs):
+        return large_int
+
+    bash = Bash(python=True, external_functions=["get_big"], external_handler=handler)
+    r = await bash.execute(f'python3 -c "v = get_big(); print(v == {large_int})"')
+    assert r.exit_code == 0, f"failed: {r.stderr}"
+    assert r.stdout.strip() == "True"

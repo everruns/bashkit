@@ -17,7 +17,7 @@ doc = false  # Python extension, no Rust docs needed
 
 [dependencies]
 # Bashkit core
-bashkit = { path = "../bashkit", features = ["scripted_tool"] }
+bashkit = { path = "../bashkit", features = ["scripted_tool", "python"] }
 
 # PyO3 native extension
 pyo3 = { workspace = true }
@@ -28,3 +28,6 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 # Serialization
 serde_json = { workspace = true }
+
+# Big-integer support for py_to_monty BigInt extraction
+num-bigint = "=0.4.6"  # must match the version pulled in by bashkit core (see Cargo.lock)

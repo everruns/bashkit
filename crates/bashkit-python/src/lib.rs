@@ -7,12 +7,13 @@
 
 use bashkit::tool::VERSION;
 use bashkit::{
-    Bash, BashTool as RustBashTool, ExecutionLimits, ScriptedTool as RustScriptedTool, Tool,
+    Bash, BashTool as RustBashTool, ExcType, ExecutionLimits, ExtFunctionResult, MontyException,
+    MontyObject, PythonExternalFnHandler, PythonLimits, ScriptedTool as RustScriptedTool, Tool,
     ToolArgs, ToolDef, ToolRequest,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyBytes, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PySet, PyTuple};
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -189,6 +190,78 @@ impl ExecResult {
 // Bash — core interpreter
 // ============================================================================
 
+/// Build a `PythonExternalFnHandler` from a Python async callable.
+///
+/// The handler converts MontyObject args/kwargs to Python objects, calls the
+/// async handler coroutine, awaits it, and converts the result back.
+fn make_external_handler(py_handler: Py<PyAny>) -> PythonExternalFnHandler {
+    Arc::new(move |fn_name, args, kwargs| {
+        let py_handler = Python::attach(|py| py_handler.clone_ref(py));
+        Box::pin(async move {
+            let fut = Python::attach(|py| {
+                let py_args = args
+                    .iter()
+                    .map(|o| monty_to_py(py, o))
+                    .collect::<PyResult<Vec<_>>>()?;
+                let py_args_list = PyList::new(py, &py_args)?;
+                let py_kwargs = PyDict::new(py);
+                for (k, v) in &kwargs {
+                    py_kwargs.set_item(monty_to_py(py, k)?, monty_to_py(py, v)?)?;
+                }
+                let coro = py_handler.call1(py, (fn_name, py_args_list, py_kwargs))?;
+                pyo3_async_runtimes::tokio::into_future(coro.into_bound(py))
+            });
+            match fut {
+                Err(e) => ExtFunctionResult::Error(MontyException::new(
+                    ExcType::RuntimeError,
+                    Some(e.to_string()),
+                )),
+                Ok(awaitable) => match awaitable.await {
+                    Err(e) => ExtFunctionResult::Error(MontyException::new(
+                        ExcType::RuntimeError,
+                        Some(e.to_string()),
+                    )),
+                    Ok(py_result) => {
+                        Python::attach(|py| match py_to_monty(py, py_result.bind(py)) {
+                            Ok(v) => ExtFunctionResult::Return(v),
+                            Err(e) => ExtFunctionResult::Error(MontyException::new(
+                                ExcType::RuntimeError,
+                                Some(e.to_string()),
+                            )),
+                        })
+                    }
+                },
+            }
+        })
+    })
+}
+
+/// Apply python/external_handler configuration to a `BashBuilder`.
+///
+/// Centralises the logic shared between `new()` and `reset()`.
+fn apply_python_config(
+    mut builder: bashkit::BashBuilder,
+    python: bool,
+    fn_names: Vec<String>,
+    handler: Option<Py<PyAny>>,
+) -> bashkit::BashBuilder {
+    // By construction, handler.is_some() implies python=true (validated in new()).
+    match (python, handler) {
+        (true, Some(h)) => {
+            builder = builder.python_with_external_handler(
+                PythonLimits::default(),
+                fn_names,
+                make_external_handler(h),
+            );
+        }
+        (true, None) => {
+            builder = builder.python();
+        }
+        (false, _) => {}
+    }
+    builder
+}
+
 /// Core bash interpreter with virtual filesystem.
 ///
 /// State persists between calls — files created in one `execute()` are
@@ -212,6 +285,12 @@ pub struct PyBash {
     cancelled: Arc<AtomicBool>,
     username: Option<String>,
     hostname: Option<String>,
+    /// Whether Monty Python execution is enabled (`python`/`python3` builtins).
+    python: bool,
+    /// External function names callable from Monty code via the handler.
+    external_functions: Vec<String>,
+    /// Async Python callable invoked when Monty calls an external function.
+    external_handler: Option<Py<PyAny>>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
 }
@@ -219,12 +298,25 @@ pub struct PyBash {
 #[pymethods]
 impl PyBash {
     #[new]
-    #[pyo3(signature = (username=None, hostname=None, max_commands=None, max_loop_iterations=None))]
+    #[pyo3(signature = (
+        username=None,
+        hostname=None,
+        max_commands=None,
+        max_loop_iterations=None,
+        python=false,
+        external_functions=None,
+        external_handler=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
+        py: Python<'_>,
         username: Option<String>,
         hostname: Option<String>,
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
+        python: bool,
+        external_functions: Option<Vec<String>>,
+        external_handler: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
         let mut builder = Bash::builder();
 
@@ -244,6 +336,38 @@ impl PyBash {
         }
         builder = builder.limits(limits);
 
+        let fn_names = external_functions.clone().unwrap_or_default();
+        if !fn_names.is_empty() && external_handler.is_none() {
+            return Err(PyValueError::new_err(
+                "external_functions requires external_handler — the list has no effect without a handler",
+            ));
+        }
+        if external_handler.is_some() && !python {
+            return Err(PyValueError::new_err(
+                "external_handler requires python=True",
+            ));
+        }
+        if external_handler
+            .as_ref()
+            .is_some_and(|h| !h.bind(py).is_callable())
+        {
+            return Err(PyValueError::new_err("external_handler must be callable"));
+        }
+        if let Some(ref handler) = external_handler {
+            let is_coro = py
+                .import("inspect")?
+                .getattr("iscoroutinefunction")?
+                .call1((handler.bind(py),))?
+                .extract::<bool>()?;
+            if !is_coro {
+                return Err(PyValueError::new_err(
+                    "external_handler must be an async callable (coroutine function)",
+                ));
+            }
+        }
+        let handler_for_build = external_handler.as_ref().map(|h| h.clone_ref(py));
+        builder = apply_python_config(builder, python, fn_names, handler_for_build);
+
         let bash = builder.build();
         let cancelled = bash.cancellation_token();
 
@@ -258,6 +382,9 @@ impl PyBash {
             cancelled,
             username,
             hostname,
+            python,
+            external_functions: external_functions.unwrap_or_default(),
+            external_handler,
             max_commands,
             max_loop_iterations,
         })
@@ -303,8 +430,18 @@ impl PyBash {
     }
 
     /// Execute commands synchronously (blocking).
+    ///
+    /// Not supported when `external_handler` is configured: the handler is an async
+    /// Python coroutine that requires a running event loop, which is unavailable in
+    /// sync context. Use `execute()` (async) instead.
+    ///
     /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
     fn execute_sync(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
+        if self.external_handler.is_some() {
+            return Err(PyRuntimeError::new_err(
+                "execute_sync is not supported when external_handler is configured — use execute() (async) instead, e.g. asyncio.run(bash.execute(...))",
+            ));
+        }
         let inner = self.inner.clone();
 
         py.detach(|| {
@@ -337,7 +474,8 @@ impl PyBash {
         })
     }
 
-    /// Reset interpreter to fresh state, preserving security configuration.
+    /// Reset interpreter to fresh state, preserving all configuration including
+    /// python mode and external function handler.
     /// Releases GIL before blocking on tokio to prevent deadlock.
     fn reset(&self, py: Python<'_>) -> PyResult<()> {
         let inner = self.inner.clone();
@@ -346,6 +484,10 @@ impl PyBash {
         let hostname = self.hostname.clone();
         let max_commands = self.max_commands;
         let max_loop_iterations = self.max_loop_iterations;
+        let python = self.python;
+        let external_functions = self.external_functions.clone();
+        // Clone handler ref while still holding the GIL (before py.detach).
+        let handler_clone = self.external_handler.as_ref().map(|h| h.clone_ref(py));
 
         py.detach(|| {
             self.rt.block_on(async move {
@@ -365,6 +507,7 @@ impl PyBash {
                     limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
                 }
                 builder = builder.limits(limits);
+                builder = apply_python_config(builder, python, external_functions, handler_clone);
                 *bash = builder.build();
                 Ok(())
             })
@@ -963,4 +1106,143 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ExecResult>()?;
     m.add_function(wrap_pyfunction!(create_langchain_tool_spec, m)?)?;
     Ok(())
+}
+
+// ============================================================================
+// MontyObject <-> Python conversion helpers
+// ============================================================================
+
+fn monty_to_py(py: Python<'_>, obj: &MontyObject) -> PyResult<Py<PyAny>> {
+    match obj {
+        MontyObject::None => Ok(py.None()),
+        MontyObject::Bool(b) => Ok(b.into_pyobject(py)?.to_owned().into_any().unbind()),
+        MontyObject::Int(i) => Ok(i.into_pyobject(py)?.into_any().unbind()),
+        // BigInt: convert to Python int via its decimal string representation.
+        MontyObject::BigInt(b) => {
+            let int_str = b.to_string();
+            let py_int = py.import("builtins")?.getattr("int")?.call1((int_str,))?;
+            Ok(py_int.into_any().unbind())
+        }
+        MontyObject::Float(f) => Ok(f.into_pyobject(py)?.into_any().unbind()),
+        MontyObject::String(s) => Ok(s.into_pyobject(py)?.into_any().unbind()),
+        // Known limitation: Path becomes a plain Python str, not pathlib.Path.
+        MontyObject::Path(s) => Ok(s.into_pyobject(py)?.into_any().unbind()),
+        MontyObject::Bytes(b) => Ok(b.as_slice().into_pyobject(py)?.into_any().unbind()),
+        MontyObject::Tuple(items) => {
+            let py_items = items
+                .iter()
+                .map(|v| monty_to_py(py, v))
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(PyTuple::new(py, &py_items)?.into_any().unbind())
+        }
+        // Known limitation: Set and FrozenSet become PyList — Python sets require
+        // hashable elements which Py<PyAny> cannot guarantee in general.
+        MontyObject::List(items) | MontyObject::Set(items) | MontyObject::FrozenSet(items) => {
+            let py_items = items
+                .iter()
+                .map(|v| monty_to_py(py, v))
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(PyList::new(py, &py_items)?.into_any().unbind())
+        }
+        // NamedTuple: convert to dict mapping field names to values, preserving field names.
+        MontyObject::NamedTuple {
+            field_names,
+            values,
+            ..
+        } => {
+            let dict = PyDict::new(py);
+            for (name, value) in field_names.iter().zip(values.iter()) {
+                dict.set_item(name, monty_to_py(py, value)?)?;
+            }
+            Ok(dict.into_any().unbind())
+        }
+        MontyObject::Dict(dict_pairs) => {
+            let dict = PyDict::new(py);
+            // DictPairs only implements IntoIterator (consuming), so clone is required
+            // to iterate without moving out of the match guard.
+            for (k, v) in dict_pairs.clone() {
+                dict.set_item(monty_to_py(py, &k)?, monty_to_py(py, &v)?)?;
+            }
+            Ok(dict.into_any().unbind())
+        }
+        // All other variants (Exception, Type, Function, etc.) — repr as string.
+        other => Ok(other.py_repr().into_pyobject(py)?.into_any().unbind()),
+    }
+}
+
+// `py` is used directly in `is_instance_of`, `import`, and `cast` calls — not only
+// forwarded in recursive calls — so clippy's "only used in recursion" is a false positive.
+#[allow(clippy::only_used_in_recursion)]
+fn py_to_monty(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<MontyObject> {
+    if obj.is_none() {
+        return Ok(MontyObject::None);
+    }
+    // bool must come before int — bool is a subtype of int in Python
+    if let Ok(b) = obj.extract::<bool>() {
+        return Ok(MontyObject::Bool(b));
+    }
+    if let Ok(i) = obj.extract::<i64>() {
+        return Ok(MontyObject::Int(i));
+    }
+    // Large Python int that overflows i64: convert via decimal string → BigInt.
+    if obj.is_instance_of::<PyInt>() {
+        let s = obj.str()?.extract::<String>()?;
+        let b = s.parse::<num_bigint::BigInt>().map_err(|e| {
+            PyValueError::new_err(format!("failed to parse Python int as BigInt: {e}"))
+        })?;
+        return Ok(MontyObject::BigInt(b));
+    }
+    // Guard f64 with an isinstance check so large Python ints (which widen to f64)
+    // are not incorrectly classified as floats.
+    if obj.is_instance_of::<PyFloat>()
+        && let Ok(f) = obj.extract::<f64>()
+    {
+        return Ok(MontyObject::Float(f));
+    }
+    if let Ok(s) = obj.extract::<String>() {
+        return Ok(MontyObject::String(s));
+    }
+    // Guard bytes with isinstance to avoid ambiguity with str-like objects.
+    if obj.is_instance_of::<PyBytes>()
+        && let Ok(b) = obj.extract::<Vec<u8>>()
+    {
+        return Ok(MontyObject::Bytes(b));
+    }
+    if let Ok(tuple) = obj.cast::<PyTuple>() {
+        let items = tuple
+            .iter()
+            .map(|v| py_to_monty(py, &v))
+            .collect::<PyResult<Vec<_>>>()?;
+        return Ok(MontyObject::Tuple(items));
+    }
+    if let Ok(list) = obj.cast::<PyList>() {
+        let items = list
+            .iter()
+            .map(|v| py_to_monty(py, &v))
+            .collect::<PyResult<Vec<_>>>()?;
+        return Ok(MontyObject::List(items));
+    }
+    if let Ok(dict) = obj.cast::<PyDict>() {
+        let pairs: Vec<(MontyObject, MontyObject)> = dict
+            .iter()
+            .map(|(k, v)| Ok((py_to_monty(py, &k)?, py_to_monty(py, &v)?)))
+            .collect::<PyResult<Vec<_>>>()?;
+        return Ok(MontyObject::dict(pairs));
+    }
+    if let Ok(set) = obj.cast::<PySet>() {
+        let items = set
+            .iter()
+            .map(|v| py_to_monty(py, &v))
+            .collect::<PyResult<Vec<_>>>()?;
+        return Ok(MontyObject::Set(items));
+    }
+    if let Ok(fset) = obj.cast::<PyFrozenSet>() {
+        let items = fset
+            .iter()
+            .map(|v| py_to_monty(py, &v))
+            .collect::<PyResult<Vec<_>>>()?;
+        return Ok(MontyObject::FrozenSet(items));
+    }
+    // Fallback: convert to string via __str__
+    Ok(MontyObject::String(obj.str()?.extract::<String>()?))
 }
