@@ -174,6 +174,9 @@ impl<'a> Lexer<'a> {
                 } else if self.peek_char() == Some('(') {
                     self.advance();
                     Some(Token::ProcessSubIn)
+                } else if self.peek_char() == Some('&') {
+                    self.advance();
+                    Some(Token::DupInput)
                 } else {
                     Some(Token::RedirectIn)
                 }
@@ -354,6 +357,38 @@ impl<'a> Lexer<'a> {
                 self.advance(); // consume digit
                 self.advance(); // consume >
                 return Some(Token::RedirectFd(fd));
+            } else if rest.starts_with("<&") {
+                // N<&M or N<&- - duplicate input fd
+                let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
+                self.advance(); // consume digit
+                self.advance(); // consume <
+                self.advance(); // consume &
+
+                // Read the target fd number or '-'
+                let mut target_str = String::new();
+                while let Some(c) = self.peek_char() {
+                    if c.is_ascii_digit() || c == '-' {
+                        target_str.push(c);
+                        self.advance();
+                        if c == '-' {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                if target_str == "-" {
+                    return Some(Token::DupFdClose(fd));
+                }
+                let target_fd: i32 = target_str.parse().unwrap_or(0);
+                return Some(Token::DupFdIn(fd, target_fd));
+            } else if rest.starts_with('<') && !rest.starts_with("<<") {
+                // N< - input redirect with fd
+                let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
+                self.advance(); // consume digit
+                self.advance(); // consume <
+                return Some(Token::RedirectFdIn(fd));
             }
         }
 

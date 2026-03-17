@@ -104,6 +104,9 @@ pub enum Token {
     /// Duplicate output file descriptor (>&)
     DupOutput,
 
+    /// Duplicate input file descriptor (<&)
+    DupInput,
+
     /// Redirect with file descriptor (e.g., 2>)
     RedirectFd(i32),
 
@@ -112,6 +115,15 @@ pub enum Token {
 
     /// Duplicate fd to another (e.g., 2>&1)
     DupFd(i32, i32),
+
+    /// Duplicate input fd to another (e.g., 4<&0)
+    DupFdIn(i32, i32),
+
+    /// Close fd (e.g., 4<&- or 4>&-)
+    DupFdClose(i32),
+
+    /// Redirect input with file descriptor (e.g., 4<)
+    RedirectFdIn(i32),
 
     /// Lexer error (e.g., unterminated string)
     Error(String),

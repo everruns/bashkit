@@ -4769,6 +4769,38 @@ impl Interpreter {
                 .await;
         }
 
+        // Handle `exec` - applies redirections to current shell
+        if name == "exec" {
+            // exec with no args: apply redirections to the shell context
+            // For input redirects with fd (exec N< file), store content in fd table
+            for redirect in &command.redirects {
+                match redirect.kind {
+                    RedirectKind::Input => {
+                        if let Some(fd) = redirect.fd {
+                            let target_path = self.expand_word(&redirect.target).await?;
+                            let path = self.resolve_path(&target_path);
+                            let content = self.fs.read_file(&path).await?;
+                            let text = String::from_utf8_lossy(&content).to_string();
+                            let lines: Vec<String> =
+                                text.lines().rev().map(|l| l.to_string()).collect();
+                            self.coproc_buffers.insert(fd, lines);
+                        }
+                    }
+                    RedirectKind::DupInput => {
+                        // exec N<&- closes fd N
+                        let target = self.expand_word(&redirect.target).await?;
+                        if target == "-" && let Some(fd) = redirect.fd {
+                            self.coproc_buffers.remove(&fd);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // Also apply output redirections
+            let result = ExecResult::default();
+            return self.apply_redirections(result, &command.redirects).await;
+        }
+
         // Handle `local` specially - must set in call frame locals
         if name == "local" {
             return self.execute_local_builtin(&args, &command.redirects).await;

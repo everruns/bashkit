@@ -852,7 +852,6 @@ a
 ### end
 
 ### coprocess_basic
-### skip: coproc fd array variable COPROC[0] not parseable in redirect context (#669)
 # Coproc basic
 coproc { echo hello; }; read line <&${COPROC[0]}; echo $line
 ### expect

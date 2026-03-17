@@ -448,6 +448,46 @@ impl<'a> Parser<'a> {
                         target: Word::literal(dst_fd.to_string()),
                     });
                 }
+                Some(tokens::Token::DupInput) => {
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: Some(0),
+                            kind: RedirectKind::DupInput,
+                            target,
+                        });
+                    }
+                }
+                Some(tokens::Token::DupFdIn(src_fd, dst_fd)) => {
+                    let src_fd = *src_fd;
+                    let dst_fd = *dst_fd;
+                    self.advance();
+                    redirects.push(Redirect {
+                        fd: Some(src_fd),
+                        kind: RedirectKind::DupInput,
+                        target: Word::literal(dst_fd.to_string()),
+                    });
+                }
+                Some(tokens::Token::DupFdClose(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    redirects.push(Redirect {
+                        fd: Some(fd),
+                        kind: RedirectKind::DupInput,
+                        target: Word::literal("-"),
+                    });
+                }
+                Some(tokens::Token::RedirectFdIn(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: Some(fd),
+                            kind: RedirectKind::Input,
+                            target,
+                        });
+                    }
+                }
                 Some(tokens::Token::HereString) => {
                     self.advance();
                     if let Ok(target) = self.expect_word() {
@@ -1246,9 +1286,15 @@ impl<'a> Parser<'a> {
         self.skip_newlines()?;
 
         let mut commands = Vec::new();
-        while !matches!(self.current_token, Some(tokens::Token::RightParen) | None) {
+        while !matches!(
+            self.current_token,
+            Some(tokens::Token::RightParen) | Some(tokens::Token::DoubleRightParen) | None
+        ) {
             self.skip_newlines()?;
-            if matches!(self.current_token, Some(tokens::Token::RightParen)) {
+            if matches!(
+                self.current_token,
+                Some(tokens::Token::RightParen) | Some(tokens::Token::DoubleRightParen)
+            ) {
                 break;
             }
             if let Some(cmd) = self.parse_command_list()? {
@@ -1256,11 +1302,15 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
+        if matches!(self.current_token, Some(tokens::Token::DoubleRightParen)) {
+            // `))` at end of nested subshells: consume as single `)`, leave `)` for parent
+            self.current_token = Some(tokens::Token::RightParen);
+        } else if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
             self.pop_depth();
             return Err(Error::Parse("expected ')' to close subshell".to_string()));
+        } else {
+            self.advance(); // consume ')'
         }
-        self.advance(); // consume ')'
 
         self.pop_depth();
         Ok(CompoundCommand::Subshell(commands))
@@ -2069,6 +2119,46 @@ impl<'a> Parser<'a> {
                                     });
                                 }
                             }
+                            tokens::Token::DupInput => {
+                                self.advance();
+                                if let Ok(target) = self.expect_word() {
+                                    redirects.push(Redirect {
+                                        fd: Some(0),
+                                        kind: RedirectKind::DupInput,
+                                        target,
+                                    });
+                                }
+                            }
+                            tokens::Token::DupFdIn(src_fd, dst_fd) => {
+                                let src_fd = *src_fd;
+                                let dst_fd = *dst_fd;
+                                self.advance();
+                                redirects.push(Redirect {
+                                    fd: Some(src_fd),
+                                    kind: RedirectKind::DupInput,
+                                    target: Word::literal(dst_fd.to_string()),
+                                });
+                            }
+                            tokens::Token::DupFdClose(fd) => {
+                                let fd = *fd;
+                                self.advance();
+                                redirects.push(Redirect {
+                                    fd: Some(fd),
+                                    kind: RedirectKind::DupInput,
+                                    target: Word::literal("-"),
+                                });
+                            }
+                            tokens::Token::RedirectFdIn(fd) => {
+                                let fd = *fd;
+                                self.advance();
+                                if let Ok(target) = self.expect_word() {
+                                    redirects.push(Redirect {
+                                        fd: Some(fd),
+                                        kind: RedirectKind::Input,
+                                        target,
+                                    });
+                                }
+                            }
                             _ => break,
                         }
                     }
@@ -2130,6 +2220,48 @@ impl<'a> Parser<'a> {
                         fd: Some(src_fd),
                         kind: RedirectKind::DupOutput,
                         target: Word::literal(dst_fd.to_string()),
+                    });
+                }
+                // <& - duplicate input fd
+                Some(tokens::Token::DupInput) => {
+                    self.advance();
+                    let target = self.expect_word()?;
+                    redirects.push(Redirect {
+                        fd: Some(0),
+                        kind: RedirectKind::DupInput,
+                        target,
+                    });
+                }
+                // N<&M - duplicate input fd
+                Some(tokens::Token::DupFdIn(src_fd, dst_fd)) => {
+                    let src_fd = *src_fd;
+                    let dst_fd = *dst_fd;
+                    self.advance();
+                    redirects.push(Redirect {
+                        fd: Some(src_fd),
+                        kind: RedirectKind::DupInput,
+                        target: Word::literal(dst_fd.to_string()),
+                    });
+                }
+                // N<&- - close fd
+                Some(tokens::Token::DupFdClose(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    redirects.push(Redirect {
+                        fd: Some(fd),
+                        kind: RedirectKind::DupInput,
+                        target: Word::literal("-"),
+                    });
+                }
+                // N< - input redirect with fd
+                Some(tokens::Token::RedirectFdIn(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    let target = self.expect_word()?;
+                    redirects.push(Redirect {
+                        fd: Some(fd),
+                        kind: RedirectKind::Input,
+                        target,
                     });
                 }
                 // { and } as arguments (not in command position) are literal words
