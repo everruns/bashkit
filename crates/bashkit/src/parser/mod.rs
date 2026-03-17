@@ -361,12 +361,17 @@ impl<'a> Parser<'a> {
         let mut redirects = Vec::new();
         loop {
             match &self.current_token {
-                Some(tokens::Token::RedirectOut) => {
+                Some(tokens::Token::RedirectOut) | Some(tokens::Token::Clobber) => {
+                    let kind = if matches!(&self.current_token, Some(tokens::Token::Clobber)) {
+                        RedirectKind::Clobber
+                    } else {
+                        RedirectKind::Output
+                    };
                     self.advance();
                     if let Ok(target) = self.expect_word() {
                         redirects.push(Redirect {
                             fd: None,
-                            kind: RedirectKind::Output,
+                            kind,
                             target,
                         });
                     }
@@ -1920,12 +1925,17 @@ impl<'a> Parser<'a> {
                     words.push(word);
                     self.advance();
                 }
-                Some(tokens::Token::RedirectOut) => {
+                Some(tokens::Token::RedirectOut) | Some(tokens::Token::Clobber) => {
+                    let kind = if matches!(&self.current_token, Some(tokens::Token::Clobber)) {
+                        RedirectKind::Clobber
+                    } else {
+                        RedirectKind::Output
+                    };
                     self.advance();
                     let target = self.expect_word()?;
                     redirects.push(Redirect {
                         fd: None,
-                        kind: RedirectKind::Output,
+                        kind,
                         target,
                     });
                 }
@@ -2020,12 +2030,20 @@ impl<'a> Parser<'a> {
                     // out to pipeline/list parsers.
                     while let Some(tok) = &self.current_token {
                         match tok {
-                            tokens::Token::RedirectOut => {
+                            tokens::Token::RedirectOut | tokens::Token::Clobber => {
+                                let kind = if matches!(
+                                    &self.current_token,
+                                    Some(tokens::Token::Clobber)
+                                ) {
+                                    RedirectKind::Clobber
+                                } else {
+                                    RedirectKind::Output
+                                };
                                 self.advance();
                                 if let Ok(target) = self.expect_word() {
                                     redirects.push(Redirect {
                                         fd: None,
-                                        kind: RedirectKind::Output,
+                                        kind,
                                         target,
                                     });
                                 }

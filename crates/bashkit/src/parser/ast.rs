@@ -471,6 +471,8 @@ pub struct Redirect {
 pub enum RedirectKind {
     /// > - redirect output
     Output,
+    /// >| - force redirect output (clobber, bypasses noclobber)
+    Clobber,
     /// >> - append output
     Append,
     /// < - redirect input

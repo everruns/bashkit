@@ -3812,6 +3812,22 @@ impl Interpreter {
                     // ] as first char is literal
                     chars_in_class.push(']');
                 }
+                Some('[') if matches!(pattern_chars.peek(), Some(':')) => {
+                    // POSIX character class [:name:]
+                    pattern_chars.next(); // consume ':'
+                    let mut class_name = String::new();
+                    loop {
+                        match pattern_chars.next() {
+                            Some(':') if matches!(pattern_chars.peek(), Some(']')) => {
+                                pattern_chars.next(); // consume ']'
+                                break;
+                            }
+                            Some(c) => class_name.push(c),
+                            None => return None,
+                        }
+                    }
+                    expand_posix_class(&class_name, &mut chars_in_class);
+                }
                 Some('-') if !chars_in_class.is_empty() => {
                     // Could be a range
                     if let Some(&next) = pattern_chars.peek() {
@@ -3844,7 +3860,59 @@ impl Interpreter {
         };
         Some(if negate { !matched } else { matched })
     }
+}
 
+/// Expand a POSIX character class name into a list of characters.
+fn expand_posix_class(name: &str, out: &mut Vec<char>) {
+    match name {
+        "space" => out.extend([' ', '\t', '\n', '\r', '\x0b', '\x0c']),
+        "blank" => out.extend([' ', '\t']),
+        "digit" => out.extend('0'..='9'),
+        "lower" => out.extend('a'..='z'),
+        "upper" => out.extend('A'..='Z'),
+        "alpha" => {
+            out.extend('a'..='z');
+            out.extend('A'..='Z');
+        }
+        "alnum" => {
+            out.extend('a'..='z');
+            out.extend('A'..='Z');
+            out.extend('0'..='9');
+        }
+        "xdigit" => {
+            out.extend('0'..='9');
+            out.extend('a'..='f');
+            out.extend('A'..='F');
+        }
+        "punct" => {
+            for c in '!'..='/' {
+                out.push(c);
+            }
+            for c in ':'..='@' {
+                out.push(c);
+            }
+            for c in '['..='`' {
+                out.push(c);
+            }
+            for c in '{'..='~' {
+                out.push(c);
+            }
+        }
+        "print" => {
+            out.extend(' '..='~');
+        }
+        "graph" => {
+            out.extend('!'..='~');
+        }
+        "cntrl" => {
+            out.extend((0u8..=31).map(|b| b as char));
+            out.push(127 as char);
+        }
+        _ => {} // Unknown class: ignore
+    }
+}
+
+impl Interpreter {
     /// Execute a sequence of commands (with errexit checking)
     async fn execute_command_sequence(&mut self, commands: &[Command]) -> Result<ExecResult> {
         self.execute_command_sequence_impl(commands, true).await
@@ -4184,6 +4252,9 @@ impl Interpreter {
         command: &SimpleCommand,
         stdin: Option<String>,
     ) -> Result<ExecResult> {
+        // Fire DEBUG trap before each simple command
+        let (_debug_stdout, _debug_stderr) = self.run_debug_trap().await;
+
         // Save old variable values before applying prefix assignments.
         // If there's a command, these assignments are temporary (bash behavior:
         // `VAR=value cmd` sets VAR only for cmd's duration).
@@ -5260,6 +5331,7 @@ impl Interpreter {
             RedirectKind::HereDoc => "<<",
             RedirectKind::HereDocStrip => "<<-",
             RedirectKind::HereString => "<<<",
+            RedirectKind::Clobber => ">|",
             RedirectKind::DupOutput => ">&",
             RedirectKind::DupInput => "<&",
             RedirectKind::OutputBoth => "&>",
@@ -6892,7 +6964,7 @@ impl Interpreter {
     ) -> Result<ExecResult> {
         for redirect in redirects {
             match redirect.kind {
-                RedirectKind::Output => {
+                RedirectKind::Output | RedirectKind::Clobber => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     // Handle /dev/null at interpreter level - cannot be bypassed
@@ -6903,6 +6975,17 @@ impl Interpreter {
                             _ => result.stdout = String::new(),
                         }
                     } else {
+                        // noclobber check: > fails if file exists (>| bypasses)
+                        if redirect.kind == RedirectKind::Output
+                            && self.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
+                            && self.fs.stat(&path).await.is_ok()
+                        {
+                            result.stdout = String::new();
+                            result.stderr =
+                                format!("bash: {}: cannot overwrite existing file\n", target_path);
+                            result.exit_code = 1;
+                            return Ok(result);
+                        }
                         // Check which fd we're redirecting
                         match redirect.fd {
                             Some(2) => {
@@ -7336,8 +7419,15 @@ impl Interpreter {
                     } else {
                         // Normal indirect expansion
                         let var_name = self.expand_variable(name);
-                        let value = self.expand_variable(&var_name);
-                        result.push_str(&value);
+                        // Check arrays first: ${!ref} where ref=arr → first element
+                        if let Some(arr) = self.arrays.get(&var_name) {
+                            if let Some(first) = arr.get(&0) {
+                                result.push_str(first);
+                            }
+                        } else {
+                            let value = self.expand_variable(&var_name);
+                            result.push_str(&value);
+                        }
                     }
                 }
                 WordPart::PrefixMatch(prefix) => {
@@ -8021,6 +8111,11 @@ impl Interpreter {
             return value.to_string();
         }
 
+        // Use glob_match for patterns with bracket expressions or extglob
+        if pattern.contains('[') || self.contains_extglob(pattern) {
+            return self.remove_pattern_glob(value, pattern, prefix, longest);
+        }
+
         if prefix {
             // Remove from beginning
             if pattern == "*" {
@@ -8133,6 +8228,49 @@ impl Interpreter {
             }
         }
 
+        value.to_string()
+    }
+
+    /// Remove prefix/suffix using glob_match for patterns with brackets or extglob.
+    fn remove_pattern_glob(
+        &self,
+        value: &str,
+        pattern: &str,
+        prefix: bool,
+        longest: bool,
+    ) -> String {
+        let chars: Vec<char> = value.chars().collect();
+        if prefix {
+            // Try each prefix length; shortest = first match, longest = last match
+            let mut last_match = None;
+            for i in 0..=chars.len() {
+                let candidate: String = chars[..i].iter().collect();
+                if self.glob_match(&candidate, pattern) {
+                    if !longest {
+                        return chars[i..].iter().collect();
+                    }
+                    last_match = Some(i);
+                }
+            }
+            if let Some(i) = last_match {
+                return chars[i..].iter().collect();
+            }
+        } else {
+            // Suffix removal: try each suffix length
+            let mut last_match = None;
+            for i in (0..=chars.len()).rev() {
+                let candidate: String = chars[i..].iter().collect();
+                if self.glob_match(&candidate, pattern) {
+                    if !longest {
+                        return chars[..i].iter().collect();
+                    }
+                    last_match = Some(i);
+                }
+            }
+            if let Some(i) = last_match {
+                return chars[..i].iter().collect();
+            }
+        }
         value.to_string()
     }
 
@@ -9377,6 +9515,29 @@ impl Interpreter {
     }
 
     /// Run ERR trap if registered. Appends trap output to stdout/stderr.
+    /// Run the DEBUG trap handler (fires before each simple command).
+    /// Returns (stdout, stderr) from the trap handler.
+    async fn run_debug_trap(&mut self) -> (String, String) {
+        if let Some(trap_cmd) = self.traps.get("DEBUG").cloned() {
+            // THREAT[TM-DOS-030]: Propagate interpreter parser limits
+            if let Ok(trap_script) = Parser::with_limits(
+                &trap_cmd,
+                self.limits.max_ast_depth,
+                self.limits.max_parser_operations,
+            )
+            .parse()
+            {
+                let emit_before = self.output_emit_count;
+                if let Ok(trap_result) = self.execute_command_sequence(&trap_script.commands).await
+                {
+                    self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
+                    return (trap_result.stdout, trap_result.stderr);
+                }
+            }
+        }
+        (String::new(), String::new())
+    }
+
     async fn run_err_trap(&mut self, stdout: &mut String, stderr: &mut String) {
         if let Some(trap_cmd) = self.traps.get("ERR").cloned() {
             // THREAT[TM-DOS-030]: Propagate interpreter parser limits
@@ -11474,5 +11635,86 @@ echo "count=$COUNT"
         .await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "x.txt f");
+    }
+
+    #[tokio::test]
+    async fn test_posix_character_class_suffix_remove() {
+        // ${x%%[![:space:]]*} should remove from first non-space to end
+        let result = run_script(r#"x="  hello world  "; echo "[${x%%[![:space:]]*}]""#).await;
+        assert_eq!(
+            result.stdout.trim(),
+            "[  ]",
+            "%%[![:space:]]* should remove from first non-space to end"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_posix_character_class_chained_trim() {
+        // Issue #677: [![:space:]] character class in parameter expansion
+        // Test the core fix: suffix removal with POSIX classes
+        let result = run_script(r#"x="  hello world  "; echo "[${x%%[![:space:]]*}]""#).await;
+        assert_eq!(
+            result.stdout.trim(),
+            "[  ]",
+            "%%[![:space:]]* should remove from first non-space to end"
+        );
+        // Test digit class
+        let result = run_script(r#"x="abc123def"; echo "${x%%[[:digit:]]*}""#).await;
+        assert_eq!(result.stdout.trim(), "abc");
+        // Test alpha class
+        let result = run_script(r#"x="123abc"; echo "${x%%[[:alpha:]]*}""#).await;
+        assert_eq!(result.stdout.trim(), "123");
+    }
+
+    #[tokio::test]
+    async fn test_posix_digit_class_in_parameter_expansion() {
+        let result = run_script(r#"x="abc123def"; echo "${x%%[[:digit:]]*}""#).await;
+        assert_eq!(result.stdout.trim(), "abc");
+    }
+
+    #[tokio::test]
+    async fn test_debug_trap() {
+        let result = run_script(
+            r#"count=0; trap '((count++))' DEBUG; echo a; echo b; trap - DEBUG; echo $count"#,
+        )
+        .await;
+        assert_eq!(result.stdout, "a\nb\n3\n");
+    }
+
+    #[tokio::test]
+    async fn test_noclobber_prevents_overwrite() {
+        let result = run_script(
+            r#"echo first > /tmp/test_nc; set -o noclobber; echo second > /tmp/test_nc 2>/dev/null; echo $?; cat /tmp/test_nc"#,
+        )
+        .await;
+        assert_eq!(result.stdout.trim(), "1\nfirst");
+    }
+
+    #[tokio::test]
+    async fn test_indirect_expansion_array() {
+        // Issue #672: ${!ref} should resolve to array's first element
+        let result = run_script(r#"arr=(a b c); ref=arr; echo ${!ref}"#).await;
+        assert_eq!(result.stdout.trim(), "a");
+    }
+
+    #[tokio::test]
+    async fn test_noclobber_clobber_override() {
+        let result = run_script(
+            r#"echo first > /tmp/test_nc2; set -o noclobber; echo second >| /tmp/test_nc2; echo $?; cat /tmp/test_nc2"#,
+        )
+        .await;
+        assert_eq!(result.stdout.trim(), "0\nsecond");
+    }
+
+    #[tokio::test]
+    async fn test_debug_trap_removal() {
+        // After trap - DEBUG, the trap should no longer fire
+        let result = run_script(
+            r#"count=0; trap '((count++))' DEBUG; echo x; trap - DEBUG; echo y; echo $count"#,
+        )
+        .await;
+        // DEBUG fires before: echo x (1), trap - DEBUG (2)
+        // After removal: echo y, echo $count don't trigger
+        assert_eq!(result.stdout, "x\ny\n2\n");
     }
 }

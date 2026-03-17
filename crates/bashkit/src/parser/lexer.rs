@@ -145,6 +145,9 @@ impl<'a> Lexer<'a> {
                 if self.peek_char() == Some('>') {
                     self.advance();
                     Some(Token::RedirectAppend)
+                } else if self.peek_char() == Some('|') {
+                    self.advance();
+                    Some(Token::Clobber)
                 } else if self.peek_char() == Some('(') {
                     self.advance();
                     Some(Token::ProcessSubOut)

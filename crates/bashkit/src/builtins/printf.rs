@@ -211,7 +211,7 @@ impl FormatSpec {
 
 /// Format a string using printf-style format specifiers
 // chars.next().unwrap() is safe: only called after peek() confirms char exists
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::collapsible_if)]
 fn format_string(format: &str, args: &[String], arg_index: &mut usize) -> String {
     let mut output = String::new();
     let mut chars = format.chars().peekable();
@@ -239,6 +239,25 @@ fn format_string(format: &str, args: &[String], arg_index: &mut usize) -> String
                         }
                         if let Ok(val) = u8::from_str_radix(&octal, 8) {
                             output.push(val as char);
+                        }
+                    }
+                    'x' => {
+                        // \xHH - hex escape (1-2 hex digits)
+                        let mut hex = String::new();
+                        for _ in 0..2 {
+                            if let Some(&c) = chars.peek() {
+                                if c.is_ascii_hexdigit() {
+                                    hex.push(chars.next().unwrap());
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        // NUL bytes are stripped (bash behavior in string context)
+                        if let Ok(val) = u8::from_str_radix(&hex, 16) {
+                            if val != 0 {
+                                output.push(val as char);
+                            }
                         }
                     }
                     'u' => {
@@ -447,7 +466,7 @@ fn shell_quote(s: &str) -> String {
 
 /// Expand escape sequences in a string
 // chars.next().unwrap() is safe: only called after peek() confirms char exists
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::collapsible_if)]
 fn expand_escapes(s: &str) -> String {
     let mut output = String::new();
     let mut chars = s.chars().peekable();
@@ -472,6 +491,25 @@ fn expand_escapes(s: &str) -> String {
                         }
                         if let Ok(val) = u8::from_str_radix(&octal, 8) {
                             output.push(val as char);
+                        }
+                    }
+                    'x' => {
+                        // \xHH - hex escape (1-2 hex digits)
+                        let mut hex = String::new();
+                        for _ in 0..2 {
+                            if let Some(&c) = chars.peek() {
+                                if c.is_ascii_hexdigit() {
+                                    hex.push(chars.next().unwrap());
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        // NUL bytes are stripped (bash behavior in string context)
+                        if let Ok(val) = u8::from_str_radix(&hex, 16) {
+                            if val != 0 {
+                                output.push(val as char);
+                            }
                         }
                     }
                     'u' => {
@@ -627,6 +665,23 @@ mod tests {
         // %b format also handles \u escapes
         assert_eq!(expand_escapes("\\u03bc"), "\u{03bc}");
         assert_eq!(expand_escapes("\\U000003bc"), "\u{03bc}");
+    }
+
+    #[test]
+    fn test_hex_escape() {
+        // \x41 -> A
+        let args = vec![];
+        let mut idx = 0;
+        assert_eq!(format_string("\\x41\\x42\\x43", &args, &mut idx), "ABC");
+        // \x00 -> NUL stripped
+        idx = 0;
+        assert_eq!(format_string("a\\x00b", &args, &mut idx), "ab");
+    }
+
+    #[test]
+    fn test_hex_escape_in_expand() {
+        assert_eq!(expand_escapes("\\x41"), "A");
+        assert_eq!(expand_escapes("a\\x00b"), "ab");
     }
 
     // Issue #435: precision should use char count, not byte count
