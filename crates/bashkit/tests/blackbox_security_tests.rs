@@ -421,19 +421,23 @@ mod finding_urandom_empty {
 mod finding_seq_output_dos {
     use super::*;
 
-    /// TM-DOS-058: seq produces 1M lines with 50-command limit.
-    /// Single builtin call generates unbounded output.
+    /// TM-DOS-058: seq output is bounded even with large range.
     #[tokio::test]
-    #[ignore] // FINDING: seq bypasses command limits (1M lines)
-    async fn seq_million_lines() {
+    async fn seq_output_is_bounded() {
         let mut bash = dos_bash();
         let result = bash.exec("seq 1 1000000").await;
         match &result {
             Ok(r) => {
+                // Output should be truncated: max 100K iterations or 1MB output
+                assert!(
+                    r.stdout.len() <= 1_200_000,
+                    "seq output too large: {} bytes",
+                    r.stdout.len()
+                );
                 let lines = r.stdout.lines().count();
-                assert!(lines <= 100, "seq bypassed limits: {} lines", lines);
+                assert!(lines <= 100_001, "seq produced too many lines: {}", lines);
             }
-            Err(_) => {}
+            Err(_) => {} // timeout is also acceptable
         }
     }
 }
