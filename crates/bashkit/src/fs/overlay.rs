@@ -341,6 +341,22 @@ impl OverlayFs {
         Ok(())
     }
 
+    /// Check limits before creating a directory.
+    ///
+    /// THREAT[TM-DOS-037]: Prevents unbounded directory creation via chmod CoW
+    /// and other paths that create directories in the upper layer.
+    fn check_dir_limits(&self) -> Result<()> {
+        let usage = self.compute_usage();
+        if usage.dir_count >= self.limits.max_dir_count {
+            return Err(IoError::other(format!(
+                "too many directories: {} directories at {} directory limit",
+                usage.dir_count, self.limits.max_dir_count
+            ))
+            .into());
+        }
+        Ok(())
+    }
+
     /// Normalize a path for consistent lookups
     fn normalize_path(path: &Path) -> PathBuf {
         super::normalize_path(path)
@@ -513,6 +529,9 @@ impl FileSystem for OverlayFs {
             .map_err(|e| IoError::other(e.to_string()))?;
 
         let path = Self::normalize_path(path);
+
+        // THREAT[TM-DOS-037]: Check directory count limits before creating
+        self.check_dir_limits()?;
 
         // Remove any whiteout for this path
         self.remove_whiteout(&path);
@@ -765,6 +784,8 @@ impl FileSystem for OverlayFs {
                 self.upper.write_file(&path, &content).await?;
                 self.hide_lower_file(stat.size);
             } else if stat.file_type == FileType::Directory {
+                // THREAT[TM-DOS-037]: Check directory limits before CoW mkdir
+                self.check_dir_limits()?;
                 self.upper.mkdir(&path, true).await?;
                 self.hide_lower_dir();
             }
