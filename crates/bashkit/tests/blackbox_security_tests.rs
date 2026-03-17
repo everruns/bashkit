@@ -331,12 +331,9 @@ mod finding_readonly_bypass {
 mod finding_trap_leak {
     use super::*;
 
-    /// TM-ISO-021: EXIT trap from one exec() fires in the next exec().
-    /// Expected: each exec() starts with clean trap state.
-    /// Actual: EXIT trap persists and fires on subsequent calls.
+    /// TM-ISO-005: EXIT trap from one exec() does not fire in the next exec().
     #[tokio::test]
-    #[ignore] // FINDING: EXIT trap leaks between exec() calls
-    async fn exit_trap_leaks_between_exec() {
+    async fn exit_trap_does_not_leak_between_exec() {
         let mut bash = tight_bash();
         let _ = bash.exec("trap 'echo LEAKED_TRAP' EXIT").await.unwrap();
         let result = bash.exec("echo clean_execution").await.unwrap();
@@ -356,12 +353,9 @@ mod finding_trap_leak {
 mod finding_exit_code_leak {
     use super::*;
 
-    /// TM-ISO-022: $? from one exec() leaks into the next.
-    /// Expected: $? should be 0 at start of each exec().
-    /// Actual: $? == 42 persists from previous `exit 42`.
+    /// TM-ISO-006: $? from one exec() does not leak into the next.
     #[tokio::test]
-    #[ignore] // FINDING: $? leaks across exec() calls
-    async fn exit_code_leaks_between_exec() {
+    async fn exit_code_does_not_leak_between_exec() {
         let mut bash = tight_bash();
         let _ = bash.exec("exit 42").await.unwrap();
         let result = bash.exec("echo $?").await.unwrap();
@@ -383,12 +377,9 @@ mod finding_exit_code_leak {
 mod finding_shell_options_leak {
     use super::*;
 
-    /// TM-ISO-023: set -e persists across exec() calls.
-    /// Expected: each exec() starts with default shell options.
-    /// Actual: set -e from previous exec causes abort on `false`.
+    /// TM-ISO-007: set -e does not persist across exec() calls.
     #[tokio::test]
-    #[ignore] // FINDING: set -e leaks across exec() calls
-    async fn set_e_leaks_between_exec() {
+    async fn set_e_does_not_leak_between_exec() {
         let mut bash = tight_bash();
         let _ = bash.exec("set -e").await;
         let result = bash.exec("false; echo 'survived'").await.unwrap();

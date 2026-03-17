@@ -691,6 +691,16 @@ impl Interpreter {
         &self.limits
     }
 
+    /// THREAT[TM-ISO-005/006/007]: Reset per-exec transient state.
+    /// Called by Bash::exec() before each top-level execution to prevent
+    /// traps, exit code, and shell options from leaking across calls.
+    pub fn reset_transient_state(&mut self) {
+        self.traps.clear();
+        self.last_exit_code = 0;
+        self.options = ShellOptions::default();
+        self.variables.retain(|k, _| !k.starts_with("SHOPT_"));
+    }
+
     /// Set an environment variable.
     pub fn set_env(&mut self, key: &str, value: &str) {
         self.env.insert(key.to_string(), value.to_string());
@@ -897,6 +907,10 @@ impl Interpreter {
         // Reset per-execution counters so each exec() gets a fresh budget.
         // Without this, hitting the limit in one exec() permanently poisons the session.
         self.counters.reset_for_execution();
+
+        // Note: per-exec state reset (traps, exit code, options) is done in
+        // Bash::exec() before calling this method, to avoid clearing state
+        // set by internal callers like execute_bash_builtin.
 
         // THREAT[TM-DOS-059]: Increment session-level exec call counter and
         // check session limits before starting execution.
