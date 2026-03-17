@@ -29,6 +29,9 @@ pub const DEFAULT_MAX_FILE_SIZE: u64 = 10_000_000;
 /// Default maximum file count: 10,000
 pub const DEFAULT_MAX_FILE_COUNT: u64 = 10_000;
 
+/// Default maximum directory count: 10,000
+pub const DEFAULT_MAX_DIR_COUNT: u64 = 10_000;
+
 /// Default maximum path depth (directory nesting): 100
 pub const DEFAULT_MAX_PATH_DEPTH: usize = 100;
 
@@ -66,6 +69,7 @@ pub const DEFAULT_MAX_PATH_LENGTH: usize = 4096;
 /// | `max_total_bytes` | 100MB | Total filesystem memory |
 /// | `max_file_size` | 10MB | Single file size |
 /// | `max_file_count` | 10,000 | Number of files |
+/// | `max_dir_count` | 10,000 | Number of directories |
 /// | `max_path_depth` | 100 | Directory nesting depth |
 /// | `max_filename_length` | 255 | Single path component |
 /// | `max_path_length` | 4096 | Total path length |
@@ -82,6 +86,12 @@ pub struct FsLimits {
     /// Maximum number of files (not including directories).
     /// Default: 10,000
     pub max_file_count: u64,
+
+    // THREAT[TM-DOS-037]: Unbounded directory creation via chmod CoW
+    // Mitigation: Limit maximum directory count
+    /// Maximum number of directories.
+    /// Default: 10,000
+    pub max_dir_count: u64,
 
     // THREAT[TM-DOS-012]: Deep directory nesting can cause stack/memory exhaustion
     // Mitigation: Limit maximum path component count
@@ -106,6 +116,7 @@ impl Default for FsLimits {
             max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
             max_file_size: DEFAULT_MAX_FILE_SIZE,
             max_file_count: DEFAULT_MAX_FILE_COUNT,
+            max_dir_count: DEFAULT_MAX_DIR_COUNT,
             max_path_depth: DEFAULT_MAX_PATH_DEPTH,
             max_filename_length: DEFAULT_MAX_FILENAME_LENGTH,
             max_path_length: DEFAULT_MAX_PATH_LENGTH,
@@ -148,6 +159,7 @@ impl FsLimits {
             max_total_bytes: u64::MAX,
             max_file_size: u64::MAX,
             max_file_count: u64::MAX,
+            max_dir_count: u64::MAX,
             max_path_depth: usize::MAX,
             max_filename_length: usize::MAX,
             max_path_length: usize::MAX,
@@ -193,6 +205,12 @@ impl FsLimits {
     /// ```
     pub fn max_file_count(mut self, count: u64) -> Self {
         self.max_file_count = count;
+        self
+    }
+
+    /// Set maximum directory count.
+    pub fn max_dir_count(mut self, count: u64) -> Self {
+        self.max_dir_count = count;
         self
     }
 
@@ -311,6 +329,17 @@ impl FsLimits {
         }
         Ok(())
     }
+
+    /// Check if adding a directory would exceed the directory count limit.
+    pub fn check_dir_count(&self, current: u64) -> Result<(), FsLimitExceeded> {
+        if current >= self.max_dir_count {
+            return Err(FsLimitExceeded::DirCount {
+                current,
+                limit: self.max_dir_count,
+            });
+        }
+        Ok(())
+    }
 }
 
 // THREAT[TM-DOS-015]: Unicode control chars and bidi overrides can cause path confusion
@@ -352,6 +381,8 @@ pub enum FsLimitExceeded {
     FileSize { size: u64, limit: u64 },
     /// File count would exceed limit.
     FileCount { current: u64, limit: u64 },
+    /// Directory count would exceed limit (TM-DOS-037).
+    DirCount { current: u64, limit: u64 },
     /// Path depth (nesting) exceeds limit (TM-DOS-012).
     PathTooDeep { depth: usize, limit: usize },
     /// Single filename component exceeds length limit (TM-DOS-013).
@@ -390,6 +421,13 @@ impl fmt::Display for FsLimitExceeded {
                 write!(
                     f,
                     "too many files: {} files at {} file limit",
+                    current, limit
+                )
+            }
+            FsLimitExceeded::DirCount { current, limit } => {
+                write!(
+                    f,
+                    "too many directories: {} directories at {} directory limit",
                     current, limit
                 )
             }
@@ -466,6 +504,7 @@ mod tests {
         assert_eq!(limits.max_total_bytes, 100_000_000);
         assert_eq!(limits.max_file_size, 10_000_000);
         assert_eq!(limits.max_file_count, 10_000);
+        assert_eq!(limits.max_dir_count, 10_000);
         assert_eq!(limits.max_path_depth, 100);
         assert_eq!(limits.max_filename_length, 255);
         assert_eq!(limits.max_path_length, 4096);
@@ -477,6 +516,7 @@ mod tests {
         assert_eq!(limits.max_total_bytes, u64::MAX);
         assert_eq!(limits.max_file_size, u64::MAX);
         assert_eq!(limits.max_file_count, u64::MAX);
+        assert_eq!(limits.max_dir_count, u64::MAX);
         assert_eq!(limits.max_path_depth, usize::MAX);
         assert_eq!(limits.max_filename_length, usize::MAX);
         assert_eq!(limits.max_path_length, usize::MAX);

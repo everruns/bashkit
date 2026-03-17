@@ -5,7 +5,9 @@
 //!
 //! Run with: `cargo test threat_`
 
-use bashkit::{Bash, ExecutionLimits};
+use bashkit::{Bash, ExecutionLimits, FileSystem, FsLimits, InMemoryFs, OverlayFs};
+use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 // =============================================================================
@@ -2667,6 +2669,355 @@ echo $FOO
             result.stdout.contains("bar"),
             "Cross-builtin injection should not affect state: got {:?}",
             result.stdout
+        );
+    }
+}
+
+// =============================================================================
+// OVERLAY FS LIMIT ACCOUNTING (issue #653)
+// =============================================================================
+
+mod overlay_limit_accounting {
+    use super::*;
+
+    fn make_lower() -> Arc<InMemoryFs> {
+        Arc::new(InMemoryFs::new())
+    }
+
+    // --- TM-DOS-035: Combined accounting (upper + lower) ---
+
+    /// TM-DOS-035: check_write_limits must use combined usage, not upper-only.
+    /// With 80 bytes in lower and 100-byte limit, writing 30 bytes should fail.
+    #[tokio::test]
+    async fn tm_dos_035_combined_byte_limit() {
+        let lower = make_lower();
+        lower
+            .write_file(Path::new("/tmp/big.txt"), &[b'A'; 80])
+            .await
+            .unwrap();
+
+        let limits = FsLimits::new().max_total_bytes(100);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        // 80 (lower) + 30 (new) = 110 > 100
+        let result = overlay
+            .write_file(Path::new("/tmp/extra.txt"), &[b'B'; 30])
+            .await;
+        assert!(
+            result.is_err(),
+            "TM-DOS-035: write should fail when combined usage exceeds limit"
+        );
+    }
+
+    /// TM-DOS-035: File count limit must include lower layer files.
+    #[tokio::test]
+    async fn tm_dos_035_combined_file_count_limit() {
+        let lower = make_lower();
+        lower
+            .write_file(Path::new("/tmp/existing.txt"), b"data")
+            .await
+            .unwrap();
+
+        let temp = OverlayFs::new(lower.clone());
+        let base_count = temp.usage().file_count;
+
+        let limits = FsLimits::new().max_file_count(base_count + 1);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        overlay
+            .write_file(Path::new("/tmp/new1.txt"), b"ok")
+            .await
+            .unwrap();
+
+        let result = overlay
+            .write_file(Path::new("/tmp/new2.txt"), b"fail")
+            .await;
+        assert!(
+            result.is_err(),
+            "TM-DOS-035: file count limit must include lower layer"
+        );
+    }
+
+    // --- TM-DOS-036: Double-counting overwritten files ---
+
+    /// TM-DOS-036: Overwriting a lower file in upper should not double-count.
+    #[tokio::test]
+    async fn tm_dos_036_no_double_count_on_override() {
+        let lower = make_lower();
+        lower
+            .write_file(Path::new("/tmp/file.txt"), &[b'L'; 100])
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+        let before = overlay.usage();
+
+        overlay
+            .write_file(Path::new("/tmp/file.txt"), &[b'U'; 50])
+            .await
+            .unwrap();
+
+        let after = overlay.usage();
+        assert_eq!(
+            after.file_count, before.file_count,
+            "TM-DOS-036: overridden file should not increase count"
+        );
+        assert_eq!(
+            after.total_bytes,
+            before.total_bytes - 50,
+            "TM-DOS-036: bytes should reflect upper size, not sum"
+        );
+    }
+
+    /// TM-DOS-036: Whiteout should deduct lower file from usage.
+    #[tokio::test]
+    async fn tm_dos_036_whiteout_deducts_usage() {
+        let lower = make_lower();
+        lower
+            .write_file(Path::new("/tmp/gone.txt"), &[b'X'; 200])
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+        let before = overlay.usage();
+
+        overlay
+            .remove(Path::new("/tmp/gone.txt"), false)
+            .await
+            .unwrap();
+
+        let after = overlay.usage();
+        assert_eq!(
+            after.total_bytes,
+            before.total_bytes - 200,
+            "TM-DOS-036: whited-out file bytes should be deducted"
+        );
+        assert_eq!(
+            after.file_count,
+            before.file_count - 1,
+            "TM-DOS-036: whited-out file should be deducted from count"
+        );
+    }
+
+    // --- TM-DOS-037: chmod CoW bypasses limits ---
+
+    /// TM-DOS-037: chmod on lower file triggers CoW, must check write limits.
+    #[tokio::test]
+    async fn tm_dos_037_chmod_file_cow_checks_limits() {
+        let lower = make_lower();
+        lower
+            .write_file(Path::new("/tmp/big.txt"), &[b'X'; 5000])
+            .await
+            .unwrap();
+
+        let limits = FsLimits::new().max_total_bytes(1000);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        let result = overlay.chmod(Path::new("/tmp/big.txt"), 0o755).await;
+        assert!(
+            result.is_err(),
+            "TM-DOS-037: chmod CoW should fail when content exceeds write limits"
+        );
+    }
+
+    /// TM-DOS-037: chmod on lower directory triggers CoW, must check dir limits.
+    #[tokio::test]
+    async fn tm_dos_037_chmod_dir_cow_checks_limits() {
+        let lower = make_lower();
+        // Create many directories in lower to fill up dir count
+        for i in 0..10 {
+            lower
+                .mkdir(Path::new(&format!("/d{}", i)), true)
+                .await
+                .unwrap();
+        }
+
+        // Get base dir count, then set limit to exactly that
+        let temp = OverlayFs::new(lower.clone());
+        let base_dirs = temp.usage().dir_count;
+
+        let limits = FsLimits::new().max_dir_count(base_dirs);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        // chmod a lower directory should trigger CoW mkdir — must be rejected
+        let result = overlay.chmod(Path::new("/d0"), 0o755).await;
+        assert!(
+            result.is_err(),
+            "TM-DOS-037: chmod dir CoW should fail when dir count at limit"
+        );
+    }
+
+    /// TM-DOS-037: mkdir should check dir count limits.
+    #[tokio::test]
+    async fn tm_dos_037_mkdir_checks_dir_limits() {
+        let lower = make_lower();
+        let temp = OverlayFs::new(lower.clone());
+        let base_dirs = temp.usage().dir_count;
+
+        let limits = FsLimits::new().max_dir_count(base_dirs + 1);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        // First mkdir should succeed
+        overlay.mkdir(Path::new("/newdir"), false).await.unwrap();
+
+        // Second mkdir should fail
+        let result = overlay.mkdir(Path::new("/newdir2"), false).await;
+        assert!(
+            result.is_err(),
+            "TM-DOS-037: mkdir should fail when dir count exceeds limit"
+        );
+    }
+
+    // --- TM-DOS-038: Incomplete recursive whiteout ---
+
+    /// TM-DOS-038: Recursive delete must hide all lower children.
+    #[tokio::test]
+    async fn tm_dos_038_recursive_delete_hides_all_children() {
+        let lower = make_lower();
+        lower.mkdir(Path::new("/data"), true).await.unwrap();
+        lower
+            .write_file(Path::new("/data/a.txt"), b"aaa")
+            .await
+            .unwrap();
+        lower
+            .write_file(Path::new("/data/b.txt"), b"bbb")
+            .await
+            .unwrap();
+        lower.mkdir(Path::new("/data/sub"), true).await.unwrap();
+        lower
+            .write_file(Path::new("/data/sub/c.txt"), b"ccc")
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+
+        overlay.remove(Path::new("/data"), true).await.unwrap();
+
+        // All children must be invisible
+        assert!(
+            !overlay.exists(Path::new("/data")).await.unwrap(),
+            "TM-DOS-038: directory itself should be hidden"
+        );
+        assert!(
+            !overlay.exists(Path::new("/data/a.txt")).await.unwrap(),
+            "TM-DOS-038: child file should be hidden"
+        );
+        assert!(
+            !overlay.exists(Path::new("/data/sub/c.txt")).await.unwrap(),
+            "TM-DOS-038: nested child should be hidden"
+        );
+
+        // read_file should fail
+        assert!(overlay.read_file(Path::new("/data/a.txt")).await.is_err());
+        assert!(
+            overlay
+                .read_file(Path::new("/data/sub/c.txt"))
+                .await
+                .is_err()
+        );
+    }
+
+    /// TM-DOS-038: Usage must deduct all recursively deleted children.
+    #[tokio::test]
+    async fn tm_dos_038_recursive_delete_deducts_all_bytes() {
+        let lower = make_lower();
+        lower.mkdir(Path::new("/stuff"), true).await.unwrap();
+        lower
+            .write_file(Path::new("/stuff/x.txt"), &[b'X'; 100])
+            .await
+            .unwrap();
+        lower
+            .write_file(Path::new("/stuff/y.txt"), &[b'Y'; 200])
+            .await
+            .unwrap();
+        lower.mkdir(Path::new("/stuff/deep"), true).await.unwrap();
+        lower
+            .write_file(Path::new("/stuff/deep/z.txt"), &[b'Z'; 50])
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+        let before = overlay.usage();
+
+        overlay.remove(Path::new("/stuff"), true).await.unwrap();
+
+        let after = overlay.usage();
+        assert_eq!(
+            after.total_bytes,
+            before.total_bytes - 350,
+            "TM-DOS-038: should deduct all child file bytes (100+200+50)"
+        );
+        assert_eq!(
+            after.file_count,
+            before.file_count - 3,
+            "TM-DOS-038: should deduct all child file counts"
+        );
+    }
+
+    // --- Boundary math ---
+
+    /// Boundary: lower=50, upper=49, limit=100, write 2 → should fail.
+    #[tokio::test]
+    async fn tm_dos_boundary_exact_limit() {
+        let lower = make_lower();
+        lower
+            .write_file(Path::new("/tmp/lower.txt"), &[b'A'; 50])
+            .await
+            .unwrap();
+
+        let limits = FsLimits::new().max_total_bytes(100);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        // 50 (lower) + 49 (upper) = 99 <= 100: should succeed
+        overlay
+            .write_file(Path::new("/tmp/upper.txt"), &[b'B'; 49])
+            .await
+            .unwrap();
+
+        // 99 + 2 = 101 > 100: should fail
+        let result = overlay
+            .write_file(Path::new("/tmp/over.txt"), &[b'C'; 2])
+            .await;
+        assert!(result.is_err(), "boundary: 99 + 2 = 101 > 100 should fail");
+    }
+
+    // --- CoW accumulation via repeated chmod ---
+
+    /// Repeated chmod on different lower files should accumulate CoW correctly.
+    /// After CoW, usage should reflect correct combined accounting.
+    #[tokio::test]
+    async fn tm_dos_cow_accumulation_via_chmod() {
+        let lower = make_lower();
+        for i in 0..5 {
+            lower
+                .write_file(Path::new(&format!("/tmp/f{}.txt", i)), &[b'A'; 100])
+                .await
+                .unwrap();
+        }
+
+        // Give generous limit so chmod CoW succeeds (check is conservative: adds
+        // content_size before deducting hidden lower, so limit must be >= usage + file_size)
+        let temp = OverlayFs::new(lower.clone());
+        let base = temp.usage().total_bytes;
+        let limits = FsLimits::new().max_total_bytes(base + 500);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        let before = overlay.usage();
+
+        for i in 0..5 {
+            let path = format!("/tmp/f{}.txt", i);
+            overlay.chmod(Path::new(&path), 0o755).await.unwrap();
+        }
+
+        let after = overlay.usage();
+        // Each chmod copies file to upper (100 bytes) and hides lower (100 bytes) → net 0
+        assert_eq!(
+            after.total_bytes, before.total_bytes,
+            "CoW chmod should not change total bytes"
+        );
+        assert_eq!(
+            after.file_count, before.file_count,
+            "CoW chmod should not change file count"
         );
     }
 }
