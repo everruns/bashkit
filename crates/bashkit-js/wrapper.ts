@@ -111,18 +111,6 @@ function toNativeOptions(
 }
 
 /**
- * Generate a heredoc write command with a randomized delimiter to prevent injection.
- */
-function buildWriteCmd(filePath: string, content: string): string {
-  const hex = Array.from(crypto.getRandomValues(new Uint8Array(8)))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-  const delimiter = `BASHKIT_EOF_${hex}`;
-  // Single-quote the delimiter to prevent expansion inside the heredoc
-  return `mkdir -p "$(dirname '${filePath.replace(/'/g, "'\\''")}')" && cat > '${filePath.replace(/'/g, "'\\''")}' << '${delimiter}'\n${content}\n${delimiter}`;
-}
-
-/**
  * Error thrown when a bash command execution fails.
  */
 export class BashError extends Error {
@@ -193,11 +181,22 @@ export class Bash {
    * If `signal` is provided, the execution will be cancelled when the signal
    * is aborted. The result will have `error: "execution cancelled"`.
    */
-  executeSync(commands: string, options?: { signal?: AbortSignal }): ExecResult {
+  executeSync(
+    commands: string,
+    options?: { signal?: AbortSignal },
+  ): ExecResult {
     if (options?.signal) {
       const signal = options.signal;
       if (signal.aborted) {
-        return { stdout: "", stderr: "", exitCode: 1, error: "execution cancelled", stdoutTruncated: false, stderrTruncated: false, finalEnv: undefined };
+        return {
+          stdout: "",
+          stderr: "",
+          exitCode: 1,
+          error: "execution cancelled",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          finalEnv: undefined,
+        };
       }
       const onAbort = () => this.native.cancel();
       signal.addEventListener("abort", onAbort, { once: true });
@@ -228,7 +227,10 @@ export class Bash {
   /**
    * Execute bash commands synchronously. Throws `BashError` on non-zero exit.
    */
-  executeSyncOrThrow(commands: string, options?: { signal?: AbortSignal }): ExecResult {
+  executeSyncOrThrow(
+    commands: string,
+    options?: { signal?: AbortSignal },
+  ): ExecResult {
     const result = this.executeSync(commands, options);
     if (result.exitCode !== 0) {
       throw new BashError(result);
@@ -293,19 +295,25 @@ export class Bash {
    */
   ls(path?: string): string[] {
     const target = path ?? ".";
-    const result = this.executeSync(`ls '${target.replace(/'/g, "'\\''")}'`);
-    if (result.exitCode !== 0) return [];
-    return result.stdout
-      .split("\n")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+    try {
+      return this.native.readDir(target);
+    } catch {
+      return [];
+    }
   }
 
   /**
    * Find files matching a name pattern. Returns absolute paths.
    */
   glob(pattern: string): string[] {
-    const result = this.executeSync(`find / -name '${pattern.replace(/'/g, "'\\''")}' -type f 2>/dev/null`);
+    // Reject patterns containing shell metacharacters to prevent injection.
+    // Allow only safe glob characters: alphanumeric, *, ?, [], ., -, _, /
+    if (/[^a-zA-Z0-9*?\[\]._ /-]/.test(pattern)) {
+      return [];
+    }
+    const result = this.executeSync(
+      `find / -name '${pattern}' -type f 2>/dev/null`,
+    );
     if (result.exitCode !== 0) return [];
     return result.stdout
       .split("\n")
@@ -353,11 +361,22 @@ export class BashTool {
   /**
    * Execute bash commands synchronously and return the result.
    */
-  executeSync(commands: string, options?: { signal?: AbortSignal }): ExecResult {
+  executeSync(
+    commands: string,
+    options?: { signal?: AbortSignal },
+  ): ExecResult {
     if (options?.signal) {
       const signal = options.signal;
       if (signal.aborted) {
-        return { stdout: "", stderr: "", exitCode: 1, error: "execution cancelled", stdoutTruncated: false, stderrTruncated: false, finalEnv: undefined };
+        return {
+          stdout: "",
+          stderr: "",
+          exitCode: 1,
+          error: "execution cancelled",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          finalEnv: undefined,
+        };
       }
       const onAbort = () => this.native.cancel();
       signal.addEventListener("abort", onAbort, { once: true });
@@ -380,7 +399,10 @@ export class BashTool {
   /**
    * Execute bash commands synchronously. Throws `BashError` on non-zero exit.
    */
-  executeSyncOrThrow(commands: string, options?: { signal?: AbortSignal }): ExecResult {
+  executeSyncOrThrow(
+    commands: string,
+    options?: { signal?: AbortSignal },
+  ): ExecResult {
     const result = this.executeSync(commands, options);
     if (result.exitCode !== 0) {
       throw new BashError(result);
@@ -421,7 +443,11 @@ export class BashTool {
    * Check whether a path exists in the virtual filesystem.
    */
   exists(path: string): boolean {
-    return this.executeSync(`test -e '${path.replace(/'/g, "'\\''")}'`).exitCode === 0;
+    try {
+      return this.native.exists(path);
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -429,8 +455,7 @@ export class BashTool {
    * Throws `BashError` if the file does not exist.
    */
   readFile(path: string): string {
-    const result = this.executeSyncOrThrow(`cat '${path.replace(/'/g, "'\\''")}'`);
-    return result.stdout;
+    return this.native.readFile(path);
   }
 
   /**
@@ -438,7 +463,17 @@ export class BashTool {
    * Creates parent directories as needed.
    */
   writeFile(path: string, content: string): void {
-    this.executeSyncOrThrow(buildWriteCmd(path, content));
+    // Ensure parent directory exists (matches prior shell-based behavior)
+    const lastSlash = path.lastIndexOf("/");
+    if (lastSlash > 0) {
+      const parent = path.slice(0, lastSlash);
+      try {
+        this.native.mkdir(parent, true);
+      } catch {
+        // parent may already exist — ignore
+      }
+    }
+    this.native.writeFile(path, content);
   }
 
   /**
@@ -446,19 +481,25 @@ export class BashTool {
    */
   ls(path?: string): string[] {
     const target = path ?? ".";
-    const result = this.executeSync(`ls '${target.replace(/'/g, "'\\''")}'`);
-    if (result.exitCode !== 0) return [];
-    return result.stdout
-      .split("\n")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+    try {
+      return this.native.readDir(target);
+    } catch {
+      return [];
+    }
   }
 
   /**
    * Find files matching a name pattern. Returns absolute paths.
    */
   glob(pattern: string): string[] {
-    const result = this.executeSync(`find / -name '${pattern.replace(/'/g, "'\\''")}' -type f 2>/dev/null`);
+    // Reject patterns containing shell metacharacters to prevent injection.
+    // Allow only safe glob characters: alphanumeric, *, ?, [], ., -, _, /
+    if (/[^a-zA-Z0-9*?\[\]._ /-]/.test(pattern)) {
+      return [];
+    }
+    const result = this.executeSync(
+      `find / -name '${pattern}' -type f 2>/dev/null`,
+    );
     if (result.exitCode !== 0) return [];
     return result.stdout
       .split("\n")

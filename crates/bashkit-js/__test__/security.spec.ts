@@ -41,9 +41,7 @@ test("WB: command limit — recovery after exceeding (TM-DOS-002)", (t) => {
 
 test("WB: loop iteration limit enforced (TM-DOS-016)", (t) => {
   const bash = new Bash({ maxLoopIterations: 5 });
-  const r = bash.executeSync(
-    "for i in 1 2 3 4 5 6 7 8 9 10; do echo $i; done",
-  );
+  const r = bash.executeSync("for i in 1 2 3 4 5 6 7 8 9 10; do echo $i; done");
   t.true(
     r.exitCode !== 0 || r.error !== undefined,
     "loop limit must be enforced",
@@ -320,10 +318,7 @@ test("WB: error messages do not contain stack traces (TM-INT-002)", (t) => {
   const r = bash.executeSync("exit 999");
   t.false(r.stderr.includes("at "), "no stack traces in errors");
   t.false(r.stderr.includes("panicked at"), "no panic info in errors");
-  t.false(
-    r.stderr.includes("thread '"),
-    "no thread panic info in errors",
-  );
+  t.false(r.stderr.includes("thread '"), "no thread panic info in errors");
 });
 
 test("WB: napi error does not leak Rust internals", (t) => {
@@ -361,59 +356,60 @@ test("WB: napi error does not leak Rust internals", (t) => {
 // approach in BashTool's helper methods.
 // ============================================================================
 
-test("WB: Bash.ls() — injection via single-quote payload", (t) => {
-  // KNOWN VULNERABILITY: ls() composes a shell command with user input.
-  // The single-quote escaping is insufficient; commands can be injected.
+test("WB: Bash.ls() — injection via single-quote payload is prevented", (t) => {
+  // FIX: ls() now uses native VFS readDir, no shell command composition.
   const bash = new Bash();
   bash.executeSync("mkdir -p /tmp/safe");
   bash.executeSync("touch /tmp/safe/file.txt");
   const result = bash.ls("'; echo INJECTED; echo '");
-  // CURRENT BEHAVIOR: injection succeeds — "INJECTED" appears in output.
-  // This documents the vulnerability. When fixed, flip to t.false.
-  t.true(
+  // Native VFS: no injection possible — returns empty (path doesn't exist)
+  t.false(
     result.some((s) => s.includes("INJECTED")),
-    "KNOWN VULN: ls() allows shell injection via crafted path",
+    "ls() must not allow shell injection",
   );
 });
 
-test("WB: Bash.glob() — injection via single-quote payload", (t) => {
-  // KNOWN VULNERABILITY: same pattern as ls()
+test("WB: Bash.glob() — injection via single-quote payload is prevented", (t) => {
+  // FIX: glob() validates pattern, rejecting shell metacharacters.
   const bash = new Bash();
   const result = bash.glob("'; echo INJECTED; echo '");
-  t.true(
+  t.false(
     result.some((s) => s.includes("INJECTED")),
-    "KNOWN VULN: glob() allows shell injection via crafted pattern",
+    "glob() must not allow shell injection",
   );
 });
 
-test("WB: BashTool.exists() — injection creates side-effect files", (t) => {
-  // KNOWN VULNERABILITY: exists() uses shell test command with user input.
-  // Injection can create files as a side effect.
+test("WB: BashTool.exists() — injection no longer creates side-effect files", (t) => {
+  // FIX: exists() now uses native VFS, no shell command composition.
   const tool = new BashTool();
   tool.exists("'; echo INJECTED > /tmp/pwned; echo '");
-  t.true(
+  t.false(
     tool.exists("/tmp/pwned"),
-    "KNOWN VULN: exists() injection creates files",
+    "exists() must not create files via injection",
   );
 });
 
-test("WB: BashTool.readFile() — injection via crafted path", (t) => {
-  // KNOWN VULNERABILITY: readFile() uses cat with user-supplied path.
+test("WB: BashTool.readFile() — injection via crafted path is prevented", (t) => {
+  // FIX: readFile() now uses native VFS, no shell command composition.
   const tool = new BashTool();
   tool.executeSync('echo "safe" > /tmp/target.txt');
-  // Injection succeeds — readFile does NOT throw
-  const result = tool.readFile("'; echo HACKED > /tmp/hacked; echo '");
-  t.is(typeof result, "string", "KNOWN VULN: readFile() does not reject injected path");
-  t.true(
+  // readFile with injected path should throw (file doesn't exist in VFS)
+  t.throws(
+    () => tool.readFile("'; echo HACKED > /tmp/hacked; echo '"),
+    undefined,
+    "readFile() must reject injected path",
+  );
+  t.false(
     tool.exists("/tmp/hacked"),
-    "KNOWN VULN: readFile() injection creates files",
+    "readFile() must not create files via injection",
   );
 });
 
 test("WB: BashTool.writeFile() heredoc delimiter injection", (t) => {
   const tool = new BashTool();
   // Content that tries to break out of heredoc
-  const malicious = "BASHKIT_EOF_0000000000000000\necho PWNED\nBASHKIT_EOF_0000000000000000";
+  const malicious =
+    "BASHKIT_EOF_0000000000000000\necho PWNED\nBASHKIT_EOF_0000000000000000";
   tool.writeFile("/tmp/heredoc_test.txt", malicious);
   const content = tool.readFile("/tmp/heredoc_test.txt");
   // The content should be stored verbatim, not interpreted
@@ -428,19 +424,20 @@ test("WB: BashTool.writeFile() heredoc delimiter injection", (t) => {
   );
 });
 
-test("WB: BashTool.writeFile() — path injection via crafted path", (t) => {
-  // KNOWN VULNERABILITY: writeFile() uses shell command with user path.
-  // The single-quote escaping is bypassed.
+test("WB: BashTool.writeFile() — path injection via crafted path is prevented", (t) => {
+  // FIX: writeFile() now uses native VFS, no shell command composition.
   const tool = new BashTool();
+  // Native VFS treats the path literally — file created with quotes in name
   try {
     tool.writeFile("/tmp/test'; touch /tmp/pwned2; echo '", "content");
   } catch {
-    // May throw — that's fine
+    // May throw if VFS rejects path — that's fine, still no injection
   }
-  // Documents that injection can create side-effect files.
-  // When fixed, this should be t.false.
-  const injected = tool.executeSync("test -f /tmp/pwned2 && echo yes || echo no");
-  t.is(typeof injected.exitCode, "number", "writeFile path injection handled without crash");
+  // No injection side effects
+  t.false(
+    tool.exists("/tmp/pwned2"),
+    "writeFile() must not create files via path injection",
+  );
 });
 
 test("WB: Bash class direct VFS API is NOT vulnerable to injection", (t) => {
@@ -771,7 +768,10 @@ test("BB: tool schemas do not leak internal paths", (t) => {
   const sys = tool.systemPrompt();
   for (const text of [input, output, desc, help, sys]) {
     t.false(text.includes("/home/"), "metadata must not leak host paths");
-    t.false(text.includes("target/debug"), "metadata must not leak build paths");
+    t.false(
+      text.includes("target/debug"),
+      "metadata must not leak build paths",
+    );
     t.false(
       /0x[0-9a-f]{8,}/i.test(text),
       "metadata must not contain addresses",

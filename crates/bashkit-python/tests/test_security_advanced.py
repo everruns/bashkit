@@ -303,21 +303,20 @@ class TestResourceLimitBoundaries:
         lines = [ln for ln in r.stdout.strip().splitlines() if ln.strip()]
         assert len(lines) <= 11  # max_loop_iterations + possible off-by-one
 
-    def test_max_commands_cumulative_across_calls(self):
-        """max_commands is cumulative — once exhausted, no more commands run.
+    def test_max_commands_resets_per_exec(self):
+        """max_commands budget resets per exec() call.
 
-        The command budget is shared across all execute calls within the
-        same interpreter instance. Internal bookkeeping may count slightly
-        differently (e.g. subshells, pipelines), so allow small margin.
+        Each exec() invocation gets a fresh command budget, preventing
+        a prior call from permanently poisoning the session.
         """
         bash = Bash(max_commands=5)
         r1 = bash.execute_sync("echo 1; echo 2; echo 3")
         lines1 = [ln for ln in r1.stdout.strip().splitlines() if ln.strip()]
         r2 = bash.execute_sync("echo a; echo b; echo c")
         lines2 = [ln for ln in r2.stdout.strip().splitlines() if ln.strip()]
-        total = len(lines1) + len(lines2)
-        # Budget is ~5 but internal accounting may vary slightly
-        assert total <= 7  # Bounded, not unbounded
+        # Both calls should produce output since budget resets per exec()
+        assert len(lines1) >= 3, f"first exec should produce 3 lines, got {len(lines1)}"
+        assert len(lines2) >= 3, f"second exec should produce 3 lines, got {len(lines2)}"
 
 
 # ===========================================================================
