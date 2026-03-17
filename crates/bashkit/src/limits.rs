@@ -461,6 +461,237 @@ pub enum LimitExceeded {
 
     #[error("session exec() call limit exceeded ({0} calls)")]
     SessionMaxExecCalls(u64),
+
+    #[error("memory limit exceeded: {0}")]
+    Memory(String),
+}
+
+// THREAT[TM-DOS-060]: Per-instance memory budget.
+// Without limits, a script can create unbounded variables, arrays, and
+// functions, consuming arbitrary heap memory and OOMing a multi-tenant process.
+
+/// Default max variable count (scalar variables).
+pub const DEFAULT_MAX_VARIABLE_COUNT: usize = 10_000;
+/// Default max total variable bytes (keys + values).
+pub const DEFAULT_MAX_TOTAL_VARIABLE_BYTES: usize = 10_000_000; // 10MB
+/// Default max array entries (total across all indexed + associative arrays).
+pub const DEFAULT_MAX_ARRAY_ENTRIES: usize = 100_000;
+/// Default max function definitions.
+pub const DEFAULT_MAX_FUNCTION_COUNT: usize = 1_000;
+/// Default max total function body bytes (source text).
+pub const DEFAULT_MAX_FUNCTION_BODY_BYTES: usize = 1_000_000; // 1MB
+
+/// Memory limits for a Bash instance.
+///
+/// Controls the maximum amount of interpreter-level memory
+/// (variables, arrays, functions) a single instance can consume.
+#[derive(Debug, Clone)]
+pub struct MemoryLimits {
+    /// Maximum number of scalar variables.
+    pub max_variable_count: usize,
+    /// Maximum total bytes across all variable keys + values.
+    pub max_total_variable_bytes: usize,
+    /// Maximum total entries across all indexed and associative arrays.
+    pub max_array_entries: usize,
+    /// Maximum number of function definitions.
+    pub max_function_count: usize,
+    /// Maximum total bytes of function body source text.
+    pub max_function_body_bytes: usize,
+}
+
+impl Default for MemoryLimits {
+    fn default() -> Self {
+        Self {
+            max_variable_count: DEFAULT_MAX_VARIABLE_COUNT,
+            max_total_variable_bytes: DEFAULT_MAX_TOTAL_VARIABLE_BYTES,
+            max_array_entries: DEFAULT_MAX_ARRAY_ENTRIES,
+            max_function_count: DEFAULT_MAX_FUNCTION_COUNT,
+            max_function_body_bytes: DEFAULT_MAX_FUNCTION_BODY_BYTES,
+        }
+    }
+}
+
+impl MemoryLimits {
+    /// Create new memory limits with defaults.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set maximum variable count.
+    pub fn max_variable_count(mut self, count: usize) -> Self {
+        self.max_variable_count = count;
+        self
+    }
+
+    /// Set maximum total variable bytes.
+    pub fn max_total_variable_bytes(mut self, bytes: usize) -> Self {
+        self.max_total_variable_bytes = bytes;
+        self
+    }
+
+    /// Set maximum array entries.
+    pub fn max_array_entries(mut self, count: usize) -> Self {
+        self.max_array_entries = count;
+        self
+    }
+
+    /// Set maximum function count.
+    pub fn max_function_count(mut self, count: usize) -> Self {
+        self.max_function_count = count;
+        self
+    }
+
+    /// Set maximum function body bytes.
+    pub fn max_function_body_bytes(mut self, bytes: usize) -> Self {
+        self.max_function_body_bytes = bytes;
+        self
+    }
+
+    /// Create unlimited memory limits.
+    pub fn unlimited() -> Self {
+        Self {
+            max_variable_count: usize::MAX,
+            max_total_variable_bytes: usize::MAX,
+            max_array_entries: usize::MAX,
+            max_function_count: usize::MAX,
+            max_function_body_bytes: usize::MAX,
+        }
+    }
+}
+
+/// Tracks approximate memory usage for budget enforcement.
+#[derive(Debug, Clone, Default)]
+pub struct MemoryBudget {
+    /// Number of scalar variables (excluding internal markers).
+    pub variable_count: usize,
+    /// Total bytes in variable keys + values.
+    pub variable_bytes: usize,
+    /// Total entries across all arrays (indexed + associative).
+    pub array_entries: usize,
+    /// Number of function definitions.
+    pub function_count: usize,
+    /// Total bytes in function bodies.
+    pub function_body_bytes: usize,
+}
+
+impl MemoryBudget {
+    /// Check if adding a variable would exceed limits.
+    pub fn check_variable_insert(
+        &self,
+        key_len: usize,
+        value_len: usize,
+        is_new: bool,
+        old_key_len: usize,
+        old_value_len: usize,
+        limits: &MemoryLimits,
+    ) -> Result<(), LimitExceeded> {
+        if is_new && self.variable_count >= limits.max_variable_count {
+            return Err(LimitExceeded::Memory(format!(
+                "variable count limit ({}) exceeded",
+                limits.max_variable_count
+            )));
+        }
+        let new_bytes =
+            (self.variable_bytes + key_len + value_len).saturating_sub(old_key_len + old_value_len);
+        if new_bytes > limits.max_total_variable_bytes {
+            return Err(LimitExceeded::Memory(format!(
+                "variable byte limit ({}) exceeded",
+                limits.max_total_variable_bytes
+            )));
+        }
+        Ok(())
+    }
+
+    /// Record a variable insert (call after successful insert).
+    pub fn record_variable_insert(
+        &mut self,
+        key_len: usize,
+        value_len: usize,
+        is_new: bool,
+        old_key_len: usize,
+        old_value_len: usize,
+    ) {
+        if is_new {
+            self.variable_count += 1;
+        }
+        self.variable_bytes =
+            (self.variable_bytes + key_len + value_len).saturating_sub(old_key_len + old_value_len);
+    }
+
+    /// Record a variable removal.
+    pub fn record_variable_remove(&mut self, key_len: usize, value_len: usize) {
+        self.variable_count = self.variable_count.saturating_sub(1);
+        self.variable_bytes = self.variable_bytes.saturating_sub(key_len + value_len);
+    }
+
+    /// Check if adding array entries would exceed limits.
+    pub fn check_array_entries(
+        &self,
+        additional: usize,
+        limits: &MemoryLimits,
+    ) -> Result<(), LimitExceeded> {
+        if self.array_entries + additional > limits.max_array_entries {
+            return Err(LimitExceeded::Memory(format!(
+                "array entry limit ({}) exceeded",
+                limits.max_array_entries
+            )));
+        }
+        Ok(())
+    }
+
+    /// Record array entry changes.
+    pub fn record_array_insert(&mut self, added: usize) {
+        self.array_entries += added;
+    }
+
+    /// Record array entry removal.
+    pub fn record_array_remove(&mut self, removed: usize) {
+        self.array_entries = self.array_entries.saturating_sub(removed);
+    }
+
+    /// Check if adding a function would exceed limits.
+    pub fn check_function_insert(
+        &self,
+        body_bytes: usize,
+        is_new: bool,
+        old_body_bytes: usize,
+        limits: &MemoryLimits,
+    ) -> Result<(), LimitExceeded> {
+        if is_new && self.function_count >= limits.max_function_count {
+            return Err(LimitExceeded::Memory(format!(
+                "function count limit ({}) exceeded",
+                limits.max_function_count
+            )));
+        }
+        let new_bytes = self.function_body_bytes + body_bytes - old_body_bytes;
+        if new_bytes > limits.max_function_body_bytes {
+            return Err(LimitExceeded::Memory(format!(
+                "function body byte limit ({}) exceeded",
+                limits.max_function_body_bytes
+            )));
+        }
+        Ok(())
+    }
+
+    /// Record a function insert.
+    pub fn record_function_insert(
+        &mut self,
+        body_bytes: usize,
+        is_new: bool,
+        old_body_bytes: usize,
+    ) {
+        if is_new {
+            self.function_count += 1;
+        }
+        self.function_body_bytes =
+            (self.function_body_bytes + body_bytes).saturating_sub(old_body_bytes);
+    }
+
+    /// Record a function removal.
+    pub fn record_function_remove(&mut self, body_bytes: usize) {
+        self.function_count = self.function_count.saturating_sub(1);
+        self.function_body_bytes = self.function_body_bytes.saturating_sub(body_bytes);
+    }
 }
 
 #[cfg(test)]
