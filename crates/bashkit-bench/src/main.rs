@@ -26,8 +26,8 @@ mod runners;
 
 use cases::BenchCase;
 use runners::{
-    BashRunner, BashkitCliRunner, BashkitJsRunner, BashkitPyRunner, BashkitRunner, GbashRunner,
-    GoshRunner, JustBashInprocRunner, JustBashRunner, Runner,
+    BashRunner, BashkitCliRunner, BashkitJsRunner, BashkitPyRunner, BashkitRunner,
+    GbashInprocRunner, GbashRunner, GoshRunner, JustBashInprocRunner, JustBashRunner, Runner,
 };
 
 /// Number of prewarm cases to run before actual benchmarks
@@ -45,7 +45,7 @@ struct Args {
     #[arg(long)]
     moniker: Option<String>,
 
-    /// Runners to use (comma-separated: bashkit,bashkit-cli,bashkit-js,bashkit-py,bash,gbash,gosh,just-bash,just-bash-inproc)
+    /// Runners to use (comma-separated: bashkit,bashkit-cli,bashkit-js,bashkit-py,bash,gbash,gbash-inproc,gosh,just-bash,just-bash-inproc)
     #[arg(long, default_value = "bashkit,bash")]
     runners: String,
 
@@ -261,6 +261,7 @@ async fn main() -> Result<()> {
             "bashkit-py" => BashkitPyRunner::create().await,
             "bash" => BashRunner::create().await,
             "gbash" => GbashRunner::create().await,
+            "gbash-inproc" => GbashInprocRunner::create().await,
             "gosh" => GoshRunner::create().await,
             "just-bash" => JustBashRunner::create().await,
             "just-bash-inproc" => JustBashInprocRunner::create().await,

@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 bashkit = { path = "../bashkit" }
-tokio = { workspace = true, features = ["rt-multi-thread", "process"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "process", "net"] }
 serde.workspace = true
 serde_json.workspace = true
 clap.workspace = true

@@ -12,12 +12,16 @@
 // - gosh: out-of-process via gosh CLI (subprocess per run)
 // - just-bash: out-of-process via just-bash CLI (subprocess per run)
 // - just-bash-inproc: in-process via Node.js + just-bash library (persistent child)
+// - gbash-inproc: in-process via gbash JSON-RPC server (persistent process, no fork per exec)
+//   Note: gbash server mode doesn't capture stdout/stderr, so output match will be 0%.
+//   Timing data is still meaningful as it eliminates process startup overhead.
 
 use anyhow::{Context, Result};
 use bashkit::Bash;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::UnixStream;
 use tokio::process::{Child, Command};
 
 /// Enum-based runner for different shell interpreters
@@ -31,6 +35,7 @@ pub enum Runner {
     Gosh(String),
     JustBash(String),
     JustBashInproc(PersistentChild),
+    GbashInproc(GbashServerChild),
 }
 
 impl Runner {
@@ -45,6 +50,7 @@ impl Runner {
             Runner::Gosh(_) => "gosh",
             Runner::JustBash(_) => "just-bash",
             Runner::JustBashInproc(_) => "just-bash-inproc",
+            Runner::GbashInproc(_) => "gbash-inproc",
         }
     }
 
@@ -59,6 +65,7 @@ impl Runner {
             Runner::Gosh(path) => run_subprocess(path, &["-c"], script).await,
             Runner::JustBash(path) => run_just_bash_subprocess(path, script).await,
             Runner::JustBashInproc(child) => child.run(script).await,
+            Runner::GbashInproc(server) => server.run(script).await,
         }
     }
 }
@@ -338,6 +345,156 @@ impl JustBashInprocRunner {
         let child = PersistentChild::spawn("node", &[script_path.to_str().unwrap()]).await?;
         Ok(Runner::JustBashInproc(child))
     }
+}
+
+// === In-process gbash via JSON-RPC server ===
+
+pub struct GbashInprocRunner;
+
+impl GbashInprocRunner {
+    pub async fn create() -> Result<Runner> {
+        let gbash_path = which_gbash().await?;
+        let server = GbashServerChild::spawn(&gbash_path).await?;
+        Ok(Runner::GbashInproc(server))
+    }
+}
+
+/// Persistent gbash server process communicating via Unix socket JSON-RPC.
+/// Each `run()` call creates a fresh session, executes the command, then destroys the session.
+pub struct GbashServerChild {
+    child: Child,
+    socket_path: String,
+    request_id: u64,
+}
+
+impl GbashServerChild {
+    async fn spawn(gbash_path: &str) -> Result<Self> {
+        let socket_path = format!("/tmp/gbash-bench-{}.sock", std::process::id());
+
+        // Clean up stale socket
+        let _ = std::fs::remove_file(&socket_path);
+
+        let child = Command::new(gbash_path)
+            .args(["--server", "--socket", &socket_path])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .with_context(|| format!("Failed to spawn gbash server: {gbash_path}"))?;
+
+        // Wait for socket to appear
+        for _ in 0..50 {
+            if Path::new(&socket_path).exists() {
+                // Verify we can connect
+                if UnixStream::connect(&socket_path).await.is_ok() {
+                    return Ok(Self {
+                        child,
+                        socket_path,
+                        request_id: 0,
+                    });
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        anyhow::bail!("gbash server did not start within 5s")
+    }
+
+    async fn run(&mut self, script: &str) -> Result<(String, String, i32)> {
+        let stream = UnixStream::connect(&self.socket_path)
+            .await
+            .context("Failed to connect to gbash server")?;
+        let (reader, mut writer) = tokio::io::split(stream);
+        let mut reader = BufReader::new(reader);
+
+        // Create session
+        self.request_id += 1;
+        let create_resp =
+            jsonrpc_call(&mut writer, &mut reader, "session.create", serde_json::json!({}), self.request_id).await?;
+
+        let session_id = create_resp
+            .pointer("/result/session/session_id")
+            .and_then(|v| v.as_str())
+            .context("No session_id in create response")?
+            .to_string();
+
+        // Execute command
+        self.request_id += 1;
+        let exec_resp = jsonrpc_call(
+            &mut writer,
+            &mut reader,
+            "session.exec",
+            serde_json::json!({
+                "session_id": session_id,
+                "command": script,
+            }),
+            self.request_id,
+        )
+        .await?;
+
+        let result = exec_resp
+            .get("result")
+            .context("No result in exec response")?;
+
+        let stdout = result
+            .get("stdout")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let stderr = result
+            .get("stderr")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let exit_code = result
+            .get("exit_code")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(-1) as i32;
+
+        // Destroy session (best-effort)
+        self.request_id += 1;
+        let _ = jsonrpc_call(
+            &mut writer,
+            &mut reader,
+            "session.destroy",
+            serde_json::json!({"session_id": session_id}),
+            self.request_id,
+        )
+        .await;
+
+        Ok((stdout, stderr, exit_code))
+    }
+}
+
+impl Drop for GbashServerChild {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+        let _ = std::fs::remove_file(&self.socket_path);
+    }
+}
+
+/// Send a JSON-RPC request over a split UnixStream and read the response.
+async fn jsonrpc_call(
+    writer: &mut tokio::io::WriteHalf<UnixStream>,
+    reader: &mut BufReader<tokio::io::ReadHalf<UnixStream>>,
+    method: &str,
+    params: serde_json::Value,
+    id: u64,
+) -> Result<serde_json::Value> {
+    let req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": id,
+    });
+    let msg = serde_json::to_string(&req)? + "\n";
+    writer.write_all(msg.as_bytes()).await?;
+    writer.flush().await?;
+    let mut line = String::new();
+    reader.read_line(&mut line).await?;
+    let resp: serde_json::Value =
+        serde_json::from_str(line.trim()).context("Failed to parse gbash JSON-RPC response")?;
+    Ok(resp)
 }
 
 // === Shared utilities ===
