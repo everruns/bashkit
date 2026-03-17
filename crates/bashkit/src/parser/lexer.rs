@@ -744,7 +744,6 @@ impl<'a> Lexer<'a> {
             } else if ch == '(' && word.ends_with('=') && self.looks_like_assoc_assign() {
                 // Associative compound assignment: var=([k]="v" ...) — keep entire
                 // (...) as part of word so declare -A m=([k]="v") stays one token.
-                // Regular indexed arr=(a b "c d") is left for parser token-by-token path.
                 word.push(ch);
                 self.advance();
                 let mut depth = 1;

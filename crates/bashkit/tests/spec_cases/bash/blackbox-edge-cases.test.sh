@@ -282,12 +282,11 @@ declare -A m; m[a]=1; m[b]=2; unset m[a]; echo ${#m[@]}
 ### end
 
 ### declare_i_arithmetic
-### bash_diff: declare -i does not auto-evaluate arithmetic in assignments (#664)
-# Integer variable auto-evaluates — bash: "8\n8", bashkit: "3+5\n2 * 4"
+# Integer variable auto-evaluates arithmetic in assignments
 declare -i x; x=3+5; echo $x; x="2 * 4"; echo $x
 ### expect
-3+5
-2 * 4
+8
+8
 ### end
 
 ### trap_debug

@@ -1112,11 +1112,10 @@ hello123
 ### end
 
 ### declare_a_array
-### bash_diff: declare -a arr=(...) does not initialize the array with values (#664)
-# declare -a explicit array — bash: "3 y", bashkit: "0"
+# declare -a explicit array
 declare -a arr=(x y z); echo ${#arr[@]} ${arr[1]}
 ### expect
-0
+3 y
 ### end
 
 ### readonly_variable
@@ -1283,11 +1282,10 @@ inner: HELLO
 ### end
 
 ### function_with_local_array
-### bash_diff: local -a arr=(...) does not initialize array with values (#664)
-# Function with local array — bash: "1 2 3", bashkit: empty
+# Function with local array
 f() { local -a arr=(1 2 3); result=${arr[@]}; [ -n "$result" ] && echo "$result" || echo "EMPTY"; }; f
 ### expect
-EMPTY
+1 2 3
 ### end
 
 ### getopts_basic
