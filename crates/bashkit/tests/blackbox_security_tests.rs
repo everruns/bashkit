@@ -99,18 +99,32 @@ mod finding_nested_cmd_subst_stack_overflow {
 mod finding_source_recursion_stack_overflow {
     use super::*;
 
-    /// TM-DOS-056: source self-recursion causes stack overflow.
-    /// REPRODUCER: Write a script that sources itself, then source it.
-    /// Expected: error from command/recursion limit. Actual: SIGABRT.
+    /// TM-DOS-056: source self-recursion hits depth limit instead of stack overflow.
     #[tokio::test]
-    #[ignore] // FINDING: stack overflow — crashes the process
-    async fn source_self_recursion_crashes() {
+    async fn source_self_recursion_hits_depth_limit() {
         let mut bash = dos_bash();
         let _ = bash
             .exec("echo 'source /tmp/recurse.sh' > /tmp/recurse.sh")
             .await;
         let result = bash.exec("source /tmp/recurse.sh").await;
         assert!(result.is_err(), "Self-sourcing must hit recursion limit");
+    }
+
+    /// TM-DOS-056: mutual recursion via source also hits depth limit.
+    #[tokio::test]
+    async fn source_mutual_recursion_hits_depth_limit() {
+        let mut bash = dos_bash();
+        let _ = bash
+            .exec("echo 'source /tmp/recurse_b.sh' > /tmp/recurse_a.sh")
+            .await;
+        let _ = bash
+            .exec("echo 'source /tmp/recurse_a.sh' > /tmp/recurse_b.sh")
+            .await;
+        let result = bash.exec("source /tmp/recurse_a.sh").await;
+        assert!(
+            result.is_err(),
+            "Mutual source recursion must hit depth limit"
+        );
     }
 }
 
