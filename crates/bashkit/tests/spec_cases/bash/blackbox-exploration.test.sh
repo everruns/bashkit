@@ -752,12 +752,11 @@ a b c
 ### end
 
 ### special_vars_last_arg
-### bash_diff: $_ (last argument of previous command) not implemented (#668)
-# Last argument $_ — bash: "hello\nhello\n", bashkit: "hello\n\n"
+# Last argument $_
 echo hello; echo $_
 ### expect
 hello
-
+hello
 ### end
 
 ### ifs_splitting
@@ -1345,11 +1344,10 @@ file
 ### end
 
 ### array_join_with_ifs
-### bash_diff: ${arr[*]} does not use first char of IFS as separator (#668)
-# Join array with IFS — bash: "a,b,c", bashkit: "a b c"
+# Join array with IFS
 arr=(a b c); IFS=,; echo "${arr[*]}"; unset IFS
 ### expect
-a b c
+a,b,c
 ### end
 
 ### nested_quoting

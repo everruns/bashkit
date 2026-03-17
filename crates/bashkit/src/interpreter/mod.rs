@@ -4648,6 +4648,13 @@ impl Interpreter {
             }
         }
 
+        // Track $_ (last argument of previous command, from already-expanded args)
+        if let Some(last) = args.last() {
+            self.insert_variable_checked("_".to_string(), last.clone());
+        } else {
+            self.insert_variable_checked("_".to_string(), name.to_string());
+        }
+
         // Check for nounset error from argument expansion
         if let Some(err_msg) = self.nounset_error.take() {
             self.last_exit_code = 1;
@@ -7287,19 +7294,25 @@ impl Interpreter {
                     };
                     if index == "@" || index == "*" {
                         // ${arr[@]} or ${arr[*]} - expand to all elements
+                        // [*] joins with first char of IFS; [@] joins with space
+                        let sep = if index == "*" {
+                            self.get_ifs_separator()
+                        } else {
+                            " ".to_string()
+                        };
                         if let Some(arr) = self.assoc_arrays.get(arr_name) {
                             let mut keys: Vec<_> = arr.keys().collect();
                             keys.sort();
                             let values: Vec<String> =
                                 keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
-                            result.push_str(&values.join(" "));
+                            result.push_str(&values.join(&sep));
                         } else if let Some(arr) = self.arrays.get(arr_name) {
                             let mut indices: Vec<_> = arr.keys().collect();
                             indices.sort();
                             let values: Vec<_> =
                                 indices.iter().filter_map(|i| arr.get(i)).collect();
                             result.push_str(
-                                &values.into_iter().cloned().collect::<Vec<_>>().join(" "),
+                                &values.into_iter().cloned().collect::<Vec<_>>().join(&sep),
                             );
                         }
                     } else if let Some(extra_idx) = extra_index {
@@ -7617,7 +7630,8 @@ impl Interpreter {
                     let values: Vec<String> =
                         keys.iter().filter_map(|k| arr.get(k).cloned()).collect();
                     if word.quoted && index == "*" {
-                        return Ok(vec![values.join(" ")]);
+                        let sep = self.get_ifs_separator();
+                        return Ok(vec![values.join(&sep)]);
                     }
                     return Ok(values);
                 }
@@ -7626,9 +7640,10 @@ impl Interpreter {
                     indices.sort();
                     let values: Vec<String> =
                         indices.iter().filter_map(|i| arr.get(i).cloned()).collect();
-                    // "${arr[*]}" joins into single field; "${arr[@]}" keeps separate
+                    // "${arr[*]}" joins into single field with IFS; "${arr[@]}" keeps separate
                     if word.quoted && index == "*" {
-                        return Ok(vec![values.join(" ")]);
+                        let sep = self.get_ifs_separator();
+                        return Ok(vec![values.join(&sep)]);
                     }
                     return Ok(values);
                 }
@@ -7686,17 +7701,23 @@ impl Interpreter {
     /// Returns (is_set, expanded_value).
     fn resolve_param_expansion_name(&self, name: &str) -> (bool, String) {
         // Check for array subscript pattern: name[@] or name[*]
+        let is_star = name.ends_with("[*]");
         if let Some(arr_name) = name
             .strip_suffix("[@]")
             .or_else(|| name.strip_suffix("[*]"))
         {
+            let sep = if is_star {
+                self.get_ifs_separator()
+            } else {
+                " ".to_string()
+            };
             if let Some(arr) = self.assoc_arrays.get(arr_name) {
                 let is_set = !arr.is_empty();
                 let mut keys: Vec<_> = arr.keys().collect();
                 keys.sort();
                 let values: Vec<String> =
                     keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
-                return (is_set, values.join(" "));
+                return (is_set, values.join(&sep));
             }
             if let Some(arr) = self.arrays.get(arr_name) {
                 let is_set = !arr.is_empty();
@@ -7705,7 +7726,7 @@ impl Interpreter {
                 let values: Vec<_> = indices.iter().filter_map(|i| arr.get(i)).collect();
                 return (
                     is_set,
-                    values.into_iter().cloned().collect::<Vec<_>>().join(" "),
+                    values.into_iter().cloned().collect::<Vec<_>>().join(&sep),
                 );
             }
             return (false, String::new());
@@ -7739,7 +7760,12 @@ impl Interpreter {
         if name == "@" || name == "*" {
             if let Some(frame) = self.call_stack.last() {
                 let is_set = !frame.positional.is_empty();
-                return (is_set, frame.positional.join(" "));
+                let sep = if name == "*" {
+                    self.get_ifs_separator()
+                } else {
+                    " ".to_string()
+                };
+                return (is_set, frame.positional.join(&sep));
             }
             return (false, String::new());
         }
@@ -9283,6 +9309,18 @@ impl Interpreter {
         current
     }
 
+    /// Get the separator for `[*]` array joins: first char of IFS, or space if IFS unset.
+    fn get_ifs_separator(&self) -> String {
+        match self.variables.get("IFS") {
+            Some(ifs) => ifs
+                .chars()
+                .next()
+                .map(|c| c.to_string())
+                .unwrap_or_default(),
+            None => " ".to_string(),
+        }
+    }
+
     fn expand_variable(&self, name: &str) -> String {
         // Resolve nameref before expansion
         let name = self.resolve_nameref(name);
@@ -9322,14 +9360,7 @@ impl Interpreter {
             "*" => {
                 // All positional parameters joined by IFS first char
                 if let Some(frame) = self.call_stack.last() {
-                    let sep = match self.variables.get("IFS") {
-                        Some(ifs) => ifs
-                            .chars()
-                            .next()
-                            .map(|c| c.to_string())
-                            .unwrap_or_default(),
-                        None => " ".to_string(),
-                    };
+                    let sep = self.get_ifs_separator();
                     return frame.positional.join(&sep);
                 }
                 return String::new();
@@ -11716,5 +11747,33 @@ echo "count=$COUNT"
         // DEBUG fires before: echo x (1), trap - DEBUG (2)
         // After removal: echo y, echo $count don't trigger
         assert_eq!(result.stdout, "x\ny\n2\n");
+    }
+
+    #[tokio::test]
+    async fn test_array_join_with_ifs() {
+        // Issue #668: ${arr[*]} should join with first char of IFS
+        let result = run_script(r#"arr=(a b c); IFS=,; echo "${arr[*]}""#).await;
+        assert_eq!(result.stdout.trim(), "a,b,c");
+    }
+
+    #[tokio::test]
+    async fn test_array_join_with_ifs_at_sign() {
+        // ${arr[@]} should NOT use IFS, keeps elements separate
+        let result = run_script(r#"arr=(a b c); IFS=,; echo "${arr[@]}""#).await;
+        assert_eq!(result.stdout.trim(), "a b c");
+    }
+
+    #[tokio::test]
+    async fn test_underscore_last_arg() {
+        // Issue #668: $_ should track last argument of previous command
+        let result = run_script("echo hello; echo $_").await;
+        assert_eq!(result.stdout, "hello\nhello\n");
+    }
+
+    #[tokio::test]
+    async fn test_underscore_no_args() {
+        // $_ with no args should be the command name
+        let result = run_script("true; echo $_").await;
+        assert_eq!(result.stdout.trim(), "true");
     }
 }
