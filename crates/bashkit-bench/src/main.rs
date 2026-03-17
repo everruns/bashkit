@@ -26,8 +26,8 @@ mod runners;
 
 use cases::BenchCase;
 use runners::{
-    BashRunner, BashkitCliRunner, BashkitJsRunner, BashkitPyRunner, BashkitRunner, GoshRunner,
-    JustBashInprocRunner, JustBashRunner, Runner,
+    BashRunner, BashkitCliRunner, BashkitJsRunner, BashkitPyRunner, BashkitRunner, GbashRunner,
+    GoshRunner, JustBashInprocRunner, JustBashRunner, Runner,
 };
 
 /// Number of prewarm cases to run before actual benchmarks
@@ -45,7 +45,7 @@ struct Args {
     #[arg(long)]
     moniker: Option<String>,
 
-    /// Runners to use (comma-separated: bashkit,bashkit-cli,bashkit-js,bashkit-py,bash,gosh,just-bash,just-bash-inproc)
+    /// Runners to use (comma-separated: bashkit,bashkit-cli,bashkit-js,bashkit-py,bash,gbash,gosh,just-bash,just-bash-inproc)
     #[arg(long, default_value = "bashkit,bash")]
     runners: String,
 
@@ -260,6 +260,7 @@ async fn main() -> Result<()> {
             "bashkit-js" => BashkitJsRunner::create().await,
             "bashkit-py" => BashkitPyRunner::create().await,
             "bash" => BashRunner::create().await,
+            "gbash" => GbashRunner::create().await,
             "gosh" => GoshRunner::create().await,
             "just-bash" => JustBashRunner::create().await,
             "just-bash-inproc" => JustBashInprocRunner::create().await,
@@ -696,6 +697,7 @@ fn generate_markdown_report(report: &BenchReport) -> String {
     );
     md.push_str("| bashkit-py | persistent child | Python + bashkit package, warm interpreter |\n");
     md.push_str("| bash | subprocess | /bin/bash, new process per run |\n");
+    md.push_str("| gbash | subprocess | gbash (Go sandbox runtime), new process per run |\n");
     md.push_str("| just-bash | subprocess | just-bash CLI, new process per run |\n");
     md.push_str(
         "| just-bash-inproc | persistent child | Node.js + just-bash library, warm interpreter |\n",

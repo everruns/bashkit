@@ -8,6 +8,8 @@
 // - bashkit-js: in-process via Node.js + @everruns/bashkit (persistent child)
 // - bashkit-py: in-process via Python + bashkit package (persistent child)
 // - bash: out-of-process via /bin/bash (subprocess per run)
+// - gbash: out-of-process via gbash CLI (subprocess per run)
+// - gosh: out-of-process via gosh CLI (subprocess per run)
 // - just-bash: out-of-process via just-bash CLI (subprocess per run)
 // - just-bash-inproc: in-process via Node.js + just-bash library (persistent child)
 
@@ -25,6 +27,7 @@ pub enum Runner {
     BashkitJs(PersistentChild),
     BashkitPy(PersistentChild),
     NativeBash(String),
+    Gbash(String),
     Gosh(String),
     JustBash(String),
     JustBashInproc(PersistentChild),
@@ -38,6 +41,7 @@ impl Runner {
             Runner::BashkitJs(_) => "bashkit-js",
             Runner::BashkitPy(_) => "bashkit-py",
             Runner::NativeBash(_) => "bash",
+            Runner::Gbash(_) => "gbash",
             Runner::Gosh(_) => "gosh",
             Runner::JustBash(_) => "just-bash",
             Runner::JustBashInproc(_) => "just-bash-inproc",
@@ -51,6 +55,7 @@ impl Runner {
             Runner::BashkitJs(child) => child.run(script).await,
             Runner::BashkitPy(child) => child.run(script).await,
             Runner::NativeBash(path) => run_subprocess(path, &["-c"], script).await,
+            Runner::Gbash(path) => run_subprocess(path, &["-c"], script).await,
             Runner::Gosh(path) => run_subprocess(path, &["-c"], script).await,
             Runner::JustBash(path) => run_just_bash_subprocess(path, script).await,
             Runner::JustBashInproc(child) => child.run(script).await,
@@ -177,6 +182,48 @@ async fn which_bash() -> Result<String> {
     }
 
     anyhow::bail!("bash not found")
+}
+
+// === Gbash - Go bash-like sandbox runtime (out-of-process) ===
+
+pub struct GbashRunner;
+
+impl GbashRunner {
+    pub async fn create() -> Result<Runner> {
+        let path = which_gbash().await?;
+        Ok(Runner::Gbash(path))
+    }
+}
+
+async fn which_gbash() -> Result<String> {
+    // Try GOPATH/bin
+    if let Ok(gopath) = std::env::var("GOPATH") {
+        let p = PathBuf::from(&gopath).join("bin/gbash");
+        if p.exists() {
+            return Ok(p.to_string_lossy().to_string());
+        }
+    }
+
+    // Try ~/go/bin (default GOPATH)
+    if let Ok(home) = std::env::var("HOME") {
+        let p = PathBuf::from(&home).join("go/bin/gbash");
+        if p.exists() {
+            return Ok(p.to_string_lossy().to_string());
+        }
+    }
+
+    // Try PATH
+    let output = Command::new("which").arg("gbash").output().await?;
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Ok(path);
+        }
+    }
+
+    anyhow::bail!(
+        "gbash not found (install via: go install github.com/ewhauser/gbash/cmd/gbash@latest)"
+    )
 }
 
 // === Gosh - Go shell interpreter (out-of-process) ===
