@@ -290,6 +290,8 @@ pub struct Interpreter {
     memory_limits: crate::limits::MemoryLimits,
     /// Memory budget tracker
     memory_budget: crate::limits::MemoryBudget,
+    /// Trace event collector
+    trace: crate::trace::TraceCollector,
     /// Execution counters for resource tracking
     counters: ExecutionCounters,
     /// Job table for background execution (shared for wait builtin access)
@@ -587,6 +589,7 @@ impl Interpreter {
             session_limits: SessionLimits::default(),
             memory_limits: crate::limits::MemoryLimits::default(),
             memory_budget: crate::limits::MemoryBudget::default(),
+            trace: crate::trace::TraceCollector::default(),
             counters: ExecutionCounters::new(),
             jobs: jobs::new_shared_job_table(),
             options: ShellOptions::default(),
@@ -675,6 +678,11 @@ impl Interpreter {
     /// Set per-instance memory limits.
     pub fn set_memory_limits(&mut self, limits: crate::limits::MemoryLimits) {
         self.memory_limits = limits;
+    }
+
+    /// Set the trace collector.
+    pub fn set_trace(&mut self, trace: crate::trace::TraceCollector) {
+        self.trace = trace;
     }
 
     /// Get execution limits.
@@ -995,6 +1003,8 @@ impl Interpreter {
             None
         };
 
+        let events = self.trace.take_events();
+
         Ok(ExecResult {
             stdout,
             stderr,
@@ -1003,6 +1013,7 @@ impl Interpreter {
             stdout_truncated,
             stderr_truncated,
             final_env,
+            events,
         })
     }
 
@@ -4584,6 +4595,35 @@ impl Interpreter {
             None
         };
 
+        // TRACE: Record command start event
+        let trace_start = if self.trace.mode() != crate::trace::TraceMode::Off {
+            self.trace
+                .command_start(name, &args, self.cwd.to_string_lossy().as_ref());
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
+
+        let result = self.dispatch_command(name, command, args, stdin).await;
+
+        // TRACE: Record command exit event for all dispatch paths
+        if let (Some(start), Ok(r)) = (trace_start, &result) {
+            self.trace.command_exit(name, r.exit_code, start.elapsed());
+        }
+
+        result
+    }
+
+    /// Inner dispatch logic for command execution.
+    /// Separated from `execute_dispatched_command` so trace start/exit events
+    /// wrap all return paths uniformly.
+    async fn dispatch_command(
+        &mut self,
+        name: &str,
+        command: &SimpleCommand,
+        args: Vec<String>,
+        stdin: Option<String>,
+    ) -> Result<ExecResult> {
         // Check for functions first
         if let Some(func_def) = self.functions.get(name).cloned() {
             return self

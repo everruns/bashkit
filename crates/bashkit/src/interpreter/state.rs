@@ -30,6 +30,8 @@ pub struct ExecResult {
     pub stderr_truncated: bool,
     /// Final environment state after execution (opt-in via `capture_final_env`)
     pub final_env: Option<std::collections::HashMap<String, String>>,
+    /// Structured trace events (empty when `TraceMode::Off`).
+    pub events: Vec<crate::trace::TraceEvent>,
 }
 
 impl ExecResult {

@@ -6,7 +6,8 @@
 //! Run with: `cargo test threat_`
 
 use bashkit::{
-    Bash, ExecutionLimits, FileSystem, FsLimits, InMemoryFs, MemoryLimits, OverlayFs, SessionLimits,
+    Bash, ExecutionLimits, FileSystem, FsLimits, InMemoryFs, MemoryLimits, OverlayFs,
+    SessionLimits, TraceEventDetails, TraceEventKind, TraceMode,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -3595,5 +3596,232 @@ echo "done"
         let r2 = bash2.exec(script).await.unwrap();
         assert_eq!(r1.exit_code, 0);
         assert_eq!(r2.exit_code, 0);
+    }
+}
+
+// =============================================================================
+// TRACE EVENT TESTS (TM-INF-019)
+// =============================================================================
+
+mod trace_events {
+    use super::*;
+
+    #[tokio::test]
+    async fn trace_off_produces_no_events() {
+        let mut bash = Bash::builder().trace_mode(TraceMode::Off).build();
+        let r = bash.exec("echo hello; echo world").await.unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert!(r.events.is_empty(), "Off mode should produce no events");
+    }
+
+    #[tokio::test]
+    async fn trace_full_records_command_start_and_exit() {
+        let mut bash = Bash::builder().trace_mode(TraceMode::Full).build();
+        let r = bash.exec("echo hello").await.unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert!(
+            r.events.len() >= 2,
+            "Full mode should record at least start+exit, got {}",
+            r.events.len()
+        );
+
+        // First event should be CommandStart for echo
+        assert_eq!(r.events[0].kind, TraceEventKind::CommandStart);
+        if let TraceEventDetails::CommandStart { command, argv, .. } = &r.events[0].details {
+            assert_eq!(command, "echo");
+            assert_eq!(argv, &["hello"]);
+        } else {
+            panic!("expected CommandStart details");
+        }
+
+        // Second event should be CommandExit for echo
+        assert_eq!(r.events[1].kind, TraceEventKind::CommandExit);
+        if let TraceEventDetails::CommandExit {
+            command, exit_code, ..
+        } = &r.events[1].details
+        {
+            assert_eq!(command, "echo");
+            assert_eq!(*exit_code, 0);
+        } else {
+            panic!("expected CommandExit details");
+        }
+    }
+
+    #[tokio::test]
+    async fn trace_full_multiple_commands() {
+        let mut bash = Bash::builder().trace_mode(TraceMode::Full).build();
+        let r = bash.exec("echo a; echo b; echo c").await.unwrap();
+        assert_eq!(r.exit_code, 0);
+
+        // Should have start+exit for each of three echo commands
+        let starts: Vec<_> = r
+            .events
+            .iter()
+            .filter(|e| e.kind == TraceEventKind::CommandStart)
+            .collect();
+        let exits: Vec<_> = r
+            .events
+            .iter()
+            .filter(|e| e.kind == TraceEventKind::CommandExit)
+            .collect();
+        assert_eq!(starts.len(), 3, "3 commands should have 3 starts");
+        assert_eq!(exits.len(), 3, "3 commands should have 3 exits");
+    }
+
+    #[tokio::test]
+    async fn trace_full_seq_numbers_monotonic() {
+        let mut bash = Bash::builder().trace_mode(TraceMode::Full).build();
+        let r = bash.exec("echo a; echo b").await.unwrap();
+        assert!(r.events.len() >= 4);
+        for i in 1..r.events.len() {
+            assert!(
+                r.events[i].seq > r.events[i - 1].seq,
+                "seq numbers should be strictly monotonic"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn trace_redacted_scrubs_secrets_in_argv() {
+        let mut bash = Bash::builder().trace_mode(TraceMode::Redacted).build();
+        // Use printf to avoid actual HTTP call; the trace records the command start
+        let r = bash
+            .exec(r#"printf "%s\n" -H "Authorization: Bearer secret123" "https://api.example.com""#)
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert!(!r.events.is_empty());
+
+        // Check that no event leaks "secret123"
+        for event in &r.events {
+            if let TraceEventDetails::CommandStart { argv, .. } = &event.details {
+                for arg in argv {
+                    assert!(
+                        !arg.contains("secret123"),
+                        "Redacted mode should not leak secrets: {arg}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn trace_redacted_scrubs_env_secrets() {
+        let mut bash = Bash::builder().trace_mode(TraceMode::Redacted).build();
+        // printf with env-style key=value argument containing a secret suffix
+        let r = bash
+            .exec(r#"printf "%s" "API_KEY=supersecret""#)
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+
+        for event in &r.events {
+            if let TraceEventDetails::CommandStart { argv, .. } = &event.details {
+                for arg in argv {
+                    assert!(
+                        !arg.contains("supersecret"),
+                        "Redacted mode should scrub env secrets: {arg}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn trace_full_does_not_scrub() {
+        let mut bash = Bash::builder().trace_mode(TraceMode::Full).build();
+        let r = bash
+            .exec(r#"printf "%s" "API_KEY=supersecret""#)
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+
+        let mut found_secret = false;
+        for event in &r.events {
+            if let TraceEventDetails::CommandStart { argv, .. } = &event.details {
+                for arg in argv {
+                    if arg.contains("supersecret") {
+                        found_secret = true;
+                    }
+                }
+            }
+        }
+        assert!(found_secret, "Full mode should preserve raw secrets");
+    }
+
+    #[tokio::test]
+    async fn trace_callback_receives_events() {
+        use std::sync::{Arc, Mutex};
+        let count = Arc::new(Mutex::new(0u32));
+        let count_clone = count.clone();
+        let mut bash = Bash::builder()
+            .trace_mode(TraceMode::Full)
+            .on_trace_event(Box::new(move |_event| {
+                *count_clone.lock().unwrap() += 1;
+            }))
+            .build();
+        let r = bash.exec("echo hello").await.unwrap();
+        assert_eq!(r.exit_code, 0);
+        let cb_count = *count.lock().unwrap();
+        assert!(
+            cb_count >= 2,
+            "callback should fire for at least start+exit, got {cb_count}"
+        );
+        // events should also be in the result
+        assert_eq!(r.events.len() as u32, cb_count);
+    }
+
+    #[tokio::test]
+    async fn trace_off_zero_overhead() {
+        let mut bash = Bash::builder().trace_mode(TraceMode::Off).build();
+        // Run a loop to verify no events accumulate
+        let r = bash
+            .exec("for i in $(seq 1 100); do echo $i; done")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert!(r.events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn trace_records_function_calls() {
+        let mut bash = Bash::builder().trace_mode(TraceMode::Full).build();
+        let r = bash.exec("myfn() { echo inside; }; myfn").await.unwrap();
+        assert_eq!(r.exit_code, 0);
+
+        // Should see start/exit for myfn and start/exit for echo inside it
+        let fn_starts: Vec<_> = r
+            .events
+            .iter()
+            .filter(|e| {
+                e.kind == TraceEventKind::CommandStart
+                    && matches!(&e.details, TraceEventDetails::CommandStart { command, .. } if command == "myfn")
+            })
+            .collect();
+        assert!(
+            !fn_starts.is_empty(),
+            "should record CommandStart for function call"
+        );
+    }
+
+    #[tokio::test]
+    async fn trace_records_command_not_found() {
+        let mut bash = Bash::builder().trace_mode(TraceMode::Full).build();
+        let r = bash.exec("nonexistent_command_xyz").await.unwrap();
+        assert_ne!(r.exit_code, 0);
+
+        // Should still get start+exit (exit code 127)
+        let exits: Vec<_> = r
+            .events
+            .iter()
+            .filter(|e| {
+                e.kind == TraceEventKind::CommandExit
+                    && matches!(&e.details, TraceEventDetails::CommandExit { exit_code, .. } if exit_code == &127)
+            })
+            .collect();
+        assert!(
+            !exits.is_empty(),
+            "should record CommandExit with code 127 for not-found"
+        );
     }
 }
