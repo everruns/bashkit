@@ -297,9 +297,8 @@ impl Bash {
     /// List entries in a directory. Returns entry names.
     #[napi]
     pub fn read_dir(&self, path: String) -> napi::Result<Vec<String>> {
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let bash = inner.lock().await;
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
             let entries = bash
                 .fs()
                 .read_dir(Path::new(&path))
@@ -523,9 +522,8 @@ impl BashTool {
     /// Read a file from the virtual filesystem. Returns contents as a UTF-8 string.
     #[napi]
     pub fn read_file(&self, path: String) -> napi::Result<String> {
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let bash = inner.lock().await;
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
             let bytes = bash
                 .fs()
                 .read_file(Path::new(&path))
@@ -539,9 +537,8 @@ impl BashTool {
     /// Write a string to a file in the virtual filesystem.
     #[napi]
     pub fn write_file(&self, path: String, content: String) -> napi::Result<()> {
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let bash = inner.lock().await;
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
             bash.fs()
                 .write_file(Path::new(&path), content.as_bytes())
                 .await
@@ -552,9 +549,8 @@ impl BashTool {
     /// Create a directory. If recursive is true, creates parent directories as needed.
     #[napi]
     pub fn mkdir(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let bash = inner.lock().await;
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
             bash.fs()
                 .mkdir(Path::new(&path), recursive.unwrap_or(false))
                 .await
@@ -565,9 +561,8 @@ impl BashTool {
     /// Check if a path exists in the virtual filesystem.
     #[napi]
     pub fn exists(&self, path: String) -> napi::Result<bool> {
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let bash = inner.lock().await;
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
             bash.fs()
                 .exists(Path::new(&path))
                 .await
@@ -578,9 +573,8 @@ impl BashTool {
     /// Remove a file or directory. If recursive is true, removes directory contents.
     #[napi]
     pub fn remove(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let bash = inner.lock().await;
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
             bash.fs()
                 .remove(Path::new(&path), recursive.unwrap_or(false))
                 .await
@@ -591,9 +585,8 @@ impl BashTool {
     /// List entries in a directory. Returns entry names.
     #[napi]
     pub fn read_dir(&self, path: String) -> napi::Result<Vec<String>> {
-        let inner = self.inner.clone();
-        self.rt.block_on(async move {
-            let bash = inner.lock().await;
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
             let entries = bash
                 .fs()
                 .read_dir(Path::new(&path))
