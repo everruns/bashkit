@@ -425,7 +425,9 @@ pub use fs::{
 pub use fs::{RealFs, RealFsMode};
 pub use git::GitConfig;
 pub use interpreter::{ControlFlow, ExecResult, HistoryEntry, OutputCallback, ShellState};
-pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded, SessionLimits};
+pub use limits::{
+    ExecutionCounters, ExecutionLimits, LimitExceeded, MemoryBudget, MemoryLimits, SessionLimits,
+};
 pub use network::NetworkAllowlist;
 pub use tool::BashToolBuilder as ToolBuilder;
 pub use tool::{
@@ -874,6 +876,7 @@ pub struct BashBuilder {
     cwd: Option<PathBuf>,
     limits: ExecutionLimits,
     session_limits: SessionLimits,
+    memory_limits: MemoryLimits,
     username: Option<String>,
     hostname: Option<String>,
     /// Fixed epoch for virtualizing the `date` builtin (TM-INF-018)
@@ -928,6 +931,15 @@ impl BashBuilder {
     /// from circumventing per-execution limits by splitting work.
     pub fn session_limits(mut self, limits: SessionLimits) -> Self {
         self.session_limits = limits;
+        self
+    }
+
+    /// Set per-instance memory limits.
+    ///
+    /// Controls the maximum variables, arrays, and functions a Bash
+    /// instance can hold. Prevents memory exhaustion in multi-tenant use.
+    pub fn memory_limits(mut self, limits: MemoryLimits) -> Self {
+        self.memory_limits = limits;
         self
     }
 
@@ -1449,6 +1461,7 @@ impl BashBuilder {
             self.cwd,
             self.limits,
             self.session_limits,
+            self.memory_limits,
             self.custom_builtins,
             self.history_file,
             #[cfg(feature = "http_client")]
@@ -1531,6 +1544,7 @@ impl BashBuilder {
         cwd: Option<PathBuf>,
         limits: ExecutionLimits,
         session_limits: SessionLimits,
+        memory_limits: MemoryLimits,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
         history_file: Option<PathBuf>,
         #[cfg(feature = "http_client")] network_allowlist: Option<NetworkAllowlist>,
@@ -1601,6 +1615,7 @@ impl BashBuilder {
         let max_parser_operations = limits.max_parser_operations;
         interpreter.set_limits(limits);
         interpreter.set_session_limits(session_limits);
+        interpreter.set_memory_limits(memory_limits);
 
         Bash {
             fs,

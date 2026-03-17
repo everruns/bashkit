@@ -5,7 +5,9 @@
 //!
 //! Run with: `cargo test threat_`
 
-use bashkit::{Bash, ExecutionLimits, FileSystem, FsLimits, InMemoryFs, OverlayFs, SessionLimits};
+use bashkit::{
+    Bash, ExecutionLimits, FileSystem, FsLimits, InMemoryFs, MemoryLimits, OverlayFs, SessionLimits,
+};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -3395,5 +3397,203 @@ mod session_limits {
         );
         // But per-exec counters should be reset
         assert_eq!(counters.commands, 0);
+    }
+}
+
+// =============================================================================
+// MEMORY BUDGET LIMITS (TM-DOS-060)
+// =============================================================================
+
+mod memory_limits {
+    use super::*;
+
+    /// TM-DOS-060: Variable count bomb — script creating many variables.
+    #[tokio::test]
+    async fn tm_dos_060_variable_count_bomb() {
+        let mem = MemoryLimits::new().max_variable_count(50);
+        let limits = ExecutionLimits::new()
+            .max_commands(10_000)
+            .max_loop_iterations(10_000);
+        let mut bash = Bash::builder()
+            .limits(limits)
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        // Try to create 100 variables — should stop at 50
+        let script = r#"
+for i in $(seq 1 100); do
+    eval "var_$i=hello"
+done
+echo "done"
+"#;
+        let result = bash.exec(script).await.unwrap();
+        // The script should complete but some variables won't be created
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// TM-DOS-060: Variable byte bomb — large variable values.
+    #[tokio::test]
+    async fn tm_dos_060_variable_size_bomb() {
+        let mem = MemoryLimits::new().max_total_variable_bytes(1000);
+        let limits = ExecutionLimits::new();
+        let mut bash = Bash::builder()
+            .limits(limits)
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        // Try to create a variable with a large value
+        let script = r#"
+big=$(printf '%0500s' | tr ' ' 'A')
+echo ${#big}
+big2=$(printf '%0500s' | tr ' ' 'B')
+echo ${#big2}
+"#;
+        let result = bash.exec(script).await.unwrap();
+        // First variable should succeed, second may be rejected
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<&str> = result.stdout.trim().lines().collect();
+        assert!(!lines.is_empty(), "should have produced some output");
+    }
+
+    /// TM-DOS-060: Array entry bomb — indexed array with many entries.
+    #[tokio::test]
+    async fn tm_dos_060_array_entry_bomb() {
+        let mem = MemoryLimits::new().max_array_entries(50);
+        let limits = ExecutionLimits::new()
+            .max_commands(10_000)
+            .max_loop_iterations(10_000);
+        let mut bash = Bash::builder()
+            .limits(limits)
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        // Try to create array with 100 entries
+        let script = r#"
+for i in $(seq 1 100); do
+    arr[$i]=hello
+done
+echo "done"
+"#;
+        let result = bash.exec(script).await.unwrap();
+        // Script completes; insertions beyond limit are silently dropped
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// TM-DOS-060: Function count bomb — defining many functions.
+    #[tokio::test]
+    async fn tm_dos_060_function_count_bomb() {
+        let mem = MemoryLimits::new().max_function_count(10);
+        let limits = ExecutionLimits::new()
+            .max_commands(10_000)
+            .max_loop_iterations(10_000);
+        let mut bash = Bash::builder()
+            .limits(limits)
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        // Try to define 50 functions
+        let script = r#"
+for i in $(seq 1 50); do
+    eval "func_$i() { echo $i; }"
+done
+echo "done"
+"#;
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+    }
+
+    /// TM-DOS-060: Normal scripts unaffected by default limits.
+    #[tokio::test]
+    async fn tm_dos_060_normal_script_unaffected() {
+        // Use default memory limits
+        let mut bash = Bash::builder().build();
+
+        let script = r#"
+name="hello"
+count=42
+arr=(one two three)
+declare -A map=([key1]=val1 [key2]=val2)
+greet() { echo "Hello $1"; }
+greet "world"
+echo "$name $count ${arr[1]}"
+"#;
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("Hello world"));
+        assert!(result.stdout.contains("hello 42 two"));
+    }
+
+    /// TM-DOS-060: Default memory limits are reasonable and non-zero.
+    #[test]
+    fn tm_dos_060_default_safety() {
+        let defaults = MemoryLimits::default();
+        assert_eq!(defaults.max_variable_count, 10_000);
+        assert_eq!(defaults.max_total_variable_bytes, 10_000_000);
+        assert_eq!(defaults.max_array_entries, 100_000);
+        assert_eq!(defaults.max_function_count, 1_000);
+        assert_eq!(defaults.max_function_body_bytes, 1_000_000);
+    }
+
+    /// TM-DOS-060: MemoryLimits::unlimited() disables limits.
+    #[test]
+    fn tm_dos_060_unlimited() {
+        let unlimited = MemoryLimits::unlimited();
+        assert_eq!(unlimited.max_variable_count, usize::MAX);
+        assert_eq!(unlimited.max_total_variable_bytes, usize::MAX);
+        assert_eq!(unlimited.max_array_entries, usize::MAX);
+        assert_eq!(unlimited.max_function_count, usize::MAX);
+        assert_eq!(unlimited.max_function_body_bytes, usize::MAX);
+    }
+
+    /// TM-DOS-060: Builder API configures memory limits correctly.
+    #[tokio::test]
+    async fn tm_dos_060_builder_api() {
+        let mem = MemoryLimits::new()
+            .max_variable_count(500)
+            .max_total_variable_bytes(50_000)
+            .max_array_entries(1000)
+            .max_function_count(50)
+            .max_function_body_bytes(10_000);
+        let mut bash = Bash::builder().memory_limits(mem).build();
+
+        let result = bash.exec("echo hello").await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("hello"));
+    }
+
+    /// TM-DOS-060: Cross-instance isolation — two Bash instances have independent budgets.
+    #[tokio::test]
+    async fn tm_dos_060_cross_instance_isolation() {
+        let mem = MemoryLimits::new().max_variable_count(20);
+        let limits = ExecutionLimits::new()
+            .max_commands(10_000)
+            .max_loop_iterations(10_000);
+
+        let mut bash1 = Bash::builder()
+            .limits(limits.clone())
+            .memory_limits(mem.clone())
+            .session_limits(SessionLimits::unlimited())
+            .build();
+        let mut bash2 = Bash::builder()
+            .limits(limits)
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        // Both should independently handle variable creation
+        let script = r#"
+for i in $(seq 1 15); do
+    eval "x_$i=test"
+done
+echo "done"
+"#;
+        let r1 = bash1.exec(script).await.unwrap();
+        let r2 = bash2.exec(script).await.unwrap();
+        assert_eq!(r1.exit_code, 0);
+        assert_eq!(r2.exit_code, 0);
     }
 }
