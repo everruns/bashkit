@@ -412,6 +412,8 @@ pub mod parser;
 pub mod scripted_tool;
 /// Tool contract for LLM integration
 pub mod tool;
+/// Structured execution trace events.
+pub mod trace;
 
 pub use async_trait::async_trait;
 pub use builtins::{Builtin, Context as BuiltinContext};
@@ -434,6 +436,9 @@ pub use tool::{
     BashTool, BashToolBuilder, Tool, ToolError, ToolExecution, ToolImage, ToolOutput,
     ToolOutputChunk, ToolOutputMetadata, ToolRequest, ToolResponse, ToolService, ToolStatus,
     VERSION,
+};
+pub use trace::{
+    TraceCallback, TraceCollector, TraceEvent, TraceEventDetails, TraceEventKind, TraceMode,
 };
 
 #[cfg(feature = "scripted_tool")]
@@ -877,6 +882,8 @@ pub struct BashBuilder {
     limits: ExecutionLimits,
     session_limits: SessionLimits,
     memory_limits: MemoryLimits,
+    trace_mode: TraceMode,
+    trace_callback: Option<TraceCallback>,
     username: Option<String>,
     hostname: Option<String>,
     /// Fixed epoch for virtualizing the `date` builtin (TM-INF-018)
@@ -940,6 +947,25 @@ impl BashBuilder {
     /// instance can hold. Prevents memory exhaustion in multi-tenant use.
     pub fn memory_limits(mut self, limits: MemoryLimits) -> Self {
         self.memory_limits = limits;
+        self
+    }
+
+    /// Set the trace mode for structured execution tracing.
+    ///
+    /// - `TraceMode::Off` (default): No events, zero overhead
+    /// - `TraceMode::Redacted`: Events with secrets scrubbed
+    /// - `TraceMode::Full`: Raw events, no redaction
+    pub fn trace_mode(mut self, mode: TraceMode) -> Self {
+        self.trace_mode = mode;
+        self
+    }
+
+    /// Set a real-time callback for trace events.
+    ///
+    /// The callback is invoked for each trace event as it occurs.
+    /// Requires `trace_mode` to be set to `Redacted` or `Full`.
+    pub fn on_trace_event(mut self, callback: TraceCallback) -> Self {
+        self.trace_callback = Some(callback);
         self
     }
 
@@ -1462,6 +1488,8 @@ impl BashBuilder {
             self.limits,
             self.session_limits,
             self.memory_limits,
+            self.trace_mode,
+            self.trace_callback,
             self.custom_builtins,
             self.history_file,
             #[cfg(feature = "http_client")]
@@ -1545,6 +1573,8 @@ impl BashBuilder {
         limits: ExecutionLimits,
         session_limits: SessionLimits,
         memory_limits: MemoryLimits,
+        trace_mode: TraceMode,
+        trace_callback: Option<TraceCallback>,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
         history_file: Option<PathBuf>,
         #[cfg(feature = "http_client")] network_allowlist: Option<NetworkAllowlist>,
@@ -1616,6 +1646,11 @@ impl BashBuilder {
         interpreter.set_limits(limits);
         interpreter.set_session_limits(session_limits);
         interpreter.set_memory_limits(memory_limits);
+        let mut trace_collector = TraceCollector::new(trace_mode);
+        if let Some(cb) = trace_callback {
+            trace_collector.set_callback(cb);
+        }
+        interpreter.set_trace(trace_collector);
 
         Bash {
             fs,
