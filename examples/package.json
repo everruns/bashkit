@@ -9,7 +9,7 @@
   },
   "devDependencies": {
     "openai": "^5",
-    "ai": "^4",
+    "ai": "^5.0.52",
     "@ai-sdk/openai": "^1",
     "@langchain/core": "^0.3",
     "@langchain/langgraph": "^0.2",
@@ -17,7 +17,8 @@
     "zod": "^3"
   },
   "overrides": {
-    "langsmith": ">=0.4.6"
+    "langsmith": ">=0.4.6",
+    "jsondiffpatch": ">=0.7.2"
   },
   "scripts": {
     "examples": "node bash_basics.mjs && node data_pipeline.mjs && node llm_tool.mjs",
