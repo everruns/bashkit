@@ -98,6 +98,9 @@ pub enum Token {
     /// Redirect both stdout and stderr (&>)
     RedirectBoth,
 
+    /// Clobber redirect (>|) - force overwrite even with noclobber
+    Clobber,
+
     /// Duplicate output file descriptor (>&)
     DupOutput,
 

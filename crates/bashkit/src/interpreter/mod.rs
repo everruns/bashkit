@@ -5331,6 +5331,7 @@ impl Interpreter {
             RedirectKind::HereDoc => "<<",
             RedirectKind::HereDocStrip => "<<-",
             RedirectKind::HereString => "<<<",
+            RedirectKind::Clobber => ">|",
             RedirectKind::DupOutput => ">&",
             RedirectKind::DupInput => "<&",
             RedirectKind::OutputBoth => "&>",
@@ -6963,7 +6964,7 @@ impl Interpreter {
     ) -> Result<ExecResult> {
         for redirect in redirects {
             match redirect.kind {
-                RedirectKind::Output => {
+                RedirectKind::Output | RedirectKind::Clobber => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     // Handle /dev/null at interpreter level - cannot be bypassed
@@ -6974,6 +6975,17 @@ impl Interpreter {
                             _ => result.stdout = String::new(),
                         }
                     } else {
+                        // noclobber check: > fails if file exists (>| bypasses)
+                        if redirect.kind == RedirectKind::Output
+                            && self.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
+                            && self.fs.stat(&path).await.is_ok()
+                        {
+                            result.stdout = String::new();
+                            result.stderr =
+                                format!("bash: {}: cannot overwrite existing file\n", target_path);
+                            result.exit_code = 1;
+                            return Ok(result);
+                        }
                         // Check which fd we're redirecting
                         match redirect.fd {
                             Some(2) => {
@@ -7407,8 +7419,15 @@ impl Interpreter {
                     } else {
                         // Normal indirect expansion
                         let var_name = self.expand_variable(name);
-                        let value = self.expand_variable(&var_name);
-                        result.push_str(&value);
+                        // Check arrays first: ${!ref} where ref=arr → first element
+                        if let Some(arr) = self.arrays.get(&var_name) {
+                            if let Some(first) = arr.get(&0) {
+                                result.push_str(first);
+                            }
+                        } else {
+                            let value = self.expand_variable(&var_name);
+                            result.push_str(&value);
+                        }
                     }
                 }
                 WordPart::PrefixMatch(prefix) => {
@@ -11660,6 +11679,31 @@ echo "count=$COUNT"
         )
         .await;
         assert_eq!(result.stdout, "a\nb\n3\n");
+    }
+
+    #[tokio::test]
+    async fn test_noclobber_prevents_overwrite() {
+        let result = run_script(
+            r#"echo first > /tmp/test_nc; set -o noclobber; echo second > /tmp/test_nc 2>/dev/null; echo $?; cat /tmp/test_nc"#,
+        )
+        .await;
+        assert_eq!(result.stdout.trim(), "1\nfirst");
+    }
+
+    #[tokio::test]
+    async fn test_indirect_expansion_array() {
+        // Issue #672: ${!ref} should resolve to array's first element
+        let result = run_script(r#"arr=(a b c); ref=arr; echo ${!ref}"#).await;
+        assert_eq!(result.stdout.trim(), "a");
+    }
+
+    #[tokio::test]
+    async fn test_noclobber_clobber_override() {
+        let result = run_script(
+            r#"echo first > /tmp/test_nc2; set -o noclobber; echo second >| /tmp/test_nc2; echo $?; cat /tmp/test_nc2"#,
+        )
+        .await;
+        assert_eq!(result.stdout.trim(), "0\nsecond");
     }
 
     #[tokio::test]
