@@ -1199,11 +1199,10 @@ llo
 ### end
 
 ### variable_indirection_array
-### bash_diff: indirect expansion ${!ref} does not resolve to first element of array (#672)
-# Indirect reference to array — bash: "a", bashkit: empty string via echo
+# Indirect reference to array — first element
 arr=(a b c); ref=arr; result=${!ref}; [ -n "$result" ] && echo "$result" || echo "EMPTY"
 ### expect
-EMPTY
+a
 ### end
 
 ### here_doc_indent
@@ -1319,16 +1318,15 @@ let x=5+3; echo $x
 ### end
 
 ### noclobber_test
-### bash_diff: set -o noclobber (set -C) not implemented — allows overwrite (#670)
-# noclobber prevents overwrite — bash: "1\nfirst", bashkit: "0\nsecond"
+# noclobber prevents overwrite; >| bypasses
 echo first > /tmp/noclobber_test
 set -o noclobber
 echo second > /tmp/noclobber_test 2>/dev/null; echo $?
 set +o noclobber
 cat /tmp/noclobber_test
 ### expect
-0
-second
+1
+first
 ### end
 
 ### env_passthrough
@@ -1468,11 +1466,11 @@ echo "!!"
 ### end
 
 ### nul_byte_handling
-### bash_diff: NUL bytes in printf not stripped — wc counts literal \x00 chars (#676)
-# printf with NUL bytes — bash: 2, bashkit: 6 (counts "\x00" as 4 chars)
+### bash_diff: NUL bytes stripped in VFS string context — bash outputs 3 bytes, bashkit outputs 2
+# printf with NUL bytes — bash: 3 (includes NUL byte), bashkit: 2 (NUL stripped)
 printf "a\x00b" | wc -c
 ### expect
-6
+2
 ### end
 
 ### very_long_pipeline
