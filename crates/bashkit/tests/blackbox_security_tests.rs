@@ -605,6 +605,49 @@ mod resource_exhaustion_passing {
     }
 }
 
+// =============================================================================
+// FORK BOMB / RESOURCE LIMITS
+// =============================================================================
+
+mod fork_bomb_and_budget {
+    use super::*;
+
+    /// Fork bomb pattern must not crash the process.
+    #[tokio::test]
+    async fn fork_bomb_does_not_segfault() {
+        let mut bash = dos_bash();
+        let result = bash.exec(":(){ :|:& };:").await;
+        // Must not crash — either error or non-zero exit
+        match &result {
+            Ok(r) => assert!(r.exit_code != 0 || !r.stderr.is_empty()),
+            Err(_) => {} // error is acceptable
+        }
+    }
+
+    /// max_commands budget resets per exec() call.
+    #[tokio::test]
+    async fn max_commands_resets_per_exec() {
+        let mut bash = Bash::builder()
+            .limits(
+                ExecutionLimits::new()
+                    .max_commands(10)
+                    .timeout(Duration::from_secs(5)),
+            )
+            .build();
+
+        // First exec uses some budget
+        let r1 = bash.exec("echo a; echo b; echo c").await.unwrap();
+        assert!(r1.stdout.contains("a"), "first exec should produce output");
+
+        // Second exec should also work (budget resets)
+        let r2 = bash.exec("echo x; echo y; echo z").await.unwrap();
+        assert!(
+            r2.stdout.contains("x"),
+            "second exec must work — budget should reset per exec()"
+        );
+    }
+}
+
 mod variable_injection_passing {
     use super::*;
 
