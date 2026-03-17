@@ -37,3 +37,7 @@ node_modules/
 
 # WASM build artifacts
 *.wasm
+
+# Benchmark output files
+bench-*.json
+bench-*.md
