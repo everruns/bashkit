@@ -590,7 +590,7 @@ file3.txt
 ### end
 
 ### chained_string_operations
-### bash_diff: [![:space:]] character class in parameter expansion not supported (#677)
+### bash_diff: variable expansion in ${x#$var} operand not supported yet
 # Multiple string operations — bash: "[hello world  ]", bashkit: "[  hello world  ]"
 x="  hello world  "; x="${x#"${x%%[![:space:]]*}"}"; echo "[$x]"
 ### expect

@@ -3812,6 +3812,22 @@ impl Interpreter {
                     // ] as first char is literal
                     chars_in_class.push(']');
                 }
+                Some('[') if matches!(pattern_chars.peek(), Some(':')) => {
+                    // POSIX character class [:name:]
+                    pattern_chars.next(); // consume ':'
+                    let mut class_name = String::new();
+                    loop {
+                        match pattern_chars.next() {
+                            Some(':') if matches!(pattern_chars.peek(), Some(']')) => {
+                                pattern_chars.next(); // consume ']'
+                                break;
+                            }
+                            Some(c) => class_name.push(c),
+                            None => return None,
+                        }
+                    }
+                    expand_posix_class(&class_name, &mut chars_in_class);
+                }
                 Some('-') if !chars_in_class.is_empty() => {
                     // Could be a range
                     if let Some(&next) = pattern_chars.peek() {
@@ -3844,7 +3860,59 @@ impl Interpreter {
         };
         Some(if negate { !matched } else { matched })
     }
+}
 
+/// Expand a POSIX character class name into a list of characters.
+fn expand_posix_class(name: &str, out: &mut Vec<char>) {
+    match name {
+        "space" => out.extend([' ', '\t', '\n', '\r', '\x0b', '\x0c']),
+        "blank" => out.extend([' ', '\t']),
+        "digit" => out.extend('0'..='9'),
+        "lower" => out.extend('a'..='z'),
+        "upper" => out.extend('A'..='Z'),
+        "alpha" => {
+            out.extend('a'..='z');
+            out.extend('A'..='Z');
+        }
+        "alnum" => {
+            out.extend('a'..='z');
+            out.extend('A'..='Z');
+            out.extend('0'..='9');
+        }
+        "xdigit" => {
+            out.extend('0'..='9');
+            out.extend('a'..='f');
+            out.extend('A'..='F');
+        }
+        "punct" => {
+            for c in '!'..='/' {
+                out.push(c);
+            }
+            for c in ':'..='@' {
+                out.push(c);
+            }
+            for c in '['..='`' {
+                out.push(c);
+            }
+            for c in '{'..='~' {
+                out.push(c);
+            }
+        }
+        "print" => {
+            out.extend(' '..='~');
+        }
+        "graph" => {
+            out.extend('!'..='~');
+        }
+        "cntrl" => {
+            out.extend((0u8..=31).map(|b| b as char));
+            out.push(127 as char);
+        }
+        _ => {} // Unknown class: ignore
+    }
+}
+
+impl Interpreter {
     /// Execute a sequence of commands (with errexit checking)
     async fn execute_command_sequence(&mut self, commands: &[Command]) -> Result<ExecResult> {
         self.execute_command_sequence_impl(commands, true).await
@@ -8021,6 +8089,11 @@ impl Interpreter {
             return value.to_string();
         }
 
+        // Use glob_match for patterns with bracket expressions or extglob
+        if pattern.contains('[') || self.contains_extglob(pattern) {
+            return self.remove_pattern_glob(value, pattern, prefix, longest);
+        }
+
         if prefix {
             // Remove from beginning
             if pattern == "*" {
@@ -8133,6 +8206,49 @@ impl Interpreter {
             }
         }
 
+        value.to_string()
+    }
+
+    /// Remove prefix/suffix using glob_match for patterns with brackets or extglob.
+    fn remove_pattern_glob(
+        &self,
+        value: &str,
+        pattern: &str,
+        prefix: bool,
+        longest: bool,
+    ) -> String {
+        let chars: Vec<char> = value.chars().collect();
+        if prefix {
+            // Try each prefix length; shortest = first match, longest = last match
+            let mut last_match = None;
+            for i in 0..=chars.len() {
+                let candidate: String = chars[..i].iter().collect();
+                if self.glob_match(&candidate, pattern) {
+                    if !longest {
+                        return chars[i..].iter().collect();
+                    }
+                    last_match = Some(i);
+                }
+            }
+            if let Some(i) = last_match {
+                return chars[i..].iter().collect();
+            }
+        } else {
+            // Suffix removal: try each suffix length
+            let mut last_match = None;
+            for i in (0..=chars.len()).rev() {
+                let candidate: String = chars[i..].iter().collect();
+                if self.glob_match(&candidate, pattern) {
+                    if !longest {
+                        return chars[..i].iter().collect();
+                    }
+                    last_match = Some(i);
+                }
+            }
+            if let Some(i) = last_match {
+                return chars[..i].iter().collect();
+            }
+        }
         value.to_string()
     }
 
@@ -11474,5 +11590,40 @@ echo "count=$COUNT"
         .await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "x.txt f");
+    }
+
+    #[tokio::test]
+    async fn test_posix_character_class_suffix_remove() {
+        // ${x%%[![:space:]]*} should remove from first non-space to end
+        let result = run_script(r#"x="  hello world  "; echo "[${x%%[![:space:]]*}]""#).await;
+        assert_eq!(
+            result.stdout.trim(),
+            "[  ]",
+            "%%[![:space:]]* should remove from first non-space to end"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_posix_character_class_chained_trim() {
+        // Issue #677: [![:space:]] character class in parameter expansion
+        // Test the core fix: suffix removal with POSIX classes
+        let result = run_script(r#"x="  hello world  "; echo "[${x%%[![:space:]]*}]""#).await;
+        assert_eq!(
+            result.stdout.trim(),
+            "[  ]",
+            "%%[![:space:]]* should remove from first non-space to end"
+        );
+        // Test digit class
+        let result = run_script(r#"x="abc123def"; echo "${x%%[[:digit:]]*}""#).await;
+        assert_eq!(result.stdout.trim(), "abc");
+        // Test alpha class
+        let result = run_script(r#"x="123abc"; echo "${x%%[[:alpha:]]*}""#).await;
+        assert_eq!(result.stdout.trim(), "123");
+    }
+
+    #[tokio::test]
+    async fn test_posix_digit_class_in_parameter_expansion() {
+        let result = run_script(r#"x="abc123def"; echo "${x%%[[:digit:]]*}""#).await;
+        assert_eq!(result.stdout.trim(), "abc");
     }
 }
