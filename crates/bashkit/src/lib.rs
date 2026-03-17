@@ -425,7 +425,7 @@ pub use fs::{
 pub use fs::{RealFs, RealFsMode};
 pub use git::GitConfig;
 pub use interpreter::{ControlFlow, ExecResult, HistoryEntry, OutputCallback, ShellState};
-pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded};
+pub use limits::{ExecutionCounters, ExecutionLimits, LimitExceeded, SessionLimits};
 pub use network::NetworkAllowlist;
 pub use tool::BashToolBuilder as ToolBuilder;
 pub use tool::{
@@ -873,6 +873,7 @@ pub struct BashBuilder {
     env: HashMap<String, String>,
     cwd: Option<PathBuf>,
     limits: ExecutionLimits,
+    session_limits: SessionLimits,
     username: Option<String>,
     hostname: Option<String>,
     /// Fixed epoch for virtualizing the `date` builtin (TM-INF-018)
@@ -918,6 +919,15 @@ impl BashBuilder {
     /// Set execution limits.
     pub fn limits(mut self, limits: ExecutionLimits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Set session-level resource limits.
+    ///
+    /// Session limits persist across `exec()` calls and prevent tenants
+    /// from circumventing per-execution limits by splitting work.
+    pub fn session_limits(mut self, limits: SessionLimits) -> Self {
+        self.session_limits = limits;
         self
     }
 
@@ -1438,6 +1448,7 @@ impl BashBuilder {
             self.fixed_epoch,
             self.cwd,
             self.limits,
+            self.session_limits,
             self.custom_builtins,
             self.history_file,
             #[cfg(feature = "http_client")]
@@ -1519,6 +1530,7 @@ impl BashBuilder {
         fixed_epoch: Option<i64>,
         cwd: Option<PathBuf>,
         limits: ExecutionLimits,
+        session_limits: SessionLimits,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
         history_file: Option<PathBuf>,
         #[cfg(feature = "http_client")] network_allowlist: Option<NetworkAllowlist>,
@@ -1588,6 +1600,7 @@ impl BashBuilder {
         let max_ast_depth = limits.max_ast_depth;
         let max_parser_operations = limits.max_parser_operations;
         interpreter.set_limits(limits);
+        interpreter.set_session_limits(session_limits);
 
         Bash {
             fs,
