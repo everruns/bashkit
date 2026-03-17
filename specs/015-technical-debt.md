@@ -231,6 +231,57 @@ let _ = rev; // TODO: resolve rev to actual snapshot
 
 ---
 
+## 13. Dead Abstraction: `SearchCapable` / `SearchProvider` Traits
+
+**Severity: MEDIUM | Type: Over-Engineering / Dead Code**
+
+`fs/search.rs` defines `SearchCapable` (line 34) and `SearchProvider` (line 41) traits with associated `SearchResults`/`SearchMatch` data structures — but no filesystem implementation provides them. The `FileSystem` trait has `as_search_capable()` which returns `None` by default. The grep builtin checks for a provider via runtime downcast but always falls back to the non-indexed path.
+
+This is speculative abstraction for a hypothetical indexed-search filesystem that nobody has implemented. The traits, data structures, and downcast plumbing are pure dead code.
+
+---
+
+## 14. Monster Functions: 7 Functions Over 250 Lines
+
+**Severity: MEDIUM | Type: Accumulated Complexity**
+
+| Function | File | Lines |
+|----------|------|-------|
+| `expand_word` | interpreter/mod.rs:7240 | ~443 |
+| `execute_simple_command` | interpreter/mod.rs:4255 | ~410 |
+| `parse_arithmetic_impl` | interpreter/mod.rs:8817 | ~401 |
+| `parse_simple_command` | parser/mod.rs:1776 | ~539 |
+| `dispatch_command` | interpreter/mod.rs:4792 | ~296 |
+| `execute_shell` | interpreter/mod.rs:3154 | ~291 |
+| `execute_find` | interpreter/mod.rs:2642 | ~273 |
+
+`expand_word` handles 8+ word part types inline. `parse_simple_command` is a 539-line parser state machine. These aren't just long — they mix multiple concerns in a single function body, making them hard to test individually.
+
+---
+
+## 15. Redundant Error Enum Variants
+
+**Severity: LOW | Type: Over-Engineering**
+
+The `Error` enum has 9+ variants where 2-3 would suffice:
+- `CommandNotFound(String)` is just `Execution("command not found: ...")`
+- `Network(String)` is just `Execution` for network errors
+- `Cancelled` is just `Execution("cancelled")`
+- `Internal(String)` is just `Execution` for internal errors
+- `Parse(String)` and `ParseAt { message, line, column }` overlap
+
+Most callers match on `Error` only to extract the message string. The variant granularity adds match arms everywhere without enabling different recovery strategies.
+
+---
+
+## 16. `FileSystem` Trait: 19 Methods, Several Optional/Unused
+
+**Severity: LOW | Type: Over-Engineering**
+
+The `FileSystem` trait requires 15 async methods and offers 4 optional ones. Methods like `as_search_capable()`, `mkfifo()`, `usage()`, and `limits()` are either never used or always return defaults. A leaner `FileSystemCore` + `FileSystemExt` split would reduce implementation burden for custom backends.
+
+---
+
 ## Summary by Priority
 
 | # | Issue | Severity | Type | Effort |
@@ -247,6 +298,10 @@ let _ = rev; // TODO: resolve rev to actual snapshot
 | 9 | VFS missing delete_file | LOW | Known hack | Small |
 | 11 | Blanket clippy::unwrap_used allows | LOW | Shortcut | Small |
 | 12 | git show ignores revision | LOW | Incomplete | Small |
+| 13 | Dead SearchCapable/SearchProvider traits | MEDIUM | Over-engineering | Small |
+| 14 | 7 monster functions (250-539 lines each) | MEDIUM | Accumulated complexity | Large |
+| 15 | Redundant Error enum variants (9 where 3 suffice) | LOW | Over-engineering | Small |
+| 16 | FileSystem trait too broad (19 methods) | LOW | Over-engineering | Medium |
 
 ### Root Cause Pattern
 
