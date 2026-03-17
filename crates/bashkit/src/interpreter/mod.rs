@@ -4252,6 +4252,9 @@ impl Interpreter {
         command: &SimpleCommand,
         stdin: Option<String>,
     ) -> Result<ExecResult> {
+        // Fire DEBUG trap before each simple command
+        let (_debug_stdout, _debug_stderr) = self.run_debug_trap().await;
+
         // Save old variable values before applying prefix assignments.
         // If there's a command, these assignments are temporary (bash behavior:
         // `VAR=value cmd` sets VAR only for cmd's duration).
@@ -9493,6 +9496,29 @@ impl Interpreter {
     }
 
     /// Run ERR trap if registered. Appends trap output to stdout/stderr.
+    /// Run the DEBUG trap handler (fires before each simple command).
+    /// Returns (stdout, stderr) from the trap handler.
+    async fn run_debug_trap(&mut self) -> (String, String) {
+        if let Some(trap_cmd) = self.traps.get("DEBUG").cloned() {
+            // THREAT[TM-DOS-030]: Propagate interpreter parser limits
+            if let Ok(trap_script) = Parser::with_limits(
+                &trap_cmd,
+                self.limits.max_ast_depth,
+                self.limits.max_parser_operations,
+            )
+            .parse()
+            {
+                let emit_before = self.output_emit_count;
+                if let Ok(trap_result) = self.execute_command_sequence(&trap_script.commands).await
+                {
+                    self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
+                    return (trap_result.stdout, trap_result.stderr);
+                }
+            }
+        }
+        (String::new(), String::new())
+    }
+
     async fn run_err_trap(&mut self, stdout: &mut String, stderr: &mut String) {
         if let Some(trap_cmd) = self.traps.get("ERR").cloned() {
             // THREAT[TM-DOS-030]: Propagate interpreter parser limits
@@ -11625,5 +11651,26 @@ echo "count=$COUNT"
     async fn test_posix_digit_class_in_parameter_expansion() {
         let result = run_script(r#"x="abc123def"; echo "${x%%[[:digit:]]*}""#).await;
         assert_eq!(result.stdout.trim(), "abc");
+    }
+
+    #[tokio::test]
+    async fn test_debug_trap() {
+        let result = run_script(
+            r#"count=0; trap '((count++))' DEBUG; echo a; echo b; trap - DEBUG; echo $count"#,
+        )
+        .await;
+        assert_eq!(result.stdout, "a\nb\n3\n");
+    }
+
+    #[tokio::test]
+    async fn test_debug_trap_removal() {
+        // After trap - DEBUG, the trap should no longer fire
+        let result = run_script(
+            r#"count=0; trap '((count++))' DEBUG; echo x; trap - DEBUG; echo y; echo $count"#,
+        )
+        .await;
+        // DEBUG fires before: echo x (1), trap - DEBUG (2)
+        // After removal: echo y, echo $count don't trigger
+        assert_eq!(result.stdout, "x\ny\n2\n");
     }
 }

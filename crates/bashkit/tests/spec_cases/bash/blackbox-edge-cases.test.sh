@@ -290,13 +290,12 @@ declare -i x; x=3+5; echo $x; x="2 * 4"; echo $x
 ### end
 
 ### trap_debug
-### bash_diff: DEBUG trap handler not implemented (counter stays 0) (#675)
-# DEBUG trap — bash: "a\nb\n2", bashkit: "a\nb\n0"
+# DEBUG trap fires before each simple command
 count=0; trap '((count++))' DEBUG; echo a; echo b; trap - DEBUG; echo $count
 ### expect
 a
 b
-0
+3
 ### end
 
 ### nested_command_substitution_complex
