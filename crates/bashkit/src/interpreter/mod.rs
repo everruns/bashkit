@@ -286,6 +286,10 @@ pub struct Interpreter {
     limits: ExecutionLimits,
     /// Session-level resource limits (persist across exec() calls)
     session_limits: SessionLimits,
+    /// Per-instance memory limits
+    memory_limits: crate::limits::MemoryLimits,
+    /// Memory budget tracker
+    memory_budget: crate::limits::MemoryBudget,
     /// Execution counters for resource tracking
     counters: ExecutionCounters,
     /// Job table for background execution (shared for wait builtin access)
@@ -581,6 +585,8 @@ impl Interpreter {
             call_stack: Vec::new(),
             limits: ExecutionLimits::default(),
             session_limits: SessionLimits::default(),
+            memory_limits: crate::limits::MemoryLimits::default(),
+            memory_budget: crate::limits::MemoryBudget::default(),
             counters: ExecutionCounters::new(),
             jobs: jobs::new_shared_job_table(),
             options: ShellOptions::default(),
@@ -664,6 +670,11 @@ impl Interpreter {
     /// Set session-level limits.
     pub fn set_session_limits(&mut self, limits: SessionLimits) {
         self.session_limits = limits;
+    }
+
+    /// Set per-instance memory limits.
+    pub fn set_memory_limits(&mut self, limits: crate::limits::MemoryLimits) {
+        self.memory_limits = limits;
     }
 
     /// Get execution limits.
@@ -1085,9 +1096,39 @@ impl Interpreter {
                     }
                 }
                 Command::Function(func_def) => {
-                    // Store the function definition
-                    self.functions
-                        .insert(func_def.name.clone(), func_def.clone());
+                    // THREAT[TM-DOS-060]: Check function count/size budget
+                    let body_bytes = func_def
+                        .span
+                        .end
+                        .offset
+                        .saturating_sub(func_def.span.start.offset);
+                    let is_new = !self.functions.contains_key(&func_def.name);
+                    let old_body_bytes = if is_new {
+                        0
+                    } else {
+                        self.functions
+                            .get(&func_def.name)
+                            .map(|f| f.span.end.offset.saturating_sub(f.span.start.offset))
+                            .unwrap_or(0)
+                    };
+                    if self
+                        .memory_budget
+                        .check_function_insert(
+                            body_bytes,
+                            is_new,
+                            old_body_bytes,
+                            &self.memory_limits,
+                        )
+                        .is_ok()
+                    {
+                        self.memory_budget.record_function_insert(
+                            body_bytes,
+                            is_new,
+                            old_body_bytes,
+                        );
+                        self.functions
+                            .insert(func_def.name.clone(), func_def.clone());
+                    }
                     Ok(ExecResult::ok(String::new()))
                 }
             }
@@ -1431,7 +1472,7 @@ impl Interpreter {
             };
 
             // Set REPLY to raw input
-            self.variables.insert("REPLY".to_string(), line.clone());
+            self.insert_variable_checked("REPLY".to_string(), line.clone());
 
             // Parse selection number
             let selected = line
@@ -1447,7 +1488,7 @@ impl Interpreter {
                 })
                 .unwrap_or_default();
 
-            self.variables.insert(select_cmd.variable.clone(), selected);
+            self.insert_variable_checked(select_cmd.variable.clone(), selected);
 
             // Execute body
             let emit_before = self.output_emit_count;
@@ -3312,11 +3353,11 @@ impl Interpreter {
         for (var, val) in &shell_opts {
             let prev = self.variables.get(*var).cloned();
             saved_opts.push((var.to_string(), prev));
-            self.variables.insert(var.to_string(), val.to_string());
+            self.insert_variable_checked(var.to_string(), val.to_string());
         }
         let saved_optind = self.variables.get("OPTIND").cloned();
         let saved_optchar = self.variables.get("_OPTCHAR_IDX").cloned();
-        self.variables.insert("OPTIND".to_string(), "1".to_string());
+        self.insert_variable_checked("OPTIND".to_string(), "1".to_string());
         self.variables.remove("_OPTCHAR_IDX");
 
         // Execute the script
@@ -3324,12 +3365,12 @@ impl Interpreter {
 
         // Restore OPTIND and internal getopts state
         if let Some(val) = saved_optind {
-            self.variables.insert("OPTIND".to_string(), val);
+            self.insert_variable_checked("OPTIND".to_string(), val);
         } else {
             self.variables.remove("OPTIND");
         }
         if let Some(val) = saved_optchar {
-            self.variables.insert("_OPTCHAR_IDX".to_string(), val);
+            self.insert_variable_checked("_OPTCHAR_IDX".to_string(), val);
         } else {
             self.variables.remove("_OPTCHAR_IDX");
         }
@@ -3337,7 +3378,7 @@ impl Interpreter {
         // Restore shell options
         for (var, prev) in saved_opts {
             if let Some(val) = prev {
-                self.variables.insert(var, val);
+                self.insert_variable_checked(var, val);
             } else {
                 self.variables.remove(&var);
             }
@@ -4123,12 +4164,28 @@ impl Interpreter {
                         if self.assoc_arrays.contains_key(&resolved_name) {
                             // Associative array: use string key
                             let key = self.expand_variable_or_literal(index_str);
-                            let arr = self.assoc_arrays.entry(resolved_name).or_default();
-                            if assignment.append {
-                                let existing = arr.get(&key).cloned().unwrap_or_default();
-                                arr.insert(key, existing + &value);
+                            let is_new_entry = self
+                                .assoc_arrays
+                                .get(&resolved_name)
+                                .is_none_or(|a| !a.contains_key(&key));
+                            if is_new_entry
+                                && self
+                                    .memory_budget
+                                    .check_array_entries(1, &self.memory_limits)
+                                    .is_err()
+                            {
+                                // Budget exceeded — skip this assignment
                             } else {
-                                arr.insert(key, value);
+                                if is_new_entry {
+                                    self.memory_budget.record_array_insert(1);
+                                }
+                                let arr = self.assoc_arrays.entry(resolved_name).or_default();
+                                if assignment.append {
+                                    let existing = arr.get(&key).cloned().unwrap_or_default();
+                                    arr.insert(key, existing + &value);
+                                } else {
+                                    arr.insert(key, value);
+                                }
                             }
                         } else {
                             // Indexed array: use numeric index (supports negative)
@@ -4143,12 +4200,28 @@ impl Interpreter {
                             } else {
                                 raw_idx as usize
                             };
-                            let arr = self.arrays.entry(resolved_name).or_default();
-                            if assignment.append {
-                                let existing = arr.get(&index).cloned().unwrap_or_default();
-                                arr.insert(index, existing + &value);
+                            let is_new_entry = self
+                                .arrays
+                                .get(&resolved_name)
+                                .is_none_or(|a| !a.contains_key(&index));
+                            if is_new_entry
+                                && self
+                                    .memory_budget
+                                    .check_array_entries(1, &self.memory_limits)
+                                    .is_err()
+                            {
+                                // Budget exceeded — skip
                             } else {
-                                arr.insert(index, value);
+                                if is_new_entry {
+                                    self.memory_budget.record_array_insert(1);
+                                }
+                                let arr = self.arrays.entry(resolved_name).or_default();
+                                if assignment.append {
+                                    let existing = arr.get(&index).cloned().unwrap_or_default();
+                                    arr.insert(index, existing + &value);
+                                } else {
+                                    arr.insert(index, value);
+                                }
                             }
                         }
                     } else if assignment.append {
@@ -4210,7 +4283,7 @@ impl Interpreter {
             for (name, old) in var_saves.into_iter().rev() {
                 match old {
                     Some(v) => {
-                        self.variables.insert(name, v);
+                        self.insert_variable_checked(name, v);
                     }
                     None => {
                         self.variables.remove(&name);
@@ -4247,7 +4320,7 @@ impl Interpreter {
             for (vname, old) in var_saves.into_iter().rev() {
                 match old {
                     Some(v) => {
-                        self.variables.insert(vname, v);
+                        self.insert_variable_checked(vname, v);
                     }
                     None => {
                         self.variables.remove(&vname);
@@ -4399,7 +4472,7 @@ impl Interpreter {
         for (name, old) in var_saves {
             match old {
                 Some(v) => {
-                    self.variables.insert(name, v);
+                    self.insert_variable_checked(name, v);
                 }
                 None => {
                     self.variables.remove(&name);
@@ -4686,7 +4759,7 @@ impl Interpreter {
                         arr.insert(i, word.to_string());
                     }
                 }
-                self.arrays.insert(arr_name.to_string(), arr);
+                self.insert_array_checked(arr_name.to_string(), arr);
                 self.variables.remove(&marker);
             }
 
@@ -5243,7 +5316,7 @@ impl Interpreter {
                             .insert(var_name.to_string(), value.to_string());
                     }
                 } else if !is_internal_variable(arg) {
-                    self.variables.insert(arg.to_string(), String::new());
+                    self.insert_variable_checked(arg.to_string(), String::new());
                 }
             }
         }
@@ -5773,7 +5846,7 @@ impl Interpreter {
                 arr.insert(idx, value);
             }
             if !arr.is_empty() {
-                self.arrays.insert(array_name, arr);
+                self.insert_array_checked(array_name, arr);
             }
         }
 
@@ -5820,7 +5893,7 @@ impl Interpreter {
 
         // Check if we're past the end
         if optind < 1 || optind > parse_args.len() {
-            self.variables.insert(varname.clone(), "?".to_string());
+            self.insert_variable_checked(varname.clone(), "?".to_string());
             return Ok(ExecResult {
                 stdout: String::new(),
                 stderr: String::new(),
@@ -5834,7 +5907,7 @@ impl Interpreter {
 
         // Check if this is an option (starts with -)
         if !current_arg.starts_with('-') || current_arg == "-" || current_arg == "--" {
-            self.variables.insert(varname.clone(), "?".to_string());
+            self.insert_variable_checked(varname.clone(), "?".to_string());
             if current_arg == "--" {
                 self.variables
                     .insert("OPTIND".to_string(), (optind + 1).to_string());
@@ -5864,7 +5937,7 @@ impl Interpreter {
             self.variables
                 .insert("OPTIND".to_string(), (optind + 1).to_string());
             self.variables.remove("_OPTCHAR_IDX");
-            self.variables.insert(varname.clone(), "?".to_string());
+            self.insert_variable_checked(varname.clone(), "?".to_string());
             return Ok(ExecResult {
                 stdout: String::new(),
                 stderr: String::new(),
@@ -5881,14 +5954,14 @@ impl Interpreter {
         // Check if this option is in the optstring
         if let Some(pos) = spec.find(opt_char) {
             let needs_arg = spec.get(pos + 1..pos + 2) == Some(":");
-            self.variables.insert(varname.clone(), opt_char.to_string());
+            self.insert_variable_checked(varname.clone(), opt_char.to_string());
 
             if needs_arg {
                 // Option needs an argument
                 if char_idx + 1 < opt_chars.len() {
                     // Rest of current arg is the argument
                     let arg_val: String = opt_chars[char_idx + 1..].iter().collect();
-                    self.variables.insert("OPTARG".to_string(), arg_val);
+                    self.insert_variable_checked("OPTARG".to_string(), arg_val);
                     self.variables
                         .insert("OPTIND".to_string(), (optind + 1).to_string());
                     self.variables.remove("_OPTCHAR_IDX");
@@ -5906,11 +5979,11 @@ impl Interpreter {
                         .insert("OPTIND".to_string(), (optind + 1).to_string());
                     self.variables.remove("_OPTCHAR_IDX");
                     if silent {
-                        self.variables.insert(varname.clone(), ":".to_string());
+                        self.insert_variable_checked(varname.clone(), ":".to_string());
                         self.variables
                             .insert("OPTARG".to_string(), opt_char.to_string());
                     } else {
-                        self.variables.insert(varname.clone(), "?".to_string());
+                        self.insert_variable_checked(varname.clone(), "?".to_string());
                         let mut result = ExecResult::ok(String::new());
                         result.stderr = format!(
                             "bash: getopts: option requires an argument -- '{}'\n",
@@ -5947,11 +6020,11 @@ impl Interpreter {
             }
 
             if silent {
-                self.variables.insert(varname.clone(), "?".to_string());
+                self.insert_variable_checked(varname.clone(), "?".to_string());
                 self.variables
                     .insert("OPTARG".to_string(), opt_char.to_string());
             } else {
-                self.variables.insert(varname.clone(), "?".to_string());
+                self.insert_variable_checked(varname.clone(), "?".to_string());
                 let mut result = ExecResult::ok(String::new());
                 result.stderr = format!("bash: getopts: illegal option -- '{}'\n", opt_char);
                 result = self.apply_redirections(result, redirects).await?;
@@ -6453,8 +6526,7 @@ impl Interpreter {
                 } else if is_integer {
                     // Evaluate as arithmetic expression
                     let int_val = self.evaluate_arithmetic_with_assign(value);
-                    self.variables
-                        .insert(var_name.to_string(), int_val.to_string());
+                    self.insert_variable_checked(var_name.to_string(), int_val.to_string());
                 } else {
                     // Apply case conversion attributes
                     let final_value = if is_lowercase {
@@ -6464,7 +6536,7 @@ impl Interpreter {
                     } else {
                         value.to_string()
                     };
-                    self.variables.insert(var_name.to_string(), final_value);
+                    self.insert_variable_checked(var_name.to_string(), final_value);
                 }
 
                 // Set case conversion attribute markers
@@ -6508,7 +6580,7 @@ impl Interpreter {
                     // Initialize empty indexed array
                     self.arrays.entry(name.to_string()).or_default();
                 } else if !self.variables.contains_key(name.as_str()) {
-                    self.variables.insert(name.to_string(), String::new());
+                    self.insert_variable_checked(name.to_string(), String::new());
                 }
                 // Set case conversion attribute markers
                 if is_lowercase {
@@ -8687,6 +8759,7 @@ impl Interpreter {
     /// Set a variable, respecting dynamic scoping.
     /// If the variable is declared `local` in any active call frame, update that frame.
     /// Otherwise, set in global variables.
+    /// THREAT[TM-DOS-060]: Checks memory budget before inserting.
     fn set_variable(&mut self, name: String, value: String) {
         // THREAT[TM-INJ-009]: Block user assignment to internal marker variables
         if Self::is_internal_variable(&name) {
@@ -8716,11 +8789,96 @@ impl Interpreter {
             if let std::collections::hash_map::Entry::Occupied(mut e) =
                 frame.locals.entry(resolved.clone())
             {
+                // Local variable update — track byte delta but no count change
+                let old_val_len = e.get().len();
+                self.memory_budget.variable_bytes = self
+                    .memory_budget
+                    .variable_bytes
+                    .saturating_add(value.len())
+                    .saturating_sub(old_val_len);
                 e.insert(value);
                 return;
             }
         }
-        self.variables.insert(resolved, value);
+        self.insert_variable_checked(resolved, value);
+    }
+
+    /// Insert a variable into the global variables map with memory budget checking.
+    /// Silently drops the insert if the budget would be exceeded.
+    /// Internal marker variables (_READONLY_, _NAMEREF_, etc.) bypass budget checks.
+    fn insert_variable_checked(&mut self, key: String, value: String) {
+        let is_internal = Self::is_internal_variable(&key);
+        if !is_internal {
+            let is_new = !self.variables.contains_key(&key);
+            let (old_key_len, old_value_len) = if is_new {
+                (0, 0)
+            } else {
+                (key.len(), self.variables.get(&key).map_or(0, |v| v.len()))
+            };
+            if self
+                .memory_budget
+                .check_variable_insert(
+                    key.len(),
+                    value.len(),
+                    is_new,
+                    old_key_len,
+                    old_value_len,
+                    &self.memory_limits,
+                )
+                .is_err()
+            {
+                return; // silently reject — budget exceeded
+            }
+            self.memory_budget.record_variable_insert(
+                key.len(),
+                value.len(),
+                is_new,
+                old_key_len,
+                old_value_len,
+            );
+        }
+        self.variables.insert(key, value);
+    }
+
+    /// Insert an array with memory budget checking.
+    /// Returns true if the insert succeeded.
+    fn insert_array_checked(&mut self, name: String, arr: HashMap<usize, String>) -> bool {
+        let new_entries = arr.len();
+        let old_entries = self.arrays.get(&name).map_or(0, |a| a.len());
+        let net = new_entries.saturating_sub(old_entries);
+        if net > 0
+            && self
+                .memory_budget
+                .check_array_entries(net, &self.memory_limits)
+                .is_err()
+        {
+            return false;
+        }
+        self.memory_budget.array_entries =
+            self.memory_budget.array_entries.saturating_sub(old_entries) + new_entries;
+        self.arrays.insert(name, arr);
+        true
+    }
+
+    /// Insert an associative array with memory budget checking.
+    /// Returns true if the insert succeeded.
+    #[allow(dead_code)]
+    fn insert_assoc_array_checked(&mut self, name: String, arr: HashMap<String, String>) -> bool {
+        let new_entries = arr.len();
+        let old_entries = self.assoc_arrays.get(&name).map_or(0, |a| a.len());
+        let net = new_entries.saturating_sub(old_entries);
+        if net > 0
+            && self
+                .memory_budget
+                .check_array_entries(net, &self.memory_limits)
+                .is_err()
+        {
+            return false;
+        }
+        self.memory_budget.array_entries =
+            self.memory_budget.array_entries.saturating_sub(old_entries) + new_entries;
+        self.assoc_arrays.insert(name, arr);
+        true
     }
 
     /// Resolve nameref chains: if `name` has a `_NAMEREF_<name>` marker,
