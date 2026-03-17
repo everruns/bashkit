@@ -4255,6 +4255,29 @@ impl Interpreter {
         // Fire DEBUG trap before each simple command
         let (_debug_stdout, _debug_stderr) = self.run_debug_trap().await;
 
+        // Bash expansion order: expand command name and args BEFORE applying
+        // prefix assignments. This ensures `x=old; x=new echo $x` prints "old".
+        let name = self.expand_word(&command.name).await?;
+
+        // Check for nounset error from name expansion
+        if let Some(err_msg) = self.nounset_error.take() {
+            self.last_exit_code = 1;
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: err_msg,
+                exit_code: 1,
+                control_flow: ControlFlow::Return(1),
+                ..Default::default()
+            });
+        }
+
+        // Pre-expand args before applying assignments (bash behavior)
+        let pre_expanded_args = if !name.is_empty() {
+            Some(self.expand_command_args(command).await?)
+        } else {
+            None
+        };
+
         // Save old variable values before applying prefix assignments.
         // If there's a command, these assignments are temporary (bash behavior:
         // `VAR=value cmd` sets VAR only for cmd's duration).
@@ -4269,7 +4292,7 @@ impl Interpreter {
         // exit code of command substitutions in the value (x=$(false) → $?=1).
         let pre_assign_subst_gen = self.subst_generation;
 
-        // Process variable assignments first
+        // Process variable assignments
         for assignment in &command.assignments {
             match &assignment.value {
                 AssignmentValue::Scalar(word) => {
@@ -4389,31 +4412,6 @@ impl Interpreter {
                     }
                 }
             }
-        }
-
-        let name = self.expand_word(&command.name).await?;
-
-        // Check for nounset error from variable expansion
-        if let Some(err_msg) = self.nounset_error.take() {
-            // Restore variable saves since we're aborting
-            for (name, old) in var_saves.into_iter().rev() {
-                match old {
-                    Some(v) => {
-                        self.insert_variable_checked(name, v);
-                    }
-                    None => {
-                        self.variables.remove(&name);
-                    }
-                }
-            }
-            self.last_exit_code = 1;
-            return Ok(ExecResult {
-                stdout: String::new(),
-                stderr: err_msg,
-                exit_code: 1,
-                control_flow: ControlFlow::Return(1),
-                ..Default::default()
-            });
         }
 
         // Alias expansion: only for plain literal unquoted command names.
@@ -4543,7 +4541,30 @@ impl Interpreter {
             }
         }
 
-        // Emit xtrace (set -x): build trace line for stderr
+        // Use pre-expanded args (expanded before assignments were applied)
+        let args = pre_expanded_args.unwrap_or_default();
+
+        // Check for glob error sentinel from expand_command_args
+        if let Some(first) = args.first()
+            && first.starts_with("\x00ERR\x00")
+        {
+            let err_msg = first.trim_start_matches("\x00ERR\x00").to_string();
+            self.last_exit_code = 1;
+            // Restore variables before returning
+            for (name, old) in var_saves {
+                match old {
+                    Some(v) => {
+                        self.insert_variable_checked(name, v);
+                    }
+                    None => {
+                        self.variables.remove(&name);
+                    }
+                }
+            }
+            return Ok(ExecResult::err(err_msg, 1));
+        }
+
+        // Emit xtrace (set -x): build trace line from pre-expanded args
         let xtrace_line = if self.is_xtrace_enabled() {
             let ps4 = self
                 .variables
@@ -4552,15 +4573,14 @@ impl Interpreter {
                 .unwrap_or_else(|| "+ ".to_string());
             let mut trace = ps4;
             trace.push_str(&name);
-            for word in &command.args {
-                let expanded = self.expand_word(word).await.unwrap_or_default();
+            for expanded in &args {
                 trace.push(' ');
                 if expanded.contains(' ') || expanded.contains('\t') || expanded.is_empty() {
                     trace.push('\'');
                     trace.push_str(&expanded.replace('\'', "'\\''"));
                     trace.push('\'');
                 } else {
-                    trace.push_str(&expanded);
+                    trace.push_str(expanded);
                 }
             }
             trace.push('\n');
@@ -4569,8 +4589,10 @@ impl Interpreter {
             None
         };
 
-        // Dispatch to the appropriate handler
-        let result = self.execute_dispatched_command(&name, command, stdin).await;
+        // Dispatch to the appropriate handler with pre-expanded args
+        let result = self
+            .execute_dispatched_command(&name, args, command, stdin)
+            .await;
 
         // Restore env (prefix assignments are command-scoped)
         for (name, old) in env_saves {
@@ -4608,17 +4630,8 @@ impl Interpreter {
         }
     }
 
-    /// Execute a command after name resolution and prefix assignment setup.
-    ///
-    /// Handles argument expansion, stdin processing, and dispatch to
-    /// functions, special builtins, regular builtins, or command-not-found.
-    async fn execute_dispatched_command(
-        &mut self,
-        name: &str,
-        command: &SimpleCommand,
-        stdin: Option<String>,
-    ) -> Result<ExecResult> {
-        // Expand arguments with brace and glob expansion
+    /// Expand command arguments with field splitting, brace, and glob expansion.
+    async fn expand_command_args(&mut self, command: &SimpleCommand) -> Result<Vec<String>> {
         let mut args: Vec<String> = Vec::new();
         for word in &command.args {
             // Use field expansion so "${arr[@]}" produces multiple args
@@ -4641,13 +4654,26 @@ impl Interpreter {
                         Ok(items) => args.extend(items),
                         Err(pat) => {
                             self.last_exit_code = 1;
-                            return Ok(ExecResult::err(format!("-bash: no match: {}\n", pat), 1));
+                            return Ok(vec![format!("\x00ERR\x00-bash: no match: {}\n", pat)]);
                         }
                     }
                 }
             }
         }
+        Ok(args)
+    }
 
+    /// Execute a command after name resolution and prefix assignment setup.
+    ///
+    /// Handles stdin processing and dispatch to functions, special builtins,
+    /// regular builtins, or command-not-found. Args are pre-expanded.
+    async fn execute_dispatched_command(
+        &mut self,
+        name: &str,
+        args: Vec<String>,
+        command: &SimpleCommand,
+        stdin: Option<String>,
+    ) -> Result<ExecResult> {
         // Track $_ (last argument of previous command, from already-expanded args)
         if let Some(last) = args.last() {
             self.insert_variable_checked("_".to_string(), last.clone());
@@ -11775,5 +11801,12 @@ echo "count=$COUNT"
         // $_ with no args should be the command name
         let result = run_script("true; echo $_").await;
         assert_eq!(result.stdout.trim(), "true");
+    }
+
+    #[tokio::test]
+    async fn test_temp_assignment_expansion_order() {
+        // Issue #671: args expanded before temporary prefix assignment
+        let result = run_script(r#"x=hello; x=world echo $x"#).await;
+        assert_eq!(result.stdout.trim(), "hello");
     }
 }

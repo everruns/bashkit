@@ -1329,11 +1329,10 @@ first
 ### end
 
 ### env_passthrough
-### bash_diff: temporary variable assignment in command prefix expands $x after assignment instead of before (#671)
-# Variable in command prefix — bash: "hello", bashkit: "world"
+# Variable in command prefix — args expanded before assignment
 x=hello; x=world echo $x
 ### expect
-world
+hello
 ### end
 
 ### split_combined_ops
