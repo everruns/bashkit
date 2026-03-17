@@ -4771,6 +4771,17 @@ impl Interpreter {
 
         // Handle `exec` - applies redirections to current shell
         if name == "exec" {
+            // exec with arguments tries to replace the shell process — not supported
+            // in sandboxed environment, so return command-not-found.
+            if !args.is_empty() {
+                let cmd = args.join(" ");
+                self.last_exit_code = 127;
+                return Ok(ExecResult {
+                    stderr: format!("-bash: exec: {}: command not found\n", cmd),
+                    exit_code: 127,
+                    ..ExecResult::default()
+                });
+            }
             // exec with no args: apply redirections to the shell context
             // For input redirects with fd (exec N< file), store content in fd table
             for redirect in &command.redirects {
