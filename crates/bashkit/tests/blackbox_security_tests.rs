@@ -233,11 +233,9 @@ mod finding_timeout_bypass {
 mod finding_readonly_bypass {
     use super::*;
 
-    /// TM-INJ-019: unset removes readonly variables.
-    /// Expected: unset should fail on readonly vars. Actual: variable is removed.
+    /// TM-INJ-019: unset cannot remove readonly variables.
     #[tokio::test]
-    #[ignore] // FINDING: readonly bypassed via unset
-    async fn unset_removes_readonly() {
+    async fn unset_cannot_remove_readonly() {
         let mut bash = tight_bash();
         let result = bash
             .exec(
@@ -257,11 +255,9 @@ mod finding_readonly_bypass {
         );
     }
 
-    /// TM-INJ-020: declare overwrites readonly variables.
-    /// Expected: declare should fail on readonly vars. Actual: variable is overwritten.
+    /// TM-INJ-020: declare cannot overwrite readonly variables.
     #[tokio::test]
-    #[ignore] // FINDING: readonly bypassed via declare
-    async fn declare_overwrites_readonly() {
+    async fn declare_cannot_overwrite_readonly() {
         let mut bash = tight_bash();
         let result = bash
             .exec(
@@ -280,11 +276,9 @@ mod finding_readonly_bypass {
         );
     }
 
-    /// TM-INJ-021: export overwrites readonly variables.
-    /// Expected: export should fail on readonly vars. Actual: variable is overwritten.
+    /// TM-INJ-021: export cannot overwrite readonly variables.
     #[tokio::test]
-    #[ignore] // FINDING: readonly bypassed via export
-    async fn export_overwrites_readonly() {
+    async fn export_cannot_overwrite_readonly() {
         let mut bash = tight_bash();
         let result = bash
             .exec(

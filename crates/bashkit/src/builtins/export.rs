@@ -39,9 +39,14 @@ impl Builtin for Export {
                     ));
                 }
                 // THREAT[TM-INJ-015]: Block internal variable prefix injection via export
-                if !is_internal_variable(name) {
-                    ctx.variables.insert(name.to_string(), value.to_string());
+                if is_internal_variable(name) {
+                    continue;
                 }
+                // THREAT[TM-INJ-021]: Refuse to overwrite readonly variables
+                if ctx.variables.contains_key(&format!("_READONLY_{}", name)) {
+                    continue;
+                }
+                ctx.variables.insert(name.to_string(), value.to_string());
             } else {
                 // Just marking for export - in our model this is a no-op
                 // unless the variable exists, in which case we keep it
