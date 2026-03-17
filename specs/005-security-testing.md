@@ -148,11 +148,43 @@ fail_point!("module::function", |action| {
 3. **Document actions**: List all supported actions in code comments and this spec.
 4. **Test both paths**: Test that fail points affect behavior AND that normal operation works without them.
 
+## JavaScript Security Tests
+
+The JavaScript/TypeScript bindings have a dedicated security test suite at
+`crates/bashkit-js/__test__/security.spec.ts`. These tests cover both
+white-box (targeting known internals) and black-box (adversarial inputs)
+scenarios across 18 categories:
+
+1. Resource limit enforcement (TM-DOS)
+2. Output truncation (TM-DOS)
+3. Sandbox escape prevention (TM-ESC)
+4. VFS security — path traversal, file count, nesting, filename limits (TM-DOS, TM-INJ)
+5. Instance isolation (TM-ISO)
+6. Error message safety (TM-INT)
+7. TypeScript wrapper injection prevention (TM-INJ)
+8. Adversarial script inputs — null bytes, deep nesting, expansion bombs
+9. Unicode & encoding attacks (TM-UNI)
+10. Injection via constructor options (TM-INJ)
+11. Concurrency & cancellation (TM-DOS)
+12. Async API security
+13. BashTool metadata safety
+14. Bash feature abuse — traps, special variables, /dev/tcp
+15. Mounted files security
+16. Rapid instance creation/destruction
+17. Edge case inputs
+18. Async factory security
+
+```bash
+# Run JS security tests
+cd crates/bashkit-js && npm test
+```
+
 ## Related Files
 
 - `crates/bashkit/tests/security_failpoint_tests.rs` - Fail-point security tests
 - `crates/bashkit/tests/threat_model_tests.rs` - Threat model tests (51 tests)
 - `crates/bashkit/tests/builtin_error_security_tests.rs` - Builtin error security tests (39 tests, includes TM-INT-003)
+- `crates/bashkit-js/__test__/security.spec.ts` - JavaScript security tests (90+ tests, 18 categories)
 - `crates/bashkit/src/limits.rs` - Resource limit fail points
 - `crates/bashkit/src/fs/memory.rs` - Filesystem fail points
 - `crates/bashkit/src/interpreter/mod.rs` - Interpreter fail points, panic catching
