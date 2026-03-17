@@ -347,6 +347,10 @@ pub struct Interpreter {
     /// Cancellation token: when set to `true`, execution aborts at the next
     /// command boundary with `Error::Cancelled`.
     cancelled: Arc<AtomicBool>,
+    /// Deferred output process substitutions: after a command writes to the
+    /// virtual file path, run these commands with the file content as stdin.
+    /// Each entry is (virtual_path, commands_to_run).
+    deferred_proc_subs: Vec<(String, Vec<Command>)>,
 }
 
 impl Interpreter {
@@ -614,6 +618,7 @@ impl Interpreter {
             coproc_buffers: HashMap::new(),
             coproc_next_fd: 63,
             cancelled: Arc::new(AtomicBool::new(false)),
+            deferred_proc_subs: Vec::new(),
         }
     }
 
@@ -4620,14 +4625,43 @@ impl Interpreter {
 
         // Prepend xtrace to stderr (like real bash, xtrace goes to the
         // shell's stderr, unaffected by per-command redirections like 2>&1).
-        if let Some(trace) = xtrace_line {
+        let mut result = if let Some(trace) = xtrace_line {
             result.map(|mut r| {
                 r.stderr = trace + &r.stderr;
                 r
             })
         } else {
             result
+        };
+
+        // Execute deferred output process substitutions: >(cmd)
+        // The main command has written to the virtual file; now run
+        // the deferred commands reading from that file.
+        if !self.deferred_proc_subs.is_empty() {
+            let deferred = std::mem::take(&mut self.deferred_proc_subs);
+            for (path_str, commands) in deferred {
+                let path = Path::new(&path_str);
+                let stdin_data = if let Ok(bytes) = self.fs.read_file(path).await {
+                    let s = String::from_utf8_lossy(&bytes).to_string();
+                    if s.is_empty() { None } else { Some(s) }
+                } else {
+                    None
+                };
+                for cmd in &commands {
+                    let prev_stdin = self.pipeline_stdin.take();
+                    self.pipeline_stdin = stdin_data.clone();
+                    let cmd_result = self.execute_command(cmd).await?;
+                    self.pipeline_stdin = prev_stdin;
+                    // Append output from deferred proc sub to main result
+                    if let Ok(ref mut r) = result {
+                        r.stdout.push_str(&cmd_result.stdout);
+                        r.stderr.push_str(&cmd_result.stderr);
+                    }
+                }
+            }
         }
+
+        result
     }
 
     /// Expand command arguments with field splitting, brace, and glob expansion.
@@ -7555,28 +7589,30 @@ impl Interpreter {
                     }
                 }
                 WordPart::ProcessSubstitution { commands, is_input } => {
-                    // Execute the commands and capture output
-                    let mut stdout = String::new();
-                    for cmd in commands {
-                        let cmd_result = self.execute_command(cmd).await?;
-                        stdout.push_str(&cmd_result.stdout);
-                    }
-
-                    // Create a virtual file with the output
                     let path_str = format!(
                         "/dev/fd/proc_sub_{}",
                         PROC_SUB_COUNTER.fetch_add(1, Ordering::Relaxed)
                     );
                     let path = Path::new(&path_str);
 
-                    // Write to virtual filesystem
-                    if self.fs.write_file(path, stdout.as_bytes()).await.is_err() {
-                        // If we can't write, just inline the content
-                        // This is a fallback for simpler behavior
-                        if *is_input {
+                    if *is_input {
+                        // <(cmd): execute commands, write output to virtual file
+                        let mut stdout = String::new();
+                        for cmd in commands {
+                            let cmd_result = self.execute_command(cmd).await?;
+                            stdout.push_str(&cmd_result.stdout);
+                        }
+                        if self.fs.write_file(path, stdout.as_bytes()).await.is_err() {
                             result.push_str(&stdout);
+                        } else {
+                            result.push_str(&path_str);
                         }
                     } else {
+                        // >(cmd): create empty file, defer command execution until
+                        // after the main command writes to it.
+                        let _ = self.fs.write_file(path, b"").await;
+                        self.deferred_proc_subs
+                            .push((path_str.clone(), commands.clone()));
                         result.push_str(&path_str);
                     }
                 }
@@ -11923,5 +11959,33 @@ echo "count=$COUNT"
         // Issue #671: args expanded before temporary prefix assignment
         let result = run_script(r#"x=hello; x=world echo $x"#).await;
         assert_eq!(result.stdout.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_process_sub_multiline() {
+        // Issue #666: process substitution should handle multiline output
+        let result = run_script(r#"cat <(echo hello; echo world)"#).await;
+        assert_eq!(result.stdout, "hello\nworld\n");
+    }
+
+    #[tokio::test]
+    async fn test_process_sub_echo_e() {
+        // Issue #666: echo -e in process substitution
+        let result = run_script(r#"cat <(echo -e "a\nb")"#).await;
+        assert_eq!(result.stdout, "a\nb\n");
+    }
+
+    #[tokio::test]
+    async fn test_process_sub_output() {
+        // Issue #666: output process substitution >(cmd) forwards output
+        let result = run_script(r#"echo hello > >(cat)"#).await;
+        assert_eq!(result.stdout.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_process_sub_paste() {
+        // Issue #666: paste with multiline process substitutions
+        let result = run_script(r#"paste <(echo -e "a\nb") <(echo -e "1\n2")"#).await;
+        assert_eq!(result.stdout, "a\t1\nb\t2\n");
     }
 }

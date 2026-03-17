@@ -2361,11 +2361,20 @@ impl<'a> Parser<'a> {
                             cmd_str.push(')');
                             self.advance();
                         }
-                        Some(tokens::Token::Word(w)) | Some(tokens::Token::QuotedWord(w)) => {
+                        Some(tokens::Token::Word(w)) => {
                             if !cmd_str.is_empty() {
                                 cmd_str.push(' ');
                             }
                             cmd_str.push_str(w);
+                            self.advance();
+                        }
+                        Some(tokens::Token::QuotedWord(w)) => {
+                            if !cmd_str.is_empty() {
+                                cmd_str.push(' ');
+                            }
+                            cmd_str.push('"');
+                            cmd_str.push_str(w);
+                            cmd_str.push('"');
                             self.advance();
                         }
                         Some(tokens::Token::LiteralWord(w)) => {
@@ -2381,7 +2390,48 @@ impl<'a> Parser<'a> {
                             cmd_str.push_str(" | ");
                             self.advance();
                         }
+                        Some(tokens::Token::Semicolon) => {
+                            cmd_str.push_str("; ");
+                            self.advance();
+                        }
+                        Some(tokens::Token::And) => {
+                            cmd_str.push_str(" && ");
+                            self.advance();
+                        }
+                        Some(tokens::Token::Or) => {
+                            cmd_str.push_str(" || ");
+                            self.advance();
+                        }
+                        Some(tokens::Token::Background) => {
+                            cmd_str.push_str(" & ");
+                            self.advance();
+                        }
+                        Some(tokens::Token::RedirectOut) => {
+                            cmd_str.push_str(" > ");
+                            self.advance();
+                        }
+                        Some(tokens::Token::RedirectAppend) => {
+                            cmd_str.push_str(" >> ");
+                            self.advance();
+                        }
+                        Some(tokens::Token::RedirectIn) => {
+                            cmd_str.push_str(" < ");
+                            self.advance();
+                        }
+                        Some(tokens::Token::HereString) => {
+                            cmd_str.push_str(" <<< ");
+                            self.advance();
+                        }
+                        Some(tokens::Token::DupOutput) => {
+                            cmd_str.push_str(" >&");
+                            self.advance();
+                        }
+                        Some(tokens::Token::RedirectFd(fd)) => {
+                            cmd_str.push_str(&format!(" {}> ", fd));
+                            self.advance();
+                        }
                         Some(tokens::Token::Newline) => {
+                            cmd_str.push('\n');
                             self.advance();
                         }
                         None => {
@@ -2390,7 +2440,7 @@ impl<'a> Parser<'a> {
                             ));
                         }
                         _ => {
-                            // Skip other tokens for now
+                            // Skip unknown tokens but don't silently lose them
                             self.advance();
                         }
                     }
