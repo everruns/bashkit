@@ -3021,3 +3021,148 @@ mod overlay_limit_accounting {
         );
     }
 }
+
+// =============================================================================
+// YAML/TEMPLATE RECURSION DEPTH LIMITS (issue #654)
+// =============================================================================
+
+mod yaml_template_depth {
+    use super::*;
+
+    fn bash() -> Bash {
+        Bash::builder().build()
+    }
+
+    // --- TM-DOS-051: YAML depth bomb ---
+
+    /// TM-DOS-051: Deeply nested YAML map should produce error, not stack overflow.
+    #[tokio::test]
+    async fn tm_dos_051_yaml_depth_bomb_maps() {
+        let mut bash = bash();
+        // Generate 200-level nested YAML
+        let mut yaml = String::new();
+        for i in 0..200 {
+            let indent = "  ".repeat(i);
+            yaml.push_str(&format!("{indent}level{i}:\n"));
+        }
+        let last_indent = "  ".repeat(200);
+        yaml.push_str(&format!("{last_indent}value: deep\n"));
+
+        let cmd = format!("yaml get level0.level1.level2 - <<'YAML_EOF'\n{yaml}YAML_EOF");
+        let result = bash.exec(&cmd).await.unwrap();
+        // Should get an error or truncated result, not a stack overflow/panic
+        let output = format!("{}{}", result.stdout, result.stderr);
+        assert!(
+            output.contains("depth exceeded") || result.exit_code != 0 || output.contains("ERROR"),
+            "TM-DOS-051: deeply nested YAML should produce clean error, got: stdout={:?} stderr={:?}",
+            result.stdout,
+            result.stderr
+        );
+    }
+
+    /// TM-DOS-051: Deeply nested YAML list should produce error.
+    #[tokio::test]
+    async fn tm_dos_051_yaml_depth_bomb_lists() {
+        let mut bash = bash();
+        let mut yaml = String::new();
+        for i in 0..200 {
+            let indent = "  ".repeat(i);
+            yaml.push_str(&format!("{indent}-\n"));
+        }
+        let last_indent = "  ".repeat(200);
+        yaml.push_str(&format!("{last_indent}- leaf\n"));
+
+        let cmd = format!("yaml get . - <<'YAML_EOF'\n{yaml}YAML_EOF");
+        let result = bash.exec(&cmd).await.unwrap();
+        let output = format!("{}{}", result.stdout, result.stderr);
+        assert!(
+            output.contains("depth exceeded") || result.exit_code != 0 || output.contains("ERROR"),
+            "TM-DOS-051: deeply nested YAML list should produce clean error"
+        );
+    }
+
+    /// TM-DOS-051: YAML with reasonable nesting should work fine.
+    #[tokio::test]
+    async fn tm_dos_051_yaml_normal_nesting_works() {
+        let mut bash = bash();
+        // Write a 5-level nested YAML to a file, then query it
+        let script = r#"
+cat > /tmp/test.yaml << 'EOF'
+a:
+  b:
+    c:
+      d:
+        e: deep_value
+EOF
+yaml get -r a.b.c.d.e /tmp/test.yaml
+"#;
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "yaml get should succeed: stderr={:?} stdout={:?}",
+            result.stderr, result.stdout
+        );
+        assert!(
+            result.stdout.trim() == "deep_value",
+            "Normal 5-level nesting should work: got {:?}",
+            result.stdout
+        );
+    }
+
+    // --- TM-DOS-052: Template depth bomb ---
+
+    /// TM-DOS-052: Deeply nested {{#if}} should produce error, not stack overflow.
+    #[tokio::test]
+    async fn tm_dos_052_template_if_depth_bomb() {
+        let mut bash = bash();
+        let mut template = String::new();
+        for _ in 0..200 {
+            template.push_str("{{#if x}}");
+        }
+        template.push_str("deep");
+        for _ in 0..200 {
+            template.push_str("{{/if}}");
+        }
+
+        // Write template and JSON to VFS, then render
+        let script = format!(
+            r#"echo '{template}' > /tmp/tpl.txt
+echo '{{"x": true}}' > /tmp/data.json
+template render /tmp/tpl.txt -d /tmp/data.json"#
+        );
+        let result = bash.exec(&script).await.unwrap();
+        let output = format!("{}{}", result.stdout, result.stderr);
+        assert!(
+            output.contains("depth exceeded") || result.exit_code != 0,
+            "TM-DOS-052: deeply nested #if should produce clean error, got: stdout={:?} stderr={:?}",
+            result.stdout,
+            result.stderr
+        );
+    }
+
+    /// TM-DOS-052: Template with reasonable usage should work fine.
+    #[tokio::test]
+    async fn tm_dos_052_template_normal_nesting_works() {
+        let mut bash = bash();
+        let script = r#"
+cat > /tmp/tpl.txt << 'TPLEOF'
+{{#if x}}hello from template{{/if}}
+TPLEOF
+cat > /tmp/data.json << 'JSONEOF'
+{"x": true}
+JSONEOF
+template render /tmp/tpl.txt -d /tmp/data.json
+"#;
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "template render should succeed: stderr={:?} stdout={:?}",
+            result.stderr, result.stdout
+        );
+        assert!(
+            result.stdout.contains("hello from template"),
+            "Normal template should work: got {:?}",
+            result.stdout
+        );
+    }
+}

@@ -184,17 +184,36 @@ fn indent_level(line: &str) -> usize {
     line.len() - line.trim_start().len()
 }
 
+// THREAT[TM-DOS-051]: Maximum recursion depth for YAML parsing.
+// Prevents stack overflow from deeply nested YAML documents.
+const MAX_YAML_DEPTH: usize = 100;
+
 /// Parse YAML content into a value.
 /// Supports maps, lists, and scalars with 2-space indentation.
 fn parse_yaml(content: &str) -> YamlValue {
     let lines: Vec<&str> = content.lines().collect();
-    let (val, _) = parse_yaml_block(&lines, 0, 0);
+    let (val, _) = parse_yaml_block(&lines, 0, 0, 0);
     val
 }
 
 /// Parse a block of YAML lines starting at `start` with expected `base_indent`.
 /// Returns the parsed value and the index of the next unprocessed line.
-fn parse_yaml_block(lines: &[&str], start: usize, base_indent: usize) -> (YamlValue, usize) {
+fn parse_yaml_block(
+    lines: &[&str],
+    start: usize,
+    base_indent: usize,
+    depth: usize,
+) -> (YamlValue, usize) {
+    // THREAT[TM-DOS-051]: Prevent stack overflow from deeply nested YAML
+    if depth > MAX_YAML_DEPTH {
+        return (
+            YamlValue::String(format!(
+                "ERROR: maximum nesting depth exceeded ({})",
+                MAX_YAML_DEPTH
+            )),
+            start,
+        );
+    }
     if start >= lines.len() {
         return (YamlValue::Null, start);
     }
@@ -222,12 +241,12 @@ fn parse_yaml_block(lines: &[&str], start: usize, base_indent: usize) -> (YamlVa
 
     // Check if this is a list
     if first_trimmed.starts_with("- ") || first_trimmed == "-" {
-        return parse_yaml_list(lines, i, first_indent);
+        return parse_yaml_list(lines, i, first_indent, depth);
     }
 
     // Otherwise it's a map (key: value)
     if first_trimmed.contains(": ") || first_trimmed.ends_with(':') {
-        return parse_yaml_map(lines, i, first_indent);
+        return parse_yaml_map(lines, i, first_indent, depth);
     }
 
     // Bare scalar
@@ -235,7 +254,12 @@ fn parse_yaml_block(lines: &[&str], start: usize, base_indent: usize) -> (YamlVa
 }
 
 /// Parse a YAML map starting at line `start` with given `base_indent`.
-fn parse_yaml_map(lines: &[&str], start: usize, base_indent: usize) -> (YamlValue, usize) {
+fn parse_yaml_map(
+    lines: &[&str],
+    start: usize,
+    base_indent: usize,
+    depth: usize,
+) -> (YamlValue, usize) {
     let mut entries: Vec<(String, YamlValue)> = Vec::new();
     let mut i = start;
 
@@ -265,7 +289,7 @@ fn parse_yaml_map(lines: &[&str], start: usize, base_indent: usize) -> (YamlValu
 
             if after_colon.is_empty() {
                 // Value is a nested block on subsequent lines
-                let (val, next) = parse_yaml_block(lines, i + 1, base_indent + 2);
+                let (val, next) = parse_yaml_block(lines, i + 1, base_indent + 2, depth + 1);
                 entries.push((key, val));
                 i = next;
             } else {
@@ -283,7 +307,12 @@ fn parse_yaml_map(lines: &[&str], start: usize, base_indent: usize) -> (YamlValu
 }
 
 /// Parse a YAML list starting at line `start` with given `base_indent`.
-fn parse_yaml_list(lines: &[&str], start: usize, base_indent: usize) -> (YamlValue, usize) {
+fn parse_yaml_list(
+    lines: &[&str],
+    start: usize,
+    base_indent: usize,
+    depth: usize,
+) -> (YamlValue, usize) {
     let mut items: Vec<YamlValue> = Vec::new();
     let mut i = start;
 
@@ -312,7 +341,7 @@ fn parse_yaml_list(lines: &[&str], start: usize, base_indent: usize) -> (YamlVal
 
         if after_dash.is_empty() {
             // Nested block item
-            let (val, next) = parse_yaml_block(lines, i + 1, base_indent + 2);
+            let (val, next) = parse_yaml_block(lines, i + 1, base_indent + 2, depth + 1);
             items.push(val);
             i = next;
         } else if after_dash.contains(": ") || after_dash.ends_with(':') {
@@ -337,7 +366,7 @@ fn parse_yaml_list(lines: &[&str], start: usize, base_indent: usize) -> (YamlVal
                 j += 1;
             }
             let block_strs: Vec<&str> = block_lines.iter().map(|s| s.as_str()).collect();
-            let (val, _) = parse_yaml_map(&block_strs, 0, base_indent + 2);
+            let (val, _) = parse_yaml_map(&block_strs, 0, base_indent + 2, depth + 1);
             items.push(val);
             i = j;
         } else {

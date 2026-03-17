@@ -151,6 +151,10 @@ fn is_truthy(
     false
 }
 
+// THREAT[TM-DOS-052]: Maximum recursion depth for template rendering.
+// Prevents stack overflow from deeply nested {{#if}}/{{#each}} blocks.
+const MAX_TEMPLATE_DEPTH: usize = 100;
+
 /// Render a template string with the given data sources.
 fn render_template(
     template: &str,
@@ -160,6 +164,25 @@ fn render_template(
     escape: bool,
     strict: bool,
 ) -> std::result::Result<String, String> {
+    render_template_inner(template, json_data, variables, env, escape, strict, 0)
+}
+
+fn render_template_inner(
+    template: &str,
+    json_data: &serde_json::Value,
+    variables: &std::collections::HashMap<String, String>,
+    env: &std::collections::HashMap<String, String>,
+    escape: bool,
+    strict: bool,
+    depth: usize,
+) -> std::result::Result<String, String> {
+    // THREAT[TM-DOS-052]: Prevent stack overflow from deeply nested templates
+    if depth > MAX_TEMPLATE_DEPTH {
+        return Err(format!(
+            "template: maximum nesting depth exceeded ({})",
+            MAX_TEMPLATE_DEPTH
+        ));
+    }
     let mut output = String::new();
     let chars: Vec<char> = template.chars().collect();
     let len = chars.len();
@@ -192,8 +215,15 @@ fn render_template(
                 i += end_pos + end_tag.len();
 
                 if is_truthy(block_var, json_data, variables, env) {
-                    let rendered =
-                        render_template(block_body, json_data, variables, env, escape, strict)?;
+                    let rendered = render_template_inner(
+                        block_body,
+                        json_data,
+                        variables,
+                        env,
+                        escape,
+                        strict,
+                        depth + 1,
+                    )?;
                     output.push_str(&rendered);
                 }
             } else if let Some(block_var) = tag.strip_prefix("#each ") {
@@ -212,13 +242,14 @@ fn render_template(
                         // Replace {{.}} with current item value
                         let item_str = json_value_to_string(item);
                         let rendered_body = block_body.replace("{{.}}", &item_str);
-                        let rendered = render_template(
+                        let rendered = render_template_inner(
                             &rendered_body,
                             json_data,
                             variables,
                             env,
                             escape,
                             strict,
+                            depth + 1,
                         )?;
                         output.push_str(&rendered);
                     }
