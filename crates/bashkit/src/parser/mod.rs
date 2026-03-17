@@ -1852,6 +1852,59 @@ impl<'a> Parser<'a> {
                         }
                     }
 
+                    // Handle compound array assignment in arg position:
+                    // declare -a arr=(x y z) → arr=(x y z) as single arg
+                    if w.ends_with('=') && !words.is_empty() {
+                        // Peek at next token — if LeftParen, collect compound assignment
+                        let saved_w = w.clone();
+                        self.advance();
+                        if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
+                            self.advance(); // consume '('
+                            let mut compound = saved_w;
+                            compound.push('(');
+                            loop {
+                                match &self.current_token {
+                                    Some(tokens::Token::RightParen) => {
+                                        compound.push(')');
+                                        self.advance();
+                                        break;
+                                    }
+                                    Some(tokens::Token::Word(elem))
+                                    | Some(tokens::Token::LiteralWord(elem))
+                                    | Some(tokens::Token::QuotedWord(elem)) => {
+                                        if !compound.ends_with('(') {
+                                            compound.push(' ');
+                                        }
+                                        compound.push_str(elem);
+                                        self.advance();
+                                    }
+                                    None => break,
+                                    _ => {
+                                        self.advance();
+                                    }
+                                }
+                            }
+                            let word = self.parse_word(compound);
+                            words.push(word);
+                            continue;
+                        }
+                        // Not a compound assignment — treat as regular word
+                        let word = if is_literal {
+                            Word {
+                                parts: vec![WordPart::Literal(saved_w)],
+                                quoted: true,
+                            }
+                        } else {
+                            let mut word = self.parse_word(saved_w);
+                            if is_quoted {
+                                word.quoted = true;
+                            }
+                            word
+                        };
+                        words.push(word);
+                        continue;
+                    }
+
                     let word = if is_literal {
                         Word {
                             parts: vec![WordPart::Literal(w.clone())],

@@ -206,6 +206,7 @@ pub(crate) fn is_internal_variable(name: &str) -> bool {
         || name.starts_with("_READONLY_")
         || name.starts_with("_UPPER_")
         || name.starts_with("_LOWER_")
+        || name.starts_with("_INTEGER_")
         || name.starts_with("_ARRAY_READ_")
         || name == "_EVAL_CMD"
         || name == "_SHIFT_COUNT"
@@ -5284,14 +5285,21 @@ impl Interpreter {
         args: &[String],
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
-        // Parse flags: -n for nameref
+        // Parse flags: -n for nameref, -a for indexed array, -A for assoc, -i for integer
         let mut is_nameref = false;
+        let mut is_array = false;
+        let mut is_assoc = false;
+        let mut is_integer = false;
         let mut var_args: Vec<&String> = Vec::new();
         for arg in args {
             if arg.starts_with('-') && !arg.contains('=') {
                 for c in arg[1..].chars() {
-                    if c == 'n' {
-                        is_nameref = true;
+                    match c {
+                        'n' => is_nameref = true,
+                        'a' => is_array = true,
+                        'A' => is_assoc = true,
+                        'i' => is_integer = true,
+                        _ => {}
                     }
                 }
             } else {
@@ -5299,9 +5307,31 @@ impl Interpreter {
             }
         }
 
-        if let Some(frame) = self.call_stack.last_mut() {
+        // Reconstruct compound assignments: local -a arr=(1 2 3)
+        // Args may be split: ["arr=(1", "2", "3)"]
+        let mut merged: Vec<String> = Vec::new();
+        let mut pending: Option<String> = None;
+        for arg in &var_args {
+            if let Some(ref mut p) = pending {
+                p.push(' ');
+                p.push_str(arg);
+                if arg.ends_with(')') {
+                    merged.push(p.clone());
+                    pending = None;
+                }
+            } else if arg.contains("=(") && !arg.ends_with(')') {
+                pending = Some(arg.to_string());
+            } else {
+                merged.push(arg.to_string());
+            }
+        }
+        if let Some(p) = pending {
+            merged.push(p);
+        }
+
+        if !self.call_stack.is_empty() {
             // In a function - set in locals
-            for arg in &var_args {
+            for arg in &merged {
                 if let Some(eq_pos) = arg.find('=') {
                     let var_name = &arg[..eq_pos];
                     let value = &arg[eq_pos + 1..];
@@ -5316,18 +5346,96 @@ impl Interpreter {
                     if is_internal_variable(var_name) {
                         continue;
                     }
-                    if is_nameref {
-                        frame.locals.insert(var_name.to_string(), String::new());
+                    // Handle compound array assignment: local -a arr=(1 2 3)
+                    if (is_array || is_assoc) && value.starts_with('(') && value.ends_with(')') {
+                        let inner = &value[1..value.len() - 1];
+                        if is_assoc {
+                            let arr = self.assoc_arrays.entry(var_name.to_string()).or_default();
+                            arr.clear();
+                            let mut rest = inner.trim();
+                            while let Some(bracket_start) = rest.find('[') {
+                                if let Some(bracket_end) = rest[bracket_start..].find(']') {
+                                    let key = &rest[bracket_start + 1..bracket_start + bracket_end];
+                                    let after = &rest[bracket_start + bracket_end + 1..];
+                                    if let Some(eq_rest) = after.strip_prefix('=') {
+                                        let eq_rest = eq_rest.trim_start();
+                                        let (val, remainder) =
+                                            if let Some(stripped) = eq_rest.strip_prefix('"') {
+                                                if let Some(end_q) = stripped.find('"') {
+                                                    (
+                                                        &stripped[..end_q],
+                                                        stripped[end_q + 1..].trim_start(),
+                                                    )
+                                                } else {
+                                                    (stripped.trim_end_matches('"'), "")
+                                                }
+                                            } else {
+                                                match eq_rest.find(char::is_whitespace) {
+                                                    Some(sp) => {
+                                                        (&eq_rest[..sp], eq_rest[sp..].trim_start())
+                                                    }
+                                                    None => (eq_rest, ""),
+                                                }
+                                            };
+                                        arr.insert(key.to_string(), val.to_string());
+                                        rest = remainder;
+                                    } else {
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                        } else {
+                            let arr = self.arrays.entry(var_name.to_string()).or_default();
+                            arr.clear();
+                            for (idx, val) in inner.split_whitespace().enumerate() {
+                                arr.insert(idx, val.trim_matches('"').to_string());
+                            }
+                        }
+                        // Mark local
+                        self.call_stack
+                            .last_mut()
+                            .unwrap()
+                            .locals
+                            .insert(var_name.to_string(), String::new());
+                    } else if is_nameref {
+                        self.call_stack
+                            .last_mut()
+                            .unwrap()
+                            .locals
+                            .insert(var_name.to_string(), String::new());
+                    } else if is_integer {
+                        let int_val = self.evaluate_arithmetic_with_assign(value);
+                        self.call_stack
+                            .last_mut()
+                            .unwrap()
+                            .locals
+                            .insert(var_name.to_string(), int_val.to_string());
+                        self.variables
+                            .insert(format!("_INTEGER_{}", var_name), "1".to_string());
                     } else {
-                        frame.locals.insert(var_name.to_string(), value.to_string());
+                        self.call_stack
+                            .last_mut()
+                            .unwrap()
+                            .locals
+                            .insert(var_name.to_string(), value.to_string());
                     }
                 } else if !is_internal_variable(arg) {
-                    frame.locals.insert(arg.to_string(), String::new());
+                    self.call_stack
+                        .last_mut()
+                        .unwrap()
+                        .locals
+                        .insert(arg.to_string(), String::new());
+                    if is_integer {
+                        self.variables
+                            .insert(format!("_INTEGER_{}", arg), "1".to_string());
+                    }
                 }
             }
             // Set nameref markers (after frame borrow is released)
             if is_nameref {
-                for arg in &var_args {
+                for arg in &merged {
                     if let Some(eq_pos) = arg.find('=') {
                         let var_name = &arg[..eq_pos];
                         let value = &arg[eq_pos + 1..];
@@ -5340,7 +5448,7 @@ impl Interpreter {
             }
         } else {
             // Not in a function - set in global variables (bash behavior)
-            for arg in &var_args {
+            for arg in &merged {
                 if let Some(eq_pos) = arg.find('=') {
                     let var_name = &arg[..eq_pos];
                     let value = &arg[eq_pos + 1..];
@@ -6567,6 +6675,9 @@ impl Interpreter {
                     // Evaluate as arithmetic expression
                     let int_val = self.evaluate_arithmetic_with_assign(value);
                     self.insert_variable_checked(var_name.to_string(), int_val.to_string());
+                    // Set persistent integer attribute marker
+                    self.variables
+                        .insert(format!("_INTEGER_{}", var_name), "1".to_string());
                 } else {
                     // Apply case conversion attributes
                     let final_value = if is_lowercase {
@@ -6636,6 +6747,10 @@ impl Interpreter {
                 if is_readonly {
                     self.variables
                         .insert(format!("_READONLY_{}", name), "1".to_string());
+                }
+                if is_integer {
+                    self.variables
+                        .insert(format!("_INTEGER_{}", name), "1".to_string());
                 }
                 if is_export {
                     self.env.insert(
@@ -8807,6 +8922,17 @@ impl Interpreter {
         }
         // Resolve nameref: if `name` is a nameref, assign to the target instead
         let resolved = self.resolve_nameref(&name).to_string();
+        // Apply integer attribute (declare -i): evaluate as arithmetic
+        let value = if self
+            .variables
+            .get(&format!("_INTEGER_{}", resolved))
+            .map(|v| v == "1")
+            .unwrap_or(false)
+        {
+            self.evaluate_arithmetic_with_assign(&value).to_string()
+        } else {
+            value
+        };
         // Apply case conversion attributes (declare -l / declare -u)
         let value = if self
             .variables
