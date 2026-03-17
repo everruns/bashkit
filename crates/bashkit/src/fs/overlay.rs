@@ -383,6 +383,10 @@ impl OverlayFs {
 #[async_trait]
 impl FileSystem for OverlayFs {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        // THREAT[TM-DOS-039]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let path = Self::normalize_path(path);
 
         // Check for whiteout (deleted file)
@@ -518,6 +522,10 @@ impl FileSystem for OverlayFs {
     }
 
     async fn remove(&self, path: &Path, recursive: bool) -> Result<()> {
+        // THREAT[TM-DOS-039]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let path = Self::normalize_path(path);
 
         // Check if exists in either layer
@@ -560,6 +568,10 @@ impl FileSystem for OverlayFs {
     }
 
     async fn stat(&self, path: &Path) -> Result<Metadata> {
+        // THREAT[TM-DOS-039]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let path = Self::normalize_path(path);
 
         // Check for whiteout
@@ -577,6 +589,10 @@ impl FileSystem for OverlayFs {
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
+        // THREAT[TM-DOS-039]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let path = Self::normalize_path(path);
 
         // Check for whiteout
@@ -613,6 +629,10 @@ impl FileSystem for OverlayFs {
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {
+        // THREAT[TM-DOS-039]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let path = Self::normalize_path(path);
 
         // Check for whiteout
@@ -630,6 +650,13 @@ impl FileSystem for OverlayFs {
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+        // THREAT[TM-DOS-039]: Validate both paths before use
+        self.limits
+            .validate_path(from)
+            .map_err(|e| IoError::other(e.to_string()))?;
+        self.limits
+            .validate_path(to)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let from = Self::normalize_path(from);
         let to = Self::normalize_path(to);
 
@@ -646,6 +673,13 @@ impl FileSystem for OverlayFs {
     }
 
     async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
+        // THREAT[TM-DOS-039]: Validate both paths before use
+        self.limits
+            .validate_path(from)
+            .map_err(|e| IoError::other(e.to_string()))?;
+        self.limits
+            .validate_path(to)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let from = Self::normalize_path(from);
         let to = Self::normalize_path(to);
 
@@ -675,6 +709,10 @@ impl FileSystem for OverlayFs {
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
+        // THREAT[TM-DOS-039]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let path = Self::normalize_path(path);
 
         // Check for whiteout
@@ -692,6 +730,10 @@ impl FileSystem for OverlayFs {
     }
 
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
+        // THREAT[TM-DOS-039]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let path = Self::normalize_path(path);
 
         // Check for whiteout
