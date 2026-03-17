@@ -399,11 +399,9 @@ mod finding_shell_options_leak {
 mod finding_urandom_empty {
     use super::*;
 
-    /// TM-INT-007: /dev/urandom via head -c produces empty output.
-    /// Expected: 16 random bytes base64-encoded. Actual: empty string.
+    /// TM-INT-004: /dev/urandom via head -c produces data.
     #[tokio::test]
-    #[ignore] // FINDING: /dev/urandom + head -c returns empty
-    async fn urandom_head_c_returns_empty() {
+    async fn urandom_head_c_returns_data() {
         let mut bash = tight_bash();
         let result = bash.exec("head -c 16 /dev/urandom | base64").await.unwrap();
         assert!(

@@ -9,26 +9,31 @@ use crate::interpreter::ExecResult;
 /// Default number of lines to output
 const DEFAULT_LINES: usize = 10;
 
-/// The head builtin - output the first N lines of input.
+/// The head builtin - output the first N lines or bytes of input.
 ///
-/// Usage: head [-n NUM] [FILE...]
+/// Usage: head [-n NUM | -c NUM] [FILE...]
 ///
 /// Options:
 ///   -n NUM   Output the first NUM lines (default: 10)
+///   -c NUM   Output the first NUM bytes
 ///   -NUM     Shorthand for -n NUM
 pub struct Head;
 
 #[async_trait]
 impl Builtin for Head {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let (num_lines, files) = parse_head_tail_args(ctx.args, DEFAULT_LINES)?;
+        let (count, byte_mode, files) = parse_head_args(ctx.args, DEFAULT_LINES)?;
 
         let mut output = String::new();
 
         if files.is_empty() {
             // Read from stdin
             if let Some(stdin) = ctx.stdin {
-                output = take_first_lines(stdin, num_lines);
+                if byte_mode {
+                    output = take_first_bytes(stdin, count);
+                } else {
+                    output = take_first_lines(stdin, count);
+                }
             }
         } else {
             // Read from files
@@ -49,8 +54,14 @@ impl Builtin for Head {
 
                 match ctx.fs.read_file(&path).await {
                     Ok(content) => {
-                        let text = String::from_utf8_lossy(&content);
-                        output.push_str(&take_first_lines(&text, num_lines));
+                        if byte_mode {
+                            // Byte mode: take first N bytes, lossy convert
+                            let bytes = &content[..content.len().min(count)];
+                            output.push_str(&String::from_utf8_lossy(bytes));
+                        } else {
+                            let text = String::from_utf8_lossy(&content);
+                            output.push_str(&take_first_lines(&text, count));
+                        }
                     }
                     Err(e) => {
                         return Ok(ExecResult::err(format!("head: {}: {}\n", file, e), 1));
@@ -127,11 +138,53 @@ impl Builtin for Tail {
     }
 }
 
-/// Parse arguments for head command.
-/// Returns (num_lines, file_list)
-fn parse_head_tail_args(args: &[String], default: usize) -> Result<(usize, Vec<String>)> {
-    let (num_lines, _, files) = parse_tail_args(args, default)?;
-    Ok((num_lines, files))
+/// Parse arguments for head command, including -c (byte count) mode.
+/// Returns (count, byte_mode, file_list)
+fn parse_head_args(args: &[String], default: usize) -> Result<(usize, bool, Vec<String>)> {
+    let mut count = default;
+    let mut byte_mode = false;
+    let mut files = Vec::new();
+    let mut i = 0;
+
+    while i < args.len() {
+        let arg = &args[i];
+
+        if arg == "-n" {
+            i += 1;
+            if i < args.len() {
+                count = args[i].parse().unwrap_or(default);
+                byte_mode = false;
+            }
+        } else if arg == "-c" {
+            i += 1;
+            if i < args.len() {
+                count = args[i].parse().unwrap_or(default);
+                byte_mode = true;
+            }
+        } else if let Some(num_str) = arg.strip_prefix("-n") {
+            count = num_str.parse().unwrap_or(default);
+            byte_mode = false;
+        } else if let Some(num_str) = arg.strip_prefix("-c") {
+            count = num_str.parse().unwrap_or(default);
+            byte_mode = true;
+        } else if let Some(num_str) = arg.strip_prefix('-') {
+            if let Ok(n) = num_str.parse::<usize>() {
+                count = n;
+            }
+        } else {
+            files.push(arg.clone());
+        }
+        i += 1;
+    }
+
+    Ok((count, byte_mode, files))
+}
+
+/// Take the first N bytes from text
+fn take_first_bytes(text: &str, n: usize) -> String {
+    let bytes = text.as_bytes();
+    let take = bytes.len().min(n);
+    String::from_utf8_lossy(&bytes[..take]).to_string()
 }
 
 /// Parse arguments for tail command, including +N "from start" syntax.
