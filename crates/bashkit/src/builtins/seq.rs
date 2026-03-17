@@ -135,8 +135,9 @@ impl Builtin for Seq {
         let mut current = first;
         let mut first_item = true;
 
-        // Safety: limit iterations to prevent infinite loops
-        let max_iterations = 1_000_000;
+        // THREAT[TM-DOS-058]: Limit iterations and output size to prevent memory exhaustion
+        let max_iterations = 100_000;
+        let max_output_bytes = 1_048_576; // 1MB
         let mut count = 0;
 
         loop {
@@ -147,7 +148,7 @@ impl Builtin for Seq {
                 break;
             }
             count += 1;
-            if count > max_iterations {
+            if count > max_iterations || output.len() > max_output_bytes {
                 break;
             }
 
