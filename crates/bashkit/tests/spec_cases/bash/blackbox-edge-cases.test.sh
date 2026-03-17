@@ -29,7 +29,6 @@ Result: 5
 ### end
 
 ### nested_subshell
-### skip: parser fuel exhausted on triple-nested subshells (#669)
 # Nested subshells
 (echo a; (echo b; (echo c)))
 ### expect
@@ -180,7 +179,6 @@ matched
 ### end
 
 ### redirect_fd_read
-### skip: exec N< file (input fd redirect) causes parse error (#669)
 # Read from custom file descriptor
 echo "from fd" > /tmp/fd_read_test; exec 4< /tmp/fd_read_test; read line <&4; exec 4<&-; echo "$line"
 ### expect

@@ -347,6 +347,10 @@ pub struct Interpreter {
     /// Cancellation token: when set to `true`, execution aborts at the next
     /// command boundary with `Error::Cancelled`.
     cancelled: Arc<AtomicBool>,
+    /// Deferred output process substitutions: after a command writes to the
+    /// virtual file path, run these commands with the file content as stdin.
+    /// Each entry is (virtual_path, commands_to_run).
+    deferred_proc_subs: Vec<(String, Vec<Command>)>,
 }
 
 impl Interpreter {
@@ -614,6 +618,7 @@ impl Interpreter {
             coproc_buffers: HashMap::new(),
             coproc_next_fd: 63,
             cancelled: Arc::new(AtomicBool::new(false)),
+            deferred_proc_subs: Vec::new(),
         }
     }
 
@@ -4255,6 +4260,29 @@ impl Interpreter {
         // Fire DEBUG trap before each simple command
         let (_debug_stdout, _debug_stderr) = self.run_debug_trap().await;
 
+        // Bash expansion order: expand command name and args BEFORE applying
+        // prefix assignments. This ensures `x=old; x=new echo $x` prints "old".
+        let name = self.expand_word(&command.name).await?;
+
+        // Check for nounset error from name expansion
+        if let Some(err_msg) = self.nounset_error.take() {
+            self.last_exit_code = 1;
+            return Ok(ExecResult {
+                stdout: String::new(),
+                stderr: err_msg,
+                exit_code: 1,
+                control_flow: ControlFlow::Return(1),
+                ..Default::default()
+            });
+        }
+
+        // Pre-expand args before applying assignments (bash behavior)
+        let pre_expanded_args = if !name.is_empty() {
+            Some(self.expand_command_args(command).await?)
+        } else {
+            None
+        };
+
         // Save old variable values before applying prefix assignments.
         // If there's a command, these assignments are temporary (bash behavior:
         // `VAR=value cmd` sets VAR only for cmd's duration).
@@ -4269,7 +4297,7 @@ impl Interpreter {
         // exit code of command substitutions in the value (x=$(false) → $?=1).
         let pre_assign_subst_gen = self.subst_generation;
 
-        // Process variable assignments first
+        // Process variable assignments
         for assignment in &command.assignments {
             match &assignment.value {
                 AssignmentValue::Scalar(word) => {
@@ -4389,31 +4417,6 @@ impl Interpreter {
                     }
                 }
             }
-        }
-
-        let name = self.expand_word(&command.name).await?;
-
-        // Check for nounset error from variable expansion
-        if let Some(err_msg) = self.nounset_error.take() {
-            // Restore variable saves since we're aborting
-            for (name, old) in var_saves.into_iter().rev() {
-                match old {
-                    Some(v) => {
-                        self.insert_variable_checked(name, v);
-                    }
-                    None => {
-                        self.variables.remove(&name);
-                    }
-                }
-            }
-            self.last_exit_code = 1;
-            return Ok(ExecResult {
-                stdout: String::new(),
-                stderr: err_msg,
-                exit_code: 1,
-                control_flow: ControlFlow::Return(1),
-                ..Default::default()
-            });
         }
 
         // Alias expansion: only for plain literal unquoted command names.
@@ -4543,7 +4546,30 @@ impl Interpreter {
             }
         }
 
-        // Emit xtrace (set -x): build trace line for stderr
+        // Use pre-expanded args (expanded before assignments were applied)
+        let args = pre_expanded_args.unwrap_or_default();
+
+        // Check for glob error sentinel from expand_command_args
+        if let Some(first) = args.first()
+            && first.starts_with("\x00ERR\x00")
+        {
+            let err_msg = first.trim_start_matches("\x00ERR\x00").to_string();
+            self.last_exit_code = 1;
+            // Restore variables before returning
+            for (name, old) in var_saves {
+                match old {
+                    Some(v) => {
+                        self.insert_variable_checked(name, v);
+                    }
+                    None => {
+                        self.variables.remove(&name);
+                    }
+                }
+            }
+            return Ok(ExecResult::err(err_msg, 1));
+        }
+
+        // Emit xtrace (set -x): build trace line from pre-expanded args
         let xtrace_line = if self.is_xtrace_enabled() {
             let ps4 = self
                 .variables
@@ -4552,15 +4578,14 @@ impl Interpreter {
                 .unwrap_or_else(|| "+ ".to_string());
             let mut trace = ps4;
             trace.push_str(&name);
-            for word in &command.args {
-                let expanded = self.expand_word(word).await.unwrap_or_default();
+            for expanded in &args {
                 trace.push(' ');
                 if expanded.contains(' ') || expanded.contains('\t') || expanded.is_empty() {
                     trace.push('\'');
                     trace.push_str(&expanded.replace('\'', "'\\''"));
                     trace.push('\'');
                 } else {
-                    trace.push_str(&expanded);
+                    trace.push_str(expanded);
                 }
             }
             trace.push('\n');
@@ -4569,8 +4594,10 @@ impl Interpreter {
             None
         };
 
-        // Dispatch to the appropriate handler
-        let result = self.execute_dispatched_command(&name, command, stdin).await;
+        // Dispatch to the appropriate handler with pre-expanded args
+        let result = self
+            .execute_dispatched_command(&name, args, command, stdin)
+            .await;
 
         // Restore env (prefix assignments are command-scoped)
         for (name, old) in env_saves {
@@ -4598,27 +4625,47 @@ impl Interpreter {
 
         // Prepend xtrace to stderr (like real bash, xtrace goes to the
         // shell's stderr, unaffected by per-command redirections like 2>&1).
-        if let Some(trace) = xtrace_line {
+        let mut result = if let Some(trace) = xtrace_line {
             result.map(|mut r| {
                 r.stderr = trace + &r.stderr;
                 r
             })
         } else {
             result
+        };
+
+        // Execute deferred output process substitutions: >(cmd)
+        // The main command has written to the virtual file; now run
+        // the deferred commands reading from that file.
+        if !self.deferred_proc_subs.is_empty() {
+            let deferred = std::mem::take(&mut self.deferred_proc_subs);
+            for (path_str, commands) in deferred {
+                let path = Path::new(&path_str);
+                let stdin_data = if let Ok(bytes) = self.fs.read_file(path).await {
+                    let s = String::from_utf8_lossy(&bytes).to_string();
+                    if s.is_empty() { None } else { Some(s) }
+                } else {
+                    None
+                };
+                for cmd in &commands {
+                    let prev_stdin = self.pipeline_stdin.take();
+                    self.pipeline_stdin = stdin_data.clone();
+                    let cmd_result = self.execute_command(cmd).await?;
+                    self.pipeline_stdin = prev_stdin;
+                    // Append output from deferred proc sub to main result
+                    if let Ok(ref mut r) = result {
+                        r.stdout.push_str(&cmd_result.stdout);
+                        r.stderr.push_str(&cmd_result.stderr);
+                    }
+                }
+            }
         }
+
+        result
     }
 
-    /// Execute a command after name resolution and prefix assignment setup.
-    ///
-    /// Handles argument expansion, stdin processing, and dispatch to
-    /// functions, special builtins, regular builtins, or command-not-found.
-    async fn execute_dispatched_command(
-        &mut self,
-        name: &str,
-        command: &SimpleCommand,
-        stdin: Option<String>,
-    ) -> Result<ExecResult> {
-        // Expand arguments with brace and glob expansion
+    /// Expand command arguments with field splitting, brace, and glob expansion.
+    async fn expand_command_args(&mut self, command: &SimpleCommand) -> Result<Vec<String>> {
         let mut args: Vec<String> = Vec::new();
         for word in &command.args {
             // Use field expansion so "${arr[@]}" produces multiple args
@@ -4641,11 +4688,31 @@ impl Interpreter {
                         Ok(items) => args.extend(items),
                         Err(pat) => {
                             self.last_exit_code = 1;
-                            return Ok(ExecResult::err(format!("-bash: no match: {}\n", pat), 1));
+                            return Ok(vec![format!("\x00ERR\x00-bash: no match: {}\n", pat)]);
                         }
                     }
                 }
             }
+        }
+        Ok(args)
+    }
+
+    /// Execute a command after name resolution and prefix assignment setup.
+    ///
+    /// Handles stdin processing and dispatch to functions, special builtins,
+    /// regular builtins, or command-not-found. Args are pre-expanded.
+    async fn execute_dispatched_command(
+        &mut self,
+        name: &str,
+        args: Vec<String>,
+        command: &SimpleCommand,
+        stdin: Option<String>,
+    ) -> Result<ExecResult> {
+        // Track $_ (last argument of previous command, from already-expanded args)
+        if let Some(last) = args.last() {
+            self.insert_variable_checked("_".to_string(), last.clone());
+        } else {
+            self.insert_variable_checked("_".to_string(), name.to_string());
         }
 
         // Check for nounset error from argument expansion
@@ -4734,6 +4801,51 @@ impl Interpreter {
             return self
                 .execute_function_call(name, &func_def, args, stdin, &command.redirects)
                 .await;
+        }
+
+        // Handle `exec` - applies redirections to current shell
+        if name == "exec" {
+            // exec with arguments tries to replace the shell process — not supported
+            // in sandboxed environment, so return command-not-found.
+            if !args.is_empty() {
+                let cmd = args.join(" ");
+                self.last_exit_code = 127;
+                return Ok(ExecResult {
+                    stderr: format!("-bash: exec: {}: command not found\n", cmd),
+                    exit_code: 127,
+                    ..ExecResult::default()
+                });
+            }
+            // exec with no args: apply redirections to the shell context
+            // For input redirects with fd (exec N< file), store content in fd table
+            for redirect in &command.redirects {
+                match redirect.kind {
+                    RedirectKind::Input => {
+                        if let Some(fd) = redirect.fd {
+                            let target_path = self.expand_word(&redirect.target).await?;
+                            let path = self.resolve_path(&target_path);
+                            let content = self.fs.read_file(&path).await?;
+                            let text = String::from_utf8_lossy(&content).to_string();
+                            let lines: Vec<String> =
+                                text.lines().rev().map(|l| l.to_string()).collect();
+                            self.coproc_buffers.insert(fd, lines);
+                        }
+                    }
+                    RedirectKind::DupInput => {
+                        // exec N<&- closes fd N
+                        let target = self.expand_word(&redirect.target).await?;
+                        if target == "-"
+                            && let Some(fd) = redirect.fd
+                        {
+                            self.coproc_buffers.remove(&fd);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // Also apply output redirections
+            let result = ExecResult::default();
+            return self.apply_redirections(result, &command.redirects).await;
         }
 
         // Handle `local` specially - must set in call frame locals
@@ -7203,9 +7315,16 @@ impl Interpreter {
                     result.push_str(trimmed);
                 }
                 WordPart::ArithmeticExpansion(expr) => {
+                    // Expand command substitutions within the arithmetic expr
+                    // (e.g., $(( $1 * $(func ...) )) — the $(func) must run first)
+                    let expanded_expr = if expr.contains("$(") {
+                        self.expand_command_subs_in_arithmetic(expr).await?
+                    } else {
+                        expr.to_string()
+                    };
                     // Handle assignment: VAR = expr (must be checked before
                     // variable expansion so the LHS name is preserved)
-                    let value = self.evaluate_arithmetic_with_assign(expr);
+                    let value = self.evaluate_arithmetic_with_assign(&expanded_expr);
                     result.push_str(&value.to_string());
                 }
                 WordPart::Length(name) => {
@@ -7287,19 +7406,25 @@ impl Interpreter {
                     };
                     if index == "@" || index == "*" {
                         // ${arr[@]} or ${arr[*]} - expand to all elements
+                        // [*] joins with first char of IFS; [@] joins with space
+                        let sep = if index == "*" {
+                            self.get_ifs_separator()
+                        } else {
+                            " ".to_string()
+                        };
                         if let Some(arr) = self.assoc_arrays.get(arr_name) {
                             let mut keys: Vec<_> = arr.keys().collect();
                             keys.sort();
                             let values: Vec<String> =
                                 keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
-                            result.push_str(&values.join(" "));
+                            result.push_str(&values.join(&sep));
                         } else if let Some(arr) = self.arrays.get(arr_name) {
                             let mut indices: Vec<_> = arr.keys().collect();
                             indices.sort();
                             let values: Vec<_> =
                                 indices.iter().filter_map(|i| arr.get(i)).collect();
                             result.push_str(
-                                &values.into_iter().cloned().collect::<Vec<_>>().join(" "),
+                                &values.into_iter().cloned().collect::<Vec<_>>().join(&sep),
                             );
                         }
                     } else if let Some(extra_idx) = extra_index {
@@ -7464,28 +7589,30 @@ impl Interpreter {
                     }
                 }
                 WordPart::ProcessSubstitution { commands, is_input } => {
-                    // Execute the commands and capture output
-                    let mut stdout = String::new();
-                    for cmd in commands {
-                        let cmd_result = self.execute_command(cmd).await?;
-                        stdout.push_str(&cmd_result.stdout);
-                    }
-
-                    // Create a virtual file with the output
                     let path_str = format!(
                         "/dev/fd/proc_sub_{}",
                         PROC_SUB_COUNTER.fetch_add(1, Ordering::Relaxed)
                     );
                     let path = Path::new(&path_str);
 
-                    // Write to virtual filesystem
-                    if self.fs.write_file(path, stdout.as_bytes()).await.is_err() {
-                        // If we can't write, just inline the content
-                        // This is a fallback for simpler behavior
-                        if *is_input {
+                    if *is_input {
+                        // <(cmd): execute commands, write output to virtual file
+                        let mut stdout = String::new();
+                        for cmd in commands {
+                            let cmd_result = self.execute_command(cmd).await?;
+                            stdout.push_str(&cmd_result.stdout);
+                        }
+                        if self.fs.write_file(path, stdout.as_bytes()).await.is_err() {
                             result.push_str(&stdout);
+                        } else {
+                            result.push_str(&path_str);
                         }
                     } else {
+                        // >(cmd): create empty file, defer command execution until
+                        // after the main command writes to it.
+                        let _ = self.fs.write_file(path, b"").await;
+                        self.deferred_proc_subs
+                            .push((path_str.clone(), commands.clone()));
                         result.push_str(&path_str);
                     }
                 }
@@ -7617,7 +7744,8 @@ impl Interpreter {
                     let values: Vec<String> =
                         keys.iter().filter_map(|k| arr.get(k).cloned()).collect();
                     if word.quoted && index == "*" {
-                        return Ok(vec![values.join(" ")]);
+                        let sep = self.get_ifs_separator();
+                        return Ok(vec![values.join(&sep)]);
                     }
                     return Ok(values);
                 }
@@ -7626,9 +7754,10 @@ impl Interpreter {
                     indices.sort();
                     let values: Vec<String> =
                         indices.iter().filter_map(|i| arr.get(i).cloned()).collect();
-                    // "${arr[*]}" joins into single field; "${arr[@]}" keeps separate
+                    // "${arr[*]}" joins into single field with IFS; "${arr[@]}" keeps separate
                     if word.quoted && index == "*" {
-                        return Ok(vec![values.join(" ")]);
+                        let sep = self.get_ifs_separator();
+                        return Ok(vec![values.join(&sep)]);
                     }
                     return Ok(values);
                 }
@@ -7686,17 +7815,23 @@ impl Interpreter {
     /// Returns (is_set, expanded_value).
     fn resolve_param_expansion_name(&self, name: &str) -> (bool, String) {
         // Check for array subscript pattern: name[@] or name[*]
+        let is_star = name.ends_with("[*]");
         if let Some(arr_name) = name
             .strip_suffix("[@]")
             .or_else(|| name.strip_suffix("[*]"))
         {
+            let sep = if is_star {
+                self.get_ifs_separator()
+            } else {
+                " ".to_string()
+            };
             if let Some(arr) = self.assoc_arrays.get(arr_name) {
                 let is_set = !arr.is_empty();
                 let mut keys: Vec<_> = arr.keys().collect();
                 keys.sort();
                 let values: Vec<String> =
                     keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
-                return (is_set, values.join(" "));
+                return (is_set, values.join(&sep));
             }
             if let Some(arr) = self.arrays.get(arr_name) {
                 let is_set = !arr.is_empty();
@@ -7705,7 +7840,7 @@ impl Interpreter {
                 let values: Vec<_> = indices.iter().filter_map(|i| arr.get(i)).collect();
                 return (
                     is_set,
-                    values.into_iter().cloned().collect::<Vec<_>>().join(" "),
+                    values.into_iter().cloned().collect::<Vec<_>>().join(&sep),
                 );
             }
             return (false, String::new());
@@ -7739,7 +7874,12 @@ impl Interpreter {
         if name == "@" || name == "*" {
             if let Some(frame) = self.call_stack.last() {
                 let is_set = !frame.positional.is_empty();
-                return (is_set, frame.positional.join(" "));
+                let sep = if name == "*" {
+                    self.get_ifs_separator()
+                } else {
+                    " ".to_string()
+                };
+                return (is_set, frame.positional.join(&sep));
             }
             return (false, String::new());
         }
@@ -9283,6 +9423,81 @@ impl Interpreter {
         current
     }
 
+    /// Expand command substitutions `$(...)` within an arithmetic expression string.
+    /// Parses the expr, executes any embedded command subs, and replaces them with output.
+    async fn expand_command_subs_in_arithmetic(&mut self, expr: &str) -> Result<String> {
+        let mut result = String::new();
+        let mut chars = expr.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '$' && chars.peek() == Some(&'(') {
+                // Check it's not $(( ... )) (arithmetic)
+                let remaining: String = chars.clone().collect();
+                if remaining.starts_with("((") {
+                    // $(( ... )) — keep as-is for arithmetic eval
+                    result.push('$');
+                    continue;
+                }
+                // $( ... ) — command substitution, find matching close paren
+                chars.next(); // consume '('
+                let mut depth = 1i32;
+                let mut cmd = String::new();
+                for c in chars.by_ref() {
+                    if c == '(' {
+                        depth += 1;
+                        cmd.push(c);
+                    } else if c == ')' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        cmd.push(c);
+                    } else {
+                        cmd.push(c);
+                    }
+                }
+                // Execute the command and substitute
+                let parser = Parser::with_limits(
+                    &cmd,
+                    self.limits.max_ast_depth,
+                    self.limits.max_parser_operations,
+                );
+                match parser.parse() {
+                    Ok(script) => {
+                        if self.counters.push_function(&self.limits).is_err() {
+                            result.push('0');
+                        } else {
+                            let cmd_result =
+                                self.execute_command_sequence(&script.commands).await?;
+                            self.counters.pop_function();
+                            let trimmed = cmd_result.stdout.trim_end_matches('\n');
+                            if trimmed.is_empty() {
+                                result.push('0');
+                            } else {
+                                result.push_str(trimmed);
+                            }
+                        }
+                    }
+                    Err(_) => result.push('0'),
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+        Ok(result)
+    }
+
+    /// Get the separator for `[*]` array joins: first char of IFS, or space if IFS unset.
+    fn get_ifs_separator(&self) -> String {
+        match self.variables.get("IFS") {
+            Some(ifs) => ifs
+                .chars()
+                .next()
+                .map(|c| c.to_string())
+                .unwrap_or_default(),
+            None => " ".to_string(),
+        }
+    }
+
     fn expand_variable(&self, name: &str) -> String {
         // Resolve nameref before expansion
         let name = self.resolve_nameref(name);
@@ -9322,14 +9537,7 @@ impl Interpreter {
             "*" => {
                 // All positional parameters joined by IFS first char
                 if let Some(frame) = self.call_stack.last() {
-                    let sep = match self.variables.get("IFS") {
-                        Some(ifs) => ifs
-                            .chars()
-                            .next()
-                            .map(|c| c.to_string())
-                            .unwrap_or_default(),
-                        None => " ".to_string(),
-                    };
+                    let sep = self.get_ifs_separator();
                     return frame.positional.join(&sep);
                 }
                 return String::new();
@@ -11716,5 +11924,68 @@ echo "count=$COUNT"
         // DEBUG fires before: echo x (1), trap - DEBUG (2)
         // After removal: echo y, echo $count don't trigger
         assert_eq!(result.stdout, "x\ny\n2\n");
+    }
+
+    #[tokio::test]
+    async fn test_array_join_with_ifs() {
+        // Issue #668: ${arr[*]} should join with first char of IFS
+        let result = run_script(r#"arr=(a b c); IFS=,; echo "${arr[*]}""#).await;
+        assert_eq!(result.stdout.trim(), "a,b,c");
+    }
+
+    #[tokio::test]
+    async fn test_array_join_with_ifs_at_sign() {
+        // ${arr[@]} should NOT use IFS, keeps elements separate
+        let result = run_script(r#"arr=(a b c); IFS=,; echo "${arr[@]}""#).await;
+        assert_eq!(result.stdout.trim(), "a b c");
+    }
+
+    #[tokio::test]
+    async fn test_underscore_last_arg() {
+        // Issue #668: $_ should track last argument of previous command
+        let result = run_script("echo hello; echo $_").await;
+        assert_eq!(result.stdout, "hello\nhello\n");
+    }
+
+    #[tokio::test]
+    async fn test_underscore_no_args() {
+        // $_ with no args should be the command name
+        let result = run_script("true; echo $_").await;
+        assert_eq!(result.stdout.trim(), "true");
+    }
+
+    #[tokio::test]
+    async fn test_temp_assignment_expansion_order() {
+        // Issue #671: args expanded before temporary prefix assignment
+        let result = run_script(r#"x=hello; x=world echo $x"#).await;
+        assert_eq!(result.stdout.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_process_sub_multiline() {
+        // Issue #666: process substitution should handle multiline output
+        let result = run_script(r#"cat <(echo hello; echo world)"#).await;
+        assert_eq!(result.stdout, "hello\nworld\n");
+    }
+
+    #[tokio::test]
+    async fn test_process_sub_echo_e() {
+        // Issue #666: echo -e in process substitution
+        let result = run_script(r#"cat <(echo -e "a\nb")"#).await;
+        assert_eq!(result.stdout, "a\nb\n");
+    }
+
+    #[tokio::test]
+    async fn test_process_sub_output() {
+        // Issue #666: output process substitution >(cmd) forwards output
+        let result = run_script(r#"echo hello > >(cat)"#).await;
+        assert_eq!(result.stdout.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_process_sub_paste() {
+        // Issue #666: paste with multiline process substitutions
+        let result = run_script(r#"paste <(echo -e "a\nb") <(echo -e "1\n2")"#).await;
+        assert_eq!(result.stdout, "a\t1\nb\t2\n");
     }
 }

@@ -211,11 +211,10 @@ global
 ### end
 
 ### function_recursion
-### bash_diff: recursive command substitution in arithmetic returns 0 instead of actual value (#667)
-# Recursive function — bash: 120, bashkit: 0
+# Recursive function
 factorial() { if [ $1 -le 1 ]; then echo 1; else echo $(( $1 * $(factorial $(( $1 - 1 ))) )); fi; }; factorial 5
 ### expect
-0
+120
 ### end
 
 ### function_args
@@ -615,11 +614,12 @@ same
 ### end
 
 ### process_substitution_paste
-### bash_diff: process substitution does not properly handle multiline content from echo -e (#666)
-# Process substitution with paste — bash: a<TAB>1\nb<TAB>2, bashkit: mangled
+### bash_diff: paste not available as external command in real bash test sandbox
+# Process substitution with paste
 paste <(echo -e "a\nb") <(echo -e "1\n2")
 ### expect
-anb	1n2
+a	1
+b	2
 ### end
 
 ### trap_basic
@@ -752,12 +752,11 @@ a b c
 ### end
 
 ### special_vars_last_arg
-### bash_diff: $_ (last argument of previous command) not implemented (#668)
-# Last argument $_ — bash: "hello\nhello\n", bashkit: "hello\n\n"
+# Last argument $_
 echo hello; echo $_
 ### expect
 hello
-
+hello
 ### end
 
 ### ifs_splitting
@@ -853,7 +852,6 @@ a
 ### end
 
 ### coprocess_basic
-### skip: coproc fd array variable COPROC[0] not parseable in redirect context (#669)
 # Coproc basic
 coproc { echo hello; }; read line <&${COPROC[0]}; echo $line
 ### expect
@@ -1163,11 +1161,11 @@ echo -e "3\n1\n2" | sort | head -1 | tr -d '\n'; echo " done"
 ### end
 
 ### process_sub_write
-### bash_diff: output process substitution >(cmd) does not capture/forward output (#666)
-# Process substitution for writing — bash: "hello", bashkit: empty
+### bash_diff: output process substitution >(cmd) runs asynchronously in real bash; bashkit runs it synchronously
+# Process substitution for writing
 echo hello > >(cat)
 ### expect
-
+hello
 ### end
 
 ### arithmetic_hex
@@ -1330,11 +1328,10 @@ first
 ### end
 
 ### env_passthrough
-### bash_diff: temporary variable assignment in command prefix expands $x after assignment instead of before (#671)
-# Variable in command prefix — bash: "hello", bashkit: "world"
+# Variable in command prefix — args expanded before assignment
 x=hello; x=world echo $x
 ### expect
-world
+hello
 ### end
 
 ### split_combined_ops
@@ -1345,11 +1342,10 @@ file
 ### end
 
 ### array_join_with_ifs
-### bash_diff: ${arr[*]} does not use first char of IFS as separator (#668)
-# Join array with IFS — bash: "a,b,c", bashkit: "a b c"
+# Join array with IFS
 arr=(a b c); IFS=,; echo "${arr[*]}"; unset IFS
 ### expect
-a b c
+a,b,c
 ### end
 
 ### nested_quoting
