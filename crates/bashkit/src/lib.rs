@@ -541,6 +541,9 @@ impl Bash {
     /// input size, then parses the script with a timeout, AST depth limit, and fuel limit,
     /// then executes the resulting AST.
     pub async fn exec(&mut self, script: &str) -> Result<ExecResult> {
+        // THREAT[TM-ISO-005/006/007]: Reset transient state between exec() calls
+        self.interpreter.reset_transient_state();
+
         // THREAT[TM-LOG-001]: Sensitive data in logs
         // Mitigation: Use LogConfig to redact sensitive script content
         #[cfg(feature = "logging")]
