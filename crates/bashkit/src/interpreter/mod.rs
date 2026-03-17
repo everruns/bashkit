@@ -990,28 +990,29 @@ impl Interpreter {
         }
 
         // Run EXIT trap if registered (only for top-level execute)
-        if run_exit_trap
-            && let Some(trap_cmd) = self.traps.get("EXIT").cloned()
-        {
-            // THREAT[TM-DOS-030]: Propagate interpreter parser limits
-            if let Ok(trap_script) = Parser::with_limits(
-                &trap_cmd,
-                self.limits.max_ast_depth,
-                self.limits.max_parser_operations,
-            )
-            .parse()
-            {
-                let emit_before = self.output_emit_count;
-                if let Ok(trap_result) =
-                    self.execute_command_sequence(&trap_script.commands).await
+        #[allow(clippy::collapsible_if)]
+        if run_exit_trap {
+            if let Some(trap_cmd) = self.traps.get("EXIT").cloned() {
+                // THREAT[TM-DOS-030]: Propagate interpreter parser limits
+                if let Ok(trap_script) = Parser::with_limits(
+                    &trap_cmd,
+                    self.limits.max_ast_depth,
+                    self.limits.max_parser_operations,
+                )
+                .parse()
                 {
-                    self.maybe_emit_output(
-                        &trap_result.stdout,
-                        &trap_result.stderr,
-                        emit_before,
-                    );
-                    stdout.push_str(&trap_result.stdout);
-                    stderr.push_str(&trap_result.stderr);
+                    let emit_before = self.output_emit_count;
+                    if let Ok(trap_result) =
+                        self.execute_command_sequence(&trap_script.commands).await
+                    {
+                        self.maybe_emit_output(
+                            &trap_result.stdout,
+                            &trap_result.stderr,
+                            emit_before,
+                        );
+                        stdout.push_str(&trap_result.stdout);
+                        stderr.push_str(&trap_result.stderr);
+                    }
                 }
             }
         }
