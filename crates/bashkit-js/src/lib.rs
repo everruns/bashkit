@@ -6,7 +6,7 @@
 //! Exposes `Bash` (core interpreter), `BashTool` (interpreter + LLM metadata),
 //! and `ExecResult` via napi-rs for use from JavaScript/TypeScript.
 //!
-//! # Safety: Arc<SharedState> pattern
+//! # Safety: `Arc<SharedState>` pattern
 //!
 //! Both `Bash` and `BashTool` wrap all mutable state in `Arc<SharedState>`.
 //! Every `#[napi]` method clones the `Arc` *before* doing any blocking or async
