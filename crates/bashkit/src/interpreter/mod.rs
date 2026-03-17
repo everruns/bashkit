@@ -34,7 +34,7 @@ use crate::builtins::{self, Builtin};
 use crate::error::Error;
 use crate::error::Result;
 use crate::fs::FileSystem;
-use crate::limits::{ExecutionCounters, ExecutionLimits};
+use crate::limits::{ExecutionCounters, ExecutionLimits, SessionLimits};
 
 /// A single command history entry.
 #[derive(Debug, Clone)]
@@ -284,6 +284,8 @@ pub struct Interpreter {
     call_stack: Vec<CallFrame>,
     /// Resource limits
     limits: ExecutionLimits,
+    /// Session-level resource limits (persist across exec() calls)
+    session_limits: SessionLimits,
     /// Execution counters for resource tracking
     counters: ExecutionCounters,
     /// Job table for background execution (shared for wait builtin access)
@@ -578,6 +580,7 @@ impl Interpreter {
             functions: HashMap::new(),
             call_stack: Vec::new(),
             limits: ExecutionLimits::default(),
+            session_limits: SessionLimits::default(),
             counters: ExecutionCounters::new(),
             jobs: jobs::new_shared_job_table(),
             options: ShellOptions::default(),
@@ -656,6 +659,11 @@ impl Interpreter {
     /// Set execution limits.
     pub fn set_limits(&mut self, limits: ExecutionLimits) {
         self.limits = limits;
+    }
+
+    /// Set session-level limits.
+    pub fn set_session_limits(&mut self, limits: SessionLimits) {
+        self.session_limits = limits;
     }
 
     /// Get execution limits.
@@ -870,6 +878,13 @@ impl Interpreter {
         // Without this, hitting the limit in one exec() permanently poisons the session.
         self.counters.reset_for_execution();
 
+        // THREAT[TM-DOS-059]: Increment session-level exec call counter and
+        // check session limits before starting execution.
+        self.counters.tick_exec_call();
+        self.counters
+            .check_session_limits(&self.session_limits)
+            .map_err(|e| crate::error::Error::Execution(e.to_string()))?;
+
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
@@ -1038,8 +1053,12 @@ impl Interpreter {
                 Ok(ExecResult::ok(String::new()))
             });
 
-            // Check command count limit
+            // Check command count limit (per-exec)
             self.counters.tick_command(&self.limits)?;
+            // THREAT[TM-DOS-059]: Check session-level command limit
+            self.counters
+                .check_session_limits(&self.session_limits)
+                .map_err(|e| crate::error::Error::Execution(e.to_string()))?;
 
             match command {
                 Command::Simple(simple) => self.execute_simple_command(simple, None).await,

@@ -5,7 +5,7 @@
 //!
 //! Run with: `cargo test threat_`
 
-use bashkit::{Bash, ExecutionLimits, FileSystem, FsLimits, InMemoryFs, OverlayFs};
+use bashkit::{Bash, ExecutionLimits, FileSystem, FsLimits, InMemoryFs, OverlayFs, SessionLimits};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -3164,5 +3164,236 @@ template render /tmp/tpl.txt -d /tmp/data.json
             "Normal template should work: got {:?}",
             result.stdout
         );
+    }
+}
+
+// =============================================================================
+// SESSION-LEVEL CUMULATIVE RESOURCE COUNTERS (TM-DOS-059)
+// =============================================================================
+
+mod session_limits {
+    use super::*;
+
+    /// TM-DOS-059: Cumulative command limit across multiple exec() calls.
+    /// Run N exec() calls each with K commands; verify failure when total > max_total_commands.
+    #[tokio::test]
+    async fn tm_dos_059_cumulative_command_limit() {
+        let session = SessionLimits::new()
+            .max_total_commands(15)
+            .max_exec_calls(100);
+        let limits = ExecutionLimits::new().max_commands(10_000);
+        let mut bash = Bash::builder()
+            .limits(limits)
+            .session_limits(session)
+            .build();
+
+        // Each exec runs 5 commands (echo x 5). Three calls = 15 commands should be near limit.
+        let script = "echo 1; echo 2; echo 3; echo 4; echo 5";
+
+        let r1 = bash.exec(script).await.unwrap();
+        assert_eq!(r1.exit_code, 0, "first batch should succeed");
+
+        let r2 = bash.exec(script).await.unwrap();
+        assert_eq!(r2.exit_code, 0, "second batch should succeed");
+
+        // Eventually we should hit the session command limit (Err or non-zero exit).
+        let mut hit_limit = false;
+        for _ in 0..5 {
+            match bash.exec(script).await {
+                Err(e) => {
+                    let msg = e.to_string();
+                    assert!(
+                        msg.contains("session"),
+                        "error should mention session: {msg}"
+                    );
+                    hit_limit = true;
+                    break;
+                }
+                Ok(r) if r.exit_code != 0 => {
+                    hit_limit = true;
+                    break;
+                }
+                Ok(_) => {} // keep going
+            }
+        }
+        assert!(hit_limit, "should eventually hit session command limit");
+    }
+
+    /// TM-DOS-059: exec() call count limit.
+    #[tokio::test]
+    async fn tm_dos_059_exec_call_count_limit() {
+        let session = SessionLimits::new()
+            .max_exec_calls(3)
+            .max_total_commands(u64::MAX);
+        let limits = ExecutionLimits::new();
+        let mut bash = Bash::builder()
+            .limits(limits)
+            .session_limits(session)
+            .build();
+
+        // First 3 exec() calls should succeed
+        for i in 0..3 {
+            let r = bash.exec("echo ok").await.unwrap();
+            assert_eq!(r.exit_code, 0, "exec call {} should succeed", i + 1);
+        }
+
+        // 4th exec() should fail with Err (session limit exceeded at entry)
+        let r = bash.exec("echo should_fail").await;
+        assert!(
+            r.is_err(),
+            "4th exec call should fail due to session exec limit"
+        );
+        let msg = r.unwrap_err().to_string();
+        assert!(
+            msg.contains("session") && msg.contains("exec"),
+            "error should mention session exec limit: {msg}"
+        );
+    }
+
+    /// TM-DOS-059: Session counters persist across exec() calls (not reset).
+    #[tokio::test]
+    async fn tm_dos_059_counter_persistence() {
+        let session = SessionLimits::new()
+            .max_total_commands(20)
+            .max_exec_calls(100);
+        let limits = ExecutionLimits::new().max_commands(10_000);
+        let mut bash = Bash::builder()
+            .limits(limits)
+            .session_limits(session)
+            .build();
+
+        // Run commands in separate exec() calls, accumulating toward limit
+        let mut hit_limit = false;
+        for i in 0..20 {
+            match bash.exec("echo a; echo b; echo c").await {
+                Err(e) => {
+                    let msg = e.to_string();
+                    assert!(
+                        msg.contains("session"),
+                        "error should mention session: {msg}"
+                    );
+                    hit_limit = true;
+                    assert!(
+                        i >= 3,
+                        "should succeed for at least a few calls before limit"
+                    );
+                    break;
+                }
+                Ok(r) if r.exit_code != 0 => {
+                    hit_limit = true;
+                    break;
+                }
+                Ok(_) => {}
+            }
+        }
+        assert!(hit_limit, "should eventually hit session command limit");
+    }
+
+    /// TM-DOS-059: Per-exec limits still work independently of session limits.
+    #[tokio::test]
+    async fn tm_dos_059_per_exec_limits_still_work() {
+        let session = SessionLimits::unlimited();
+        let limits = ExecutionLimits::new().max_commands(3);
+        let mut bash = Bash::builder()
+            .limits(limits)
+            .session_limits(session)
+            .build();
+
+        // Per-exec limit of 3 commands should still trigger.
+        // May return Ok with non-zero exit or Err depending on how limit surfaces.
+        let r = bash.exec("echo 1; echo 2; echo 3; echo 4; echo 5").await;
+        match r {
+            Ok(result) => assert_ne!(
+                result.exit_code, 0,
+                "per-exec command limit should still work"
+            ),
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("command") || msg.contains("limit"),
+                    "error should be about command limit: {msg}"
+                );
+            }
+        }
+    }
+
+    /// TM-DOS-059: Builder API configures session limits correctly.
+    #[tokio::test]
+    async fn tm_dos_059_builder_api() {
+        let session = SessionLimits::new()
+            .max_total_commands(50)
+            .max_exec_calls(10);
+        let mut bash = Bash::builder().session_limits(session).build();
+
+        // Should work within limits
+        let r = bash.exec("echo hello").await.unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert!(r.stdout.contains("hello"));
+    }
+
+    /// TM-DOS-059: Default session limits are reasonable and non-zero.
+    #[tokio::test]
+    async fn tm_dos_059_default_safety() {
+        let defaults = SessionLimits::default();
+        assert!(
+            defaults.max_total_commands > 0,
+            "default max_total_commands should be non-zero"
+        );
+        assert!(
+            defaults.max_exec_calls > 0,
+            "default max_exec_calls should be non-zero"
+        );
+        // Defaults should be reasonably large but finite
+        assert!(
+            defaults.max_total_commands < u64::MAX,
+            "default max_total_commands should be finite"
+        );
+        assert!(
+            defaults.max_exec_calls < u64::MAX,
+            "default max_exec_calls should be finite"
+        );
+        // Verify specific expected values
+        assert_eq!(defaults.max_total_commands, 100_000);
+        assert_eq!(defaults.max_exec_calls, 1_000);
+    }
+
+    /// TM-DOS-059: SessionLimits::unlimited() disables all session limits.
+    #[tokio::test]
+    async fn tm_dos_059_unlimited() {
+        let unlimited = SessionLimits::unlimited();
+        assert_eq!(unlimited.max_total_commands, u64::MAX);
+        assert_eq!(unlimited.max_exec_calls, u64::MAX);
+    }
+
+    /// TM-DOS-059: reset_for_execution does NOT reset session counters.
+    #[test]
+    fn tm_dos_059_reset_preserves_session_counters() {
+        use bashkit::ExecutionCounters;
+
+        let limits = ExecutionLimits::new().max_commands(10_000);
+        let mut counters = ExecutionCounters::new();
+
+        // Simulate some commands
+        for _ in 0..5 {
+            counters.tick_command(&limits).unwrap();
+        }
+        counters.tick_exec_call();
+
+        assert_eq!(counters.session_commands, 5);
+        assert_eq!(counters.session_exec_calls, 1);
+
+        // reset_for_execution should NOT reset session counters
+        counters.reset_for_execution();
+
+        assert_eq!(
+            counters.session_commands, 5,
+            "session_commands must persist"
+        );
+        assert_eq!(
+            counters.session_exec_calls, 1,
+            "session_exec_calls must persist"
+        );
+        // But per-exec counters should be reset
+        assert_eq!(counters.commands, 0);
     }
 }

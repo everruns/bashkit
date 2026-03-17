@@ -188,6 +188,68 @@ impl ExecutionLimits {
     }
 }
 
+// THREAT[TM-DOS-059]: Session-level cumulative resource limits.
+// Per-exec limits reset every exec() call. Session limits persist across
+// all exec() calls within a Bash instance, preventing a tenant from
+// circumventing per-execution limits by splitting work across many calls.
+
+/// Default max total commands across all exec() calls: 100,000
+pub const DEFAULT_SESSION_MAX_COMMANDS: u64 = 100_000;
+
+/// Default max exec() invocations per session: 1,000
+pub const DEFAULT_SESSION_MAX_EXEC_CALLS: u64 = 1_000;
+
+/// Session-level resource limits that persist across `exec()` calls.
+///
+/// These limits prevent tenants from circumventing per-execution limits
+/// by splitting work across many small `exec()` calls.
+#[derive(Debug, Clone)]
+pub struct SessionLimits {
+    /// Maximum total commands across all exec() calls.
+    /// Default: 100,000
+    pub max_total_commands: u64,
+
+    /// Maximum number of exec() invocations per session.
+    /// Default: 1,000
+    pub max_exec_calls: u64,
+}
+
+impl Default for SessionLimits {
+    fn default() -> Self {
+        Self {
+            max_total_commands: DEFAULT_SESSION_MAX_COMMANDS,
+            max_exec_calls: DEFAULT_SESSION_MAX_EXEC_CALLS,
+        }
+    }
+}
+
+impl SessionLimits {
+    /// Create new session limits with defaults.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set maximum total commands across all exec() calls.
+    pub fn max_total_commands(mut self, count: u64) -> Self {
+        self.max_total_commands = count;
+        self
+    }
+
+    /// Set maximum number of exec() invocations.
+    pub fn max_exec_calls(mut self, count: u64) -> Self {
+        self.max_exec_calls = count;
+        self
+    }
+
+    /// Create unlimited session limits (no restrictions).
+    pub fn unlimited() -> Self {
+        Self {
+            max_total_commands: u64::MAX,
+            max_exec_calls: u64::MAX,
+        }
+    }
+}
+
 /// Execution counters for tracking resource usage
 #[derive(Debug, Clone, Default)]
 pub struct ExecutionCounters {
@@ -204,6 +266,14 @@ pub struct ExecutionCounters {
     // This counter never resets, tracking total iterations across all loops.
     /// Total loop iterations across all loops (never reset)
     pub total_loop_iterations: usize,
+
+    // THREAT[TM-DOS-059]: Session-level cumulative counters.
+    // These persist across exec() calls (never reset by reset_for_execution).
+    /// Total commands across all exec() calls in this session.
+    pub session_commands: u64,
+
+    /// Number of exec() invocations in this session.
+    pub session_exec_calls: u64,
 }
 
 impl ExecutionCounters {
@@ -249,10 +319,34 @@ impl ExecutionCounters {
         });
 
         self.commands += 1;
+        self.session_commands += 1;
         if self.commands > limits.max_commands {
             return Err(LimitExceeded::MaxCommands(limits.max_commands));
         }
         Ok(())
+    }
+
+    /// Check session-level limits. Called at exec() entry and during execution.
+    pub fn check_session_limits(
+        &self,
+        session_limits: &SessionLimits,
+    ) -> Result<(), LimitExceeded> {
+        if self.session_exec_calls > session_limits.max_exec_calls {
+            return Err(LimitExceeded::SessionMaxExecCalls(
+                session_limits.max_exec_calls,
+            ));
+        }
+        if self.session_commands > session_limits.max_total_commands {
+            return Err(LimitExceeded::SessionMaxCommands(
+                session_limits.max_total_commands,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Increment exec call counter for session tracking.
+    pub fn tick_exec_call(&mut self) {
+        self.session_exec_calls += 1;
     }
 
     /// Increment loop iteration counter, returns error if limit exceeded
@@ -361,6 +455,12 @@ pub enum LimitExceeded {
 
     #[error("parser fuel exhausted ({0} operations, max {1})")]
     ParserExhausted(usize, usize),
+
+    #[error("session command limit exceeded ({0} total commands)")]
+    SessionMaxCommands(u64),
+
+    #[error("session exec() call limit exceeded ({0} calls)")]
+    SessionMaxExecCalls(u64),
 }
 
 #[cfg(test)]
