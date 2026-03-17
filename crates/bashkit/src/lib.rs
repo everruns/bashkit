@@ -650,6 +650,17 @@ impl Bash {
         self.interpreter.load_history().await;
 
         let exec_start = std::time::Instant::now();
+        // THREAT[TM-DOS-057]: Wrap execution with timeout to prevent sleep/blocking bypass
+        let execution_timeout = self.interpreter.limits().timeout;
+        #[cfg(not(target_family = "wasm"))]
+        let result =
+            match tokio::time::timeout(execution_timeout, self.interpreter.execute(&ast)).await {
+                Ok(r) => r,
+                Err(_elapsed) => Err(Error::ResourceLimit(LimitExceeded::Timeout(
+                    execution_timeout,
+                ))),
+            };
+        #[cfg(target_family = "wasm")]
         let result = self.interpreter.execute(&ast).await;
         let duration_ms = exec_start.elapsed().as_millis() as u64;
 
