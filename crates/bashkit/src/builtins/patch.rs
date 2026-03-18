@@ -349,8 +349,7 @@ impl Builtin for Patch {
                         // Handle file deletion
                         if diff.new_path == "/dev/null" && !opts.reverse {
                             output.push_str(&format!("patching file {} (removed)\n", target));
-                            // WTF: VFS doesn't have a delete_file, using write with empty content
-                            // as a workaround. Real deletion would need fs.remove().
+                            ctx.fs.remove(&path, false).await?;
                         } else {
                             ctx.fs.write_file(&path, patched.as_bytes()).await?;
                             output.push_str(&format!("patching file {}\n", target));
@@ -615,5 +614,24 @@ mod tests {
         assert_eq!(hunk.old_count, 1);
         assert_eq!(hunk.new_start, 5);
         assert_eq!(hunk.new_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_patch_delete_file_removes_from_vfs() {
+        // Create a file, then apply a delete patch (new_path = /dev/null)
+        let diff = "--- a/to_delete.txt\n\
+                     +++ /dev/null\n\
+                     @@ -1,2 +0,0 @@\n\
+                     -hello\n\
+                     -world\n";
+        let (result, fs) =
+            run_patch(&["-p1"], diff, &[("/to_delete.txt", b"hello\nworld\n")]).await;
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        // File should be actually removed, not just emptied
+        let fs_dyn = fs as Arc<dyn FileSystem>;
+        assert!(
+            !fs_dyn.exists(Path::new("/to_delete.txt")).await.unwrap(),
+            "deleted file should not exist in VFS"
+        );
     }
 }
