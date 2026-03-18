@@ -1,6 +1,7 @@
 ---
 name: process-issues
 description: Resolve all open GitHub issues. Each issue becomes exactly one shipped PR. Trigger when user says "process issues", "work through issues", "resolve issues", "handle open issues", "fix all issues", or asks to resolve GitHub issues end-to-end.
+user_invocable: true
 ---
 
 Resolve all qualifying open GitHub issues. Each issue becomes exactly one merged PR. Do not stop until every issue is resolved or explicitly deferred.
@@ -43,23 +44,15 @@ For each qualifying issue (ordered by issue number), achieve ALL of these before
 - Security tests added if change touches parser, interpreter, VFS, network, git, or user input (per `specs/005-security-testing.md`)
 - Threat model updated if new attack surface (per `specs/006-threat-model.md`)
 
-### 4. Specs are in sync
+### 4. Ship via `/ship`
 
-- Relevant specs in `specs/` updated if behavior changed
-- `specs/009-implementation-status.md` updated if feature status changed
+Invoke the `/ship` skill to handle all remaining steps: spec updates, artifact updates, code simplification, security review, smoke testing, quality gates, PR creation, CI, and merge.
 
-### 5. Quality gates pass
+Pass context: `Closes #N — <short description of the fix/feature>`
 
-- `just pre-pr` green (fmt + clippy + test)
-- Fix any failures before proceeding
+Do NOT duplicate any `/ship` steps manually — let the skill handle the full pipeline.
 
-### 6. PR is merged
-
-- Commit with conventional format: `type(scope): description` referencing `Closes #N`
-- PR created with summary + test plan
-- CI green
-- Squash-merged (`gh pr merge --squash --delete-branch`)
-- Return to main before next issue: `git checkout main && git pull origin main`
+After `/ship` completes and the PR is merged, return to main before next issue: `git checkout main && git pull origin main`
 
 ## After all issues
 
