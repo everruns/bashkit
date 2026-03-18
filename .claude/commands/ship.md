@@ -65,6 +65,21 @@ Analyze all changed code for security vulnerabilities:
 
 If security issues are found, fix them, add regression tests, and update `specs/006-threat-model.md` if a new threat category is identified.
 
+### Phase 3d: Design Quality Review
+
+Review all changed code for shortcuts, lazy abstractions, and premature compromises. This is a greenfield project — correctness and clean design matter more than compatibility or speed of delivery. Take the time to find better abstractions.
+
+1. **No shortcut abstractions** — reject copy-paste patterns disguised as "good enough". If two things look similar, determine whether they are *actually* the same concept. If yes, unify properly. If no, keep them separate with clear names — don't force a bad shared interface.
+2. **No lazy wrappers** — every abstraction must earn its place. A wrapper that just forwards calls adds indirection without value. An enum variant that exists "just in case" is dead weight. If a layer doesn't add meaning, remove it.
+3. **Right abstraction level** — check that traits, types, and module boundaries model the actual domain, not implementation accidents. A `StringOrList` enum is a parser leak; a `Pattern` type is a domain concept. Prefer the latter.
+4. **No stringly-typed interfaces** — look for magic strings, string matching on variant names, ad-hoc parsing of structured data. Replace with enums, newtypes, or proper typed APIs.
+5. **No premature generics** — a function generic over three trait bounds used in one call site is harder to read than a concrete function. Generalize only when there are (or will immediately be) multiple real callers.
+6. **No compatibility shims** — this is greenfield. If an interface is wrong, change it. Don't add adapters, conversion layers, or deprecated alternatives. Fix call sites instead.
+7. **Error types are first-class** — check that error enums are specific and actionable, not catch-all `Other(String)` buckets. Each variant should guide the caller's recovery logic.
+8. **Module boundaries enforce invariants** — if a `pub` field or function lets outside code break a module's assumptions, tighten visibility. Constructors and accessors exist to protect invariants, not to be "nice".
+
+If design issues are found, refactor, update tests (loop back to Phase 2), and update specs if the change alters documented behavior.
+
 ### Phase 4: Smoke Testing
 
 Smoke test impacted functionality to verify it works end-to-end:
