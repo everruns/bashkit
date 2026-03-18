@@ -1,6 +1,7 @@
 ---
 name: process-issues
 description: Resolve all open GitHub issues. Each issue becomes exactly one shipped PR. Trigger when user says "process issues", "work through issues", "resolve issues", "handle open issues", "fix all issues", or asks to resolve GitHub issues end-to-end.
+user_invocable: true
 ---
 
 Resolve all qualifying open GitHub issues. Each issue becomes exactly one merged PR. Do not stop until every issue is resolved or explicitly deferred.
