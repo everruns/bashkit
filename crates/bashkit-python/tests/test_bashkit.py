@@ -1260,7 +1260,7 @@ def test_bash_async_callable_object_accepted():
 
 @pytest.mark.asyncio
 async def test_bash_handler_receives_set_as_set():
-    """Monty Set passed to handler arrives as Python set (not list)."""
+    """Monty Set passed to handler arrives as Python set, not list."""
     received = []
 
     async def handler(fn_name, args, kwargs):
@@ -1269,9 +1269,9 @@ async def test_bash_handler_receives_set_as_set():
 
     bash = Bash(python=True, external_functions=["check"], external_handler=handler)
     await bash.execute('python3 -c "check({1, 2, 3})"')
-    # If args were received, verify the first positional arg is a set
-    if received and received[0]:
-        assert isinstance(received[0][0], (set, list))  # set preferred, list is fallback
+    assert len(received) == 1
+    assert isinstance(received[0][0], set), f"expected set, got {type(received[0][0]).__name__}"
+    assert received[0][0] == {1, 2, 3}
 
 
 def test_bash_cancel_works_after_reset():
