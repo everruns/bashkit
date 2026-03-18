@@ -4,17 +4,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context};
 use crate::error::Result;
-use crate::interpreter::{ExecResult, is_internal_variable};
-
-/// Check if a variable name is valid: [a-zA-Z_][a-zA-Z0-9_]*
-fn is_valid_var_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
-        _ => return false,
-    }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
+use crate::interpreter::{ExecResult, is_internal_variable, is_valid_var_name};
 
 /// export builtin - mark variables for export to child processes
 ///
