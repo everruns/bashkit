@@ -441,87 +441,169 @@ impl Interpreter {
         fixed_epoch: Option<i64>,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
     ) -> Self {
+        // Macro to reduce boilerplate for simple zero-arg builtin registration.
+        // Custom-construction builtins (date, source, hostname, etc.) are registered below.
+        macro_rules! register_builtins {
+            ($map:ident, $( $name:literal => $type:ident ),+ $(,)?) => {
+                $( $map.insert($name.to_string(), Box::new(builtins::$type) as Box<dyn Builtin>); )+
+            };
+        }
+
         let mut builtins: HashMap<String, Box<dyn Builtin>> = HashMap::new();
 
-        // Register default builtins
-        builtins.insert("echo".to_string(), Box::new(builtins::Echo));
-        builtins.insert("true".to_string(), Box::new(builtins::True));
-        builtins.insert("false".to_string(), Box::new(builtins::False));
-        builtins.insert("exit".to_string(), Box::new(builtins::Exit));
-        builtins.insert("cd".to_string(), Box::new(builtins::Cd));
-        builtins.insert("pwd".to_string(), Box::new(builtins::Pwd));
-        builtins.insert("cat".to_string(), Box::new(builtins::Cat));
-        builtins.insert("break".to_string(), Box::new(builtins::Break));
-        builtins.insert("continue".to_string(), Box::new(builtins::Continue));
-        builtins.insert("return".to_string(), Box::new(builtins::Return));
-        builtins.insert("test".to_string(), Box::new(builtins::Test));
-        builtins.insert("[".to_string(), Box::new(builtins::Bracket));
-        builtins.insert("printf".to_string(), Box::new(builtins::Printf));
-        builtins.insert("export".to_string(), Box::new(builtins::Export));
-        builtins.insert("read".to_string(), Box::new(builtins::Read));
-        builtins.insert("set".to_string(), Box::new(builtins::Set));
-        builtins.insert("unset".to_string(), Box::new(builtins::Unset));
-        builtins.insert("shift".to_string(), Box::new(builtins::Shift));
-        builtins.insert("local".to_string(), Box::new(builtins::Local));
-        // POSIX special built-ins
-        builtins.insert(":".to_string(), Box::new(builtins::Colon));
-        builtins.insert("readonly".to_string(), Box::new(builtins::Readonly));
-        builtins.insert("times".to_string(), Box::new(builtins::Times));
-        builtins.insert("eval".to_string(), Box::new(builtins::Eval));
+        register_builtins!(builtins,
+            // Core shell builtins
+            "echo" => Echo,
+            "true" => True,
+            "false" => False,
+            "exit" => Exit,
+            "cd" => Cd,
+            "pwd" => Pwd,
+            "cat" => Cat,
+            "break" => Break,
+            "continue" => Continue,
+            "return" => Return,
+            "test" => Test,
+            "[" => Bracket,
+            "printf" => Printf,
+            "export" => Export,
+            "read" => Read,
+            "set" => Set,
+            "unset" => Unset,
+            "shift" => Shift,
+            "local" => Local,
+            // POSIX special built-ins
+            ":" => Colon,
+            "readonly" => Readonly,
+            "times" => Times,
+            "eval" => Eval,
+            // Text processing
+            "jq" => Jq,
+            "grep" => Grep,
+            "sed" => Sed,
+            "awk" => Awk,
+            "head" => Head,
+            "tail" => Tail,
+            "sort" => Sort,
+            "uniq" => Uniq,
+            "cut" => Cut,
+            "tr" => Tr,
+            "wc" => Wc,
+            "nl" => Nl,
+            "paste" => Paste,
+            "column" => Column,
+            "comm" => Comm,
+            "diff" => Diff,
+            "strings" => Strings,
+            "tac" => Tac,
+            "rev" => Rev,
+            "fold" => Fold,
+            "expand" => Expand,
+            "unexpand" => Unexpand,
+            "join" => Join,
+            "split" => Split,
+            // File operations
+            "basename" => Basename,
+            "dirname" => Dirname,
+            "realpath" => Realpath,
+            "readlink" => Readlink,
+            "mkdir" => Mkdir,
+            "mktemp" => Mktemp,
+            "mkfifo" => Mkfifo,
+            "rm" => Rm,
+            "cp" => Cp,
+            "mv" => Mv,
+            "touch" => Touch,
+            "chmod" => Chmod,
+            "ln" => Ln,
+            "chown" => Chown,
+            "rmdir" => Rmdir,
+            // Directory listing and search
+            "ls" => Ls,
+            "find" => Find,
+            "tree" => Tree,
+            // File inspection
+            "less" => Less,
+            "file" => File,
+            "stat" => Stat,
+            // Binary / encoding
+            "od" => Od,
+            "xxd" => Xxd,
+            "hexdump" => Hexdump,
+            "base64" => Base64,
+            "md5sum" => Md5sum,
+            "sha1sum" => Sha1sum,
+            "sha256sum" => Sha256sum,
+            // Archive operations
+            "tar" => Tar,
+            "gzip" => Gzip,
+            "gunzip" => Gunzip,
+            "zip" => Zip,
+            "unzip" => Unzip,
+            // Numeric / math
+            "seq" => Seq,
+            "expr" => Expr,
+            "bc" => Bc,
+            // Misc utilities
+            "yes" => Yes,
+            "sleep" => Sleep,
+            "kill" => Kill,
+            "wait" => Wait,
+            "timeout" => Timeout,
+            // Navigation
+            "pushd" => Pushd,
+            "popd" => Popd,
+            "dirs" => Dirs,
+            // Disk usage
+            "du" => Du,
+            "df" => Df,
+            // Environment
+            "env" => Env,
+            "printenv" => Printenv,
+            "history" => History,
+            // Network
+            "curl" => Curl,
+            "wget" => Wget,
+            "http" => Http,
+            // Pipeline control
+            "xargs" => Xargs,
+            "tee" => Tee,
+            "watch" => Watch,
+            // Shell options
+            "shopt" => Shopt,
+            "clear" => Clear,
+            // Extended builtins
+            "envsubst" => Envsubst,
+            "assert" => Assert,
+            "dotenv" => Dotenv,
+            "glob" => GlobCmd,
+            "log" => Log,
+            "retry" => Retry,
+            "semver" => Semver,
+            "verify" => Verify,
+            "compgen" => Compgen,
+            "csv" => Csv,
+            "fc" => Fc,
+            "help" => Help,
+            "iconv" => Iconv,
+            "json" => Json,
+            "parallel" => Parallel,
+            "patch" => Patch,
+            "rg" => Rg,
+            "template" => Template,
+            "tomlq" => Tomlq,
+            "yaml" => Yaml,
+        );
+
+        // Custom-construction builtins that need parameters
+
+        // source/. requires filesystem access
         builtins.insert(
             "source".to_string(),
             Box::new(builtins::Source::new(fs.clone())),
         );
         builtins.insert(".".to_string(), Box::new(builtins::Source::new(fs.clone())));
-        builtins.insert("jq".to_string(), Box::new(builtins::Jq));
-        builtins.insert("grep".to_string(), Box::new(builtins::Grep));
-        builtins.insert("sed".to_string(), Box::new(builtins::Sed));
-        builtins.insert("awk".to_string(), Box::new(builtins::Awk));
-        builtins.insert("sleep".to_string(), Box::new(builtins::Sleep));
-        builtins.insert("head".to_string(), Box::new(builtins::Head));
-        builtins.insert("tail".to_string(), Box::new(builtins::Tail));
-        builtins.insert("basename".to_string(), Box::new(builtins::Basename));
-        builtins.insert("dirname".to_string(), Box::new(builtins::Dirname));
-        builtins.insert("realpath".to_string(), Box::new(builtins::Realpath));
-        builtins.insert("readlink".to_string(), Box::new(builtins::Readlink));
-        builtins.insert("mkdir".to_string(), Box::new(builtins::Mkdir));
-        builtins.insert("mktemp".to_string(), Box::new(builtins::Mktemp));
-        builtins.insert("mkfifo".to_string(), Box::new(builtins::Mkfifo));
-        builtins.insert("rm".to_string(), Box::new(builtins::Rm));
-        builtins.insert("cp".to_string(), Box::new(builtins::Cp));
-        builtins.insert("mv".to_string(), Box::new(builtins::Mv));
-        builtins.insert("touch".to_string(), Box::new(builtins::Touch));
-        builtins.insert("chmod".to_string(), Box::new(builtins::Chmod));
-        builtins.insert("ln".to_string(), Box::new(builtins::Ln));
-        builtins.insert("chown".to_string(), Box::new(builtins::Chown));
-        builtins.insert("kill".to_string(), Box::new(builtins::Kill));
-        builtins.insert("wc".to_string(), Box::new(builtins::Wc));
-        builtins.insert("nl".to_string(), Box::new(builtins::Nl));
-        builtins.insert("paste".to_string(), Box::new(builtins::Paste));
-        builtins.insert("column".to_string(), Box::new(builtins::Column));
-        builtins.insert("comm".to_string(), Box::new(builtins::Comm));
-        builtins.insert("diff".to_string(), Box::new(builtins::Diff));
-        builtins.insert("strings".to_string(), Box::new(builtins::Strings));
-        builtins.insert("od".to_string(), Box::new(builtins::Od));
-        builtins.insert("xxd".to_string(), Box::new(builtins::Xxd));
-        builtins.insert("hexdump".to_string(), Box::new(builtins::Hexdump));
-        builtins.insert("base64".to_string(), Box::new(builtins::Base64));
-        builtins.insert("md5sum".to_string(), Box::new(builtins::Md5sum));
-        builtins.insert("sha1sum".to_string(), Box::new(builtins::Sha1sum));
-        builtins.insert("sha256sum".to_string(), Box::new(builtins::Sha256sum));
-        builtins.insert("seq".to_string(), Box::new(builtins::Seq));
-        builtins.insert("tac".to_string(), Box::new(builtins::Tac));
-        builtins.insert("rev".to_string(), Box::new(builtins::Rev));
-        builtins.insert("yes".to_string(), Box::new(builtins::Yes));
-        builtins.insert("expr".to_string(), Box::new(builtins::Expr));
-        builtins.insert("bc".to_string(), Box::new(builtins::Bc));
-        builtins.insert("pushd".to_string(), Box::new(builtins::Pushd));
-        builtins.insert("popd".to_string(), Box::new(builtins::Popd));
-        builtins.insert("dirs".to_string(), Box::new(builtins::Dirs));
-        builtins.insert("sort".to_string(), Box::new(builtins::Sort));
-        builtins.insert("uniq".to_string(), Box::new(builtins::Uniq));
-        builtins.insert("cut".to_string(), Box::new(builtins::Cut));
-        builtins.insert("tr".to_string(), Box::new(builtins::Tr));
+
         // THREAT[TM-INF-018]: Use fixed epoch if configured, else real clock
         builtins.insert(
             "date".to_string(),
@@ -534,15 +616,7 @@ impl Interpreter {
                 builtins::Date::new()
             }),
         );
-        builtins.insert("wait".to_string(), Box::new(builtins::Wait));
-        builtins.insert("curl".to_string(), Box::new(builtins::Curl));
-        builtins.insert("wget".to_string(), Box::new(builtins::Wget));
-        // Git builtin (requires git feature and configuration at runtime)
-        #[cfg(feature = "git")]
-        builtins.insert("git".to_string(), Box::new(builtins::Git));
-        // Python builtins: opt-in via BashBuilder::python() / BashToolBuilder::python()
-        // The `python` feature flag enables compilation; registration is explicit.
-        builtins.insert("timeout".to_string(), Box::new(builtins::Timeout));
+
         // System info builtins (configurable virtual values)
         let hostname_val = hostname.unwrap_or_else(|| builtins::DEFAULT_HOSTNAME.to_string());
         let username_val = username.unwrap_or_else(|| builtins::DEFAULT_USERNAME.to_string());
@@ -562,60 +636,10 @@ impl Interpreter {
             "id".to_string(),
             Box::new(builtins::Id::with_username(&username_val)),
         );
-        // Directory listing and search
-        builtins.insert("ls".to_string(), Box::new(builtins::Ls));
-        builtins.insert("find".to_string(), Box::new(builtins::Find));
-        builtins.insert("tree".to_string(), Box::new(builtins::Tree));
-        builtins.insert("rmdir".to_string(), Box::new(builtins::Rmdir));
-        // File inspection
-        builtins.insert("less".to_string(), Box::new(builtins::Less));
-        builtins.insert("file".to_string(), Box::new(builtins::File));
-        builtins.insert("stat".to_string(), Box::new(builtins::Stat));
-        // Archive operations
-        builtins.insert("tar".to_string(), Box::new(builtins::Tar));
-        builtins.insert("gzip".to_string(), Box::new(builtins::Gzip));
-        builtins.insert("gunzip".to_string(), Box::new(builtins::Gunzip));
-        // Disk usage
-        builtins.insert("du".to_string(), Box::new(builtins::Du));
-        builtins.insert("df".to_string(), Box::new(builtins::Df));
-        // Environment builtins
-        builtins.insert("env".to_string(), Box::new(builtins::Env));
-        builtins.insert("printenv".to_string(), Box::new(builtins::Printenv));
-        builtins.insert("history".to_string(), Box::new(builtins::History));
-        // Pipeline control
-        builtins.insert("xargs".to_string(), Box::new(builtins::Xargs));
-        builtins.insert("tee".to_string(), Box::new(builtins::Tee));
-        builtins.insert("watch".to_string(), Box::new(builtins::Watch));
-        builtins.insert("shopt".to_string(), Box::new(builtins::Shopt));
-        builtins.insert("clear".to_string(), Box::new(builtins::Clear));
-        builtins.insert("fold".to_string(), Box::new(builtins::Fold));
-        builtins.insert("expand".to_string(), Box::new(builtins::Expand));
-        builtins.insert("unexpand".to_string(), Box::new(builtins::Unexpand));
-        builtins.insert("envsubst".to_string(), Box::new(builtins::Envsubst));
-        builtins.insert("join".to_string(), Box::new(builtins::Join));
-        builtins.insert("split".to_string(), Box::new(builtins::Split));
-        builtins.insert("assert".to_string(), Box::new(builtins::Assert));
-        builtins.insert("dotenv".to_string(), Box::new(builtins::Dotenv));
-        builtins.insert("glob".to_string(), Box::new(builtins::GlobCmd));
-        builtins.insert("log".to_string(), Box::new(builtins::Log));
-        builtins.insert("retry".to_string(), Box::new(builtins::Retry));
-        builtins.insert("semver".to_string(), Box::new(builtins::Semver));
-        builtins.insert("verify".to_string(), Box::new(builtins::Verify));
-        builtins.insert("compgen".to_string(), Box::new(builtins::Compgen));
-        builtins.insert("csv".to_string(), Box::new(builtins::Csv));
-        builtins.insert("fc".to_string(), Box::new(builtins::Fc));
-        builtins.insert("help".to_string(), Box::new(builtins::Help));
-        builtins.insert("http".to_string(), Box::new(builtins::Http));
-        builtins.insert("iconv".to_string(), Box::new(builtins::Iconv));
-        builtins.insert("json".to_string(), Box::new(builtins::Json));
-        builtins.insert("parallel".to_string(), Box::new(builtins::Parallel));
-        builtins.insert("patch".to_string(), Box::new(builtins::Patch));
-        builtins.insert("rg".to_string(), Box::new(builtins::Rg));
-        builtins.insert("template".to_string(), Box::new(builtins::Template));
-        builtins.insert("tomlq".to_string(), Box::new(builtins::Tomlq));
-        builtins.insert("yaml".to_string(), Box::new(builtins::Yaml));
-        builtins.insert("zip".to_string(), Box::new(builtins::Zip));
-        builtins.insert("unzip".to_string(), Box::new(builtins::Unzip));
+
+        // Git builtin (requires git feature and configuration at runtime)
+        #[cfg(feature = "git")]
+        builtins.insert("git".to_string(), Box::new(builtins::Git));
 
         // Merge custom builtins (override defaults if same name)
         for (name, builtin) in custom_builtins {
