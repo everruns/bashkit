@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use std::path::Path;
 
-use super::{Builtin, Context, resolve_path};
+use super::{Builtin, Context, ExecutionPlan, SubCommand, resolve_path};
 use crate::error::Result;
 use crate::fs::FileType;
 use crate::interpreter::ExecResult;
@@ -298,6 +298,10 @@ struct FindOptions {
     max_depth: Option<usize>,
     min_depth: Option<usize>,
     printf_format: Option<String>,
+    /// -exec/-execdir command template (args before \; or +)
+    exec_args: Vec<String>,
+    /// true if -exec uses + (batch mode), false for \; (per-file mode)
+    exec_batch: bool,
 }
 
 /// The find builtin - search for files.
@@ -315,147 +319,285 @@ struct FindOptions {
 ///   -exec CMD {} +     Execute CMD once with all matches
 pub struct Find;
 
-#[async_trait]
-impl Builtin for Find {
-    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let mut paths: Vec<String> = Vec::new();
-        let mut opts = FindOptions {
-            name_pattern: None,
-            type_filter: None,
-            max_depth: None,
-            min_depth: None,
-            printf_format: None,
-        };
+/// Parse find arguments into search paths and options.
+/// Returns (paths, opts) or an error ExecResult.
+#[allow(clippy::result_large_err)]
+fn parse_find_args(args: &[String]) -> std::result::Result<(Vec<String>, FindOptions), ExecResult> {
+    let mut paths: Vec<String> = Vec::new();
+    let mut opts = FindOptions {
+        name_pattern: None,
+        type_filter: None,
+        max_depth: None,
+        min_depth: None,
+        printf_format: None,
+        exec_args: Vec::new(),
+        exec_batch: false,
+    };
 
-        // Parse arguments
-        let mut i = 0;
-        while i < ctx.args.len() {
-            let arg = &ctx.args[i];
-            match arg.as_str() {
-                "-name" => {
-                    i += 1;
-                    if i >= ctx.args.len() {
-                        return Ok(ExecResult::err(
-                            "find: missing argument to '-name'\n".to_string(),
-                            1,
-                        ));
-                    }
-                    opts.name_pattern = Some(ctx.args[i].clone());
-                }
-                "-type" => {
-                    i += 1;
-                    if i >= ctx.args.len() {
-                        return Ok(ExecResult::err(
-                            "find: missing argument to '-type'\n".to_string(),
-                            1,
-                        ));
-                    }
-                    let t = &ctx.args[i];
-                    match t.as_str() {
-                        "f" | "d" | "l" => opts.type_filter = Some(t.chars().next().unwrap()),
-                        _ => {
-                            return Ok(ExecResult::err(format!("find: unknown type '{}'\n", t), 1));
-                        }
-                    }
-                }
-                "-maxdepth" => {
-                    i += 1;
-                    if i >= ctx.args.len() {
-                        return Ok(ExecResult::err(
-                            "find: missing argument to '-maxdepth'\n".to_string(),
-                            1,
-                        ));
-                    }
-                    match ctx.args[i].parse::<usize>() {
-                        Ok(n) => opts.max_depth = Some(n),
-                        Err(_) => {
-                            return Ok(ExecResult::err(
-                                format!("find: invalid maxdepth value '{}'\n", ctx.args[i]),
-                                1,
-                            ));
-                        }
-                    }
-                }
-                "-mindepth" => {
-                    i += 1;
-                    if i >= ctx.args.len() {
-                        return Ok(ExecResult::err(
-                            "find: missing argument to '-mindepth'\n".to_string(),
-                            1,
-                        ));
-                    }
-                    match ctx.args[i].parse::<usize>() {
-                        Ok(n) => opts.min_depth = Some(n),
-                        Err(_) => {
-                            return Ok(ExecResult::err(
-                                format!("find: invalid mindepth value '{}'\n", ctx.args[i]),
-                                1,
-                            ));
-                        }
-                    }
-                }
-                "-print" | "-print0" => {
-                    // Default action, ignore
-                }
-                "-printf" => {
-                    i += 1;
-                    if i >= ctx.args.len() {
-                        return Ok(ExecResult::err(
-                            "find: missing argument to '-printf'\n".to_string(),
-                            1,
-                        ));
-                    }
-                    opts.printf_format = Some(ctx.args[i].clone());
-                }
-                "-exec" | "-execdir" => {
-                    // -exec is handled at interpreter level (execute_find);
-                    // skip args here for fallback path
-                    i += 1;
-                    while i < ctx.args.len() {
-                        let a = &ctx.args[i];
-                        if a == ";" || a == "\\;" || a == "+" {
-                            break;
-                        }
-                        i += 1;
-                    }
-                }
-                "-not" | "!" => {
-                    // Negation - skip (not fully supported)
-                }
-                s if s.starts_with('-') => {
-                    return Ok(ExecResult::err(
-                        format!("find: unknown predicate '{}'\n", s),
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        match arg.as_str() {
+            "-name" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(ExecResult::err(
+                        "find: missing argument to '-name'\n".to_string(),
                         1,
                     ));
                 }
-                _ => {
-                    paths.push(arg.clone());
+                opts.name_pattern = Some(args[i].clone());
+            }
+            "-type" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(ExecResult::err(
+                        "find: missing argument to '-type'\n".to_string(),
+                        1,
+                    ));
+                }
+                let t = &args[i];
+                match t.as_str() {
+                    "f" | "d" | "l" => opts.type_filter = Some(t.chars().next().unwrap()),
+                    _ => {
+                        return Err(ExecResult::err(format!("find: unknown type '{}'\n", t), 1));
+                    }
                 }
             }
-            i += 1;
+            "-maxdepth" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(ExecResult::err(
+                        "find: missing argument to '-maxdepth'\n".to_string(),
+                        1,
+                    ));
+                }
+                match args[i].parse::<usize>() {
+                    Ok(n) => opts.max_depth = Some(n),
+                    Err(_) => {
+                        return Err(ExecResult::err(
+                            format!("find: invalid maxdepth value '{}'\n", args[i]),
+                            1,
+                        ));
+                    }
+                }
+            }
+            "-mindepth" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(ExecResult::err(
+                        "find: missing argument to '-mindepth'\n".to_string(),
+                        1,
+                    ));
+                }
+                match args[i].parse::<usize>() {
+                    Ok(n) => opts.min_depth = Some(n),
+                    Err(_) => {
+                        return Err(ExecResult::err(
+                            format!("find: invalid mindepth value '{}'\n", args[i]),
+                            1,
+                        ));
+                    }
+                }
+            }
+            "-print" | "-print0" => {
+                // Default action, ignore
+            }
+            "-printf" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(ExecResult::err(
+                        "find: missing argument to '-printf'\n".to_string(),
+                        1,
+                    ));
+                }
+                opts.printf_format = Some(args[i].clone());
+            }
+            "-exec" | "-execdir" => {
+                i += 1;
+                while i < args.len() {
+                    let a = &args[i];
+                    if a == ";" || a == "\\;" {
+                        break;
+                    }
+                    if a == "+" {
+                        opts.exec_batch = true;
+                        break;
+                    }
+                    opts.exec_args.push(a.clone());
+                    i += 1;
+                }
+            }
+            "-not" | "!" => {
+                // Negation - skip (not fully supported)
+            }
+            s if s.starts_with('-') => {
+                return Err(ExecResult::err(
+                    format!("find: unknown predicate '{}'\n", s),
+                    1,
+                ));
+            }
+            _ => {
+                paths.push(arg.clone());
+            }
+        }
+        i += 1;
+    }
+
+    if paths.is_empty() {
+        paths.push(".".to_string());
+    }
+
+    Ok((paths, opts))
+}
+
+/// Collect matched paths for find, without -exec output.
+async fn collect_find_paths(
+    ctx: &Context<'_>,
+    search_paths: &[String],
+    opts: &FindOptions,
+) -> Result<Vec<String>> {
+    let mut matched: Vec<String> = Vec::new();
+    // Reuse find_recursive but with a temporary output buffer
+    let temp_opts = FindOptions {
+        name_pattern: opts.name_pattern.clone(),
+        type_filter: opts.type_filter,
+        max_depth: opts.max_depth,
+        min_depth: opts.min_depth,
+        printf_format: None, // Don't format, just collect paths
+        exec_args: Vec::new(),
+        exec_batch: false,
+    };
+    let mut output = String::new();
+    for path_str in search_paths {
+        let path = resolve_path(ctx.cwd, path_str);
+        if !ctx.fs.exists(&path).await.unwrap_or(false) {
+            // Skip non-existent paths in collection phase
+            continue;
+        }
+        find_recursive(ctx, &path, path_str, &temp_opts, 0, &mut output).await?;
+    }
+    // Parse the output back into paths (each line is a path)
+    for line in output.lines() {
+        if !line.is_empty() {
+            matched.push(line.to_string());
+        }
+    }
+    Ok(matched)
+}
+
+/// Build exec sub-commands from matched paths and exec_args template.
+fn build_find_exec_commands(
+    exec_args: &[String],
+    matched_paths: &[String],
+    batch: bool,
+) -> Vec<SubCommand> {
+    if exec_args.is_empty() || matched_paths.is_empty() {
+        return Vec::new();
+    }
+
+    if batch {
+        // Batch mode: -exec cmd {} +
+        // Replace {} with all paths at once
+        let cmd_args: Vec<String> = exec_args
+            .iter()
+            .flat_map(|arg| {
+                if arg == "{}" {
+                    matched_paths.to_vec()
+                } else {
+                    vec![arg.clone()]
+                }
+            })
+            .collect();
+
+        if cmd_args.is_empty() {
+            return Vec::new();
         }
 
-        // Default to current directory
-        if paths.is_empty() {
-            paths.push(".".to_string());
-        }
+        vec![SubCommand {
+            name: cmd_args[0].clone(),
+            args: cmd_args[1..].to_vec(),
+            stdin: None,
+        }]
+    } else {
+        // Per-file mode: -exec cmd {} \;
+        matched_paths
+            .iter()
+            .map(|found_path| {
+                let cmd_args: Vec<String> = exec_args
+                    .iter()
+                    .map(|arg| arg.replace("{}", found_path))
+                    .collect();
 
-        let mut output = String::new();
+                SubCommand {
+                    name: cmd_args[0].clone(),
+                    args: cmd_args[1..].to_vec(),
+                    stdin: None,
+                }
+            })
+            .collect()
+    }
+}
 
-        for path_str in &paths {
+#[async_trait]
+impl Builtin for Find {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        let (search_paths, opts) = match parse_find_args(ctx.args) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
+        };
+
+        // Check paths exist
+        for path_str in &search_paths {
             let path = resolve_path(ctx.cwd, path_str);
-
             if !ctx.fs.exists(&path).await.unwrap_or(false) {
                 return Ok(ExecResult::err(
                     format!("find: '{}': No such file or directory\n", path_str),
                     1,
                 ));
             }
+        }
 
+        let mut output = String::new();
+        for path_str in &search_paths {
+            let path = resolve_path(ctx.cwd, path_str);
             find_recursive(&ctx, &path, path_str, &opts, 0, &mut output).await?;
         }
 
         Ok(ExecResult::ok(output))
+    }
+
+    async fn execution_plan(&self, ctx: &Context<'_>) -> Result<Option<ExecutionPlan>> {
+        let (search_paths, opts) = match parse_find_args(ctx.args) {
+            Ok(v) => v,
+            Err(_) => return Ok(None), // Let execute() handle errors
+        };
+
+        // Only return a plan when -exec is present
+        if opts.exec_args.is_empty() {
+            return Ok(None);
+        }
+
+        // Check paths exist
+        for path_str in &search_paths {
+            let path = resolve_path(ctx.cwd, path_str);
+            if !ctx.fs.exists(&path).await.unwrap_or(false) {
+                return Ok(None); // Let execute() handle errors
+            }
+        }
+
+        // Collect matched paths
+        let matched_paths = collect_find_paths(ctx, &search_paths, &opts).await?;
+        if matched_paths.is_empty() {
+            return Ok(None);
+        }
+
+        let commands = build_find_exec_commands(&opts.exec_args, &matched_paths, opts.exec_batch);
+        if commands.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(ExecutionPlan::Batch { commands }))
     }
 }
 
