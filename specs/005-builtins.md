@@ -184,6 +184,12 @@ let bash = Bash::builder()
 #[async_trait]
 pub trait Builtin: Send + Sync {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult>;
+
+    /// Return an execution plan for sub-command execution.
+    /// Default: Ok(None) — normal execute() is used.
+    async fn execution_plan(&self, ctx: &Context<'_>) -> Result<Option<ExecutionPlan>> {
+        Ok(None)
+    }
 }
 
 pub struct Context<'a> {
@@ -198,6 +204,44 @@ pub struct Context<'a> {
     pub http_client: Option<&'a HttpClient>,
 }
 ```
+
+### Execution Plans (Sub-Command Delegation)
+
+Builtins cannot access the interpreter directly. When a builtin needs to run
+other commands (e.g. `timeout`, `xargs`, `find -exec`), it returns a declarative
+`ExecutionPlan` from `execution_plan()`. The interpreter checks this method
+before `execute()` — when it returns `Some(plan)`, the interpreter fulfills the
+plan instead of using the `execute()` result.
+
+```rust
+pub struct SubCommand {
+    pub name: String,
+    pub args: Vec<String>,
+    pub stdin: Option<String>,
+}
+
+pub enum ExecutionPlan {
+    /// Run a single command with a timeout.
+    Timeout {
+        duration: Duration,
+        preserve_status: bool,
+        command: SubCommand,
+    },
+    /// Run a sequence of commands, collecting output.
+    Batch {
+        commands: Vec<SubCommand>,
+    },
+}
+```
+
+**Current users:**
+- `timeout` → `ExecutionPlan::Timeout` — wraps a sub-command with a time limit
+- `xargs` → `ExecutionPlan::Batch` — builds commands from stdin lines
+- `find -exec` → `ExecutionPlan::Batch` — runs commands on matched files
+
+**Adding new execution plans:** Add a variant to `ExecutionPlan` and handle it
+in the interpreter's plan fulfillment code (`interpreter/mod.rs`). Custom
+builtins can also override `execution_plan()` to request sub-command execution.
 
 ### Custom Builtins
 
