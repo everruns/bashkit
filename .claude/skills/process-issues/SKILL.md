@@ -1,14 +1,17 @@
-Resolve all open GitHub issues. Each issue becomes exactly one shipped PR. Do not stop until every issue is resolved or explicitly deferred.
+---
+name: process-issues
+description: Resolve all open GitHub issues. Each issue becomes exactly one shipped PR. Trigger when user says "process issues", "work through issues", "resolve issues", "handle open issues", "fix all issues", or asks to resolve GitHub issues end-to-end.
+---
 
-Trigger when: user says "process issues", "work through issues", "resolve issues", "handle open issues", "fix all issues", or any variation asking to process/resolve GitHub issues end-to-end.
+Resolve all qualifying open GitHub issues. Each issue becomes exactly one merged PR. Do not stop until every issue is resolved or explicitly deferred.
 
 ## Arguments
 
-- `$ARGUMENTS` - Optional: filter to specific issue numbers (e.g. "42 55") or labels. If omitted, process all open issues.
+- `$ARGUMENTS` - Optional: specific issue numbers (e.g. "42 55") or labels. If omitted, process all open issues.
 
 ## Goal
 
-Every qualifying open issue has a merged PR that resolves it. One issue = one PR. No bundling. No skipping.
+Every qualifying open issue has a merged PR that resolves it. **One issue = one PR. No bundling. No skipping.**
 
 ## Qualifying issues
 
@@ -64,7 +67,7 @@ Scan for `#[ignore]` tests that may now pass. Un-ignore any that are green. Sing
 
 ## Rules
 
-- **One issue = one PR.** This is non-negotiable. Never bundle multiple issues.
+- **One issue = one PR.** Non-negotiable. Never bundle multiple issues.
 - If an issue is unclear or not reproducible, comment asking for clarification and skip to next.
 - If a fix would be >500 lines, split into sub-issues and link them.
 - Never skip the failing-test-first step for bugs.
