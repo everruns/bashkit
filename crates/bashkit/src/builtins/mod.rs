@@ -89,7 +89,7 @@ mod system;
 mod template;
 mod test;
 mod textrev;
-mod timeout;
+pub(crate) mod timeout;
 mod tomlq;
 mod tree;
 mod vars;
@@ -201,6 +201,43 @@ use crate::interpreter::ExecResult;
 
 // Re-export for use by builtins
 pub use crate::interpreter::BuiltinSideEffect;
+
+/// A sub-command that a builtin wants the interpreter to execute.
+///
+/// Builtins like `timeout`, `xargs`, and `find -exec` need to execute
+/// other commands. They return an [`ExecutionPlan`] describing what to
+/// run, and the interpreter handles actual execution.
+#[derive(Debug, Clone)]
+pub struct SubCommand {
+    /// Command name (e.g. "echo", "rm").
+    pub name: String,
+    /// Command arguments.
+    pub args: Vec<String>,
+    /// Optional stdin to pipe into the command.
+    pub stdin: Option<String>,
+}
+
+/// Execution plan returned by builtins that need to run sub-commands.
+///
+/// Instead of executing commands directly (which would require interpreter
+/// access), builtins return a plan that the interpreter fulfills.
+#[derive(Debug)]
+pub enum ExecutionPlan {
+    /// Run a single command with a timeout.
+    Timeout {
+        /// Maximum duration before killing the command.
+        duration: std::time::Duration,
+        /// Whether to preserve the command's exit status on timeout.
+        preserve_status: bool,
+        /// The command to execute.
+        command: SubCommand,
+    },
+    /// Run a sequence of commands, collecting their output.
+    Batch {
+        /// Commands to execute in order.
+        commands: Vec<SubCommand>,
+    },
+}
 
 /// Resolve a path relative to the current working directory.
 ///
@@ -397,6 +434,20 @@ pub trait Builtin: Send + Sync {
     /// * `Err(Error)` - Fatal error that should abort execution
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult>;
 
+    /// Return an execution plan for sub-command execution.
+    ///
+    /// Builtins that need to execute other commands (e.g. `timeout`, `xargs`,
+    /// `find -exec`) override this to return an `ExecutionPlan`. The interpreter
+    /// fulfills the plan by executing the sub-commands and returning results.
+    ///
+    /// When this returns `Some(plan)`, the interpreter ignores the `execute()`
+    /// result and instead runs the plan. When `None`, normal `execute()` is used.
+    ///
+    /// The default implementation returns `Ok(None)`.
+    async fn execution_plan(&self, _ctx: &Context<'_>) -> Result<Option<ExecutionPlan>> {
+        Ok(None)
+    }
+
     /// Optional short hint for LLM system prompts.
     ///
     /// Return a concise one-line description of capabilities and limitations.
@@ -419,6 +470,10 @@ pub trait Builtin: Send + Sync {
 impl Builtin for std::sync::Arc<dyn Builtin> {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         (**self).execute(ctx).await
+    }
+
+    async fn execution_plan(&self, ctx: &Context<'_>) -> Result<Option<ExecutionPlan>> {
+        (**self).execution_plan(ctx).await
     }
 
     fn llm_hint(&self) -> Option<&'static str> {

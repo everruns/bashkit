@@ -1,11 +1,12 @@
 //! Timeout builtin - run command with time limit
 //!
 //! Executes a command with a specified timeout duration.
+//! Returns an [`ExecutionPlan::Timeout`] for the interpreter to fulfill.
 
 use async_trait::async_trait;
 use std::time::Duration;
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, ExecutionPlan, SubCommand};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -18,6 +19,7 @@ use crate::interpreter::ExecResult;
 ///   Ns    - N seconds
 ///   Nm    - N minutes
 ///   Nh    - N hours
+///   Nd    - N days
 ///
 /// Options:
 ///   -k DURATION  - Send KILL signal after DURATION if command still running
@@ -38,125 +40,134 @@ pub struct Timeout;
 
 const MAX_TIMEOUT_SECONDS: u64 = 300; // 5 minutes max
 
-/// Parse a duration string like "30", "30s", "5m", "1h"
-fn parse_duration(s: &str) -> Option<Duration> {
+/// Parse a duration string like "30", "30s", "5m", "1h", "1d"
+pub(crate) fn parse_duration(s: &str) -> Option<Duration> {
     let s = s.trim();
     if s.is_empty() {
         return None;
     }
 
-    // Check for suffix
     let (num_str, multiplier) = if let Some(stripped) = s.strip_suffix('s') {
         (stripped, 1u64)
     } else if let Some(stripped) = s.strip_suffix('m') {
         (stripped, 60u64)
     } else if let Some(stripped) = s.strip_suffix('h') {
         (stripped, 3600u64)
+    } else if let Some(stripped) = s.strip_suffix('d') {
+        (stripped, 86400u64)
     } else {
         (s, 1u64) // Default to seconds
     };
 
-    // Parse the number (support decimals)
     let seconds: f64 = num_str.parse().ok()?;
     if seconds < 0.0 {
         return None;
     }
 
-    let total_seconds = (seconds * multiplier as f64) as u64;
+    let total_secs_f64 = seconds * multiplier as f64;
+    // Cap at max while preserving subsecond precision
+    let max = Duration::from_secs(MAX_TIMEOUT_SECONDS);
+    let d = Duration::from_secs_f64(total_secs_f64);
+    Some(if d > max { max } else { d })
+}
 
-    // Cap at max timeout
-    let capped = total_seconds.min(MAX_TIMEOUT_SECONDS);
+/// Parse timeout arguments, returning (preserve_status, duration, cmd_name, cmd_args)
+/// or an error ExecResult.
+#[allow(clippy::result_large_err)]
+fn parse_timeout_args(
+    args: &[String],
+) -> std::result::Result<(bool, Duration, String, Vec<String>), ExecResult> {
+    if args.is_empty() {
+        return Err(ExecResult::err(
+            "timeout: missing operand\nUsage: timeout DURATION COMMAND [ARGS...]\n".to_string(),
+            125,
+        ));
+    }
 
-    Some(Duration::from_secs(capped))
+    let mut preserve_status = false;
+    let mut arg_idx = 0;
+
+    while arg_idx < args.len() {
+        let arg = &args[arg_idx];
+        match arg.as_str() {
+            "--preserve-status" => {
+                preserve_status = true;
+                arg_idx += 1;
+            }
+            "-k" | "-s" => {
+                // These options take a value, skip it
+                arg_idx += 2;
+            }
+            s if s.starts_with('-') && !s.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) => {
+                arg_idx += 1;
+            }
+            _ => break, // Found duration
+        }
+    }
+
+    if arg_idx >= args.len() {
+        return Err(ExecResult::err(
+            "timeout: missing operand\nUsage: timeout DURATION COMMAND [ARGS...]\n".to_string(),
+            125,
+        ));
+    }
+
+    let duration_str = &args[arg_idx];
+    let duration = match parse_duration(duration_str) {
+        Some(d) => d,
+        None => {
+            return Err(ExecResult::err(
+                format!("timeout: invalid time interval '{}'\n", duration_str),
+                125,
+            ));
+        }
+    };
+
+    arg_idx += 1;
+
+    if arg_idx >= args.len() {
+        return Err(ExecResult::err(
+            "timeout: missing command\nUsage: timeout DURATION COMMAND [ARGS...]\n".to_string(),
+            125,
+        ));
+    }
+
+    let cmd_name = args[arg_idx].clone();
+    let cmd_args = args[arg_idx + 1..].to_vec();
+
+    Ok((preserve_status, duration, cmd_name, cmd_args))
 }
 
 #[async_trait]
 impl Builtin for Timeout {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if ctx.args.is_empty() {
-            return Ok(ExecResult::err(
-                "timeout: missing operand\nUsage: timeout DURATION COMMAND [ARGS...]\n".to_string(),
-                125,
-            ));
-        }
-
-        // Parse options
-        let mut preserve_status = false;
-        let mut duration_idx = 0;
-
-        for (i, arg) in ctx.args.iter().enumerate() {
-            match arg.as_str() {
-                "--preserve-status" => {
-                    preserve_status = true;
-                    duration_idx = i + 1;
-                }
-                "-k" | "-s" => {
-                    // Skip the next argument (these options take a value)
-                    duration_idx = i + 2;
-                }
-                _ if arg.starts_with('-') => {
-                    // Skip unknown options
-                    duration_idx = i + 1;
-                }
-                _ => {
-                    duration_idx = i;
-                    break;
-                }
+        // Validate arguments and return error for invalid input.
+        // Actual command execution is handled by execution_plan().
+        match parse_timeout_args(ctx.args) {
+            Err(e) => Ok(e),
+            Ok(_) => {
+                // Valid args but no executor available (standalone builtin context).
+                // This shouldn't normally happen since the interpreter uses execution_plan().
+                Ok(ExecResult::ok(String::new()))
             }
         }
+    }
 
-        if duration_idx >= ctx.args.len() {
-            return Ok(ExecResult::err(
-                "timeout: missing operand\nUsage: timeout DURATION COMMAND [ARGS...]\n".to_string(),
-                125,
-            ));
-        }
-
-        // Parse duration
-        let duration = match parse_duration(&ctx.args[duration_idx]) {
-            Some(d) => d,
-            None => {
-                return Ok(ExecResult::err(
-                    format!(
-                        "timeout: invalid time interval '{}'\n",
-                        ctx.args[duration_idx]
-                    ),
-                    125,
-                ));
+    async fn execution_plan(&self, ctx: &Context<'_>) -> Result<Option<ExecutionPlan>> {
+        match parse_timeout_args(ctx.args) {
+            Err(_) => Ok(None), // Let execute() handle the error
+            Ok((preserve_status, duration, cmd_name, cmd_args)) => {
+                Ok(Some(ExecutionPlan::Timeout {
+                    duration,
+                    preserve_status,
+                    command: SubCommand {
+                        name: cmd_name,
+                        args: cmd_args,
+                        stdin: ctx.stdin.map(|s| s.to_string()),
+                    },
+                }))
             }
-        };
-
-        // Get command and args
-        let cmd_idx = duration_idx + 1;
-        if cmd_idx >= ctx.args.len() {
-            return Ok(ExecResult::err(
-                "timeout: missing command\nUsage: timeout DURATION COMMAND [ARGS...]\n".to_string(),
-                125,
-            ));
         }
-
-        let command = &ctx.args[cmd_idx];
-        let command_args: Vec<String> = ctx.args[cmd_idx + 1..].to_vec();
-
-        // Note: In the current Bashkit architecture, we can't easily execute
-        // arbitrary commands from within a builtin. The timeout would need to
-        // be implemented at the interpreter level to wrap command execution.
-        //
-        // For now, we return an informative message about the limitation.
-        // A full implementation would require interpreter-level changes.
-
-        let _ = (duration, preserve_status, command, command_args);
-
-        Ok(ExecResult::err(
-            format!(
-                "timeout: command execution not available from builtin context\n\
-                 Note: timeout requires interpreter-level integration.\n\
-                 Requested: timeout {:?} {} ...\n\
-                 Consider using execution limits instead.\n",
-                duration, command
-            ),
-            125,
-        ))
     }
 }
 
@@ -193,6 +204,29 @@ mod tests {
         Timeout.execute(ctx).await.unwrap()
     }
 
+    async fn get_plan(args: &[&str], stdin: Option<&str>) -> Option<ExecutionPlan> {
+        let fs = Arc::new(InMemoryFs::new());
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs,
+            stdin,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        Timeout.execution_plan(&ctx).await.unwrap()
+    }
+
     #[test]
     fn test_parse_duration_seconds() {
         assert_eq!(parse_duration("30"), Some(Duration::from_secs(30)));
@@ -213,9 +247,15 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_duration_days() {
+        // Capped at MAX_TIMEOUT_SECONDS (300)
+        assert_eq!(parse_duration("1d"), Some(Duration::from_secs(300)));
+    }
+
+    #[test]
     fn test_parse_duration_decimal() {
-        assert_eq!(parse_duration("1.5"), Some(Duration::from_secs(1)));
-        assert_eq!(parse_duration("0.5s"), Some(Duration::from_secs(0)));
+        let d = parse_duration("1.5").unwrap();
+        assert!(d.as_secs_f64() > 1.4 && d.as_secs_f64() < 1.6);
     }
 
     #[test]
@@ -247,10 +287,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_timeout_with_command() {
-        let result = run_timeout(&["30", "echo", "hello"]).await;
-        // Currently returns stub error
-        assert_eq!(result.exit_code, 125);
-        assert!(result.stderr.contains("interpreter-level"));
+    async fn test_timeout_plan_basic() {
+        let plan = get_plan(&["30", "echo", "hello"], None).await;
+        match plan {
+            Some(ExecutionPlan::Timeout {
+                duration,
+                preserve_status,
+                command,
+            }) => {
+                assert_eq!(duration, Duration::from_secs(30));
+                assert!(!preserve_status);
+                assert_eq!(command.name, "echo");
+                assert_eq!(command.args, vec!["hello"]);
+                assert!(command.stdin.is_none());
+            }
+            _ => panic!("expected Timeout plan"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_timeout_plan_preserve_status() {
+        let plan = get_plan(&["--preserve-status", "5", "sleep", "10"], None).await;
+        match plan {
+            Some(ExecutionPlan::Timeout {
+                preserve_status, ..
+            }) => {
+                assert!(preserve_status);
+            }
+            _ => panic!("expected Timeout plan"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_timeout_plan_with_stdin() {
+        let plan = get_plan(&["5", "cat"], Some("hello\n")).await;
+        match plan {
+            Some(ExecutionPlan::Timeout { command, .. }) => {
+                assert_eq!(command.stdin.as_deref(), Some("hello\n"));
+            }
+            _ => panic!("expected Timeout plan"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_timeout_plan_invalid_returns_none() {
+        let plan = get_plan(&[], None).await;
+        assert!(plan.is_none());
+
+        let plan = get_plan(&["abc", "echo"], None).await;
+        assert!(plan.is_none());
     }
 }
