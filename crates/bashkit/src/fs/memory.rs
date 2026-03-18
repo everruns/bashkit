@@ -46,7 +46,7 @@ use std::sync::RwLock;
 use std::time::SystemTime;
 
 use super::limits::{FsLimits, FsUsage};
-use super::traits::{DirEntry, FileSystem, FileType, Metadata};
+use super::traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata};
 use crate::error::Result;
 
 #[cfg(feature = "failpoints")]
@@ -1330,7 +1330,10 @@ impl FileSystem for InMemoryFs {
             None => Err(IoError::new(ErrorKind::NotFound, "not found").into()),
         }
     }
+}
 
+#[async_trait]
+impl FileSystemExt for InMemoryFs {
     async fn mkfifo(&self, path: &Path, mode: u32) -> Result<()> {
         self.limits
             .validate_path(path)

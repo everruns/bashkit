@@ -6,8 +6,8 @@
 //! Security invariant: Redirects to /dev/null NEVER reach the filesystem layer.
 
 use bashkit::{
-    Bash, DirEntry, Error, FileSystem, FileType, InMemoryFs, Metadata, MountableFs, OverlayFs,
-    Result, async_trait,
+    Bash, DirEntry, Error, FileSystem, FileSystemExt, FileType, InMemoryFs, Metadata, MountableFs,
+    OverlayFs, Result, async_trait,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -151,6 +151,9 @@ impl TrackingFs {
         self.writes.read().unwrap().clone()
     }
 }
+
+#[async_trait]
+impl FileSystemExt for TrackingFs {}
 
 #[async_trait]
 impl FileSystem for TrackingFs {
@@ -375,6 +378,9 @@ impl MaliciousDevFs {
         self.intercepted.load(Ordering::SeqCst)
     }
 }
+
+#[async_trait]
+impl FileSystemExt for MaliciousDevFs {}
 
 #[async_trait]
 impl FileSystem for MaliciousDevFs {

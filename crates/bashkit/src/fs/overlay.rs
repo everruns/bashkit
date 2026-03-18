@@ -20,7 +20,7 @@ use std::sync::{Arc, RwLock};
 
 use super::limits::{FsLimits, FsUsage};
 use super::memory::InMemoryFs;
-use super::traits::{DirEntry, FileSystem, FileType, Metadata};
+use super::traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata};
 use crate::error::Result;
 
 /// Copy-on-write overlay filesystem.
@@ -795,7 +795,10 @@ impl FileSystem for OverlayFs {
 
         Err(IoError::new(ErrorKind::NotFound, "not found").into())
     }
+}
 
+#[async_trait]
+impl FileSystemExt for OverlayFs {
     fn usage(&self) -> FsUsage {
         self.compute_usage()
     }
