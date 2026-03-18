@@ -76,6 +76,7 @@ mod printf;
 mod read;
 mod retry;
 mod rg;
+pub(crate) mod search_common;
 mod sed;
 mod semver;
 mod seq;
