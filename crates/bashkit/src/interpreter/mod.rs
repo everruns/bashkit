@@ -214,6 +214,18 @@ pub(crate) fn is_internal_variable(name: &str) -> bool {
         || name == "_SET_POSITIONAL"
 }
 
+/// Check if a string is a valid shell variable name: `[a-zA-Z_][a-zA-Z0-9_]*`.
+///
+/// Single canonical copy used by interpreter and builtins.
+pub(crate) fn is_valid_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// A frame in the call stack for local variable scoping
 #[derive(Debug, Clone)]
 struct CallFrame {
@@ -1298,7 +1310,7 @@ impl Interpreter {
     /// Execute a for loop
     async fn execute_for(&mut self, for_cmd: &ForCommand) -> Result<ExecResult> {
         // Validate for-loop variable name (bash rejects invalid names at runtime, exit 1)
-        if !Self::is_valid_var_name(&for_cmd.variable) {
+        if !is_valid_var_name(&for_cmd.variable) {
             return Ok(ExecResult::err(
                 format!("bash: `{}': not a valid identifier\n", for_cmd.variable),
                 1,
@@ -5044,7 +5056,7 @@ impl Interpreter {
                 if let Some(eq_pos) = arg.find('=') {
                     let var_name = &arg[..eq_pos];
                     let value = &arg[eq_pos + 1..];
-                    if !Self::is_valid_var_name(var_name) {
+                    if !is_valid_var_name(var_name) {
                         let result = ExecResult::err(
                             format!("local: `{}': not a valid identifier\n", arg),
                             1,
@@ -7938,13 +7950,6 @@ impl Interpreter {
     /// Evaluate arithmetic with assignment support (e.g. `X = X + 1`).
     /// Assignment must be handled before variable expansion so the LHS
     /// variable name is preserved.
-    /// Check if a string is a valid shell variable name
-    fn is_valid_var_name(s: &str) -> bool {
-        !s.is_empty()
-            && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            && !s.chars().next().unwrap_or('0').is_ascii_digit()
-    }
-
     fn evaluate_arithmetic_with_assign(&mut self, expr: &str) -> i64 {
         let expr = expr.trim();
 
@@ -7972,7 +7977,7 @@ impl Interpreter {
         // Handle pre-increment/pre-decrement: ++var, --var
         if let Some(var_name) = expr.strip_prefix("++") {
             let var_name = var_name.trim();
-            if Self::is_valid_var_name(var_name) {
+            if is_valid_var_name(var_name) {
                 let val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0) + 1;
                 self.set_variable(var_name.to_string(), val.to_string());
                 return val;
@@ -7980,7 +7985,7 @@ impl Interpreter {
         }
         if let Some(var_name) = expr.strip_prefix("--") {
             let var_name = var_name.trim();
-            if Self::is_valid_var_name(var_name) {
+            if is_valid_var_name(var_name) {
                 let val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0) - 1;
                 self.set_variable(var_name.to_string(), val.to_string());
                 return val;
@@ -7990,7 +7995,7 @@ impl Interpreter {
         // Handle post-increment/post-decrement: var++, var--
         if let Some(var_name) = expr.strip_suffix("++") {
             let var_name = var_name.trim();
-            if Self::is_valid_var_name(var_name) {
+            if is_valid_var_name(var_name) {
                 let old_val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0);
                 self.set_variable(var_name.to_string(), (old_val + 1).to_string());
                 return old_val;
@@ -7998,7 +8003,7 @@ impl Interpreter {
         }
         if let Some(var_name) = expr.strip_suffix("--") {
             let var_name = var_name.trim();
-            if Self::is_valid_var_name(var_name) {
+            if is_valid_var_name(var_name) {
                 let old_val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0);
                 self.set_variable(var_name.to_string(), (old_val - 1).to_string());
                 return old_val;
@@ -8039,7 +8044,7 @@ impl Interpreter {
                     ("", "")
                 };
 
-                if Self::is_valid_var_name(var_name) {
+                if is_valid_var_name(var_name) {
                     let rhs = &expr[eq_pos + 1..];
                     let rhs_val = self.evaluate_arithmetic(rhs);
                     let value = if op.is_empty() {
@@ -8112,7 +8117,7 @@ impl Interpreter {
             return trimmed.to_string();
         }
         // If value looks like a variable name, recursively dereference
-        if Self::is_valid_var_name(trimmed) {
+        if is_valid_var_name(trimmed) {
             let inner = self.expand_variable(trimmed);
             return self.resolve_arith_var(&inner, depth + 1);
         }
