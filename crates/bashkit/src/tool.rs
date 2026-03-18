@@ -1236,7 +1236,6 @@ pub(crate) fn tool_output_from_response(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
