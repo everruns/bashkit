@@ -34,6 +34,7 @@ src/
 │   └── ast.rs           # AST node types
 ├── interpreter/          # Execution engine
 │   ├── mod.rs           # Interpreter implementation
+│   ├── glob.rs          # Glob pattern matching and expansion
 │   ├── state.rs         # ExecResult and state types
 │   └── jobs.rs          # Job table for background execution
 ├── fs/                   # Virtual filesystem
