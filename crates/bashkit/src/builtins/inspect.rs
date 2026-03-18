@@ -400,7 +400,6 @@ fn default_stat_format(name: &str, metadata: &crate::fs::Metadata) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::collections::HashMap;

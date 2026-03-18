@@ -968,7 +968,6 @@ fn find_label(cmds: &[(Option<Address>, bool, SedCommand)], target: &str) -> Opt
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::fs::InMemoryFs;

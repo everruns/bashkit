@@ -135,7 +135,6 @@ fn fold_line(line: &str, width: usize, break_at_spaces: bool, output: &mut Strin
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::fs::InMemoryFs;
