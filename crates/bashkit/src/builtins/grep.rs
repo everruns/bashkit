@@ -39,6 +39,7 @@
 use async_trait::async_trait;
 use regex::{Regex, RegexBuilder};
 
+use super::search_common::parse_numeric_flag_arg;
 use super::{Builtin, Context};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
@@ -159,92 +160,24 @@ impl GrepOptions {
                             break; // Consumed rest of this arg
                         }
                         'm' => {
-                            // -m N (remaining chars or next arg)
-                            let rest: String = chars[j + 1..].iter().collect();
-                            let num_str = if !rest.is_empty() {
-                                rest
-                            } else {
-                                i += 1;
-                                if i < args.len() {
-                                    args[i].clone()
-                                } else {
-                                    return Err(Error::Execution(
-                                        "grep: -m requires an argument".to_string(),
-                                    ));
-                                }
-                            };
-                            opts.max_count = Some(num_str.parse().map_err(|_| {
-                                Error::Execution(format!("grep: invalid max count: {}", num_str))
-                            })?);
-                            break; // Consumed rest of this arg
+                            opts.max_count = Some(parse_numeric_flag_arg(
+                                &chars, j, &mut i, args, "grep", "-m",
+                            )?);
+                            break;
                         }
                         'A' => {
-                            // -A N (after context)
-                            let rest: String = chars[j + 1..].iter().collect();
-                            let num_str = if !rest.is_empty() {
-                                rest
-                            } else {
-                                i += 1;
-                                if i < args.len() {
-                                    args[i].clone()
-                                } else {
-                                    return Err(Error::Execution(
-                                        "grep: -A requires an argument".to_string(),
-                                    ));
-                                }
-                            };
-                            opts.after_context = num_str.parse().map_err(|_| {
-                                Error::Execution(format!(
-                                    "grep: invalid context length: {}",
-                                    num_str
-                                ))
-                            })?;
+                            opts.after_context =
+                                parse_numeric_flag_arg(&chars, j, &mut i, args, "grep", "-A")?;
                             break;
                         }
                         'B' => {
-                            // -B N (before context)
-                            let rest: String = chars[j + 1..].iter().collect();
-                            let num_str = if !rest.is_empty() {
-                                rest
-                            } else {
-                                i += 1;
-                                if i < args.len() {
-                                    args[i].clone()
-                                } else {
-                                    return Err(Error::Execution(
-                                        "grep: -B requires an argument".to_string(),
-                                    ));
-                                }
-                            };
-                            opts.before_context = num_str.parse().map_err(|_| {
-                                Error::Execution(format!(
-                                    "grep: invalid context length: {}",
-                                    num_str
-                                ))
-                            })?;
+                            opts.before_context =
+                                parse_numeric_flag_arg(&chars, j, &mut i, args, "grep", "-B")?;
                             break;
                         }
                         'C' => {
-                            // -C N (context before and after)
-                            let rest: String = chars[j + 1..].iter().collect();
-                            let num_str = if !rest.is_empty() {
-                                rest
-                            } else {
-                                i += 1;
-                                if i < args.len() {
-                                    args[i].clone()
-                                } else {
-                                    return Err(Error::Execution(
-                                        "grep: -C requires an argument".to_string(),
-                                    ));
-                                }
-                            };
-                            let ctx: usize = num_str.parse().map_err(|_| {
-                                Error::Execution(format!(
-                                    "grep: invalid context length: {}",
-                                    num_str
-                                ))
-                            })?;
+                            let ctx =
+                                parse_numeric_flag_arg(&chars, j, &mut i, args, "grep", "-C")?;
                             opts.before_context = ctx;
                             opts.after_context = ctx;
                             break;
