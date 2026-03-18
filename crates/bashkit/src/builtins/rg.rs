@@ -16,8 +16,9 @@
 //!   rg --color never PATTERN    # color output (no-op)
 
 use async_trait::async_trait;
-use regex::{Regex, RegexBuilder};
+use regex::Regex;
 
+use super::search_common::{build_search_regex, collect_files_recursive, parse_numeric_flag_arg};
 use super::{Builtin, Context, resolve_path};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
@@ -73,22 +74,8 @@ impl RgOptions {
                         'w' => opts.word_boundary = true,
                         'F' => opts.fixed_strings = true,
                         'm' => {
-                            let rest: String = chars[j + 1..].iter().collect();
-                            let num_str = if !rest.is_empty() {
-                                rest
-                            } else {
-                                i += 1;
-                                if i < args.len() {
-                                    args[i].clone()
-                                } else {
-                                    return Err(Error::Execution(
-                                        "rg: -m requires an argument".to_string(),
-                                    ));
-                                }
-                            };
-                            opts.max_count = Some(num_str.parse().map_err(|_| {
-                                Error::Execution(format!("rg: invalid max count: {}", num_str))
-                            })?);
+                            opts.max_count =
+                                Some(parse_numeric_flag_arg(&chars, j, &mut i, args, "rg", "-m")?);
                             break;
                         }
                         _ => {} // ignore unknown
@@ -121,48 +108,14 @@ impl RgOptions {
     }
 
     fn build_regex(&self) -> Result<Regex> {
-        let pat = if self.fixed_strings {
-            regex::escape(&self.pattern)
-        } else {
-            self.pattern.clone()
-        };
-
-        let pat = if self.word_boundary {
-            format!(r"\b{}\b", pat)
-        } else {
-            pat
-        };
-
-        RegexBuilder::new(&pat)
-            .case_insensitive(self.ignore_case)
-            .build()
-            .map_err(|e| Error::Execution(format!("rg: invalid pattern: {}", e)))
+        build_search_regex(
+            &self.pattern,
+            self.fixed_strings,
+            self.word_boundary,
+            self.ignore_case,
+            "rg",
+        )
     }
-}
-
-/// Recursively collect files from a directory in the VFS
-async fn collect_files(
-    fs: &std::sync::Arc<dyn crate::fs::FileSystem>,
-    dir: &std::path::Path,
-) -> Vec<std::path::PathBuf> {
-    let mut result = Vec::new();
-    let mut dirs = vec![dir.to_path_buf()];
-
-    while let Some(current) = dirs.pop() {
-        if let Ok(entries) = fs.read_dir(&current).await {
-            for entry in entries {
-                let path = current.join(&entry.name);
-                if entry.metadata.file_type.is_dir() {
-                    dirs.push(path);
-                } else if entry.metadata.file_type.is_file() {
-                    result.push(path);
-                }
-            }
-        }
-    }
-
-    result.sort();
-    result
 }
 
 #[async_trait]
@@ -178,7 +131,7 @@ impl Builtin for Rg {
                 vec![("(stdin)".to_string(), stdin.to_string())]
             } else {
                 // Search current directory recursively
-                let files = collect_files(&ctx.fs, ctx.cwd).await;
+                let files = collect_files_recursive(&ctx.fs, std::slice::from_ref(ctx.cwd)).await;
                 let mut inputs = Vec::new();
                 for path in files {
                     if let Ok(content) = ctx.fs.read_file(&path).await {
@@ -196,7 +149,7 @@ impl Builtin for Rg {
                 if let Ok(meta) = ctx.fs.stat(&path).await
                     && meta.file_type.is_dir()
                 {
-                    let files = collect_files(&ctx.fs, &path).await;
+                    let files = collect_files_recursive(&ctx.fs, std::slice::from_ref(&path)).await;
                     for fpath in files {
                         if let Ok(content) = ctx.fs.read_file(&fpath).await {
                             let text = String::from_utf8_lossy(&content).into_owned();
