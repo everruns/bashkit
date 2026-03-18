@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context};
+use super::{Builtin, BuiltinSideEffect, Context};
 use crate::error::Result;
 use crate::interpreter::{ExecResult, is_internal_variable};
 
@@ -143,12 +143,12 @@ impl Builtin for Read {
             if is_internal_variable(arr_name) {
                 return Ok(ExecResult::ok(String::new()));
             }
-            // Store as _ARRAY_<name>_<idx> for the interpreter to pick up
-            ctx.variables.insert(
-                format!("_ARRAY_READ_{}", arr_name),
-                words.join("\x1F"), // unit separator as delimiter
-            );
-            return Ok(ExecResult::ok(String::new()));
+            let mut result = ExecResult::ok(String::new());
+            result.side_effects.push(BuiltinSideEffect::SetArray {
+                name: arr_name.to_string(),
+                elements: words.iter().map(|w| w.to_string()).collect(),
+            });
+            return Ok(result);
         }
 
         // If no variable names given, use REPLY
@@ -409,9 +409,14 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        let stored = variables.get("_ARRAY_READ_ARR").unwrap();
-        let parts: Vec<&str> = stored.split('\x1F').collect();
-        assert_eq!(parts, vec!["one", "two", "three"]);
+        assert_eq!(result.side_effects.len(), 1);
+        match &result.side_effects[0] {
+            BuiltinSideEffect::SetArray { name, elements } => {
+                assert_eq!(name, "ARR");
+                assert_eq!(elements, &["one", "two", "three"]);
+            }
+            _ => panic!("Expected SetArray side effect"),
+        }
     }
 
     #[tokio::test]
@@ -429,7 +434,11 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert!(variables.contains_key("_ARRAY_READ_REPLY"));
+        assert_eq!(result.side_effects.len(), 1);
+        match &result.side_effects[0] {
+            BuiltinSideEffect::SetArray { name, .. } => assert_eq!(name, "REPLY"),
+            _ => panic!("Expected SetArray side effect"),
+        }
     }
 
     // ==================== combined flags ====================

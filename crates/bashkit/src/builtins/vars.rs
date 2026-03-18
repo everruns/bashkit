@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context};
+use super::{Builtin, BuiltinSideEffect, Context};
 use crate::error::Result;
 use crate::interpreter::{ExecResult, is_internal_variable};
 
@@ -93,17 +93,9 @@ fn format_set_plus_o(variables: &std::collections::HashMap<String, String>) -> S
 }
 
 impl Set {
-    /// Encode positional parameters as count\x1Farg1\x1Farg2... for the interpreter.
-    fn encode_positional(
-        variables: &mut std::collections::HashMap<String, String>,
-        positional: &[&str],
-    ) {
-        let mut encoded = positional.len().to_string();
-        for p in positional {
-            encoded.push('\x1F');
-            encoded.push_str(p);
-        }
-        variables.insert("_SET_POSITIONAL".to_string(), encoded);
+    /// Create a SetPositional side effect.
+    fn positional_effect(positional: &[&str]) -> BuiltinSideEffect {
+        BuiltinSideEffect::SetPositional(positional.iter().map(|s| s.to_string()).collect())
     }
 }
 
@@ -121,13 +113,14 @@ impl Builtin for Set {
             return Ok(ExecResult::ok(output));
         }
 
+        let mut side_effects = Vec::new();
         let mut i = 0;
         while i < ctx.args.len() {
             let arg = &ctx.args[i];
             if arg == "--" {
                 // Everything after `--` becomes positional parameters.
                 let positional: Vec<&str> = ctx.args[i + 1..].iter().map(|s| s.as_str()).collect();
-                Self::encode_positional(ctx.variables, &positional);
+                side_effects.push(Self::positional_effect(&positional));
                 break;
             } else if (arg.starts_with('-') || arg.starts_with('+'))
                 && arg.len() > 1
@@ -174,13 +167,15 @@ impl Builtin for Set {
             } else {
                 // Non-flag arg: this and everything after become positional params
                 let positional: Vec<&str> = ctx.args[i..].iter().map(|s| s.as_str()).collect();
-                Self::encode_positional(ctx.variables, &positional);
+                side_effects.push(Self::positional_effect(&positional));
                 break;
             }
             i += 1;
         }
 
-        Ok(ExecResult::ok(String::new()))
+        let mut result = ExecResult::ok(String::new());
+        result.side_effects = side_effects;
+        Ok(result)
     }
 }
 
@@ -193,12 +188,11 @@ impl Builtin for Shift {
         // Number of positions to shift (default 1)
         let n: usize = ctx.args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
 
-        // In real bash, this shifts the positional parameters
-        // For now, we store the shift count for the interpreter to handle
-        ctx.variables
-            .insert("_SHIFT_COUNT".to_string(), n.to_string());
-
-        Ok(ExecResult::ok(String::new()))
+        let mut result = ExecResult::ok(String::new());
+        result
+            .side_effects
+            .push(BuiltinSideEffect::ShiftPositional(n));
+        Ok(result)
     }
 }
 

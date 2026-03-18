@@ -198,6 +198,9 @@ use crate::error::Result;
 use crate::fs::FileSystem;
 use crate::interpreter::ExecResult;
 
+// Re-export for use by builtins
+pub use crate::interpreter::BuiltinSideEffect;
+
 /// Resolve a path relative to the current working directory.
 ///
 /// If the path is absolute, returns it unchanged.
