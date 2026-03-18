@@ -960,10 +960,9 @@ impl Tool for BashTool {
 /// Extract error kind from Error for categorization
 fn error_kind(e: &Error) -> String {
     match e {
-        Error::Parse(_) | Error::ParseAt { .. } => "parse_error".to_string(),
+        Error::Parse { .. } => "parse_error".to_string(),
         Error::Execution(_) => "execution_error".to_string(),
         Error::Io(_) => "io_error".to_string(),
-        Error::CommandNotFound(_) => "command_not_found".to_string(),
         Error::ResourceLimit(_) => "resource_limit".to_string(),
         Error::Network(_) => "network_error".to_string(),
         Error::Regex(_) => "regex_error".to_string(),

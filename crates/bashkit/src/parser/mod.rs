@@ -133,7 +133,7 @@ impl<'a> Parser<'a> {
     fn tick(&mut self) -> Result<()> {
         if self.fuel == 0 {
             let used = self.max_fuel;
-            return Err(Error::Parse(format!(
+            return Err(Error::parse(format!(
                 "parser fuel exhausted ({} operations, max {})",
                 used, self.max_fuel
             )));
@@ -146,7 +146,7 @@ impl<'a> Parser<'a> {
     fn push_depth(&mut self) -> Result<()> {
         self.current_depth += 1;
         if self.current_depth > self.max_depth {
-            return Err(Error::Parse(format!(
+            return Err(Error::parse(format!(
                 "AST nesting too deep ({} levels, max {})",
                 self.current_depth, self.max_depth
             )));
@@ -711,7 +711,7 @@ impl<'a> Parser<'a> {
             | Some(tokens::Token::QuotedWord(w)) => w.clone(),
             _ => {
                 self.pop_depth();
-                return Err(Error::Parse(
+                return Err(Error::parse(
                     "expected variable name in for loop".to_string(),
                 ));
             }
@@ -802,7 +802,7 @@ impl<'a> Parser<'a> {
             | Some(tokens::Token::QuotedWord(w)) => w.clone(),
             _ => {
                 self.pop_depth();
-                return Err(Error::Parse("expected variable name in select".to_string()));
+                return Err(Error::parse("expected variable name in select".to_string()));
             }
         };
         self.advance();
@@ -810,7 +810,7 @@ impl<'a> Parser<'a> {
         // Expect 'in' keyword
         if !self.is_keyword("in") {
             self.pop_depth();
-            return Err(Error::Parse("expected 'in' in select".to_string()));
+            return Err(Error::parse("expected 'in' in select".to_string()));
         }
         self.advance(); // consume 'in'
 
@@ -958,7 +958,7 @@ impl<'a> Parser<'a> {
                     self.advance();
                 }
                 None => {
-                    return Err(Error::Parse(
+                    return Err(Error::parse(
                         "unexpected end of input in for loop".to_string(),
                     ));
                 }
@@ -1307,7 +1307,7 @@ impl<'a> Parser<'a> {
             self.current_token = Some(tokens::Token::RightParen);
         } else if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
             self.pop_depth();
-            return Err(Error::Parse("expected ')' to close subshell".to_string()));
+            return Err(Error::parse("expected ')' to close subshell".to_string()));
         } else {
             self.advance(); // consume ')'
         }
@@ -1335,7 +1335,7 @@ impl<'a> Parser<'a> {
 
         if !matches!(self.current_token, Some(tokens::Token::RightBrace)) {
             self.pop_depth();
-            return Err(Error::Parse(
+            return Err(Error::parse(
                 "expected '}' to close brace group".to_string(),
             ));
         }
@@ -1437,7 +1437,7 @@ impl<'a> Parser<'a> {
                     self.advance();
                 }
                 None => {
-                    return Err(crate::error::Error::Parse(
+                    return Err(crate::error::Error::parse(
                         "unexpected end of input in [[ ]]".to_string(),
                     ));
                 }
@@ -1555,7 +1555,7 @@ impl<'a> Parser<'a> {
                     self.advance();
                 }
                 None => {
-                    return Err(Error::Parse(
+                    return Err(Error::parse(
                         "unexpected end of input in arithmetic command".to_string(),
                     ));
                 }
@@ -1586,7 +1586,7 @@ impl<'a> Parser<'a> {
         if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
             self.advance(); // consume '('
             if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
-                return Err(Error::Parse(
+                return Err(Error::parse(
                     "expected ')' in function definition".to_string(),
                 ));
             }
@@ -1596,7 +1596,7 @@ impl<'a> Parser<'a> {
 
         // Expect { for body
         if !matches!(self.current_token, Some(tokens::Token::LeftBrace)) {
-            return Err(Error::Parse("expected '{' for function body".to_string()));
+            return Err(Error::parse("expected '{' for function body".to_string()));
         }
 
         // Parse body as brace group
@@ -2026,7 +2026,7 @@ impl<'a> Parser<'a> {
                         Some(tokens::Token::Word(w)) => (w.clone(), false),
                         Some(tokens::Token::LiteralWord(w)) => (w.clone(), true),
                         Some(tokens::Token::QuotedWord(w)) => (w.clone(), true),
-                        _ => return Err(Error::Parse("expected delimiter after <<".to_string())),
+                        _ => return Err(Error::parse("expected delimiter after <<".to_string())),
                     };
                     // Don't advance - let read_heredoc consume directly from lexer position
 
@@ -2435,7 +2435,7 @@ impl<'a> Parser<'a> {
                             self.advance();
                         }
                         None => {
-                            return Err(Error::Parse(
+                            return Err(Error::parse(
                                 "unexpected end of input in process substitution".to_string(),
                             ));
                         }

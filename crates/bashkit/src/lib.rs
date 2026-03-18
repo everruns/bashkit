@@ -625,7 +625,7 @@ impl Bash {
                         error = %join_error,
                         "Parser task failed"
                     );
-                    return Err(Error::Parse(format!("parser task failed: {}", join_error)));
+                    return Err(Error::parse(format!("parser task failed: {}", join_error)));
                 }
                 Err(_elapsed) => {
                     #[cfg(feature = "logging")]

@@ -31,7 +31,7 @@ async fn run_bashkit(script: &str) -> (String, i32) {
         Ok(result) => (result.stdout, result.exit_code),
         Err(e) => {
             // Parse errors should return exit code 2 (like bash)
-            let exit_code = if matches!(e, bashkit::Error::Parse(_)) {
+            let exit_code = if matches!(e, bashkit::Error::Parse { .. }) {
                 2
             } else {
                 1

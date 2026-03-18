@@ -17,13 +17,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// exposing internal details or sensitive information.
 #[derive(Error, Debug)]
 pub enum Error {
-    /// Parse error occurred while parsing the script (without location info).
-    #[error("parse error: {0}")]
-    Parse(String),
-
-    /// Parse error with source location information.
-    #[error("parse error at line {line}, column {column}: {message}")]
-    ParseAt {
+    /// Parse error occurred while parsing the script.
+    ///
+    /// When `line` and `column` are 0, the error has no source location.
+    #[error("parse error{}: {message}", if *line > 0 { format!(" at line {}, column {}", line, column) } else { String::new() })]
+    Parse {
         message: String,
         line: usize,
         column: usize,
@@ -36,10 +34,6 @@ pub enum Error {
     /// I/O error from filesystem operations.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-
-    /// Command not found.
-    #[error("command not found: {0}")]
-    CommandNotFound(String),
 
     /// Resource limit exceeded.
     #[error("resource limit exceeded: {0}")]
@@ -77,10 +71,19 @@ pub enum Error {
 impl Error {
     /// Create a parse error with source location.
     pub fn parse_at(message: impl Into<String>, line: usize, column: usize) -> Self {
-        Self::ParseAt {
+        Self::Parse {
             message: message.into(),
             line,
             column,
+        }
+    }
+
+    /// Create a parse error without source location.
+    pub fn parse(message: impl Into<String>) -> Self {
+        Self::Parse {
+            message: message.into(),
+            line: 0,
+            column: 0,
         }
     }
 }
