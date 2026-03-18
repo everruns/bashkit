@@ -37,6 +37,11 @@ use crate::interpreter::ExecResult;
 /// Git builtin command.
 pub struct Git;
 
+/// Convert a git client error into a standard git error result (exit code 128).
+fn git_err(e: impl std::fmt::Display) -> Result<ExecResult> {
+    Ok(ExecResult::err(format!("{}\n", e), 128))
+}
+
 #[async_trait]
 impl super::Builtin for Git {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -145,7 +150,7 @@ async fn git_init(
 
     match git_client.init(&ctx.fs, &path).await {
         Ok(output) => Ok(ExecResult::ok(output)),
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
 
@@ -187,7 +192,7 @@ async fn git_config(
             // Set config
             match git_client.config_set(&ctx.fs, ctx.cwd, key, value).await {
                 Ok(()) => Ok(ExecResult::ok(String::new())),
-                Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+                Err(e) => git_err(e),
             }
         }
         None => {
@@ -195,7 +200,7 @@ async fn git_config(
             match git_client.config_get(&ctx.fs, ctx.cwd, key).await {
                 Ok(Some(value)) => Ok(ExecResult::ok(format!("{}\n", value))),
                 Ok(None) => Ok(ExecResult::ok(String::new())),
-                Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+                Err(e) => git_err(e),
             }
         }
     }
@@ -220,7 +225,7 @@ async fn git_add(
 
     match git_client.add(&ctx.fs, ctx.cwd, &paths).await {
         Ok(()) => Ok(ExecResult::ok(String::new())),
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
 
@@ -267,7 +272,7 @@ async fn git_status(ctx: Context<'_>, git_client: &crate::git::GitClient) -> Res
             let output = git_client.format_status(&status);
             Ok(ExecResult::ok(output))
         }
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
 
@@ -309,7 +314,7 @@ async fn git_log(
             let output = git_client.format_log(&entries);
             Ok(ExecResult::ok(output))
         }
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
 
@@ -326,7 +331,7 @@ async fn git_remote(
                 let output: String = remotes.iter().map(|r| format!("{}\n", r.name)).collect();
                 Ok(ExecResult::ok(output))
             }
-            Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+            Err(e) => git_err(e),
         }
     } else {
         let subcmd = &args[0];
@@ -348,7 +353,7 @@ async fn git_remote(
                             .collect();
                         Ok(ExecResult::ok(output))
                     }
-                    Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+                    Err(e) => git_err(e),
                 }
             }
             "add" => {
@@ -362,7 +367,7 @@ async fn git_remote(
                 let url = &subargs[1];
                 match git_client.remote_add(&ctx.fs, ctx.cwd, name, url).await {
                     Ok(()) => Ok(ExecResult::ok(String::new())),
-                    Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+                    Err(e) => git_err(e),
                 }
             }
             "remove" | "rm" => {
@@ -375,7 +380,7 @@ async fn git_remote(
                 let name = &subargs[0];
                 match git_client.remote_remove(&ctx.fs, ctx.cwd, name).await {
                     Ok(()) => Ok(ExecResult::ok(String::new())),
-                    Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+                    Err(e) => git_err(e),
                 }
             }
             _ => Ok(ExecResult::err(
@@ -420,7 +425,7 @@ async fn git_clone(
 
     match git_client.clone(&ctx.fs, url, &dest).await {
         Ok(output) => Ok(ExecResult::ok(output)),
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
 
@@ -434,7 +439,7 @@ async fn git_fetch(
 
     match git_client.fetch(&ctx.fs, ctx.cwd, remote).await {
         Ok(output) => Ok(ExecResult::ok(output)),
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
 
@@ -448,7 +453,7 @@ async fn git_push(
 
     match git_client.push(&ctx.fs, ctx.cwd, remote).await {
         Ok(output) => Ok(ExecResult::ok(output)),
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
 
@@ -462,7 +467,7 @@ async fn git_pull(
 
     match git_client.pull(&ctx.fs, ctx.cwd, remote).await {
         Ok(output) => Ok(ExecResult::ok(output)),
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
 
@@ -479,7 +484,7 @@ async fn git_branch(
                 let output = git_client.format_branch_list(&branches);
                 Ok(ExecResult::ok(output))
             }
-            Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+            Err(e) => git_err(e),
         }
     } else if args[0] == "-d" || args[0] == "-D" {
         // Delete branch
@@ -497,7 +502,7 @@ async fn git_branch(
         // Create branch
         match git_client.branch_create(&ctx.fs, ctx.cwd, &args[0]).await {
             Ok(()) => Ok(ExecResult::ok(String::new())),
-            Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+            Err(e) => git_err(e),
         }
     }
 }
@@ -525,7 +530,7 @@ async fn git_checkout(
         }
         // Create branch first
         if let Err(e) = git_client.branch_create(&ctx.fs, ctx.cwd, &args[1]).await {
-            return Ok(ExecResult::err(format!("{}\n", e), 128));
+            return git_err(e);
         }
         // Then checkout
         match git_client.checkout(&ctx.fs, ctx.cwd, &args[1]).await {
@@ -551,7 +556,7 @@ async fn git_diff(
 
     match git_client.diff(&ctx.fs, ctx.cwd, from, to).await {
         Ok(output) => Ok(ExecResult::ok(output)),
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
 
@@ -575,7 +580,7 @@ async fn git_reset(
 
     match git_client.reset(&ctx.fs, ctx.cwd, mode, target).await {
         Ok(output) => Ok(ExecResult::ok(output)),
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
 
@@ -588,7 +593,7 @@ async fn git_show(
     let target = args.first().map(|s| s.as_str());
     match git_client.show(&ctx.fs, ctx.cwd, target).await {
         Ok(output) => Ok(ExecResult::ok(output)),
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
 
@@ -599,7 +604,7 @@ async fn git_ls_files(ctx: Context<'_>, git_client: &crate::git::GitClient) -> R
             let output: String = files.iter().map(|f| format!("{}\n", f)).collect();
             Ok(ExecResult::ok(output))
         }
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
 
@@ -618,7 +623,7 @@ async fn git_rev_parse(
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     match git_client.rev_parse(&ctx.fs, ctx.cwd, &refs).await {
         Ok(output) => Ok(ExecResult::ok(output)),
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
 
@@ -651,7 +656,7 @@ async fn git_restore(
 
     match git_client.restore(&ctx.fs, ctx.cwd, &paths, staged).await {
         Ok(output) => Ok(ExecResult::ok(output)),
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
 
@@ -700,6 +705,6 @@ async fn git_grep(
                 Ok(ExecResult::ok(output))
             }
         }
-        Err(e) => Ok(ExecResult::err(format!("{}\n", e), 128)),
+        Err(e) => git_err(e),
     }
 }
