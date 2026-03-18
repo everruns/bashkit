@@ -15,8 +15,8 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PySet, PyTuple};
 use pyo3_async_runtimes::tokio::future_into_py;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 use tokio::sync::Mutex;
 
 // ============================================================================
@@ -282,7 +282,9 @@ pub struct PyBash {
     /// Shared tokio runtime — reused across all sync calls to avoid
     /// per-call OS thread/fd exhaustion (issue #414).
     rt: tokio::runtime::Runtime,
-    cancelled: Arc<AtomicBool>,
+    /// Cancellation token. Wrapped in RwLock so reset() can swap it to
+    /// the new interpreter's token without requiring &mut self.
+    cancelled: Arc<RwLock<Arc<AtomicBool>>>,
     username: Option<String>,
     hostname: Option<String>,
     /// Whether Monty Python execution is enabled (`python`/`python3` builtins).
@@ -378,7 +380,7 @@ impl PyBash {
         builder = apply_python_config(builder, python, fn_names, handler_for_build);
 
         let bash = builder.build();
-        let cancelled = bash.cancellation_token();
+        let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -404,7 +406,9 @@ impl PyBash {
     /// Safe to call from any thread. Execution will abort at the next
     /// command boundary.
     fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Relaxed);
+        if let Ok(token) = self.cancelled.read() {
+            token.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Execute commands asynchronously.
@@ -519,9 +523,11 @@ impl PyBash {
                 builder = builder.limits(limits);
                 builder = apply_python_config(builder, python, external_functions, handler_clone);
                 *bash = builder.build();
-                // Reset the shared cancellation flag so cancel() doesn't immediately
-                // abort executions that started after reset.
-                cancelled.store(false, std::sync::atomic::Ordering::Relaxed);
+                // Swap the cancellation token to the new interpreter's token so
+                // cancel() targets the current (not stale) interpreter.
+                if let Ok(mut token) = cancelled.write() {
+                    *token = bash.cancellation_token();
+                }
                 Ok(())
             })
         })
@@ -572,7 +578,9 @@ pub struct BashTool {
     /// Shared tokio runtime — reused across all sync calls to avoid
     /// per-call OS thread/fd exhaustion (issue #414).
     rt: tokio::runtime::Runtime,
-    cancelled: Arc<AtomicBool>,
+    /// Cancellation token. Wrapped in RwLock so reset() can swap it to
+    /// the new interpreter's token without requiring &mut self.
+    cancelled: Arc<RwLock<Arc<AtomicBool>>>,
     username: Option<String>,
     hostname: Option<String>,
     max_commands: Option<u64>,
@@ -631,7 +639,7 @@ impl BashTool {
         builder = builder.limits(limits);
 
         let bash = builder.build();
-        let cancelled = bash.cancellation_token();
+        let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -651,7 +659,9 @@ impl BashTool {
 
     /// Cancel the currently running execution.
     fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Relaxed);
+        if let Ok(token) = self.cancelled.read() {
+            token.store(true, Ordering::Relaxed);
+        }
     }
 
     fn execute<'py>(&self, py: Python<'py>, commands: String) -> PyResult<Bound<'py, PyAny>> {
@@ -726,6 +736,7 @@ impl BashTool {
         let hostname = self.hostname.clone();
         let max_commands = self.max_commands;
         let max_loop_iterations = self.max_loop_iterations;
+        let cancelled = self.cancelled.clone();
 
         py.detach(|| {
             self.rt.block_on(async move {
@@ -746,6 +757,11 @@ impl BashTool {
                 }
                 builder = builder.limits(limits);
                 *bash = builder.build();
+                // Swap the cancellation token to the new interpreter's token so
+                // cancel() targets the current (not stale) interpreter.
+                if let Ok(mut token) = cancelled.write() {
+                    *token = bash.cancellation_token();
+                }
                 Ok(())
             })
         })

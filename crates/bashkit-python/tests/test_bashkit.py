@@ -1274,8 +1274,42 @@ async def test_bash_handler_receives_set_as_set():
     assert received[0][0] == {1, 2, 3}
 
 
-def test_bash_cancel_works_after_reset():
-    """cancel() should not raise after reset() rebuilds the interpreter."""
-    bash = Bash(python=True)
+def test_bash_cancel_then_reset_clears_cancellation():
+    """cancel() before reset() must not affect post-reset executions."""
+    bash = Bash()
+    bash.cancel()
+    bash.reset()
+    r = bash.execute_sync("echo hi")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "hi"
+
+
+def test_bash_cancel_after_reset_still_works():
+    """cancel() after reset() must target the new interpreter."""
+    bash = Bash()
     bash.reset()
     bash.cancel()
+    # The cancel targets the new interpreter — verify it took effect
+    # by checking the cancelled flag prevents execution
+    r = bash.execute_sync("echo hi")
+    # Cancelled execution should fail
+    assert r.exit_code != 0 or "cancel" in r.stderr.lower() or "cancel" in (r.error or "").lower()
+
+
+def test_bashtool_cancel_then_reset_clears_cancellation():
+    """BashTool: cancel() before reset() must not affect post-reset executions."""
+    tool = BashTool()
+    tool.cancel()
+    tool.reset()
+    r = tool.execute_sync("echo hi")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "hi"
+
+
+def test_bashtool_cancel_after_reset_still_works():
+    """BashTool: cancel() after reset() must target the new interpreter."""
+    tool = BashTool()
+    tool.reset()
+    tool.cancel()
+    r = tool.execute_sync("echo hi")
+    assert r.exit_code != 0 or "cancel" in r.stderr.lower() or "cancel" in (r.error or "").lower()
