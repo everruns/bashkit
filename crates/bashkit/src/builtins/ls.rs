@@ -2959,4 +2959,205 @@ mod tests {
         assert!(glob_match("test.backup.txt", "test*.txt"));
         assert!(glob_match("test.txt", "test*.txt"));
     }
+
+    // ==================== parse_find_args tests ====================
+
+    #[test]
+    fn test_parse_find_args_defaults_to_dot() {
+        let args: Vec<String> = vec![];
+        let (paths, opts) = parse_find_args(&args).unwrap();
+        assert_eq!(paths, vec!["."]);
+        assert!(opts.exec_args.is_empty());
+        assert!(!opts.exec_batch);
+    }
+
+    #[test]
+    fn test_parse_find_args_exec_per_file() {
+        let args: Vec<String> = vec![
+            ".".into(),
+            "-name".into(),
+            "*.txt".into(),
+            "-exec".into(),
+            "cat".into(),
+            "{}".into(),
+            ";".into(),
+        ];
+        let (paths, opts) = parse_find_args(&args).unwrap();
+        assert_eq!(paths, vec!["."]);
+        assert_eq!(opts.name_pattern.as_deref(), Some("*.txt"));
+        assert_eq!(opts.exec_args, vec!["cat", "{}"]);
+        assert!(!opts.exec_batch);
+    }
+
+    #[test]
+    fn test_parse_find_args_exec_batch() {
+        let args: Vec<String> = vec!["-exec".into(), "rm".into(), "{}".into(), "+".into()];
+        let (_paths, opts) = parse_find_args(&args).unwrap();
+        assert_eq!(opts.exec_args, vec!["rm", "{}"]);
+        assert!(opts.exec_batch);
+    }
+
+    #[test]
+    fn test_parse_find_args_error_missing_name() {
+        let args: Vec<String> = vec!["-name".into()];
+        assert!(parse_find_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_parse_find_args_error_unknown_predicate() {
+        let args: Vec<String> = vec!["-bogus".into()];
+        assert!(parse_find_args(&args).is_err());
+    }
+
+    // ==================== build_find_exec_commands tests ====================
+
+    #[test]
+    fn test_build_find_exec_commands_per_file() {
+        let exec_args = vec!["echo".to_string(), "{}".to_string()];
+        let paths = vec!["a.txt".to_string(), "b.txt".to_string()];
+        let cmds = build_find_exec_commands(&exec_args, &paths, false);
+        assert_eq!(cmds.len(), 2);
+        assert_eq!(cmds[0].name, "echo");
+        assert_eq!(cmds[0].args, vec!["a.txt"]);
+        assert_eq!(cmds[1].name, "echo");
+        assert_eq!(cmds[1].args, vec!["b.txt"]);
+    }
+
+    #[test]
+    fn test_build_find_exec_commands_batch() {
+        let exec_args = vec!["rm".to_string(), "{}".to_string()];
+        let paths = vec!["a.txt".to_string(), "b.txt".to_string()];
+        let cmds = build_find_exec_commands(&exec_args, &paths, true);
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].name, "rm");
+        assert_eq!(cmds[0].args, vec!["a.txt", "b.txt"]);
+    }
+
+    #[test]
+    fn test_build_find_exec_commands_empty_paths() {
+        let exec_args = vec!["echo".to_string(), "{}".to_string()];
+        let cmds = build_find_exec_commands(&exec_args, &[], false);
+        assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn test_build_find_exec_commands_empty_exec() {
+        let paths = vec!["a.txt".to_string()];
+        let cmds = build_find_exec_commands(&[], &paths, false);
+        assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn test_build_find_exec_commands_multiple_placeholders() {
+        let exec_args = vec!["cp".to_string(), "{}".to_string(), "{}.bak".to_string()];
+        let paths = vec!["a.txt".to_string()];
+        let cmds = build_find_exec_commands(&exec_args, &paths, false);
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].name, "cp");
+        assert_eq!(cmds[0].args, vec!["a.txt", "a.txt.bak"]);
+    }
+
+    // ==================== find execution_plan tests ====================
+
+    #[tokio::test]
+    async fn test_find_plan_no_exec_returns_none() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec!["-name".to_string(), "*.txt".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let plan = Find.execution_plan(&ctx).await.unwrap();
+        assert!(plan.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_find_plan_exec_with_matches() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        // Create test files
+        fs.write_file(&PathBuf::from("/home/user/a.txt"), b"hello")
+            .await
+            .unwrap();
+        fs.write_file(&PathBuf::from("/home/user/b.txt"), b"world")
+            .await
+            .unwrap();
+
+        let args = vec![
+            ".".to_string(),
+            "-name".to_string(),
+            "*.txt".to_string(),
+            "-exec".to_string(),
+            "cat".to_string(),
+            "{}".to_string(),
+            ";".to_string(),
+        ];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let plan = Find.execution_plan(&ctx).await.unwrap();
+        match plan {
+            Some(ExecutionPlan::Batch { commands }) => {
+                assert_eq!(commands.len(), 2);
+                assert_eq!(commands[0].name, "cat");
+                // Each command should have a single arg (the found path)
+                assert_eq!(commands[0].args.len(), 1);
+                assert_eq!(commands[1].args.len(), 1);
+            }
+            _ => panic!("expected Batch plan"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_plan_exec_no_matches_returns_none() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec![
+            ".".to_string(),
+            "-name".to_string(),
+            "*.xyz".to_string(),
+            "-exec".to_string(),
+            "echo".to_string(),
+            "{}".to_string(),
+            ";".to_string(),
+        ];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+        };
+
+        let plan = Find.execution_plan(&ctx).await.unwrap();
+        assert!(plan.is_none());
+    }
 }

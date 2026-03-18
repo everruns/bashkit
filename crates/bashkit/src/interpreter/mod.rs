@@ -5791,9 +5791,13 @@ impl Interpreter {
                     Ok(Ok(result)) => result,
                     Ok(Err(e)) => return Err(e),
                     Err(_) => {
-                        // Timeout expired - exit code 124
-                        let _ = preserve_status;
-                        ExecResult::err(String::new(), 124)
+                        // Timeout expired.
+                        // --preserve-status: in real bash, returns the signal+128 status
+                        // of the killed child.  We can't capture that from tokio::timeout,
+                        // so we always use 124 (the standard timeout exit code).
+                        // TODO: propagate child exit status when preserve_status is true
+                        let exit_code = if preserve_status { 137 } else { 124 };
+                        ExecResult::err(String::new(), exit_code)
                     }
                 }
             }
@@ -5803,10 +5807,20 @@ impl Interpreter {
                 let mut last_exit_code = 0;
 
                 for cmd in commands {
+                    let cmd_redirects = if let Some(ref stdin_data) = cmd.stdin {
+                        vec![Redirect {
+                            fd: None,
+                            kind: RedirectKind::HereString,
+                            target: Word::literal(stdin_data.trim_end_matches('\n').to_string()),
+                        }]
+                    } else {
+                        Vec::new()
+                    };
+
                     let inner_cmd = Command::Simple(SimpleCommand {
                         name: Word::literal(cmd.name),
                         args: cmd.args.iter().map(|s| Word::literal(s.clone())).collect(),
-                        redirects: Vec::new(),
+                        redirects: cmd_redirects,
                         assignments: Vec::new(),
                         span: Span::new(),
                     });
