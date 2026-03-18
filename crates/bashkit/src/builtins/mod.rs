@@ -437,7 +437,7 @@ pub trait Builtin: Send + Sync {
     /// Return an execution plan for sub-command execution.
     ///
     /// Builtins that need to execute other commands (e.g. `timeout`, `xargs`,
-    /// `find -exec`) override this to return an [`ExecutionPlan`]. The interpreter
+    /// `find -exec`) override this to return an `ExecutionPlan`. The interpreter
     /// fulfills the plan by executing the sub-commands and returning results.
     ///
     /// When this returns `Some(plan)`, the interpreter ignores the `execute()`
