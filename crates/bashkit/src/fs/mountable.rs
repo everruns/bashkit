@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use super::limits::{FsLimits, FsUsage};
-use super::traits::{DirEntry, FileSystem, FileType, Metadata};
+use super::traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata};
 use crate::error::Result;
 use std::io::ErrorKind;
 
@@ -467,7 +467,10 @@ impl FileSystem for MountableFs {
         let (fs, resolved) = self.resolve(path);
         fs.chmod(&resolved, mode).await
     }
+}
 
+#[async_trait]
+impl FileSystemExt for MountableFs {
     fn usage(&self) -> FsUsage {
         // Aggregate usage from root and all mounts
         let mut total = self.root.usage();

@@ -419,8 +419,8 @@ pub use async_trait::async_trait;
 pub use builtins::{Builtin, Context as BuiltinContext};
 pub use error::{Error, Result};
 pub use fs::{
-    DirEntry, FileSystem, FileType, FsBackend, FsLimitExceeded, FsLimits, FsUsage, InMemoryFs,
-    Metadata, MountableFs, OverlayFs, PosixFs, VfsSnapshot, normalize_path,
+    DirEntry, FileSystem, FileSystemExt, FileType, FsBackend, FsLimitExceeded, FsLimits, FsUsage,
+    InMemoryFs, Metadata, MountableFs, OverlayFs, PosixFs, VfsSnapshot, normalize_path,
     verify_filesystem_requirements,
 };
 #[cfg(feature = "realfs")]
