@@ -16,7 +16,7 @@ mod state;
 
 #[allow(unused_imports)]
 pub use jobs::{JobTable, SharedJobTable};
-pub use state::{ControlFlow, ExecResult};
+pub use state::{BuiltinSideEffect, ControlFlow, ExecResult};
 // Re-export snapshot type for public API
 
 use std::collections::{HashMap, HashSet};
@@ -1054,6 +1054,7 @@ impl Interpreter {
             stderr_truncated,
             final_env,
             events,
+            ..Default::default()
         })
     }
 
@@ -4529,59 +4530,8 @@ impl Interpreter {
                 }
             };
 
-            // Post-process: read -a populates array from marker variable
-            let markers: Vec<(String, String)> = self
-                .variables
-                .iter()
-                .filter(|(k, _)| k.starts_with("_ARRAY_READ_"))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
-            for (marker, value) in markers {
-                let arr_name = marker.strip_prefix("_ARRAY_READ_").unwrap();
-                let mut arr = HashMap::new();
-                for (i, word) in value.split('\x1F').enumerate() {
-                    if !word.is_empty() {
-                        arr.insert(i, word.to_string());
-                    }
-                }
-                self.insert_array_checked(arr_name.to_string(), arr);
-                self.variables.remove(&marker);
-            }
-
-            // Post-process: shift builtin updates positional parameters
-            if let Some(shift_str) = self.variables.remove("_SHIFT_COUNT") {
-                let n: usize = shift_str.parse().unwrap_or(1);
-                if let Some(frame) = self.call_stack.last_mut() {
-                    if n <= frame.positional.len() {
-                        frame.positional.drain(..n);
-                    } else {
-                        frame.positional.clear();
-                    }
-                }
-            }
-
-            // Post-process: `set --` replaces positional parameters
-            // Encoded as count\x1Farg1\x1Farg2... to preserve empty args.
-            if let Some(encoded) = self.variables.remove("_SET_POSITIONAL") {
-                let parts: Vec<&str> = encoded.splitn(2, '\x1F').collect();
-                let count: usize = parts[0].parse().unwrap_or(0);
-                let new_positional: Vec<String> = if count == 0 {
-                    Vec::new()
-                } else if parts.len() > 1 {
-                    parts[1].split('\x1F').map(|s| s.to_string()).collect()
-                } else {
-                    Vec::new()
-                };
-                if let Some(frame) = self.call_stack.last_mut() {
-                    frame.positional = new_positional;
-                } else {
-                    self.call_stack.push(CallFrame {
-                        name: String::new(),
-                        locals: HashMap::new(),
-                        positional: new_positional,
-                    });
-                }
-            }
+            // Process structured side effects from builtins
+            self.apply_builtin_side_effects(&result);
 
             // Handle output redirections
             return self.apply_redirections(result, &command.redirects).await;
@@ -6051,6 +6001,7 @@ impl Interpreter {
                         git_client: self.git_client.as_ref(),
                     };
                     let mut result = builtin.execute(ctx).await?;
+                    self.apply_builtin_side_effects(&result);
                     result = self.apply_redirections(result, redirects).await?;
                     Ok(result)
                 } else {
@@ -6594,6 +6545,43 @@ impl Interpreter {
         }
 
         Ok(stdin)
+    }
+
+    /// Process structured side effects from builtin execution.
+    fn apply_builtin_side_effects(&mut self, result: &ExecResult) {
+        for effect in &result.side_effects {
+            match effect {
+                builtins::BuiltinSideEffect::SetArray { name, elements } => {
+                    let mut arr = HashMap::new();
+                    for (i, word) in elements.iter().enumerate() {
+                        if !word.is_empty() {
+                            arr.insert(i, word.clone());
+                        }
+                    }
+                    self.insert_array_checked(name.clone(), arr);
+                }
+                builtins::BuiltinSideEffect::ShiftPositional(n) => {
+                    if let Some(frame) = self.call_stack.last_mut() {
+                        if *n <= frame.positional.len() {
+                            frame.positional.drain(..*n);
+                        } else {
+                            frame.positional.clear();
+                        }
+                    }
+                }
+                builtins::BuiltinSideEffect::SetPositional(new_positional) => {
+                    if let Some(frame) = self.call_stack.last_mut() {
+                        frame.positional = new_positional.clone();
+                    } else {
+                        self.call_stack.push(CallFrame {
+                            name: String::new(),
+                            locals: HashMap::new(),
+                            positional: new_positional.clone(),
+                        });
+                    }
+                }
+            }
+        }
     }
 
     /// Apply output redirections to command output

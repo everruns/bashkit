@@ -13,6 +13,22 @@ pub enum ControlFlow {
     Return(i32),
 }
 
+/// Structured side-effect channel for builtins that need to communicate
+/// state changes back to the interpreter.
+///
+/// Replaces magic-prefixed variables (`_SHIFT_COUNT`, `_SET_POSITIONAL`,
+/// `_ARRAY_READ_*`) with a typed enum. The interpreter reads these from
+/// `ExecResult::side_effects` after builtin execution.
+#[derive(Debug, Clone)]
+pub enum BuiltinSideEffect {
+    /// Shift N positional parameters (replaces `_SHIFT_COUNT`).
+    ShiftPositional(usize),
+    /// Replace all positional parameters (replaces `_SET_POSITIONAL`).
+    SetPositional(Vec<String>),
+    /// Populate an indexed array variable (replaces `_ARRAY_READ_*`).
+    SetArray { name: String, elements: Vec<String> },
+}
+
 /// Result of executing a bash script.
 #[derive(Debug, Clone, Default)]
 pub struct ExecResult {
@@ -32,6 +48,9 @@ pub struct ExecResult {
     pub final_env: Option<std::collections::HashMap<String, String>>,
     /// Structured trace events (empty when `TraceMode::Off`).
     pub events: Vec<crate::trace::TraceEvent>,
+    /// Structured side effects from builtin execution.
+    /// The interpreter processes these after the builtin returns.
+    pub side_effects: Vec<BuiltinSideEffect>,
 }
 
 impl ExecResult {
