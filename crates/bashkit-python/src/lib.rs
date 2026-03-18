@@ -354,11 +354,20 @@ impl PyBash {
             return Err(PyValueError::new_err("external_handler must be callable"));
         }
         if let Some(ref handler) = external_handler {
-            let is_coro = py
-                .import("inspect")?
-                .getattr("iscoroutinefunction")?
-                .call1((handler.bind(py),))?
-                .extract::<bool>()?;
+            // Check both the object itself and its __call__ method to support
+            // objects with `async def __call__` (matching the ExternalHandler Protocol),
+            // decorated coroutines, and similar async callables that return False
+            // from iscoroutinefunction(obj) but True for iscoroutinefunction(obj.__call__).
+            let inspect = py.import("inspect")?;
+            let is_coro_fn = inspect.getattr("iscoroutinefunction")?;
+            let bound = handler.bind(py);
+            let is_coro = is_coro_fn.call1((bound,))?.extract::<bool>()?
+                || bound
+                    .getattr("__call__")
+                    .ok()
+                    .and_then(|c| is_coro_fn.call1((c,)).ok())
+                    .and_then(|r| r.extract::<bool>().ok())
+                    .unwrap_or(false);
             if !is_coro {
                 return Err(PyValueError::new_err(
                     "external_handler must be an async callable (coroutine function)",
@@ -488,6 +497,7 @@ impl PyBash {
         let external_functions = self.external_functions.clone();
         // Clone handler ref while still holding the GIL (before py.detach).
         let handler_clone = self.external_handler.as_ref().map(|h| h.clone_ref(py));
+        let cancelled = self.cancelled.clone();
 
         py.detach(|| {
             self.rt.block_on(async move {
@@ -509,6 +519,9 @@ impl PyBash {
                 builder = builder.limits(limits);
                 builder = apply_python_config(builder, python, external_functions, handler_clone);
                 *bash = builder.build();
+                // Reset the shared cancellation flag so cancel() doesn't immediately
+                // abort executions that started after reset.
+                cancelled.store(false, std::sync::atomic::Ordering::Relaxed);
                 Ok(())
             })
         })
@@ -1135,14 +1148,26 @@ fn monty_to_py(py: Python<'_>, obj: &MontyObject) -> PyResult<Py<PyAny>> {
                 .collect::<PyResult<Vec<_>>>()?;
             Ok(PyTuple::new(py, &py_items)?.into_any().unbind())
         }
-        // Known limitation: Set and FrozenSet become PyList — Python sets require
-        // hashable elements which Py<PyAny> cannot guarantee in general.
-        MontyObject::List(items) | MontyObject::Set(items) | MontyObject::FrozenSet(items) => {
+        MontyObject::List(items) => {
             let py_items = items
                 .iter()
                 .map(|v| monty_to_py(py, v))
                 .collect::<PyResult<Vec<_>>>()?;
             Ok(PyList::new(py, &py_items)?.into_any().unbind())
+        }
+        MontyObject::Set(items) => {
+            let py_items = items
+                .iter()
+                .map(|v| monty_to_py(py, v))
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(PySet::new(py, &py_items)?.into_any().unbind())
+        }
+        MontyObject::FrozenSet(items) => {
+            let py_items = items
+                .iter()
+                .map(|v| monty_to_py(py, v))
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(PyFrozenSet::new(py, &py_items)?.into_any().unbind())
         }
         // NamedTuple: convert to dict mapping field names to values, preserving field names.
         MontyObject::NamedTuple {

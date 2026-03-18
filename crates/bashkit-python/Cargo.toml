@@ -30,4 +30,4 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 serde_json = { workspace = true }
 
 # Big-integer support for py_to_monty BigInt extraction
-num-bigint = "=0.4.6"  # must match the version pulled in by bashkit core (see Cargo.lock)
+num-bigint = "^0.4.6"  # must be compatible with the version pulled in by bashkit core

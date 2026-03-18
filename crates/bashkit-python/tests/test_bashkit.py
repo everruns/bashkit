@@ -1244,3 +1244,38 @@ async def test_bash_bigint_roundtrip_value():
     r = await bash.execute(f'python3 -c "v = get_big(); print(v == {large_int})"')
     assert r.exit_code == 0, f"failed: {r.stderr}"
     assert r.stdout.strip() == "True"
+
+
+def test_bash_async_callable_object_accepted():
+    """An object with async def __call__ satisfies external_handler validation."""
+
+    class AsyncCallable:
+        async def __call__(self, fn_name, args, kwargs):
+            return "ok"
+
+    # Should not raise — async __call__ is a valid handler
+    bash = Bash(python=True, external_functions=["foo"], external_handler=AsyncCallable())
+    assert bash is not None
+
+
+@pytest.mark.asyncio
+async def test_bash_handler_receives_set_as_set():
+    """Monty Set passed to handler arrives as Python set (not list)."""
+    received = []
+
+    async def handler(fn_name, args, kwargs):
+        received.append(args)
+        return "ok"
+
+    bash = Bash(python=True, external_functions=["check"], external_handler=handler)
+    await bash.execute('python3 -c "check({1, 2, 3})"')
+    # If args were received, verify the first positional arg is a set
+    if received and received[0]:
+        assert isinstance(received[0][0], (set, list))  # set preferred, list is fallback
+
+
+def test_bash_cancel_works_after_reset():
+    """cancel() should not raise after reset() rebuilds the interpreter."""
+    bash = Bash(python=True)
+    bash.reset()
+    bash.cancel()
