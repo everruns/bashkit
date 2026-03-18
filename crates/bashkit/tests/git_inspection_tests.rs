@@ -66,6 +66,21 @@ mod show {
     }
 
     #[tokio::test]
+    async fn show_non_head_revision_returns_error() {
+        let mut bash = create_git_bash();
+        setup_repo(&mut bash).await;
+        // Non-HEAD revisions are not supported — should error, not silently return current content
+        let result = bash
+            .exec("cd /repo && git show HEAD~1:README.md")
+            .await
+            .unwrap();
+        assert_ne!(
+            result.exit_code, 0,
+            "non-HEAD revision should fail, not silently return current content"
+        );
+    }
+
+    #[tokio::test]
     async fn show_no_commits() {
         let mut bash = create_git_bash();
         bash.exec("git init /repo && cd /repo").await.unwrap();

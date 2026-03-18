@@ -1282,8 +1282,13 @@ impl GitClient {
 
         // Handle <rev>:<path> syntax — show file content at revision
         if let Some((rev, path)) = target.split_once(':') {
-            // For simplicity, show current file content (no true history tracking per-file)
-            let _ = rev; // TODO: resolve rev to actual snapshot
+            // Only HEAD is supported — other revisions require history tracking
+            if rev != "HEAD" {
+                return Err(Error::Execution(format!(
+                    "fatal: unsupported revision '{}' (only HEAD is supported in virtual git)",
+                    rev
+                )));
+            }
             let file_path = repo_path.join(path);
             if fs.exists(&file_path).await? {
                 let content = fs.read_file(&file_path).await?;
