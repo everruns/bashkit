@@ -2377,835 +2377,6 @@ impl Interpreter {
         None
     }
 
-    /// Execute a timeout command - run command with time limit
-    ///
-    /// Usage: timeout [OPTIONS] DURATION COMMAND [ARGS...]
-    ///
-    /// Options:
-    ///   --preserve-status  Exit with command's status even on timeout
-    ///   -k DURATION        Kill signal timeout (ignored - always terminates)
-    ///   -s SIGNAL          Signal to send (ignored)
-    ///
-    /// Exit codes:
-    ///   124 - Command timed out
-    ///   125 - Timeout itself failed (bad arguments)
-    ///   Otherwise, exit status of command
-    async fn execute_timeout(
-        &mut self,
-        args: &[String],
-        stdin: Option<String>,
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        use std::time::Duration;
-        use tokio::time::timeout;
-
-        const MAX_TIMEOUT_SECONDS: u64 = 300; // 5 minutes max for safety
-
-        if args.is_empty() {
-            return Ok(ExecResult::err(
-                "timeout: missing operand\nUsage: timeout DURATION COMMAND [ARGS...]\n".to_string(),
-                125,
-            ));
-        }
-
-        // Parse options and find duration/command
-        let mut preserve_status = false;
-        let mut arg_idx = 0;
-
-        while arg_idx < args.len() {
-            let arg = &args[arg_idx];
-            match arg.as_str() {
-                "--preserve-status" => {
-                    preserve_status = true;
-                    arg_idx += 1;
-                }
-                "-k" | "-s" => {
-                    // These options take a value, skip it
-                    arg_idx += 2;
-                }
-                s if s.starts_with('-')
-                    && !s.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) =>
-                {
-                    // Unknown option, skip
-                    arg_idx += 1;
-                }
-                _ => break, // Found duration
-            }
-        }
-
-        if arg_idx >= args.len() {
-            return Ok(ExecResult::err(
-                "timeout: missing operand\nUsage: timeout DURATION COMMAND [ARGS...]\n".to_string(),
-                125,
-            ));
-        }
-
-        // Parse duration
-        let duration_str = &args[arg_idx];
-        let max_duration = Duration::from_secs(MAX_TIMEOUT_SECONDS);
-        let duration = match Self::parse_timeout_duration(duration_str) {
-            Some(d) => {
-                // Cap at max while preserving subsecond precision
-                if d > max_duration { max_duration } else { d }
-            }
-            None => {
-                return Ok(ExecResult::err(
-                    format!("timeout: invalid time interval '{}'\n", duration_str),
-                    125,
-                ));
-            }
-        };
-
-        arg_idx += 1;
-
-        if arg_idx >= args.len() {
-            return Ok(ExecResult::err(
-                "timeout: missing command\nUsage: timeout DURATION COMMAND [ARGS...]\n".to_string(),
-                125,
-            ));
-        }
-
-        // Build the inner command
-        let cmd_name = &args[arg_idx];
-        let cmd_args: Vec<String> = args[arg_idx + 1..].to_vec();
-
-        // If we have stdin from a pipeline, pass it to the inner command via here-string
-        let inner_redirects = if let Some(ref stdin_data) = stdin {
-            vec![Redirect {
-                fd: None,
-                kind: RedirectKind::HereString,
-                target: Word::literal(stdin_data.trim_end_matches('\n').to_string()),
-            }]
-        } else {
-            Vec::new()
-        };
-
-        // Create a SimpleCommand for the inner command
-        let inner_cmd = Command::Simple(SimpleCommand {
-            name: Word::literal(cmd_name.clone()),
-            args: cmd_args.iter().map(|s| Word::literal(s.clone())).collect(),
-            redirects: inner_redirects,
-            assignments: Vec::new(),
-            span: Span::new(),
-        });
-
-        // Execute with timeout using execute_command (which handles recursion via Box::pin)
-        let exec_future = self.execute_command(&inner_cmd);
-        let result = match timeout(duration, exec_future).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(e)) => return Err(e),
-            Err(_) => {
-                // Timeout expired
-                if preserve_status {
-                    // Return the timeout exit code but preserve-status means...
-                    // actually in bash --preserve-status makes timeout return
-                    // the command's exit status, but if it times out, there's no status
-                    // so it still returns 124
-                    ExecResult::err(String::new(), 124)
-                } else {
-                    ExecResult::err(String::new(), 124)
-                }
-            }
-        };
-
-        // Apply output redirections
-        self.apply_redirections(result, redirects).await
-    }
-
-    /// Parse a timeout duration string like "30", "30s", "5m", "1h"
-    fn parse_timeout_duration(s: &str) -> Option<std::time::Duration> {
-        use std::time::Duration;
-
-        let s = s.trim();
-        if s.is_empty() {
-            return None;
-        }
-
-        // Check for suffix
-        let (num_str, multiplier) = if let Some(stripped) = s.strip_suffix('s') {
-            (stripped, 1u64)
-        } else if let Some(stripped) = s.strip_suffix('m') {
-            (stripped, 60u64)
-        } else if let Some(stripped) = s.strip_suffix('h') {
-            (stripped, 3600u64)
-        } else if let Some(stripped) = s.strip_suffix('d') {
-            (stripped, 86400u64)
-        } else {
-            (s, 1u64) // Default to seconds
-        };
-
-        // Parse the number (support decimals)
-        let seconds: f64 = num_str.parse().ok()?;
-        if seconds < 0.0 {
-            return None;
-        }
-
-        let total_secs_f64 = seconds * multiplier as f64;
-        Some(Duration::from_secs_f64(total_secs_f64))
-    }
-
-    /// Execute `xargs` - build and execute command lines from stdin.
-    ///
-    /// Parses xargs options, splits stdin into arguments, and executes the
-    /// target command via the interpreter for each batch.
-    async fn execute_xargs(
-        &mut self,
-        args: &[String],
-        stdin: Option<String>,
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        let mut replace_str: Option<String> = None;
-        let mut max_args: Option<usize> = None;
-        let mut delimiter: Option<char> = None;
-        let mut command: Vec<String> = Vec::new();
-
-        // Parse xargs options
-        let mut i = 0;
-        while i < args.len() {
-            let arg = &args[i];
-            match arg.as_str() {
-                "-I" => {
-                    i += 1;
-                    if i >= args.len() {
-                        return Ok(ExecResult::err(
-                            "xargs: option requires an argument -- 'I'\n".to_string(),
-                            1,
-                        ));
-                    }
-                    replace_str = Some(args[i].clone());
-                    max_args = Some(1); // -I implies -n 1
-                }
-                "-n" => {
-                    i += 1;
-                    if i >= args.len() {
-                        return Ok(ExecResult::err(
-                            "xargs: option requires an argument -- 'n'\n".to_string(),
-                            1,
-                        ));
-                    }
-                    match args[i].parse::<usize>() {
-                        Ok(n) if n > 0 => max_args = Some(n),
-                        _ => {
-                            return Ok(ExecResult::err(
-                                format!("xargs: invalid number: '{}'\n", args[i]),
-                                1,
-                            ));
-                        }
-                    }
-                }
-                "-d" => {
-                    i += 1;
-                    if i >= args.len() {
-                        return Ok(ExecResult::err(
-                            "xargs: option requires an argument -- 'd'\n".to_string(),
-                            1,
-                        ));
-                    }
-                    delimiter = args[i].chars().next();
-                }
-                "-0" => {
-                    delimiter = Some('\0');
-                }
-                s if s.starts_with('-') && s != "-" => {
-                    return Ok(ExecResult::err(
-                        format!("xargs: invalid option -- '{}'\n", &s[1..]),
-                        1,
-                    ));
-                }
-                _ => {
-                    // Rest is the command
-                    command.extend(args[i..].iter().cloned());
-                    break;
-                }
-            }
-            i += 1;
-        }
-
-        // Default command is echo
-        if command.is_empty() {
-            command.push("echo".to_string());
-        }
-
-        // Read input
-        let input = stdin.as_deref().unwrap_or("");
-        if input.is_empty() {
-            let result = ExecResult::ok(String::new());
-            return self.apply_redirections(result, redirects).await;
-        }
-
-        // Split input by delimiter
-        let items: Vec<&str> = if let Some(delim) = delimiter {
-            input.split(delim).filter(|s| !s.is_empty()).collect()
-        } else {
-            input.split_whitespace().collect()
-        };
-
-        if items.is_empty() {
-            let result = ExecResult::ok(String::new());
-            return self.apply_redirections(result, redirects).await;
-        }
-
-        let mut combined_stdout = String::new();
-        let mut combined_stderr = String::new();
-        let mut last_exit_code = 0;
-
-        // Group items based on max_args
-        let chunk_size = max_args.unwrap_or(items.len());
-        let chunks: Vec<Vec<&str>> = items.chunks(chunk_size).map(|c| c.to_vec()).collect();
-
-        for chunk in chunks {
-            let cmd_args: Vec<String> = if let Some(ref repl) = replace_str {
-                // With -I, substitute REPLACE string in all command args
-                let item = chunk.first().unwrap_or(&"");
-                command.iter().map(|arg| arg.replace(repl, item)).collect()
-            } else {
-                // Append chunk items as arguments after the command
-                let mut full = command.clone();
-                full.extend(chunk.iter().map(|s| s.to_string()));
-                full
-            };
-
-            // Build a SimpleCommand and execute it through the interpreter
-            let cmd_name = cmd_args[0].clone();
-            let cmd_rest: Vec<Word> = cmd_args[1..]
-                .iter()
-                .map(|s| Word::literal(s.clone()))
-                .collect();
-
-            let inner_cmd = Command::Simple(SimpleCommand {
-                name: Word::literal(cmd_name),
-                args: cmd_rest,
-                redirects: Vec::new(),
-                assignments: Vec::new(),
-                span: Span::new(),
-            });
-
-            let result = self.execute_command(&inner_cmd).await?;
-            combined_stdout.push_str(&result.stdout);
-            combined_stderr.push_str(&result.stderr);
-            last_exit_code = result.exit_code;
-        }
-
-        let mut result = ExecResult {
-            stdout: combined_stdout,
-            stderr: combined_stderr,
-            exit_code: last_exit_code,
-            control_flow: ControlFlow::None,
-            ..Default::default()
-        };
-
-        result = self.apply_redirections(result, redirects).await?;
-        Ok(result)
-    }
-
-    /// Execute `find` with `-exec` support.
-    ///
-    /// Intercepts find when -exec is present so commands can be executed
-    /// through the interpreter. Supports:
-    /// - `find PATH -exec cmd {} \;`  (per-file execution)
-    /// - `find PATH -exec cmd {} +`   (batch execution)
-    /// - All standard find options: -name, -type, -maxdepth
-    async fn execute_find(
-        &mut self,
-        args: &[String],
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        let mut search_paths: Vec<String> = Vec::new();
-        let mut name_pattern: Option<String> = None;
-        let mut type_filter: Option<char> = None;
-        let mut max_depth: Option<usize> = None;
-        let mut min_depth: Option<usize> = None;
-        let mut exec_args: Vec<String> = Vec::new();
-        let mut exec_batch = false;
-        let mut printf_format: Option<String> = None;
-
-        // Parse arguments
-        let mut i = 0;
-        while i < args.len() {
-            let arg = &args[i];
-            match arg.as_str() {
-                "-name" => {
-                    i += 1;
-                    if i >= args.len() {
-                        return Ok(ExecResult::err(
-                            "find: missing argument to '-name'\n".to_string(),
-                            1,
-                        ));
-                    }
-                    name_pattern = Some(args[i].clone());
-                }
-                "-type" => {
-                    i += 1;
-                    if i >= args.len() {
-                        return Ok(ExecResult::err(
-                            "find: missing argument to '-type'\n".to_string(),
-                            1,
-                        ));
-                    }
-                    match args[i].as_str() {
-                        "f" | "d" | "l" => type_filter = Some(args[i].chars().next().unwrap()),
-                        t => {
-                            return Ok(ExecResult::err(format!("find: unknown type '{}'\n", t), 1));
-                        }
-                    }
-                }
-                "-maxdepth" => {
-                    i += 1;
-                    if i >= args.len() {
-                        return Ok(ExecResult::err(
-                            "find: missing argument to '-maxdepth'\n".to_string(),
-                            1,
-                        ));
-                    }
-                    match args[i].parse::<usize>() {
-                        Ok(n) => max_depth = Some(n),
-                        Err(_) => {
-                            return Ok(ExecResult::err(
-                                format!("find: invalid maxdepth value '{}'\n", args[i]),
-                                1,
-                            ));
-                        }
-                    }
-                }
-                "-mindepth" => {
-                    i += 1;
-                    if i >= args.len() {
-                        return Ok(ExecResult::err(
-                            "find: missing argument to '-mindepth'\n".to_string(),
-                            1,
-                        ));
-                    }
-                    match args[i].parse::<usize>() {
-                        Ok(n) => min_depth = Some(n),
-                        Err(_) => {
-                            return Ok(ExecResult::err(
-                                format!("find: invalid mindepth value '{}'\n", args[i]),
-                                1,
-                            ));
-                        }
-                    }
-                }
-                "-print" | "-print0" => {}
-                "-printf" => {
-                    i += 1;
-                    if i >= args.len() {
-                        return Ok(ExecResult::err(
-                            "find: missing argument to '-printf'\n".to_string(),
-                            1,
-                        ));
-                    }
-                    printf_format = Some(args[i].clone());
-                }
-                "-exec" | "-execdir" => {
-                    i += 1;
-                    while i < args.len() {
-                        let a = &args[i];
-                        if a == ";" || a == "\\;" {
-                            break;
-                        }
-                        if a == "+" {
-                            exec_batch = true;
-                            break;
-                        }
-                        exec_args.push(a.clone());
-                        i += 1;
-                    }
-                }
-                "-not" | "!" => {}
-                s if s.starts_with('-') => {
-                    return Ok(ExecResult::err(
-                        format!("find: unknown predicate '{}'\n", s),
-                        1,
-                    ));
-                }
-                _ => {
-                    search_paths.push(arg.clone());
-                }
-            }
-            i += 1;
-        }
-
-        if search_paths.is_empty() {
-            search_paths.push(".".to_string());
-        }
-
-        // Collect matching paths via recursive walk
-        let mut matched_paths: Vec<String> = Vec::new();
-        for path_str in &search_paths {
-            let path = self.resolve_path(path_str);
-            if !self.fs.exists(&path).await.unwrap_or(false) {
-                return Ok(ExecResult::err(
-                    format!("find: '{}': No such file or directory\n", path_str),
-                    1,
-                ));
-            }
-            self.find_collect(
-                &path,
-                path_str,
-                &name_pattern,
-                type_filter,
-                max_depth,
-                0,
-                &mut matched_paths,
-            )
-            .await?;
-        }
-
-        // Filter by mindepth
-        if let Some(min) = min_depth {
-            matched_paths.retain(|p| {
-                let depth = if search_paths.len() == 1 {
-                    let base = &search_paths[0];
-                    if p == base {
-                        0
-                    } else {
-                        let suffix = p.strip_prefix(base).unwrap_or(p);
-                        let suffix = suffix.strip_prefix('/').unwrap_or(suffix);
-                        if suffix.is_empty() {
-                            0
-                        } else {
-                            suffix.matches('/').count() + 1
-                        }
-                    }
-                } else {
-                    0
-                };
-                depth >= min
-            });
-        }
-
-        // Handle -printf output
-        if let Some(ref fmt) = printf_format {
-            let mut output = String::new();
-            for found_path in &matched_paths {
-                let resolved = self.resolve_path(found_path);
-                let formatted = self
-                    .find_printf_format(fmt, found_path, &resolved, &search_paths)
-                    .await;
-                output.push_str(&formatted);
-            }
-            let result = ExecResult::ok(output);
-            return self.apply_redirections(result, redirects).await;
-        }
-
-        // Execute commands for matched paths
-        if exec_args.is_empty() {
-            // No exec command parsed, just print
-            let output =
-                matched_paths.join("\n") + if matched_paths.is_empty() { "" } else { "\n" };
-            let result = ExecResult::ok(output);
-            return self.apply_redirections(result, redirects).await;
-        }
-
-        let mut combined_stdout = String::new();
-        let mut combined_stderr = String::new();
-        let mut last_exit_code = 0;
-
-        if exec_batch {
-            // Batch mode: -exec cmd {} +
-            // Replace {} with all paths at once
-            let cmd_args: Vec<String> = exec_args
-                .iter()
-                .flat_map(|arg| {
-                    if arg == "{}" {
-                        matched_paths.clone()
-                    } else {
-                        vec![arg.clone()]
-                    }
-                })
-                .collect();
-
-            if !cmd_args.is_empty() {
-                let cmd_name = cmd_args[0].clone();
-                let cmd_rest: Vec<Word> = cmd_args[1..]
-                    .iter()
-                    .map(|s| Word::literal(s.clone()))
-                    .collect();
-
-                let inner_cmd = Command::Simple(SimpleCommand {
-                    name: Word::literal(cmd_name),
-                    args: cmd_rest,
-                    redirects: Vec::new(),
-                    assignments: Vec::new(),
-                    span: Span::new(),
-                });
-
-                let result = self.execute_command(&inner_cmd).await?;
-                combined_stdout.push_str(&result.stdout);
-                combined_stderr.push_str(&result.stderr);
-                last_exit_code = result.exit_code;
-            }
-        } else {
-            // Per-file mode: -exec cmd {} \;
-            for found_path in &matched_paths {
-                let cmd_args: Vec<String> = exec_args
-                    .iter()
-                    .map(|arg| arg.replace("{}", found_path))
-                    .collect();
-
-                if cmd_args.is_empty() {
-                    continue;
-                }
-
-                let cmd_name = cmd_args[0].clone();
-                let cmd_rest: Vec<Word> = cmd_args[1..]
-                    .iter()
-                    .map(|s| Word::literal(s.clone()))
-                    .collect();
-
-                let inner_cmd = Command::Simple(SimpleCommand {
-                    name: Word::literal(cmd_name),
-                    args: cmd_rest,
-                    redirects: Vec::new(),
-                    assignments: Vec::new(),
-                    span: Span::new(),
-                });
-
-                let result = self.execute_command(&inner_cmd).await?;
-                combined_stdout.push_str(&result.stdout);
-                combined_stderr.push_str(&result.stderr);
-                last_exit_code = result.exit_code;
-            }
-        }
-
-        let mut result = ExecResult {
-            stdout: combined_stdout,
-            stderr: combined_stderr,
-            exit_code: last_exit_code,
-            control_flow: ControlFlow::None,
-            ..Default::default()
-        };
-
-        result = self.apply_redirections(result, redirects).await?;
-        Ok(result)
-    }
-
-    /// Recursively collect paths matching find criteria.
-    ///
-    /// Helper for `execute_find`. Walks the filesystem tree and collects
-    /// display paths of entries matching name/type/depth filters.
-    #[allow(clippy::too_many_arguments)]
-    fn find_collect<'a>(
-        &'a self,
-        path: &'a Path,
-        display_path: &'a str,
-        name_pattern: &'a Option<String>,
-        type_filter: Option<char>,
-        max_depth: Option<usize>,
-        current_depth: usize,
-        results: &'a mut Vec<String>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
-        Box::pin(async move {
-            use crate::builtins::glob_match;
-
-            let metadata = self.fs.stat(path).await?;
-            let entry_name = Path::new(display_path)
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| display_path.to_string());
-
-            let type_matches = match type_filter {
-                Some('f') => metadata.file_type.is_file(),
-                Some('d') => metadata.file_type.is_dir(),
-                Some('l') => metadata.file_type.is_symlink(),
-                _ => true,
-            };
-
-            let name_matches = match name_pattern {
-                Some(pattern) => glob_match(&entry_name, pattern),
-                None => true,
-            };
-
-            if type_matches && name_matches {
-                results.push(display_path.to_string());
-            }
-
-            if metadata.file_type.is_dir() {
-                if let Some(max) = max_depth
-                    && current_depth >= max
-                {
-                    return Ok(());
-                }
-
-                let entries = self.fs.read_dir(path).await?;
-                let mut sorted_entries = entries;
-                sorted_entries.sort_by(|a, b| a.name.cmp(&b.name));
-
-                for entry in sorted_entries {
-                    let child_path = path.join(&entry.name);
-                    let child_display = if display_path == "." {
-                        format!("./{}", entry.name)
-                    } else {
-                        format!("{}/{}", display_path, entry.name)
-                    };
-
-                    self.find_collect(
-                        &child_path,
-                        &child_display,
-                        name_pattern,
-                        type_filter,
-                        max_depth,
-                        current_depth + 1,
-                        results,
-                    )
-                    .await?;
-                }
-            }
-
-            Ok(())
-        })
-    }
-
-    /// Format a single path using a `-printf` format string.
-    ///
-    /// Supported specifiers: `%f` (filename), `%p` (full path), `%P` (relative path),
-    /// `%s` (size), `%m` (octal mode), `%M` (symbolic mode), `%T@` (mtime epoch),
-    /// `%y` (type char), `%d` (depth). Escapes: `\n`, `\t`, `\0`, `\\`.
-    async fn find_printf_format(
-        &self,
-        fmt: &str,
-        display_path: &str,
-        resolved_path: &Path,
-        search_paths: &[String],
-    ) -> String {
-        let meta = self.fs.stat(resolved_path).await.ok();
-
-        let mut out = String::new();
-        let chars: Vec<char> = fmt.chars().collect();
-        let mut i = 0;
-        while i < chars.len() {
-            match chars[i] {
-                '\\' => {
-                    i += 1;
-                    if i < chars.len() {
-                        match chars[i] {
-                            'n' => out.push('\n'),
-                            't' => out.push('\t'),
-                            '0' => out.push('\0'),
-                            '\\' => out.push('\\'),
-                            c => {
-                                out.push('\\');
-                                out.push(c);
-                            }
-                        }
-                    }
-                }
-                '%' => {
-                    i += 1;
-                    if i >= chars.len() {
-                        out.push('%');
-                        continue;
-                    }
-                    match chars[i] {
-                        'f' => {
-                            // Filename (basename)
-                            let name = Path::new(display_path)
-                                .file_name()
-                                .map(|s| s.to_string_lossy().to_string())
-                                .unwrap_or_else(|| display_path.to_string());
-                            out.push_str(&name);
-                        }
-                        'p' => {
-                            out.push_str(display_path);
-                        }
-                        'P' => {
-                            // Path relative to search root (strip search path prefix)
-                            let base = search_paths.first().map(|s| s.as_str()).unwrap_or(".");
-                            let rel = display_path
-                                .strip_prefix(base)
-                                .unwrap_or(display_path)
-                                .trim_start_matches('/');
-                            out.push_str(rel);
-                        }
-                        's' => {
-                            let size = meta.as_ref().map(|m| m.size).unwrap_or(0);
-                            out.push_str(&size.to_string());
-                        }
-                        'm' => {
-                            let mode = meta.as_ref().map(|m| m.mode).unwrap_or(0);
-                            out.push_str(&format!("{:o}", mode & 0o7777));
-                        }
-                        'M' => {
-                            // Symbolic mode like ls -l (e.g., -rw-r--r--)
-                            let m = meta.as_ref();
-                            let ft = m.map(|m| &m.file_type);
-                            let mode = m.map(|m| m.mode).unwrap_or(0);
-                            let type_ch = match ft {
-                                Some(ft) if ft.is_dir() => 'd',
-                                Some(ft) if ft.is_symlink() => 'l',
-                                _ => '-',
-                            };
-                            out.push(type_ch);
-                            for shift in [6, 3, 0] {
-                                let bits = (mode >> shift) & 7;
-                                out.push(if bits & 4 != 0 { 'r' } else { '-' });
-                                out.push(if bits & 2 != 0 { 'w' } else { '-' });
-                                out.push(if bits & 1 != 0 { 'x' } else { '-' });
-                            }
-                        }
-                        'y' => {
-                            let ch = match meta.as_ref().map(|m| &m.file_type) {
-                                Some(ft) if ft.is_dir() => 'd',
-                                Some(ft) if ft.is_symlink() => 'l',
-                                Some(ft) if ft.is_file() => 'f',
-                                _ => 'f',
-                            };
-                            out.push(ch);
-                        }
-                        'd' => {
-                            // Depth relative to search root
-                            let base = search_paths.first().map(|s| s.as_str()).unwrap_or(".");
-                            let depth = if display_path == base {
-                                0
-                            } else {
-                                let suffix = display_path
-                                    .strip_prefix(base)
-                                    .unwrap_or(display_path)
-                                    .trim_start_matches('/');
-                                if suffix.is_empty() {
-                                    0
-                                } else {
-                                    suffix.matches('/').count() + 1
-                                }
-                            };
-                            out.push_str(&depth.to_string());
-                        }
-                        'T' => {
-                            // %T@ = mtime as seconds since epoch
-                            i += 1;
-                            if i < chars.len() && chars[i] == '@' {
-                                let secs = meta
-                                    .as_ref()
-                                    .and_then(|m| {
-                                        m.modified
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .ok()
-                                            .map(|d| d.as_secs())
-                                    })
-                                    .unwrap_or(0);
-                                out.push_str(&secs.to_string());
-                            } else {
-                                out.push_str("%T");
-                                // re-process current char
-                                continue;
-                            }
-                        }
-                        '%' => {
-                            out.push('%');
-                        }
-                        c => {
-                            out.push('%');
-                            out.push(c);
-                        }
-                    }
-                }
-                c => out.push(c),
-            }
-            i += 1;
-        }
-        out
-    }
-
     /// Execute `bash` or `sh` command - interpret scripts using this interpreter.
     ///
     /// Supports:
@@ -4451,21 +3622,6 @@ impl Interpreter {
             return self.execute_history(&args, &command.redirects).await;
         }
 
-        // Handle `timeout` specially - needs interpreter-level command execution
-        if name == "timeout" {
-            return self.execute_timeout(&args, stdin, &command.redirects).await;
-        }
-
-        // Handle `xargs` specially - needs interpreter-level command execution
-        if name == "xargs" {
-            return self.execute_xargs(&args, stdin, &command.redirects).await;
-        }
-
-        // Handle `find -exec` specially - needs interpreter-level command execution
-        if name == "find" && args.iter().any(|a| a == "-exec" || a == "-execdir") {
-            return self.execute_find(&args, &command.redirects).await;
-        }
-
         // Handle `bash` and `sh` specially - execute scripts using the interpreter
         if name == "bash" || name == "sh" {
             return self
@@ -4560,6 +3716,45 @@ impl Interpreter {
 
         // Check for builtins
         if let Some(builtin) = self.builtins.get(name) {
+            // First, check if the builtin wants to return an execution plan
+            // (e.g. timeout, xargs, find -exec need the interpreter to run sub-commands)
+            {
+                let plan_ctx = builtins::Context {
+                    args: &args,
+                    env: &self.env,
+                    variables: &mut self.variables,
+                    cwd: &mut self.cwd,
+                    fs: Arc::clone(&self.fs),
+                    stdin: stdin.as_deref(),
+                    #[cfg(feature = "http_client")]
+                    http_client: self.http_client.as_ref(),
+                    #[cfg(feature = "git")]
+                    git_client: self.git_client.as_ref(),
+                };
+
+                let plan_result = AssertUnwindSafe(builtin.execution_plan(&plan_ctx))
+                    .catch_unwind()
+                    .await;
+
+                match plan_result {
+                    Ok(Ok(Some(plan))) => {
+                        let result = self.execute_builtin_plan(plan, &command.redirects).await?;
+                        return Ok(result);
+                    }
+                    Ok(Ok(None)) => {
+                        // No plan - fall through to normal execute()
+                    }
+                    Ok(Err(e)) => return Err(e),
+                    Err(_panic) => {
+                        let result = ExecResult::err(
+                            format!("bash: {}: builtin failed unexpectedly\n", name),
+                            1,
+                        );
+                        return self.apply_redirections(result, &command.redirects).await;
+                    }
+                }
+            }
+
             let ctx = builtins::Context {
                 args: &args,
                 env: &self.env,
@@ -6549,6 +5744,104 @@ impl Interpreter {
         }
 
         Ok(stdin)
+    }
+
+    /// Execute an [`ExecutionPlan`] returned by a builtin's `execution_plan()` method.
+    ///
+    /// This is the interpreter hook that fulfills sub-command execution requests
+    /// from builtins like `timeout`, `xargs`, and `find -exec`.
+    async fn execute_builtin_plan(
+        &mut self,
+        plan: builtins::ExecutionPlan,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let result = match plan {
+            builtins::ExecutionPlan::Timeout {
+                duration,
+                preserve_status,
+                command,
+            } => {
+                use tokio::time::timeout;
+
+                // Build inner command with optional stdin via here-string
+                let inner_redirects = if let Some(ref stdin_data) = command.stdin {
+                    vec![Redirect {
+                        fd: None,
+                        kind: RedirectKind::HereString,
+                        target: Word::literal(stdin_data.trim_end_matches('\n').to_string()),
+                    }]
+                } else {
+                    Vec::new()
+                };
+
+                let inner_cmd = Command::Simple(SimpleCommand {
+                    name: Word::literal(command.name),
+                    args: command
+                        .args
+                        .iter()
+                        .map(|s| Word::literal(s.clone()))
+                        .collect(),
+                    redirects: inner_redirects,
+                    assignments: Vec::new(),
+                    span: Span::new(),
+                });
+
+                let exec_future = self.execute_command(&inner_cmd);
+                match timeout(duration, exec_future).await {
+                    Ok(Ok(result)) => result,
+                    Ok(Err(e)) => return Err(e),
+                    Err(_) => {
+                        // Timeout expired.
+                        // --preserve-status: in real bash, returns the signal+128 status
+                        // of the killed child.  We can't capture that from tokio::timeout,
+                        // so we always use 124 (the standard timeout exit code).
+                        // TODO: propagate child exit status when preserve_status is true
+                        let exit_code = if preserve_status { 137 } else { 124 };
+                        ExecResult::err(String::new(), exit_code)
+                    }
+                }
+            }
+            builtins::ExecutionPlan::Batch { commands } => {
+                let mut combined_stdout = String::new();
+                let mut combined_stderr = String::new();
+                let mut last_exit_code = 0;
+
+                for cmd in commands {
+                    let cmd_redirects = if let Some(ref stdin_data) = cmd.stdin {
+                        vec![Redirect {
+                            fd: None,
+                            kind: RedirectKind::HereString,
+                            target: Word::literal(stdin_data.trim_end_matches('\n').to_string()),
+                        }]
+                    } else {
+                        Vec::new()
+                    };
+
+                    let inner_cmd = Command::Simple(SimpleCommand {
+                        name: Word::literal(cmd.name),
+                        args: cmd.args.iter().map(|s| Word::literal(s.clone())).collect(),
+                        redirects: cmd_redirects,
+                        assignments: Vec::new(),
+                        span: Span::new(),
+                    });
+
+                    let result = self.execute_command(&inner_cmd).await?;
+                    combined_stdout.push_str(&result.stdout);
+                    combined_stderr.push_str(&result.stderr);
+                    last_exit_code = result.exit_code;
+                }
+
+                ExecResult {
+                    stdout: combined_stdout,
+                    stderr: combined_stderr,
+                    exit_code: last_exit_code,
+                    control_flow: ControlFlow::None,
+                    ..Default::default()
+                }
+            }
+        };
+
+        self.apply_redirections(result, redirects).await
     }
 
     /// Process structured side effects from builtin execution.
@@ -9559,23 +8852,24 @@ mod tests {
         );
     }
 
-    /// Test that parse_timeout_duration preserves subsecond precision
+    /// Test that parse_duration preserves subsecond precision
     #[test]
     fn test_parse_timeout_duration_subsecond() {
+        use crate::builtins::timeout::parse_duration;
         use std::time::Duration;
 
         // Should preserve subsecond precision
-        let d = Interpreter::parse_timeout_duration("0.001").unwrap();
+        let d = parse_duration("0.001").unwrap();
         assert_eq!(d, Duration::from_secs_f64(0.001));
 
-        let d = Interpreter::parse_timeout_duration("0.5").unwrap();
+        let d = parse_duration("0.5").unwrap();
         assert_eq!(d, Duration::from_millis(500));
 
-        let d = Interpreter::parse_timeout_duration("1.5s").unwrap();
+        let d = parse_duration("1.5s").unwrap();
         assert_eq!(d, Duration::from_millis(1500));
 
         // Zero should work
-        let d = Interpreter::parse_timeout_duration("0").unwrap();
+        let d = parse_duration("0").unwrap();
         assert_eq!(d, Duration::ZERO);
     }
 
