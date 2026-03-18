@@ -243,7 +243,26 @@ pub enum ExecutionPlan {
 in the interpreter's plan fulfillment code (`interpreter/mod.rs`). Custom
 builtins can also override `execution_plan()` to request sub-command execution.
 
-### Custom Builtins
+### Adding Internal Builtins
+
+Simple builtins (zero-arg unit structs) are registered via the `register_builtins!`
+macro in `interpreter/mod.rs`. To add a new one:
+
+1. Create the builtin module in `crates/bashkit/src/builtins/` (implement `Builtin` trait)
+2. Add `mod mycommand;` and `pub use mycommand::MyCommand;` in `builtins/mod.rs`
+3. Add one line to the `register_builtins!` table in `interpreter/mod.rs`:
+   ```rust
+   register_builtins!(builtins,
+       // ...existing entries...
+       "mycommand" => MyCommand,
+   );
+   ```
+
+Builtins that need constructor parameters (filesystem, config values, etc.) are
+registered as explicit `builtins.insert(...)` calls below the macro invocation.
+See `date`, `source`, `hostname`, `uname`, `whoami`, `id` for examples.
+
+### Custom Builtins (External)
 
 Bashkit supports registering custom builtins via `BashBuilder`:
 
