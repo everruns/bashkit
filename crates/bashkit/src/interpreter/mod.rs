@@ -226,6 +226,58 @@ pub(crate) fn is_valid_var_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// Flags shared between `declare` and `local` builtins.
+#[derive(Default)]
+struct DeclareFlags {
+    nameref: bool,
+    array: bool,
+    assoc: bool,
+    integer: bool,
+}
+
+impl DeclareFlags {
+    /// Parse common declare/local flags from a flag argument like "-naAi".
+    fn parse_flag_chars(&mut self, flag_arg: &str) {
+        for c in flag_arg[1..].chars() {
+            match c {
+                'n' => self.nameref = true,
+                'a' => self.array = true,
+                'A' => self.assoc = true,
+                'i' => self.integer = true,
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Reconstruct compound assignments that were split across arguments.
+///
+/// Shell compound assignments like `arr=(1 2 3)` get split into
+/// `["arr=(1", "2", "3)"]` by the parser. This merges them back.
+fn merge_compound_assignments<S: AsRef<str>>(args: &[S]) -> Vec<String> {
+    let mut merged = Vec::new();
+    let mut pending: Option<String> = None;
+    for arg in args {
+        let s = arg.as_ref();
+        if let Some(ref mut p) = pending {
+            p.push(' ');
+            p.push_str(s);
+            if s.ends_with(')') {
+                merged.push(p.clone());
+                pending = None;
+            }
+        } else if s.contains("=(") && !s.ends_with(')') {
+            pending = Some(s.to_string());
+        } else {
+            merged.push(s.to_string());
+        }
+    }
+    if let Some(p) = pending {
+        merged.push(p);
+    }
+    merged
+}
+
 /// A frame in the call stack for local variable scoping
 #[derive(Debug, Clone)]
 struct CallFrame {
@@ -5006,49 +5058,17 @@ impl Interpreter {
         args: &[String],
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
-        // Parse flags: -n for nameref, -a for indexed array, -A for assoc, -i for integer
-        let mut is_nameref = false;
-        let mut is_array = false;
-        let mut is_assoc = false;
-        let mut is_integer = false;
+        let mut flags = DeclareFlags::default();
         let mut var_args: Vec<&String> = Vec::new();
         for arg in args {
             if arg.starts_with('-') && !arg.contains('=') {
-                for c in arg[1..].chars() {
-                    match c {
-                        'n' => is_nameref = true,
-                        'a' => is_array = true,
-                        'A' => is_assoc = true,
-                        'i' => is_integer = true,
-                        _ => {}
-                    }
-                }
+                flags.parse_flag_chars(arg);
             } else {
                 var_args.push(arg);
             }
         }
 
-        // Reconstruct compound assignments: local -a arr=(1 2 3)
-        // Args may be split: ["arr=(1", "2", "3)"]
-        let mut merged: Vec<String> = Vec::new();
-        let mut pending: Option<String> = None;
-        for arg in &var_args {
-            if let Some(ref mut p) = pending {
-                p.push(' ');
-                p.push_str(arg);
-                if arg.ends_with(')') {
-                    merged.push(p.clone());
-                    pending = None;
-                }
-            } else if arg.contains("=(") && !arg.ends_with(')') {
-                pending = Some(arg.to_string());
-            } else {
-                merged.push(arg.to_string());
-            }
-        }
-        if let Some(p) = pending {
-            merged.push(p);
-        }
+        let merged = merge_compound_assignments(&var_args);
 
         if !self.call_stack.is_empty() {
             // In a function - set in locals
@@ -5068,9 +5088,12 @@ impl Interpreter {
                         continue;
                     }
                     // Handle compound array assignment: local -a arr=(1 2 3)
-                    if (is_array || is_assoc) && value.starts_with('(') && value.ends_with(')') {
+                    if (flags.array || flags.assoc)
+                        && value.starts_with('(')
+                        && value.ends_with(')')
+                    {
                         let inner = &value[1..value.len() - 1];
-                        if is_assoc {
+                        if flags.assoc {
                             let arr = self.assoc_arrays.entry(var_name.to_string()).or_default();
                             arr.clear();
                             let mut rest = inner.trim();
@@ -5120,13 +5143,13 @@ impl Interpreter {
                             .unwrap()
                             .locals
                             .insert(var_name.to_string(), String::new());
-                    } else if is_nameref {
+                    } else if flags.nameref {
                         self.call_stack
                             .last_mut()
                             .unwrap()
                             .locals
                             .insert(var_name.to_string(), String::new());
-                    } else if is_integer {
+                    } else if flags.integer {
                         let int_val = self.evaluate_arithmetic_with_assign(value);
                         self.call_stack
                             .last_mut()
@@ -5148,14 +5171,14 @@ impl Interpreter {
                         .unwrap()
                         .locals
                         .insert(arg.to_string(), String::new());
-                    if is_integer {
+                    if flags.integer {
                         self.variables
                             .insert(format!("_INTEGER_{}", arg), "1".to_string());
                     }
                 }
             }
             // Set nameref markers (after frame borrow is released)
-            if is_nameref {
+            if flags.nameref {
                 for arg in &merged {
                     if let Some(eq_pos) = arg.find('=') {
                         let var_name = &arg[..eq_pos];
@@ -5177,7 +5200,7 @@ impl Interpreter {
                     if is_internal_variable(var_name) {
                         continue;
                     }
-                    if is_nameref {
+                    if flags.nameref {
                         self.variables
                             .insert(format!("_NAMEREF_{}", var_name), value.to_string());
                     } else {
@@ -6215,10 +6238,7 @@ impl Interpreter {
         let mut print_mode = false;
         let mut is_readonly = false;
         let mut is_export = false;
-        let mut is_array = false;
-        let mut is_assoc = false;
-        let mut is_integer = false;
-        let mut is_nameref = false;
+        let mut flags = DeclareFlags::default();
         let mut remove_nameref = false;
         let mut is_lowercase = false;
         let mut is_uppercase = false;
@@ -6226,19 +6246,15 @@ impl Interpreter {
 
         for arg in args {
             if arg.starts_with('-') && !arg.contains('=') {
+                flags.parse_flag_chars(arg);
                 for c in arg[1..].chars() {
                     match c {
                         'p' => print_mode = true,
                         'r' => is_readonly = true,
                         'x' => is_export = true,
-                        'a' => is_array = true,
-                        'i' => is_integer = true,
-                        'A' => is_assoc = true,
-                        'n' => is_nameref = true,
                         'l' => is_lowercase = true,
                         'u' => is_uppercase = true,
-                        'g' | 't' | 'f' | 'F' => {} // ignored
-                        _ => {}
+                        _ => {} // n, a, A, i handled by flags
                     }
                 }
             } else if arg.starts_with('+') && !arg.contains('=') {
@@ -6310,31 +6326,7 @@ impl Interpreter {
         }
 
         // Reconstruct compound assignments: declare -A m=([a]="1" [b]="2")
-        // Args may be split across names: ["m=([a]=1", "[b]=2)"]
-        let mut merged_names: Vec<String> = Vec::new();
-        let mut pending: Option<String> = None;
-        for name in &names {
-            if let Some(ref mut p) = pending {
-                p.push(' ');
-                p.push_str(name);
-                if name.ends_with(')') {
-                    merged_names.push(p.clone());
-                    pending = None;
-                }
-            } else if let Some(eq_pos) = name.find("=(") {
-                if name.ends_with(')') {
-                    merged_names.push(name.to_string());
-                } else {
-                    pending = Some(name.to_string());
-                    let _ = eq_pos; // used above in find
-                }
-            } else {
-                merged_names.push(name.to_string());
-            }
-        }
-        if let Some(p) = pending {
-            merged_names.push(p);
-        }
+        let merged_names = merge_compound_assignments(&names);
 
         // Set variables
         for name in &merged_names {
@@ -6356,9 +6348,9 @@ impl Interpreter {
                 }
 
                 // Handle compound array assignment: declare -A m=([k]="v" ...)
-                if (is_assoc || is_array) && value.starts_with('(') && value.ends_with(')') {
+                if (flags.assoc || flags.array) && value.starts_with('(') && value.ends_with(')') {
                     let inner = &value[1..value.len() - 1];
-                    if is_assoc {
+                    if flags.assoc {
                         let arr = self.assoc_arrays.entry(var_name.to_string()).or_default();
                         arr.clear();
                         // Parse [key]="value" pairs
@@ -6404,11 +6396,11 @@ impl Interpreter {
                             arr.insert(idx, val.trim_matches('"').to_string());
                         }
                     }
-                } else if is_nameref {
+                } else if flags.nameref {
                     // declare -n ref=target: create nameref
                     self.variables
                         .insert(format!("_NAMEREF_{}", var_name), value.to_string());
-                } else if is_integer {
+                } else if flags.integer {
                     // Evaluate as arithmetic expression
                     let int_val = self.evaluate_arithmetic_with_assign(value);
                     self.insert_variable_checked(var_name.to_string(), int_val.to_string());
@@ -6453,7 +6445,7 @@ impl Interpreter {
                 if remove_nameref {
                     // typeset +n ref: remove nameref attribute
                     self.variables.remove(&format!("_NAMEREF_{}", name));
-                } else if is_nameref {
+                } else if flags.nameref {
                     // typeset -n ref (without =value): use existing variable value as target
                     if let Some(existing) = self.variables.get(name.as_str()).cloned()
                         && !existing.is_empty()
@@ -6461,10 +6453,10 @@ impl Interpreter {
                         self.variables
                             .insert(format!("_NAMEREF_{}", name), existing);
                     }
-                } else if is_assoc {
+                } else if flags.assoc {
                     // Initialize empty associative array
                     self.assoc_arrays.entry(name.to_string()).or_default();
-                } else if is_array {
+                } else if flags.array {
                     // Initialize empty indexed array
                     self.arrays.entry(name.to_string()).or_default();
                 } else if !self.variables.contains_key(name.as_str()) {
@@ -6485,7 +6477,7 @@ impl Interpreter {
                     self.variables
                         .insert(format!("_READONLY_{}", name), "1".to_string());
                 }
-                if is_integer {
+                if flags.integer {
                     self.variables
                         .insert(format!("_INTEGER_{}", name), "1".to_string());
                 }
