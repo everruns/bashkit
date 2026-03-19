@@ -394,6 +394,7 @@
 
 // Stricter panic prevention - prefer proper error handling over unwrap()
 #![warn(clippy::unwrap_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 
 mod builtins;
 mod error;
@@ -1761,7 +1762,6 @@ pub mod python_guide {}
 pub mod logging_guide {}
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};

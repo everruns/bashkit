@@ -71,8 +71,6 @@ struct FormatSpec {
 }
 
 impl FormatSpec {
-    // chars.next().unwrap() is safe: only called after peek() confirms char exists
-    #[allow(clippy::unwrap_used)]
     fn parse(spec: &str) -> Self {
         let mut left_align = false;
         let mut zero_pad = false;
@@ -106,7 +104,11 @@ impl FormatSpec {
         let mut width_str = String::new();
         while let Some(&c) = chars.peek() {
             if c.is_ascii_digit() {
-                width_str.push(chars.next().unwrap());
+                width_str.push(
+                    chars
+                        .next()
+                        .expect("chars.next() valid: peek() confirmed char exists"),
+                );
             } else {
                 break;
             }
@@ -123,7 +125,11 @@ impl FormatSpec {
             let mut prec_str = String::new();
             while let Some(&c) = chars.peek() {
                 if c.is_ascii_digit() {
-                    prec_str.push(chars.next().unwrap());
+                    prec_str.push(
+                        chars
+                            .next()
+                            .expect("chars.next() valid: peek() confirmed char exists"),
+                    );
                 } else {
                     break;
                 }
@@ -210,8 +216,7 @@ impl FormatSpec {
 }
 
 /// Format a string using printf-style format specifiers
-// chars.next().unwrap() is safe: only called after peek() confirms char exists
-#[allow(clippy::unwrap_used, clippy::collapsible_if)]
+#[allow(clippy::collapsible_if)]
 fn format_string(format: &str, args: &[String], arg_index: &mut usize) -> String {
     let mut output = String::new();
     let mut chars = format.chars().peekable();
@@ -232,7 +237,11 @@ fn format_string(format: &str, args: &[String], arg_index: &mut usize) -> String
                         let mut octal = String::from("0");
                         while let Some(&c) = chars.peek() {
                             if c.is_ascii_digit() && c != '8' && c != '9' && octal.len() < 4 {
-                                octal.push(chars.next().unwrap());
+                                octal.push(
+                                    chars
+                                        .next()
+                                        .expect("chars.next() valid: peek() confirmed char exists"),
+                                );
                             } else {
                                 break;
                             }
@@ -247,7 +256,9 @@ fn format_string(format: &str, args: &[String], arg_index: &mut usize) -> String
                         for _ in 0..2 {
                             if let Some(&c) = chars.peek() {
                                 if c.is_ascii_hexdigit() {
-                                    hex.push(chars.next().unwrap());
+                                    hex.push(chars.next().expect(
+                                        "chars.next() valid: peek() confirmed char exists",
+                                    ));
                                 } else {
                                     break;
                                 }
@@ -299,7 +310,11 @@ fn format_string(format: &str, args: &[String], arg_index: &mut usize) -> String
                         || c == '#'
                         || c == '.'
                     {
-                        spec.push(chars.next().unwrap());
+                        spec.push(
+                            chars
+                                .next()
+                                .expect("chars.next() valid: peek() confirmed char exists"),
+                        );
                     } else {
                         break;
                     }
@@ -465,8 +480,7 @@ fn shell_quote(s: &str) -> String {
 }
 
 /// Expand escape sequences in a string
-// chars.next().unwrap() is safe: only called after peek() confirms char exists
-#[allow(clippy::unwrap_used, clippy::collapsible_if)]
+#[allow(clippy::collapsible_if)]
 fn expand_escapes(s: &str) -> String {
     let mut output = String::new();
     let mut chars = s.chars().peekable();
@@ -484,7 +498,11 @@ fn expand_escapes(s: &str) -> String {
                         let mut octal = String::from("0");
                         while let Some(&c) = chars.peek() {
                             if c.is_ascii_digit() && c != '8' && c != '9' && octal.len() < 4 {
-                                octal.push(chars.next().unwrap());
+                                octal.push(
+                                    chars
+                                        .next()
+                                        .expect("chars.next() valid: peek() confirmed char exists"),
+                                );
                             } else {
                                 break;
                             }
@@ -499,7 +517,9 @@ fn expand_escapes(s: &str) -> String {
                         for _ in 0..2 {
                             if let Some(&c) = chars.peek() {
                                 if c.is_ascii_hexdigit() {
-                                    hex.push(chars.next().unwrap());
+                                    hex.push(chars.next().expect(
+                                        "chars.next() valid: peek() confirmed char exists",
+                                    ));
                                 } else {
                                     break;
                                 }
@@ -542,8 +562,6 @@ fn expand_escapes(s: &str) -> String {
 
 /// Parse a unicode escape sequence (\uHHHH or \UHHHHHHHH) from a char iterator.
 /// `max_digits` is 4 for \u and 8 for \U.
-// chars.next().unwrap() is safe: only called after peek() confirms char exists
-#[allow(clippy::unwrap_used)]
 fn parse_unicode_escape(
     chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
     max_digits: usize,
@@ -552,7 +570,11 @@ fn parse_unicode_escape(
     for _ in 0..max_digits {
         if let Some(&c) = chars.peek() {
             if c.is_ascii_hexdigit() {
-                hex.push(chars.next().unwrap());
+                hex.push(
+                    chars
+                        .next()
+                        .expect("chars.next() valid: peek() confirmed char exists"),
+                );
             } else {
                 break;
             }

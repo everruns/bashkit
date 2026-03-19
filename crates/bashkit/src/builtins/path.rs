@@ -18,8 +18,6 @@ pub struct Basename;
 
 #[async_trait]
 impl Builtin for Basename {
-    // args_iter.next().unwrap() is safe: guarded by is_empty() check above
-    #[allow(clippy::unwrap_used)]
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if ctx.args.is_empty() {
             return Ok(ExecResult::err(
@@ -32,7 +30,9 @@ impl Builtin for Basename {
         let mut args_iter = ctx.args.iter();
 
         // Get the path argument
-        let path_arg = args_iter.next().unwrap();
+        let path_arg = args_iter
+            .next()
+            .expect("args_iter.next() valid: guarded by is_empty() check above");
         let path = Path::new(path_arg);
 
         // Get the basename
@@ -282,7 +282,6 @@ enum ReadlinkMode {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::collections::HashMap;

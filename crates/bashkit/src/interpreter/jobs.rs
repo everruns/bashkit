@@ -113,7 +113,6 @@ pub fn new_shared_job_table() -> SharedJobTable {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
