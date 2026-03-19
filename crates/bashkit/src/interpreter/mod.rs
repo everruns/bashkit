@@ -239,7 +239,11 @@ fn command_not_found_message(name: &str, known_commands: &[&str]) -> String {
             }
         })
         .collect();
-    suggestions.sort_by_key(|(_, d)| *d);
+    suggestions.sort_unstable_by(|(left_name, left_dist), (right_name, right_dist)| {
+        left_dist
+            .cmp(right_dist)
+            .then_with(|| left_name.cmp(right_name))
+    });
     suggestions.truncate(3);
 
     if !suggestions.is_empty() {
@@ -9797,6 +9801,15 @@ echo "count=$COUNT"
     async fn test_posix_digit_class_in_parameter_expansion() {
         let result = run_script(r#"x="abc123def"; echo "${x%%[[:digit:]]*}""#).await;
         assert_eq!(result.stdout.trim(), "abc");
+    }
+
+    #[test]
+    fn test_command_not_found_suggestions_use_stable_tie_break() {
+        let msg = command_not_found_message("grpe", &["type", "true", "tree", "grep"]);
+        assert_eq!(
+            msg,
+            "bash: grpe: command not found. Did you mean: grep, tree, true?"
+        );
     }
 
     #[tokio::test]
