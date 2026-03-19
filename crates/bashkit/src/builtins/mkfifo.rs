@@ -13,7 +13,7 @@ use crate::interpreter::ExecResult;
 ///
 /// Usage: mkfifo [-m MODE] NAME...
 ///
-/// Creates FIFO entries at the given paths via `FileSystem::mkfifo`.
+/// Creates FIFO entries at the given paths via `FileSystemExt::mkfifo`.
 /// The `-m` flag sets the permission mode (octal, default 0o666).
 pub struct Mkfifo;
 

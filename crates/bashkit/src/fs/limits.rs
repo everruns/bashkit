@@ -470,7 +470,7 @@ impl std::error::Error for FsLimitExceeded {}
 
 /// Current filesystem usage statistics.
 ///
-/// Returned by [`FileSystem::usage()`](crate::FileSystem::usage).
+/// Returned by [`FileSystemExt::usage()`](crate::FileSystemExt::usage).
 #[derive(Debug, Clone, Default)]
 pub struct FsUsage {
     /// Total bytes used by all files.
