@@ -217,8 +217,8 @@ async fn path_search_command_not_found() {
 async fn command_not_found_typo_suggestion() {
     let mut bash = Bash::new();
 
-    // "grpe" is close to "grep" (distance=2)
-    let result = bash.exec("grpe test").await.unwrap();
+    // "grepp" is close to "grep" (distance=1, unique match)
+    let result = bash.exec("grepp test").await.unwrap();
     assert_eq!(result.exit_code, 127);
     assert!(result.stderr.contains("Did you mean"));
     assert!(result.stderr.contains("grep"));
