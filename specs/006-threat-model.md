@@ -768,7 +768,7 @@ Only exact domain matches are allowed (TM-NET-017).
 | TM-ISO-004 | Cross-session env pollution via jq | `std::env::set_var()` in jq | Custom jaq global variable (`$__bashkit_env__`) | **MITIGATED** |
 | TM-ISO-007 | Alias leakage | Aliases defined in session A visible in session B | Per-instance alias HashMap | **MITIGATED** |
 | TM-ISO-008 | Trap handler leakage | Trap from session A fires in session B | Per-instance trap HashMap | **MITIGATED** |
-| TM-ISO-009 | Shell option leakage | `set -e` in session A affects session B | Per-instance ShellOptions | **MITIGATED** |
+| TM-ISO-009 | Shell option leakage | `set -e` in session A affects session B | Per-instance SHOPT_* variables | **MITIGATED** |
 | TM-ISO-010 | Exported env var leakage | `export` in session A visible in session B | Per-instance env HashMap | **MITIGATED** |
 | TM-ISO-011 | Array leakage | Indexed/associative arrays cross sessions | Per-instance array HashMaps | **MITIGATED** |
 | TM-ISO-012 | Working directory leakage | `cd` in session A changes session B's cwd | Per-instance `cwd: PathBuf` | **MITIGATED** |

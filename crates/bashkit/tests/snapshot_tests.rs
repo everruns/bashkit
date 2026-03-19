@@ -200,3 +200,58 @@ async fn combined_snapshot_restore_multi_turn() {
         .unwrap();
     assert_eq!(result.stdout, "gone\n");
 }
+
+// ==================== Shell options snapshot/restore ====================
+
+#[tokio::test]
+async fn shell_options_survive_snapshot_roundtrip() {
+    let mut bash = Bash::new();
+
+    // Set options via `set` builtin. Options live in SHOPT_* variables which
+    // are included in the variables snapshot (no more split brain with a
+    // separate ShellOptions struct).
+    bash.exec("set -e; set -o pipefail").await.unwrap();
+
+    let state = bash.shell_state();
+
+    // Options should be present in snapshotted variables
+    assert_eq!(
+        state.variables.get("SHOPT_e").map(|s| s.as_str()),
+        Some("1")
+    );
+    assert_eq!(
+        state.variables.get("SHOPT_pipefail").map(|s| s.as_str()),
+        Some("1")
+    );
+
+    // Serialize → deserialize to prove options survive JSON roundtrip
+    let json = serde_json::to_string(&state).unwrap();
+    let restored: bashkit::ShellState = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        restored.variables.get("SHOPT_e").map(|s| s.as_str()),
+        Some("1")
+    );
+    assert_eq!(
+        restored.variables.get("SHOPT_pipefail").map(|s| s.as_str()),
+        Some("1")
+    );
+
+    // Restore into a fresh interpreter and verify options are active
+    let mut bash2 = Bash::new();
+    bash2.restore_shell_state(&restored);
+
+    // exec() calls reset_transient_state which clears SHOPT_* vars,
+    // so we verify the state was restored correctly by inspecting it
+    // before the next exec() call.
+    let state2 = bash2.shell_state();
+    assert_eq!(
+        state2.variables.get("SHOPT_e").map(|s| s.as_str()),
+        Some("1"),
+        "errexit should survive snapshot/restore roundtrip"
+    );
+    assert_eq!(
+        state2.variables.get("SHOPT_pipefail").map(|s| s.as_str()),
+        Some("1"),
+        "pipefail should survive snapshot/restore roundtrip"
+    );
+}

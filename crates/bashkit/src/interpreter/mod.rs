@@ -289,17 +289,6 @@ struct CallFrame {
     positional: Vec<String>,
 }
 
-/// Shell options that can be set via `set -o` or `set -x`
-#[derive(Debug, Clone, Default)]
-pub struct ShellOptions {
-    /// Exit immediately if a command exits with non-zero status (set -e)
-    pub errexit: bool,
-    /// Print commands before execution (set -x)
-    pub xtrace: bool,
-    /// Return rightmost non-zero exit code from pipeline (set -o pipefail)
-    pub pipefail: bool,
-}
-
 /// A snapshot of shell state (variables, env, cwd, options).
 ///
 /// Captures the serializable portions of the interpreter state.
@@ -323,12 +312,6 @@ pub struct ShellState {
     pub aliases: HashMap<String, String>,
     /// Trap handlers
     pub traps: HashMap<String, String>,
-    /// Shell options
-    pub errexit: bool,
-    /// Shell options
-    pub xtrace: bool,
-    /// Shell options
-    pub pipefail: bool,
 }
 
 /// Interpreter state.
@@ -362,8 +345,6 @@ pub struct Interpreter {
     counters: ExecutionCounters,
     /// Job table for background execution (shared for wait builtin access)
     jobs: SharedJobTable,
-    /// Shell options (set -e, set -x, etc.)
-    options: ShellOptions,
     /// Current line number for $LINENO
     current_line: usize,
     /// HTTP client for network builtins (curl, wget)
@@ -686,7 +667,6 @@ impl Interpreter {
             trace: crate::trace::TraceCollector::default(),
             counters: ExecutionCounters::new(),
             jobs: jobs::new_shared_job_table(),
-            options: ShellOptions::default(),
             current_line: 1,
             #[cfg(feature = "http_client")]
             http_client: None,
@@ -726,38 +706,20 @@ impl Interpreter {
         }
     }
 
-    /// Get mutable access to shell options (for builtins like `set`)
-    #[allow(dead_code)]
-    pub fn options_mut(&mut self) -> &mut ShellOptions {
-        &mut self.options
-    }
-
-    /// Get shell options
-    #[allow(dead_code)]
-    pub fn options(&self) -> &ShellOptions {
-        &self.options
-    }
-
-    /// Check if errexit (set -e) is enabled
-    /// This checks both the options struct and the SHOPT_e variable
-    /// (the `set` builtin stores options in SHOPT_e)
+    /// Check if errexit (set -e) is enabled.
     fn is_errexit_enabled(&self) -> bool {
-        self.options.errexit
-            || self
-                .variables
-                .get("SHOPT_e")
-                .map(|v| v == "1")
-                .unwrap_or(false)
+        self.variables
+            .get("SHOPT_e")
+            .map(|v| v == "1")
+            .unwrap_or(false)
     }
 
-    /// Check if xtrace (set -x) is enabled
+    /// Check if xtrace (set -x) is enabled.
     fn is_xtrace_enabled(&self) -> bool {
-        self.options.xtrace
-            || self
-                .variables
-                .get("SHOPT_x")
-                .map(|v| v == "1")
-                .unwrap_or(false)
+        self.variables
+            .get("SHOPT_x")
+            .map(|v| v == "1")
+            .unwrap_or(false)
     }
 
     /// Set execution limits.
@@ -791,7 +753,6 @@ impl Interpreter {
     pub fn reset_transient_state(&mut self) {
         self.traps.clear();
         self.last_exit_code = 0;
-        self.options = ShellOptions::default();
         self.variables.retain(|k, _| !k.starts_with("SHOPT_"));
     }
 
@@ -919,9 +880,6 @@ impl Interpreter {
             last_exit_code: self.last_exit_code,
             aliases: self.aliases.clone(),
             traps: self.traps.clone(),
-            errexit: self.options.errexit,
-            xtrace: self.options.xtrace,
-            pipefail: self.options.pipefail,
         }
     }
 
@@ -935,9 +893,6 @@ impl Interpreter {
         self.last_exit_code = state.last_exit_code;
         self.aliases = state.aliases.clone();
         self.traps = state.traps.clone();
-        self.options.errexit = state.errexit;
-        self.options.xtrace = state.xtrace;
-        self.options.pipefail = state.pipefail;
     }
 
     /// Set an output callback for streaming output during execution.
@@ -1297,7 +1252,6 @@ impl Interpreter {
                 let saved_traps = self.traps.clone();
                 let saved_call_stack = self.call_stack.clone();
                 let saved_exit = self.last_exit_code;
-                let saved_options = self.options.clone();
                 let saved_aliases = self.aliases.clone();
                 let saved_coproc = self.coproc_buffers.clone();
 
@@ -1341,7 +1295,6 @@ impl Interpreter {
                 self.traps = saved_traps;
                 self.call_stack = saved_call_stack;
                 self.last_exit_code = saved_exit;
-                self.options = saved_options;
                 self.aliases = saved_aliases;
                 self.coproc_buffers = saved_coproc;
                 result
@@ -8400,13 +8353,6 @@ impl Interpreter {
                         flags.push(opt);
                     }
                 }
-                // Also check options struct
-                if self.options.errexit && !flags.contains('e') {
-                    flags.push('e');
-                }
-                if self.options.xtrace && !flags.contains('x') {
-                    flags.push('x');
-                }
                 return flags;
             }
             "RANDOM" => {
@@ -8544,12 +8490,10 @@ impl Interpreter {
 
     /// Check if pipefail (`set -o pipefail`) is active.
     fn is_pipefail(&self) -> bool {
-        self.options.pipefail
-            || self
-                .variables
-                .get("SHOPT_pipefail")
-                .map(|v| v == "1")
-                .unwrap_or(false)
+        self.variables
+            .get("SHOPT_pipefail")
+            .map(|v| v == "1")
+            .unwrap_or(false)
     }
 
     /// Run ERR trap if registered. Appends trap output to stdout/stderr.
