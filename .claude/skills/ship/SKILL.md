@@ -1,8 +1,12 @@
-# Ship
+---
+name: ship
+description: Run the full ship flow — verify quality, ensure test coverage, update artifacts, smoke test, push, create PR, and merge when CI is green. Trigger when user says "ship", "ship it", "fix and ship", or asks to push and merge a branch.
+user_invocable: true
+---
 
 Run the full ship flow: verify quality, ensure test coverage, update artifacts, smoke test, then push, create PR, and merge when CI is green.
 
-This command implements the complete "Shipping" definition and Pre-PR Checklist from AGENTS.md. When the user says "ship" or "fix and ship", execute ALL phases below — not just the push/merge steps.
+This skill implements the complete "Shipping" definition and Pre-PR Checklist from AGENTS.md. When the user says "ship" or "fix and ship", execute ALL phases below — not just the push/merge steps.
 
 ## Arguments
 
@@ -140,9 +144,8 @@ After successful merge:
 - Report the merged PR URL
 - Done
 
-## Notes
+## Rules
 
-- This is the canonical shipping workflow. It implements the full "Shipping" definition and Pre-PR Checklist from AGENTS.md.
 - Phases 2-4 (tests, artifacts, simplification, security review, smoke testing) are the quality core — do NOT skip them.
 - The `$ARGUMENTS` context helps scope which tests, specs, and smoke tests are relevant.
 - For "fix and ship" requests: implement the fix first, then run `/ship` to validate and merge.
