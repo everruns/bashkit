@@ -1773,6 +1773,300 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a simple command with redirections
+    /// Collect array elements between `(` and `)` tokens into a `Vec<Word>`.
+    fn collect_array_elements(&mut self) -> Vec<Word> {
+        let mut elements = Vec::new();
+        loop {
+            match &self.current_token {
+                Some(tokens::Token::RightParen) => {
+                    self.advance();
+                    break;
+                }
+                Some(tokens::Token::Word(elem))
+                | Some(tokens::Token::LiteralWord(elem))
+                | Some(tokens::Token::QuotedWord(elem)) => {
+                    let elem_clone = elem.clone();
+                    let word = if matches!(&self.current_token, Some(tokens::Token::LiteralWord(_)))
+                    {
+                        Word {
+                            parts: vec![WordPart::Literal(elem_clone)],
+                            quoted: true,
+                        }
+                    } else {
+                        self.parse_word(elem_clone)
+                    };
+                    elements.push(word);
+                    self.advance();
+                }
+                None => break,
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+        elements
+    }
+
+    /// Parse the value side of an assignment (`VAR=value`).
+    /// Returns `Some((Assignment, needs_advance))` if the current word is an assignment.
+    /// The bool indicates whether the caller must call `self.advance()` afterward.
+    fn try_parse_assignment(&mut self, w: &str) -> Option<(Assignment, bool)> {
+        let (name, index, value, is_append) = Self::is_assignment(w)?;
+        let name = name.to_string();
+        let index = index.map(|s| s.to_string());
+        let value_str = value.to_string();
+
+        // Array literal in the token itself: arr=(a b c)
+        if value_str.starts_with('(') && value_str.ends_with(')') {
+            let inner = &value_str[1..value_str.len() - 1];
+            let elements: Vec<Word> = inner
+                .split_whitespace()
+                .map(|s| self.parse_word(s.to_string()))
+                .collect();
+            return Some((
+                Assignment {
+                    name,
+                    index,
+                    value: AssignmentValue::Array(elements),
+                    append: is_append,
+                },
+                true,
+            ));
+        }
+
+        // Empty value — check for arr=(...) syntax with separate tokens
+        if value_str.is_empty() {
+            self.advance();
+            if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
+                self.advance(); // consume '('
+                let elements = self.collect_array_elements();
+                return Some((
+                    Assignment {
+                        name,
+                        index,
+                        value: AssignmentValue::Array(elements),
+                        append: is_append,
+                    },
+                    false,
+                ));
+            }
+            // Empty assignment: VAR=
+            return Some((
+                Assignment {
+                    name,
+                    index,
+                    value: AssignmentValue::Scalar(Word::literal("")),
+                    append: is_append,
+                },
+                false,
+            ));
+        }
+
+        // Quoted or plain scalar value
+        let value_word = if value_str.starts_with('"') && value_str.ends_with('"') {
+            let inner = Self::strip_quotes(&value_str);
+            let mut w = self.parse_word(inner.to_string());
+            w.quoted = true;
+            w
+        } else if value_str.starts_with('\'') && value_str.ends_with('\'') {
+            let inner = Self::strip_quotes(&value_str);
+            Word {
+                parts: vec![WordPart::Literal(inner.to_string())],
+                quoted: true,
+            }
+        } else {
+            self.parse_word(value_str)
+        };
+        Some((
+            Assignment {
+                name,
+                index,
+                value: AssignmentValue::Scalar(value_word),
+                append: is_append,
+            },
+            true,
+        ))
+    }
+
+    /// Parse a compound array argument in arg position (e.g. `declare -a arr=(x y z)`).
+    /// Called when the current word ends with `=` and the next token is `(`.
+    /// Returns the compound word if successful, or `None` if not a compound assignment.
+    fn try_parse_compound_array_arg(&mut self, saved_w: String) -> Option<Word> {
+        if !matches!(self.current_token, Some(tokens::Token::LeftParen)) {
+            return None;
+        }
+        self.advance(); // consume '('
+        let mut compound = saved_w;
+        compound.push('(');
+        loop {
+            match &self.current_token {
+                Some(tokens::Token::RightParen) => {
+                    compound.push(')');
+                    self.advance();
+                    break;
+                }
+                Some(tokens::Token::Word(elem))
+                | Some(tokens::Token::LiteralWord(elem))
+                | Some(tokens::Token::QuotedWord(elem)) => {
+                    if !compound.ends_with('(') {
+                        compound.push(' ');
+                    }
+                    compound.push_str(elem);
+                    self.advance();
+                }
+                None => break,
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+        Some(self.parse_word(compound))
+    }
+
+    /// Parse a heredoc redirect (`<<` or `<<-`) and any trailing redirects on the same line.
+    fn parse_heredoc_redirect(
+        &mut self,
+        strip_tabs: bool,
+        redirects: &mut Vec<Redirect>,
+    ) -> Result<()> {
+        self.advance();
+        // Get the delimiter word and track if it was quoted
+        let (delimiter, quoted) = match &self.current_token {
+            Some(tokens::Token::Word(w)) => (w.clone(), false),
+            Some(tokens::Token::LiteralWord(w)) => (w.clone(), true),
+            Some(tokens::Token::QuotedWord(w)) => (w.clone(), true),
+            _ => return Err(Error::parse("expected delimiter after <<".to_string())),
+        };
+
+        let content = self.lexer.read_heredoc(&delimiter);
+
+        // Strip leading tabs for <<-
+        let content = if strip_tabs {
+            let had_trailing_newline = content.ends_with('\n');
+            let mut stripped: String = content
+                .lines()
+                .map(|l: &str| l.trim_start_matches('\t'))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if had_trailing_newline {
+                stripped.push('\n');
+            }
+            stripped
+        } else {
+            content
+        };
+
+        let target = if quoted {
+            Word::quoted_literal(content)
+        } else {
+            self.parse_word(content)
+        };
+
+        let kind = if strip_tabs {
+            RedirectKind::HereDocStrip
+        } else {
+            RedirectKind::HereDoc
+        };
+
+        redirects.push(Redirect {
+            fd: None,
+            kind,
+            target,
+        });
+
+        // Advance so re-injected rest-of-line tokens are picked up
+        self.advance();
+
+        // Consume any trailing redirects on the same line (e.g. `cat <<EOF > file`)
+        self.collect_trailing_redirects(redirects);
+        Ok(())
+    }
+
+    /// Consume redirect tokens that follow a heredoc on the same line.
+    fn collect_trailing_redirects(&mut self, redirects: &mut Vec<Redirect>) {
+        while let Some(tok) = &self.current_token {
+            match tok {
+                tokens::Token::RedirectOut | tokens::Token::Clobber => {
+                    let kind = if matches!(&self.current_token, Some(tokens::Token::Clobber)) {
+                        RedirectKind::Clobber
+                    } else {
+                        RedirectKind::Output
+                    };
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: None,
+                            kind,
+                            target,
+                        });
+                    }
+                }
+                tokens::Token::RedirectAppend => {
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: None,
+                            kind: RedirectKind::Append,
+                            target,
+                        });
+                    }
+                }
+                tokens::Token::RedirectFd(fd) => {
+                    let fd = *fd;
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: Some(fd),
+                            kind: RedirectKind::Output,
+                            target,
+                        });
+                    }
+                }
+                tokens::Token::DupInput => {
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: Some(0),
+                            kind: RedirectKind::DupInput,
+                            target,
+                        });
+                    }
+                }
+                tokens::Token::DupFdIn(src_fd, dst_fd) => {
+                    let src_fd = *src_fd;
+                    let dst_fd = *dst_fd;
+                    self.advance();
+                    redirects.push(Redirect {
+                        fd: Some(src_fd),
+                        kind: RedirectKind::DupInput,
+                        target: Word::literal(dst_fd.to_string()),
+                    });
+                }
+                tokens::Token::DupFdClose(fd) => {
+                    let fd = *fd;
+                    self.advance();
+                    redirects.push(Redirect {
+                        fd: Some(fd),
+                        kind: RedirectKind::DupInput,
+                        target: Word::literal("-"),
+                    });
+                }
+                tokens::Token::RedirectFdIn(fd) => {
+                    let fd = *fd;
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: Some(fd),
+                            kind: RedirectKind::Input,
+                            target,
+                        });
+                    }
+                }
+                _ => break,
+            }
+        }
+    }
+
     fn parse_simple_command(&mut self) -> Result<Option<SimpleCommand>> {
         self.tick()?;
         self.skip_newlines()?;
@@ -1792,165 +2086,42 @@ impl<'a> Parser<'a> {
                         matches!(&self.current_token, Some(tokens::Token::LiteralWord(_)));
                     let is_quoted =
                         matches!(&self.current_token, Some(tokens::Token::QuotedWord(_)));
+                    // Clone early to release borrow on self.current_token
+                    let w = w.clone();
 
                     // Stop if this word cannot start a command (like 'then', 'fi', etc.)
-                    // This check is only for command position - reserved words in argument
-                    // position are handled as regular arguments. The termination of compound
-                    // commands is handled by parse_compound_list_until which checks for
-                    // terminators BEFORE calling parse_command_list.
-                    if words.is_empty() && Self::is_non_command_word(w) {
+                    if words.is_empty() && Self::is_non_command_word(&w) {
                         break;
                     }
 
                     // Check for assignment (only before the command name, not for literal words)
-                    if words.is_empty() && !is_literal {
-                        let w_clone = w.clone();
-                        if let Some((name, index, value, is_append)) = Self::is_assignment(&w_clone)
-                        {
-                            let name = name.to_string();
-                            let index = index.map(|s| s.to_string());
-                            let value_str = value.to_string();
-
-                            // Check for array literal: arr=(a b c)
-                            let assignment_value = if value_str.starts_with('(')
-                                && value_str.ends_with(')')
-                            {
-                                let inner = &value_str[1..value_str.len() - 1];
-                                let elements: Vec<Word> = inner
-                                    .split_whitespace()
-                                    .map(|s| self.parse_word(s.to_string()))
-                                    .collect();
-                                AssignmentValue::Array(elements)
-                            } else if value_str.is_empty() {
-                                // Check if next token is ( for arr=(...) syntax
-                                self.advance();
-                                if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
-                                    self.advance(); // consume '('
-                                    let mut elements = Vec::new();
-                                    loop {
-                                        match &self.current_token {
-                                            Some(tokens::Token::RightParen) => {
-                                                self.advance();
-                                                break;
-                                            }
-                                            Some(tokens::Token::Word(elem))
-                                            | Some(tokens::Token::LiteralWord(elem))
-                                            | Some(tokens::Token::QuotedWord(elem)) => {
-                                                let elem_clone = elem.clone();
-                                                let word = if matches!(
-                                                    &self.current_token,
-                                                    Some(tokens::Token::LiteralWord(_))
-                                                ) {
-                                                    Word {
-                                                        parts: vec![WordPart::Literal(elem_clone)],
-                                                        quoted: true,
-                                                    }
-                                                } else {
-                                                    self.parse_word(elem_clone)
-                                                };
-                                                elements.push(word);
-                                                self.advance();
-                                            }
-                                            None => break,
-                                            _ => {
-                                                self.advance();
-                                            }
-                                        }
-                                    }
-                                    assignments.push(Assignment {
-                                        name,
-                                        index,
-                                        value: AssignmentValue::Array(elements),
-                                        append: is_append,
-                                    });
-                                    continue;
-                                } else {
-                                    // Empty assignment: VAR=
-                                    assignments.push(Assignment {
-                                        name,
-                                        index,
-                                        value: AssignmentValue::Scalar(Word::literal("")),
-                                        append: is_append,
-                                    });
-                                    continue;
-                                }
-                            } else {
-                                // Handle quoted values: strip quotes and handle appropriately
-                                let value_word = if value_str.starts_with('"')
-                                    && value_str.ends_with('"')
-                                {
-                                    // Double-quoted: strip quotes but allow variable expansion
-                                    let inner = Self::strip_quotes(&value_str);
-                                    let mut w = self.parse_word(inner.to_string());
-                                    w.quoted = true;
-                                    w
-                                } else if value_str.starts_with('\'') && value_str.ends_with('\'') {
-                                    // Single-quoted: literal, no expansion
-                                    let inner = Self::strip_quotes(&value_str);
-                                    Word {
-                                        parts: vec![WordPart::Literal(inner.to_string())],
-                                        quoted: true,
-                                    }
-                                } else {
-                                    self.parse_word(value_str)
-                                };
-                                AssignmentValue::Scalar(value_word)
-                            };
-                            assignments.push(Assignment {
-                                name,
-                                index,
-                                value: assignment_value,
-                                append: is_append,
-                            });
+                    if words.is_empty()
+                        && !is_literal
+                        && let Some((assignment, needs_advance)) = self.try_parse_assignment(&w)
+                    {
+                        if needs_advance {
                             self.advance();
-                            continue;
                         }
+                        assignments.push(assignment);
+                        continue;
                     }
 
                     // Handle compound array assignment in arg position:
                     // declare -a arr=(x y z) → arr=(x y z) as single arg
                     if w.ends_with('=') && !words.is_empty() {
-                        // Peek at next token — if LeftParen, collect compound assignment
-                        let saved_w = w.clone();
                         self.advance();
-                        if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
-                            self.advance(); // consume '('
-                            let mut compound = saved_w;
-                            compound.push('(');
-                            loop {
-                                match &self.current_token {
-                                    Some(tokens::Token::RightParen) => {
-                                        compound.push(')');
-                                        self.advance();
-                                        break;
-                                    }
-                                    Some(tokens::Token::Word(elem))
-                                    | Some(tokens::Token::LiteralWord(elem))
-                                    | Some(tokens::Token::QuotedWord(elem)) => {
-                                        if !compound.ends_with('(') {
-                                            compound.push(' ');
-                                        }
-                                        compound.push_str(elem);
-                                        self.advance();
-                                    }
-                                    None => break,
-                                    _ => {
-                                        self.advance();
-                                    }
-                                }
-                            }
-                            let word = self.parse_word(compound);
+                        if let Some(word) = self.try_parse_compound_array_arg(w.clone()) {
                             words.push(word);
                             continue;
                         }
                         // Not a compound assignment — treat as regular word
                         let word = if is_literal {
                             Word {
-                                parts: vec![WordPart::Literal(saved_w)],
+                                parts: vec![WordPart::Literal(w)],
                                 quoted: true,
                             }
                         } else {
-                            let mut word = self.parse_word(saved_w);
+                            let mut word = self.parse_word(w);
                             if is_quoted {
                                 word.quoted = true;
                             }
@@ -1962,11 +2133,11 @@ impl<'a> Parser<'a> {
 
                     let word = if is_literal {
                         Word {
-                            parts: vec![WordPart::Literal(w.clone())],
+                            parts: vec![WordPart::Literal(w)],
                             quoted: true,
                         }
                     } else {
-                        let mut word = self.parse_word(w.clone());
+                        let mut word = self.parse_word(w);
                         if is_quoted {
                             word.quoted = true;
                         }
@@ -2019,157 +2190,13 @@ impl<'a> Parser<'a> {
                 Some(tokens::Token::HereDoc) | Some(tokens::Token::HereDocStrip) => {
                     let strip_tabs =
                         matches!(self.current_token, Some(tokens::Token::HereDocStrip));
-                    self.advance();
-                    // Get the delimiter word and track if it was quoted
-                    // Quoted delimiters (single or double quotes) disable variable expansion
-                    let (delimiter, quoted) = match &self.current_token {
-                        Some(tokens::Token::Word(w)) => (w.clone(), false),
-                        Some(tokens::Token::LiteralWord(w)) => (w.clone(), true),
-                        Some(tokens::Token::QuotedWord(w)) => (w.clone(), true),
-                        _ => return Err(Error::parse("expected delimiter after <<".to_string())),
-                    };
-                    // Don't advance - let read_heredoc consume directly from lexer position
-
-                    // Read the here document content (reads until delimiter line).
-                    // Rest-of-line tokens (redirects, pipes, etc.) are re-injected
-                    // into the lexer buffer by read_heredoc.
-                    let content = self.lexer.read_heredoc(&delimiter);
-
-                    // Strip leading tabs for <<-
-                    let content = if strip_tabs {
-                        let had_trailing_newline = content.ends_with('\n');
-                        let mut stripped: String = content
-                            .lines()
-                            .map(|l: &str| l.trim_start_matches('\t'))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        if had_trailing_newline {
-                            stripped.push('\n');
-                        }
-                        stripped
-                    } else {
-                        content
-                    };
-
-                    // If delimiter was quoted, content is literal (no expansion)
-                    // Otherwise, parse for variable expansion
-                    let target = if quoted {
-                        Word::quoted_literal(content)
-                    } else {
-                        self.parse_word(content)
-                    };
-
-                    let kind = if strip_tabs {
-                        RedirectKind::HereDocStrip
-                    } else {
-                        RedirectKind::HereDoc
-                    };
-
-                    redirects.push(Redirect {
-                        fd: None,
-                        kind,
-                        target,
-                    });
-
-                    // Advance the parser token so it picks up re-injected
-                    // rest-of-line tokens (|, ;, &&, > file) from the lexer.
-                    self.advance();
-
-                    // If re-injected tokens include redirects (e.g. `> file`
-                    // in `cat <<EOF > file`), consume them here before breaking
-                    // out to pipeline/list parsers.
-                    while let Some(tok) = &self.current_token {
-                        match tok {
-                            tokens::Token::RedirectOut | tokens::Token::Clobber => {
-                                let kind = if matches!(
-                                    &self.current_token,
-                                    Some(tokens::Token::Clobber)
-                                ) {
-                                    RedirectKind::Clobber
-                                } else {
-                                    RedirectKind::Output
-                                };
-                                self.advance();
-                                if let Ok(target) = self.expect_word() {
-                                    redirects.push(Redirect {
-                                        fd: None,
-                                        kind,
-                                        target,
-                                    });
-                                }
-                            }
-                            tokens::Token::RedirectAppend => {
-                                self.advance();
-                                if let Ok(target) = self.expect_word() {
-                                    redirects.push(Redirect {
-                                        fd: None,
-                                        kind: RedirectKind::Append,
-                                        target,
-                                    });
-                                }
-                            }
-                            tokens::Token::RedirectFd(fd) => {
-                                let fd = *fd;
-                                self.advance();
-                                if let Ok(target) = self.expect_word() {
-                                    redirects.push(Redirect {
-                                        fd: Some(fd),
-                                        kind: RedirectKind::Output,
-                                        target,
-                                    });
-                                }
-                            }
-                            tokens::Token::DupInput => {
-                                self.advance();
-                                if let Ok(target) = self.expect_word() {
-                                    redirects.push(Redirect {
-                                        fd: Some(0),
-                                        kind: RedirectKind::DupInput,
-                                        target,
-                                    });
-                                }
-                            }
-                            tokens::Token::DupFdIn(src_fd, dst_fd) => {
-                                let src_fd = *src_fd;
-                                let dst_fd = *dst_fd;
-                                self.advance();
-                                redirects.push(Redirect {
-                                    fd: Some(src_fd),
-                                    kind: RedirectKind::DupInput,
-                                    target: Word::literal(dst_fd.to_string()),
-                                });
-                            }
-                            tokens::Token::DupFdClose(fd) => {
-                                let fd = *fd;
-                                self.advance();
-                                redirects.push(Redirect {
-                                    fd: Some(fd),
-                                    kind: RedirectKind::DupInput,
-                                    target: Word::literal("-"),
-                                });
-                            }
-                            tokens::Token::RedirectFdIn(fd) => {
-                                let fd = *fd;
-                                self.advance();
-                                if let Ok(target) = self.expect_word() {
-                                    redirects.push(Redirect {
-                                        fd: Some(fd),
-                                        kind: RedirectKind::Input,
-                                        target,
-                                    });
-                                }
-                            }
-                            _ => break,
-                        }
-                    }
+                    self.parse_heredoc_redirect(strip_tabs, &mut redirects)?;
                     break;
                 }
                 Some(tokens::Token::ProcessSubIn) | Some(tokens::Token::ProcessSubOut) => {
-                    // Process substitution as argument
                     let word = self.expect_word()?;
                     words.push(word);
                 }
-                // &> - redirect both stdout and stderr to file
                 Some(tokens::Token::RedirectBoth) => {
                     self.advance();
                     let target = self.expect_word()?;
@@ -2179,17 +2206,15 @@ impl<'a> Parser<'a> {
                         target,
                     });
                 }
-                // >& - duplicate output fd (used for >&2 etc.)
                 Some(tokens::Token::DupOutput) => {
                     self.advance();
                     let target = self.expect_word()?;
                     redirects.push(Redirect {
-                        fd: Some(1), // Default to stdout
+                        fd: Some(1),
                         kind: RedirectKind::DupOutput,
                         target,
                     });
                 }
-                // N> - redirect with specific file descriptor
                 Some(tokens::Token::RedirectFd(fd)) => {
                     let fd = *fd;
                     self.advance();
@@ -2200,7 +2225,6 @@ impl<'a> Parser<'a> {
                         target,
                     });
                 }
-                // N>> - append with specific file descriptor
                 Some(tokens::Token::RedirectFdAppend(fd)) => {
                     let fd = *fd;
                     self.advance();
@@ -2211,7 +2235,6 @@ impl<'a> Parser<'a> {
                         target,
                     });
                 }
-                // N>&M - duplicate fd N to M
                 Some(tokens::Token::DupFd(src_fd, dst_fd)) => {
                     let src_fd = *src_fd;
                     let dst_fd = *dst_fd;
@@ -2222,7 +2245,6 @@ impl<'a> Parser<'a> {
                         target: Word::literal(dst_fd.to_string()),
                     });
                 }
-                // <& - duplicate input fd
                 Some(tokens::Token::DupInput) => {
                     self.advance();
                     let target = self.expect_word()?;
@@ -2232,7 +2254,6 @@ impl<'a> Parser<'a> {
                         target,
                     });
                 }
-                // N<&M - duplicate input fd
                 Some(tokens::Token::DupFdIn(src_fd, dst_fd)) => {
                     let src_fd = *src_fd;
                     let dst_fd = *dst_fd;
@@ -2243,7 +2264,6 @@ impl<'a> Parser<'a> {
                         target: Word::literal(dst_fd.to_string()),
                     });
                 }
-                // N<&- - close fd
                 Some(tokens::Token::DupFdClose(fd)) => {
                     let fd = *fd;
                     self.advance();
@@ -2253,7 +2273,6 @@ impl<'a> Parser<'a> {
                         target: Word::literal("-"),
                     });
                 }
-                // N< - input redirect with fd
                 Some(tokens::Token::RedirectFdIn(fd)) => {
                     let fd = *fd;
                     self.advance();
@@ -2288,7 +2307,6 @@ impl<'a> Parser<'a> {
 
         // Handle assignment-only commands (VAR=value with no command)
         if words.is_empty() && !assignments.is_empty() {
-            // Create a "noop" command that just does the assignments
             return Ok(Some(SimpleCommand {
                 name: Word::literal(""),
                 args: Vec::new(),
