@@ -28,6 +28,7 @@ from bashkit._bashkit import (
     Bash,
     BashTool,
     ExecResult,
+    FileSystem,
     ScriptedTool,
     create_langchain_tool_spec,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "Bash",
     "BashTool",
     "ExecResult",
+    "FileSystem",
     "ScriptedTool",
     "create_langchain_tool_spec",
 ]

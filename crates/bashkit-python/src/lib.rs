@@ -7,7 +7,8 @@
 
 use bashkit::tool::VERSION;
 use bashkit::{
-    Bash, BashTool as RustBashTool, ExcType, ExecutionLimits, ExtFunctionResult, MontyException,
+    Bash, BashTool as RustBashTool, DirEntry as FsDirEntry, ExcType, ExecutionLimits,
+    ExtFunctionResult, FileSystem, FileType as FsFileType, Metadata as FsMetadata, MontyException,
     MontyObject, PythonExternalFnHandler, PythonLimits, ScriptedTool as RustScriptedTool, Tool,
     ToolArgs, ToolDef, ToolRequest,
 };
@@ -15,8 +16,10 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PySet, PyTuple};
 use pyo3_async_runtimes::tokio::future_into_py;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 // ============================================================================
@@ -115,6 +118,255 @@ fn py_to_json_inner(
     // Fallback: str()
     let s = obj.str()?.extract::<String>()?;
     Ok(serde_json::Value::String(s))
+}
+
+#[derive(Clone)]
+struct MountedTextConfig {
+    path: String,
+    content: String,
+    readonly: bool,
+}
+
+#[derive(Clone)]
+struct RealMountConfig {
+    host_path: String,
+    vfs_mount: Option<String>,
+    readwrite: bool,
+}
+
+fn make_runtime() -> PyResult<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))
+}
+
+fn apply_fs_config(
+    mut builder: bashkit::BashBuilder,
+    mounted_text_files: &[MountedTextConfig],
+    real_mounts: &[RealMountConfig],
+) -> bashkit::BashBuilder {
+    for mount in mounted_text_files {
+        builder = if mount.readonly {
+            builder.mount_readonly_text(&mount.path, mount.content.clone())
+        } else {
+            builder.mount_text(&mount.path, mount.content.clone())
+        };
+    }
+
+    for mount in real_mounts {
+        builder = match (mount.readwrite, &mount.vfs_mount) {
+            (false, None) => builder.mount_real_readonly(&mount.host_path),
+            (false, Some(vfs_mount)) => builder.mount_real_readonly_at(&mount.host_path, vfs_mount),
+            (true, None) => builder.mount_real_readwrite(&mount.host_path),
+            (true, Some(vfs_mount)) => builder.mount_real_readwrite_at(&mount.host_path, vfs_mount),
+        };
+    }
+
+    builder
+}
+
+fn system_time_to_unix_seconds(time: SystemTime) -> f64 {
+    time.duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+fn file_type_name(file_type: FsFileType) -> &'static str {
+    match file_type {
+        FsFileType::File => "file",
+        FsFileType::Directory => "directory",
+        FsFileType::Symlink => "symlink",
+        FsFileType::Fifo => "fifo",
+    }
+}
+
+fn metadata_to_pydict(py: Python<'_>, metadata: &FsMetadata) -> PyResult<Py<PyAny>> {
+    let dict = PyDict::new(py);
+    dict.set_item("file_type", file_type_name(metadata.file_type))?;
+    dict.set_item("size", metadata.size)?;
+    dict.set_item("mode", metadata.mode)?;
+    dict.set_item("modified", system_time_to_unix_seconds(metadata.modified))?;
+    dict.set_item("created", system_time_to_unix_seconds(metadata.created))?;
+    Ok(dict.into_any().unbind())
+}
+
+fn dir_entry_to_pydict(py: Python<'_>, entry: &FsDirEntry) -> PyResult<Py<PyAny>> {
+    let dict = PyDict::new(py);
+    dict.set_item("name", &entry.name)?;
+    dict.set_item("metadata", metadata_to_pydict(py, &entry.metadata)?)?;
+    Ok(dict.into_any().unbind())
+}
+
+#[pyclass(name = "FileSystem")]
+struct PyFileSystem {
+    inner: Arc<dyn FileSystem>,
+    rt: tokio::runtime::Runtime,
+}
+
+impl PyFileSystem {
+    fn new(inner: Arc<dyn FileSystem>) -> PyResult<Self> {
+        Ok(Self {
+            inner,
+            rt: make_runtime()?,
+        })
+    }
+}
+
+#[pymethods]
+impl PyFileSystem {
+    fn read_file<'py>(&self, py: Python<'py>, path: String) -> PyResult<Bound<'py, PyBytes>> {
+        let data = py.detach(|| {
+            self.rt.block_on(async {
+                self.inner
+                    .read_file(Path::new(&path))
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })?;
+        Ok(PyBytes::new(py, &data))
+    }
+
+    fn write_file(&self, py: Python<'_>, path: String, content: Vec<u8>) -> PyResult<()> {
+        py.detach(|| {
+            self.rt.block_on(async {
+                self.inner
+                    .write_file(Path::new(&path), &content)
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })
+    }
+
+    fn append_file(&self, py: Python<'_>, path: String, content: Vec<u8>) -> PyResult<()> {
+        py.detach(|| {
+            self.rt.block_on(async {
+                self.inner
+                    .append_file(Path::new(&path), &content)
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })
+    }
+
+    #[pyo3(signature = (path, recursive=false))]
+    fn mkdir(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
+        py.detach(|| {
+            self.rt.block_on(async {
+                self.inner
+                    .mkdir(Path::new(&path), recursive)
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })
+    }
+
+    #[pyo3(signature = (path, recursive=false))]
+    fn remove(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
+        py.detach(|| {
+            self.rt.block_on(async {
+                self.inner
+                    .remove(Path::new(&path), recursive)
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })
+    }
+
+    fn stat(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        let metadata = py.detach(|| {
+            self.rt.block_on(async {
+                self.inner
+                    .stat(Path::new(&path))
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })?;
+        metadata_to_pydict(py, &metadata)
+    }
+
+    fn read_dir(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        let entries = py.detach(|| {
+            self.rt.block_on(async {
+                self.inner
+                    .read_dir(Path::new(&path))
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })?;
+        let items: Vec<Py<PyAny>> = entries
+            .iter()
+            .map(|entry| dir_entry_to_pydict(py, entry))
+            .collect::<PyResult<_>>()?;
+        Ok(PyList::new(py, &items)?.into_any().unbind())
+    }
+
+    fn exists(&self, py: Python<'_>, path: String) -> PyResult<bool> {
+        py.detach(|| {
+            self.rt.block_on(async {
+                self.inner
+                    .exists(Path::new(&path))
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })
+    }
+
+    fn rename(&self, py: Python<'_>, from_path: String, to_path: String) -> PyResult<()> {
+        py.detach(|| {
+            self.rt.block_on(async {
+                self.inner
+                    .rename(Path::new(&from_path), Path::new(&to_path))
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })
+    }
+
+    fn copy(&self, py: Python<'_>, from_path: String, to_path: String) -> PyResult<()> {
+        py.detach(|| {
+            self.rt.block_on(async {
+                self.inner
+                    .copy(Path::new(&from_path), Path::new(&to_path))
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })
+    }
+
+    fn symlink(&self, py: Python<'_>, target: String, link: String) -> PyResult<()> {
+        py.detach(|| {
+            self.rt.block_on(async {
+                self.inner
+                    .symlink(Path::new(&target), Path::new(&link))
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })
+    }
+
+    fn chmod(&self, py: Python<'_>, path: String, mode: u32) -> PyResult<()> {
+        py.detach(|| {
+            self.rt.block_on(async {
+                self.inner
+                    .chmod(Path::new(&path), mode)
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })
+    }
+
+    fn read_link(&self, py: Python<'_>, path: String) -> PyResult<String> {
+        let target = py.detach(|| {
+            self.rt.block_on(async {
+                self.inner
+                    .read_link(Path::new(&path))
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })?;
+        Ok(target.display().to_string())
+    }
 }
 
 // ============================================================================
@@ -293,6 +545,8 @@ pub struct PyBash {
     external_functions: Vec<String>,
     /// Async Python callable invoked when Monty calls an external function.
     external_handler: Option<Py<PyAny>>,
+    mounted_text_files: Vec<MountedTextConfig>,
+    real_mounts: Vec<RealMountConfig>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
 }
@@ -308,6 +562,12 @@ impl PyBash {
         python=false,
         external_functions=None,
         external_handler=None,
+        mount_text=None,
+        mount_readonly_text=None,
+        mount_real_readonly=None,
+        mount_real_readonly_at=None,
+        mount_real_readwrite=None,
+        mount_real_readwrite_at=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -319,6 +579,12 @@ impl PyBash {
         python: bool,
         external_functions: Option<Vec<String>>,
         external_handler: Option<Py<PyAny>>,
+        mount_text: Option<Vec<(String, String)>>,
+        mount_readonly_text: Option<Vec<(String, String)>>,
+        mount_real_readonly: Option<Vec<String>>,
+        mount_real_readonly_at: Option<Vec<(String, String)>>,
+        mount_real_readwrite: Option<Vec<String>>,
+        mount_real_readwrite_at: Option<Vec<(String, String)>>,
     ) -> PyResult<Self> {
         let mut builder = Bash::builder();
 
@@ -337,6 +603,57 @@ impl PyBash {
             limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
         }
         builder = builder.limits(limits);
+
+        let mounted_text_files =
+            mount_text
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(path, content)| MountedTextConfig {
+                    path,
+                    content,
+                    readonly: false,
+                })
+                .chain(mount_readonly_text.unwrap_or_default().into_iter().map(
+                    |(path, content)| MountedTextConfig {
+                        path,
+                        content,
+                        readonly: true,
+                    },
+                ))
+                .collect::<Vec<_>>();
+        let real_mounts = mount_real_readonly
+            .unwrap_or_default()
+            .into_iter()
+            .map(|host_path| RealMountConfig {
+                host_path,
+                vfs_mount: None,
+                readwrite: false,
+            })
+            .chain(mount_real_readonly_at.unwrap_or_default().into_iter().map(
+                |(host_path, vfs_mount)| RealMountConfig {
+                    host_path,
+                    vfs_mount: Some(vfs_mount),
+                    readwrite: false,
+                },
+            ))
+            .chain(
+                mount_real_readwrite
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|host_path| RealMountConfig {
+                        host_path,
+                        vfs_mount: None,
+                        readwrite: true,
+                    }),
+            )
+            .chain(mount_real_readwrite_at.unwrap_or_default().into_iter().map(
+                |(host_path, vfs_mount)| RealMountConfig {
+                    host_path,
+                    vfs_mount: Some(vfs_mount),
+                    readwrite: true,
+                },
+            ))
+            .collect::<Vec<_>>();
 
         let fn_names = external_functions.clone().unwrap_or_default();
         if !fn_names.is_empty() && external_handler.is_none() {
@@ -378,14 +695,12 @@ impl PyBash {
         }
         let handler_for_build = external_handler.as_ref().map(|h| h.clone_ref(py));
         builder = apply_python_config(builder, python, fn_names, handler_for_build);
+        builder = apply_fs_config(builder, &mounted_text_files, &real_mounts);
 
         let bash = builder.build();
         let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
 
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))?;
+        let rt = make_runtime()?;
 
         Ok(Self {
             inner: Arc::new(Mutex::new(bash)),
@@ -396,6 +711,8 @@ impl PyBash {
             python,
             external_functions: external_functions.unwrap_or_default(),
             external_handler,
+            mounted_text_files,
+            real_mounts,
             max_commands,
             max_loop_iterations,
         })
@@ -499,6 +816,8 @@ impl PyBash {
         let max_loop_iterations = self.max_loop_iterations;
         let python = self.python;
         let external_functions = self.external_functions.clone();
+        let mounted_text_files = self.mounted_text_files.clone();
+        let real_mounts = self.real_mounts.clone();
         // Clone handler ref while still holding the GIL (before py.detach).
         let handler_clone = self.external_handler.as_ref().map(|h| h.clone_ref(py));
         let cancelled = self.cancelled.clone();
@@ -522,6 +841,7 @@ impl PyBash {
                 }
                 builder = builder.limits(limits);
                 builder = apply_python_config(builder, python, external_functions, handler_clone);
+                builder = apply_fs_config(builder, &mounted_text_files, &real_mounts);
                 *bash = builder.build();
                 // Swap the cancellation token to the new interpreter's token so
                 // cancel() targets the current (not stale) interpreter.
@@ -531,6 +851,86 @@ impl PyBash {
                 Ok(())
             })
         })
+    }
+
+    fn fs(&self, py: Python<'_>) -> PyResult<Py<PyFileSystem>> {
+        let inner = self.inner.clone();
+        let fs = py.detach(|| {
+            self.rt.block_on(async {
+                let bash = inner.lock().await;
+                Ok::<Arc<dyn FileSystem>, PyErr>(bash.fs())
+            })
+        })?;
+        Py::new(py, PyFileSystem::new(fs)?)
+    }
+
+    fn mount_text(&mut self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
+        self.mounted_text_files.push(MountedTextConfig {
+            path,
+            content,
+            readonly: false,
+        });
+        self.reset(py)
+    }
+
+    fn mount_readonly_text(
+        &mut self,
+        py: Python<'_>,
+        path: String,
+        content: String,
+    ) -> PyResult<()> {
+        self.mounted_text_files.push(MountedTextConfig {
+            path,
+            content,
+            readonly: true,
+        });
+        self.reset(py)
+    }
+
+    fn mount_real_readonly(&mut self, py: Python<'_>, host_path: String) -> PyResult<()> {
+        self.real_mounts.push(RealMountConfig {
+            host_path,
+            vfs_mount: None,
+            readwrite: false,
+        });
+        self.reset(py)
+    }
+
+    fn mount_real_readonly_at(
+        &mut self,
+        py: Python<'_>,
+        host_path: String,
+        vfs_mount: String,
+    ) -> PyResult<()> {
+        self.real_mounts.push(RealMountConfig {
+            host_path,
+            vfs_mount: Some(vfs_mount),
+            readwrite: false,
+        });
+        self.reset(py)
+    }
+
+    fn mount_real_readwrite(&mut self, py: Python<'_>, host_path: String) -> PyResult<()> {
+        self.real_mounts.push(RealMountConfig {
+            host_path,
+            vfs_mount: None,
+            readwrite: true,
+        });
+        self.reset(py)
+    }
+
+    fn mount_real_readwrite_at(
+        &mut self,
+        py: Python<'_>,
+        host_path: String,
+        vfs_mount: String,
+    ) -> PyResult<()> {
+        self.real_mounts.push(RealMountConfig {
+            host_path,
+            vfs_mount: Some(vfs_mount),
+            readwrite: true,
+        });
+        self.reset(py)
     }
 
     fn __repr__(&self) -> String {
@@ -583,6 +983,8 @@ pub struct BashTool {
     cancelled: Arc<RwLock<Arc<AtomicBool>>>,
     username: Option<String>,
     hostname: Option<String>,
+    mounted_text_files: Vec<MountedTextConfig>,
+    real_mounts: Vec<RealMountConfig>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
 }
@@ -613,12 +1015,30 @@ impl BashTool {
 #[pymethods]
 impl BashTool {
     #[new]
-    #[pyo3(signature = (username=None, hostname=None, max_commands=None, max_loop_iterations=None))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        username=None,
+        hostname=None,
+        max_commands=None,
+        max_loop_iterations=None,
+        mount_text=None,
+        mount_readonly_text=None,
+        mount_real_readonly=None,
+        mount_real_readonly_at=None,
+        mount_real_readwrite=None,
+        mount_real_readwrite_at=None,
+    ))]
     fn new(
         username: Option<String>,
         hostname: Option<String>,
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
+        mount_text: Option<Vec<(String, String)>>,
+        mount_readonly_text: Option<Vec<(String, String)>>,
+        mount_real_readonly: Option<Vec<String>>,
+        mount_real_readonly_at: Option<Vec<(String, String)>>,
+        mount_real_readwrite: Option<Vec<String>>,
+        mount_real_readwrite_at: Option<Vec<(String, String)>>,
     ) -> PyResult<Self> {
         let mut builder = Bash::builder();
 
@@ -638,13 +1058,62 @@ impl BashTool {
         }
         builder = builder.limits(limits);
 
+        let mounted_text_files =
+            mount_text
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(path, content)| MountedTextConfig {
+                    path,
+                    content,
+                    readonly: false,
+                })
+                .chain(mount_readonly_text.unwrap_or_default().into_iter().map(
+                    |(path, content)| MountedTextConfig {
+                        path,
+                        content,
+                        readonly: true,
+                    },
+                ))
+                .collect::<Vec<_>>();
+        let real_mounts = mount_real_readonly
+            .unwrap_or_default()
+            .into_iter()
+            .map(|host_path| RealMountConfig {
+                host_path,
+                vfs_mount: None,
+                readwrite: false,
+            })
+            .chain(mount_real_readonly_at.unwrap_or_default().into_iter().map(
+                |(host_path, vfs_mount)| RealMountConfig {
+                    host_path,
+                    vfs_mount: Some(vfs_mount),
+                    readwrite: false,
+                },
+            ))
+            .chain(
+                mount_real_readwrite
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|host_path| RealMountConfig {
+                        host_path,
+                        vfs_mount: None,
+                        readwrite: true,
+                    }),
+            )
+            .chain(mount_real_readwrite_at.unwrap_or_default().into_iter().map(
+                |(host_path, vfs_mount)| RealMountConfig {
+                    host_path,
+                    vfs_mount: Some(vfs_mount),
+                    readwrite: true,
+                },
+            ))
+            .collect::<Vec<_>>();
+        builder = apply_fs_config(builder, &mounted_text_files, &real_mounts);
+
         let bash = builder.build();
         let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
 
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))?;
+        let rt = make_runtime()?;
 
         Ok(Self {
             inner: Arc::new(Mutex::new(bash)),
@@ -652,6 +1121,8 @@ impl BashTool {
             cancelled,
             username,
             hostname,
+            mounted_text_files,
+            real_mounts,
             max_commands,
             max_loop_iterations,
         })
@@ -734,6 +1205,8 @@ impl BashTool {
         let inner = self.inner.clone();
         let username = self.username.clone();
         let hostname = self.hostname.clone();
+        let mounted_text_files = self.mounted_text_files.clone();
+        let real_mounts = self.real_mounts.clone();
         let max_commands = self.max_commands;
         let max_loop_iterations = self.max_loop_iterations;
         let cancelled = self.cancelled.clone();
@@ -756,6 +1229,7 @@ impl BashTool {
                     limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
                 }
                 builder = builder.limits(limits);
+                builder = apply_fs_config(builder, &mounted_text_files, &real_mounts);
                 *bash = builder.build();
                 // Swap the cancellation token to the new interpreter's token so
                 // cancel() targets the current (not stale) interpreter.
@@ -765,6 +1239,86 @@ impl BashTool {
                 Ok(())
             })
         })
+    }
+
+    fn fs(&self, py: Python<'_>) -> PyResult<Py<PyFileSystem>> {
+        let inner = self.inner.clone();
+        let fs = py.detach(|| {
+            self.rt.block_on(async {
+                let bash = inner.lock().await;
+                Ok::<Arc<dyn FileSystem>, PyErr>(bash.fs())
+            })
+        })?;
+        Py::new(py, PyFileSystem::new(fs)?)
+    }
+
+    fn mount_text(&mut self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
+        self.mounted_text_files.push(MountedTextConfig {
+            path,
+            content,
+            readonly: false,
+        });
+        self.reset(py)
+    }
+
+    fn mount_readonly_text(
+        &mut self,
+        py: Python<'_>,
+        path: String,
+        content: String,
+    ) -> PyResult<()> {
+        self.mounted_text_files.push(MountedTextConfig {
+            path,
+            content,
+            readonly: true,
+        });
+        self.reset(py)
+    }
+
+    fn mount_real_readonly(&mut self, py: Python<'_>, host_path: String) -> PyResult<()> {
+        self.real_mounts.push(RealMountConfig {
+            host_path,
+            vfs_mount: None,
+            readwrite: false,
+        });
+        self.reset(py)
+    }
+
+    fn mount_real_readonly_at(
+        &mut self,
+        py: Python<'_>,
+        host_path: String,
+        vfs_mount: String,
+    ) -> PyResult<()> {
+        self.real_mounts.push(RealMountConfig {
+            host_path,
+            vfs_mount: Some(vfs_mount),
+            readwrite: false,
+        });
+        self.reset(py)
+    }
+
+    fn mount_real_readwrite(&mut self, py: Python<'_>, host_path: String) -> PyResult<()> {
+        self.real_mounts.push(RealMountConfig {
+            host_path,
+            vfs_mount: None,
+            readwrite: true,
+        });
+        self.reset(py)
+    }
+
+    fn mount_real_readwrite_at(
+        &mut self,
+        py: Python<'_>,
+        host_path: String,
+        vfs_mount: String,
+    ) -> PyResult<()> {
+        self.real_mounts.push(RealMountConfig {
+            host_path,
+            vfs_mount: Some(vfs_mount),
+            readwrite: true,
+        });
+        self.reset(py)
     }
 
     #[getter]
@@ -1133,6 +1687,7 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BashTool>()?;
     m.add_class::<ScriptedTool>()?;
     m.add_class::<ExecResult>()?;
+    m.add_class::<PyFileSystem>()?;
     m.add_function(wrap_pyfunction!(create_langchain_tool_spec, m)?)?;
     Ok(())
 }
