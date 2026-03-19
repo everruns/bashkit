@@ -150,8 +150,6 @@ pub struct Cp;
 
 #[async_trait]
 impl Builtin for Cp {
-    // files.last().unwrap() is safe: guarded by files.len() < 2 check above
-    #[allow(clippy::unwrap_used)]
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if ctx.args.len() < 2 {
             return Ok(ExecResult::err("cp: missing file operand\n".to_string(), 1));
@@ -167,7 +165,9 @@ impl Builtin for Cp {
             ));
         }
 
-        let dest = files.last().unwrap();
+        let dest = files
+            .last()
+            .expect("files.last() valid: guarded by files.len() < 2 check above");
         let sources = &files[..files.len() - 1];
         let dest_path = resolve_path(ctx.cwd, dest);
 
@@ -218,8 +218,6 @@ pub struct Mv;
 
 #[async_trait]
 impl Builtin for Mv {
-    // files.last().unwrap() is safe: guarded by files.len() < 2 check above
-    #[allow(clippy::unwrap_used)]
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if ctx.args.len() < 2 {
             return Ok(ExecResult::err("mv: missing file operand\n".to_string(), 1));
@@ -234,7 +232,9 @@ impl Builtin for Mv {
             ));
         }
 
-        let dest = files.last().unwrap();
+        let dest = files
+            .last()
+            .expect("files.last() valid: guarded by files.len() < 2 check above");
         let sources = &files[..files.len() - 1];
         let dest_path = resolve_path(ctx.cwd, dest);
 
@@ -426,8 +426,6 @@ fn apply_symbolic_mode(mode_str: &str, current_mode: u32) -> Option<u32> {
 
 #[async_trait]
 impl Builtin for Chmod {
-    // from_str_radix().unwrap() is safe: is_ok() check on same value above
-    #[allow(clippy::unwrap_used)]
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if ctx.args.len() < 2 {
             return Ok(ExecResult::err("chmod: missing operand\n".to_string(), 1));
@@ -453,7 +451,8 @@ impl Builtin for Chmod {
             }
 
             let mode = if is_octal {
-                u32::from_str_radix(mode_str, 8).unwrap()
+                u32::from_str_radix(mode_str, 8)
+                    .expect("from_str_radix valid: is_octal confirmed by is_ok() check above")
             } else {
                 // Symbolic mode - need current permissions
                 let current_mode = match ctx.fs.stat(&path).await {
@@ -735,7 +734,6 @@ impl Builtin for Mktemp {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::collections::HashMap;

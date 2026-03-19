@@ -239,7 +239,6 @@ fn next_tab_stop(col: usize, tab_stops: &[usize]) -> usize {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::fs::InMemoryFs;

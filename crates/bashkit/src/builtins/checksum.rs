@@ -82,7 +82,6 @@ fn hex_digest<D: Digest>(data: &[u8]) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::collections::HashMap;

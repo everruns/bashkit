@@ -309,7 +309,6 @@ fn redact_url_credentials(url: &str) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

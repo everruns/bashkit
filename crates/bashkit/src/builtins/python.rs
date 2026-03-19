@@ -767,7 +767,6 @@ fn format_exception_with_output(e: MontyException, printed: &str) -> ExecResult 
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::builtins::Context;

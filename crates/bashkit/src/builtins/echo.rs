@@ -71,8 +71,6 @@ impl Builtin for Echo {
     }
 }
 
-// to_digit().unwrap() is safe: only called after is_ascii_hexdigit() check
-#[allow(clippy::unwrap_used)]
 fn interpret_escape_sequences(s: &str) -> String {
     let mut result = String::new();
     let mut chars = s.chars().peekable();
@@ -109,7 +107,10 @@ fn interpret_escape_sequences(s: &str) -> String {
                     for _ in 0..2 {
                         if let Some(&digit) = chars.peek() {
                             if digit.is_ascii_hexdigit() {
-                                value = value * 16 + digit.to_digit(16).unwrap() as u8;
+                                value = value * 16
+                                    + digit.to_digit(16).expect(
+                                        "to_digit(16) valid: guarded by is_ascii_hexdigit()",
+                                    ) as u8;
                                 chars.next();
                             } else {
                                 break;
@@ -137,7 +138,6 @@ fn interpret_escape_sequences(s: &str) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

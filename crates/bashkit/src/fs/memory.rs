@@ -1378,7 +1378,6 @@ impl FileSystem for InMemoryFs {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
