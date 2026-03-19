@@ -160,6 +160,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
         Fold.execute(ctx).await.expect("fold failed")
     }

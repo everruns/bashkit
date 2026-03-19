@@ -46,6 +46,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
         let result = Clear.execute(ctx).await.expect("clear failed");
         assert_eq!(result.exit_code, 0);

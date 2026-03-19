@@ -118,50 +118,185 @@ impl Builtin for Printenv {
     }
 }
 
-/// The history builtin - display command history.
+/// The history builtin — display and manage command history.
 ///
-/// Usage: history [-c] [N]
+/// Usage: history [-c] [--grep PATTERN] [--cwd DIR] [--failed] [--since DURATION] [N]
 ///
 /// Options:
-///   -c   Clear the history
-///   N    Show last N entries
+///   -c          Clear the history
+///   --grep PAT  Filter by command pattern
+///   --cwd DIR   Filter by working directory prefix
+///   --failed    Show only failed commands (non-zero exit)
+///   --since DUR Show only entries within duration (e.g. 2d, 1h, 30m, 60s)
+///   N           Show last N entries
 ///
-/// In Bashkit's virtual environment, history is limited to the current session.
-/// Note: Full history tracking would require interpreter changes.
+/// Reads history from [`ShellRef`](super::ShellRef), clears via
+/// [`BuiltinSideEffect::ClearHistory`](super::BuiltinSideEffect).
 pub struct History;
+
+impl History {
+    /// Parse a human-readable duration string to seconds (e.g. "2d", "1h", "30m", "60s").
+    fn parse_duration_to_secs(s: &str) -> Option<i64> {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+        let (num_str, multiplier) = if let Some(stripped) = s.strip_suffix('d') {
+            (stripped, 86400)
+        } else if let Some(stripped) = s.strip_suffix('h') {
+            (stripped, 3600)
+        } else if let Some(stripped) = s.strip_suffix('m') {
+            (stripped, 60)
+        } else if let Some(stripped) = s.strip_suffix('s') {
+            (stripped, 1)
+        } else {
+            (s, 1)
+        };
+        let num: i64 = num_str.parse().ok()?;
+        Some(num * multiplier)
+    }
+}
 
 #[async_trait]
 impl Builtin for History {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        let Some(shell) = ctx.shell.as_ref() else {
+            // No shell state — return empty (no-op for external builtins)
+            return Ok(ExecResult::ok(String::new()));
+        };
+
         let mut clear = false;
         let mut count: Option<usize> = None;
+        let mut grep_pattern: Option<String> = None;
+        let mut cwd_filter: Option<String> = None;
+        let mut failed_only = false;
+        let mut since_secs: Option<i64> = None;
 
-        for arg in ctx.args {
-            if arg == "-c" {
-                clear = true;
-            } else if let Ok(n) = arg.parse::<usize>() {
-                count = Some(n);
-            } else if let Some(opt) = arg.strip_prefix('-') {
-                return Ok(ExecResult::err(
-                    format!("history: invalid option -- '{}'\n", opt),
-                    1,
-                ));
+        let mut i = 0;
+        while i < ctx.args.len() {
+            let arg = &ctx.args[i];
+            match arg.as_str() {
+                "-c" => clear = true,
+                "--grep" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        grep_pattern = Some(ctx.args[i].clone());
+                    } else {
+                        return Ok(ExecResult::err(
+                            "history: --grep requires an argument\n".to_string(),
+                            1,
+                        ));
+                    }
+                }
+                "--cwd" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        cwd_filter = Some(ctx.args[i].clone());
+                    } else {
+                        return Ok(ExecResult::err(
+                            "history: --cwd requires an argument\n".to_string(),
+                            1,
+                        ));
+                    }
+                }
+                "--failed" => failed_only = true,
+                "--since" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        match Self::parse_duration_to_secs(&ctx.args[i]) {
+                            Some(secs) => since_secs = Some(secs),
+                            None => {
+                                return Ok(ExecResult::err(
+                                    format!(
+                                        "history: invalid duration '{}' (use e.g. 2d, 1h, 30m, 60s)\n",
+                                        ctx.args[i]
+                                    ),
+                                    1,
+                                ));
+                            }
+                        }
+                    } else {
+                        return Ok(ExecResult::err(
+                            "history: --since requires an argument\n".to_string(),
+                            1,
+                        ));
+                    }
+                }
+                _ => {
+                    if let Some(opt) = arg.strip_prefix("--") {
+                        return Ok(ExecResult::err(
+                            format!("history: unrecognized option '--{}'\n", opt),
+                            1,
+                        ));
+                    } else if let Some(opt) = arg.strip_prefix('-') {
+                        // Allow -c, reject others
+                        if opt != "c" {
+                            return Ok(ExecResult::err(
+                                format!("history: invalid option -- '{}'\n", opt),
+                                1,
+                            ));
+                        }
+                    } else if let Ok(n) = arg.parse::<usize>() {
+                        count = Some(n);
+                    }
+                }
             }
+            i += 1;
         }
 
         if clear {
-            // In Bashkit's virtual environment, there's no persistent history to clear
-            return Ok(ExecResult::ok(String::new()));
+            let mut result = ExecResult::ok(String::new());
+            result
+                .side_effects
+                .push(super::BuiltinSideEffect::ClearHistory);
+            return Ok(result);
         }
 
-        // In Bashkit's virtual environment, we don't have access to shell history
-        // Return an informational message
-        let output = if let Some(_n) = count {
-            // Would show last N entries
-            String::new()
+        let history = shell.history_entries();
+        let now = chrono::Utc::now().timestamp();
+
+        // Apply filters
+        let filtered: Vec<(usize, &crate::interpreter::HistoryEntry)> = history
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| {
+                if let Some(ref pat) = grep_pattern
+                    && !entry.command.contains(pat.as_str())
+                {
+                    return false;
+                }
+                if let Some(ref cwd) = cwd_filter
+                    && !entry.cwd.starts_with(cwd.as_str())
+                {
+                    return false;
+                }
+                if failed_only && entry.exit_code == 0 {
+                    return false;
+                }
+                if let Some(secs) = since_secs
+                    && now - entry.timestamp > secs
+                {
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        // Apply count limit (last N entries)
+        let entries: &[(usize, &crate::interpreter::HistoryEntry)] = if let Some(n) = count {
+            let start = filtered.len().saturating_sub(n);
+            &filtered[start..]
         } else {
-            String::new()
+            &filtered
         };
+
+        // Format output: bash-style numbered listing
+        let mut output = String::new();
+        for (idx, entry) in entries {
+            use std::fmt::Write;
+            // 1-indexed like bash
+            let _ = writeln!(output, "  {}  {}", idx + 1, entry.command);
+        }
 
         Ok(ExecResult::ok(output))
     }
@@ -208,6 +343,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Env.execute(ctx).await.unwrap();
@@ -234,6 +370,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Env.execute(ctx).await.unwrap();
@@ -258,6 +395,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Env.execute(ctx).await.unwrap();
@@ -287,6 +425,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Env.execute(ctx).await.unwrap();
@@ -315,6 +454,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Printenv.execute(ctx).await.unwrap();
@@ -341,6 +481,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Printenv.execute(ctx).await.unwrap();
@@ -367,6 +508,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Printenv.execute(ctx).await.unwrap();
@@ -392,6 +534,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Printenv.execute(ctx).await.unwrap();
@@ -417,6 +560,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Printenv.execute(ctx).await.unwrap();
@@ -443,6 +587,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = History.execute(ctx).await.unwrap();
@@ -466,6 +611,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = History.execute(ctx).await.unwrap();
@@ -489,6 +635,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = History.execute(ctx).await.unwrap();
@@ -496,7 +643,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_history_invalid_option() {
+    async fn test_history_no_shell_state() {
+        // Without ShellRef, history is a no-op
         let (fs, mut cwd, mut variables) = create_test_ctx().await;
         let env = HashMap::new();
 
@@ -512,10 +660,11 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = History.execute(ctx).await.unwrap();
-        assert_eq!(result.exit_code, 1);
-        assert!(result.stderr.contains("invalid option"));
+        // No shell state → graceful no-op
+        assert_eq!(result.exit_code, 0);
     }
 }

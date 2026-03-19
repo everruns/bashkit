@@ -309,6 +309,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Basename.execute(ctx).await.unwrap()
@@ -332,6 +333,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Dirname.execute(ctx).await.unwrap()
@@ -435,6 +437,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Readlink.execute(ctx).await.unwrap()

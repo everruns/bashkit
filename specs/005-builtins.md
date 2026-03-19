@@ -199,11 +199,60 @@ pub struct Context<'a> {
     pub cwd: &'a mut PathBuf,
     pub fs: Arc<dyn FileSystem>,
     pub stdin: Option<&'a str>,
-    // Only available with http_client feature:
     #[cfg(feature = "http_client")]
     pub http_client: Option<&'a HttpClient>,
+    #[cfg(feature = "git")]
+    pub git_client: Option<&'a GitClient>,
+    /// Internal builtins only — None for custom builtins.
+    pub(crate) shell: Option<ShellRef<'a>>,
 }
 ```
+
+### Shell State Access (ShellRef)
+
+Internal builtins that need interpreter state receive it via `Context.shell`:
+
+```rust
+pub(crate) struct ShellRef<'a> {
+    // Direct mutable access (simple HashMap state, no invariants)
+    pub(crate) aliases: &'a mut HashMap<String, String>,
+    pub(crate) traps: &'a mut HashMap<String, String>,
+    // Read-only introspection (accessed via methods)
+    // has_builtin(), has_function(), is_keyword(),
+    // call_stack_depth(), call_stack_frame_name(),
+    // history_entries(), jobs()
+}
+```
+
+**Design rationale:**
+- **Direct mutation** for aliases/traps — simple HashMaps with no invariants
+- **Side effects** for arrays (budget checks), positional params (call stack),
+  history (VFS persistence) — state with invariants the interpreter must enforce
+- **Read-only methods** for introspection (functions, builtins, keywords,
+  call stack, history, jobs) — builtins shouldn't mutate these
+- `pub(crate)` keeps ShellRef out of the public API; custom builtins get `None`
+- No dynamic dispatch — concrete struct, not trait
+
+**Builtins using ShellRef:**
+- `type`, `which` — read-only: check builtin/function/keyword names
+- `hash` — no-op (no PATH cache in sandbox)
+- `alias`, `unalias` — direct mutation of `shell.aliases`
+- `trap` — direct mutation of `shell.traps`
+- `caller` — read call stack depth/frame names
+- `history` — read history entries, clear via `ClearHistory` side effect
+- `wait` — read job table, set exit code via `SetLastExitCode` side effect
+- `mapfile`/`readarray` — set arrays via `SetIndexedArray` side effect
+
+**Builtins still in interpreter dispatch chain** (fundamentally need interpreter):
+- `exec` — redirect management, VFS I/O
+- `local` — call frame locals mutation
+- `source`/`.`, `eval` — parse and execute in current context
+- `bash`/`sh` — script execution
+- `command` — dispatch to builtins/functions
+- `declare`/`typeset` — arrays, assoc arrays, variable attributes
+- `unset` — functions, arrays, namerefs, call stack locals
+- `let` — arithmetic evaluation with assignment
+- `getopts` — complex variable + call stack interaction
 
 ### Execution Plans (Sub-Command Delegation)
 
@@ -250,70 +299,4 @@ macro in `interpreter/mod.rs`. To add a new one:
 
 1. Create the builtin module in `crates/bashkit/src/builtins/` (implement `Builtin` trait)
 2. Add `mod mycommand;` and `pub use mycommand::MyCommand;` in `builtins/mod.rs`
-3. Add one line to the `register_builtins!` table in `interpreter/mod.rs`:
-   ```rust
-   register_builtins!(builtins,
-       // ...existing entries...
-       "mycommand" => MyCommand,
-   );
-   ```
-
-Builtins that need constructor parameters (filesystem, config values, etc.) are
-registered as explicit `builtins.insert(...)` calls below the macro invocation.
-See `date`, `source`, `hostname`, `uname`, `whoami`, `id` for examples.
-
-### Custom Builtins (External)
-
-Bashkit supports registering custom builtins via `BashBuilder`:
-
-```rust
-use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, async_trait};
-
-struct MyCommand;
-
-#[async_trait]
-impl Builtin for MyCommand {
-    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
-        Ok(ExecResult::ok("Hello!\n".to_string()))
-    }
-}
-
-let bash = Bash::builder()
-    .builtin("mycommand", Box::new(MyCommand))
-    .build();
-```
-
-Custom builtins:
-- Have full access to execution context (args, env, fs, stdin)
-- Can override default builtins if registered with the same name
-- Must implement `Send + Sync` for async safety
-- Integrate seamlessly with pipelines, conditionals, and loops
-
-See `crates/bashkit/docs/custom_builtins.md` for detailed documentation.
-
-### Safety Constraints
-
-1. **No real filesystem access** - All operations use virtual filesystem
-2. **Resource limits** - `sleep` capped at 60s, execution limits enforced
-3. **Network restrictions** - URL allowlist required for network builtins
-4. **No process spawning** - All commands are internal implementations
-
-### Implementation Notes
-
-- Background execution (`&`) is parsed but runs synchronously
-- Network builtins require explicit allowlist configuration for security
-- File operations respect virtual filesystem permissions
-- Network responses are limited to 10MB by default to prevent memory exhaustion
-
-## Verification
-
-```bash
-# All builtins work
-cargo test --lib builtins
-
-# Spec tests pass
-cargo test --test spec_tests
-
-# Full test suite
-cargo test --all-features
-```
+3. Add one line to the `register_builtins!` table i

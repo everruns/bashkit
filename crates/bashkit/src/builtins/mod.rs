@@ -22,11 +22,13 @@
 //!
 //! Register via [`BashBuilder::builtin`](crate::BashBuilder::builtin).
 
+mod alias;
 mod archive;
 mod assert;
 mod awk;
 mod base64;
 mod bc;
+mod caller;
 mod cat;
 mod checksum;
 mod clear;
@@ -59,11 +61,13 @@ mod hextools;
 mod http;
 mod iconv;
 mod inspect;
+mod introspect;
 mod join;
 mod jq;
 mod json;
 mod log;
 mod ls;
+mod mapfile;
 mod mkfifo;
 mod navigation;
 mod nl;
@@ -91,6 +95,7 @@ mod test;
 mod textrev;
 pub(crate) mod timeout;
 mod tomlq;
+mod trap;
 mod tree;
 mod vars;
 mod verify;
@@ -106,11 +111,13 @@ mod git;
 #[cfg(feature = "python")]
 mod python;
 
+pub use alias::{Alias, Unalias};
 pub use archive::{Gunzip, Gzip, Tar};
 pub use assert::Assert;
 pub use awk::Awk;
 pub use base64::Base64;
 pub use bc::Bc;
+pub use caller::Caller;
 pub use cat::Cat;
 pub use checksum::{Md5sum, Sha1sum, Sha256sum};
 pub use clear::Clear;
@@ -143,12 +150,14 @@ pub use hextools::{Hexdump, Od, Xxd};
 pub use http::Http;
 pub use iconv::Iconv;
 pub use inspect::{File, Less, Stat};
+pub use introspect::{Hash, Type, Which};
 pub use join::Join;
 pub use jq::Jq;
 pub use json::Json;
 pub use log::Log;
 pub(crate) use ls::glob_match;
 pub use ls::{Find, Ls, Rmdir};
+pub use mapfile::Mapfile;
 pub use mkfifo::Mkfifo;
 pub use navigation::{Cd, Pwd};
 pub use nl::Nl;
@@ -175,6 +184,7 @@ pub use test::{Bracket, Test};
 pub use textrev::{Rev, Tac};
 pub use timeout::Timeout;
 pub use tomlq::Tomlq;
+pub use trap::Trap;
 pub use tree::Tree;
 pub use vars::{Eval, Local, Readonly, Set, Shift, Shopt, Times, Unset};
 pub use verify::Verify;
@@ -198,6 +208,9 @@ use std::sync::Arc;
 use crate::error::Result;
 use crate::fs::FileSystem;
 use crate::interpreter::ExecResult;
+
+// Re-export ShellRef for internal builtins
+pub(crate) use crate::interpreter::ShellRef;
 
 // Re-export for use by builtins
 pub use crate::interpreter::BuiltinSideEffect;
@@ -350,6 +363,20 @@ pub struct Context<'a> {
     /// [`BashBuilder::git`](crate::BashBuilder::git).
     #[cfg(feature = "git")]
     pub git_client: Option<&'a crate::git::GitClient>,
+
+    /// Direct access to interpreter shell state.
+    ///
+    /// Provides internal builtins with:
+    /// - **Mutable access** to aliases and traps (simple HashMap state)
+    /// - **Read-only access** to functions, builtins, call stack, history, jobs
+    ///
+    /// `None` for custom/external builtins; `Some(...)` for internal builtins
+    /// that need interpreter state (e.g. `type`, `alias`, `trap`).
+    ///
+    /// Design: aliases/traps are directly mutable because they're simple HashMaps
+    /// with no invariants. Arrays use [`BuiltinSideEffect`] because they need
+    /// budget checking. History uses side effects for VFS persistence.
+    pub(crate) shell: Option<ShellRef<'a>>,
 }
 
 impl<'a> Context<'a> {
@@ -376,6 +403,7 @@ impl<'a> Context<'a> {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         }
     }
 }

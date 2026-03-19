@@ -328,6 +328,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
         Json.execute(ctx).await.unwrap()
     }

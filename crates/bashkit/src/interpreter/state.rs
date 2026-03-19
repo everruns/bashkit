@@ -16,9 +16,13 @@ pub enum ControlFlow {
 /// Structured side-effect channel for builtins that need to communicate
 /// state changes back to the interpreter.
 ///
-/// Replaces magic-prefixed variables (`_SHIFT_COUNT`, `_SET_POSITIONAL`,
-/// `_ARRAY_READ_*`) with a typed enum. The interpreter reads these from
-/// `ExecResult::side_effects` after builtin execution.
+/// Used only for state with invariants that builtins can't enforce directly:
+/// - Arrays: need memory budget checking via `insert_array_checked`
+/// - Positional params: stored on the call stack, not in Context
+/// - History: needs VFS persistence via `save_history`
+/// - Exit code: interpreter tracks `last_exit_code` separately
+///
+/// Simple state (aliases, traps) is mutated directly via [`ShellRef`].
 #[derive(Debug, Clone)]
 pub enum BuiltinSideEffect {
     /// Shift N positional parameters (replaces `_SHIFT_COUNT`).
@@ -27,6 +31,17 @@ pub enum BuiltinSideEffect {
     SetPositional(Vec<String>),
     /// Populate an indexed array variable (replaces `_ARRAY_READ_*`).
     SetArray { name: String, elements: Vec<String> },
+    /// Populate an indexed array with index->value pairs (for mapfile).
+    SetIndexedArray {
+        name: String,
+        entries: Vec<(usize, String)>,
+    },
+    /// Remove an indexed array.
+    RemoveArray(String),
+    /// Clear command history (interpreter persists to VFS).
+    ClearHistory,
+    /// Set the last exit code (for wait builtin).
+    SetLastExitCode(i32),
 }
 
 /// Result of executing a bash script.

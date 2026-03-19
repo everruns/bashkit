@@ -968,6 +968,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -1000,6 +1001,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -1033,6 +1035,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -1053,6 +1056,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -1082,6 +1086,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -1108,6 +1113,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -1132,6 +1138,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -1164,6 +1171,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -1194,6 +1202,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -1226,6 +1235,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -1258,6 +1268,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1290,6 +1301,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1320,6 +1332,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1350,6 +1363,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1383,6 +1397,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1408,6 +1423,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1432,6 +1448,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1456,6 +1473,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1501,6 +1519,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1563,6 +1582,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -1609,6 +1629,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1662,6 +1683,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let find_result = Find.execute(ctx_find).await.unwrap();
@@ -1679,6 +1701,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let ls_result = Ls.execute(ctx_ls).await.unwrap();
@@ -1726,6 +1749,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1765,6 +1789,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1809,6 +1834,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1855,6 +1881,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1880,6 +1907,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result2 = Find.execute(ctx2).await.unwrap();
@@ -1914,6 +1942,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1948,6 +1977,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -1972,6 +2002,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -2000,6 +2031,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Rmdir.execute(ctx).await.unwrap();
@@ -2029,6 +2061,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Rmdir.execute(ctx).await.unwrap();
@@ -2053,6 +2086,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Rmdir.execute(ctx).await.unwrap();
@@ -2081,6 +2115,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Rmdir.execute(ctx).await.unwrap();
@@ -2107,6 +2142,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Rmdir.execute(ctx).await.unwrap();
@@ -2133,6 +2169,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Rmdir.execute(ctx).await.unwrap();
@@ -2201,6 +2238,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -2294,6 +2332,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Find.execute(ctx).await.unwrap();
@@ -2378,6 +2417,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -2427,6 +2467,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -2467,6 +2508,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -2502,6 +2544,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -2535,6 +2578,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -2572,6 +2616,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -2609,6 +2654,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -2659,6 +2705,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -2690,6 +2737,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -2722,6 +2770,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -2756,6 +2805,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -2792,6 +2842,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -2824,6 +2875,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -2857,6 +2909,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -2902,6 +2955,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Ls.execute(ctx).await.unwrap();
@@ -3076,6 +3130,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let plan = Find.execution_plan(&ctx).await.unwrap();
@@ -3115,6 +3170,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let plan = Find.execution_plan(&ctx).await.unwrap();
@@ -3155,6 +3211,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let plan = Find.execution_plan(&ctx).await.unwrap();

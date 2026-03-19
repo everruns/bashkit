@@ -557,6 +557,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Cut.execute(ctx).await.unwrap()
@@ -580,6 +581,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Tr.execute(ctx).await.unwrap()

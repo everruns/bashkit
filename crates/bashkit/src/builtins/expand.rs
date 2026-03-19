@@ -264,6 +264,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
         Expand.execute(ctx).await.expect("expand failed")
     }
@@ -285,6 +286,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
         Unexpand.execute(ctx).await.expect("unexpand failed")
     }

@@ -455,6 +455,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Date::new().execute(ctx).await.unwrap()

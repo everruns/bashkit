@@ -360,6 +360,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -384,6 +385,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -408,6 +410,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -442,6 +445,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -467,6 +471,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -491,6 +496,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -515,6 +521,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Xargs.execute(ctx).await.unwrap();
@@ -539,6 +546,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let plan = Xargs.execution_plan(&ctx).await.unwrap();
@@ -569,6 +577,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let plan = Xargs.execution_plan(&ctx).await.unwrap();
@@ -603,6 +612,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -630,6 +640,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -663,6 +674,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -689,6 +701,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -713,6 +726,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Tee.execute(ctx).await.unwrap();
@@ -739,6 +753,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Watch.execute(ctx).await.unwrap();
@@ -764,6 +779,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Watch.execute(ctx).await.unwrap();
@@ -789,6 +805,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Watch.execute(ctx).await.unwrap();
@@ -813,6 +830,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Watch.execute(ctx).await.unwrap();
