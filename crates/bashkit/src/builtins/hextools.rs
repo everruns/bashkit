@@ -322,57 +322,52 @@ fn xxd_dump(data: &[u8], opts: &XxdOptions) -> String {
     output
 }
 
+/// Decode a string of hex digit characters into bytes.
+/// Non-hex characters are silently ignored. Odd trailing nibble is dropped.
+fn decode_hex(hex: &str) -> Vec<u8> {
+    let clean: String = hex.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    clean
+        .as_bytes()
+        .chunks(2)
+        .filter_map(|pair| {
+            if pair.len() == 2 {
+                u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// Reverse hex dump: convert hex string back to binary bytes.
 /// In plain mode (-r -p), treats input as a continuous hex stream.
 /// In normal mode (-r), parses xxd-style output (skips address and ASCII columns).
 fn xxd_reverse(data: &[u8], plain: bool) -> Vec<u8> {
     let text = String::from_utf8_lossy(data);
-    let mut result = Vec::new();
 
     if plain {
-        // Plain mode: entire input is hex chars (whitespace ignored)
-        let hex: String = text.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-        for chunk in hex.as_bytes().chunks(2) {
-            if chunk.len() == 2 {
-                let s = std::str::from_utf8(chunk).unwrap_or("00");
-                if let Ok(b) = u8::from_str_radix(s, 16) {
-                    result.push(b);
-                }
-            }
-        }
-    } else {
-        // Normal xxd output: "ADDR: HH HH ...  ASCII"
-        for line in text.lines() {
-            // Skip empty lines
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            // Find hex portion after the address (colon-separated)
-            let hex_part = if let Some(idx) = line.find(':') {
-                &line[idx + 1..]
-            } else {
-                line
-            };
-            // Take only the hex portion (before the ASCII column)
-            // ASCII column starts after two spaces
-            let hex_part = if let Some(idx) = hex_part.find("  ") {
-                &hex_part[..idx]
-            } else {
-                hex_part
-            };
-            let hex: String = hex_part.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-            for chunk in hex.as_bytes().chunks(2) {
-                if chunk.len() == 2 {
-                    let s = std::str::from_utf8(chunk).unwrap_or("00");
-                    if let Ok(b) = u8::from_str_radix(s, 16) {
-                        result.push(b);
-                    }
-                }
-            }
-        }
+        return decode_hex(&text);
     }
 
+    // Normal xxd output: "ADDR: HH HH ...  ASCII"
+    let mut result = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Strip address prefix (before colon)
+        let hex_part = match line.find(':') {
+            Some(idx) => &line[idx + 1..],
+            None => line,
+        };
+        // Strip ASCII column (after double space)
+        let hex_part = match hex_part.find("  ") {
+            Some(idx) => &hex_part[..idx],
+            None => hex_part,
+        };
+        result.extend(decode_hex(hex_part));
+    }
     result
 }
 
