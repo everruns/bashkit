@@ -53,7 +53,7 @@ use std::sync::Arc;
 
 use super::backend::FsBackend;
 use super::limits::{FsLimits, FsUsage};
-use super::traits::{DirEntry, FileSystem, Metadata, fs_errors};
+use super::traits::{DirEntry, FileSystem, FileSystemExt, Metadata, fs_errors};
 use crate::error::Result;
 
 /// POSIX-compatible filesystem wrapper.
@@ -234,7 +234,10 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
         self.backend.chmod(path, mode).await
     }
+}
 
+#[async_trait]
+impl<B: FsBackend + 'static> FileSystemExt for PosixFs<B> {
     fn usage(&self) -> FsUsage {
         self.backend.usage()
     }

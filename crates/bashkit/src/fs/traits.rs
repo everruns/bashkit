@@ -101,10 +101,68 @@ pub mod fs_errors {
     }
 }
 
+/// Optional filesystem extensions for resource tracking and special file types.
+///
+/// This trait provides methods that most custom filesystem implementations do not
+/// need to override. All methods have sensible defaults:
+///
+/// - [`usage()`](FileSystemExt::usage) returns zero usage
+/// - [`limits()`](FileSystemExt::limits) returns unlimited
+/// - [`mkfifo()`](FileSystemExt::mkfifo) returns "not supported"
+///
+/// Built-in implementations (`InMemoryFs`, `OverlayFs`, `MountableFs`) override
+/// these to provide real statistics. Custom backends can opt in by implementing
+/// just the methods they need.
+///
+/// `FileSystemExt` is a supertrait of [`FileSystem`], so its methods are
+/// available on any `dyn FileSystem` trait object.
+#[async_trait]
+pub trait FileSystemExt: Send + Sync {
+    /// Get current filesystem usage statistics.
+    ///
+    /// Returns total bytes used, file count, and directory count.
+    /// Used by `du` and `df` builtins.
+    ///
+    /// # Default Implementation
+    ///
+    /// Returns zeros. Implementations should override for accurate stats.
+    fn usage(&self) -> FsUsage {
+        FsUsage::default()
+    }
+
+    /// Create a named pipe (FIFO) at the given path.
+    ///
+    /// FIFOs are simulated as buffered files in the virtual filesystem.
+    /// Reading from a FIFO returns its buffered content, writing appends to it.
+    ///
+    /// # Default Implementation
+    ///
+    /// Returns "not supported" error. Override in implementations that support FIFOs.
+    async fn mkfifo(&self, _path: &Path, _mode: u32) -> Result<()> {
+        Err(std::io::Error::other("mkfifo not supported").into())
+    }
+
+    /// Get filesystem limits.
+    ///
+    /// Returns the configured limits for this filesystem.
+    /// Used by `df` builtin to show available space.
+    ///
+    /// # Default Implementation
+    ///
+    /// Returns unlimited limits.
+    fn limits(&self) -> FsLimits {
+        FsLimits::unlimited()
+    }
+}
+
 /// Async virtual filesystem trait.
 ///
-/// This trait defines the interface for all filesystem implementations in Bashkit.
-/// Implement this trait to create custom storage backends.
+/// This trait defines the core interface for all filesystem implementations in
+/// Bashkit. It contains only the essential POSIX-like operations. Optional
+/// methods for resource tracking and special file types live in
+/// [`FileSystemExt`], which is a supertrait — so all `FileSystem` implementors
+/// must also implement `FileSystemExt` (usually just `impl FileSystemExt for T {}`
+/// to accept the defaults).
 ///
 /// # Thread Safety
 ///
@@ -114,13 +172,17 @@ pub mod fs_errors {
 ///
 /// # Implementing FileSystem
 ///
-/// To create a custom filesystem, implement all methods in this trait.
+/// To create a custom filesystem, implement all methods in this trait and
+/// add an empty `FileSystemExt` impl (or override specific extension methods).
 /// See `examples/custom_filesystem_impl.rs` for a complete implementation.
 ///
 /// ```rust,ignore
-/// use bashkit::{async_trait, FileSystem, Result};
+/// use bashkit::{async_trait, FileSystem, FileSystemExt, Result};
 ///
 /// pub struct MyFileSystem { /* ... */ }
+///
+/// #[async_trait]
+/// impl FileSystemExt for MyFileSystem {}
 ///
 /// #[async_trait]
 /// impl FileSystem for MyFileSystem {
@@ -151,7 +213,7 @@ pub mod fs_errors {
 /// - [`OverlayFs`](crate::OverlayFs) - Copy-on-write layered filesystem
 /// - [`MountableFs`](crate::MountableFs) - Multiple mount points
 #[async_trait]
-pub trait FileSystem: Send + Sync {
+pub trait FileSystem: FileSystemExt {
     /// Read a file's contents as bytes.
     ///
     /// # Errors
@@ -287,42 +349,6 @@ pub trait FileSystem: Send + Sync {
     ///
     /// Returns an error if the path does not exist.
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()>;
-
-    /// Get current filesystem usage statistics.
-    ///
-    /// Returns total bytes used, file count, and directory count.
-    /// Used by `du` and `df` builtins.
-    ///
-    /// # Default Implementation
-    ///
-    /// Returns zeros. Implementations should override for accurate stats.
-    fn usage(&self) -> FsUsage {
-        FsUsage::default()
-    }
-
-    /// Create a named pipe (FIFO) at the given path.
-    ///
-    /// FIFOs are simulated as buffered files in the virtual filesystem.
-    /// Reading from a FIFO returns its buffered content, writing appends to it.
-    ///
-    /// # Default Implementation
-    ///
-    /// Returns "not supported" error. Override in implementations that support FIFOs.
-    async fn mkfifo(&self, _path: &Path, _mode: u32) -> Result<()> {
-        Err(std::io::Error::other("mkfifo not supported").into())
-    }
-
-    /// Get filesystem limits.
-    ///
-    /// Returns the configured limits for this filesystem.
-    /// Used by `df` builtin to show available space.
-    ///
-    /// # Default Implementation
-    ///
-    /// Returns unlimited limits.
-    fn limits(&self) -> FsLimits {
-        FsLimits::unlimited()
-    }
 }
 
 /// File or directory metadata.
@@ -650,6 +676,9 @@ mod tests {
     fn filesystem_default_usage_returns_zeros() {
         // Test via a minimal struct that only implements the defaults
         struct Dummy;
+
+        #[async_trait]
+        impl FileSystemExt for Dummy {}
 
         #[async_trait]
         impl FileSystem for Dummy {
