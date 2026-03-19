@@ -58,88 +58,40 @@ impl Default for NlOptions {
 fn parse_nl_args(args: &[String]) -> std::result::Result<(NlOptions, Vec<String>), String> {
     let mut opts = NlOptions::default();
     let mut files = Vec::new();
-    let mut i = 0;
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "-b" {
-            i += 1;
-            if i < args.len() {
-                opts.body_type = match args[i].as_str() {
-                    "a" => BodyType::All,
-                    "t" => BodyType::NonEmpty,
-                    "n" => BodyType::None,
-                    other => return Err(format!("nl: invalid body numbering style: '{}'", other)),
-                };
-            }
-        } else if let Some(val) = arg.strip_prefix("-b") {
+    while !p.is_done() {
+        if let Some(val) = p.flag_value("-b", "nl")? {
             opts.body_type = match val {
                 "a" => BodyType::All,
                 "t" => BodyType::NonEmpty,
                 "n" => BodyType::None,
                 other => return Err(format!("nl: invalid body numbering style: '{}'", other)),
             };
-        } else if arg == "-n" {
-            i += 1;
-            if i < args.len() {
-                opts.format = match args[i].as_str() {
-                    "ln" => NumberFormat::LeftJustified,
-                    "rn" => NumberFormat::RightJustified,
-                    "rz" => NumberFormat::RightZero,
-                    other => return Err(format!("nl: invalid line numbering format: '{}'", other)),
-                };
-            }
-        } else if let Some(val) = arg.strip_prefix("-n") {
+        } else if let Some(val) = p.flag_value("-n", "nl")? {
             opts.format = match val {
                 "ln" => NumberFormat::LeftJustified,
                 "rn" => NumberFormat::RightJustified,
                 "rz" => NumberFormat::RightZero,
                 other => return Err(format!("nl: invalid line numbering format: '{}'", other)),
             };
-        } else if arg == "-s" {
-            i += 1;
-            if i < args.len() {
-                opts.separator = args[i].clone();
-            }
-        } else if let Some(val) = arg.strip_prefix("-s") {
+        } else if let Some(val) = p.flag_value("-s", "nl")? {
             opts.separator = val.to_string();
-        } else if arg == "-i" {
-            i += 1;
-            if i < args.len() {
-                opts.increment = args[i]
-                    .parse()
-                    .map_err(|_| format!("nl: invalid line number increment: '{}'", args[i]))?;
-            }
-        } else if let Some(val) = arg.strip_prefix("-i") {
+        } else if let Some(val) = p.flag_value("-i", "nl")? {
             opts.increment = val
                 .parse()
                 .map_err(|_| format!("nl: invalid line number increment: '{}'", val))?;
-        } else if arg == "-v" {
-            i += 1;
-            if i < args.len() {
-                opts.start = args[i]
-                    .parse()
-                    .map_err(|_| format!("nl: invalid starting line number: '{}'", args[i]))?;
-            }
-        } else if let Some(val) = arg.strip_prefix("-v") {
+        } else if let Some(val) = p.flag_value("-v", "nl")? {
             opts.start = val
                 .parse()
                 .map_err(|_| format!("nl: invalid starting line number: '{}'", val))?;
-        } else if arg == "-w" {
-            i += 1;
-            if i < args.len() {
-                opts.width = args[i]
-                    .parse()
-                    .map_err(|_| format!("nl: invalid line number field width: '{}'", args[i]))?;
-            }
-        } else if let Some(val) = arg.strip_prefix("-w") {
+        } else if let Some(val) = p.flag_value("-w", "nl")? {
             opts.width = val
                 .parse()
                 .map_err(|_| format!("nl: invalid line number field width: '{}'", val))?;
-        } else if arg == "-" || !arg.starts_with('-') {
-            files.push(arg.clone());
+        } else if let Some(arg) = p.positional() {
+            files.push(arg.to_string());
         }
-        i += 1;
     }
 
     Ok((opts, files))

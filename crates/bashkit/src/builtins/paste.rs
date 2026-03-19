@@ -26,23 +26,16 @@ fn parse_paste_args(args: &[String]) -> (PasteOptions, Vec<String>) {
         serial: false,
     };
     let mut files = Vec::new();
-    let mut i = 0;
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "-d" {
-            i += 1;
-            if i < args.len() {
-                opts.delimiters = parse_delim_spec(&args[i]);
-            }
-        } else if let Some(d) = arg.strip_prefix("-d") {
-            opts.delimiters = parse_delim_spec(d);
-        } else if arg == "-s" {
+    while !p.is_done() {
+        if let Some(val) = p.flag_value_opt("-d") {
+            opts.delimiters = parse_delim_spec(val);
+        } else if p.flag("-s") {
             opts.serial = true;
-        } else if arg == "-" || !arg.starts_with('-') {
-            files.push(arg.clone());
+        } else if let Some(arg) = p.positional() {
+            files.push(arg.to_string());
         }
-        i += 1;
     }
 
     if opts.delimiters.is_empty() {

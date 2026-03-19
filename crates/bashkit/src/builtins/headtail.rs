@@ -144,37 +144,25 @@ fn parse_head_args(args: &[String], default: usize) -> Result<(usize, bool, Vec<
     let mut count = default;
     let mut byte_mode = false;
     let mut files = Vec::new();
-    let mut i = 0;
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    while i < args.len() {
-        let arg = &args[i];
-
-        if arg == "-n" {
-            i += 1;
-            if i < args.len() {
-                count = args[i].parse().unwrap_or(default);
-                byte_mode = false;
-            }
-        } else if arg == "-c" {
-            i += 1;
-            if i < args.len() {
-                count = args[i].parse().unwrap_or(default);
-                byte_mode = true;
-            }
-        } else if let Some(num_str) = arg.strip_prefix("-n") {
-            count = num_str.parse().unwrap_or(default);
+    while !p.is_done() {
+        if let Some(val) = p.flag_value_opt("-n") {
+            count = val.parse().unwrap_or(default);
             byte_mode = false;
-        } else if let Some(num_str) = arg.strip_prefix("-c") {
-            count = num_str.parse().unwrap_or(default);
+        } else if let Some(val) = p.flag_value_opt("-c") {
+            count = val.parse().unwrap_or(default);
             byte_mode = true;
-        } else if let Some(num_str) = arg.strip_prefix('-') {
-            if let Ok(n) = num_str.parse::<usize>() {
+        } else if let Some(arg) = p.current().filter(|a| a.starts_with('-')) {
+            if let Some(num_str) = arg.strip_prefix('-')
+                && let Ok(n) = num_str.parse::<usize>()
+            {
                 count = n;
             }
-        } else {
-            files.push(arg.clone());
+            p.advance();
+        } else if let Some(arg) = p.positional() {
+            files.push(arg.to_string());
         }
-        i += 1;
     }
 
     Ok((count, byte_mode, files))
@@ -193,44 +181,27 @@ fn parse_tail_args(args: &[String], default: usize) -> Result<(usize, bool, Vec<
     let mut num_lines = default;
     let mut from_start = false;
     let mut files = Vec::new();
-    let mut i = 0;
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    while i < args.len() {
-        let arg = &args[i];
-
-        if arg == "-n" {
-            // -n NUM or -n +NUM
-            i += 1;
-            if i < args.len() {
-                let val = &args[i];
-                if let Some(pos_str) = val.strip_prefix('+') {
-                    from_start = true;
-                    num_lines = pos_str.parse().unwrap_or(default);
-                } else {
-                    from_start = false;
-                    num_lines = val.parse().unwrap_or(default);
-                }
-            }
-        } else if let Some(num_str) = arg.strip_prefix("-n") {
-            // -nNUM or -n+NUM (no space)
-            if let Some(pos_str) = num_str.strip_prefix('+') {
+    while !p.is_done() {
+        if let Some(val) = p.flag_value_opt("-n") {
+            if let Some(pos_str) = val.strip_prefix('+') {
                 from_start = true;
                 num_lines = pos_str.parse().unwrap_or(default);
             } else {
                 from_start = false;
-                num_lines = num_str.parse().unwrap_or(default);
+                num_lines = val.parse().unwrap_or(default);
             }
-        } else if let Some(num_str) = arg.strip_prefix('-') {
-            // -NUM shorthand
-            if let Ok(n) = num_str.parse::<usize>() {
+        } else if let Some(arg) = p.current().filter(|a| a.starts_with('-')) {
+            if let Some(num_str) = arg.strip_prefix('-')
+                && let Ok(n) = num_str.parse::<usize>()
+            {
                 num_lines = n;
             }
-            // Ignore unknown options
-        } else {
-            // File argument
-            files.push(arg.clone());
+            p.advance();
+        } else if let Some(arg) = p.positional() {
+            files.push(arg.to_string());
         }
-        i += 1;
     }
 
     Ok((num_lines, from_start, files))

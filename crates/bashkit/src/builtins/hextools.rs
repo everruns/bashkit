@@ -73,58 +73,43 @@ fn parse_od_args(args: &[String]) -> std::result::Result<(OdOptions, Vec<String>
         skip: 0,
     };
     let mut files = Vec::new();
-    let mut i = 0;
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "-A" {
-            i += 1;
-            if i < args.len() {
-                opts.addr_radix = match args[i].as_str() {
-                    "d" => AddrRadix::Decimal,
-                    "o" => AddrRadix::Octal,
-                    "x" => AddrRadix::Hex,
-                    "n" => AddrRadix::None,
-                    other => return Err(format!("od: invalid address radix: '{}'", other)),
-                };
-            }
-        } else if arg == "-t" {
-            i += 1;
-            if i < args.len() {
-                opts.output_type = match args[i].chars().next() {
-                    Some('o') => OutputType::Octal,
-                    Some('x') => OutputType::Hex,
-                    Some('d') => OutputType::Decimal,
-                    Some('c') => OutputType::Char,
-                    _ => return Err(format!("od: invalid output type: '{}'", args[i])),
-                };
-            }
-        } else if arg == "-N" {
-            i += 1;
-            if i < args.len() {
-                opts.count = Some(
-                    args[i]
-                        .parse()
-                        .map_err(|_| format!("od: invalid count: '{}'", args[i]))?,
-                );
-            }
-        } else if arg == "-j" {
-            i += 1;
-            if i < args.len() {
-                opts.skip = args[i]
-                    .parse()
-                    .map_err(|_| format!("od: invalid skip: '{}'", args[i]))?;
-            }
-        } else if arg == "-x" {
+    while !p.is_done() {
+        if let Some(val) = p.flag_value("-A", "od")? {
+            opts.addr_radix = match val {
+                "d" => AddrRadix::Decimal,
+                "o" => AddrRadix::Octal,
+                "x" => AddrRadix::Hex,
+                "n" => AddrRadix::None,
+                other => return Err(format!("od: invalid address radix: '{}'", other)),
+            };
+        } else if let Some(val) = p.flag_value("-t", "od")? {
+            opts.output_type = match val.chars().next() {
+                Some('o') => OutputType::Octal,
+                Some('x') => OutputType::Hex,
+                Some('d') => OutputType::Decimal,
+                Some('c') => OutputType::Char,
+                _ => return Err(format!("od: invalid output type: '{}'", val)),
+            };
+        } else if let Some(val) = p.flag_value("-N", "od")? {
+            opts.count = Some(
+                val.parse()
+                    .map_err(|_| format!("od: invalid count: '{}'", val))?,
+            );
+        } else if let Some(val) = p.flag_value("-j", "od")? {
+            opts.skip = val
+                .parse()
+                .map_err(|_| format!("od: invalid skip: '{}'", val))?;
+        } else if p.flag("-x") {
             opts.output_type = OutputType::Hex;
-        } else if arg == "-c" {
+        } else if p.flag("-c") {
             opts.output_type = OutputType::Char;
-        } else if arg == "-d" {
+        } else if p.flag("-d") {
             opts.output_type = OutputType::Decimal;
-        } else if !arg.starts_with('-') || arg == "-" {
-            files.push(arg.clone());
+        } else if let Some(arg) = p.positional() {
+            files.push(arg.to_string());
         }
-        i += 1;
     }
 
     Ok((opts, files))
@@ -237,49 +222,34 @@ fn parse_xxd_args(args: &[String]) -> std::result::Result<(XxdOptions, Vec<Strin
         plain: false,
     };
     let mut files = Vec::new();
-    let mut i = 0;
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "-l" {
-            i += 1;
-            if i < args.len() {
-                opts.length = Some(
-                    args[i]
-                        .parse()
-                        .map_err(|_| format!("xxd: invalid length: '{}'", args[i]))?,
-                );
+    while !p.is_done() {
+        if let Some(val) = p.flag_value("-l", "xxd")? {
+            opts.length = Some(
+                val.parse()
+                    .map_err(|_| format!("xxd: invalid length: '{}'", val))?,
+            );
+        } else if let Some(val) = p.flag_value("-s", "xxd")? {
+            opts.offset = val
+                .parse()
+                .map_err(|_| format!("xxd: invalid offset: '{}'", val))?;
+        } else if let Some(val) = p.flag_value("-c", "xxd")? {
+            opts.cols = val
+                .parse()
+                .map_err(|_| format!("xxd: invalid cols: '{}'", val))?;
+            if opts.cols == 0 {
+                opts.cols = 16;
             }
-        } else if arg == "-s" {
-            i += 1;
-            if i < args.len() {
-                opts.offset = args[i]
-                    .parse()
-                    .map_err(|_| format!("xxd: invalid offset: '{}'", args[i]))?;
-            }
-        } else if arg == "-c" {
-            i += 1;
-            if i < args.len() {
-                opts.cols = args[i]
-                    .parse()
-                    .map_err(|_| format!("xxd: invalid cols: '{}'", args[i]))?;
-                if opts.cols == 0 {
-                    opts.cols = 16;
-                }
-            }
-        } else if arg == "-g" {
-            i += 1;
-            if i < args.len() {
-                opts.group = args[i]
-                    .parse()
-                    .map_err(|_| format!("xxd: invalid group: '{}'", args[i]))?;
-            }
-        } else if arg == "-p" {
+        } else if let Some(val) = p.flag_value("-g", "xxd")? {
+            opts.group = val
+                .parse()
+                .map_err(|_| format!("xxd: invalid group: '{}'", val))?;
+        } else if p.flag("-p") {
             opts.plain = true;
-        } else if !arg.starts_with('-') || arg == "-" {
-            files.push(arg.clone());
+        } else if let Some(arg) = p.positional() {
+            files.push(arg.to_string());
         }
-        i += 1;
     }
 
     Ok((opts, files))
@@ -380,32 +350,23 @@ fn parse_hexdump_args(
         offset: 0,
     };
     let mut files = Vec::new();
-    let mut i = 0;
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "-C" {
+    while !p.is_done() {
+        if p.flag("-C") {
             opts.canonical = true;
-        } else if arg == "-n" {
-            i += 1;
-            if i < args.len() {
-                opts.length = Some(
-                    args[i]
-                        .parse()
-                        .map_err(|_| format!("hexdump: invalid length: '{}'", args[i]))?,
-                );
-            }
-        } else if arg == "-s" {
-            i += 1;
-            if i < args.len() {
-                opts.offset = args[i]
-                    .parse()
-                    .map_err(|_| format!("hexdump: invalid offset: '{}'", args[i]))?;
-            }
-        } else if !arg.starts_with('-') || arg == "-" {
-            files.push(arg.clone());
+        } else if let Some(val) = p.flag_value("-n", "hexdump")? {
+            opts.length = Some(
+                val.parse()
+                    .map_err(|_| format!("hexdump: invalid length: '{}'", val))?,
+            );
+        } else if let Some(val) = p.flag_value("-s", "hexdump")? {
+            opts.offset = val
+                .parse()
+                .map_err(|_| format!("hexdump: invalid offset: '{}'", val))?;
+        } else if let Some(arg) = p.positional() {
+            files.push(arg.to_string());
         }
-        i += 1;
     }
 
     Ok((opts, files))

@@ -59,35 +59,32 @@ fn parse_parallel_args(args: &[String]) -> std::result::Result<ParallelConfig, S
 
     // First segment: options + command template
     let first = &segments[0];
-    let mut i = 0;
-    while i < first.len() {
-        let arg = &first[i];
-        match arg.as_str() {
-            "-j" => {
-                i += 1;
-                if i >= first.len() {
-                    return Err("parallel: -j requires an argument".to_string());
-                }
-                let n: u32 = first[i]
-                    .parse()
-                    .map_err(|_| format!("parallel: invalid job count '{}'", first[i]))?;
-                if n == 0 {
-                    return Err("parallel: -j must be at least 1".to_string());
-                }
-                jobs = Some(n);
+    let mut p = super::arg_parser::ArgParser::new(first);
+    while !p.is_done() {
+        if let Some(val) = p.flag_value("-j", "parallel")? {
+            let n: u32 = val
+                .parse()
+                .map_err(|_| format!("parallel: invalid job count '{}'", val))?;
+            if n == 0 {
+                return Err("parallel: -j must be at least 1".to_string());
             }
-            "--dry-run" => dry_run = true,
-            "--keep-order" | "-k" => keep_order = true,
-            "--bar" => bar = true,
-            "-v" => verbose = true,
-            other if other.starts_with('-') && command_parts.is_empty() => {
-                return Err(format!("parallel: unknown option '{other}'"));
+            jobs = Some(n);
+        } else if p.flag("--dry-run") {
+            dry_run = true;
+        } else if p.flag_any(&["--keep-order", "-k"]) {
+            keep_order = true;
+        } else if p.flag("--bar") {
+            bar = true;
+        } else if p.flag("-v") {
+            verbose = true;
+        } else if p.is_flag() && command_parts.is_empty() {
+            if let Some(arg) = p.current() {
+                return Err(format!("parallel: unknown option '{}'", arg));
             }
-            _ => {
-                command_parts.push(arg.clone());
-            }
+            p.advance();
+        } else if let Some(arg) = p.positional() {
+            command_parts.push(arg.to_string());
         }
-        i += 1;
     }
 
     // Remaining segments are argument groups
