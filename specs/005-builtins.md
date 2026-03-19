@@ -99,7 +99,7 @@ execution → $PATH search → "command not found".
 
 #### Byte Inspection
 - `od` - Octal dump (`-A`, `-t`, `-N`, `-j`)
-- `xxd` - Hex dump (`-l`, `-s`, `-c`, `-g`, `-p`)
+- `xxd` - Hex dump (`-l`, `-s`, `-c`, `-g`, `-p`, `-r`)
 - `hexdump` - Hex display (`-C`, `-n`, `-s`)
 - `strings` - Extract printable strings (`-n`, `-t`)
 

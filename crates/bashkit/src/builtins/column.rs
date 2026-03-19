@@ -29,30 +29,22 @@ fn parse_column_args(args: &[String]) -> (ColumnOptions, Vec<String>) {
         output_sep: "  ".to_string(),
     };
     let mut files = Vec::new();
-    let mut i = 0;
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "-t" {
+    while !p.is_done() {
+        if p.flag("-t") {
             opts.table = true;
-        } else if arg == "-s" {
-            i += 1;
-            if i < args.len() {
-                opts.input_sep = Some(args[i].clone());
+        } else if let Some(val) = p.flag_value_opt("-s") {
+            opts.input_sep = Some(val.to_string());
+        } else if let Some(val) = p.flag_value_opt("-o") {
+            opts.output_sep = val.to_string();
+        } else if !p.is_flag() {
+            if let Some(arg) = p.positional() {
+                files.push(arg.to_string());
             }
-        } else if let Some(s) = arg.strip_prefix("-s") {
-            opts.input_sep = Some(s.to_string());
-        } else if arg == "-o" {
-            i += 1;
-            if i < args.len() {
-                opts.output_sep = args[i].clone();
-            }
-        } else if let Some(o) = arg.strip_prefix("-o") {
-            opts.output_sep = o.to_string();
-        } else if !arg.starts_with('-') {
-            files.push(arg.clone());
+        } else {
+            p.advance();
         }
-        i += 1;
     }
 
     (opts, files)

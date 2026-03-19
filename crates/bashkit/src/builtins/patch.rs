@@ -31,28 +31,20 @@ fn parse_patch_args(args: &[String]) -> PatchOptions {
         reverse: false,
         target_file: None,
     };
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    let mut i = 0;
-    while i < args.len() {
-        let arg = &args[i];
-        if let Some(rest) = arg.strip_prefix("-p") {
-            if let Ok(n) = rest.parse::<usize>() {
-                opts.strip = n;
-            } else {
-                // -p N as two args
-                i += 1;
-                if i < args.len() {
-                    opts.strip = args[i].parse().unwrap_or(0);
-                }
-            }
-        } else if arg == "--dry-run" {
+    while !p.is_done() {
+        if let Some(val) = p.flag_value_opt("-p") {
+            opts.strip = val.parse().unwrap_or(0);
+        } else if p.flag("--dry-run") {
             opts.dry_run = true;
-        } else if arg == "-R" || arg == "--reverse" {
+        } else if p.flag_any(&["-R", "--reverse"]) {
             opts.reverse = true;
-        } else if !arg.starts_with('-') {
-            opts.target_file = Some(arg.clone());
+        } else if let Some(arg) = p.positional() {
+            opts.target_file = Some(arg.to_string());
+        } else {
+            p.advance();
         }
-        i += 1;
     }
 
     opts

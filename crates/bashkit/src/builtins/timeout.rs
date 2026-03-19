@@ -85,25 +85,29 @@ fn parse_timeout_args(
     }
 
     let mut preserve_status = false;
-    let mut arg_idx = 0;
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    while arg_idx < args.len() {
-        let arg = &args[arg_idx];
-        match arg.as_str() {
-            "--preserve-status" => {
-                preserve_status = true;
-                arg_idx += 1;
+    while !p.is_done() {
+        if p.flag("--preserve-status") {
+            preserve_status = true;
+        } else if p.flag_any(&["-k", "-s"]) {
+            // These options take a value, skip it
+            p.advance();
+        } else if p.is_flag() {
+            let Some(s) = p.current() else {
+                p.advance();
+                continue;
+            };
+            if !s.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) {
+                p.advance();
+            } else {
+                break; // Negative-looking number is actually a duration
             }
-            "-k" | "-s" => {
-                // These options take a value, skip it
-                arg_idx += 2;
-            }
-            s if s.starts_with('-') && !s.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) => {
-                arg_idx += 1;
-            }
-            _ => break, // Found duration
+        } else {
+            break; // Found duration
         }
     }
+    let mut arg_idx = args.len() - p.rest().len();
 
     if arg_idx >= args.len() {
         return Err(ExecResult::err(

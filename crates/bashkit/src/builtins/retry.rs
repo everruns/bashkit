@@ -36,61 +36,39 @@ fn parse_retry_args(args: &[String]) -> std::result::Result<RetryConfig, String>
     let mut backoff = false;
     let mut quiet = false;
     let mut verbose = false;
-    let mut command = Vec::new();
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    let mut i = 0;
-    let mut found_separator = false;
-
-    while i < args.len() {
-        let arg = &args[i];
-        if found_separator {
-            command.push(arg.clone());
-            i += 1;
-            continue;
+    while !p.is_done() {
+        if p.flag("--") {
+            break;
+        } else if let Some(val) = p.flag_value("-n", "retry")? {
+            max_attempts = val
+                .parse()
+                .map_err(|_| format!("retry: invalid number '{}'", val))?;
+            if max_attempts == 0 {
+                return Err("retry: -n must be at least 1".to_string());
+            }
+        } else if let Some(val) = p.flag_value("-d", "retry")? {
+            delay_secs = val
+                .parse()
+                .map_err(|_| format!("retry: invalid delay '{}'", val))?;
+            if delay_secs < 0.0 {
+                return Err("retry: delay must be non-negative".to_string());
+            }
+        } else if p.flag("--backoff") {
+            backoff = true;
+        } else if p.flag("-q") {
+            quiet = true;
+        } else if p.flag("-v") {
+            verbose = true;
+        } else if let Some(arg) = p.current() {
+            return Err(format!("retry: unknown option '{}'", arg));
+        } else {
+            p.advance();
         }
-        match arg.as_str() {
-            "--" => {
-                found_separator = true;
-            }
-            "-n" => {
-                i += 1;
-                if i >= args.len() {
-                    return Err("retry: -n requires an argument".to_string());
-                }
-                max_attempts = args[i]
-                    .parse()
-                    .map_err(|_| format!("retry: invalid number '{}'", args[i]))?;
-                if max_attempts == 0 {
-                    return Err("retry: -n must be at least 1".to_string());
-                }
-            }
-            "-d" => {
-                i += 1;
-                if i >= args.len() {
-                    return Err("retry: -d requires an argument".to_string());
-                }
-                delay_secs = args[i]
-                    .parse()
-                    .map_err(|_| format!("retry: invalid delay '{}'", args[i]))?;
-                if delay_secs < 0.0 {
-                    return Err("retry: delay must be non-negative".to_string());
-                }
-            }
-            "--backoff" => {
-                backoff = true;
-            }
-            "-q" => {
-                quiet = true;
-            }
-            "-v" => {
-                verbose = true;
-            }
-            other => {
-                return Err(format!("retry: unknown option '{other}'"));
-            }
-        }
-        i += 1;
     }
+
+    let command: Vec<String> = p.rest().to_vec();
 
     Ok(RetryConfig {
         max_attempts,

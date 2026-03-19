@@ -115,46 +115,40 @@ fn parse_http_args(args: &[String]) -> std::result::Result<HttpConfig, String> {
     let mut method: Option<String> = None;
     let mut url: Option<String> = None;
     let mut items = Vec::new();
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    let mut i = 0;
-    while i < args.len() {
-        let arg = &args[i];
-        match arg.as_str() {
-            "--json" | "-j" => json_mode = true,
-            "--form" | "-f" => form_mode = true,
-            "-v" | "--verbose" => verbose = true,
-            "-h" | "--headers" => headers_only = true,
-            "-b" | "--body" => { /* default, no-op */ }
-            "-o" | "--output" => {
-                i += 1;
-                if i >= args.len() {
-                    return Err("http: -o requires an argument".to_string());
-                }
-                output_file = Some(args[i].clone());
-            }
-            _ if arg.starts_with('-') && url.is_none() => {
-                return Err(format!("http: unknown option '{arg}'"));
-            }
-            _ => {
-                // Positional: METHOD, URL, or item
-                if url.is_none() {
-                    if is_http_method(arg) && method.is_none() {
-                        method = Some(arg.to_uppercase());
-                    } else {
-                        url = Some(arg.clone());
-                    }
+    while !p.is_done() {
+        if p.flag_any(&["--json", "-j"]) {
+            json_mode = true;
+        } else if p.flag_any(&["--form", "-f"]) {
+            form_mode = true;
+        } else if p.flag_any(&["-v", "--verbose"]) {
+            verbose = true;
+        } else if p.flag_any(&["-h", "--headers"]) {
+            headers_only = true;
+        } else if p.flag_any(&["-b", "--body"]) {
+            // default, no-op
+        } else if let Some(val) = p.flag_value_any(&["-o", "--output"], "http")? {
+            output_file = Some(val.to_string());
+        } else if p.is_flag() && url.is_none() {
+            let flag = p.current().unwrap_or("?");
+            return Err(format!("http: unknown option '{}'", flag));
+        } else if let Some(arg) = p.positional() {
+            if url.is_none() {
+                if is_http_method(arg) && method.is_none() {
+                    method = Some(arg.to_uppercase());
                 } else {
-                    // Try to parse as item
-                    match parse_item(arg) {
-                        Some(item) => items.push(item),
-                        None => {
-                            return Err(format!("http: invalid item '{arg}'"));
-                        }
+                    url = Some(arg.to_string());
+                }
+            } else {
+                match parse_item(arg) {
+                    Some(item) => items.push(item),
+                    None => {
+                        return Err(format!("http: invalid item '{arg}'"));
                     }
                 }
             }
         }
-        i += 1;
     }
 
     let url = url.ok_or_else(|| "http: missing URL".to_string())?;

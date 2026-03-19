@@ -32,65 +32,48 @@ fn parse_xargs_args(args: &[String]) -> std::result::Result<XargsOptions, ExecRe
     let mut max_args: Option<usize> = None;
     let mut delimiter: Option<char> = None;
     let mut command: Vec<String> = Vec::new();
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    let mut i = 0;
-    while i < args.len() {
-        let arg = &args[i];
-        match arg.as_str() {
-            "-I" => {
-                i += 1;
-                if i >= args.len() {
+    while !p.is_done() {
+        if let Some(val) = p
+            .flag_value("-I", "xargs")
+            .map_err(|e| ExecResult::err(format!("{e}\n"), 1))?
+        {
+            replace_str = Some(val.to_string());
+            max_args = Some(1); // -I implies -n 1
+        } else if let Some(val) = p
+            .flag_value("-n", "xargs")
+            .map_err(|e| ExecResult::err(format!("{e}\n"), 1))?
+        {
+            match val.parse::<usize>() {
+                Ok(n) if n > 0 => max_args = Some(n),
+                _ => {
                     return Err(ExecResult::err(
-                        "xargs: option requires an argument -- 'I'\n".to_string(),
+                        format!("xargs: invalid number: '{}'\n", val),
                         1,
                     ));
                 }
-                replace_str = Some(args[i].clone());
-                max_args = Some(1); // -I implies -n 1
             }
-            "-n" => {
-                i += 1;
-                if i >= args.len() {
-                    return Err(ExecResult::err(
-                        "xargs: option requires an argument -- 'n'\n".to_string(),
-                        1,
-                    ));
-                }
-                match args[i].parse::<usize>() {
-                    Ok(n) if n > 0 => max_args = Some(n),
-                    _ => {
-                        return Err(ExecResult::err(
-                            format!("xargs: invalid number: '{}'\n", args[i]),
-                            1,
-                        ));
-                    }
-                }
-            }
-            "-d" => {
-                i += 1;
-                if i >= args.len() {
-                    return Err(ExecResult::err(
-                        "xargs: option requires an argument -- 'd'\n".to_string(),
-                        1,
-                    ));
-                }
-                delimiter = args[i].chars().next();
-            }
-            "-0" => {
-                delimiter = Some('\0');
-            }
-            s if s.starts_with('-') && s != "-" => {
-                return Err(ExecResult::err(
-                    format!("xargs: invalid option -- '{}'\n", &s[1..]),
-                    1,
-                ));
-            }
-            _ => {
-                command.extend(args[i..].iter().cloned());
-                break;
-            }
+        } else if let Some(val) = p
+            .flag_value("-d", "xargs")
+            .map_err(|e| ExecResult::err(format!("{e}\n"), 1))?
+        {
+            delimiter = val.chars().next();
+        } else if p.flag("-0") {
+            delimiter = Some('\0');
+        } else if p.is_flag() && p.current() != Some("-") {
+            let Some(s) = p.current() else {
+                p.advance();
+                continue;
+            };
+            return Err(ExecResult::err(
+                format!("xargs: invalid option -- '{}'\n", &s[1..]),
+                1,
+            ));
+        } else {
+            command.extend(p.rest().iter().cloned());
+            break;
         }
-        i += 1;
     }
 
     if command.is_empty() {

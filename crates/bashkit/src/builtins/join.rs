@@ -33,39 +33,24 @@ impl Builtin for Join {
         };
 
         let mut files: Vec<&str> = Vec::new();
-        let mut i = 0;
+        let mut p = super::arg_parser::ArgParser::new(ctx.args);
 
-        while i < ctx.args.len() {
-            match ctx.args[i].as_str() {
-                "-1" => {
-                    i += 1;
-                    opts.field1 = ctx.args.get(i).and_then(|s| s.parse().ok()).unwrap_or(1);
+        while !p.is_done() {
+            if let Some(val) = p.flag_value_opt("-1") {
+                opts.field1 = val.parse().unwrap_or(1);
+            } else if let Some(val) = p.flag_value_opt("-2") {
+                opts.field2 = val.parse().unwrap_or(1);
+            } else if let Some(val) = p.flag_value_opt("-t") {
+                opts.separator = val.chars().next().unwrap_or(' ');
+            } else if let Some(val) = p.flag_value_opt("-a") {
+                if let Ok(n) = val.parse::<usize>() {
+                    opts.unpaired.push(n);
                 }
-                "-2" => {
-                    i += 1;
-                    opts.field2 = ctx.args.get(i).and_then(|s| s.parse().ok()).unwrap_or(1);
-                }
-                "-t" => {
-                    i += 1;
-                    if let Some(s) = ctx.args.get(i) {
-                        opts.separator = s.chars().next().unwrap_or(' ');
-                    }
-                }
-                "-a" => {
-                    i += 1;
-                    if let Some(n) = ctx.args.get(i).and_then(|s| s.parse::<usize>().ok()) {
-                        opts.unpaired.push(n);
-                    }
-                }
-                "-e" => {
-                    i += 1;
-                    if let Some(s) = ctx.args.get(i) {
-                        opts.empty = s.clone();
-                    }
-                }
-                _ => files.push(&ctx.args[i]),
+            } else if let Some(val) = p.flag_value_opt("-e") {
+                opts.empty = val.to_string();
+            } else if let Some(arg) = p.positional() {
+                files.push(arg);
             }
-            i += 1;
         }
 
         if files.len() < 2 {
