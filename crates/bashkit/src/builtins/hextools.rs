@@ -577,6 +577,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Od.execute(ctx).await.unwrap()
@@ -600,6 +601,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Xxd.execute(ctx).await.unwrap()
@@ -623,6 +625,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Hexdump.execute(ctx).await.unwrap()
@@ -651,6 +654,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Od.execute(ctx).await.unwrap()

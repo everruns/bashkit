@@ -405,6 +405,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Zip.execute(ctx).await.unwrap();
@@ -428,6 +429,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Unzip.execute(ctx).await.unwrap()
@@ -468,6 +470,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
         let result = Zip.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 1);
@@ -492,6 +495,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
         let result = Zip.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 1);
@@ -662,6 +666,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
         let result = Unzip.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 1);

@@ -594,6 +594,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = jq.execute(ctx).await?;
@@ -658,6 +659,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = jq.execute(ctx).await?;
@@ -682,6 +684,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         jq.execute(ctx).await
@@ -705,6 +708,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         jq.execute(ctx).await
@@ -868,6 +872,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         jq.execute(ctx).await
@@ -978,6 +983,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = jq.execute(ctx).await.unwrap();
@@ -1003,6 +1009,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = jq.execute(ctx).await.unwrap();
@@ -1148,6 +1155,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
         let result = jq.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 1, "-e with false should exit 1");
@@ -1172,6 +1180,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
         let result = jq.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0, "-e with truthy value should exit 0");
@@ -1270,6 +1279,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = jq.execute(ctx).await.unwrap();
@@ -1311,6 +1321,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = jq.execute(ctx).await.unwrap();

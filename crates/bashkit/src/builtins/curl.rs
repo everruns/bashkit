@@ -1036,6 +1036,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Curl.execute(ctx).await.unwrap()
@@ -1059,6 +1060,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Wget.execute(ctx).await.unwrap()

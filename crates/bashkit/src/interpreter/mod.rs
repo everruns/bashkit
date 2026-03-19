@@ -101,6 +101,78 @@ fn is_keyword(name: &str) -> bool {
     )
 }
 
+/// Borrowed reference to interpreter shell state for builtins.
+///
+/// Provides:
+/// - **Direct mutable access** to aliases and traps (simple HashMaps, no invariants)
+/// - **Read-only access** to functions, builtins, call stack, history, jobs
+///
+/// Design rationale: aliases and traps are directly mutable because they're
+/// simple HashMap state with no invariants to enforce. Arrays use
+/// [`BuiltinSideEffect`] because they need memory budget checking.
+/// History uses side effects for VFS persistence.
+///
+/// All fields are disjoint from `Context`'s mutable borrows (variables, cwd),
+/// enabling safe split borrowing in `dispatch_command`.
+pub(crate) struct ShellRef<'a> {
+    /// Direct mutable access to shell aliases.
+    pub(crate) aliases: &'a mut HashMap<String, String>,
+    /// Direct mutable access to trap handlers.
+    pub(crate) traps: &'a mut HashMap<String, String>,
+    /// Registered builtin commands (read-only, accessed via `has_builtin`).
+    pub(crate) builtins: &'a HashMap<String, Box<dyn Builtin>>,
+    /// Defined shell functions (read-only, accessed via `has_function`).
+    pub(crate) functions: &'a HashMap<String, FunctionDef>,
+    /// Call stack frames (read-only, accessed via `call_stack_depth`/`call_stack_frame_name`).
+    call_stack: &'a [CallFrame],
+    /// Command history (read-only, accessed via `history_entries`).
+    pub(crate) history: &'a [HistoryEntry],
+    /// Shared job table (read-only, accessed via `jobs`).
+    pub(crate) jobs: &'a SharedJobTable,
+}
+
+impl ShellRef<'_> {
+    /// Check if a name is a registered builtin command.
+    pub(crate) fn has_builtin(&self, name: &str) -> bool {
+        self.builtins.contains_key(name)
+    }
+
+    /// Check if a name is a defined shell function.
+    pub(crate) fn has_function(&self, name: &str) -> bool {
+        self.functions.contains_key(name)
+    }
+
+    /// Check if a name is a shell keyword.
+    pub(crate) fn is_keyword(&self, name: &str) -> bool {
+        is_keyword(name)
+    }
+
+    /// Get call stack depth (number of active function frames).
+    pub(crate) fn call_stack_depth(&self) -> usize {
+        self.call_stack.len()
+    }
+
+    /// Get function name at a given frame index (0 = most recent).
+    pub(crate) fn call_stack_frame_name(&self, idx: usize) -> Option<&str> {
+        if self.call_stack.is_empty() {
+            return None;
+        }
+        // idx 0 = most recent frame (last in vec)
+        let vec_idx = self.call_stack.len().checked_sub(1 + idx)?;
+        Some(self.call_stack[vec_idx].name.as_str())
+    }
+
+    /// Get command history entries.
+    pub(crate) fn history_entries(&self) -> &[HistoryEntry] {
+        self.history
+    }
+
+    /// Get the shared job table for wait operations.
+    pub(crate) fn jobs(&self) -> &SharedJobTable {
+        self.jobs
+    }
+}
+
 /// Levenshtein edit distance between two strings.
 fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
@@ -550,6 +622,16 @@ impl Interpreter {
             "xargs" => Xargs,
             "tee" => Tee,
             "watch" => Watch,
+            // Shell introspection (moved from interpreter if-chain)
+            "type" => Type,
+            "which" => Which,
+            "hash" => Hash,
+            "alias" => Alias,
+            "unalias" => Unalias,
+            "trap" => Trap,
+            "caller" => Caller,
+            "mapfile" => Mapfile,
+            "readarray" => Mapfile,
             // Shell options
             "shopt" => Shopt,
             "clear" => Clear,
@@ -3594,11 +3676,6 @@ impl Interpreter {
             return self.execute_local_builtin(&args, &command.redirects).await;
         }
 
-        // Handle `history` at interpreter level - needs access to history entries
-        if name == "history" {
-            return self.execute_history(&args, &command.redirects).await;
-        }
-
         // Handle `bash` and `sh` specially - execute scripts using the interpreter
         if name == "bash" || name == "sh" {
             return self
@@ -3623,25 +3700,6 @@ impl Interpreter {
                 .await;
         }
 
-        // Handle `type`/`which`/`hash` builtins - need interpreter-level access
-        if name == "type" {
-            return self.execute_type_builtin(&args, &command.redirects).await;
-        }
-        if name == "which" {
-            return self.execute_which_builtin(&args, &command.redirects).await;
-        }
-        if name == "hash" {
-            // hash is a no-op in sandboxed env (no real PATH search cache)
-            let mut result = ExecResult::ok(String::new());
-            result = self.apply_redirections(result, &command.redirects).await?;
-            return Ok(result);
-        }
-
-        // Handle `trap` - register signal/event handlers
-        if name == "trap" {
-            return self.execute_trap_builtin(&args, &command.redirects).await;
-        }
-
         // Handle `declare`/`typeset` - needs interpreter-level access to arrays
         if name == "declare" || name == "typeset" {
             return self
@@ -3664,38 +3722,20 @@ impl Interpreter {
             return self.execute_getopts(&args, &command.redirects).await;
         }
 
-        // Handle `caller` - needs direct access to call stack
-        if name == "caller" {
-            return self.execute_caller_builtin(&args, &command.redirects).await;
-        }
-
-        // Handle `wait` - needs direct access to job table
-        if name == "wait" {
-            return self.execute_wait_builtin(&args, &command.redirects).await;
-        }
-
-        // Handle `mapfile`/`readarray` - needs direct access to arrays
-        if name == "mapfile" || name == "readarray" {
-            return self.execute_mapfile(&args, stdin.as_deref()).await;
-        }
-
-        // Handle `alias` builtin - needs direct access to self.aliases
-        if name == "alias" {
-            return self.execute_alias_builtin(&args, &command.redirects).await;
-        }
-
-        // Handle `unalias` builtin - needs direct access to self.aliases
-        if name == "unalias" {
-            return self
-                .execute_unalias_builtin(&args, &command.redirects)
-                .await;
-        }
-
         // Check for builtins
         if let Some(builtin) = self.builtins.get(name) {
             // First, check if the builtin wants to return an execution plan
             // (e.g. timeout, xargs, find -exec need the interpreter to run sub-commands)
             {
+                let shell_ref = ShellRef {
+                    builtins: &self.builtins,
+                    functions: &self.functions,
+                    aliases: &mut self.aliases,
+                    traps: &mut self.traps,
+                    call_stack: &self.call_stack,
+                    history: &self.history,
+                    jobs: &self.jobs,
+                };
                 let plan_ctx = builtins::Context {
                     args: &args,
                     env: &self.env,
@@ -3707,6 +3747,7 @@ impl Interpreter {
                     http_client: self.http_client.as_ref(),
                     #[cfg(feature = "git")]
                     git_client: self.git_client.as_ref(),
+                    shell: Some(shell_ref),
                 };
 
                 let plan_result = AssertUnwindSafe(builtin.execution_plan(&plan_ctx))
@@ -3732,6 +3773,15 @@ impl Interpreter {
                 }
             }
 
+            let shell_ref = ShellRef {
+                builtins: &self.builtins,
+                functions: &self.functions,
+                aliases: &mut self.aliases,
+                traps: &mut self.traps,
+                call_stack: &self.call_stack,
+                history: &self.history,
+                jobs: &self.jobs,
+            };
             let ctx = builtins::Context {
                 args: &args,
                 env: &self.env,
@@ -3743,6 +3793,7 @@ impl Interpreter {
                 http_client: self.http_client.as_ref(),
                 #[cfg(feature = "git")]
                 git_client: self.git_client.as_ref(),
+                shell: Some(shell_ref),
             };
 
             // Execute builtin with panic catching for security
@@ -4387,237 +4438,6 @@ impl Interpreter {
         Ok(ExecResult::ok(String::new()))
     }
 
-    /// Execute the `history` builtin with query modes.
-    ///
-    /// Supported syntax:
-    /// - `history` — show all entries
-    /// - `history N` — show last N entries
-    /// - `history -c` — clear history (and VFS file)
-    /// - `history --grep PATTERN` — filter by command substring
-    /// - `history --cwd PATH` — filter by working directory
-    /// - `history --failed` — show only non-zero exit codes
-    /// - `history --since DURATION` — entries newer than duration (e.g. 2d, 1h, 30m)
-    async fn execute_history(
-        &mut self,
-        args: &[String],
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        let mut clear = false;
-        let mut count: Option<usize> = None;
-        let mut grep_pattern: Option<String> = None;
-        let mut cwd_filter: Option<String> = None;
-        let mut failed_only = false;
-        let mut since_secs: Option<i64> = None;
-
-        let mut i = 0;
-        while i < args.len() {
-            let arg = &args[i];
-            match arg.as_str() {
-                "-c" => clear = true,
-                "--grep" => {
-                    i += 1;
-                    if i < args.len() {
-                        grep_pattern = Some(args[i].clone());
-                    } else {
-                        let result = ExecResult::err(
-                            "history: --grep requires an argument\n".to_string(),
-                            1,
-                        );
-                        return self.apply_redirections(result, redirects).await;
-                    }
-                }
-                "--cwd" => {
-                    i += 1;
-                    if i < args.len() {
-                        cwd_filter = Some(args[i].clone());
-                    } else {
-                        let result =
-                            ExecResult::err("history: --cwd requires an argument\n".to_string(), 1);
-                        return self.apply_redirections(result, redirects).await;
-                    }
-                }
-                "--failed" => failed_only = true,
-                "--since" => {
-                    i += 1;
-                    if i < args.len() {
-                        match Self::parse_duration_to_secs(&args[i]) {
-                            Some(secs) => since_secs = Some(secs),
-                            None => {
-                                let result = ExecResult::err(
-                                    format!(
-                                        "history: invalid duration '{}' (use e.g. 2d, 1h, 30m, 60s)\n",
-                                        args[i]
-                                    ),
-                                    1,
-                                );
-                                return self.apply_redirections(result, redirects).await;
-                            }
-                        }
-                    } else {
-                        let result = ExecResult::err(
-                            "history: --since requires an argument\n".to_string(),
-                            1,
-                        );
-                        return self.apply_redirections(result, redirects).await;
-                    }
-                }
-                _ => {
-                    if let Some(opt) = arg.strip_prefix("--") {
-                        let result = ExecResult::err(
-                            format!("history: unrecognized option '--{}'\n", opt),
-                            1,
-                        );
-                        return self.apply_redirections(result, redirects).await;
-                    } else if let Some(opt) = arg.strip_prefix('-') {
-                        // Allow -c, reject others
-                        if opt != "c" {
-                            let result = ExecResult::err(
-                                format!("history: invalid option -- '{}'\n", opt),
-                                1,
-                            );
-                            return self.apply_redirections(result, redirects).await;
-                        }
-                    } else if let Ok(n) = arg.parse::<usize>() {
-                        count = Some(n);
-                    }
-                }
-            }
-            i += 1;
-        }
-
-        if clear {
-            self.history.clear();
-            self.save_history().await;
-            let result = ExecResult::ok(String::new());
-            return self.apply_redirections(result, redirects).await;
-        }
-
-        let now = chrono::Utc::now().timestamp();
-
-        // Apply filters
-        let filtered: Vec<(usize, &HistoryEntry)> = self
-            .history
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| {
-                if let Some(ref pat) = grep_pattern
-                    && !entry.command.contains(pat.as_str())
-                {
-                    return false;
-                }
-                if let Some(ref cwd) = cwd_filter
-                    && !entry.cwd.starts_with(cwd.as_str())
-                {
-                    return false;
-                }
-                if failed_only && entry.exit_code == 0 {
-                    return false;
-                }
-                if let Some(secs) = since_secs
-                    && now - entry.timestamp > secs
-                {
-                    return false;
-                }
-                true
-            })
-            .collect();
-
-        // Apply count limit (last N entries)
-        let entries: &[(usize, &HistoryEntry)] = if let Some(n) = count {
-            let start = filtered.len().saturating_sub(n);
-            &filtered[start..]
-        } else {
-            &filtered
-        };
-
-        // Format output: bash-style numbered listing
-        let mut output = String::new();
-        for (idx, entry) in entries {
-            use std::fmt::Write;
-            // 1-indexed like bash
-            let _ = writeln!(output, "  {}  {}", idx + 1, entry.command);
-        }
-
-        let result = ExecResult::ok(output);
-        self.apply_redirections(result, redirects).await
-    }
-
-    /// Parse a human-readable duration string to seconds (e.g. "2d", "1h", "30m", "60s").
-    fn parse_duration_to_secs(s: &str) -> Option<i64> {
-        let s = s.trim();
-        if s.is_empty() {
-            return None;
-        }
-        let (num_str, multiplier) = if let Some(n) = s.strip_suffix('d') {
-            (n, 86400)
-        } else if let Some(n) = s.strip_suffix('h') {
-            (n, 3600)
-        } else if let Some(n) = s.strip_suffix('m') {
-            (n, 60)
-        } else if let Some(n) = s.strip_suffix('s') {
-            (n, 1)
-        } else {
-            (s, 1)
-        };
-        let n: i64 = num_str.parse().ok()?;
-        Some(n * multiplier)
-    }
-
-    /// Execute the `trap` builtin — register/list signal handlers.
-    async fn execute_trap_builtin(
-        &mut self,
-        args: &[String],
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        if args.is_empty() {
-            // List all traps
-            let mut output = String::new();
-            let mut sorted: Vec<_> = self.traps.iter().collect();
-            sorted.sort_by_key(|(sig, _)| (*sig).clone());
-            for (sig, cmd) in sorted {
-                output.push_str(&format!("trap -- '{}' {}\n", cmd, sig));
-            }
-            let result = ExecResult::ok(output);
-            return self.apply_redirections(result, redirects).await;
-        }
-        // Handle -p flag (print traps)
-        if args[0] == "-p" {
-            let mut output = String::new();
-            if args.len() == 1 {
-                let mut sorted: Vec<_> = self.traps.iter().collect();
-                sorted.sort_by_key(|(sig, _)| (*sig).clone());
-                for (sig, cmd) in sorted {
-                    output.push_str(&format!("trap -- '{}' {}\n", cmd, sig));
-                }
-            } else {
-                for sig in &args[1..] {
-                    let sig_upper = sig.to_uppercase();
-                    if let Some(cmd) = self.traps.get(&sig_upper) {
-                        output.push_str(&format!("trap -- '{}' {}\n", cmd, sig_upper));
-                    }
-                }
-            }
-            let result = ExecResult::ok(output);
-            return self.apply_redirections(result, redirects).await;
-        }
-        if args.len() == 1 {
-            let sig = args[0].to_uppercase();
-            self.traps.remove(&sig);
-        } else {
-            let cmd = args[0].clone();
-            for sig in &args[1..] {
-                let sig_upper = sig.to_uppercase();
-                if cmd == "-" {
-                    self.traps.remove(&sig_upper);
-                } else {
-                    self.traps.insert(sig_upper, cmd.clone());
-                }
-            }
-        }
-        let result = ExecResult::ok(String::new());
-        self.apply_redirections(result, redirects).await
-    }
-
     /// Execute the `let` builtin — evaluate arithmetic expressions.
     async fn execute_let_builtin(
         &mut self,
@@ -4702,226 +4522,6 @@ impl Interpreter {
         }
         let result = ExecResult::ok(String::new());
         self.apply_redirections(result, redirects).await
-    }
-
-    /// Execute the `caller` builtin — show call stack frame info.
-    async fn execute_caller_builtin(
-        &mut self,
-        args: &[String],
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        let frame_num: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(0);
-        if self.call_stack.is_empty() {
-            let result = ExecResult::err(String::new(), 1);
-            return self.apply_redirections(result, redirects).await;
-        }
-        let source = "main";
-        let line = 1;
-        let output = if frame_num == 0 && self.call_stack.len() == 1 {
-            format!("{} main {}\n", line, source)
-        } else if frame_num + 1 < self.call_stack.len() {
-            let idx = self.call_stack.len() - 2 - frame_num;
-            let frame = &self.call_stack[idx];
-            format!("{} {} {}\n", line, frame.name, source)
-        } else if frame_num + 1 == self.call_stack.len() {
-            format!("{} main {}\n", line, source)
-        } else {
-            let result = ExecResult::err(String::new(), 1);
-            return self.apply_redirections(result, redirects).await;
-        };
-        let result = ExecResult::ok(output);
-        self.apply_redirections(result, redirects).await
-    }
-
-    /// Execute the `wait` builtin with direct access to the job table.
-    ///
-    /// Merges background job stdout/stderr into the result so callers
-    /// see the output produced by waited-for jobs.
-    async fn execute_wait_builtin(
-        &mut self,
-        args: &[String],
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        let mut last_exit_code = 0i32;
-        let mut stdout = String::new();
-        let mut stderr = String::new();
-
-        if args.is_empty() {
-            // Wait for all background jobs, collecting their output
-            let results = self.jobs.lock().await.wait_all_results().await;
-            for r in results {
-                stdout.push_str(&r.stdout);
-                stderr.push_str(&r.stderr);
-                last_exit_code = r.exit_code;
-            }
-        } else {
-            // Wait for specific job IDs
-            for arg in args {
-                if let Ok(job_id) = arg.parse::<usize>()
-                    && let Some(r) = self.jobs.lock().await.wait_for(job_id).await
-                {
-                    stdout.push_str(&r.stdout);
-                    stderr.push_str(&r.stderr);
-                    last_exit_code = r.exit_code;
-                }
-                // If job not found or not parseable, that's ok
-            }
-        }
-
-        self.last_exit_code = last_exit_code;
-        let mut result = ExecResult {
-            stdout,
-            stderr,
-            exit_code: last_exit_code,
-            control_flow: ControlFlow::None,
-            ..Default::default()
-        };
-        result = self.apply_redirections(result, redirects).await?;
-        Ok(result)
-    }
-
-    /// Execute the `alias` builtin. Needs direct access to self.aliases.
-    ///
-    /// Usage:
-    /// - `alias` - list all aliases
-    /// - `alias name` - show alias for name (error if not defined)
-    /// - `alias name=value` - define alias
-    /// - `alias name=value name2=value2` - define multiple aliases
-    async fn execute_alias_builtin(
-        &mut self,
-        args: &[String],
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        if args.is_empty() {
-            // List all aliases
-            let mut output = String::new();
-            let mut sorted: Vec<_> = self.aliases.iter().collect();
-            sorted.sort_by_key(|(k, _)| (*k).clone());
-            for (name, value) in sorted {
-                output.push_str(&format!("alias {}='{}'\n", name, value));
-            }
-            let result = ExecResult::ok(output);
-            return self.apply_redirections(result, redirects).await;
-        }
-
-        let mut output = String::new();
-        let mut exit_code = 0;
-        let mut stderr = String::new();
-
-        for arg in args {
-            if let Some(eq_pos) = arg.find('=') {
-                // alias name=value
-                let name = &arg[..eq_pos];
-                let value = &arg[eq_pos + 1..];
-                self.aliases.insert(name.to_string(), value.to_string());
-            } else {
-                // alias name - show the alias
-                if let Some(value) = self.aliases.get(arg.as_str()) {
-                    output.push_str(&format!("alias {}='{}'\n", arg, value));
-                } else {
-                    stderr.push_str(&format!("bash: alias: {}: not found\n", arg));
-                    exit_code = 1;
-                }
-            }
-        }
-
-        let result = ExecResult {
-            stdout: output,
-            stderr,
-            exit_code,
-            control_flow: ControlFlow::None,
-            ..Default::default()
-        };
-        self.apply_redirections(result, redirects).await
-    }
-
-    /// Execute the `unalias` builtin. Needs direct access to self.aliases.
-    ///
-    /// Usage:
-    /// - `unalias name` - remove alias
-    /// - `unalias -a` - remove all aliases
-    async fn execute_unalias_builtin(
-        &mut self,
-        args: &[String],
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        if args.is_empty() {
-            let result = ExecResult::err(
-                "bash: unalias: usage: unalias [-a] name [name ...]\n".to_string(),
-                2,
-            );
-            return self.apply_redirections(result, redirects).await;
-        }
-
-        let mut exit_code = 0;
-        let mut stderr = String::new();
-
-        for arg in args {
-            if arg == "-a" {
-                self.aliases.clear();
-            } else if self.aliases.remove(arg.as_str()).is_none() {
-                stderr.push_str(&format!("bash: unalias: {}: not found\n", arg));
-                exit_code = 1;
-            }
-        }
-
-        let result = ExecResult {
-            stdout: String::new(),
-            stderr,
-            exit_code,
-            control_flow: ControlFlow::None,
-            ..Default::default()
-        };
-        self.apply_redirections(result, redirects).await
-    }
-
-    /// Execute the `getopts` builtin (POSIX option parsing).
-    ///
-    /// Execute mapfile/readarray builtin — reads lines into an indexed array.
-    /// Handled inline because it needs direct access to self.arrays.
-    async fn execute_mapfile(
-        &mut self,
-        args: &[String],
-        stdin_data: Option<&str>,
-    ) -> Result<ExecResult> {
-        let mut trim_trailing = false; // -t: strip trailing newlines
-        let mut array_name = "MAPFILE".to_string();
-        let mut positional = Vec::new();
-
-        for arg in args {
-            match arg.as_str() {
-                "-t" => trim_trailing = true,
-                a if a.starts_with('-') => {} // skip unknown flags
-                _ => positional.push(arg.clone()),
-            }
-        }
-
-        if let Some(name) = positional.first() {
-            array_name = name.clone();
-        }
-
-        let input = stdin_data.unwrap_or("");
-
-        // Clear existing array
-        self.arrays.remove(&array_name);
-
-        // Split into lines and populate array
-        if !input.is_empty() {
-            let mut arr = HashMap::new();
-            for (idx, line) in input.lines().enumerate() {
-                let value = if trim_trailing {
-                    line.to_string()
-                } else {
-                    format!("{}\n", line)
-                };
-                arr.insert(idx, value);
-            }
-            if !arr.is_empty() {
-                self.insert_array_checked(array_name, arr);
-            }
-        }
-
-        Ok(ExecResult::ok(String::new()))
     }
 
     /// Usage: `getopts optstring name [args...]`
@@ -5195,6 +4795,15 @@ impl Interpreter {
                 let remaining = &args[cmd_args_start..];
                 if let Some(builtin) = self.builtins.get(remaining[0].as_str()) {
                     let builtin_args = &remaining[1..];
+                    let shell_ref = ShellRef {
+                        builtins: &self.builtins,
+                        functions: &self.functions,
+                        aliases: &mut self.aliases,
+                        traps: &mut self.traps,
+                        call_stack: &self.call_stack,
+                        history: &self.history,
+                        jobs: &self.jobs,
+                    };
                     let ctx = builtins::Context {
                         args: builtin_args,
                         env: &self.env,
@@ -5206,6 +4815,7 @@ impl Interpreter {
                         http_client: self.http_client.as_ref(),
                         #[cfg(feature = "git")]
                         git_client: self.git_client.as_ref(),
+                        shell: Some(shell_ref),
                     };
                     let mut result = builtin.execute(ctx).await?;
                     self.apply_builtin_side_effects(&result);
@@ -5219,163 +4829,6 @@ impl Interpreter {
                 }
             }
         }
-    }
-
-    /// Execute `type` builtin — describe command type.
-    ///
-    /// - `type name` — "name is a shell builtin" / "name is a function" / etc.
-    /// - `type -t name` — print just the type word: builtin, function, keyword, file, alias
-    /// - `type -p name` — print path if it would be found on PATH
-    /// - `type -a name` — show all matches (functions, builtins, keywords)
-    async fn execute_type_builtin(
-        &mut self,
-        args: &[String],
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        if args.is_empty() {
-            return Ok(ExecResult::err(
-                "bash: type: usage: type [-afptP] name [name ...]\n".to_string(),
-                1,
-            ));
-        }
-
-        let mut type_only = false; // -t
-        let mut path_only = false; // -p
-        let mut show_all = false; // -a
-        let mut names: Vec<&str> = Vec::new();
-
-        for arg in args {
-            if arg.starts_with('-') && arg.len() > 1 {
-                for c in arg[1..].chars() {
-                    match c {
-                        't' => type_only = true,
-                        'p' => path_only = true,
-                        'a' => show_all = true,
-                        'f' => {} // -f: suppress function lookup (ignored for now)
-                        'P' => path_only = true,
-                        _ => {
-                            return Ok(ExecResult::err(
-                                format!(
-                                    "bash: type: -{}: invalid option\ntype: usage: type [-afptP] name [name ...]\n",
-                                    c
-                                ),
-                                1,
-                            ));
-                        }
-                    }
-                }
-            } else {
-                names.push(arg);
-            }
-        }
-
-        let mut output = String::new();
-        let mut all_found = true;
-
-        for name in &names {
-            let is_func = self.functions.contains_key(*name);
-            let is_builtin = self.builtins.contains_key(*name);
-            let is_kw = is_keyword(name);
-
-            if type_only {
-                if is_func {
-                    output.push_str("function\n");
-                } else if is_kw {
-                    output.push_str("keyword\n");
-                } else if is_builtin {
-                    output.push_str("builtin\n");
-                } else {
-                    // not found — print nothing, set exit code
-                    all_found = false;
-                }
-            } else if path_only {
-                // -p only reports external files; builtins/functions have no path
-                if !is_func && !is_builtin && !is_kw {
-                    all_found = false;
-                }
-                // In sandboxed env there are no external files, so nothing to print
-            } else {
-                // default verbose output
-                let mut found_any = false;
-                if is_func {
-                    output.push_str(&format!("{} is a function\n", name));
-                    found_any = true;
-                    if !show_all {
-                        continue;
-                    }
-                }
-                if is_kw {
-                    output.push_str(&format!("{} is a shell keyword\n", name));
-                    found_any = true;
-                    if !show_all {
-                        continue;
-                    }
-                }
-                if is_builtin {
-                    output.push_str(&format!("{} is a shell builtin\n", name));
-                    found_any = true;
-                    if !show_all {
-                        continue;
-                    }
-                }
-                if !found_any {
-                    output.push_str(&format!("bash: type: {}: not found\n", name));
-                    all_found = false;
-                }
-            }
-        }
-
-        let exit_code = if all_found { 0 } else { 1 };
-        let mut result = ExecResult {
-            stdout: output,
-            stderr: String::new(),
-            exit_code,
-            control_flow: ControlFlow::None,
-            ..Default::default()
-        };
-        result = self.apply_redirections(result, redirects).await?;
-        Ok(result)
-    }
-
-    /// Execute `which` builtin — locate a command.
-    ///
-    /// In bashkit's sandboxed environment, builtins are the equivalent of
-    /// executables on PATH. Reports the name if found.
-    async fn execute_which_builtin(
-        &mut self,
-        args: &[String],
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        let names: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-
-        if names.is_empty() {
-            return Ok(ExecResult::ok(String::new()));
-        }
-
-        let mut output = String::new();
-        let mut all_found = true;
-
-        for name in &names {
-            if self.builtins.contains_key(*name)
-                || self.functions.contains_key(*name)
-                || is_keyword(name)
-            {
-                output.push_str(&format!("{}\n", name));
-            } else {
-                all_found = false;
-            }
-        }
-
-        let exit_code = if all_found { 0 } else { 1 };
-        let mut result = ExecResult {
-            stdout: output,
-            stderr: String::new(),
-            exit_code,
-            control_flow: ControlFlow::None,
-            ..Default::default()
-        };
-        result = self.apply_redirections(result, redirects).await?;
-        Ok(result)
     }
 
     /// Execute `declare`/`typeset` builtin — declare variables with attributes.
@@ -5834,6 +5287,17 @@ impl Interpreter {
                     }
                     self.insert_array_checked(name.clone(), arr);
                 }
+                builtins::BuiltinSideEffect::SetIndexedArray { name, entries } => {
+                    let arr: HashMap<usize, String> = entries.iter().cloned().collect();
+                    // Remove existing array first (mirrors mapfile behavior)
+                    self.arrays.remove(name);
+                    if !arr.is_empty() {
+                        self.insert_array_checked(name.clone(), arr);
+                    }
+                }
+                builtins::BuiltinSideEffect::RemoveArray(name) => {
+                    self.arrays.remove(name);
+                }
                 builtins::BuiltinSideEffect::ShiftPositional(n) => {
                     if let Some(frame) = self.call_stack.last_mut() {
                         if *n <= frame.positional.len() {
@@ -5853,6 +5317,12 @@ impl Interpreter {
                             positional: new_positional.clone(),
                         });
                     }
+                }
+                builtins::BuiltinSideEffect::ClearHistory => {
+                    self.history.clear();
+                }
+                builtins::BuiltinSideEffect::SetLastExitCode(code) => {
+                    self.last_exit_code = *code;
                 }
             }
         }

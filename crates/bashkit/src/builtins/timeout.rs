@@ -199,6 +199,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Timeout.execute(ctx).await.unwrap()
@@ -222,6 +223,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Timeout.execution_plan(&ctx).await.unwrap()

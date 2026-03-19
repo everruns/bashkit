@@ -280,6 +280,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         Rg.execute(ctx).await.unwrap()
@@ -448,6 +449,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
         let result = Rg.execute(ctx).await;
         assert!(result.is_err());

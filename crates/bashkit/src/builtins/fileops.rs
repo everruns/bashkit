@@ -772,6 +772,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Mkdir.execute(ctx).await.unwrap();
@@ -796,6 +797,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Mkdir.execute(ctx).await.unwrap();
@@ -820,6 +822,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Touch.execute(ctx).await.unwrap();
@@ -849,6 +852,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Rm.execute(ctx).await.unwrap();
@@ -873,6 +877,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Rm.execute(ctx).await.unwrap();
@@ -901,6 +906,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Cp.execute(ctx).await.unwrap();
@@ -933,6 +939,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Mv.execute(ctx).await.unwrap();
@@ -963,6 +970,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = Chmod.execute(ctx).await.unwrap();

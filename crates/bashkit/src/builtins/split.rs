@@ -181,6 +181,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
         Split.execute(ctx).await.expect("split failed")
     }

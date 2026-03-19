@@ -812,6 +812,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         grep.execute(ctx).await
@@ -988,6 +989,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = grep.execute(ctx).await.unwrap();
@@ -1026,6 +1028,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = grep.execute(ctx).await.unwrap();
@@ -1089,6 +1092,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = grep.execute(ctx).await.unwrap();
@@ -1131,6 +1135,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = grep.execute(ctx).await.unwrap();
@@ -1170,6 +1175,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = grep.execute(ctx).await.unwrap();
@@ -1203,6 +1209,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = grep.execute(ctx).await.unwrap();
@@ -1234,6 +1241,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = grep.execute(ctx).await.unwrap();
@@ -1265,6 +1273,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = grep.execute(ctx).await.unwrap();
@@ -1317,6 +1326,7 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            shell: None,
         };
 
         let result = grep.execute(ctx).await.unwrap();
