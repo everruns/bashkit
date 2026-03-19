@@ -215,7 +215,10 @@ async fn shell_options_survive_snapshot_roundtrip() {
     let state = bash.shell_state();
 
     // Options should be present in snapshotted variables
-    assert_eq!(state.variables.get("SHOPT_e").map(|s| s.as_str()), Some("1"));
+    assert_eq!(
+        state.variables.get("SHOPT_e").map(|s| s.as_str()),
+        Some("1")
+    );
     assert_eq!(
         state.variables.get("SHOPT_pipefail").map(|s| s.as_str()),
         Some("1")
