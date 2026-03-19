@@ -237,7 +237,11 @@ fn format_string(format: &str, args: &[String], arg_index: &mut usize) -> String
                         let mut octal = String::from("0");
                         while let Some(&c) = chars.peek() {
                             if c.is_ascii_digit() && c != '8' && c != '9' && octal.len() < 4 {
-                                octal.push(chars.next().expect("chars.next() valid: peek() confirmed char exists"));
+                                octal.push(
+                                    chars
+                                        .next()
+                                        .expect("chars.next() valid: peek() confirmed char exists"),
+                                );
                             } else {
                                 break;
                             }
@@ -252,7 +256,9 @@ fn format_string(format: &str, args: &[String], arg_index: &mut usize) -> String
                         for _ in 0..2 {
                             if let Some(&c) = chars.peek() {
                                 if c.is_ascii_hexdigit() {
-                                    hex.push(chars.next().expect("chars.next() valid: peek() confirmed char exists"));
+                                    hex.push(chars.next().expect(
+                                        "chars.next() valid: peek() confirmed char exists",
+                                    ));
                                 } else {
                                     break;
                                 }
@@ -304,7 +310,11 @@ fn format_string(format: &str, args: &[String], arg_index: &mut usize) -> String
                         || c == '#'
                         || c == '.'
                     {
-                        spec.push(chars.next().expect("chars.next() valid: peek() confirmed char exists"));
+                        spec.push(
+                            chars
+                                .next()
+                                .expect("chars.next() valid: peek() confirmed char exists"),
+                        );
                     } else {
                         break;
                     }
@@ -488,7 +498,11 @@ fn expand_escapes(s: &str) -> String {
                         let mut octal = String::from("0");
                         while let Some(&c) = chars.peek() {
                             if c.is_ascii_digit() && c != '8' && c != '9' && octal.len() < 4 {
-                                octal.push(chars.next().expect("chars.next() valid: peek() confirmed char exists"));
+                                octal.push(
+                                    chars
+                                        .next()
+                                        .expect("chars.next() valid: peek() confirmed char exists"),
+                                );
                             } else {
                                 break;
                             }
@@ -503,7 +517,9 @@ fn expand_escapes(s: &str) -> String {
                         for _ in 0..2 {
                             if let Some(&c) = chars.peek() {
                                 if c.is_ascii_hexdigit() {
-                                    hex.push(chars.next().expect("chars.next() valid: peek() confirmed char exists"));
+                                    hex.push(chars.next().expect(
+                                        "chars.next() valid: peek() confirmed char exists",
+                                    ));
                                 } else {
                                     break;
                                 }
