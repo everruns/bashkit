@@ -78,24 +78,20 @@ fn parse_unzip_args(args: &[String]) -> std::result::Result<UnzipOptions, String
     let mut extract_dir = None;
     let mut overwrite = false;
     let mut positional = Vec::new();
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-l" => list_only = true,
-            "-o" => overwrite = true,
-            "-d" => {
-                i += 1;
-                if i < args.len() {
-                    extract_dir = Some(args[i].clone());
-                } else {
-                    return Err("unzip: -d requires a directory argument".to_string());
-                }
-            }
-            _ if !args[i].starts_with('-') => positional.push(args[i].clone()),
-            _ => {} // ignore unknown
+    while !p.is_done() {
+        if p.flag("-l") {
+            list_only = true;
+        } else if p.flag("-o") {
+            overwrite = true;
+        } else if let Some(val) = p.flag_value("-d", "unzip")? {
+            extract_dir = Some(val.to_string());
+        } else if let Some(arg) = p.positional() {
+            positional.push(arg.to_string());
+        } else {
+            p.advance(); // ignore unknown
         }
-        i += 1;
     }
 
     if positional.is_empty() {

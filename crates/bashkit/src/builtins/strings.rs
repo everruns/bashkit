@@ -36,44 +36,37 @@ fn parse_strings_args(
         offset_format: None,
     };
     let mut files = Vec::new();
-    let mut i = 0;
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "-n" {
-            i += 1;
-            if i < args.len() {
-                opts.min_length = args[i].parse().map_err(|_| {
-                    format!("strings: invalid minimum string length: '{}'", args[i])
-                })?;
-            }
-        } else if let Some(val) = arg.strip_prefix("-n") {
+    while !p.is_done() {
+        if let Some(val) = p.flag_value("-n", "strings")? {
             opts.min_length = val
                 .parse()
                 .map_err(|_| format!("strings: invalid minimum string length: '{}'", val))?;
-        } else if arg == "-t" {
-            i += 1;
-            if i < args.len() {
-                opts.offset_format = Some(match args[i].as_str() {
-                    "d" => OffsetFormat::Decimal,
-                    "o" => OffsetFormat::Octal,
-                    "x" => OffsetFormat::Hex,
-                    other => {
-                        return Err(format!("strings: invalid radix for -t: '{}'", other));
-                    }
-                });
-            }
-        } else if arg == "-a" {
+        } else if let Some(val) = p.flag_value("-t", "strings")? {
+            opts.offset_format = Some(match val {
+                "d" => OffsetFormat::Decimal,
+                "o" => OffsetFormat::Octal,
+                "x" => OffsetFormat::Hex,
+                other => {
+                    return Err(format!("strings: invalid radix for -t: '{}'", other));
+                }
+            });
+        } else if p.flag("-a") {
             // Default behavior, ignore
-        } else if arg == "-" || !arg.starts_with('-') {
-            files.push(arg.clone());
-        } else if let Some(rest) = arg.strip_prefix('-') {
+        } else if let Some(arg) = p.positional() {
+            files.push(arg.to_string());
+        } else if let Some(arg) = p.current() {
             // Try parsing as -NUM shorthand
-            if let Ok(n) = rest.parse::<usize>() {
+            if let Some(rest) = arg.strip_prefix('-')
+                && let Ok(n) = rest.parse::<usize>()
+            {
                 opts.min_length = n;
             }
+            p.advance();
+        } else {
+            p.advance();
         }
-        i += 1;
     }
 
     if opts.min_length == 0 {

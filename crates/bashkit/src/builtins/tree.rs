@@ -41,56 +41,46 @@ impl Builtin for Tree {
         };
 
         let mut paths: Vec<&str> = Vec::new();
-        let mut i = 0;
-        while i < ctx.args.len() {
-            match ctx.args[i].as_str() {
-                "-a" => opts.show_hidden = true,
-                "-d" => opts.dirs_only = true,
-                "-L" => {
-                    i += 1;
-                    if i >= ctx.args.len() {
+        let mut p = super::arg_parser::ArgParser::new(ctx.args);
+        while !p.is_done() {
+            if p.flag("-a") {
+                opts.show_hidden = true;
+            } else if p.flag("-d") {
+                opts.dirs_only = true;
+            } else if let Some(val) = p.flag_value_opt("-L") {
+                match val.parse::<usize>() {
+                    Ok(n) if n > 0 => opts.max_depth = Some(n),
+                    _ => {
                         return Ok(ExecResult::err(
-                            "tree: option requires an argument -- 'L'\n".to_string(),
+                            "tree: Invalid level, must be greater than 0.\n".to_string(),
                             1,
                         ));
                     }
-                    match ctx.args[i].parse::<usize>() {
-                        Ok(n) if n > 0 => opts.max_depth = Some(n),
+                }
+            } else if let Some(val) = p.flag_value_opt("-I") {
+                opts.exclude_pattern = Some(val.to_string());
+            } else if p.is_flag() {
+                // Handle combined flags like -ad
+                let Some(s) = p.current() else {
+                    p.advance();
+                    continue;
+                };
+                for ch in s[1..].chars() {
+                    match ch {
+                        'a' => opts.show_hidden = true,
+                        'd' => opts.dirs_only = true,
                         _ => {
                             return Ok(ExecResult::err(
-                                "tree: Invalid level, must be greater than 0.\n".to_string(),
+                                format!("tree: invalid option -- '{}'\n", ch),
                                 1,
                             ));
                         }
                     }
                 }
-                "-I" => {
-                    i += 1;
-                    if i >= ctx.args.len() {
-                        return Ok(ExecResult::err(
-                            "tree: option requires an argument -- 'I'\n".to_string(),
-                            1,
-                        ));
-                    }
-                    opts.exclude_pattern = Some(ctx.args[i].clone());
-                }
-                s if s.starts_with('-') && s.len() > 1 => {
-                    for ch in s[1..].chars() {
-                        match ch {
-                            'a' => opts.show_hidden = true,
-                            'd' => opts.dirs_only = true,
-                            _ => {
-                                return Ok(ExecResult::err(
-                                    format!("tree: invalid option -- '{}'\n", ch),
-                                    1,
-                                ));
-                            }
-                        }
-                    }
-                }
-                _ => paths.push(&ctx.args[i]),
+                p.advance();
+            } else if let Some(arg) = p.positional() {
+                paths.push(arg);
             }
-            i += 1;
         }
 
         if paths.is_empty() {

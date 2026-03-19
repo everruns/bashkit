@@ -40,32 +40,20 @@ fn parse_template_args(args: &[String]) -> std::result::Result<TemplateConfig, S
     let mut escape_html = false;
     let mut strict = false;
     let mut template_file = None;
+    let mut p = super::arg_parser::ArgParser::new(args);
 
-    let mut i = 0;
-    while i < args.len() {
-        let arg = &args[i];
-        match arg.as_str() {
-            "-d" => {
-                i += 1;
-                if i >= args.len() {
-                    return Err("template: -d requires an argument".to_string());
-                }
-                data_file = Some(args[i].clone());
-            }
-            "-e" => {
-                escape_html = true;
-            }
-            "--strict" => {
-                strict = true;
-            }
-            other if other.starts_with('-') => {
-                return Err(format!("template: unknown option '{other}'"));
-            }
-            _ => {
-                template_file = Some(arg.clone());
-            }
+    while !p.is_done() {
+        if let Some(val) = p.flag_value("-d", "template")? {
+            data_file = Some(val.to_string());
+        } else if p.flag("-e") {
+            escape_html = true;
+        } else if p.flag("--strict") {
+            strict = true;
+        } else if let Some(arg) = p.current().filter(|a| a.starts_with('-')) {
+            return Err(format!("template: unknown option '{}'", arg));
+        } else if let Some(arg) = p.positional() {
+            template_file = Some(arg.to_string());
         }
-        i += 1;
     }
 
     Ok(TemplateConfig {
