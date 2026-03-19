@@ -60,9 +60,12 @@
 //! Best for: complex behavior, custom caching, specialized semantics.
 //!
 //! ```rust,ignore
-//! use bashkit::{async_trait, FileSystem, Bash};
+//! use bashkit::{async_trait, FileSystem, FileSystemExt, Bash};
 //!
 //! struct MyFs { /* ... */ }
+//!
+//! #[async_trait]
+//! impl FileSystemExt for MyFs {}
 //!
 //! #[async_trait]
 //! impl FileSystem for MyFs {
@@ -294,7 +297,7 @@
 //! Implement the [`FileSystem`] trait to create custom storage backends:
 //!
 //! ```rust
-//! use bashkit::{async_trait, FileSystem, DirEntry, Metadata, FileType, Result, Error};
+//! use bashkit::{async_trait, FileSystem, FileSystemExt, DirEntry, Metadata, FileType, Result, Error};
 //! use std::path::{Path, PathBuf};
 //! use std::collections::HashMap;
 //! use std::sync::RwLock;
@@ -314,6 +317,9 @@
 //!         Self { files: RwLock::new(files) }
 //!     }
 //! }
+//!
+//! #[async_trait]
+//! impl FileSystemExt for SimpleFs {}
 //!
 //! #[async_trait]
 //! impl FileSystem for SimpleFs {
@@ -408,7 +414,7 @@ pub use posix::PosixFs;
 #[cfg(feature = "realfs")]
 pub use realfs::{RealFs, RealFsMode};
 #[allow(unused_imports)]
-pub use traits::{DirEntry, FileSystem, FileType, Metadata, fs_errors};
+pub use traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata, fs_errors};
 
 use crate::error::Result;
 use std::io::{Error as IoError, ErrorKind};

@@ -4,7 +4,8 @@
 //! are properly exported from the crate's public API.
 
 use bashkit::{
-    Bash, DirEntry, Error, FileSystem, FileType, InMemoryFs, Metadata, Result, async_trait,
+    Bash, DirEntry, Error, FileSystem, FileSystemExt, FileType, InMemoryFs, Metadata, Result,
+    async_trait,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -47,6 +48,9 @@ impl MinimalFs {
         result
     }
 }
+
+#[async_trait]
+impl FileSystemExt for MinimalFs {}
 
 #[async_trait]
 impl FileSystem for MinimalFs {

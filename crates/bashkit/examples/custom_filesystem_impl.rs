@@ -6,7 +6,9 @@
 //!
 //! Run with: cargo run --example custom_filesystem_impl
 
-use bashkit::{Bash, DirEntry, Error, FileSystem, FileType, Metadata, Result, async_trait};
+use bashkit::{
+    Bash, DirEntry, Error, FileSystem, FileSystemExt, FileType, Metadata, Result, async_trait,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -101,6 +103,9 @@ impl SessionFileSystemAdapter {
 }
 
 // The async_trait macro is re-exported from bashkit for convenience
+#[async_trait]
+impl FileSystemExt for SessionFileSystemAdapter {}
+
 #[async_trait]
 impl FileSystem for SessionFileSystemAdapter {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {

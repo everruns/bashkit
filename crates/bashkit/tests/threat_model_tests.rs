@@ -6,8 +6,8 @@
 //! Run with: `cargo test threat_`
 
 use bashkit::{
-    Bash, ExecutionLimits, FileSystem, FsLimits, InMemoryFs, MemoryLimits, OverlayFs,
-    SessionLimits, TraceEventDetails, TraceEventKind, TraceMode,
+    Bash, ExecutionLimits, FileSystem, FileSystemExt, FsLimits, InMemoryFs, MemoryLimits,
+    OverlayFs, SessionLimits, TraceEventDetails, TraceEventKind, TraceMode,
 };
 use std::path::Path;
 use std::sync::Arc;
