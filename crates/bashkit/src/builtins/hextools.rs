@@ -19,7 +19,7 @@ pub struct Od;
 
 /// The xxd builtin - make a hexdump or do the reverse.
 ///
-/// Usage: xxd [-l LEN] [-s OFFSET] [-c COLS] [-g GROUP] [-p] [FILE...]
+/// Usage: xxd [-l LEN] [-s OFFSET] [-c COLS] [-g GROUP] [-p] [-r] [FILE...]
 ///
 /// Options:
 ///   -l LEN     Stop after LEN bytes
@@ -211,6 +211,7 @@ struct XxdOptions {
     cols: usize,
     group: usize,
     plain: bool,
+    reverse: bool,
 }
 
 fn parse_xxd_args(args: &[String]) -> std::result::Result<(XxdOptions, Vec<String>), String> {
@@ -220,6 +221,7 @@ fn parse_xxd_args(args: &[String]) -> std::result::Result<(XxdOptions, Vec<Strin
         cols: 16,
         group: 2,
         plain: false,
+        reverse: false,
     };
     let mut files = Vec::new();
     let mut p = super::arg_parser::ArgParser::new(args);
@@ -247,6 +249,8 @@ fn parse_xxd_args(args: &[String]) -> std::result::Result<(XxdOptions, Vec<Strin
                 .map_err(|_| format!("xxd: invalid group: '{}'", val))?;
         } else if p.flag("-p") {
             opts.plain = true;
+        } else if p.flag("-r") {
+            opts.reverse = true;
         } else if let Some(arg) = p.positional() {
             files.push(arg.to_string());
         }
@@ -318,6 +322,60 @@ fn xxd_dump(data: &[u8], opts: &XxdOptions) -> String {
     output
 }
 
+/// Reverse hex dump: convert hex string back to binary bytes.
+/// In plain mode (-r -p), treats input as a continuous hex stream.
+/// In normal mode (-r), parses xxd-style output (skips address and ASCII columns).
+fn xxd_reverse(data: &[u8], plain: bool) -> Vec<u8> {
+    let text = String::from_utf8_lossy(data);
+    let mut result = Vec::new();
+
+    if plain {
+        // Plain mode: entire input is hex chars (whitespace ignored)
+        let hex: String = text.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+        for chunk in hex.as_bytes().chunks(2) {
+            if chunk.len() == 2 {
+                let s = std::str::from_utf8(chunk).unwrap_or("00");
+                if let Ok(b) = u8::from_str_radix(s, 16) {
+                    result.push(b);
+                }
+            }
+        }
+    } else {
+        // Normal xxd output: "ADDR: HH HH ...  ASCII"
+        for line in text.lines() {
+            // Skip empty lines
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            // Find hex portion after the address (colon-separated)
+            let hex_part = if let Some(idx) = line.find(':') {
+                &line[idx + 1..]
+            } else {
+                line
+            };
+            // Take only the hex portion (before the ASCII column)
+            // ASCII column starts after two spaces
+            let hex_part = if let Some(idx) = hex_part.find("  ") {
+                &hex_part[..idx]
+            } else {
+                hex_part
+            };
+            let hex: String = hex_part.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+            for chunk in hex.as_bytes().chunks(2) {
+                if chunk.len() == 2 {
+                    let s = std::str::from_utf8(chunk).unwrap_or("00");
+                    if let Ok(b) = u8::from_str_radix(s, 16) {
+                        result.push(b);
+                    }
+                }
+            }
+        }
+    }
+
+    result
+}
+
 #[async_trait]
 impl Builtin for Xxd {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -327,9 +385,16 @@ impl Builtin for Xxd {
         };
 
         let data = collect_input(ctx.stdin, &files, ctx.cwd, &ctx.fs).await?;
-        let output = xxd_dump(&data, &opts);
 
-        Ok(ExecResult::ok(output))
+        if opts.reverse {
+            let bytes = xxd_reverse(&data, opts.plain);
+            // Output raw bytes as lossy UTF-8
+            let output = String::from_utf8_lossy(&bytes).to_string();
+            Ok(ExecResult::ok(output))
+        } else {
+            let output = xxd_dump(&data, &opts);
+            Ok(ExecResult::ok(output))
+        }
     }
 }
 
@@ -761,6 +826,32 @@ mod tests {
         let result = run_xxd(&["-p"], Some("\x00\x01\x02")).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "000102\n");
+    }
+
+    #[tokio::test]
+    async fn test_xxd_reverse_plain() {
+        let result = run_xxd(&["-r", "-p"], Some("48656c6c6f")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "Hello");
+    }
+
+    #[tokio::test]
+    async fn test_xxd_reverse_plain_whitespace() {
+        let result = run_xxd(&["-r", "-p"], Some("4865 6c6c\n6f")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "Hello");
+    }
+
+    #[tokio::test]
+    async fn test_xxd_reverse_normal() {
+        // Normal xxd output format
+        let result = run_xxd(
+            &["-r"],
+            Some("00000000: 4865 6c6c 6f                             Hello"),
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "Hello");
     }
 
     // --- Hexdump tests ---
