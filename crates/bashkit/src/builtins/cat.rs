@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use std::path::Path;
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -54,15 +54,11 @@ impl Builtin for Cat {
                         ctx.cwd.join(file).to_string_lossy().to_string()
                     };
 
-                    match ctx.fs.read_file(Path::new(&path)).await {
-                        Ok(content) => {
-                            let text = String::from_utf8_lossy(&content);
-                            raw.push_str(&text);
-                        }
-                        Err(e) => {
-                            return Ok(ExecResult::err(format!("cat: {}: {}\n", file, e), 1));
-                        }
-                    }
+                    let text = match read_text_file(&*ctx.fs, Path::new(&path), "cat").await {
+                        Ok(t) => t,
+                        Err(e) => return Ok(e),
+                    };
+                    raw.push_str(&text);
                 }
             }
         }

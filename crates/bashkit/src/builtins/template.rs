@@ -6,7 +6,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, resolve_path};
+use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -287,16 +287,10 @@ impl Builtin for Template {
         // Load JSON data if provided
         let json_data = if let Some(ref data_path) = config.data_file {
             let path = resolve_path(ctx.cwd, data_path);
-            let content = match ctx.fs.read_file(&path).await {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    return Ok(ExecResult::err(
-                        format!("template: cannot read data file '{}': {}\n", data_path, e),
-                        1,
-                    ));
-                }
+            let text = match read_text_file(&*ctx.fs, &path, "template").await {
+                Ok(t) => t,
+                Err(e) => return Ok(e),
             };
-            let text = String::from_utf8_lossy(&content);
             match serde_json::from_str::<serde_json::Value>(&text) {
                 Ok(v) => v,
                 Err(e) => {
@@ -313,14 +307,9 @@ impl Builtin for Template {
         // Load template
         let template_text = if let Some(ref tpl_path) = config.template_file {
             let path = resolve_path(ctx.cwd, tpl_path);
-            match ctx.fs.read_file(&path).await {
-                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                Err(e) => {
-                    return Ok(ExecResult::err(
-                        format!("template: cannot read '{}': {}\n", tpl_path, e),
-                        1,
-                    ));
-                }
+            match read_text_file(&*ctx.fs, &path, "template").await {
+                Ok(t) => t,
+                Err(e) => return Ok(e),
             }
         } else if let Some(stdin) = ctx.stdin {
             stdin.to_string()
@@ -619,6 +608,6 @@ mod tests {
         )
         .await;
         assert_eq!(result.exit_code, 1);
-        assert!(result.stderr.contains("cannot read data file"));
+        assert!(result.stderr.contains("template:"));
     }
 }

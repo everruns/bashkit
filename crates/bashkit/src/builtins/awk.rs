@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use regex::Regex;
 use std::collections::HashMap;
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, read_text_file};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
 
@@ -2959,14 +2959,10 @@ impl Builtin for Awk {
                     } else {
                         ctx.cwd.join(&ctx.args[i])
                     };
-                    match ctx.fs.read_file(&path).await {
-                        Ok(content) => {
-                            program_str = String::from_utf8_lossy(&content).into_owned();
-                        }
-                        Err(e) => {
-                            return Ok(ExecResult::err(format!("awk: {}: {}", ctx.args[i], e), 1));
-                        }
-                    }
+                    program_str = match read_text_file(&*ctx.fs, &path, "awk").await {
+                        Ok(t) => t,
+                        Err(e) => return Ok(e),
+                    };
                 }
             } else if arg.starts_with('-') {
                 // Unknown option - ignore
@@ -3031,14 +3027,11 @@ impl Builtin for Awk {
                     ctx.cwd.join(file)
                 };
 
-                match ctx.fs.read_file(&path).await {
-                    Ok(content) => {
-                        inputs.push(String::from_utf8_lossy(&content).into_owned());
-                    }
-                    Err(e) => {
-                        return Ok(ExecResult::err(format!("awk: {}: {}", file, e), 1));
-                    }
-                }
+                let text = match read_text_file(&*ctx.fs, &path, "awk").await {
+                    Ok(t) => t,
+                    Err(e) => return Ok(e),
+                };
+                inputs.push(text);
             }
             inputs
         };

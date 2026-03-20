@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use regex::Regex;
 
 use super::search_common::{build_search_regex, collect_files_recursive, parse_numeric_flag_arg};
-use super::{Builtin, Context, resolve_path};
+use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
 
@@ -159,15 +159,11 @@ impl Builtin for Rg {
                     continue;
                 }
                 // It's a file
-                match ctx.fs.read_file(&path).await {
-                    Ok(content) => {
-                        let text = String::from_utf8_lossy(&content).into_owned();
-                        inputs.push((p.clone(), text));
-                    }
-                    Err(e) => {
-                        return Ok(ExecResult::err(format!("rg: {}: {}\n", p, e), 1));
-                    }
-                }
+                let text = match read_text_file(&*ctx.fs, &path, "rg").await {
+                    Ok(t) => t,
+                    Err(e) => return Ok(e),
+                };
+                inputs.push((p.clone(), text));
             }
             inputs
         };

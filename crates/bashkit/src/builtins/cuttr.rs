@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -184,15 +184,11 @@ impl Builtin for Cut {
                     ctx.cwd.join(file)
                 };
 
-                match ctx.fs.read_file(&path).await {
-                    Ok(content) => {
-                        let text = String::from_utf8_lossy(&content);
-                        process_input(&text, &mut output);
-                    }
-                    Err(e) => {
-                        return Ok(ExecResult::err(format!("cut: {}: {}\n", file, e), 1));
-                    }
-                }
+                let text = match read_text_file(&*ctx.fs, &path, "cut").await {
+                    Ok(t) => t,
+                    Err(e) => return Ok(e),
+                };
+                process_input(&text, &mut output);
             }
         }
 
