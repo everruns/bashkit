@@ -11,7 +11,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, resolve_path};
+use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -385,13 +385,9 @@ async fn read_input<'a>(
 ) -> std::result::Result<String, ExecResult> {
     if let Some(path_str) = file_arg {
         let path = resolve_path(ctx.cwd, path_str);
-        match ctx.fs.read_file(&path).await {
-            Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
-            Err(_) => Err(ExecResult::err(
-                format!("yaml: cannot read '{}'\n", path_str),
-                1,
-            )),
-        }
+        read_text_file(ctx.fs.as_ref(), &path, "yaml")
+            .await
+            .map_err(|_| ExecResult::err(format!("yaml: cannot read '{}'\n", path_str), 1))
     } else if let Some(stdin) = ctx.stdin {
         Ok(stdin.to_string())
     } else {

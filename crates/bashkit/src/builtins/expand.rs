@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, resolve_path};
+use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -46,8 +46,8 @@ impl Builtin for Expand {
             let mut buf = String::new();
             for file in &files {
                 let path = resolve_path(ctx.cwd, file);
-                match ctx.fs.read_file(&path).await {
-                    Ok(bytes) => buf.push_str(&String::from_utf8_lossy(&bytes)),
+                match read_text_file(ctx.fs.as_ref(), &path, "expand").await {
+                    Ok(text) => buf.push_str(&text),
                     Err(_) => {
                         return Ok(ExecResult::err(
                             format!("expand: {}: No such file or directory\n", file),
@@ -127,8 +127,8 @@ impl Builtin for Unexpand {
             let mut buf = String::new();
             for file in &files {
                 let path = resolve_path(ctx.cwd, file);
-                match ctx.fs.read_file(&path).await {
-                    Ok(bytes) => buf.push_str(&String::from_utf8_lossy(&bytes)),
+                match read_text_file(ctx.fs.as_ref(), &path, "unexpand").await {
+                    Ok(text) => buf.push_str(&text),
                     Err(_) => {
                         return Ok(ExecResult::err(
                             format!("unexpand: {}: No such file or directory\n", file),
