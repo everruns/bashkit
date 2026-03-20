@@ -393,38 +393,6 @@ pub struct Context<'a> {
     pub(crate) shell: Option<ShellRef<'a>>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::read_text_file;
-    use crate::fs::{FileSystem, InMemoryFs};
-    use std::path::Path;
-
-    #[tokio::test]
-    async fn read_text_file_returns_lossy_utf8() {
-        let fs = InMemoryFs::new();
-        fs.write_file(Path::new("/tmp/data.bin"), b"hi\xffthere")
-            .await
-            .unwrap();
-
-        let text = read_text_file(&fs, Path::new("/tmp/data.bin"), "cat")
-            .await
-            .unwrap();
-
-        assert_eq!(text, "hi\u{fffd}there");
-    }
-
-    #[tokio::test]
-    async fn read_text_file_formats_missing_file_errors() {
-        let fs = InMemoryFs::new();
-        let err = read_text_file(&fs, Path::new("/tmp/missing.txt"), "cat")
-            .await
-            .unwrap_err();
-
-        assert_eq!(err.exit_code, 1);
-        assert!(err.stderr.contains("cat: /tmp/missing.txt:"));
-    }
-}
-
 impl<'a> Context<'a> {
     /// Create a new Context for testing purposes.
     ///
@@ -558,6 +526,7 @@ impl Builtin for std::sync::Arc<dyn Builtin> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::{FileSystem, InMemoryFs};
 
     #[test]
     fn test_resolve_path_absolute() {
@@ -611,5 +580,30 @@ mod tests {
         let cwd = PathBuf::from("/home/user");
         let result = resolve_path(&cwd, "./downloads/../documents/./file.txt");
         assert_eq!(result, PathBuf::from("/home/user/documents/file.txt"));
+    }
+
+    #[tokio::test]
+    async fn read_text_file_returns_lossy_utf8() {
+        let fs = InMemoryFs::new();
+        fs.write_file(Path::new("/tmp/data.bin"), b"hi\xffthere")
+            .await
+            .unwrap();
+
+        let text = read_text_file(&fs, Path::new("/tmp/data.bin"), "cat")
+            .await
+            .unwrap();
+
+        assert_eq!(text, "hi\u{fffd}there");
+    }
+
+    #[tokio::test]
+    async fn read_text_file_formats_missing_file_errors() {
+        let fs = InMemoryFs::new();
+        let err = read_text_file(&fs, Path::new("/tmp/missing.txt"), "cat")
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.exit_code, 1);
+        assert!(err.stderr.contains("cat: /tmp/missing.txt:"));
     }
 }
