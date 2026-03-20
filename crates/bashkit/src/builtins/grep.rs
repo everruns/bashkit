@@ -438,52 +438,59 @@ impl Builtin for Grep {
             }
             vec![(stdin_name.to_string(), stdin_content)]
         } else if opts.recursive {
-            // Linear directory traversal
-            let mut inputs = Vec::new();
-            let mut dirs_to_process: Vec<std::path::PathBuf> = Vec::new();
+            // Try indexed search via SearchCapable if available
+            let search_result = try_indexed_search(&*ctx.fs, &opts, ctx.cwd);
 
-            for file in &opts.files {
-                let path = if file.starts_with('/') {
-                    std::path::PathBuf::from(file)
-                } else {
-                    ctx.cwd.join(file)
-                };
-                dirs_to_process.push(path);
-            }
+            if let Some(indexed_inputs) = search_result {
+                indexed_inputs
+            } else {
+                // Fallback: linear directory traversal
+                let mut inputs = Vec::new();
+                let mut dirs_to_process: Vec<std::path::PathBuf> = Vec::new();
 
-            while let Some(path) = dirs_to_process.pop() {
-                if let Ok(entries) = ctx.fs.read_dir(&path).await {
-                    for entry in entries {
-                        let entry_path = path.join(&entry.name);
-                        if entry.metadata.file_type.is_dir() {
-                            // Skip dirs matching --exclude-dir patterns
-                            if opts
-                                .exclude_dir_patterns
-                                .iter()
-                                .any(|p| glob_matches(&entry.name, p))
-                            {
-                                continue;
-                            }
-                            dirs_to_process.push(entry_path);
-                        } else if entry.metadata.file_type.is_file()
-                            && should_include_file(
-                                &entry.name,
-                                &opts.include_patterns,
-                                &opts.exclude_patterns,
-                            )
-                            && let Ok(content) = ctx.fs.read_file(&entry_path).await
-                        {
-                            let text = process_content(content, opts.binary_as_text);
-                            inputs.push((entry_path.to_string_lossy().into_owned(), text));
-                        }
-                    }
-                } else if let Ok(content) = ctx.fs.read_file(&path).await {
-                    // It's a file, not a directory
-                    let text = process_content(content, opts.binary_as_text);
-                    inputs.push((path.to_string_lossy().into_owned(), text));
+                for file in &opts.files {
+                    let path = if file.starts_with('/') {
+                        std::path::PathBuf::from(file)
+                    } else {
+                        ctx.cwd.join(file)
+                    };
+                    dirs_to_process.push(path);
                 }
+
+                while let Some(path) = dirs_to_process.pop() {
+                    if let Ok(entries) = ctx.fs.read_dir(&path).await {
+                        for entry in entries {
+                            let entry_path = path.join(&entry.name);
+                            if entry.metadata.file_type.is_dir() {
+                                // Skip dirs matching --exclude-dir patterns
+                                if opts
+                                    .exclude_dir_patterns
+                                    .iter()
+                                    .any(|p| glob_matches(&entry.name, p))
+                                {
+                                    continue;
+                                }
+                                dirs_to_process.push(entry_path);
+                            } else if entry.metadata.file_type.is_file()
+                                && should_include_file(
+                                    &entry.name,
+                                    &opts.include_patterns,
+                                    &opts.exclude_patterns,
+                                )
+                                && let Ok(content) = ctx.fs.read_file(&entry_path).await
+                            {
+                                let text = process_content(content, opts.binary_as_text);
+                                inputs.push((entry_path.to_string_lossy().into_owned(), text));
+                            }
+                        }
+                    } else if let Ok(content) = ctx.fs.read_file(&path).await {
+                        // It's a file, not a directory
+                        let text = process_content(content, opts.binary_as_text);
+                        inputs.push((path.to_string_lossy().into_owned(), text));
+                    }
+                }
+                inputs
             }
-            inputs
         } else {
             // Read from specified files
             let mut inputs = Vec::new();
@@ -783,6 +790,63 @@ impl Builtin for Grep {
 
         Ok(ExecResult::with_code(output, exit_code))
     }
+}
+
+/// Try to use an indexed search provider for recursive grep.
+///
+/// Returns `Some(inputs)` if a `SearchCapable` provider handled the search,
+/// `None` to fall back to linear scan.
+fn try_indexed_search(
+    fs: &dyn crate::fs::FileSystem,
+    opts: &GrepOptions,
+    cwd: &std::path::Path,
+) -> Option<Vec<(String, String)>> {
+    let sc = fs.as_search_capable()?;
+    let root = if let Some(first) = opts.files.first() {
+        if first.starts_with('/') {
+            std::path::PathBuf::from(first)
+        } else {
+            cwd.join(first)
+        }
+    } else {
+        cwd.to_path_buf()
+    };
+    let provider = sc.search_provider(&root)?;
+    let caps = provider.capabilities();
+    if !caps.content_search {
+        return None;
+    }
+
+    // Build combined pattern string
+    let pattern = opts.patterns.join("|");
+    let query = crate::fs::SearchQuery {
+        pattern,
+        is_regex: !opts.fixed_strings && caps.regex,
+        case_insensitive: opts.ignore_case,
+        root,
+        glob_filter: opts.include_patterns.first().cloned(),
+        max_results: opts.max_count,
+    };
+
+    let results = provider.search(&query).ok()?;
+
+    // Group matches by file path to build (filename, content) pairs
+    let mut file_map: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for m in &results.matches {
+        let key = m.path.to_string_lossy().into_owned();
+        file_map
+            .entry(key)
+            .or_default()
+            .push(m.line_content.clone());
+    }
+
+    Some(
+        file_map
+            .into_iter()
+            .map(|(path, lines)| (path, lines.join("\n")))
+            .collect(),
+    )
 }
 
 #[cfg(test)]
