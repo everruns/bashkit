@@ -2,6 +2,71 @@
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-03-20
+
+### Highlights
+
+- **Second external contribution!** Welcome @shubham-lohiya, who exposed the `Bash` class with Monty Python execution and external function handler in the Python bindings ([#760](https://github.com/everruns/bashkit/pull/760)) — making it easy to extend bashkit with custom Python functions
+- **Browser terminal example**: Bashkit now runs entirely in the browser via WebAssembly (`wasm32-wasip1-threads`), with a single-file terminal UI — no framework required
+- **New features**: structured execution trace events, per-instance memory budgets, static AST budget validation, `head -c` byte mode, IFS separator + `$_` tracking, final environment state in `ExecResult`
+- **Security hardening**: blackbox security audit surfaced 15 vulnerabilities — all fixed; readonly variable bypass blocked; stack overflow, memory exhaustion, and source recursion depth limits enforced; shell injection prevented in JS VFS helpers
+- **Major refactoring**: FileSystem split into core + FileSystemExt, shared ArgParser extracted, register_builtins! macro replacing 120+ insert calls, ShellRef Context API, shell options split-brain fix
+
+### What's Changed
+
+* chore: pre-release maintenance — docs, fuzz, threat model, cargo-vet ([#774](https://github.com/everruns/bashkit/pull/774))
+* fix(interpreter): stabilize command-not-found suggestions ([#773](https://github.com/everruns/bashkit/pull/773))
+* refactor: remove blanket clippy::unwrap_used allows ([#772](https://github.com/everruns/bashkit/pull/772))
+* chore: move /ship from command to skill format ([#771](https://github.com/everruns/bashkit/pull/771))
+* refactor(fs): split FileSystem into core + FileSystemExt ([#770](https://github.com/everruns/bashkit/pull/770))
+* refactor(builtins): extract shared ArgParser (#744) ([#769](https://github.com/everruns/bashkit/pull/769))
+* refactor: replace hardcoded if-name dispatch with ShellRef Context API ([#767](https://github.com/everruns/bashkit/pull/767))
+* refactor: break up 6 monster functions into smaller helpers ([#766](https://github.com/everruns/bashkit/pull/766))
+* refactor(interpreter): fix shell options split brain (#736) ([#764](https://github.com/everruns/bashkit/pull/764))
+* refactor(builtins): replace 120+ insert calls with register_builtins! macro ([#762](https://github.com/everruns/bashkit/pull/762))
+* refactor(builtins): move find/xargs/timeout execution plans from interpreter to builtins ([#761](https://github.com/everruns/bashkit/pull/761))
+* feat(python): expose `Bash` class with Monty Python execution and external function handler ([#760](https://github.com/everruns/bashkit/pull/760)) by @shubham-lohiya
+* fix(git): error on non-HEAD revision in git show rev:path ([#758](https://github.com/everruns/bashkit/pull/758))
+* refactor(builtins): extract git_err helper to eliminate 24 identical error wrapping lines ([#757](https://github.com/everruns/bashkit/pull/757))
+* refactor(error): simplify Error enum by merging Parse/ParseAt and removing dead CommandNotFound ([#756](https://github.com/everruns/bashkit/pull/756))
+* refactor(fs): remove dead SearchCapable/SearchProvider traits ([#755](https://github.com/everruns/bashkit/pull/755))
+* fix(vfs): use fs.remove() for patch file deletion instead of empty write ([#754](https://github.com/everruns/bashkit/pull/754))
+* refactor(interpreter): deduplicate declare/local compound assignment and flag parsing ([#753](https://github.com/everruns/bashkit/pull/753))
+* refactor(builtins): extract shared search utilities from grep and rg ([#752](https://github.com/everruns/bashkit/pull/752))
+* refactor: deduplicate is_valid_var_name into single pub(crate) function ([#751](https://github.com/everruns/bashkit/pull/751))
+* refactor(builtins): replace magic variable hack with BuiltinSideEffect enum ([#750](https://github.com/everruns/bashkit/pull/750))
+* chore(skills): add design quality review phase to ship command ([#749](https://github.com/everruns/bashkit/pull/749))
+* refactor(interpreter): extract glob/pattern matching to glob.rs ([#748](https://github.com/everruns/bashkit/pull/748))
+* fix(skills): delegate process-issues shipping to /ship skill ([#747](https://github.com/everruns/bashkit/pull/747))
+* chore: convert process-issues command to .claude/skills/ format ([#746](https://github.com/everruns/bashkit/pull/746))
+* feat: IFS separator, $_ tracking, and prefix assignment order ([#724](https://github.com/everruns/bashkit/pull/724))
+* fix(deps): bump ai SDK to ^5.0.52 and override jsondiffpatch >=0.7.2 ([#723](https://github.com/everruns/bashkit/pull/723))
+* fix(deps): override langsmith >=0.4.6 to fix SSRF vulnerability ([#722](https://github.com/everruns/bashkit/pull/722))
+* fix(js): wrap napi structs in Arc<SharedState> to prevent invalid pointer access ([#721](https://github.com/everruns/bashkit/pull/721))
+* fix: hex escapes, POSIX classes, DEBUG trap, noclobber, indirect arrays ([#719](https://github.com/everruns/bashkit/pull/719))
+* fix(js): prevent shell injection in Bash/BashTool VFS helpers ([#718](https://github.com/everruns/bashkit/pull/718))
+* fix(interpreter): prevent stack overflow in nested command substitution ([#717](https://github.com/everruns/bashkit/pull/717))
+* fix(builtins): bound seq output to prevent memory exhaustion ([#716](https://github.com/everruns/bashkit/pull/716))
+* feat(builtins): add head -c byte count mode ([#715](https://github.com/everruns/bashkit/pull/715))
+* fix(interpreter): reset transient state between exec() calls (TM-ISO-005/006/007) ([#714](https://github.com/everruns/bashkit/pull/714))
+* fix(interpreter): block readonly variable bypass via unset/declare/export (TM-INJ-019/020/021) ([#713](https://github.com/everruns/bashkit/pull/713))
+* fix(interpreter): enforce execution timeout via tokio::time::timeout (TM-DOS-057) ([#712](https://github.com/everruns/bashkit/pull/712))
+* fix(interpreter): source recursion depth limit (TM-DOS-056) ([#711](https://github.com/everruns/bashkit/pull/711))
+* fix(interpreter): declare -a/-i and local -a with inline init ([#710](https://github.com/everruns/bashkit/pull/710))
+* feat(fs): optional SearchCapable trait for indexed search ([#709](https://github.com/everruns/bashkit/pull/709))
+* feat(trace): structured execution trace events ([#708](https://github.com/everruns/bashkit/pull/708))
+* feat(limits): per-instance memory budget for variables/arrays/functions ([#707](https://github.com/everruns/bashkit/pull/707))
+* feat(limits): YAML/template depth limits + session-level cumulative counters ([#706](https://github.com/everruns/bashkit/pull/706))
+* fix(fs): OverlayFs validate_path + directory count limits + accounting gaps ([#701](https://github.com/everruns/bashkit/pull/701))
+* test(python): add advanced security tests for Python integration ([#705](https://github.com/everruns/bashkit/pull/705))
+* test(security): add JavaScript integration security tests ([#700](https://github.com/everruns/bashkit/pull/700))
+* test(security): blackbox security testing — 15 vulnerability findings ([#688](https://github.com/everruns/bashkit/pull/688))
+* fix(security): guard all builtins against internal variable namespace injection ([#696](https://github.com/everruns/bashkit/pull/696))
+* feat(interpreter): return final environment state in ExecResult ([#695](https://github.com/everruns/bashkit/pull/695))
+* feat(parser): static budget validation on parsed AST before execution ([#694](https://github.com/everruns/bashkit/pull/694))
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.10...v0.1.11
+
 ## [0.1.10] - 2026-03-15
 
 ### Highlights
