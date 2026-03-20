@@ -109,6 +109,44 @@ def test_bash_realfs_readwrite_at(tmp_path):
     assert (tmp_path / "hello.txt").read_text().strip() == "hello host"
 
 
+def test_bash_fs_handle_tracks_reset_and_mounts():
+    bash = Bash()
+    fs = bash.fs()
+    fs.write_file("/tmp/old.txt", b"old")
+    bash.execute_sync("export KEEP=1")
+
+    bash.mount_text("/config/app.conf", "debug=true\n")
+
+    assert fs.read_file("/config/app.conf") == b"debug=true\n"
+    assert fs.exists("/tmp/old.txt") is False
+    assert bash.execute_sync("echo ${KEEP:-empty}").stdout.strip() == "empty"
+
+
+def test_bash_fs_handle_supports_directory_ops_and_links():
+    bash = Bash()
+    fs = bash.fs()
+
+    fs.mkdir("/data/src", recursive=True)
+    fs.write_file("/data/src/file.txt", b"alpha")
+    fs.append_file("/data/src/file.txt", b"beta")
+    assert fs.read_file("/data/src/file.txt") == b"alphabeta"
+
+    fs.mkdir("/data/dst", recursive=True)
+    fs.copy("/data/src/file.txt", "/data/dst/copied.txt")
+    fs.rename("/data/dst/copied.txt", "/data/dst/renamed.txt")
+    fs.symlink("/data/dst/renamed.txt", "/data/link.txt")
+    fs.chmod("/data/dst/renamed.txt", 0o600)
+
+    entries = sorted(entry["name"] for entry in fs.read_dir("/data"))
+    assert entries == ["dst", "link.txt", "src"]
+    assert fs.read_link("/data/link.txt") == "/data/dst/renamed.txt"
+    assert fs.stat("/data/dst/renamed.txt")["mode"] == 0o600
+
+    fs.remove("/data/link.txt")
+    fs.remove("/data", recursive=True)
+    assert fs.exists("/data") is False
+
+
 # -- Bash: Async execution -------------------------------------------------
 
 
@@ -224,6 +262,17 @@ def test_bashtool_realfs_and_fs_handle(tmp_path):
     tool.execute_sync("echo 'from tool' > /workspace/tool.txt")
     assert (tmp_path / "tool.txt").read_text().strip() == "from tool"
     assert tool.fs().read_file("/workspace/tool.txt") == b"from tool\n"
+
+
+def test_bashtool_fs_handle_tracks_mount_rebuilds():
+    tool = BashTool()
+    fs = tool.fs()
+    tool.execute_sync("export KEEP=1")
+
+    tool.mount_text("/config/tool.conf", "enabled=true\n")
+
+    assert fs.read_file("/config/tool.conf") == b"enabled=true\n"
+    assert tool.execute_sync("echo ${KEEP:-empty}").stdout.strip() == "empty"
 
 
 # -- BashTool: Async execution ----------------------------------------------

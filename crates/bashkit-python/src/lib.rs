@@ -16,10 +16,12 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PySet, PyTuple};
 use pyo3_async_runtimes::tokio::future_into_py;
+use std::future::Future;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 
 // ============================================================================
@@ -134,10 +136,11 @@ struct RealMountConfig {
     readwrite: bool,
 }
 
-fn make_runtime() -> PyResult<tokio::runtime::Runtime> {
+fn make_runtime() -> PyResult<Arc<Runtime>> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
+        .map(Arc::new)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))
 }
 
@@ -200,15 +203,27 @@ fn dir_entry_to_pydict(py: Python<'_>, entry: &FsDirEntry) -> PyResult<Py<PyAny>
 
 #[pyclass(name = "FileSystem")]
 struct PyFileSystem {
-    inner: Arc<dyn FileSystem>,
-    rt: tokio::runtime::Runtime,
+    inner: Arc<Mutex<Bash>>,
+    rt: Arc<Runtime>,
 }
 
 impl PyFileSystem {
-    fn new(inner: Arc<dyn FileSystem>) -> PyResult<Self> {
-        Ok(Self {
-            inner,
-            rt: make_runtime()?,
+    fn live(inner: Arc<Mutex<Bash>>, rt: Arc<Runtime>) -> Self {
+        Self { inner, rt }
+    }
+
+    fn with_fs<T, F, Fut>(&self, f: F) -> PyResult<T>
+    where
+        F: FnOnce(Arc<dyn FileSystem>) -> Fut,
+        Fut: Future<Output = PyResult<T>>,
+    {
+        let inner = self.inner.clone();
+        self.rt.block_on(async move {
+            let fs = {
+                let bash = inner.lock().await;
+                bash.fs()
+            };
+            f(fs).await
         })
     }
 }
@@ -217,9 +232,8 @@ impl PyFileSystem {
 impl PyFileSystem {
     fn read_file<'py>(&self, py: Python<'py>, path: String) -> PyResult<Bound<'py, PyBytes>> {
         let data = py.detach(|| {
-            self.rt.block_on(async {
-                self.inner
-                    .read_file(Path::new(&path))
+            self.with_fs(|fs| async move {
+                fs.read_file(Path::new(&path))
                     .await
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))
             })
@@ -229,9 +243,8 @@ impl PyFileSystem {
 
     fn write_file(&self, py: Python<'_>, path: String, content: Vec<u8>) -> PyResult<()> {
         py.detach(|| {
-            self.rt.block_on(async {
-                self.inner
-                    .write_file(Path::new(&path), &content)
+            self.with_fs(|fs| async move {
+                fs.write_file(Path::new(&path), &content)
                     .await
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))
             })
@@ -240,9 +253,8 @@ impl PyFileSystem {
 
     fn append_file(&self, py: Python<'_>, path: String, content: Vec<u8>) -> PyResult<()> {
         py.detach(|| {
-            self.rt.block_on(async {
-                self.inner
-                    .append_file(Path::new(&path), &content)
+            self.with_fs(|fs| async move {
+                fs.append_file(Path::new(&path), &content)
                     .await
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))
             })
@@ -252,9 +264,8 @@ impl PyFileSystem {
     #[pyo3(signature = (path, recursive=false))]
     fn mkdir(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
         py.detach(|| {
-            self.rt.block_on(async {
-                self.inner
-                    .mkdir(Path::new(&path), recursive)
+            self.with_fs(|fs| async move {
+                fs.mkdir(Path::new(&path), recursive)
                     .await
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))
             })
@@ -264,9 +275,8 @@ impl PyFileSystem {
     #[pyo3(signature = (path, recursive=false))]
     fn remove(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
         py.detach(|| {
-            self.rt.block_on(async {
-                self.inner
-                    .remove(Path::new(&path), recursive)
+            self.with_fs(|fs| async move {
+                fs.remove(Path::new(&path), recursive)
                     .await
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))
             })
@@ -275,9 +285,8 @@ impl PyFileSystem {
 
     fn stat(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
         let metadata = py.detach(|| {
-            self.rt.block_on(async {
-                self.inner
-                    .stat(Path::new(&path))
+            self.with_fs(|fs| async move {
+                fs.stat(Path::new(&path))
                     .await
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))
             })
@@ -287,9 +296,8 @@ impl PyFileSystem {
 
     fn read_dir(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
         let entries = py.detach(|| {
-            self.rt.block_on(async {
-                self.inner
-                    .read_dir(Path::new(&path))
+            self.with_fs(|fs| async move {
+                fs.read_dir(Path::new(&path))
                     .await
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))
             })
@@ -303,9 +311,8 @@ impl PyFileSystem {
 
     fn exists(&self, py: Python<'_>, path: String) -> PyResult<bool> {
         py.detach(|| {
-            self.rt.block_on(async {
-                self.inner
-                    .exists(Path::new(&path))
+            self.with_fs(|fs| async move {
+                fs.exists(Path::new(&path))
                     .await
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))
             })
@@ -314,9 +321,8 @@ impl PyFileSystem {
 
     fn rename(&self, py: Python<'_>, from_path: String, to_path: String) -> PyResult<()> {
         py.detach(|| {
-            self.rt.block_on(async {
-                self.inner
-                    .rename(Path::new(&from_path), Path::new(&to_path))
+            self.with_fs(|fs| async move {
+                fs.rename(Path::new(&from_path), Path::new(&to_path))
                     .await
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))
             })
@@ -325,9 +331,8 @@ impl PyFileSystem {
 
     fn copy(&self, py: Python<'_>, from_path: String, to_path: String) -> PyResult<()> {
         py.detach(|| {
-            self.rt.block_on(async {
-                self.inner
-                    .copy(Path::new(&from_path), Path::new(&to_path))
+            self.with_fs(|fs| async move {
+                fs.copy(Path::new(&from_path), Path::new(&to_path))
                     .await
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))
             })
@@ -336,9 +341,8 @@ impl PyFileSystem {
 
     fn symlink(&self, py: Python<'_>, target: String, link: String) -> PyResult<()> {
         py.detach(|| {
-            self.rt.block_on(async {
-                self.inner
-                    .symlink(Path::new(&target), Path::new(&link))
+            self.with_fs(|fs| async move {
+                fs.symlink(Path::new(&target), Path::new(&link))
                     .await
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))
             })
@@ -347,9 +351,8 @@ impl PyFileSystem {
 
     fn chmod(&self, py: Python<'_>, path: String, mode: u32) -> PyResult<()> {
         py.detach(|| {
-            self.rt.block_on(async {
-                self.inner
-                    .chmod(Path::new(&path), mode)
+            self.with_fs(|fs| async move {
+                fs.chmod(Path::new(&path), mode)
                     .await
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))
             })
@@ -358,9 +361,8 @@ impl PyFileSystem {
 
     fn read_link(&self, py: Python<'_>, path: String) -> PyResult<String> {
         let target = py.detach(|| {
-            self.rt.block_on(async {
-                self.inner
-                    .read_link(Path::new(&path))
+            self.with_fs(|fs| async move {
+                fs.read_link(Path::new(&path))
                     .await
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))
             })
@@ -533,7 +535,7 @@ pub struct PyBash {
     inner: Arc<Mutex<Bash>>,
     /// Shared tokio runtime — reused across all sync calls to avoid
     /// per-call OS thread/fd exhaustion (issue #414).
-    rt: tokio::runtime::Runtime,
+    rt: Arc<Runtime>,
     /// Cancellation token. Wrapped in RwLock so reset() can swap it to
     /// the new interpreter's token without requiring &mut self.
     cancelled: Arc<RwLock<Arc<AtomicBool>>>,
@@ -853,17 +855,18 @@ impl PyBash {
         })
     }
 
+    /// Return a live filesystem handle backed by the current interpreter.
+    ///
+    /// The handle survives `reset()` and `mount_*()` rebuilds and always
+    /// resolves the latest interpreter filesystem before each operation.
     fn fs(&self, py: Python<'_>) -> PyResult<Py<PyFileSystem>> {
-        let inner = self.inner.clone();
-        let fs = py.detach(|| {
-            self.rt.block_on(async {
-                let bash = inner.lock().await;
-                Ok::<Arc<dyn FileSystem>, PyErr>(bash.fs())
-            })
-        })?;
-        Py::new(py, PyFileSystem::new(fs)?)
+        Py::new(py, PyFileSystem::live(self.inner.clone(), self.rt.clone()))
     }
 
+    /// Mount a writable text file, then rebuild the interpreter.
+    ///
+    /// This clears shell session state such as variables, cwd, and other
+    /// filesystem mutations, matching `reset()` semantics.
     fn mount_text(&mut self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
         self.mounted_text_files.push(MountedTextConfig {
             path,
@@ -873,6 +876,10 @@ impl PyBash {
         self.reset(py)
     }
 
+    /// Mount a readonly text file, then rebuild the interpreter.
+    ///
+    /// This clears shell session state such as variables, cwd, and other
+    /// filesystem mutations, matching `reset()` semantics.
     fn mount_readonly_text(
         &mut self,
         py: Python<'_>,
@@ -887,6 +894,10 @@ impl PyBash {
         self.reset(py)
     }
 
+    /// Mount a host directory readonly, then rebuild the interpreter.
+    ///
+    /// This clears shell session state such as variables, cwd, and other
+    /// filesystem mutations, matching `reset()` semantics.
     fn mount_real_readonly(&mut self, py: Python<'_>, host_path: String) -> PyResult<()> {
         self.real_mounts.push(RealMountConfig {
             host_path,
@@ -896,6 +907,10 @@ impl PyBash {
         self.reset(py)
     }
 
+    /// Mount a host directory readonly at a VFS path, then rebuild the interpreter.
+    ///
+    /// This clears shell session state such as variables, cwd, and other
+    /// filesystem mutations, matching `reset()` semantics.
     fn mount_real_readonly_at(
         &mut self,
         py: Python<'_>,
@@ -910,6 +925,10 @@ impl PyBash {
         self.reset(py)
     }
 
+    /// Mount a host directory readwrite, then rebuild the interpreter.
+    ///
+    /// This clears shell session state such as variables, cwd, and other
+    /// filesystem mutations, matching `reset()` semantics.
     fn mount_real_readwrite(&mut self, py: Python<'_>, host_path: String) -> PyResult<()> {
         self.real_mounts.push(RealMountConfig {
             host_path,
@@ -919,6 +938,10 @@ impl PyBash {
         self.reset(py)
     }
 
+    /// Mount a host directory readwrite at a VFS path, then rebuild the interpreter.
+    ///
+    /// This clears shell session state such as variables, cwd, and other
+    /// filesystem mutations, matching `reset()` semantics.
     fn mount_real_readwrite_at(
         &mut self,
         py: Python<'_>,
@@ -977,7 +1000,7 @@ pub struct BashTool {
     inner: Arc<Mutex<Bash>>,
     /// Shared tokio runtime — reused across all sync calls to avoid
     /// per-call OS thread/fd exhaustion (issue #414).
-    rt: tokio::runtime::Runtime,
+    rt: Arc<Runtime>,
     /// Cancellation token. Wrapped in RwLock so reset() can swap it to
     /// the new interpreter's token without requiring &mut self.
     cancelled: Arc<RwLock<Arc<AtomicBool>>>,
@@ -1241,17 +1264,18 @@ impl BashTool {
         })
     }
 
+    /// Return a live filesystem handle backed by the current interpreter.
+    ///
+    /// The handle survives `reset()` and `mount_*()` rebuilds and always
+    /// resolves the latest interpreter filesystem before each operation.
     fn fs(&self, py: Python<'_>) -> PyResult<Py<PyFileSystem>> {
-        let inner = self.inner.clone();
-        let fs = py.detach(|| {
-            self.rt.block_on(async {
-                let bash = inner.lock().await;
-                Ok::<Arc<dyn FileSystem>, PyErr>(bash.fs())
-            })
-        })?;
-        Py::new(py, PyFileSystem::new(fs)?)
+        Py::new(py, PyFileSystem::live(self.inner.clone(), self.rt.clone()))
     }
 
+    /// Mount a writable text file, then rebuild the interpreter.
+    ///
+    /// This clears shell session state such as variables, cwd, and other
+    /// filesystem mutations, matching `reset()` semantics.
     fn mount_text(&mut self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
         self.mounted_text_files.push(MountedTextConfig {
             path,
@@ -1261,6 +1285,10 @@ impl BashTool {
         self.reset(py)
     }
 
+    /// Mount a readonly text file, then rebuild the interpreter.
+    ///
+    /// This clears shell session state such as variables, cwd, and other
+    /// filesystem mutations, matching `reset()` semantics.
     fn mount_readonly_text(
         &mut self,
         py: Python<'_>,
@@ -1275,6 +1303,10 @@ impl BashTool {
         self.reset(py)
     }
 
+    /// Mount a host directory readonly, then rebuild the interpreter.
+    ///
+    /// This clears shell session state such as variables, cwd, and other
+    /// filesystem mutations, matching `reset()` semantics.
     fn mount_real_readonly(&mut self, py: Python<'_>, host_path: String) -> PyResult<()> {
         self.real_mounts.push(RealMountConfig {
             host_path,
@@ -1284,6 +1316,10 @@ impl BashTool {
         self.reset(py)
     }
 
+    /// Mount a host directory readonly at a VFS path, then rebuild the interpreter.
+    ///
+    /// This clears shell session state such as variables, cwd, and other
+    /// filesystem mutations, matching `reset()` semantics.
     fn mount_real_readonly_at(
         &mut self,
         py: Python<'_>,
@@ -1298,6 +1334,10 @@ impl BashTool {
         self.reset(py)
     }
 
+    /// Mount a host directory readwrite, then rebuild the interpreter.
+    ///
+    /// This clears shell session state such as variables, cwd, and other
+    /// filesystem mutations, matching `reset()` semantics.
     fn mount_real_readwrite(&mut self, py: Python<'_>, host_path: String) -> PyResult<()> {
         self.real_mounts.push(RealMountConfig {
             host_path,
@@ -1307,6 +1347,10 @@ impl BashTool {
         self.reset(py)
     }
 
+    /// Mount a host directory readwrite at a VFS path, then rebuild the interpreter.
+    ///
+    /// This clears shell session state such as variables, cwd, and other
+    /// filesystem mutations, matching `reset()` semantics.
     fn mount_real_readwrite_at(
         &mut self,
         py: Python<'_>,
@@ -1412,7 +1456,7 @@ pub struct ScriptedTool {
     env_vars: Vec<(String, String)>,
     /// Shared tokio runtime — reused across all sync calls to avoid
     /// per-call OS thread/fd exhaustion (issue #414).
-    rt: tokio::runtime::Runtime,
+    rt: Arc<Runtime>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
 }
@@ -1487,10 +1531,7 @@ impl ScriptedTool {
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
     ) -> PyResult<Self> {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))?;
+        let rt = make_runtime()?;
 
         Ok(Self {
             name,
