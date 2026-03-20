@@ -32,7 +32,7 @@ for sandbox security reasons. See the compliance spec for details.
 | Category | Count |
 |----------|-------|
 | Core & Navigation | 12 |
-| Flow Control & Variables | 21 |
+| Flow Control & Variables | 23 |
 | Shell | 7 |
 | Text Processing | 20 |
 | File Operations & Inspection | 17 |
@@ -40,7 +40,7 @@ for sandbox security reasons. See the compliance spec for details.
 | Utilities & System | 20 |
 | Network | 2 |
 | Experimental | 3 |
-| **Total** | **148** |
+| **Total** | **150** |
 
 ---
 
@@ -147,6 +147,8 @@ for sandbox security reasons. See the compliance spec for details.
 | `let` | `EXPR...` | Evaluate arithmetic |
 | `getopts` | `OPTSTRING NAME` | Parse positional parameters |
 | `caller` | `[FRAME]` | Display call stack frame |
+| `mapfile` | `-n`, `-O`, `-s`, `-t`, `-d` | Read lines into array |
+| `readarray` | `-n`, `-O`, `-s`, `-t`, `-d` | Alias for mapfile |
 | `shopt` | `-s`, `-u`, `-q` | Shell options |
 | `seq` | `[FIRST [INCR]] LAST` | Print number sequence |
 | `tac` | (none) | Reverse file lines |

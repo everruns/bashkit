@@ -8,7 +8,7 @@
 
 - **Node.js native bindings** (`@everruns/bashkit`): Full npm package with NAPI-RS, async execute API, VFS file helpers, lazy file values — 6 platforms, tested on Node 20/22/24, with 200+ tests and 6 examples including OpenAI, Vercel AI, and LangChain integrations
 - **Pi coding agent integration**: Bashkit extension for [pi.dev](https://pi.dev/) terminal coding agent — replaces shell, read, write, and edit tools with bashkit-backed virtual implementations, zero real filesystem access
-- **39 new builtins** (109→148): rg, patch, zip/unzip, iconv, compgen, json, csv, tomlq, yaml, template, parallel, http, help, fc, tree, readlink, clear, fold, expand/unexpand, envsubst, join, split, and more
+- **41 new builtins** (109→150): rg, patch, zip/unzip, iconv, compgen, json, csv, tomlq, yaml, template, parallel, http, help, fc, tree, readlink, clear, fold, expand/unexpand, envsubst, join, split, and more
 - **Performance**: Criterion benchmark harness with auto-save, 7-runner comparison suite, lazy-init HTTP client, trimmed CLI one-shot startup path
 - **Coprocess & background execution**: `coproc` support with named FD pairs, background `&` execution with `wait` builtin, cancellation via AtomicBool token
 

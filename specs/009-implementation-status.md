@@ -103,17 +103,17 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 1852 (1824 pass, 28 skip)
+**Total spec test cases:** 2382 (2354 pass, 28 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 1424 | Yes | 1399 | 25 | `bash_spec_tests` in CI |
-| AWK | 98 | Yes | 98 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
-| Grep | 82 | Yes | 82 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
+| Bash (core) | 1934 | Yes | 1909 | 25 | `bash_spec_tests` in CI |
+| AWK | 104 | Yes | 104 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g |
+| Grep | 91 | Yes | 91 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect |
 | Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
-| JQ | 116 | Yes | 115 | 1 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
-| Python | 57 | Yes | 55 | 2 | embedded Python (Monty) |
-| **Total** | **1852** | **Yes** | **1824** | **28** | |
+| JQ | 120 | Yes | 119 | 1 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
+| Python | 58 | Yes | 56 | 2 | embedded Python (Monty) |
+| **Total** | **2382** | **Yes** | **2354** | **28** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -210,6 +210,8 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | wc.test.sh | 20 | word count |
 | word-split.test.sh | 39 | IFS word splitting (36 skipped) |
 | xargs.test.sh | 7 | xargs command |
+| blackbox-edge-cases.test.sh | 92 | edge cases for quoting, expansion, redirection, error handling |
+| blackbox-exploration.test.sh | 206 | broad coverage exploration: builtins, pipelines, subshells, traps |
 
 ## Shell Features
 
@@ -244,7 +246,7 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-**145 core builtins + 3 feature-gated = 148 total**
+**147 core builtins + 3 feature-gated = 150 total**
 
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,
@@ -254,7 +256,7 @@ Features that may be added in the future (not intentionally excluded):
 `sort`, `uniq`, `cut`, `tr`, `paste`, `column`, `diff`, `comm`, `date`,
 `wait`, `curl`, `wget`, `timeout`, `command`, `getopts`,
 `type`, `which`, `hash`, `declare`, `typeset`, `let`, `kill`, `shopt`,
-`trap`, `caller`, `seq`, `tac`, `rev`, `yes`, `expr`,
+`trap`, `caller`, `mapfile`, `readarray`, `seq`, `tac`, `rev`, `yes`, `expr`,
 `time` (keyword), `whoami`, `hostname`, `uname`, `id`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
 `:` (colon), `eval`, `readonly`, `times`, `bash`, `sh`,
 `od`, `xxd`, `hexdump`, `strings`, `base64`, `md5sum`, `sha1sum`, `sha256sum`,
