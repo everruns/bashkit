@@ -403,6 +403,7 @@ mod overlay;
 mod posix;
 #[cfg(feature = "realfs")]
 mod realfs;
+mod search;
 mod traits;
 
 pub use backend::FsBackend;
@@ -413,6 +414,9 @@ pub use overlay::OverlayFs;
 pub use posix::PosixFs;
 #[cfg(feature = "realfs")]
 pub use realfs::{RealFs, RealFsMode};
+pub use search::{
+    SearchCapabilities, SearchCapable, SearchMatch, SearchProvider, SearchQuery, SearchResults,
+};
 #[allow(unused_imports)]
 pub use traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata, fs_errors};
 
