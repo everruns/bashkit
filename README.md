@@ -98,7 +98,7 @@ assert_eq!(output.result["stdout"], "hello\nworld\n");
   </a>
 </div>
 
-## Built-in Commands (100+)
+## Built-in Commands (150)
 
 | Category | Commands |
 |----------|----------|

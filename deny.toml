@@ -13,8 +13,7 @@ allow = [
     "Zlib",
     "MPL-2.0",                # Mozilla Public License 2.0 (colored crate)
     "Unicode-3.0",            # Unicode License v3 (icu_* crates)
-    "OpenSSL",                # OpenSSL License (aws-lc-sys via reqwest)
-    "CDLA-Permissive-2.0",    # Community Data License Agreement (webpki-root-certs)
+"CDLA-Permissive-2.0",    # Community Data License Agreement (webpki-root-certs)
     "Unicode-DFS-2016",       # Unicode Data Files and Software License (unicode_names2 via monty/ruff, --all-features only)
 ]
 
