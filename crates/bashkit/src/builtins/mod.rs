@@ -210,6 +210,19 @@ use crate::error::Result;
 use crate::fs::FileSystem;
 use crate::interpreter::ExecResult;
 
+pub(crate) async fn read_text_file(
+    fs: &dyn FileSystem,
+    path: &Path,
+    cmd_name: &str,
+) -> std::result::Result<String, ExecResult> {
+    let content = fs
+        .read_file(path)
+        .await
+        .map_err(|e| ExecResult::err(format!("{cmd_name}: {}: {e}\n", path.display()), 1))?;
+
+    Ok(String::from_utf8_lossy(&content).into_owned())
+}
+
 // Re-export ShellRef for internal builtins
 pub(crate) use crate::interpreter::ShellRef;
 
@@ -378,6 +391,38 @@ pub struct Context<'a> {
     /// with no invariants. Arrays use [`BuiltinSideEffect`] because they need
     /// budget checking. History uses side effects for VFS persistence.
     pub(crate) shell: Option<ShellRef<'a>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_text_file;
+    use crate::fs::{FileSystem, InMemoryFs};
+    use std::path::Path;
+
+    #[tokio::test]
+    async fn read_text_file_returns_lossy_utf8() {
+        let fs = InMemoryFs::new();
+        fs.write_file(Path::new("/tmp/data.bin"), b"hi\xffthere")
+            .await
+            .unwrap();
+
+        let text = read_text_file(&fs, Path::new("/tmp/data.bin"), "cat")
+            .await
+            .unwrap();
+
+        assert_eq!(text, "hi\u{fffd}there");
+    }
+
+    #[tokio::test]
+    async fn read_text_file_formats_missing_file_errors() {
+        let fs = InMemoryFs::new();
+        let err = read_text_file(&fs, Path::new("/tmp/missing.txt"), "cat")
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.exit_code, 1);
+        assert!(err.stderr.contains("cat: /tmp/missing.txt:"));
+    }
 }
 
 impl<'a> Context<'a> {
