@@ -21,7 +21,7 @@
 use async_trait::async_trait;
 use regex::{Regex, RegexBuilder};
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, read_text_file};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
 
@@ -778,15 +778,11 @@ impl Builtin for Sed {
                     ctx.cwd.join(file)
                 };
 
-                match ctx.fs.read_file(&path).await {
-                    Ok(content) => {
-                        let text = String::from_utf8_lossy(&content).into_owned();
-                        inputs.push((Some(file.clone()), text));
-                    }
-                    Err(e) => {
-                        return Ok(ExecResult::err(format!("sed: {}: {}", file, e), 1));
-                    }
-                }
+                let text = match read_text_file(&*ctx.fs, &path, "sed").await {
+                    Ok(t) => t,
+                    Err(e) => return Ok(e),
+                };
+                inputs.push((Some(file.clone()), text));
             }
             inputs
         };

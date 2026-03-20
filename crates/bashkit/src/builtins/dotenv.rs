@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, resolve_path};
+use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::interpreter::{ExecResult, is_internal_variable};
 
@@ -112,11 +112,9 @@ impl Builtin for Dotenv {
 
         for file in &files {
             let path = resolve_path(ctx.cwd, file);
-            let content = match ctx.fs.read_file(&path).await {
-                Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
-                Err(e) => {
-                    return Ok(ExecResult::err(format!("dotenv: {file}: {e}\n"), 1));
-                }
+            let content = match read_text_file(&*ctx.fs, &path, "dotenv").await {
+                Ok(t) => t,
+                Err(e) => return Ok(e),
             };
 
             let pairs = parse_dotenv(&content);

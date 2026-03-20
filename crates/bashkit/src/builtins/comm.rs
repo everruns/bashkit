@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -68,14 +68,9 @@ impl Builtin for Comm {
             } else {
                 ctx.cwd.join(&files[0])
             };
-            match ctx.fs.read_file(&path).await {
-                Ok(content) => {
-                    let text = String::from_utf8_lossy(&content);
-                    text.lines().map(|l| l.to_string()).collect()
-                }
-                Err(e) => {
-                    return Ok(ExecResult::err(format!("comm: {}: {}\n", files[0], e), 1));
-                }
+            match read_text_file(&*ctx.fs, &path, "comm").await {
+                Ok(text) => text.lines().map(|l| l.to_string()).collect(),
+                Err(e) => return Ok(e),
             }
         };
 
@@ -89,14 +84,9 @@ impl Builtin for Comm {
             } else {
                 ctx.cwd.join(&files[1])
             };
-            match ctx.fs.read_file(&path).await {
-                Ok(content) => {
-                    let text = String::from_utf8_lossy(&content);
-                    text.lines().map(|l| l.to_string()).collect()
-                }
-                Err(e) => {
-                    return Ok(ExecResult::err(format!("comm: {}: {}\n", files[1], e), 1));
-                }
+            match read_text_file(&*ctx.fs, &path, "comm").await {
+                Ok(text) => text.lines().map(|l| l.to_string()).collect(),
+                Err(e) => return Ok(e),
             }
         };
 

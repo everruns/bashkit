@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -178,17 +178,13 @@ impl Builtin for Sort {
                     ctx.cwd.join(file)
                 };
 
-                match ctx.fs.read_file(&path).await {
-                    Ok(content) => {
-                        let text = String::from_utf8_lossy(&content);
-                        for line in text.split(line_sep) {
-                            if !line.is_empty() {
-                                all_lines.push(line.to_string());
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        return Ok(ExecResult::err(format!("sort: {}: {}\n", file, e), 1));
+                let text = match read_text_file(&*ctx.fs, &path, "sort").await {
+                    Ok(t) => t,
+                    Err(e) => return Ok(e),
+                };
+                for line in text.split(line_sep) {
+                    if !line.is_empty() {
+                        all_lines.push(line.to_string());
                     }
                 }
             }
@@ -203,20 +199,16 @@ impl Builtin for Sort {
                 } else {
                     ctx.cwd.join(file)
                 };
-                match ctx.fs.read_file(&path).await {
-                    Ok(content) => {
-                        let text = String::from_utf8_lossy(&content);
-                        let lines: Vec<String> = text
-                            .split(line_sep)
-                            .filter(|l| !l.is_empty())
-                            .map(|l| l.to_string())
-                            .collect();
-                        streams.push(lines);
-                    }
-                    Err(e) => {
-                        return Ok(ExecResult::err(format!("sort: {}: {}\n", file, e), 1));
-                    }
-                }
+                let text = match read_text_file(&*ctx.fs, &path, "sort").await {
+                    Ok(t) => t,
+                    Err(e) => return Ok(e),
+                };
+                let lines: Vec<String> = text
+                    .split(line_sep)
+                    .filter(|l| !l.is_empty())
+                    .map(|l| l.to_string())
+                    .collect();
+                streams.push(lines);
             }
             // k-way merge using indices
             let mut indices: Vec<usize> = vec![0; streams.len()];
@@ -433,14 +425,9 @@ impl Builtin for Uniq {
                 ctx.cwd.join(file)
             };
 
-            match ctx.fs.read_file(&path).await {
-                Ok(content) => {
-                    let text = String::from_utf8_lossy(&content);
-                    text.lines().map(|l| l.to_string()).collect()
-                }
-                Err(e) => {
-                    return Ok(ExecResult::err(format!("uniq: {}: {}\n", file, e), 1));
-                }
+            match read_text_file(&*ctx.fs, &path, "uniq").await {
+                Ok(text) => text.lines().map(|l| l.to_string()).collect(),
+                Err(e) => return Ok(e),
             }
         };
 

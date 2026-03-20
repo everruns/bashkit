@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use std::path::Path;
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -33,15 +33,8 @@ async fn read_input(ctx: &Context<'_>) -> std::result::Result<String, ExecResult
                 } else {
                     ctx.cwd.join(file).to_string_lossy().to_string()
                 };
-                match ctx.fs.read_file(Path::new(&path)).await {
-                    Ok(content) => {
-                        let text = String::from_utf8_lossy(&content);
-                        raw.push_str(&text);
-                    }
-                    Err(e) => {
-                        return Err(ExecResult::err(format!("tac: {}: {}\n", file, e), 1));
-                    }
-                }
+                let text = read_text_file(&*ctx.fs, Path::new(&path), "tac").await?;
+                raw.push_str(&text);
             }
         }
     }

@@ -9,9 +9,8 @@
 use async_trait::async_trait;
 use jaq_core::{Compiler, Ctx, RcIter, load};
 use jaq_json::Val;
-use std::path::Path;
 
-use super::{Builtin, Context, resolve_path};
+use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
 
@@ -287,21 +286,14 @@ impl Builtin for Jq {
             let mut combined = String::new();
             for file_arg in &file_args {
                 let path = resolve_path(ctx.cwd, file_arg);
-                match ctx.fs.read_file(Path::new(&path)).await {
-                    Ok(content) => {
-                        let text = String::from_utf8_lossy(&content);
-                        if !combined.is_empty() && !combined.ends_with('\n') {
-                            combined.push('\n');
-                        }
-                        combined.push_str(&text);
-                    }
-                    Err(e) => {
-                        return Ok(ExecResult::err(
-                            format!("jq: Could not open file {}: {}\n", file_arg, e),
-                            2,
-                        ));
-                    }
+                let text = match read_text_file(&*ctx.fs, &path, "jq").await {
+                    Ok(t) => t,
+                    Err(e) => return Ok(e),
+                };
+                if !combined.is_empty() && !combined.ends_with('\n') {
+                    combined.push('\n');
                 }
+                combined.push_str(&text);
             }
             file_content = combined;
             file_content.as_str()
@@ -929,8 +921,8 @@ mod tests {
         let result = run_jq_with_files(&[".", "/missing.json"], &[])
             .await
             .unwrap();
-        assert_eq!(result.exit_code, 2);
-        assert!(result.stderr.contains("Could not open file"));
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("jq: /missing.json:"));
     }
 
     #[tokio::test]

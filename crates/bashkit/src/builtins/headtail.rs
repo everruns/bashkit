@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -117,20 +117,16 @@ impl Builtin for Tail {
                     ctx.cwd.join(file)
                 };
 
-                match ctx.fs.read_file(&path).await {
-                    Ok(content) => {
-                        let text = String::from_utf8_lossy(&content);
-                        let selected = if from_start {
-                            take_from_line(&text, num_lines)
-                        } else {
-                            take_last_lines(&text, num_lines)
-                        };
-                        output.push_str(&selected);
-                    }
-                    Err(e) => {
-                        return Ok(ExecResult::err(format!("tail: {}: {}\n", file, e), 1));
-                    }
-                }
+                let text = match read_text_file(&*ctx.fs, &path, "tail").await {
+                    Ok(t) => t,
+                    Err(e) => return Ok(e),
+                };
+                let selected = if from_start {
+                    take_from_line(&text, num_lines)
+                } else {
+                    take_last_lines(&text, num_lines)
+                };
+                output.push_str(&selected);
             }
         }
 

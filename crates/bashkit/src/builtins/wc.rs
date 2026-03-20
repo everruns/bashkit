@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -130,9 +130,8 @@ impl Builtin for Wc {
                     ctx.cwd.join(file)
                 };
 
-                match ctx.fs.read_file(&path).await {
-                    Ok(content) => {
-                        let text = String::from_utf8_lossy(&content);
+                match read_text_file(&*ctx.fs, &path, "wc").await {
+                    Ok(text) => {
                         let counts = count_text(&text);
 
                         total_lines += counts.lines;
@@ -146,9 +145,7 @@ impl Builtin for Wc {
                         output.push_str(&format_counts(&counts, &flags, Some(file), true));
                         output.push('\n');
                     }
-                    Err(e) => {
-                        return Ok(ExecResult::err(format!("wc: {}: {}\n", file, e), 1));
-                    }
+                    Err(e) => return Ok(e),
                 }
             }
 
