@@ -102,14 +102,6 @@ criteria = "safe-to-deploy"
 version = "1.16.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.aws-lc-rs]]
-version = "1.16.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.aws-lc-sys]]
-version = "0.39.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.aws-lc-sys]]
 version = "0.39.0"
 criteria = "safe-to-deploy"
@@ -1687,14 +1679,6 @@ version = "0.8.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy]]
-version = "0.8.47"
-criteria = "safe-to-deploy"
-
-[[exemptions.zerocopy]]
-version = "0.8.47"
-criteria = "safe-to-deploy"
-
-[[exemptions.zerocopy-derive]]
 version = "0.8.47"
 criteria = "safe-to-deploy"
 
