@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use base64::Engine;
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -60,8 +60,8 @@ impl Builtin for Base64 {
                 ctx.stdin.unwrap_or("").to_string()
             } else {
                 let resolved = super::resolve_path(ctx.cwd, path);
-                match ctx.fs.read_file(&resolved).await {
-                    Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+                match read_text_file(ctx.fs.as_ref(), &resolved, "base64").await {
+                    Ok(text) => text,
                     Err(_) => {
                         return Ok(ExecResult::err(
                             format!("base64: {}: No such file or directory\n", path),

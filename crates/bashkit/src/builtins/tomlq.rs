@@ -9,7 +9,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, resolve_path};
+use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -300,8 +300,8 @@ impl Builtin for Tomlq {
 
         let content = if let Some(path_str) = &file_arg {
             let path = resolve_path(ctx.cwd, path_str);
-            match ctx.fs.read_file(&path).await {
-                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+            match read_text_file(ctx.fs.as_ref(), &path, "tomlq").await {
+                Ok(text) => text,
                 Err(_) => {
                     return Ok(ExecResult::err(
                         format!("tomlq: cannot read '{}'\n", path_str),
