@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-03-21
+
+### Highlights
+
+- **Restored SearchCapable/SearchProvider traits** for indexed filesystem search
+- **Improved text file handling** across 17 builtins with shared lossy read helpers
+
+### What's Changed
+
+* feat(fs): restore SearchCapable/SearchProvider traits ([#779](https://github.com/everruns/bashkit/pull/779))
+* refactor(builtins): adopt read_text_file helper across 17 builtins ([#778](https://github.com/everruns/bashkit/pull/778))
+* chore(skills): move repo skills under .agents ([#777](https://github.com/everruns/bashkit/pull/777))
+* refactor(builtins): share lossy text file reads ([#775](https://github.com/everruns/bashkit/pull/775))
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.11...v0.1.12
+
 ## [0.1.11] - 2026-03-20
 
 ### Highlights
