@@ -14,13 +14,115 @@
 //! holding a raw-pointer-derived `&self` across `block_on` or `.await` points.
 
 use bashkit::tool::VERSION;
-use bashkit::{Bash as RustBash, BashTool as RustBashTool, ExecutionLimits, Tool};
+use bashkit::{
+    Bash as RustBash, BashTool as RustBashTool, ExecutionLimits, ExtFunctionResult, MontyObject,
+    PythonExternalFnHandler, PythonLimits, ScriptedTool as RustScriptedTool, Tool, ToolArgs,
+    ToolDef, ToolRequest,
+};
 use napi_derive::napi;
 use std::collections::HashMap;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
+
+// ============================================================================
+// MontyObject <-> JSON conversion
+// ============================================================================
+
+#[allow(dead_code)]
+fn monty_to_json(obj: &MontyObject) -> serde_json::Value {
+    match obj {
+        MontyObject::None => serde_json::Value::Null,
+        MontyObject::Bool(b) => serde_json::Value::Bool(*b),
+        MontyObject::Int(i) => serde_json::json!(*i),
+        MontyObject::BigInt(b) => serde_json::Value::String(b.to_string()),
+        MontyObject::Float(f) => serde_json::json!(*f),
+        MontyObject::String(s) | MontyObject::Path(s) => serde_json::Value::String(s.clone()),
+        MontyObject::Bytes(b) => serde_json::Value::String(base64_encode(b)),
+        MontyObject::Tuple(items) | MontyObject::List(items) => {
+            serde_json::Value::Array(items.iter().map(monty_to_json).collect())
+        }
+        MontyObject::Set(items) | MontyObject::FrozenSet(items) => {
+            serde_json::Value::Array(items.iter().map(monty_to_json).collect())
+        }
+        MontyObject::Dict(pairs) => {
+            let mut map = serde_json::Map::new();
+            for (k, v) in pairs.clone() {
+                let key = match &k {
+                    MontyObject::String(s) => s.clone(),
+                    other => format!("{}", monty_to_json(other)),
+                };
+                map.insert(key, monty_to_json(&v));
+            }
+            serde_json::Value::Object(map)
+        }
+        MontyObject::NamedTuple {
+            field_names,
+            values,
+            ..
+        } => {
+            let mut map = serde_json::Map::new();
+            for (name, value) in field_names.iter().zip(values.iter()) {
+                map.insert(name.clone(), monty_to_json(value));
+            }
+            serde_json::Value::Object(map)
+        }
+        other => serde_json::Value::String(other.py_repr()),
+    }
+}
+
+#[allow(dead_code)]
+fn json_to_monty(val: &serde_json::Value) -> MontyObject {
+    match val {
+        serde_json::Value::Null => MontyObject::None,
+        serde_json::Value::Bool(b) => MontyObject::Bool(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                MontyObject::Int(i)
+            } else if let Some(f) = n.as_f64() {
+                MontyObject::Float(f)
+            } else {
+                MontyObject::None
+            }
+        }
+        serde_json::Value::String(s) => MontyObject::String(s.clone()),
+        serde_json::Value::Array(arr) => MontyObject::List(arr.iter().map(json_to_monty).collect()),
+        serde_json::Value::Object(map) => {
+            let pairs: Vec<(MontyObject, MontyObject)> = map
+                .iter()
+                .map(|(k, v)| (MontyObject::String(k.clone()), json_to_monty(v)))
+                .collect();
+            MontyObject::dict(pairs)
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn base64_encode(data: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        result.push(CHARS[(n >> 18 & 63) as usize] as char);
+        result.push(CHARS[(n >> 12 & 63) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(CHARS[(n >> 6 & 63) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARS[(n & 63) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
+}
 
 // ============================================================================
 // ExecResult
@@ -37,6 +139,8 @@ pub struct ExecResult {
     pub stdout_truncated: bool,
     pub stderr_truncated: bool,
     pub final_env: Option<HashMap<String, String>>,
+    /// True if exit_code is 0.
+    pub success: bool,
 }
 
 // ============================================================================
@@ -53,6 +157,10 @@ pub struct BashOptions {
     /// Files to mount in the virtual filesystem.
     /// Keys are absolute paths, values are file content strings.
     pub files: Option<HashMap<String, String>>,
+    /// Enable embedded Python execution (`python`/`python3` builtins).
+    pub python: Option<bool>,
+    /// Names of external functions callable from embedded Python code.
+    pub external_functions: Option<Vec<String>>,
 }
 
 fn default_opts() -> BashOptions {
@@ -62,6 +170,8 @@ fn default_opts() -> BashOptions {
         max_commands: None,
         max_loop_iterations: None,
         files: None,
+        python: None,
+        external_functions: None,
     }
 }
 
@@ -77,7 +187,21 @@ struct SharedState {
     hostname: Option<String>,
     max_commands: Option<u32>,
     max_loop_iterations: Option<u32>,
+    python: bool,
+    external_functions: Vec<String>,
+    external_handler: Option<ExternalHandlerArc>,
 }
+
+/// Wrapper for the external handler that can be stored and cloned.
+type ExternalHandlerArc = Arc<
+    dyn Fn(
+            String,
+            Vec<MontyObject>,
+            Vec<(MontyObject, MontyObject)>,
+        ) -> Pin<Box<dyn std::future::Future<Output = ExtFunctionResult> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Clone `Arc<SharedState>`, then use the runtime to block on a future that
 /// captures only the cloned Arc. This avoids holding raw `&self` across
@@ -110,6 +234,8 @@ impl Bash {
     #[napi(constructor)]
     pub fn new(options: Option<BashOptions>) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
+        let py = opts.python.unwrap_or(false);
+        let ext_fns = opts.external_functions.clone().unwrap_or_default();
 
         let bash = build_bash(
             opts.username.as_deref(),
@@ -117,6 +243,9 @@ impl Bash {
             opts.max_commands,
             opts.max_loop_iterations,
             opts.files.as_ref(),
+            py,
+            &ext_fns,
+            None,
         );
         let cancelled = bash.cancellation_token();
 
@@ -134,6 +263,9 @@ impl Bash {
                 hostname: opts.hostname,
                 max_commands: opts.max_commands,
                 max_loop_iterations: opts.max_loop_iterations,
+                python: py,
+                external_functions: ext_fns,
+                external_handler: None,
             }),
         })
     }
@@ -153,6 +285,7 @@ impl Bash {
                     stdout_truncated: result.stdout_truncated,
                     stderr_truncated: result.stderr_truncated,
                     final_env: result.final_env,
+                    success: result.exit_code == 0,
                 }),
                 Err(e) => {
                     let msg = e.to_string();
@@ -164,6 +297,7 @@ impl Bash {
                         stdout_truncated: false,
                         stderr_truncated: false,
                         final_env: None,
+                        success: false,
                     })
                 }
             }
@@ -184,6 +318,7 @@ impl Bash {
                 stdout_truncated: result.stdout_truncated,
                 stderr_truncated: result.stderr_truncated,
                 final_env: result.final_env,
+                success: result.exit_code == 0,
             }),
             Err(e) => {
                 let msg = e.to_string();
@@ -195,6 +330,7 @@ impl Bash {
                     stdout_truncated: false,
                     stderr_truncated: false,
                     final_env: None,
+                    success: false,
                 })
             }
         }
@@ -220,6 +356,9 @@ impl Bash {
                 s.max_commands,
                 s.max_loop_iterations,
                 None,
+                s.python,
+                &s.external_functions,
+                s.external_handler.as_ref(),
             );
             *bash = new_bash;
             Ok(())
@@ -350,6 +489,8 @@ impl BashTool {
     #[napi(constructor)]
     pub fn new(options: Option<BashOptions>) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
+        let py = opts.python.unwrap_or(false);
+        let ext_fns = opts.external_functions.clone().unwrap_or_default();
 
         let bash = build_bash(
             opts.username.as_deref(),
@@ -357,6 +498,9 @@ impl BashTool {
             opts.max_commands,
             opts.max_loop_iterations,
             opts.files.as_ref(),
+            py,
+            &ext_fns,
+            None,
         );
         let cancelled = bash.cancellation_token();
 
@@ -374,6 +518,9 @@ impl BashTool {
                 hostname: opts.hostname,
                 max_commands: opts.max_commands,
                 max_loop_iterations: opts.max_loop_iterations,
+                python: py,
+                external_functions: ext_fns,
+                external_handler: None,
             }),
         })
     }
@@ -393,6 +540,7 @@ impl BashTool {
                     stdout_truncated: result.stdout_truncated,
                     stderr_truncated: result.stderr_truncated,
                     final_env: result.final_env,
+                    success: result.exit_code == 0,
                 }),
                 Err(e) => {
                     let msg = e.to_string();
@@ -404,6 +552,7 @@ impl BashTool {
                         stdout_truncated: false,
                         stderr_truncated: false,
                         final_env: None,
+                        success: false,
                     })
                 }
             }
@@ -424,6 +573,7 @@ impl BashTool {
                 stdout_truncated: result.stdout_truncated,
                 stderr_truncated: result.stderr_truncated,
                 final_env: result.final_env,
+                success: result.exit_code == 0,
             }),
             Err(e) => {
                 let msg = e.to_string();
@@ -435,6 +585,7 @@ impl BashTool {
                     stdout_truncated: false,
                     stderr_truncated: false,
                     final_env: None,
+                    success: false,
                 })
             }
         }
@@ -457,6 +608,9 @@ impl BashTool {
                 s.max_commands,
                 s.max_loop_iterations,
                 None,
+                s.python,
+                &s.external_functions,
+                s.external_handler.as_ref(),
             );
             *bash = new_bash;
             Ok(())
@@ -598,15 +752,302 @@ impl BashTool {
 }
 
 // ============================================================================
+// ScriptedTool — multi-tool orchestration via bash scripts
+// ============================================================================
+
+/// Options for creating a ScriptedTool instance.
+#[napi(object)]
+pub struct ScriptedToolOptions {
+    pub name: String,
+    pub short_description: Option<String>,
+    pub max_commands: Option<u32>,
+    pub max_loop_iterations: Option<u32>,
+}
+
+/// Threadsafe callback: data=(String,), return=String, CalleeHandled=false.
+/// The tuple matches the JS function signature `(request: string) => string`.
+type ToolTsfn = napi::threadsafe_function::ThreadsafeFunction<
+    (String,),
+    String,
+    (String,),
+    napi::Status,
+    false,
+>;
+
+/// Entry for a registered JS tool callback.
+///
+/// Stores a threadsafe function that receives a JSON-serialized request string
+/// `{"params": {...}, "stdin": "..." | null}` and returns a string result.
+struct JsToolEntry {
+    name: String,
+    description: String,
+    schema: serde_json::Value,
+    /// Wrapped in Arc so we can share references with Rust ScriptedTool callbacks
+    /// (ThreadsafeFunction doesn't implement Clone).
+    callback: Arc<ToolTsfn>,
+}
+
+/// Compose JS callbacks as bash builtins for multi-tool orchestration.
+///
+/// Each registered tool becomes a bash builtin command. An LLM (or user) writes
+/// a single bash script that pipes, loops, and branches across all tools.
+#[napi]
+pub struct ScriptedTool {
+    name: String,
+    short_desc: Option<String>,
+    tools: Vec<JsToolEntry>,
+    env_vars: Vec<(String, String)>,
+    rt: Mutex<tokio::runtime::Runtime>,
+    max_commands: Option<u32>,
+    max_loop_iterations: Option<u32>,
+}
+
+#[napi]
+impl ScriptedTool {
+    #[napi(constructor)]
+    pub fn new(options: ScriptedToolOptions) -> napi::Result<Self> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
+
+        Ok(Self {
+            name: options.name,
+            short_desc: options.short_description,
+            tools: Vec::new(),
+            env_vars: Vec::new(),
+            rt: Mutex::new(rt),
+            max_commands: options.max_commands,
+            max_loop_iterations: options.max_loop_iterations,
+        })
+    }
+
+    /// Register a tool command.
+    ///
+    /// The callback receives a JSON string `{"params": {...}, "stdin": "..." | null}`
+    /// and must return a string result.
+    #[napi(
+        ts_args_type = "name: string, description: string, callback: (request: string) => string, schema?: string"
+    )]
+    pub fn add_tool(
+        &mut self,
+        name: String,
+        description: String,
+        callback: napi::bindgen_prelude::Function<(String,), String>,
+        schema: Option<String>,
+    ) -> napi::Result<()> {
+        let tsfn: ToolTsfn = callback.build_threadsafe_function::<(String,)>().build()?;
+
+        let schema_val = match schema {
+            Some(s) => serde_json::from_str(&s)
+                .map_err(|e| napi::Error::from_reason(format!("Invalid schema JSON: {e}")))?,
+            None => serde_json::Value::Object(Default::default()),
+        };
+
+        self.tools.push(JsToolEntry {
+            name,
+            description,
+            schema: schema_val,
+            callback: Arc::new(tsfn),
+        });
+        Ok(())
+    }
+
+    /// Add an environment variable visible inside scripts.
+    #[napi]
+    pub fn env(&mut self, key: String, value: String) {
+        self.env_vars.push((key, value));
+    }
+
+    /// Execute a bash script synchronously.
+    #[napi]
+    pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
+        let tool = self.build_rust_tool();
+        let rt_guard = self.rt.blocking_lock();
+        let resp = rt_guard.block_on(async move {
+            tool.execute(ToolRequest {
+                commands,
+                timeout_ms: None,
+            })
+            .await
+        });
+        Ok(ExecResult {
+            stdout: resp.stdout,
+            stderr: resp.stderr,
+            exit_code: resp.exit_code,
+            error: resp.error,
+            stdout_truncated: resp.stdout_truncated,
+            stderr_truncated: resp.stderr_truncated,
+            final_env: resp.final_env,
+            success: resp.exit_code == 0,
+        })
+    }
+
+    /// Execute a bash script asynchronously, returning a Promise.
+    #[napi]
+    pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
+        let tool = self.build_rust_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands,
+                timeout_ms: None,
+            })
+            .await;
+        Ok(ExecResult {
+            stdout: resp.stdout,
+            stderr: resp.stderr,
+            exit_code: resp.exit_code,
+            error: resp.error,
+            stdout_truncated: resp.stdout_truncated,
+            stderr_truncated: resp.stderr_truncated,
+            final_env: resp.final_env,
+            success: resp.exit_code == 0,
+        })
+    }
+
+    /// Get tool name.
+    #[napi(getter)]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Get short description.
+    #[napi(getter)]
+    pub fn short_description(&self) -> String {
+        self.short_desc
+            .clone()
+            .unwrap_or_else(|| format!("ScriptedTool: {}", self.name))
+    }
+
+    /// Number of registered tools.
+    #[napi]
+    pub fn tool_count(&self) -> u32 {
+        self.tools.len() as u32
+    }
+
+    /// Get token-efficient tool description.
+    #[napi]
+    pub fn description(&self) -> String {
+        self.build_rust_tool().description().to_string()
+    }
+
+    /// Get help as a Markdown document.
+    #[napi]
+    pub fn help(&self) -> String {
+        self.build_rust_tool().help()
+    }
+
+    /// Get compact system-prompt text for orchestration.
+    #[napi]
+    pub fn system_prompt(&self) -> String {
+        self.build_rust_tool().system_prompt()
+    }
+
+    /// Get JSON input schema as string.
+    #[napi]
+    pub fn input_schema(&self) -> napi::Result<String> {
+        let tool = self.build_rust_tool();
+        let schema = tool.input_schema();
+        serde_json::to_string_pretty(&schema)
+            .map_err(|e| napi::Error::from_reason(format!("Schema serialization failed: {e}")))
+    }
+
+    /// Get JSON output schema as string.
+    #[napi]
+    pub fn output_schema(&self) -> napi::Result<String> {
+        let tool = self.build_rust_tool();
+        let schema = tool.output_schema();
+        serde_json::to_string_pretty(&schema)
+            .map_err(|e| napi::Error::from_reason(format!("Schema serialization failed: {e}")))
+    }
+
+    /// Get tool version.
+    #[napi(getter)]
+    pub fn version(&self) -> &str {
+        VERSION
+    }
+}
+
+impl ScriptedTool {
+    fn build_rust_tool(&self) -> RustScriptedTool {
+        let mut builder = RustScriptedTool::builder(&self.name);
+
+        if let Some(ref desc) = self.short_desc {
+            builder = builder.short_description(desc);
+        }
+
+        for entry in &self.tools {
+            let tsfn = entry.callback.clone();
+            let tool_name = entry.name.clone();
+
+            let callback = move |args: &ToolArgs| -> Result<String, String> {
+                // Serialize params + stdin as JSON for the JS callback
+                let request = serde_json::json!({
+                    "params": args.params,
+                    "stdin": args.stdin.as_deref(),
+                });
+                let request_str = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+
+                // Use a dedicated thread so the TSFN can dispatch to the JS event loop.
+                // The main thread must NOT be blocked (use async `execute`, not `executeSync`).
+                let tsfn_clone = tsfn.clone();
+                let tool_name_clone = tool_name.clone();
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build();
+                    let result = match rt {
+                        Ok(rt) => rt
+                            .block_on(tsfn_clone.call_async((request_str,)))
+                            .map_err(|e| format!("{}: {}", tool_name_clone, e)),
+                        Err(e) => Err(format!("{}: runtime error: {}", tool_name_clone, e)),
+                    };
+                    let _ = tx.send(result);
+                });
+                rx.recv()
+                    .map_err(|_| format!("{}: callback channel closed", tool_name))?
+            };
+
+            builder = builder.tool(
+                ToolDef::new(&entry.name, &entry.description).with_schema(entry.schema.clone()),
+                callback,
+            );
+        }
+
+        for (k, v) in &self.env_vars {
+            builder = builder.env(k, v);
+        }
+
+        if self.max_commands.is_some() || self.max_loop_iterations.is_some() {
+            let mut limits = ExecutionLimits::new();
+            if let Some(mc) = self.max_commands {
+                limits = limits.max_commands(mc as usize);
+            }
+            if let Some(mli) = self.max_loop_iterations {
+                limits = limits.max_loop_iterations(mli as usize);
+            }
+            builder = builder.limits(limits);
+        }
+
+        builder.build()
+    }
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
+#[allow(clippy::too_many_arguments)]
 fn build_bash(
     username: Option<&str>,
     hostname: Option<&str>,
     max_commands: Option<u32>,
     max_loop_iterations: Option<u32>,
     files: Option<&HashMap<String, String>>,
+    python: bool,
+    external_functions: &[String],
+    external_handler: Option<&ExternalHandlerArc>,
 ) -> RustBash {
     let mut builder = RustBash::builder();
 
@@ -630,6 +1071,25 @@ fn build_bash(
     if let Some(files) = files {
         for (path, content) in files {
             builder = builder.mount_text(path, content);
+        }
+    }
+
+    // Enable Python/Monty
+    if python {
+        if let Some(handler) = external_handler {
+            let h = handler.clone();
+            let fn_names = external_functions.to_vec();
+            let python_handler: PythonExternalFnHandler = Arc::new(move |name, args, kwargs| {
+                let h = h.clone();
+                Box::pin(async move { h(name, args, kwargs).await })
+            });
+            builder = builder.python_with_external_handler(
+                PythonLimits::default(),
+                fn_names,
+                python_handler,
+            );
+        } else {
+            builder = builder.python();
         }
     }
 

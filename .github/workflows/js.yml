@@ -82,6 +82,7 @@ jobs:
           node bash_basics.mjs
           node data_pipeline.mjs
           node llm_tool.mjs
+          node langchain_integration.mjs
 
       - name: Install Doppler CLI
         if: env.DOPPLER_TOKEN != ''

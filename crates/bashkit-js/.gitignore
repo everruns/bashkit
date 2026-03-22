@@ -20,11 +20,15 @@ bashkit.wasi-browser.js
 wasi-worker.mjs
 wasi-worker-browser.mjs
 
-# tsc output (source is wrapper.ts)
+# tsc output (source is wrapper.ts, langchain.ts)
 wrapper.js
 wrapper.d.ts
 wrapper.d.ts.map
 wrapper.js.map
+langchain.js
+langchain.d.ts
+langchain.d.ts.map
+langchain.js.map
 
 # Lockfile managed by CI
 Cargo.lock

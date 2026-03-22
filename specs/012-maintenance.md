@@ -84,6 +84,20 @@ dependency rot, or security gaps ship in a release.
 - Names are clear and descriptive (functions, variables, types)
 - No premature generalizations — code serves current needs, not hypothetical future ones
 
+### Binding Parity
+
+- Python and Node bindings expose the same public API surface
+- Feature gaps tracked and resolved before release
+- Parity checklist:
+  - Core classes: `Bash`, `BashTool`, `ExecResult`, `ScriptedTool`, `BashError`
+  - Execution methods: `execute`, `execute_sync`, `executeOrThrow`/`execute_or_throw`
+  - Configuration: `username`, `hostname`, `max_commands`, `max_loop_iterations`, `python`, `external_functions`/`external_handler`
+  - Tool metadata: `name`, `description`, `help`, `system_prompt`, `input_schema`, `output_schema`, `version`
+  - Module functions: `getVersion`/`get_version`
+  - Framework integrations: LangChain available in both bindings
+  - ExecResult fields: `stdout`, `stderr`, `exit_code`, `error`, `success`, truncation flags, `final_env`
+- New features added to one binding must have a tracking issue for the other
+
 ### Agent Configuration
 
 - `AGENTS.md` / `CLAUDE.md` instructions accurate
