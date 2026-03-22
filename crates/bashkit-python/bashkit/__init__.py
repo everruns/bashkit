@@ -26,17 +26,21 @@ Framework integrations:
 
 from bashkit._bashkit import (
     Bash,
+    BashError,
     BashTool,
     ExecResult,
     ScriptedTool,
     create_langchain_tool_spec,
+    get_version,
 )
 
 __version__ = "0.1.2"
 __all__ = [
     "Bash",
+    "BashError",
     "BashTool",
     "ExecResult",
     "ScriptedTool",
     "create_langchain_tool_spec",
+    "get_version",
 ]
