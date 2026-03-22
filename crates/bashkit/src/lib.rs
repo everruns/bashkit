@@ -487,6 +487,8 @@ use std::sync::Arc;
 /// Provides a virtual bash interpreter with an in-memory virtual filesystem.
 pub struct Bash {
     fs: Arc<dyn FileSystem>,
+    /// Outermost MountableFs layer for live mount/unmount after build.
+    mountable: Arc<MountableFs>,
     interpreter: Interpreter,
     /// Parser timeout (stored separately for use before interpreter runs)
     #[cfg(not(target_family = "wasm"))]
@@ -511,7 +513,9 @@ impl Default for Bash {
 impl Bash {
     /// Create a new Bash instance with default settings.
     pub fn new() -> Self {
-        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let base_fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mountable = Arc::new(MountableFs::new(base_fs));
+        let fs: Arc<dyn FileSystem> = Arc::clone(&mountable) as Arc<dyn FileSystem>;
         let interpreter = Interpreter::new(Arc::clone(&fs));
         #[cfg(not(target_family = "wasm"))]
         let parser_timeout = ExecutionLimits::default().parser_timeout;
@@ -520,6 +524,7 @@ impl Bash {
         let max_parser_operations = ExecutionLimits::default().max_parser_operations;
         Self {
             fs,
+            mountable,
             interpreter,
             #[cfg(not(target_family = "wasm"))]
             parser_timeout,
@@ -797,6 +802,91 @@ impl Bash {
     /// ```
     pub fn fs(&self) -> Arc<dyn FileSystem> {
         Arc::clone(&self.fs)
+    }
+
+    /// Mount a filesystem at `vfs_path` on a live interpreter.
+    ///
+    /// Unlike [`BashBuilder`] mount methods which configure mounts before build,
+    /// this method attaches a filesystem **after** the interpreter is running.
+    /// Shell state (env vars, cwd, history) is preserved — no rebuild needed.
+    ///
+    /// The mount takes effect immediately: subsequent `exec()` calls will see
+    /// files from the mounted filesystem at the given path.
+    ///
+    /// # Arguments
+    ///
+    /// * `vfs_path` - Absolute path where the filesystem will appear (e.g. `/mnt/data`)
+    /// * `fs` - The filesystem to mount
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `vfs_path` is not absolute.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, FileSystem, InMemoryFs};
+    /// use std::path::Path;
+    /// use std::sync::Arc;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::new();
+    ///
+    /// // Create and populate a filesystem
+    /// let data_fs = Arc::new(InMemoryFs::new());
+    /// data_fs.write_file(Path::new("/users.json"), br#"["alice"]"#).await?;
+    ///
+    /// // Mount it live — no rebuild, no state loss
+    /// bash.mount("/mnt/data", data_fs)?;
+    ///
+    /// let result = bash.exec("cat /mnt/data/users.json").await?;
+    /// assert!(result.stdout.contains("alice"));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn mount(
+        &self,
+        vfs_path: impl AsRef<std::path::Path>,
+        fs: Arc<dyn FileSystem>,
+    ) -> Result<()> {
+        self.mountable.mount(vfs_path, fs)
+    }
+
+    /// Unmount a previously mounted filesystem.
+    ///
+    /// After unmounting, paths under `vfs_path` fall back to the root filesystem
+    /// or the next shorter mount prefix. Shell state is preserved.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if nothing is mounted at `vfs_path`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, FileSystem, InMemoryFs};
+    /// use std::path::Path;
+    /// use std::sync::Arc;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::new();
+    ///
+    /// let tmp_fs = Arc::new(InMemoryFs::new());
+    /// tmp_fs.write_file(Path::new("/data.txt"), b"temp").await?;
+    ///
+    /// bash.mount("/scratch", tmp_fs)?;
+    /// let result = bash.exec("cat /scratch/data.txt").await?;
+    /// assert_eq!(result.stdout, "temp");
+    ///
+    /// bash.unmount("/scratch")?;
+    /// // /scratch/data.txt is no longer accessible
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn unmount(&self, vfs_path: impl AsRef<std::path::Path>) -> Result<()> {
+        self.mountable.unmount(vfs_path)
     }
 
     /// Capture the current shell state (variables, env, cwd, options).
@@ -1483,7 +1573,7 @@ impl BashBuilder {
         let base_fs = Self::apply_real_mounts(&self.real_mounts, base_fs);
 
         // Layer 2: If there are mounted text files, wrap in an OverlayFs
-        let fs: Arc<dyn FileSystem> = if self.mounted_files.is_empty() {
+        let base_fs: Arc<dyn FileSystem> = if self.mounted_files.is_empty() {
             base_fs
         } else {
             let overlay = OverlayFs::new(base_fs);
@@ -1494,8 +1584,13 @@ impl BashBuilder {
             Arc::new(overlay)
         };
 
+        // Layer 3: Wrap in MountableFs for post-build live mount/unmount
+        let mountable = Arc::new(MountableFs::new(base_fs));
+        let fs: Arc<dyn FileSystem> = Arc::clone(&mountable) as Arc<dyn FileSystem>;
+
         Self::build_with_fs(
             fs,
+            mountable,
             self.env,
             self.username,
             self.hostname,
@@ -1581,6 +1676,7 @@ impl BashBuilder {
     #[allow(clippy::too_many_arguments)]
     fn build_with_fs(
         fs: Arc<dyn FileSystem>,
+        mountable: Arc<MountableFs>,
         env: HashMap<String, String>,
         username: Option<String>,
         hostname: Option<String>,
@@ -1670,6 +1766,7 @@ impl BashBuilder {
 
         Bash {
             fs,
+            mountable,
             interpreter,
             #[cfg(not(target_family = "wasm"))]
             parser_timeout,
@@ -1745,6 +1842,18 @@ pub mod threat_model {}
 #[cfg(feature = "python")]
 #[doc = include_str!("../docs/python.md")]
 pub mod python_guide {}
+
+/// Guide for live mount/unmount on a running Bash instance.
+///
+/// This guide covers:
+/// - Attaching/detaching filesystems post-build
+/// - State preservation across mount operations
+/// - Hot-swapping mounted filesystems
+/// - Layered filesystem architecture
+///
+/// **Related:** [`Bash::mount`], [`Bash::unmount`], [`MountableFs`], [`BashBuilder::mount_text`]
+#[doc = include_str!("../docs/live_mounts.md")]
+pub mod live_mounts_guide {}
 
 /// Logging guide for Bashkit.
 ///
