@@ -148,6 +148,49 @@ find /tmp/pf5 -type f -printf '%f\t%y\n'
 a.txt	f
 ### end
 
+### find_multi_path_one_missing
+### bash_diff: Virtual /tmp vs real /tmp may have different state
+# Find with multiple paths where one doesn't exist should still output results from valid paths
+mkdir -p /tmp/multi_exist
+touch /tmp/multi_exist/file1.txt
+touch /tmp/multi_exist/file2.txt
+find /tmp/multi_exist /tmp/multi_nonexist -type f 2>/dev/null | sort
+### expect
+/tmp/multi_exist/file1.txt
+/tmp/multi_exist/file2.txt
+### end
+
+### find_multi_path_missing_first
+### bash_diff: Virtual /tmp vs real /tmp may have different state
+# Find with missing first path should still output results from second path
+mkdir -p /tmp/multi_second
+touch /tmp/multi_second/found.txt
+find /tmp/multi_missing_first /tmp/multi_second -type f 2>/dev/null
+### expect
+/tmp/multi_second/found.txt
+### end
+
+### find_multi_path_all_valid
+### bash_diff: Virtual /tmp vs real /tmp may have different state
+# Find with multiple valid paths should output results from all
+mkdir -p /tmp/multi_a
+mkdir -p /tmp/multi_b
+touch /tmp/multi_a/a.txt
+touch /tmp/multi_b/b.txt
+find /tmp/multi_a /tmp/multi_b -type f | sort
+### expect
+/tmp/multi_a/a.txt
+/tmp/multi_b/b.txt
+### end
+
+### find_missing_path_stderr
+### bash_diff: Virtual /tmp vs real /tmp may have different state
+# Find with missing path should output error to stderr and exit 1
+find /tmp/totally_nonexistent_path 2>&1
+### expect
+find: '/tmp/totally_nonexistent_path': No such file or directory
+### end
+
 ### ls_recursive
 # ls -R should list nested directories
 mkdir -p /tmp/lsrec/a/b

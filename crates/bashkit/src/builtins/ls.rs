@@ -9,7 +9,7 @@ use std::path::Path;
 use super::{Builtin, Context, ExecutionPlan, SubCommand, resolve_path};
 use crate::error::Result;
 use crate::fs::FileType;
-use crate::interpreter::ExecResult;
+use crate::interpreter::{ControlFlow, ExecResult};
 
 /// Options for ls command
 struct LsOptions {
@@ -472,10 +472,13 @@ async fn collect_find_paths(
     for path_str in search_paths {
         let path = resolve_path(ctx.cwd, path_str);
         if !ctx.fs.exists(&path).await.unwrap_or(false) {
-            // Skip non-existent paths in collection phase
             continue;
         }
-        find_recursive(ctx, &path, path_str, &temp_opts, 0, &mut output).await?;
+        // Intentionally swallowing errors (`let _ =`) rather than propagating (`?`):
+        // this feeds execution_plan(), which is only an optimization hint. Propagating
+        // would bubble up as Err and abort the entire command. Real error handling
+        // (stderr messages, exit codes) lives in execute(), which is always called.
+        let _ = find_recursive(ctx, &path, path_str, &temp_opts, 0, &mut output).await;
     }
     // Parse the output back into paths (each line is a path)
     for line in output.lines() {
@@ -547,24 +550,34 @@ impl Builtin for Find {
             Err(e) => return Ok(e),
         };
 
-        // Check paths exist
+        let mut output = String::new();
+        let mut errors = String::new();
+        let mut had_error = false;
+
         for path_str in &search_paths {
             let path = resolve_path(ctx.cwd, path_str);
             if !ctx.fs.exists(&path).await.unwrap_or(false) {
-                return Ok(ExecResult::err(
-                    format!("find: '{}': No such file or directory\n", path_str),
-                    1,
+                errors.push_str(&format!(
+                    "find: '{}': No such file or directory\n",
+                    path_str
                 ));
+                had_error = true;
+                continue;
+            }
+
+            if let Err(e) = find_recursive(&ctx, &path, path_str, &opts, 0, &mut output).await {
+                errors.push_str(&format!("find: '{}': {}\n", path_str, e));
+                had_error = true;
             }
         }
 
-        let mut output = String::new();
-        for path_str in &search_paths {
-            let path = resolve_path(ctx.cwd, path_str);
-            find_recursive(&ctx, &path, path_str, &opts, 0, &mut output).await?;
-        }
-
-        Ok(ExecResult::ok(output))
+        Ok(ExecResult {
+            stdout: output,
+            stderr: errors,
+            exit_code: if had_error { 1 } else { 0 },
+            control_flow: ControlFlow::None,
+            ..Default::default()
+        })
     }
 
     async fn execution_plan(&self, ctx: &Context<'_>) -> Result<Option<ExecutionPlan>> {
@@ -578,15 +591,7 @@ impl Builtin for Find {
             return Ok(None);
         }
 
-        // Check paths exist
-        for path_str in &search_paths {
-            let path = resolve_path(ctx.cwd, path_str);
-            if !ctx.fs.exists(&path).await.unwrap_or(false) {
-                return Ok(None); // Let execute() handle errors
-            }
-        }
-
-        // Collect matched paths
+        // Collect matched paths (collect_find_paths skips missing paths)
         let matched_paths = collect_find_paths(ctx, &search_paths, &opts).await?;
         if matched_paths.is_empty() {
             return Ok(None);
