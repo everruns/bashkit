@@ -10,6 +10,9 @@
     ".": {
       "browser": "./bashkit.wasi-browser.js",
       "default": "./wrapper.js"
+    },
+    "./langchain": {
+      "default": "./langchain.js"
     }
   },
   "license": "MIT",
@@ -38,6 +41,8 @@
   "files": [
     "wrapper.js",
     "wrapper.d.ts",
+    "langchain.js",
+    "langchain.d.ts",
     "index.cjs",
     "index.d.ts",
     "index.d.cts",
@@ -65,14 +70,24 @@
   "optionalDependencies": {
     "@napi-rs/wasm-runtime": "^1.1.1"
   },
+  "peerDependencies": {
+    "@langchain/core": ">=0.3",
+    "zod": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "@langchain/core": { "optional": true },
+    "zod": { "optional": true }
+  },
   "devDependencies": {
+    "@langchain/core": "^0.3",
     "@napi-rs/cli": "^3.0.0",
     "@types/node": "^25.5.0",
     "ava": "^6.2.0",
     "oxlint": "^0.16.0",
     "prettier": "^3.4.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "zod": "^3"
   },
   "ava": {
     "extensions": {

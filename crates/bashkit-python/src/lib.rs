@@ -487,6 +487,56 @@ impl PyBash {
         })
     }
 
+    /// Execute commands synchronously. Raises `BashError` on non-zero exit.
+    ///
+    /// Not supported when `external_handler` is configured.
+    fn execute_sync_or_throw(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
+        let result = self.execute_sync(py, commands)?;
+        if result.exit_code != 0 {
+            return Err(raise_bash_error(&result));
+        }
+        Ok(result)
+    }
+
+    /// Execute commands asynchronously. Raises `BashError` on non-zero exit.
+    fn execute_or_throw<'py>(
+        &self,
+        py: Python<'py>,
+        commands: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let mut bash = inner.lock().await;
+            let result = match bash.exec(&commands).await {
+                Ok(r) => ExecResult {
+                    stdout: r.stdout,
+                    stderr: r.stderr,
+                    exit_code: r.exit_code,
+                    error: None,
+                    stdout_truncated: r.stdout_truncated,
+                    stderr_truncated: r.stderr_truncated,
+                    final_env: r.final_env,
+                },
+                Err(e) => {
+                    let msg = e.to_string();
+                    ExecResult {
+                        stdout: String::new(),
+                        stderr: msg.clone(),
+                        exit_code: 1,
+                        error: Some(msg),
+                        stdout_truncated: false,
+                        stderr_truncated: false,
+                        final_env: None,
+                    }
+                }
+            };
+            if result.exit_code != 0 {
+                return Err(raise_bash_error(&result));
+            }
+            Ok(result)
+        })
+    }
+
     /// Reset interpreter to fresh state, preserving all configuration including
     /// python mode and external function handler.
     /// Releases GIL before blocking on tokio to prevent deadlock.
@@ -725,6 +775,54 @@ impl BashTool {
                     }
                 }
             })
+        })
+    }
+
+    /// Execute commands synchronously. Raises `BashError` on non-zero exit.
+    fn execute_sync_or_throw(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
+        let result = self.execute_sync(py, commands)?;
+        if result.exit_code != 0 {
+            return Err(raise_bash_error(&result));
+        }
+        Ok(result)
+    }
+
+    /// Execute commands asynchronously. Raises `BashError` on non-zero exit.
+    fn execute_or_throw<'py>(
+        &self,
+        py: Python<'py>,
+        commands: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let mut bash = inner.lock().await;
+            let result = match bash.exec(&commands).await {
+                Ok(r) => ExecResult {
+                    stdout: r.stdout,
+                    stderr: r.stderr,
+                    exit_code: r.exit_code,
+                    error: None,
+                    stdout_truncated: r.stdout_truncated,
+                    stderr_truncated: r.stderr_truncated,
+                    final_env: r.final_env,
+                },
+                Err(e) => {
+                    let msg = e.to_string();
+                    ExecResult {
+                        stdout: String::new(),
+                        stderr: msg.clone(),
+                        exit_code: 1,
+                        error: Some(msg),
+                        stdout_truncated: false,
+                        stderr_truncated: false,
+                        final_env: None,
+                    }
+                }
+            };
+            if result.exit_code != 0 {
+                return Err(raise_bash_error(&result));
+            }
+            Ok(result)
         })
     }
 
@@ -1101,8 +1199,42 @@ impl ScriptedTool {
 }
 
 // ============================================================================
+// BashError — exception for non-zero exit codes
+// ============================================================================
+
+pyo3::create_exception!(bashkit, BashError, pyo3::exceptions::PyException);
+
+/// Raise a `BashError` from an `ExecResult` with non-zero exit code.
+fn raise_bash_error(result: &ExecResult) -> PyErr {
+    let message = result
+        .error
+        .clone()
+        .unwrap_or_else(|| result.stderr.clone());
+    let msg = if message.is_empty() {
+        format!("Exit code {}", result.exit_code)
+    } else {
+        message
+    };
+    Python::attach(|py| {
+        let err = BashError::new_err(msg);
+        // Attach structured fields to the exception instance.
+        let val = err.value(py);
+        let _ = val.setattr("exit_code", result.exit_code);
+        let _ = val.setattr("stderr", &result.stderr);
+        let _ = val.setattr("stdout", &result.stdout);
+        err
+    })
+}
+
+// ============================================================================
 // Module-level functions
 // ============================================================================
+
+/// Get the bashkit version string.
+#[pyfunction]
+fn get_version() -> &'static str {
+    VERSION
+}
 
 /// Create a LangChain-compatible tool spec from BashTool.
 #[pyfunction]
@@ -1133,7 +1265,9 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BashTool>()?;
     m.add_class::<ScriptedTool>()?;
     m.add_class::<ExecResult>()?;
+    m.add("BashError", m.py().get_type::<BashError>())?;
     m.add_function(wrap_pyfunction!(create_langchain_tool_spec, m)?)?;
+    m.add_function(wrap_pyfunction!(get_version, m)?)?;
     Ok(())
 }
 

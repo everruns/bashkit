@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import type {
   Bash as NativeBashType,
   BashTool as NativeBashToolType,
+  ScriptedTool as NativeScriptedToolType,
   ExecResult,
   BashOptions as NativeBashOptions,
 } from "./index.cjs";
@@ -10,6 +11,7 @@ const require = createRequire(import.meta.url);
 const native = require("./index.cjs");
 const NativeBash: typeof NativeBashType = native.Bash;
 const NativeBashTool: typeof NativeBashToolType = native.BashTool;
+const NativeScriptedTool: typeof NativeScriptedToolType = native.ScriptedTool;
 const nativeGetVersion: () => string = native.getVersion;
 
 export type { ExecResult };
@@ -49,6 +51,20 @@ export interface BashOptions {
    * ```
    */
   files?: Record<string, FileValue>;
+  /**
+   * Enable embedded Python execution (`python`/`python3` builtins).
+   *
+   * When true, bash scripts can use `python -c '...'` or `python3 script.py`
+   * to run Python code within the sandbox.
+   */
+  python?: boolean;
+  /**
+   * Names of external functions callable from embedded Python code.
+   *
+   * These function names become available as Python builtins within
+   * the embedded interpreter. When called, they invoke the external handler.
+   */
+  externalFunctions?: string[];
 }
 
 /**
@@ -107,6 +123,8 @@ function toNativeOptions(
     maxCommands: options?.maxCommands,
     maxLoopIterations: options?.maxLoopIterations,
     files: resolvedFiles,
+    python: options?.python,
+    externalFunctions: options?.externalFunctions,
   };
 }
 
@@ -196,6 +214,7 @@ export class Bash {
           stdoutTruncated: false,
           stderrTruncated: false,
           finalEnv: undefined,
+          success: false,
         };
       }
       const onAbort = () => this.native.cancel();
@@ -376,6 +395,7 @@ export class BashTool {
           stdoutTruncated: false,
           stderrTruncated: false,
           finalEnv: undefined,
+          success: false,
         };
       }
       const onAbort = () => this.native.cancel();
@@ -515,6 +535,187 @@ export class BashTool {
   /** Short description. */
   get shortDescription(): string {
     return this.native.shortDescription;
+  }
+
+  /** Token-efficient tool description. */
+  description(): string {
+    return this.native.description();
+  }
+
+  /** Markdown help document. */
+  help(): string {
+    return this.native.help();
+  }
+
+  /** Compact system prompt for orchestration. */
+  systemPrompt(): string {
+    return this.native.systemPrompt();
+  }
+
+  /** JSON input schema as string. */
+  inputSchema(): string {
+    return this.native.inputSchema();
+  }
+
+  /** JSON output schema as string. */
+  outputSchema(): string {
+    return this.native.outputSchema();
+  }
+
+  /** Tool version. */
+  get version(): string {
+    return this.native.version;
+  }
+}
+
+/**
+ * Options for creating a ScriptedTool instance.
+ */
+export interface ScriptedToolOptions {
+  name: string;
+  shortDescription?: string;
+  maxCommands?: number;
+  maxLoopIterations?: number;
+}
+
+/**
+ * Callback type for ScriptedTool tool commands.
+ *
+ * Receives parsed `--key value` flags as `params` and optional piped input as `stdin`.
+ * Must return a string.
+ */
+export type ToolCallback = (
+  params: Record<string, unknown>,
+  stdin: string | null,
+) => string;
+
+/**
+ * Compose JS callbacks as bash builtins for multi-tool orchestration.
+ *
+ * Each registered tool becomes a bash builtin command. An LLM (or user) writes
+ * a single bash script that pipes, loops, and branches across all tools.
+ *
+ * @example
+ * ```typescript
+ * import { ScriptedTool } from '@everruns/bashkit';
+ *
+ * const tool = new ScriptedTool({ name: "api" });
+ * tool.addTool("greet", "Greet user",
+ *   (params) => `hello ${params.name ?? "world"}\n`
+ * );
+ * const result = tool.executeSync("greet --name Alice");
+ * console.log(result.stdout); // hello Alice\n
+ * ```
+ */
+export class ScriptedTool {
+  private native: NativeScriptedToolType;
+
+  constructor(options: ScriptedToolOptions) {
+    this.native = new NativeScriptedTool({
+      name: options.name,
+      shortDescription: options.shortDescription,
+      maxCommands: options.maxCommands,
+      maxLoopIterations: options.maxLoopIterations,
+    });
+  }
+
+  /**
+   * Register a tool command.
+   *
+   * @param name - Command name (becomes a bash builtin)
+   * @param description - Human-readable description
+   * @param callback - JS function `(params, stdin) => string`
+   * @param schema - Optional JSON Schema for input parameters
+   */
+  addTool(
+    name: string,
+    description: string,
+    callback: ToolCallback,
+    schema?: Record<string, unknown>,
+  ): void {
+    // Wrap the user callback to handle JSON serialization protocol
+    const wrappedCallback = (requestJson: string): string => {
+      const request = JSON.parse(requestJson) as {
+        params: Record<string, unknown>;
+        stdin: string | null;
+      };
+      return callback(request.params, request.stdin);
+    };
+    this.native.addTool(
+      name,
+      description,
+      wrappedCallback,
+      schema ? JSON.stringify(schema) : undefined,
+    );
+  }
+
+  /**
+   * Add an environment variable visible inside scripts.
+   */
+  env(key: string, value: string): void {
+    this.native.env(key, value);
+  }
+
+  /**
+   * Execute a bash script synchronously.
+   *
+   * Note: ScriptedTool callbacks run asynchronously via Node's event loop.
+   * This method will deadlock if any registered tool callback is invoked.
+   * Use `execute()` (async) instead for scripts that call registered tools.
+   * Only use this for scripts that don't invoke any registered tools
+   * (e.g., pure bash without tool calls).
+   */
+  executeSync(commands: string): ExecResult {
+    return this.native.executeSync(commands);
+  }
+
+  /**
+   * Execute a bash script asynchronously, returning a Promise.
+   *
+   * This is the recommended execution method for ScriptedTool since
+   * tool callbacks require the Node.js event loop to be running.
+   */
+  async execute(commands: string): Promise<ExecResult> {
+    return this.native.execute(commands);
+  }
+
+  /**
+   * Execute synchronously. Throws `BashError` on non-zero exit.
+   *
+   * Same caveats as `executeSync()` — use `executeOrThrow()` instead.
+   */
+  executeSyncOrThrow(commands: string): ExecResult {
+    const result = this.native.executeSync(commands);
+    if (result.exitCode !== 0) {
+      throw new BashError(result);
+    }
+    return result;
+  }
+
+  /**
+   * Execute asynchronously. Throws `BashError` on non-zero exit.
+   */
+  async executeOrThrow(commands: string): Promise<ExecResult> {
+    const result = await this.native.execute(commands);
+    if (result.exitCode !== 0) {
+      throw new BashError(result);
+    }
+    return result;
+  }
+
+  /** Tool name. */
+  get name(): string {
+    return this.native.name;
+  }
+
+  /** Short description. */
+  get shortDescription(): string {
+    return this.native.shortDescription;
+  }
+
+  /** Number of registered tools. */
+  toolCount(): number {
+    return this.native.toolCount();
   }
 
   /** Token-efficient tool description. */
