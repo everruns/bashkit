@@ -97,3 +97,6 @@ if (process.env.OPENAI_API_KEY) {
 } else {
   console.log("\nSkipping agent (no OPENAI_API_KEY). Self-contained tests passed.");
 }
+
+// Native NAPI module keeps the event loop alive; exit explicitly.
+process.exit(0);
