@@ -490,6 +490,12 @@ impl FileSystemExt for MountableFs {
         // Return root filesystem limits as the overall limits
         self.root.limits()
     }
+
+    async fn mkfifo(&self, path: &Path, mode: u32) -> Result<()> {
+        self.validate_path(path)?;
+        let (fs, resolved) = self.resolve(path);
+        fs.mkfifo(&resolved, mode).await
+    }
 }
 
 #[cfg(test)]
