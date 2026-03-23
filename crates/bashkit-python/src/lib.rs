@@ -144,6 +144,71 @@ fn make_runtime() -> PyResult<Arc<Runtime>> {
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))
 }
 
+/// Parse the six mount kwargs into internal config structs.
+/// Shared by both `PyBash::new()` and `BashTool::new()`.
+fn parse_mount_configs(
+    mount_text: Option<Vec<(String, String)>>,
+    mount_readonly_text: Option<Vec<(String, String)>>,
+    mount_real_readonly: Option<Vec<String>>,
+    mount_real_readonly_at: Option<Vec<(String, String)>>,
+    mount_real_readwrite: Option<Vec<String>>,
+    mount_real_readwrite_at: Option<Vec<(String, String)>>,
+) -> (Vec<MountedTextConfig>, Vec<RealMountConfig>) {
+    let mounted_text_files = mount_text
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(path, content)| MountedTextConfig {
+            path,
+            content,
+            readonly: false,
+        })
+        .chain(
+            mount_readonly_text
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(path, content)| MountedTextConfig {
+                    path,
+                    content,
+                    readonly: true,
+                }),
+        )
+        .collect::<Vec<_>>();
+    let real_mounts = mount_real_readonly
+        .unwrap_or_default()
+        .into_iter()
+        .map(|host_path| RealMountConfig {
+            host_path,
+            vfs_mount: None,
+            readwrite: false,
+        })
+        .chain(mount_real_readonly_at.unwrap_or_default().into_iter().map(
+            |(host_path, vfs_mount)| RealMountConfig {
+                host_path,
+                vfs_mount: Some(vfs_mount),
+                readwrite: false,
+            },
+        ))
+        .chain(
+            mount_real_readwrite
+                .unwrap_or_default()
+                .into_iter()
+                .map(|host_path| RealMountConfig {
+                    host_path,
+                    vfs_mount: None,
+                    readwrite: true,
+                }),
+        )
+        .chain(mount_real_readwrite_at.unwrap_or_default().into_iter().map(
+            |(host_path, vfs_mount)| RealMountConfig {
+                host_path,
+                vfs_mount: Some(vfs_mount),
+                readwrite: true,
+            },
+        ))
+        .collect::<Vec<_>>();
+    (mounted_text_files, real_mounts)
+}
+
 fn apply_fs_config(
     mut builder: bashkit::BashBuilder,
     mounted_text_files: &[MountedTextConfig],
@@ -652,56 +717,14 @@ impl PyBash {
         }
         builder = builder.limits(limits);
 
-        let mounted_text_files =
-            mount_text
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(path, content)| MountedTextConfig {
-                    path,
-                    content,
-                    readonly: false,
-                })
-                .chain(mount_readonly_text.unwrap_or_default().into_iter().map(
-                    |(path, content)| MountedTextConfig {
-                        path,
-                        content,
-                        readonly: true,
-                    },
-                ))
-                .collect::<Vec<_>>();
-        let real_mounts = mount_real_readonly
-            .unwrap_or_default()
-            .into_iter()
-            .map(|host_path| RealMountConfig {
-                host_path,
-                vfs_mount: None,
-                readwrite: false,
-            })
-            .chain(mount_real_readonly_at.unwrap_or_default().into_iter().map(
-                |(host_path, vfs_mount)| RealMountConfig {
-                    host_path,
-                    vfs_mount: Some(vfs_mount),
-                    readwrite: false,
-                },
-            ))
-            .chain(
-                mount_real_readwrite
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|host_path| RealMountConfig {
-                        host_path,
-                        vfs_mount: None,
-                        readwrite: true,
-                    }),
-            )
-            .chain(mount_real_readwrite_at.unwrap_or_default().into_iter().map(
-                |(host_path, vfs_mount)| RealMountConfig {
-                    host_path,
-                    vfs_mount: Some(vfs_mount),
-                    readwrite: true,
-                },
-            ))
-            .collect::<Vec<_>>();
+        let (mounted_text_files, real_mounts) = parse_mount_configs(
+            mount_text,
+            mount_readonly_text,
+            mount_real_readonly,
+            mount_real_readonly_at,
+            mount_real_readwrite,
+            mount_real_readwrite_at,
+        );
 
         let fn_names = external_functions.clone().unwrap_or_default();
         if !fn_names.is_empty() && external_handler.is_none() {
@@ -952,6 +975,11 @@ impl PyBash {
     }
 
     /// Return a live filesystem handle backed by the current interpreter.
+    ///
+    /// Each operation on the returned handle acquires the interpreter lock,
+    /// so it always reflects the latest state (including post-reset). For
+    /// batch reads where consistency isn't needed, prefer reading files via
+    /// `execute_sync("cat ...")`.
     fn fs(&self, py: Python<'_>) -> PyResult<Py<PyFileSystem>> {
         Py::new(
             py,
@@ -1110,56 +1138,14 @@ impl BashTool {
         }
         builder = builder.limits(limits);
 
-        let mounted_text_files =
-            mount_text
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(path, content)| MountedTextConfig {
-                    path,
-                    content,
-                    readonly: false,
-                })
-                .chain(mount_readonly_text.unwrap_or_default().into_iter().map(
-                    |(path, content)| MountedTextConfig {
-                        path,
-                        content,
-                        readonly: true,
-                    },
-                ))
-                .collect::<Vec<_>>();
-        let real_mounts = mount_real_readonly
-            .unwrap_or_default()
-            .into_iter()
-            .map(|host_path| RealMountConfig {
-                host_path,
-                vfs_mount: None,
-                readwrite: false,
-            })
-            .chain(mount_real_readonly_at.unwrap_or_default().into_iter().map(
-                |(host_path, vfs_mount)| RealMountConfig {
-                    host_path,
-                    vfs_mount: Some(vfs_mount),
-                    readwrite: false,
-                },
-            ))
-            .chain(
-                mount_real_readwrite
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|host_path| RealMountConfig {
-                        host_path,
-                        vfs_mount: None,
-                        readwrite: true,
-                    }),
-            )
-            .chain(mount_real_readwrite_at.unwrap_or_default().into_iter().map(
-                |(host_path, vfs_mount)| RealMountConfig {
-                    host_path,
-                    vfs_mount: Some(vfs_mount),
-                    readwrite: true,
-                },
-            ))
-            .collect::<Vec<_>>();
+        let (mounted_text_files, real_mounts) = parse_mount_configs(
+            mount_text,
+            mount_readonly_text,
+            mount_real_readonly,
+            mount_real_readonly_at,
+            mount_real_readwrite,
+            mount_real_readwrite_at,
+        );
         builder = apply_fs_config(builder, &mounted_text_files, &real_mounts);
 
         let bash = builder.build();
@@ -1342,6 +1328,11 @@ impl BashTool {
     }
 
     /// Return a live filesystem handle backed by the current interpreter.
+    ///
+    /// Each operation on the returned handle acquires the interpreter lock,
+    /// so it always reflects the latest state (including post-reset). For
+    /// batch reads where consistency isn't needed, prefer reading files via
+    /// `execute_sync("cat ...")`.
     fn fs(&self, py: Python<'_>) -> PyResult<Py<PyFileSystem>> {
         Py::new(
             py,
