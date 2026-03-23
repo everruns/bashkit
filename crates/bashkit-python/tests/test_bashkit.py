@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from bashkit import Bash, BashTool, ScriptedTool, create_langchain_tool_spec
+from bashkit import Bash, BashTool, FileSystem, ScriptedTool, create_langchain_tool_spec
 
 # ===========================================================================
 # Bash: Core interpreter
@@ -76,6 +76,91 @@ def test_bash_reset():
     bash.reset()
     r = bash.execute_sync("echo ${KEEP:-empty}")
     assert r.stdout.strip() == "empty"
+
+
+def test_bash_fs_handle_bytes_roundtrip():
+    bash = Bash()
+    fs = bash.fs()
+    assert isinstance(fs, FileSystem)
+    fs.mkdir("/data", recursive=True)
+    payload = b"\x00\x01\x02\xffoffice"
+    fs.write_file("/data/blob.bin", payload)
+    assert fs.read_file("/data/blob.bin") == payload
+    stat = fs.stat("/data/blob.bin")
+    assert stat["size"] == len(payload)
+    assert fs.exists("/data/blob.bin") is True
+
+
+def test_bash_mount_text_and_readonly_text():
+    bash = Bash(
+        mount_text=[("/config/app.conf", "debug=true\n")],
+        mount_readonly_text=[("/etc/version", "1.2.3\n")],
+    )
+    assert bash.execute_sync("cat /config/app.conf").stdout == "debug=true\n"
+    assert bash.execute_sync("cat /etc/version").stdout == "1.2.3\n"
+    mode = bash.fs().stat("/etc/version")["mode"]
+    assert mode == 0o444
+
+
+def test_bash_realfs_readwrite_at(tmp_path):
+    bash = Bash(mount_real_readwrite_at=[(str(tmp_path), "/workspace")])
+    result = bash.execute_sync("echo 'hello host' > /workspace/hello.txt")
+    assert result.exit_code == 0
+    assert (tmp_path / "hello.txt").read_text().strip() == "hello host"
+
+
+def test_bash_live_mount_preserves_state_and_unmounts(tmp_path):
+    bash = Bash()
+    bash.execute_sync("export KEEP=1")
+
+    workspace = FileSystem.real(str(tmp_path), readwrite=True)
+    bash.mount("/workspace", workspace)
+    bash.execute_sync("echo live > /workspace/live.txt")
+
+    assert (tmp_path / "live.txt").read_text().strip() == "live"
+    assert bash.execute_sync("echo $KEEP").stdout.strip() == "1"
+
+    bash.unmount("/workspace")
+    result = bash.execute_sync("if test -f /workspace/live.txt; then echo present; else echo missing; fi")
+    assert result.stdout.strip() == "missing"
+
+
+def test_bash_fs_handle_tracks_reset_and_new_live_mounts():
+    bash = Bash()
+    fs = bash.fs()
+    fs.write_file("/tmp/old.txt", b"old")
+
+    bash.reset()
+    assert fs.exists("/tmp/old.txt") is False
+
+    overlay = FileSystem()
+    overlay.write_file("/mounted.txt", b"fresh")
+    bash.mount("/mnt", overlay)
+    assert fs.read_file("/mnt/mounted.txt") == b"fresh"
+
+
+def test_bash_fs_handle_supports_directory_ops_and_links():
+    fs = FileSystem()
+
+    fs.mkdir("/data/src", recursive=True)
+    fs.write_file("/data/src/file.txt", b"alpha")
+    fs.append_file("/data/src/file.txt", b"beta")
+    assert fs.read_file("/data/src/file.txt") == b"alphabeta"
+
+    fs.mkdir("/data/dst", recursive=True)
+    fs.copy("/data/src/file.txt", "/data/dst/copied.txt")
+    fs.rename("/data/dst/copied.txt", "/data/dst/renamed.txt")
+    fs.symlink("/data/dst/renamed.txt", "/data/link.txt")
+    fs.chmod("/data/dst/renamed.txt", 0o600)
+
+    entries = sorted(entry["name"] for entry in fs.read_dir("/data"))
+    assert entries == ["dst", "link.txt", "src"]
+    assert fs.read_link("/data/link.txt") == "/data/dst/renamed.txt"
+    assert fs.stat("/data/dst/renamed.txt")["mode"] == 0o600
+
+    fs.remove("/data/link.txt")
+    fs.remove("/data", recursive=True)
+    assert fs.exists("/data") is False
 
 
 # -- Bash: Async execution -------------------------------------------------
@@ -186,6 +271,28 @@ def test_file_persistence():
     tool.execute_sync("echo content > /tmp/test.txt")
     r = tool.execute_sync("cat /tmp/test.txt")
     assert r.stdout.strip() == "content"
+
+
+def test_bashtool_realfs_and_fs_handle(tmp_path):
+    tool = BashTool(mount_real_readwrite_at=[(str(tmp_path), "/workspace")])
+    tool.execute_sync("echo 'from tool' > /workspace/tool.txt")
+    assert (tmp_path / "tool.txt").read_text().strip() == "from tool"
+    assert tool.fs().read_file("/workspace/tool.txt") == b"from tool\n"
+
+
+def test_bashtool_live_mount_preserves_state(tmp_path):
+    tool = BashTool()
+    tool.execute_sync("export KEEP=1")
+
+    workspace = FileSystem.real(str(tmp_path), readwrite=True)
+    tool.mount("/workspace", workspace)
+    tool.execute_sync("echo tool > /workspace/tool.txt")
+
+    assert (tmp_path / "tool.txt").read_text().strip() == "tool"
+    assert tool.execute_sync("echo $KEEP").stdout.strip() == "1"
+
+    tool.unmount("/workspace")
+    assert tool.execute_sync("echo ${KEEP:-missing}").stdout.strip() == "1"
 
 
 # -- BashTool: Async execution ----------------------------------------------
