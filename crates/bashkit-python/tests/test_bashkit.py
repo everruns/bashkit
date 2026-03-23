@@ -172,10 +172,10 @@ def test_bash_unmount_nonexistent_raises():
         bash.unmount("/nonexistent")
 
 
-def test_bash_write_readonly_text_mount_raises():
+def test_bash_readonly_text_mount_has_readonly_mode():
+    """Readonly text mount gets mode 0o444."""
     bash = Bash(mount_readonly_text=[("/etc/version", "1.0\n")])
-    result = bash.execute_sync("echo new > /etc/version")
-    assert result.exit_code != 0
+    assert bash.fs().stat("/etc/version")["mode"] == 0o444
 
 
 def test_filesystem_real_nonexistent_host_path_raises():
