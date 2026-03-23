@@ -163,6 +163,38 @@ def test_bash_fs_handle_supports_directory_ops_and_links():
     assert fs.exists("/data") is False
 
 
+# -- Bash: FS / mount error cases ------------------------------------------
+
+
+def test_bash_unmount_nonexistent_raises():
+    bash = Bash()
+    with pytest.raises(Exception):
+        bash.unmount("/nonexistent")
+
+
+def test_bash_write_readonly_text_mount_raises():
+    bash = Bash(mount_readonly_text=[("/etc/version", "1.0\n")])
+    result = bash.execute_sync("echo new > /etc/version")
+    assert result.exit_code != 0
+
+
+def test_filesystem_real_nonexistent_host_path_raises():
+    with pytest.raises(Exception):
+        FileSystem.real("/nonexistent_path_that_does_not_exist_abc123", readwrite=True)
+
+
+def test_filesystem_read_nonexistent_file_raises():
+    fs = FileSystem()
+    with pytest.raises(Exception):
+        fs.read_file("/no/such/file")
+
+
+def test_filesystem_stat_nonexistent_raises():
+    fs = FileSystem()
+    with pytest.raises(Exception):
+        fs.stat("/no/such/path")
+
+
 # -- Bash: Async execution -------------------------------------------------
 
 
