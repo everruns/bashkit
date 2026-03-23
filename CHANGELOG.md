@@ -6,7 +6,7 @@
 
 ### Highlights
 
-- **First contribution from @achicu!** Fixed `find` with multiple paths silently discarding results when one path is missing ([#781](https://github.com/everruns/bashkit/pull/781))
+- **Community contribution from @achicu**: fixed `find` with multiple paths silently discarding results when one path is missing ([#781](https://github.com/everruns/bashkit/pull/781))
 - **Python/Node binding parity** — both bindings now expose the same API surface ([#785](https://github.com/everruns/bashkit/pull/785))
 - **Live mount/unmount** on running `Bash` instances for dynamic filesystem composition ([#784](https://github.com/everruns/bashkit/pull/784))
 
