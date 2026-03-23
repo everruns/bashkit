@@ -78,6 +78,40 @@ bash = Bash(
 )
 ```
 
+### Direct Filesystem Access
+
+```python
+from bashkit import Bash
+
+bash = Bash()
+fs = bash.fs()
+fs.mkdir("/data", recursive=True)
+fs.write_file("/data/blob.bin", b"\x00\x01hello")
+assert fs.read_file("/data/blob.bin") == b"\x00\x01hello"
+```
+
+### Live Mounts
+
+```python
+from bashkit import Bash, FileSystem
+
+bash = Bash()
+workspace = FileSystem.real("/path/to/workspace", readwrite=True)
+bash.mount("/workspace", workspace)
+
+bash.execute_sync("echo 'hello' > /workspace/demo.txt")
+bash.unmount("/workspace")
+```
+
+`Bash` and `BashTool` also still support constructor-time mounts:
+
+- `mount_text=[("/path", "content")]`
+- `mount_readonly_text=[("/path", "content")]`
+- `mount_real_readonly=["/host/path"]`
+- `mount_real_readonly_at=[("/host/path", "/vfs/path")]`
+- `mount_real_readwrite=["/host/path"]`
+- `mount_real_readwrite_at=[("/host/path", "/vfs/path")]`
+
 ### BashTool — Convenience Wrapper for AI Agents
 
 `BashTool` is a convenience wrapper specifically designed for AI agents. It wraps `Bash` and adds contract metadata (`description`, Markdown `help`, `system_prompt`, JSON schemas) needed by tool-use protocols. Use this when integrating with LangChain, PydanticAI, or similar agent frameworks.
