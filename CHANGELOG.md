@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-03-23
+
+### Highlights
+
+- **Community contribution from @achicu**: fixed `find` with multiple paths silently discarding results when one path is missing ([#781](https://github.com/everruns/bashkit/pull/781))
+- **Python/Node binding parity** — both bindings now expose the same API surface ([#785](https://github.com/everruns/bashkit/pull/785))
+- **Live mount/unmount** on running `Bash` instances for dynamic filesystem composition ([#784](https://github.com/everruns/bashkit/pull/784))
+
+### What's Changed
+
+* fix(examples): exit langchain example to prevent NAPI event loop hang ([#786](https://github.com/everruns/bashkit/pull/786)) by @chaliy
+* feat(bindings): add Python/Node binding parity ([#785](https://github.com/everruns/bashkit/pull/785)) by @chaliy
+* feat(fs): expose live mount/unmount on running Bash instance ([#784](https://github.com/everruns/bashkit/pull/784)) by @chaliy
+* chore: add cargo-vet exemptions for jni-sys 0.3.1, 0.4.1 and jni-sys-macros 0.4.1 ([#783](https://github.com/everruns/bashkit/pull/783)) by @chaliy
+* fix: find with multiple paths no longer discards results on missing path ([#781](https://github.com/everruns/bashkit/pull/781)) by @achicu
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.12...v0.1.13
+
 ## [0.1.12] - 2026-03-21
 
 ### Highlights
