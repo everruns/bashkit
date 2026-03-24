@@ -130,7 +130,7 @@
 mod execute;
 mod toolset;
 
-pub use toolset::{DiscoveryMode, ScriptingToolSet, ScriptingToolSetBuilder};
+pub use toolset::{DiscoverTool, DiscoveryMode, ScriptingToolSet, ScriptingToolSetBuilder};
 
 use crate::{ExecutionLimits, Tool, ToolService};
 use schemars::schema_for;
