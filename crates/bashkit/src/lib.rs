@@ -445,9 +445,9 @@ pub use trace::{
 
 #[cfg(feature = "scripted_tool")]
 pub use scripted_tool::{
-    DiscoveryMode, ScriptedCommandInvocation, ScriptedCommandKind, ScriptedExecutionTrace,
-    ScriptedTool, ScriptedToolBuilder, ScriptingToolSet, ScriptingToolSetBuilder, DiscoverTool,
-    ToolArgs, ToolCallback, ToolDef,
+    DiscoverTool, DiscoveryMode, ScriptedCommandInvocation, ScriptedCommandKind,
+    ScriptedExecutionTrace, ScriptedTool, ScriptedToolBuilder, ScriptingToolSet,
+    ScriptingToolSetBuilder, ToolArgs, ToolCallback, ToolDef,
 };
 
 #[cfg(feature = "http_client")]
