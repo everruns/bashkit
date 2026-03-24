@@ -251,34 +251,44 @@ server.run().await?;
 - Gated behind `scripted_tool` feature flag on `bashkit-cli`
 - Existing `bash` tool unaffected (backward compatible)
 
-### ScriptingToolSet — mode-controlled wrapper
+### ScriptingToolSet — mode-controlled multi-tool wrapper
 
-`ScriptingToolSet` is a higher-level wrapper around `ScriptedTool` that controls
-`system_prompt()` generation based on a `DiscoveryMode`:
+`ScriptingToolSet` wraps `ScriptedTool` and exposes one or two tools via `tools()`
+based on `DiscoveryMode`:
 
-| Mode | system_prompt() | When to use |
-|------|----------------|-------------|
-| `Exclusive` (default) | Full schemas, usage hints | Only tool the LLM has |
-| `WithDiscovery` | Semantic descriptions + discover/help instructions | Alongside other tools, or large tool sets |
+| Mode | `tools()` returns | When to use |
+|------|------------------|-------------|
+| `Exclusive` (default) | 1 tool: `ScriptedTool` with full schemas | Only tool the LLM has |
+| `WithDiscovery` | 2 tools: `ScriptedTool` (compact) + `DiscoverTool` | Alongside other tools, or large tool sets |
 
 ```rust
-// Exclusive mode (default): full schemas in prompt
+// Exclusive mode (default): tools() returns [ScriptedTool]
 let toolset = ScriptingToolSet::builder("api")
     .short_description("My API")
     .tool(ToolDef::new("get_user", "Fetch user").with_schema(...), callback)
     .build();
+let tools = toolset.tools(); // vec![ScriptedTool]
 
-// Discovery mode: semantic-only prompt
+// Discovery mode: tools() returns [ScriptedTool, DiscoverTool]
 let toolset = ScriptingToolSet::builder("api")
     .short_description("My API")
     .tool(ToolDef::new("get_user", "Fetch user").with_category("users"), callback)
     .with_discovery()
     .build();
+let tools = toolset.tools(); // vec![ScriptedTool(compact), DiscoverTool]
+assert_eq!(tools[0].name(), "api");           // script tool
+assert_eq!(tools[1].name(), "api_discover");   // discover tool
 ```
 
-`ScriptingToolSet` implements `Tool` — delegates `execute()` to inner `ScriptedTool`,
-overrides `system_prompt()` based on mode. In discovery mode, the prompt tells the LLM
-to use `discover` and `help` builtins rather than listing full schemas.
+`ScriptingToolSet` does **not** implement `Tool` itself. Instead, call `tools()` to
+get `Vec<Box<dyn Tool>>` and register each with your LLM.
+
+In discovery mode:
+- The **script tool** (`{name}`) has a compact prompt (tool names only, no schemas)
+  and all builtins (tools + help + discover).
+- The **discover tool** (`{name}_discover`) has a prompt focused on `discover`/`help`
+  commands. It shares the same inner `ScriptedTool`, so the LLM can explore schemas
+  before writing scripts.
 
 Builder API mirrors `ScriptedToolBuilder`: `.tool()`, `.env()`, `.limits()`,
 `.short_description()`, plus `.with_discovery()` to switch mode.
@@ -296,7 +306,7 @@ scripted_tool/
 
 Public exports from `lib.rs` (gated by `scripted_tool` feature):
 `ToolDef`, `ToolArgs`, `ToolCallback`, `ScriptedTool`, `ScriptedToolBuilder`,
-`ScriptingToolSet`, `ScriptingToolSetBuilder`, `DiscoveryMode`.
+`ScriptingToolSet`, `ScriptingToolSetBuilder`, `DiscoverTool`, `DiscoveryMode`.
 
 ## Example
 

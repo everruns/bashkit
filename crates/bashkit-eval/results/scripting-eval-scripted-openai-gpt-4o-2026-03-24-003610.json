@@ -1,0 +1,1578 @@
+{
+  "provider": "openai",
+  "model": "gpt-4o",
+  "timestamp": "2026-03-24T00:36:10Z",
+  "max_turns": 10,
+  "baseline": false,
+  "results": [
+    {
+      "task": {
+        "id": "disc-find-by-category",
+        "category": "discovery",
+        "description": "Discover tools by category and fetch weather forecast",
+        "system": null,
+        "prompt": "You need the 5-day weather forecast for New York. First use `discover --category weather` to find the relevant tools. Then use `help` to learn the exact parameter names before calling the forecast tool. Print the forecast summary including each day's conditions.",
+        "tools": [
+          {
+            "name": "get_stock_price",
+            "description": "Get current stock price for a ticker symbol",
+            "schema": {
+              "properties": {
+                "ticker": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "read",
+              "market"
+            ],
+            "category": "finance",
+            "mock": {
+              "param": "ticker",
+              "responses": {
+                "AAPL": "{\"ticker\":\"AAPL\",\"price\":185.50,\"change\":-1.2}"
+              },
+              "default": "{\"error\":\"unknown ticker\"}"
+            }
+          },
+          {
+            "name": "convert_currency",
+            "description": "Convert between currencies",
+            "schema": {
+              "properties": {
+                "amount": {
+                  "type": "number"
+                },
+                "from": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "read",
+              "conversion"
+            ],
+            "category": "finance",
+            "mock": "{\"from\":\"USD\",\"to\":\"EUR\",\"amount\":100,\"result\":92.5}"
+          },
+          {
+            "name": "get_weather",
+            "description": "Get current weather for a city",
+            "schema": {
+              "properties": {
+                "place_name": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "read",
+              "current"
+            ],
+            "category": "weather",
+            "mock": {
+              "param": "place_name",
+              "responses": {
+                "New York": "{\"city\":\"New York\",\"temp_f\":42,\"condition\":\"Partly Cloudy\",\"humidity\":65}",
+                "London": "{\"city\":\"London\",\"temp_f\":38,\"condition\":\"Rainy\",\"humidity\":80}"
+              },
+              "default": "{\"error\":\"city not found\"}"
+            }
+          },
+          {
+            "name": "get_forecast",
+            "description": "Get 5-day weather forecast for a city",
+            "schema": {
+              "properties": {
+                "place_name": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "read",
+              "forecast"
+            ],
+            "category": "weather",
+            "mock": {
+              "param": "place_name",
+              "responses": {
+                "New York": "{\"city\":\"New York\",\"forecast\":[{\"day\":\"Mon\",\"high\":45,\"low\":32,\"condition\":\"Sunny\"},{\"day\":\"Tue\",\"high\":48,\"low\":35,\"condition\":\"Cloudy\"},{\"day\":\"Wed\",\"high\":40,\"low\":28,\"condition\":\"Snow\"},{\"day\":\"Thu\",\"high\":38,\"low\":25,\"condition\":\"Clear\"},{\"day\":\"Fri\",\"high\":42,\"low\":30,\"condition\":\"Partly Cloudy\"}]}"
+              },
+              "default": "{\"error\":\"city not found\"}"
+            }
+          },
+          {
+            "name": "send_email",
+            "description": "Send an email to a recipient",
+            "schema": {
+              "properties": {
+                "body": {
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "write",
+              "email"
+            ],
+            "category": "communication",
+            "mock": "{\"status\":\"sent\",\"message_id\":\"MSG-001\"}"
+          },
+          {
+            "name": "send_sms",
+            "description": "Send an SMS message",
+            "schema": {
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "phone": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "write",
+              "sms"
+            ],
+            "category": "communication",
+            "mock": "{\"status\":\"sent\"}"
+          },
+          {
+            "name": "create_task",
+            "description": "Create a task in the task manager",
+            "schema": {
+              "properties": {
+                "priority": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "write",
+              "tasks"
+            ],
+            "category": "productivity",
+            "mock": "{\"task_id\":\"T-100\",\"status\":\"created\"}"
+          },
+          {
+            "name": "list_tasks",
+            "description": "List tasks from the task manager",
+            "schema": {
+              "properties": {
+                "status": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "read",
+              "tasks"
+            ],
+            "category": "productivity",
+            "mock": "[{\"task_id\":\"T-99\",\"title\":\"Review PR\",\"status\":\"open\"}]"
+          }
+        ],
+        "files": {},
+        "discovery_mode": true,
+        "expectations": [
+          {
+            "check": "stdout_contains:New York",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:Mon",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:Sunny",
+            "weight": 1.0
+          },
+          {
+            "check": "exit_code:0",
+            "weight": 1.0
+          }
+        ]
+      },
+      "trace": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You need the 5-day weather forecast for New York. First use `discover --category weather` to find the relevant tools. Then use `help` to learn the exact parameter names before calling the forecast tool. Print the forecast summary including each day's conditions."
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_oXbrsYzUtGkReu1pnGLVQq9I",
+                "name": "disc-find-by-category_discover",
+                "input": {
+                  "commands": "discover --categories=weather"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_oXbrsYzUtGkReu1pnGLVQq9I",
+                "content": "get_stock_price      Get current stock price for a ticker symbol\nconvert_currency     Convert between currencies\nget_weather          Get current weather for a city\nget_forecast         Get 5-day weather forecast for a city\nsend_email           Send an email to a recipient\nsend_sms             Send an SMS message\ncreate_task          Create a task in the task manager\nlist_tasks           List tasks from the task manager\n",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_rJlcqrQCWFUUQGmVm8CXAdA5",
+                "name": "disc-find-by-category_discover",
+                "input": {
+                  "commands": "help get_forecast"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_rJlcqrQCWFUUQGmVm8CXAdA5",
+                "content": "get_forecast - Get 5-day weather forecast for a city\nUsage: get_forecast --place_name <string>\n",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_1Rw8eftxfGqpY57ZpMLL2khe",
+                "name": "disc-find-by-category",
+                "input": {
+                  "commands": "get_forecast --place_name \"New York\""
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_1Rw8eftxfGqpY57ZpMLL2khe",
+                "content": "{\"city\":\"New York\",\"forecast\":[{\"day\":\"Mon\",\"high\":45,\"low\":32,\"condition\":\"Sunny\"},{\"day\":\"Tue\",\"high\":48,\"low\":35,\"condition\":\"Cloudy\"},{\"day\":\"Wed\",\"high\":40,\"low\":28,\"condition\":\"Snow\"},{\"day\":\"Thu\",\"high\":38,\"low\":25,\"condition\":\"Clear\"},{\"day\":\"Fri\",\"high\":42,\"low\":30,\"condition\":\"Partly Cloudy\"}]}",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Here is the 5-day weather forecast for New York:\n\n- **Monday**: Sunny with a high of 45°F and a low of 32°F.\n- **Tuesday**: Cloudy with a high of 48°F and a low of 35°F.\n- **Wednesday**: Snow with a high of 40°F and a low of 28°F.\n- **Thursday**: Clear skies with a high of 38°F and a low of 25°F.\n- **Friday**: Partly cloudy with a high of 42°F and a low of 30°F."
+              }
+            ]
+          }
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "disc-find-by-category_discover",
+            "input": {
+              "commands": "discover --categories=weather"
+            },
+            "output": "get_stock_price      Get current stock price for a ticker symbol\nconvert_currency     Convert between currencies\nget_weather          Get current weather for a city\nget_forecast         Get 5-day weather forecast for a city\nsend_email           Send an email to a recipient\nsend_sms             Send an SMS message\ncreate_task          Create a task in the task manager\nlist_tasks           List tasks from the task manager\n",
+            "exit_code": 0,
+            "invocations": [
+              {
+                "name": "discover",
+                "kind": "Discover",
+                "args": [
+                  "--categories=weather"
+                ],
+                "exit_code": 0
+              }
+            ]
+          },
+          {
+            "tool_name": "disc-find-by-category_discover",
+            "input": {
+              "commands": "help get_forecast"
+            },
+            "output": "get_forecast - Get 5-day weather forecast for a city\nUsage: get_forecast --place_name <string>\n",
+            "exit_code": 0,
+            "invocations": [
+              {
+                "name": "help",
+                "kind": "Help",
+                "args": [
+                  "get_forecast"
+                ],
+                "exit_code": 0
+              }
+            ]
+          },
+          {
+            "tool_name": "disc-find-by-category",
+            "input": {
+              "commands": "get_forecast --place_name \"New York\""
+            },
+            "output": "{\"city\":\"New York\",\"forecast\":[{\"day\":\"Mon\",\"high\":45,\"low\":32,\"condition\":\"Sunny\"},{\"day\":\"Tue\",\"high\":48,\"low\":35,\"condition\":\"Cloudy\"},{\"day\":\"Wed\",\"high\":40,\"low\":28,\"condition\":\"Snow\"},{\"day\":\"Thu\",\"high\":38,\"low\":25,\"condition\":\"Clear\"},{\"day\":\"Fri\",\"high\":42,\"low\":30,\"condition\":\"Partly Cloudy\"}]}",
+            "exit_code": 0,
+            "invocations": [
+              {
+                "name": "get_forecast",
+                "kind": "Tool",
+                "args": [
+                  "--place_name",
+                  "New York"
+                ],
+                "exit_code": 0
+              }
+            ]
+          }
+        ],
+        "tool_call_count": 3,
+        "turns": 4,
+        "natural_stop": true,
+        "total_input_tokens": 3150,
+        "total_output_tokens": 193,
+        "duration_ms": 8582,
+        "baseline": false,
+        "raw_tool_output_bytes": 824,
+        "tool_output_sent_bytes": 824
+      },
+      "score": {
+        "task_id": "disc-find-by-category",
+        "results": [
+          {
+            "check": "stdout_contains:New York",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:Mon",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:Sunny",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "exit_code:0",
+            "passed": true,
+            "detail": "expected 0, got 0",
+            "weight": 1.0
+          }
+        ],
+        "score": 4.0,
+        "max_score": 4.0
+      }
+    },
+    {
+      "task": {
+        "id": "disc-search-then-use",
+        "category": "discovery",
+        "description": "Search for inventory tool and check stock levels",
+        "system": null,
+        "prompt": "Check the current stock level for product SKU-200. First use `discover --search inventory` to find the inventory tool. Then use `help` to learn the exact parameter names before calling it. Print the product name, SKU, and stock quantity.",
+        "tools": [
+          {
+            "name": "create_order",
+            "description": "Place a new purchase order",
+            "schema": {
+              "properties": {
+                "product_sku": {
+                  "type": "string"
+                },
+                "quantity": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "write"
+            ],
+            "category": "orders",
+            "mock": "{\"order_id\":\"PO-500\",\"status\":\"placed\"}"
+          },
+          {
+            "name": "cancel_order",
+            "description": "Cancel an existing order",
+            "schema": {
+              "properties": {
+                "order_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "write"
+            ],
+            "category": "orders",
+            "mock": "{\"status\":\"cancelled\"}"
+          },
+          {
+            "name": "get_order_status",
+            "description": "Check status of an order",
+            "schema": {
+              "properties": {
+                "order_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "read"
+            ],
+            "category": "orders",
+            "mock": "{\"order_id\":\"PO-500\",\"status\":\"shipped\"}"
+          },
+          {
+            "name": "check_inventory",
+            "description": "Check current inventory stock for a product SKU",
+            "schema": {
+              "properties": {
+                "product_code": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "read",
+              "stock"
+            ],
+            "category": "inventory",
+            "mock": {
+              "param": "product_code",
+              "responses": {
+                "SKU-200": "{\"sku\":\"SKU-200\",\"name\":\"Widget Pro\",\"quantity\":142,\"warehouse\":\"WH-East\"}",
+                "SKU-100": "{\"sku\":\"SKU-100\",\"name\":\"Widget Basic\",\"quantity\":0,\"warehouse\":\"WH-East\"}"
+              },
+              "default": "{\"error\":\"unknown SKU\"}"
+            }
+          },
+          {
+            "name": "update_inventory",
+            "description": "Update inventory count for a product",
+            "schema": {
+              "properties": {
+                "product_code": {
+                  "type": "string"
+                },
+                "quantity": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "write",
+              "stock"
+            ],
+            "category": "inventory",
+            "mock": "{\"status\":\"updated\"}"
+          },
+          {
+            "name": "list_warehouses",
+            "description": "List all warehouse locations",
+            "schema": {
+              "properties": {},
+              "type": "object"
+            },
+            "tags": [
+              "read"
+            ],
+            "category": "inventory",
+            "mock": "[{\"id\":\"WH-East\",\"location\":\"New York\"},{\"id\":\"WH-West\",\"location\":\"Los Angeles\"}]"
+          },
+          {
+            "name": "get_supplier",
+            "description": "Get supplier contact details",
+            "schema": {
+              "properties": {
+                "supplier_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "read"
+            ],
+            "category": "suppliers",
+            "mock": "{\"supplier_id\":\"SUP-1\",\"name\":\"Acme Parts\",\"contact\":\"sales@acme.com\"}"
+          },
+          {
+            "name": "list_suppliers",
+            "description": "List all suppliers",
+            "schema": {
+              "properties": {},
+              "type": "object"
+            },
+            "tags": [
+              "read"
+            ],
+            "category": "suppliers",
+            "mock": "[{\"supplier_id\":\"SUP-1\",\"name\":\"Acme Parts\"},{\"supplier_id\":\"SUP-2\",\"name\":\"Global Widgets\"}]"
+          },
+          {
+            "name": "get_shipment",
+            "description": "Track a shipment",
+            "schema": {
+              "properties": {
+                "tracking_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "read"
+            ],
+            "category": "shipping",
+            "mock": "{\"tracking_id\":\"SH-100\",\"status\":\"in_transit\",\"eta\":\"2026-03-20\"}"
+          }
+        ],
+        "files": {},
+        "discovery_mode": true,
+        "expectations": [
+          {
+            "check": "stdout_contains:142",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:SKU-200",
+            "weight": 1.0
+          },
+          {
+            "check": "exit_code:0",
+            "weight": 1.0
+          }
+        ]
+      },
+      "trace": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Check the current stock level for product SKU-200. First use `discover --search inventory` to find the inventory tool. Then use `help` to learn the exact parameter names before calling it. Print the product name, SKU, and stock quantity."
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_hBkoEKiJpVSj6bAWTzOkpVlO",
+                "name": "disc-search-then-use_discover",
+                "input": {
+                  "commands": "discover --search inventory"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_hBkoEKiJpVSj6bAWTzOkpVlO",
+                "content": "check_inventory      Check current inventory stock for a product SKU\nupdate_inventory     Update inventory count for a product\n",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_rmqhvgCjfZQSt3vRSXTjMqhR",
+                "name": "disc-search-then-use_discover",
+                "input": {
+                  "commands": "help check_inventory"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_rmqhvgCjfZQSt3vRSXTjMqhR",
+                "content": "check_inventory - Check current inventory stock for a product SKU\nUsage: check_inventory --product_code <string>\n",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_viMPHPLwrxJAoQacHqwvggnr",
+                "name": "disc-search-then-use",
+                "input": {
+                  "commands": "check_inventory --product_code SKU-200"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_viMPHPLwrxJAoQacHqwvggnr",
+                "content": "{\"sku\":\"SKU-200\",\"name\":\"Widget Pro\",\"quantity\":142,\"warehouse\":\"WH-East\"}",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "The current stock details are as follows:\n- Product Name: Widget Pro\n- SKU: SKU-200\n- Stock Quantity: 142"
+              }
+            ]
+          }
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "disc-search-then-use_discover",
+            "input": {
+              "commands": "discover --search inventory"
+            },
+            "output": "check_inventory      Check current inventory stock for a product SKU\nupdate_inventory     Update inventory count for a product\n",
+            "exit_code": 0,
+            "invocations": [
+              {
+                "name": "discover",
+                "kind": "Discover",
+                "args": [
+                  "--search",
+                  "inventory"
+                ],
+                "exit_code": 0
+              }
+            ]
+          },
+          {
+            "tool_name": "disc-search-then-use_discover",
+            "input": {
+              "commands": "help check_inventory"
+            },
+            "output": "check_inventory - Check current inventory stock for a product SKU\nUsage: check_inventory --product_code <string>\n",
+            "exit_code": 0,
+            "invocations": [
+              {
+                "name": "help",
+                "kind": "Help",
+                "args": [
+                  "check_inventory"
+                ],
+                "exit_code": 0
+              }
+            ]
+          },
+          {
+            "tool_name": "disc-search-then-use",
+            "input": {
+              "commands": "check_inventory --product_code SKU-200"
+            },
+            "output": "{\"sku\":\"SKU-200\",\"name\":\"Widget Pro\",\"quantity\":142,\"warehouse\":\"WH-East\"}",
+            "exit_code": 0,
+            "invocations": [
+              {
+                "name": "check_inventory",
+                "kind": "Tool",
+                "args": [
+                  "--product_code",
+                  "SKU-200"
+                ],
+                "exit_code": 0
+              }
+            ]
+          }
+        ],
+        "tool_call_count": 3,
+        "turns": 4,
+        "natural_stop": true,
+        "total_input_tokens": 2933,
+        "total_output_tokens": 99,
+        "duration_ms": 4156,
+        "baseline": false,
+        "raw_tool_output_bytes": 314,
+        "tool_output_sent_bytes": 314
+      },
+      "score": {
+        "task_id": "disc-search-then-use",
+        "results": [
+          {
+            "check": "stdout_contains:142",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:SKU-200",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "exit_code:0",
+            "passed": true,
+            "detail": "expected 0, got 0",
+            "weight": 1.0
+          }
+        ],
+        "score": 3.0,
+        "max_score": 3.0
+      }
+    },
+    {
+      "task": {
+        "id": "disc-tag-filter",
+        "category": "discovery",
+        "description": "Find read-only tools and compose multi-step customer profile query",
+        "system": null,
+        "prompt": "Build a customer profile for customer C-100. First use `discover --tag read` to find read-only tools. Then use `help` to learn the exact parameter names before calling the customer and purchase-history tools. Get the customer details and purchase history. Print the customer name and total purchase amount.",
+        "tools": [
+          {
+            "name": "get_customer",
+            "description": "Fetch customer profile by ID",
+            "schema": {
+              "properties": {
+                "account_ref": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "read"
+            ],
+            "category": "customers",
+            "mock": {
+              "param": "account_ref",
+              "responses": {
+                "C-100": "{\"customer_id\":\"C-100\",\"name\":\"Alice Johnson\",\"email\":\"alice@example.com\",\"tier\":\"premium\"}"
+              },
+              "default": "{\"error\":\"customer not found\"}"
+            }
+          },
+          {
+            "name": "update_customer",
+            "description": "Update customer profile fields",
+            "schema": {
+              "properties": {
+                "account_ref": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "write"
+            ],
+            "category": "customers",
+            "mock": "{\"status\":\"updated\"}"
+          },
+          {
+            "name": "delete_customer",
+            "description": "Delete a customer account permanently",
+            "schema": {
+              "properties": {
+                "account_ref": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "write",
+              "dangerous"
+            ],
+            "category": "customers",
+            "mock": "{\"status\":\"deleted\"}"
+          },
+          {
+            "name": "get_purchases",
+            "description": "Get purchase history for a customer",
+            "schema": {
+              "properties": {
+                "account_ref": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "read"
+            ],
+            "category": "purchases",
+            "mock": {
+              "param": "account_ref",
+              "responses": {
+                "C-100": "[{\"purchase_id\":\"P-1\",\"amount\":59.99,\"product\":\"Widget A\",\"date\":\"2026-01-15\"},{\"purchase_id\":\"P-2\",\"amount\":129.50,\"product\":\"Gadget B\",\"date\":\"2026-02-20\"},{\"purchase_id\":\"P-3\",\"amount\":34.00,\"product\":\"Cable C\",\"date\":\"2026-03-01\"}]"
+              },
+              "default": "[]"
+            }
+          },
+          {
+            "name": "create_purchase",
+            "description": "Record a new purchase",
+            "schema": {
+              "properties": {
+                "account_ref": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "number"
+                },
+                "product": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "write"
+            ],
+            "category": "purchases",
+            "mock": "{\"purchase_id\":\"P-99\",\"status\":\"recorded\"}"
+          },
+          {
+            "name": "issue_refund",
+            "description": "Issue a refund for a purchase",
+            "schema": {
+              "properties": {
+                "purchase_id": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "write",
+              "dangerous"
+            ],
+            "category": "purchases",
+            "mock": "{\"refund_id\":\"R-50\",\"status\":\"processed\"}"
+          },
+          {
+            "name": "get_loyalty_points",
+            "description": "Get loyalty points balance",
+            "schema": {
+              "properties": {
+                "account_ref": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "read"
+            ],
+            "category": "loyalty",
+            "mock": {
+              "param": "account_ref",
+              "responses": {
+                "C-100": "{\"customer_id\":\"C-100\",\"points\":2500,\"tier\":\"gold\"}"
+              },
+              "default": "{\"points\":0}"
+            }
+          },
+          {
+            "name": "redeem_points",
+            "description": "Redeem loyalty points for a reward",
+            "schema": {
+              "properties": {
+                "account_ref": {
+                  "type": "string"
+                },
+                "points": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "write"
+            ],
+            "category": "loyalty",
+            "mock": "{\"status\":\"redeemed\",\"reward\":\"$25 credit\"}"
+          }
+        ],
+        "files": {},
+        "discovery_mode": true,
+        "expectations": [
+          {
+            "check": "stdout_contains:Alice Johnson",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:223.49",
+            "weight": 1.0
+          },
+          {
+            "check": "exit_code:0",
+            "weight": 1.0
+          }
+        ]
+      },
+      "trace": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Build a customer profile for customer C-100. First use `discover --tag read` to find read-only tools. Then use `help` to learn the exact parameter names before calling the customer and purchase-history tools. Get the customer details and purchase history. Print the customer name and total purchase amount."
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_2x0yviw7CJhCMroxqFq9lLbu",
+                "name": "disc-tag-filter_discover",
+                "input": {
+                  "commands": "discover --tag read"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_2x0yviw7CJhCMroxqFq9lLbu",
+                "content": "get_customer         Fetch customer profile by ID\nget_purchases        Get purchase history for a customer\nget_loyalty_points   Get loyalty points balance\n",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_xpvMoD10oPc7cAGzLrMo91dT",
+                "name": "disc-tag-filter_discover",
+                "input": {
+                  "commands": "help get_customer"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_xpvMoD10oPc7cAGzLrMo91dT",
+                "content": "get_customer - Fetch customer profile by ID\nUsage: get_customer --account_ref <string>\n",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_HGUXX6NpzdPZz5oixM4n1BO7",
+                "name": "disc-tag-filter_discover",
+                "input": {
+                  "commands": "help get_purchases"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_HGUXX6NpzdPZz5oixM4n1BO7",
+                "content": "get_purchases - Get purchase history for a customer\nUsage: get_purchases --account_ref <string>\n",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_IfN73keujZHAGpNBTxJuen83",
+                "name": "disc-tag-filter",
+                "input": {
+                  "commands": "get_customer --account_ref C-100"
+                }
+              },
+              {
+                "type": "tool_use",
+                "id": "call_dz1J1wdCzGCQsmFv7cgXxdOX",
+                "name": "disc-tag-filter",
+                "input": {
+                  "commands": "get_purchases --account_ref C-100"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_IfN73keujZHAGpNBTxJuen83",
+                "content": "{\"customer_id\":\"C-100\",\"name\":\"Alice Johnson\",\"email\":\"alice@example.com\",\"tier\":\"premium\"}",
+                "is_error": false
+              },
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_dz1J1wdCzGCQsmFv7cgXxdOX",
+                "content": "[{\"purchase_id\":\"P-1\",\"amount\":59.99,\"product\":\"Widget A\",\"date\":\"2026-01-15\"},{\"purchase_id\":\"P-2\",\"amount\":129.50,\"product\":\"Gadget B\",\"date\":\"2026-02-20\"},{\"purchase_id\":\"P-3\",\"amount\":34.00,\"product\":\"Cable C\",\"date\":\"2026-03-01\"}]",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Customer Name: Alice Johnson\n\nTotal Purchase Amount: $223.49"
+              }
+            ]
+          }
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "disc-tag-filter_discover",
+            "input": {
+              "commands": "discover --tag read"
+            },
+            "output": "get_customer         Fetch customer profile by ID\nget_purchases        Get purchase history for a customer\nget_loyalty_points   Get loyalty points balance\n",
+            "exit_code": 0,
+            "invocations": [
+              {
+                "name": "discover",
+                "kind": "Discover",
+                "args": [
+                  "--tag",
+                  "read"
+                ],
+                "exit_code": 0
+              }
+            ]
+          },
+          {
+            "tool_name": "disc-tag-filter_discover",
+            "input": {
+              "commands": "help get_customer"
+            },
+            "output": "get_customer - Fetch customer profile by ID\nUsage: get_customer --account_ref <string>\n",
+            "exit_code": 0,
+            "invocations": [
+              {
+                "name": "help",
+                "kind": "Help",
+                "args": [
+                  "get_customer"
+                ],
+                "exit_code": 0
+              }
+            ]
+          },
+          {
+            "tool_name": "disc-tag-filter_discover",
+            "input": {
+              "commands": "help get_purchases"
+            },
+            "output": "get_purchases - Get purchase history for a customer\nUsage: get_purchases --account_ref <string>\n",
+            "exit_code": 0,
+            "invocations": [
+              {
+                "name": "help",
+                "kind": "Help",
+                "args": [
+                  "get_purchases"
+                ],
+                "exit_code": 0
+              }
+            ]
+          },
+          {
+            "tool_name": "disc-tag-filter",
+            "input": {
+              "commands": "get_customer --account_ref C-100"
+            },
+            "output": "{\"customer_id\":\"C-100\",\"name\":\"Alice Johnson\",\"email\":\"alice@example.com\",\"tier\":\"premium\"}",
+            "exit_code": 0,
+            "invocations": [
+              {
+                "name": "get_customer",
+                "kind": "Tool",
+                "args": [
+                  "--account_ref",
+                  "C-100"
+                ],
+                "exit_code": 0
+              }
+            ]
+          },
+          {
+            "tool_name": "disc-tag-filter",
+            "input": {
+              "commands": "get_purchases --account_ref C-100"
+            },
+            "output": "[{\"purchase_id\":\"P-1\",\"amount\":59.99,\"product\":\"Widget A\",\"date\":\"2026-01-15\"},{\"purchase_id\":\"P-2\",\"amount\":129.50,\"product\":\"Gadget B\",\"date\":\"2026-02-20\"},{\"purchase_id\":\"P-3\",\"amount\":34.00,\"product\":\"Cable C\",\"date\":\"2026-03-01\"}]",
+            "exit_code": 0,
+            "invocations": [
+              {
+                "name": "get_purchases",
+                "kind": "Tool",
+                "args": [
+                  "--account_ref",
+                  "C-100"
+                ],
+                "exit_code": 0
+              }
+            ]
+          }
+        ],
+        "tool_call_count": 5,
+        "turns": 5,
+        "natural_stop": true,
+        "total_input_tokens": 3916,
+        "total_output_tokens": 140,
+        "duration_ms": 3596,
+        "baseline": false,
+        "raw_tool_output_bytes": 664,
+        "tool_output_sent_bytes": 664
+      },
+      "score": {
+        "task_id": "disc-tag-filter",
+        "results": [
+          {
+            "check": "stdout_contains:Alice Johnson",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "stdout_contains:223.49",
+            "passed": false,
+            "detail": "'223.49' not found in any tool output",
+            "weight": 1.0
+          },
+          {
+            "check": "exit_code:0",
+            "passed": true,
+            "detail": "expected 0, got 0",
+            "weight": 1.0
+          }
+        ],
+        "score": 2.0,
+        "max_score": 3.0
+      }
+    },
+    {
+      "task": {
+        "id": "disc-help-json-pipe",
+        "category": "discovery",
+        "description": "Learn tool parameters via help and create a support ticket",
+        "system": null,
+        "prompt": "Create a support ticket with subject 'Login broken' and priority 'high' for customer C-50. First run `help create_ticket --json` to learn the exact parameter names for the create_ticket tool, then call it. Print the ticket ID from the response.",
+        "tools": [
+          {
+            "name": "create_ticket",
+            "description": "Create a new support ticket",
+            "schema": {
+              "properties": {
+                "account_ref": {
+                  "description": "Customer ID",
+                  "type": "string"
+                },
+                "details": {
+                  "description": "Detailed description",
+                  "type": "string"
+                },
+                "severity_level": {
+                  "description": "Priority: low, medium, high, critical",
+                  "type": "string"
+                },
+                "ticket_subject": {
+                  "description": "Ticket subject",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "write"
+            ],
+            "category": "support",
+            "mock": "{\"ticket_id\":\"TK-5001\",\"status\":\"open\",\"created_at\":\"2026-03-14T10:00:00Z\"}"
+          },
+          {
+            "name": "list_tickets",
+            "description": "List support tickets with optional filters",
+            "schema": {
+              "properties": {
+                "account_ref": {
+                  "type": "string"
+                },
+                "severity_level": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "read"
+            ],
+            "category": "support",
+            "mock": "[{\"ticket_id\":\"TK-5000\",\"subject\":\"Billing question\",\"status\":\"open\"}]"
+          },
+          {
+            "name": "close_ticket",
+            "description": "Close a resolved support ticket",
+            "schema": {
+              "properties": {
+                "resolution": {
+                  "type": "string"
+                },
+                "ticket_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "write"
+            ],
+            "category": "support",
+            "mock": "{\"ticket_id\":\"TK-5000\",\"status\":\"closed\"}"
+          },
+          {
+            "name": "get_customer",
+            "description": "Fetch customer details",
+            "schema": {
+              "properties": {
+                "account_ref": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "read"
+            ],
+            "category": "customers",
+            "mock": {
+              "param": "account_ref",
+              "responses": {
+                "C-50": "{\"customer_id\":\"C-50\",\"name\":\"Bob Smith\",\"plan\":\"enterprise\"}"
+              },
+              "default": "{\"error\":\"not found\"}"
+            }
+          },
+          {
+            "name": "list_agents",
+            "description": "List available support agents",
+            "schema": {
+              "properties": {},
+              "type": "object"
+            },
+            "tags": [
+              "read"
+            ],
+            "category": "support",
+            "mock": "[{\"agent_id\":\"A-1\",\"name\":\"Sarah\",\"available\":true}]"
+          },
+          {
+            "name": "assign_ticket",
+            "description": "Assign ticket to an agent",
+            "schema": {
+              "properties": {
+                "agent_id": {
+                  "type": "string"
+                },
+                "ticket_id": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tags": [
+              "write"
+            ],
+            "category": "support",
+            "mock": "{\"status\":\"assigned\"}"
+          }
+        ],
+        "files": {},
+        "discovery_mode": true,
+        "expectations": [
+          {
+            "check": "stdout_contains:TK-5001",
+            "weight": 1.0
+          },
+          {
+            "check": "exit_code:0",
+            "weight": 1.0
+          }
+        ]
+      },
+      "trace": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Create a support ticket with subject 'Login broken' and priority 'high' for customer C-50. First run `help create_ticket --json` to learn the exact parameter names for the create_ticket tool, then call it. Print the ticket ID from the response."
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_I83rTzpZZpigoO6YXWYgkRB1",
+                "name": "disc-help-json-pipe",
+                "input": {
+                  "commands": "help create_ticket --json"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_I83rTzpZZpigoO6YXWYgkRB1",
+                "content": "{\n  \"description\": \"Create a new support ticket\",\n  \"input_schema\": {\n    \"properties\": {\n      \"account_ref\": {\n        \"description\": \"Customer ID\",\n        \"type\": \"string\"\n      },\n      \"details\": {\n        \"description\": \"Detailed description\",\n        \"type\": \"string\"\n      },\n      \"severity_level\": {\n        \"description\": \"Priority: low, medium, high, critical\",\n        \"type\": \"string\"\n      },\n      \"ticket_subject\": {\n        \"description\": \"Ticket subject\",\n        \"type\": \"string\"\n      }\n    },\n    \"type\": \"object\"\n  },\n  \"name\": \"create_ticket\"\n}\n",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call_nr1Xqm9BZZgLWDa69jrzYhHC",
+                "name": "disc-help-json-pipe",
+                "input": {
+                  "commands": "create_ticket --ticket_subject 'Login broken' --severity_level high --account_ref C-50 --details 'Unable to log in'"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool_result",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call_nr1Xqm9BZZgLWDa69jrzYhHC",
+                "content": "{\"ticket_id\":\"TK-5001\",\"status\":\"open\",\"created_at\":\"2026-03-14T10:00:00Z\"}",
+                "is_error": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "The support ticket has been created with the ID: **TK-5001**."
+              }
+            ]
+          }
+        ],
+        "tool_calls": [
+          {
+            "tool_name": "disc-help-json-pipe",
+            "input": {
+              "commands": "help create_ticket --json"
+            },
+            "output": "{\n  \"description\": \"Create a new support ticket\",\n  \"input_schema\": {\n    \"properties\": {\n      \"account_ref\": {\n        \"description\": \"Customer ID\",\n        \"type\": \"string\"\n      },\n      \"details\": {\n        \"description\": \"Detailed description\",\n        \"type\": \"string\"\n      },\n      \"severity_level\": {\n        \"description\": \"Priority: low, medium, high, critical\",\n        \"type\": \"string\"\n      },\n      \"ticket_subject\": {\n        \"description\": \"Ticket subject\",\n        \"type\": \"string\"\n      }\n    },\n    \"type\": \"object\"\n  },\n  \"name\": \"create_ticket\"\n}\n",
+            "exit_code": 0,
+            "invocations": [
+              {
+                "name": "help",
+                "kind": "Help",
+                "args": [
+                  "create_ticket",
+                  "--json"
+                ],
+                "exit_code": 0
+              }
+            ]
+          },
+          {
+            "tool_name": "disc-help-json-pipe",
+            "input": {
+              "commands": "create_ticket --ticket_subject 'Login broken' --severity_level high --account_ref C-50 --details 'Unable to log in'"
+            },
+            "output": "{\"ticket_id\":\"TK-5001\",\"status\":\"open\",\"created_at\":\"2026-03-14T10:00:00Z\"}",
+            "exit_code": 0,
+            "invocations": [
+              {
+                "name": "create_ticket",
+                "kind": "Tool",
+                "args": [
+                  "--ticket_subject",
+                  "Login broken",
+                  "--severity_level",
+                  "high",
+                  "--account_ref",
+                  "C-50",
+                  "--details",
+                  "Unable to log in"
+                ],
+                "exit_code": 0
+              }
+            ]
+          }
+        ],
+        "tool_call_count": 2,
+        "turns": 3,
+        "natural_stop": true,
+        "total_input_tokens": 2254,
+        "total_output_tokens": 84,
+        "duration_ms": 4269,
+        "baseline": false,
+        "raw_tool_output_bytes": 645,
+        "tool_output_sent_bytes": 645
+      },
+      "score": {
+        "task_id": "disc-help-json-pipe",
+        "results": [
+          {
+            "check": "stdout_contains:TK-5001",
+            "passed": true,
+            "detail": "found",
+            "weight": 1.0
+          },
+          {
+            "check": "exit_code:0",
+            "passed": true,
+            "detail": "expected 0, got 0",
+            "weight": 1.0
+          }
+        ],
+        "score": 2.0,
+        "max_score": 2.0
+      }
+    }
+  ],
+  "summary": {
+    "total_tasks": 4,
+    "total_passed": 3,
+    "total_score": 11.0,
+    "total_max_score": 12.0,
+    "overall_rate": 0.9166666666666666,
+    "total_input_tokens": 12253,
+    "total_output_tokens": 516,
+    "total_turns": 16,
+    "total_tool_calls": 13,
+    "tool_calls_ok": 13,
+    "tool_calls_error": 0,
+    "tool_call_success_rate": 1.0,
+    "total_duration_ms": 20603,
+    "avg_turns_per_task": 4.0,
+    "avg_tool_calls_per_task": 3.25,
+    "total_inner_commands": 13,
+    "total_inner_tool_calls": 5,
+    "total_inner_help_calls": 5,
+    "total_inner_discover_calls": 3,
+    "avg_inner_commands_per_task": 3.25,
+    "avg_duration_ms": 5150.75,
+    "total_raw_tool_output_bytes": 2447,
+    "total_tool_output_sent_bytes": 2447,
+    "by_category": {
+      "discovery": {
+        "tasks": 4,
+        "passed": 3,
+        "score": 11.0,
+        "max_score": 12.0,
+        "rate": 0.9166666666666666,
+        "avg_turns": 4.0,
+        "avg_tool_calls": 3.25,
+        "avg_inner_commands": 3.25,
+        "total_raw_output_bytes": 2447
+      }
+    }
+  }
+}

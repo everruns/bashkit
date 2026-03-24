@@ -8,7 +8,7 @@
 
 use anyhow::{Context, Result};
 use bashkit::{
-    ScriptedCommandInvocation, ScriptedCommandKind, ScriptingToolSet, Tool, ToolArgs, ToolDef,
+    ScriptedCommandInvocation, ScriptedCommandKind, ScriptingToolSet, ToolArgs, ToolDef,
     ToolRequest,
 };
 use serde::{Deserialize, Serialize};
@@ -140,15 +140,14 @@ fn build_tool_def(mock_tool: &crate::scripting_dataset::MockToolDef) -> ToolDef 
     def
 }
 
-/// Run scripting eval in **scripted** mode: single ScriptedTool wrapping all mock tools.
-/// Uses ScriptingToolSet with WithDiscovery mode when task sets `discovery_mode: true`.
+/// Run scripting eval in **scripted** mode: tools composed into a ScriptingToolSet.
+/// Uses ScriptingToolSet with WithDiscovery mode when task sets `discovery_mode: true`,
+/// which exposes two tools (script + discover); Exclusive mode exposes one tool.
 pub async fn run_scripted_agent(
     provider: &dyn Provider,
     task: &ScriptingEvalTask,
     max_turns: usize,
 ) -> Result<ScriptingTrace> {
-    // Always use ScriptingToolSet. WithDiscovery hides tool names (LLM must use
-    // discover/help builtins); Exclusive shows full schemas in system prompt.
     let mut builder = ScriptingToolSet::builder(&task.id);
     builder = builder.short_description("Scripted tool eval");
     for mock_tool in &task.tools {
@@ -159,15 +158,25 @@ pub async fn run_scripted_agent(
     if task.discovery_mode {
         builder = builder.with_discovery();
     }
-    let tool = builder.build();
+    let toolset = builder.build();
+    let tools = toolset.tools();
 
-    let tool_def = ToolDefinition {
-        name: tool.name().to_string(),
-        description: tool.description().to_string(),
-        input_schema: tool.input_schema(),
-    };
+    let tool_defs: Vec<ToolDefinition> = tools
+        .iter()
+        .map(|t| ToolDefinition {
+            name: t.name().to_string(),
+            description: t.description().to_string(),
+            input_schema: t.input_schema(),
+        })
+        .collect();
 
-    let system = task.system.clone().unwrap_or_else(|| tool.system_prompt());
+    let system = task.system.clone().unwrap_or_else(|| {
+        tools
+            .iter()
+            .map(|t| t.system_prompt())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    });
 
     let mut messages = vec![Message {
         role: Role::User,
@@ -187,7 +196,7 @@ pub async fn run_scripted_agent(
 
     for _turn in 0..max_turns {
         let response = provider
-            .chat(&messages, std::slice::from_ref(&tool_def), &system)
+            .chat(&messages, &tool_defs, &system)
             .await
             .context("provider chat failed")?;
 
@@ -217,19 +226,25 @@ pub async fn run_scripted_agent(
         }
 
         let mut result_blocks = Vec::new();
-        for (id, _name, input) in &tool_uses {
+        for (id, call_name, input) in &tool_uses {
             let commands = input["commands"]
                 .as_str()
                 .or_else(|| input["script"].as_str())
                 .unwrap_or("");
 
-            let resp = tool
+            // Route to the matching tool by name
+            let matched_tool = tools
+                .iter()
+                .find(|t| t.name() == call_name.as_str())
+                .unwrap_or(&tools[0]);
+
+            let resp = matched_tool
                 .execute(ToolRequest {
                     commands: commands.to_string(),
                     timeout_ms: None,
                 })
                 .await;
-            let invocations = tool
+            let invocations = toolset
                 .take_last_execution_trace()
                 .map(|trace| trace.invocations)
                 .unwrap_or_default();
@@ -241,7 +256,7 @@ pub async fn run_scripted_agent(
             tool_output_sent_bytes += content.len();
 
             all_tool_calls.push(ScriptingToolCall {
-                tool_name: tool.name().to_string(),
+                tool_name: call_name.to_string(),
                 input: (*input).clone(),
                 output: resp.stdout,
                 exit_code: resp.exit_code,

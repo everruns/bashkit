@@ -1,8 +1,9 @@
 // ScriptingToolSet: higher-level wrapper around ScriptedTool that controls
-// system_prompt generation based on DiscoveryMode.
+// how tools are exposed based on DiscoveryMode.
 //
-// - Exclusive (default): full schemas in prompt, LLM knows everything upfront.
-// - WithDiscovery: semantic descriptions only, LLM uses discover/help builtins.
+// - Exclusive (default): returns one ScriptedTool with full schemas in prompt.
+// - WithDiscovery: returns two tools — ScriptedTool (compact prompt) +
+//   DiscoverTool (discover/help only).
 
 use super::{RegisteredTool, ScriptedExecutionTrace, ScriptedTool, ToolArgs, ToolDef};
 use crate::ExecutionLimits;
@@ -15,14 +16,124 @@ use std::sync::Arc;
 // DiscoveryMode
 // ============================================================================
 
-/// Controls how system_prompt() exposes tool information to the LLM.
+/// Controls how [`ScriptingToolSet::tools`] exposes tool information to the LLM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DiscoveryMode {
-    /// Full schemas in system_prompt. LLM sees all tool names, params, types.
+    /// Returns one tool with full schemas in system_prompt.
     #[default]
     Exclusive,
-    /// Semantic descriptions only. LLM uses `discover` and `help` builtins.
+    /// Returns two tools: a compact ScriptedTool + a DiscoverTool for
+    /// runtime schema discovery via `discover` and `help` builtins.
     WithDiscovery,
+}
+
+// ============================================================================
+// DiscoverTool — discovery-only tool for WithDiscovery mode
+// ============================================================================
+
+/// A [`Tool`] that exposes only `discover` and `help` builtins for runtime
+/// schema discovery. Returned by [`ScriptingToolSet::tools`] in
+/// [`DiscoveryMode::WithDiscovery`] mode alongside the main script tool.
+///
+/// The LLM uses this tool to explore available commands before writing
+/// scripts for the main tool.
+///
+/// ```rust
+/// use bashkit::{ScriptingToolSet, ToolArgs, ToolDef, Tool};
+///
+/// # tokio_test::block_on(async {
+/// let toolset = ScriptingToolSet::builder("api")
+///     .tool(
+///         ToolDef::new("greet", "Greet someone").with_category("social"),
+///         |_args: &ToolArgs| Ok("hello\n".to_string()),
+///     )
+///     .with_discovery()
+///     .build();
+///
+/// let tools = toolset.tools();
+/// assert_eq!(tools.len(), 2);
+///
+/// // Second tool is the DiscoverTool
+/// let discover = &tools[1];
+/// assert!(discover.name().ends_with("_discover"));
+/// # });
+/// ```
+pub struct DiscoverTool {
+    name: String,
+    locale: String,
+    display_name: String,
+    short_desc: String,
+    inner: ScriptedTool,
+}
+
+#[async_trait]
+impl Tool for DiscoverTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    fn short_description(&self) -> &str {
+        &self.short_desc
+    }
+
+    fn description(&self) -> &str {
+        &self.short_desc
+    }
+
+    fn help(&self) -> String {
+        format!(
+            "# {}\n\nDiscover available tool commands.\n\n## Commands\n\n- `discover --categories` — list categories\n- `discover --category <name>` — list tools in category\n- `discover --tag <tag>` — filter by tag\n- `discover --search <keyword>` — search by name/description\n- `help --list` — list all tools\n- `help <tool>` — human-readable usage\n- `help <tool> --json` — machine-readable schema\n\nAll commands support `--json` for structured output.\n",
+            self.display_name
+        )
+    }
+
+    fn system_prompt(&self) -> String {
+        format!(
+            "{}: discover available tool commands. Use `discover --categories`, `discover --search <keyword>`, `help <tool>`, `help <tool> --json`.",
+            self.name
+        )
+    }
+
+    fn locale(&self) -> &str {
+        &self.locale
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        let schema = schema_for!(ToolRequest);
+        serde_json::to_value(schema).unwrap_or_default()
+    }
+
+    fn output_schema(&self) -> serde_json::Value {
+        let schema = schema_for!(ToolResponse);
+        serde_json::to_value(schema).unwrap_or_default()
+    }
+
+    fn version(&self) -> &str {
+        VERSION
+    }
+
+    fn execution(
+        &self,
+        args: serde_json::Value,
+    ) -> Result<crate::tool::ToolExecution, crate::tool::ToolError> {
+        self.inner.execution(args)
+    }
+
+    async fn execute(&self, req: ToolRequest) -> ToolResponse {
+        self.inner.execute(req).await
+    }
+
+    async fn execute_with_status(
+        &self,
+        req: ToolRequest,
+        status_callback: Box<dyn FnMut(ToolStatus) + Send>,
+    ) -> ToolResponse {
+        self.inner.execute_with_status(req, status_callback).await
+    }
 }
 
 // ============================================================================
@@ -102,7 +213,7 @@ impl ScriptingToolSetBuilder {
         self
     }
 
-    /// Switch to discovery mode: semantic-only prompt, LLM uses discover/help.
+    /// Switch to discovery mode: returns two tools from [`ScriptingToolSet::tools`].
     pub fn with_discovery(mut self) -> Self {
         self.mode = DiscoveryMode::WithDiscovery;
         self
@@ -139,8 +250,6 @@ impl ScriptingToolSetBuilder {
         ScriptingToolSet {
             name: self.name.clone(),
             locale: self.locale.clone(),
-            display_name: self.name.clone(),
-            short_desc,
             inner: builder.build(),
             mode: self.mode,
         }
@@ -151,23 +260,23 @@ impl ScriptingToolSetBuilder {
 // ScriptingToolSet
 // ============================================================================
 
-/// Higher-level wrapper around [`ScriptedTool`] with mode-controlled prompts.
+/// Higher-level wrapper around [`ScriptedTool`] with mode-controlled tool exposure.
 ///
-/// Two modes control how `system_prompt()` exposes tools:
+/// Use [`ScriptingToolSet::tools`] to get the tools to register with your LLM:
 ///
-/// - **Exclusive** (default): Full tool schemas in the prompt. Best when this is
-///   the only tool the LLM has — it knows everything upfront.
+/// - **Exclusive** (default): Returns one tool — a [`ScriptedTool`] with full
+///   schemas in its system prompt.
 ///
-/// - **WithDiscovery**: Semantic descriptions only. The prompt tells the LLM to
-///   use `discover` and `help` builtins to find tools and their schemas. Best when
-///   this tool is alongside other discovery tools, or when the tool set is large.
+/// - **WithDiscovery**: Returns two tools — a [`ScriptedTool`] with compact
+///   prompt (no schemas) + a [`DiscoverTool`] for runtime schema discovery
+///   via `discover` and `help` builtins.
 ///
 /// ```rust
 /// use bashkit::{ScriptingToolSet, ToolArgs, ToolDef, Tool, ToolRequest};
 ///
 /// # tokio_test::block_on(async {
-/// // Exclusive mode (default): full schemas in prompt
-/// let mut toolset = ScriptingToolSet::builder("api")
+/// // Exclusive mode (default): one tool with full schemas
+/// let toolset = ScriptingToolSet::builder("api")
 ///     .tool(
 ///         ToolDef::new("greet", "Greet someone")
 ///             .with_schema(serde_json::json!({
@@ -178,11 +287,11 @@ impl ScriptingToolSetBuilder {
 ///     )
 ///     .build();
 ///
-/// let prompt = toolset.system_prompt();
-/// assert!(prompt.contains("greet"));
-/// assert!(prompt.contains("--name <string>"));
+/// let tools = toolset.tools();
+/// assert_eq!(tools.len(), 1);
+/// assert!(tools[0].system_prompt().contains("--name <string>"));
 ///
-/// let resp = toolset.execute(ToolRequest {
+/// let resp = tools[0].execute(ToolRequest {
 ///     commands: "greet --name Alice".into(),
 ///     timeout_ms: None,
 /// }).await;
@@ -193,7 +302,7 @@ impl ScriptingToolSetBuilder {
 /// ```rust
 /// use bashkit::{ScriptingToolSet, ToolArgs, ToolDef, Tool};
 ///
-/// // Discovery mode: semantic-only prompt
+/// // Discovery mode: two tools
 /// let toolset = ScriptingToolSet::builder("api")
 ///     .tool(
 ///         ToolDef::new("greet", "Greet someone"),
@@ -202,15 +311,14 @@ impl ScriptingToolSetBuilder {
 ///     .with_discovery()
 ///     .build();
 ///
-/// let prompt = toolset.system_prompt();
-/// assert!(prompt.contains("discover"));
-/// assert!(!prompt.contains("Usage:"));
+/// let tools = toolset.tools();
+/// assert_eq!(tools.len(), 2);
+/// assert_eq!(tools[0].name(), "api");
+/// assert_eq!(tools[1].name(), "api_discover");
 /// ```
 pub struct ScriptingToolSet {
     name: String,
     locale: String,
-    display_name: String,
-    short_desc: String,
     inner: ScriptedTool,
     mode: DiscoveryMode,
 }
@@ -231,79 +339,27 @@ impl ScriptingToolSet {
         self.inner.take_last_execution_trace()
     }
 
-    /// Build discovery-mode system prompt: semantic descriptions + discover/help instructions.
-    fn build_discovery_prompt(&self) -> String {
-        format!(
-            "{}: run bash scripts that orchestrate tool commands. Use `discover --categories`, `discover --search <keyword>`, `help <tool>`, and `help <tool> --json` for runtime discovery. {}",
-            self.name, self.short_desc
-        )
-    }
-}
-
-#[async_trait]
-impl Tool for ScriptingToolSet {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn display_name(&self) -> &str {
-        &self.display_name
-    }
-
-    fn short_description(&self) -> &str {
-        &self.short_desc
-    }
-
-    fn description(&self) -> &str {
-        self.inner.description()
-    }
-
-    fn help(&self) -> String {
-        self.inner.help()
-    }
-
-    fn system_prompt(&self) -> String {
+    /// Return the tools to register with the LLM.
+    ///
+    /// - **Exclusive**: `[ScriptedTool]` — one tool with full schemas in prompt.
+    /// - **WithDiscovery**: `[ScriptedTool, DiscoverTool]` — script tool with
+    ///   compact prompt + discover tool for runtime schema exploration.
+    pub fn tools(&self) -> Vec<Box<dyn Tool>> {
         match self.mode {
-            DiscoveryMode::Exclusive => self.inner.system_prompt(),
-            DiscoveryMode::WithDiscovery => self.build_discovery_prompt(),
+            DiscoveryMode::Exclusive => {
+                vec![Box::new(self.inner.clone())]
+            }
+            DiscoveryMode::WithDiscovery => {
+                let discover = DiscoverTool {
+                    name: format!("{}_discover", self.name),
+                    locale: self.locale.clone(),
+                    display_name: format!("{} Discover", self.name),
+                    short_desc: format!("Discover available {} commands", self.name),
+                    inner: self.inner.clone(),
+                };
+                vec![Box::new(self.inner.clone()), Box::new(discover)]
+            }
         }
-    }
-
-    fn locale(&self) -> &str {
-        &self.locale
-    }
-
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schema_for!(ToolRequest);
-        serde_json::to_value(schema).unwrap_or_default()
-    }
-
-    fn output_schema(&self) -> serde_json::Value {
-        let schema = schema_for!(ToolResponse);
-        serde_json::to_value(schema).unwrap_or_default()
-    }
-
-    fn version(&self) -> &str {
-        VERSION
-    }
-
-    fn execution(
-        &self,
-        args: serde_json::Value,
-    ) -> Result<crate::tool::ToolExecution, crate::tool::ToolError> {
-        self.inner.execution(args)
-    }
-
-    async fn execute(&self, req: ToolRequest) -> ToolResponse {
-        self.inner.execute(req).await
-    }
-
-    async fn execute_with_status(
-        &self,
-        req: ToolRequest,
-        status_callback: Box<dyn FnMut(ToolStatus) + Send>,
-    ) -> ToolResponse {
-        self.inner.execute_with_status(req, status_callback).await
     }
 }
 
@@ -364,12 +420,21 @@ mod tests {
         assert_eq!(toolset.discovery_mode(), DiscoveryMode::WithDiscovery);
     }
 
-    // -- Exclusive mode prompt --
+    // -- Exclusive mode: tools() returns 1 --
 
     #[test]
-    fn test_exclusive_mode_has_full_schemas() {
+    fn test_exclusive_returns_one_tool() {
         let toolset = make_tools().build();
-        let sp = toolset.system_prompt();
+        let tools = toolset.tools();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name(), "test_api");
+    }
+
+    #[test]
+    fn test_exclusive_tool_has_full_schemas() {
+        let toolset = make_tools().build();
+        let tools = toolset.tools();
+        let sp = tools[0].system_prompt();
         assert!(sp.contains("get_user [--id <integer>]"), "prompt: {sp}");
         assert!(
             sp.contains("list_orders [--user_id <integer>]"),
@@ -378,29 +443,41 @@ mod tests {
     }
 
     #[test]
-    fn test_exclusive_mode_no_discover_instructions() {
+    fn test_exclusive_tool_no_discover_instructions() {
         let toolset = make_tools().build();
-        let sp = toolset.system_prompt();
+        let tools = toolset.tools();
+        let sp = tools[0].system_prompt();
         assert!(!sp.contains("discover --categories"), "prompt: {sp}");
     }
 
-    // -- Discovery mode prompt --
+    // -- Discovery mode: tools() returns 2 --
 
     #[test]
-    fn test_discovery_mode_semantic_only() {
+    fn test_discovery_returns_two_tools() {
         let toolset = make_tools().with_discovery().build();
-        let sp = toolset.system_prompt();
-        assert!(sp.contains("discover --categories"), "prompt: {sp}");
-        assert!(sp.contains("discover --search <keyword>"), "prompt: {sp}");
-        assert!(sp.contains("help <tool>"), "prompt: {sp}");
+        let tools = toolset.tools();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].name(), "test_api");
+        assert_eq!(tools[1].name(), "test_api_discover");
     }
 
     #[test]
-    fn test_discovery_mode_no_usage_lines() {
+    fn test_discovery_script_tool_compact_prompt() {
         let toolset = make_tools().with_discovery().build();
-        let sp = toolset.system_prompt();
+        let tools = toolset.tools();
+        let sp = tools[0].system_prompt();
+        // Compact: no schema flags
         assert!(!sp.contains("--id <integer>"), "prompt: {sp}");
         assert!(!sp.contains("--user_id <integer>"), "prompt: {sp}");
+    }
+
+    #[test]
+    fn test_discovery_discover_tool_prompt() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let sp = tools[1].system_prompt();
+        assert!(sp.contains("discover"), "prompt: {sp}");
+        assert!(sp.contains("help"), "prompt: {sp}");
     }
 
     // -- Name / description --
@@ -408,8 +485,9 @@ mod tests {
     #[test]
     fn test_name_and_short_description() {
         let toolset = make_tools().build();
-        assert_eq!(toolset.name(), "test_api");
-        assert_eq!(toolset.short_description(), "Test API");
+        let tools = toolset.tools();
+        assert_eq!(tools[0].name(), "test_api");
+        assert_eq!(tools[0].short_description(), "Test API");
     }
 
     #[test]
@@ -419,15 +497,17 @@ mod tests {
                 Ok("ok\n".into())
             })
             .build();
-        assert_eq!(toolset.short_description(), "ScriptingToolSet: mytools");
+        let tools = toolset.tools();
+        assert_eq!(tools[0].short_description(), "ScriptingToolSet: mytools");
     }
 
-    // -- Execution delegates to inner --
+    // -- Execution via tools() --
 
     #[tokio::test]
-    async fn test_execute_delegates_to_inner() {
+    async fn test_execute_via_exclusive_tool() {
         let toolset = make_tools().build();
-        let resp = toolset
+        let tools = toolset.tools();
+        let resp = tools[0]
             .execute(ToolRequest {
                 commands: "get_user --id 42 | jq -r '.name'".into(),
                 timeout_ms: None,
@@ -438,9 +518,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_discovery_mode_also_works() {
+    async fn test_execute_via_discovery_script_tool() {
         let toolset = make_tools().with_discovery().build();
-        let resp = toolset
+        let tools = toolset.tools();
+        let resp = tools[0]
             .execute(ToolRequest {
                 commands: "get_user --id 1".into(),
                 timeout_ms: None,
@@ -451,14 +532,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_with_status_delegates() {
+    async fn test_execute_via_discover_tool() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let resp = tools[1]
+            .execute(ToolRequest {
+                commands: "discover --categories".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("users"));
+        assert!(resp.stdout.contains("orders"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_tool_help_builtin() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let resp = tools[1]
+            .execute(ToolRequest {
+                commands: "help get_user".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("get_user"));
+        assert!(resp.stdout.contains("--id"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_status_via_tool() {
         use std::sync::{Arc, Mutex};
 
         let toolset = make_tools().build();
+        let tools = toolset.tools();
         let phases = Arc::new(Mutex::new(Vec::new()));
         let phases_clone = phases.clone();
 
-        let resp = toolset
+        let resp = tools[0]
             .execute_with_status(
                 ToolRequest {
                     commands: "get_user --id 1".into(),
@@ -484,21 +596,8 @@ mod tests {
     #[tokio::test]
     async fn test_help_builtin_works_in_exclusive() {
         let toolset = make_tools().build();
-        let resp = toolset
-            .execute(ToolRequest {
-                commands: "help get_user".into(),
-                timeout_ms: None,
-            })
-            .await;
-        assert_eq!(resp.exit_code, 0);
-        assert!(resp.stdout.contains("get_user"));
-        assert!(resp.stdout.contains("--id"));
-    }
-
-    #[tokio::test]
-    async fn test_help_builtin_works_in_discovery() {
-        let toolset = make_tools().with_discovery().build();
-        let resp = toolset
+        let tools = toolset.tools();
+        let resp = tools[0]
             .execute(ToolRequest {
                 commands: "help get_user".into(),
                 timeout_ms: None,
@@ -512,21 +611,8 @@ mod tests {
     #[tokio::test]
     async fn test_discover_builtin_works_in_exclusive() {
         let toolset = make_tools().build();
-        let resp = toolset
-            .execute(ToolRequest {
-                commands: "discover --categories".into(),
-                timeout_ms: None,
-            })
-            .await;
-        assert_eq!(resp.exit_code, 0);
-        assert!(resp.stdout.contains("users"));
-        assert!(resp.stdout.contains("orders"));
-    }
-
-    #[tokio::test]
-    async fn test_discover_builtin_works_in_discovery() {
-        let toolset = make_tools().with_discovery().build();
-        let resp = toolset
+        let tools = toolset.tools();
+        let resp = tools[0]
             .execute(ToolRequest {
                 commands: "discover --categories".into(),
                 timeout_ms: None,
@@ -548,7 +634,8 @@ mod tests {
             })
             .build();
 
-        let resp = toolset
+        let tools = toolset.tools();
+        let resp = tools[0]
             .execute(ToolRequest {
                 commands: "echo $MY_VAR".into(),
                 timeout_ms: None,
@@ -563,15 +650,25 @@ mod tests {
     #[test]
     fn test_version() {
         let toolset = make_tools().build();
-        assert_eq!(toolset.version(), VERSION);
+        let tools = toolset.tools();
+        assert_eq!(tools[0].version(), VERSION);
     }
 
     #[test]
     fn test_schemas() {
         let toolset = make_tools().build();
-        let input = toolset.input_schema();
+        let tools = toolset.tools();
+        let input = tools[0].input_schema();
         assert!(input["properties"]["commands"].is_object());
-        let output = toolset.output_schema();
+        let output = tools[0].output_schema();
         assert!(output["properties"]["stdout"].is_object());
+    }
+
+    #[test]
+    fn test_discover_tool_schemas() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let input = tools[1].input_schema();
+        assert!(input["properties"]["commands"].is_object());
     }
 }
