@@ -41,6 +41,39 @@ fn extract_key(line: &str, delimiter: Option<char>, key_field: usize) -> String 
     }
 }
 
+/// Extract leading numeric prefix from a string for `sort -n`.
+/// Real coreutils `sort -n` parses the leading numeric portion (optional sign,
+/// digits, optional decimal point and digits) and treats the rest as non-numeric.
+/// Non-numeric strings have value 0.
+fn extract_numeric_prefix(s: &str) -> f64 {
+    let s = s.trim_start();
+    if s.is_empty() {
+        return 0.0;
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let mut end = 0;
+    // Optional sign
+    if end < chars.len() && (chars[end] == '+' || chars[end] == '-') {
+        end += 1;
+    }
+    // Digits
+    while end < chars.len() && chars[end].is_ascii_digit() {
+        end += 1;
+    }
+    // Optional decimal point + digits
+    if end < chars.len() && chars[end] == '.' {
+        end += 1;
+        while end < chars.len() && chars[end].is_ascii_digit() {
+            end += 1;
+        }
+    }
+    if end == 0 || (end == 1 && (chars[0] == '+' || chars[0] == '-')) {
+        return 0.0;
+    }
+    let num_str: String = chars[..end].iter().collect();
+    num_str.parse().unwrap_or(0.0)
+}
+
 /// Parse human-numeric value (e.g., "10K" → 10_000, "5M" → 5_000_000)
 fn parse_human_numeric(s: &str) -> f64 {
     let s = s.trim();
@@ -289,21 +322,26 @@ impl Builtin for Sort {
                 let mb = month_ordinal(&kb);
                 ma.cmp(&mb)
             } else if numeric {
-                let na: f64 = ka
-                    .split_whitespace()
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0.0);
-                let nb: f64 = kb
-                    .split_whitespace()
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0.0);
-                na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
+                let na = extract_numeric_prefix(&ka);
+                let nb = extract_numeric_prefix(&kb);
+                match na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal) {
+                    std::cmp::Ordering::Equal => a.cmp(b),
+                    ord => ord,
+                }
             } else if fold_case {
-                ka.to_lowercase().cmp(&kb.to_lowercase())
+                let ord = ka.to_lowercase().cmp(&kb.to_lowercase());
+                if ord == std::cmp::Ordering::Equal && key_field.is_some() {
+                    a.cmp(b)
+                } else {
+                    ord
+                }
             } else {
-                ka.cmp(&kb)
+                let ord = ka.cmp(&kb);
+                if ord == std::cmp::Ordering::Equal && key_field.is_some() {
+                    a.cmp(b)
+                } else {
+                    ord
+                }
             }
         };
 
