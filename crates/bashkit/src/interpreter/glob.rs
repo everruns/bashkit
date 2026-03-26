@@ -244,6 +244,9 @@ impl Interpreter {
                     }
                 }
                 (Some('['), Some(v)) => {
+                    // Save state before consuming '[' — if bracket expr is
+                    // invalid (e.g. "[]"), we fall back to literal '[' match.
+                    let saved_pattern = pattern_chars.clone();
                     pattern_chars.next(); // consume '['
                     let match_char = if nocase { v.to_ascii_lowercase() } else { v };
                     if let Some(matched) =
@@ -255,8 +258,20 @@ impl Interpreter {
                             return false;
                         }
                     } else {
-                        // Invalid bracket expression, treat '[' as literal
-                        return false;
+                        // Invalid bracket expression — treat '[' as literal
+                        pattern_chars = saved_pattern;
+                        pattern_chars.next(); // consume '[' as literal
+                        let p = '[';
+                        let match_ok = if nocase {
+                            p.eq_ignore_ascii_case(&v)
+                        } else {
+                            p == v
+                        };
+                        if match_ok {
+                            value_chars.next();
+                        } else {
+                            return false;
+                        }
                     }
                 }
                 (Some('['), None) => return false,
