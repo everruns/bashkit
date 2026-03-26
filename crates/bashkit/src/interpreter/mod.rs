@@ -5897,11 +5897,12 @@ impl Interpreter {
                     result.push_str(&self.expand_array_access_part(name, index));
                 }
                 WordPart::ArrayIndices(name) => {
-                    if let Some(arr) = self.assoc_arrays.get(name) {
+                    let resolved = self.resolve_nameref(name);
+                    if let Some(arr) = self.assoc_arrays.get(resolved) {
                         let mut keys: Vec<_> = arr.keys().cloned().collect();
                         keys.sort();
                         result.push_str(&keys.join(" "));
-                    } else if let Some(arr) = self.arrays.get(name) {
+                    } else if let Some(arr) = self.arrays.get(resolved) {
                         let mut indices: Vec<_> = arr.keys().collect();
                         indices.sort();
                         let index_strs: Vec<String> =
