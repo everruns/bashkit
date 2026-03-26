@@ -36,6 +36,7 @@ pub struct Set;
 /// Map long option names to their SHOPT_* variable names
 fn option_name_to_var(name: &str) -> Option<&'static str> {
     match name {
+        "allexport" => Some("SHOPT_a"),
         "errexit" => Some("SHOPT_e"),
         "nounset" => Some("SHOPT_u"),
         "xtrace" => Some("SHOPT_x"),
@@ -50,6 +51,7 @@ fn option_name_to_var(name: &str) -> Option<&'static str> {
 
 /// All known `set -o` options with their variable names, in display order.
 const SET_O_OPTIONS: &[(&str, &str)] = &[
+    ("allexport", "SHOPT_a"),
     ("errexit", "SHOPT_e"),
     ("noglob", "SHOPT_f"),
     ("noclobber", "SHOPT_C"),
