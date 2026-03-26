@@ -55,11 +55,12 @@ impl Builtin for Head {
                 match ctx.fs.read_file(&path).await {
                     Ok(content) => {
                         if byte_mode {
-                            // Byte mode: take first N bytes, lossy convert
+                            // Byte mode: take first N bytes, preserve raw byte values
                             let bytes = &content[..content.len().min(count)];
-                            output.push_str(&String::from_utf8_lossy(bytes));
+                            let s: String = bytes.iter().map(|&b| b as char).collect();
+                            output.push_str(&s);
                         } else {
-                            let text = String::from_utf8_lossy(&content);
+                            let text: String = content.iter().map(|&b| b as char).collect();
                             output.push_str(&take_first_lines(&text, count));
                         }
                     }
