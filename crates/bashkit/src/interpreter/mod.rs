@@ -3168,7 +3168,9 @@ impl Interpreter {
                         expanded_values.push((value, has_command_subst));
                     }
 
-                    let arr = self.arrays.entry(assignment.name.clone()).or_default();
+                    // Resolve nameref for array assignments
+                    let arr_name = self.resolve_nameref(&assignment.name).to_string();
+                    let arr = self.arrays.entry(arr_name).or_default();
                     let mut idx = if assignment.append {
                         arr.keys().max().map(|k| k + 1).unwrap_or(0)
                     } else {
@@ -5921,9 +5923,10 @@ impl Interpreter {
                     result.push_str(&names.join(" "));
                 }
                 WordPart::ArrayLength(name) => {
-                    if let Some(arr) = self.assoc_arrays.get(name) {
+                    let resolved = self.resolve_nameref(name);
+                    if let Some(arr) = self.assoc_arrays.get(resolved) {
                         result.push_str(&arr.len().to_string());
-                    } else if let Some(arr) = self.arrays.get(name) {
+                    } else if let Some(arr) = self.arrays.get(resolved) {
                         result.push_str(&arr.len().to_string());
                     } else {
                         result.push('0');
@@ -6028,12 +6031,13 @@ impl Interpreter {
             }
             // "${!arr[@]}" - array keys/indices as separate fields
             if let WordPart::ArrayIndices(name) = &word.parts[0] {
-                if let Some(arr) = self.assoc_arrays.get(name) {
+                let resolved = self.resolve_nameref(name);
+                if let Some(arr) = self.assoc_arrays.get(resolved) {
                     let mut keys: Vec<_> = arr.keys().cloned().collect();
                     keys.sort();
                     return Ok(keys);
                 }
-                if let Some(arr) = self.arrays.get(name) {
+                if let Some(arr) = self.arrays.get(resolved) {
                     let mut indices: Vec<_> = arr.keys().collect();
                     indices.sort();
                     return Ok(indices.iter().map(|i| i.to_string()).collect());
