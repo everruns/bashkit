@@ -4013,7 +4013,9 @@ impl Interpreter {
         let saved_aliases = self.aliases.clone();
         let saved_coproc = self.coproc_buffers.clone();
 
-        // Child only sees exported variables (env), not all shell variables
+        // Child only sees exported variables (env), not all shell variables.
+        // Reset last_exit_code so $? starts at 0 (matches real bash subprocess).
+        // Clear nounset_error to prevent parent expansion errors from leaking.
         self.variables = self.env.clone();
         self.arrays.clear();
         self.assoc_arrays.clear();
@@ -4021,6 +4023,8 @@ impl Interpreter {
         self.traps.clear();
         self.aliases.clear();
         self.coproc_buffers.clear();
+        self.last_exit_code = 0;
+        self.nounset_error = None;
 
         // Push call frame: $0 = script name, $1..N = args
         self.call_stack = vec![CallFrame {

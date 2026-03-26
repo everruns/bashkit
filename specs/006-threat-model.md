@@ -1207,6 +1207,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-ISO-021 | EXIT trap leaks across `exec()` calls | Cross-invocation interference — trap from exec N fires in exec N+1 | Reset traps in `reset_for_execution()` |
 | TM-ISO-022 | `$?` leaks across `exec()` calls | State pollution — exit code from previous exec visible to next exec | Reset `last_exit_code` in `reset_for_execution()` |
 | TM-ISO-023 | `set -e` leaks across `exec()` calls | Unexpected abort — shell options from previous exec affect next exec | Reset shell options in `reset_for_execution()` |
+| TM-ISO-024 | `$?` leaks into VFS subprocess | Parent `last_exit_code` visible inside VFS script subprocess, causing false `set -e` failures | Reset `last_exit_code = 0` and `nounset_error = None` in `execute_script_content` subprocess isolation |
 | TM-INT-007 | `/dev/urandom` empty with `head -c` | Weak randomness — `head -c 16 /dev/urandom` returns empty string | Fix virtual device pipe handling in head builtin |
 | TM-DOS-044 | Nested `$()` stack overflow (regression) | Process crash (SIGABRT) at depth ~50 despite #492 fix | Interpreter execution path may need separate depth tracking from lexer fix |
 
