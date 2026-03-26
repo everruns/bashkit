@@ -5805,23 +5805,18 @@ impl Interpreter {
                         self.last_exit_code = cmd_result.exit_code;
                     }
                     // Fire EXIT trap set inside the command substitution
-                    if let Some(trap_cmd) = self.traps.get("EXIT").cloned() {
-                        let parent_had_same = saved_traps.get("EXIT") == Some(&trap_cmd);
-                        if !parent_had_same {
-                            if let Ok(trap_script) = Parser::with_limits(
-                                &trap_cmd,
-                                self.limits.max_ast_depth,
-                                self.limits.max_parser_operations,
-                            )
-                            .parse()
-                            {
-                                if let Ok(trap_result) =
-                                    self.execute_command_sequence(&trap_script.commands).await
-                                {
-                                    stdout.push_str(&trap_result.stdout);
-                                }
-                            }
-                        }
+                    if let Some(trap_cmd) = self.traps.get("EXIT").cloned()
+                        && saved_traps.get("EXIT") != Some(&trap_cmd)
+                        && let Ok(trap_script) = Parser::with_limits(
+                            &trap_cmd,
+                            self.limits.max_ast_depth,
+                            self.limits.max_parser_operations,
+                        )
+                        .parse()
+                        && let Ok(trap_result) =
+                            self.execute_command_sequence(&trap_script.commands).await
+                    {
+                        stdout.push_str(&trap_result.stdout);
                     }
                     // Restore parent trap state
                     self.traps = saved_traps;
