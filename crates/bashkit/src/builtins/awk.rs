@@ -3036,8 +3036,20 @@ impl Builtin for Awk {
             inputs
         };
 
-        'files: for input in inputs {
+        'files: for (file_idx, input) in inputs.iter().enumerate() {
             interp.state.fnr = 0;
+            // Set FILENAME to current file path, or empty for stdin
+            if !files.is_empty() {
+                interp.state.variables.insert(
+                    "FILENAME".to_string(),
+                    AwkValue::String(files[file_idx].clone()),
+                );
+            } else {
+                interp
+                    .state
+                    .variables
+                    .insert("FILENAME".to_string(), AwkValue::String(String::new()));
+            }
             // Index-based iteration so getline can advance the index
             interp.input_lines = input.lines().map(|l| l.to_string()).collect();
             interp.line_index = 0;
