@@ -359,3 +359,53 @@ async fn exec_script_dollar_at() {
     let result = bash.exec("/all.sh x y z").await.unwrap();
     assert_eq!(result.stdout.trim(), "x y z");
 }
+
+/// Functions defined in parent are NOT visible in subprocess script execution
+#[tokio::test]
+async fn exec_script_functions_not_inherited() {
+    let mut bash = Bash::new();
+    let fs = bash.fs();
+
+    fs.write_file(
+        Path::new("/check_func.sh"),
+        b"#!/bin/bash\nif declare -f helper > /dev/null 2>&1; then\n  echo found\nelse\n  echo not found\nfi",
+    )
+    .await
+    .unwrap();
+    fs.chmod(Path::new("/check_func.sh"), 0o755).await.unwrap();
+
+    // Define a function in parent, then run subprocess script
+    bash.exec("helper() { echo from_parent; }").await.unwrap();
+    let result = bash.exec("/check_func.sh").await.unwrap();
+    assert_eq!(result.stdout.trim(), "not found");
+}
+
+/// `declare -f nonexistent` should return exit code 1
+#[tokio::test]
+async fn declare_f_nonexistent_function_returns_1() {
+    let mut bash = Bash::new();
+    let result = bash.exec("declare -f no_such_func").await.unwrap();
+    assert_eq!(result.exit_code, 1);
+}
+
+/// `declare -f existing_func` should print definition and return exit code 0
+#[tokio::test]
+async fn declare_f_existing_function_prints_definition() {
+    let mut bash = Bash::new();
+    bash.exec("myfunc() { echo hello; }").await.unwrap();
+    let result = bash.exec("declare -f myfunc").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stdout.contains("myfunc"));
+}
+
+/// `declare -f` with no args lists all functions
+#[tokio::test]
+async fn declare_f_no_args_lists_all_functions() {
+    let mut bash = Bash::new();
+    bash.exec("foo() { echo a; }").await.unwrap();
+    bash.exec("bar() { echo b; }").await.unwrap();
+    let result = bash.exec("declare -f").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stdout.contains("foo"));
+    assert!(result.stdout.contains("bar"));
+}
