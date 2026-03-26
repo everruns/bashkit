@@ -1371,7 +1371,7 @@ version = "0.1.25"
 criteria = "safe-to-deploy"
 
 [[exemptions.unicode-segmentation]]
-version = "1.13.1"
+version = "1.13.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.unicode-width]]
