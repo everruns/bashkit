@@ -8001,7 +8001,12 @@ impl Interpreter {
     }
 
     /// Check if a variable is set (for `set -u` / nounset).
+    /// Follows nameref indirection so that a nameref pointing to a defined
+    /// target is considered "set".
     fn is_variable_set(&self, name: &str) -> bool {
+        // Resolve nameref before checking — a nameref whose target exists is "set".
+        let name = self.resolve_nameref(name);
+
         // Special variables are always "set"
         if matches!(
             name,
