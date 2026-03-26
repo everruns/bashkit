@@ -3596,12 +3596,41 @@ impl Interpreter {
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         if !args.is_empty() {
-            let cmd = args.join(" ");
-            self.last_exit_code = 127;
+            // exec cmd args... — execute command and exit with its exit code.
+            // In a real shell this replaces the process; in VFS we run + exit.
+            // Build the command as a script string and execute it.
+            // Single-quote each arg to prevent re-expansion.
+            let mut script_str = String::new();
+            for (i, arg) in args.iter().enumerate() {
+                if i > 0 {
+                    script_str.push(' ');
+                }
+                script_str.push('\'');
+                script_str.push_str(&arg.replace('\'', "'\\''"));
+                script_str.push('\'');
+            }
+
+            let parser = Parser::with_limits(
+                &script_str,
+                self.limits.max_ast_depth,
+                self.limits.max_parser_operations,
+            );
+            let script = match parser.parse() {
+                Ok(s) => s,
+                Err(_) => {
+                    return Ok(ExecResult::err(
+                        format!("-bash: exec: {}: command not found\n", args[0]),
+                        127,
+                    ));
+                }
+            };
+
+            let result = self.execute(&script).await?;
+
+            // Signal exit so subsequent statements don't execute
             return Ok(ExecResult {
-                stderr: format!("-bash: exec: {}: command not found\n", cmd),
-                exit_code: 127,
-                ..ExecResult::default()
+                control_flow: ControlFlow::Return(result.exit_code),
+                ..result
             });
         }
         for redirect in redirects {
