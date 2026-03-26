@@ -2057,6 +2057,19 @@ impl AwkInterpreter {
         }
     }
 
+    /// Evaluate an expression as a boolean, with special handling for regex
+    /// literals: `/regex/` is matched against $0 in boolean context (e.g. && / ||).
+    fn eval_expr_as_bool(&mut self, expr: &AwkExpr) -> bool {
+        if let AwkExpr::Regex(pattern) = expr {
+            let line = self.state.get_field(0).as_string();
+            if let Ok(re) = Regex::new(pattern) {
+                return re.is_match(&line);
+            }
+            return false;
+        }
+        self.eval_expr(expr).as_bool()
+    }
+
     fn eval_expr(&mut self, expr: &AwkExpr) -> AwkValue {
         match expr {
             AwkExpr::Number(n) => AwkValue::Number(*n),
@@ -2112,8 +2125,16 @@ impl AwkInterpreter {
                     } else {
                         0.0
                     }),
-                    "&&" => AwkValue::Number(if l.as_bool() && r.as_bool() { 1.0 } else { 0.0 }),
-                    "||" => AwkValue::Number(if l.as_bool() || r.as_bool() { 1.0 } else { 0.0 }),
+                    "&&" => {
+                        let lb = self.eval_expr_as_bool(left);
+                        let rb = self.eval_expr_as_bool(right);
+                        AwkValue::Number(if lb && rb { 1.0 } else { 0.0 })
+                    }
+                    "||" => {
+                        let lb = self.eval_expr_as_bool(left);
+                        let rb = self.eval_expr_as_bool(right);
+                        AwkValue::Number(if lb || rb { 1.0 } else { 0.0 })
+                    }
                     "~" => {
                         if let Ok(re) = Regex::new(&r.as_string()) {
                             AwkValue::Number(if re.is_match(&l.as_string()) {
@@ -2143,14 +2164,17 @@ impl AwkInterpreter {
                     _ => AwkValue::Uninitialized,
                 }
             }
-            AwkExpr::UnaryOp(op, expr) => {
-                let v = self.eval_expr(expr);
-                match op.as_str() {
-                    "-" => AwkValue::Number(-v.as_number()),
-                    "!" => AwkValue::Number(if v.as_bool() { 0.0 } else { 1.0 }),
-                    _ => v,
+            AwkExpr::UnaryOp(op, expr) => match op.as_str() {
+                "-" => {
+                    let v = self.eval_expr(expr);
+                    AwkValue::Number(-v.as_number())
                 }
-            }
+                "!" => {
+                    let b = self.eval_expr_as_bool(expr);
+                    AwkValue::Number(if b { 0.0 } else { 1.0 })
+                }
+                _ => self.eval_expr(expr),
+            },
             AwkExpr::Concat(parts) => {
                 let s: String = parts
                     .iter()
@@ -2231,7 +2255,12 @@ impl AwkInterpreter {
                 AwkValue::Number(if exists { 1.0 } else { 0.0 })
             }
             AwkExpr::FuncCall(name, args) => self.call_function(name, args),
-            AwkExpr::Regex(pattern) => AwkValue::String(pattern.clone()),
+            AwkExpr::Regex(pattern) => {
+                // When used as a standalone expression, /regex/ matches against $0.
+                // When used as a function argument (gsub, sub, match, split),
+                // it's evaluated as a string pattern, so return the pattern string.
+                AwkValue::String(pattern.clone())
+            }
             AwkExpr::Match(expr, pattern) => {
                 let s = self.eval_expr(expr).as_string();
                 if let Ok(re) = Regex::new(pattern) {
