@@ -409,3 +409,92 @@ async fn declare_f_no_args_lists_all_functions() {
     assert!(result.stdout.contains("foo"));
     assert!(result.stdout.contains("bar"));
 }
+
+/// Issue #842: $? should be 0 at start of VFS script subprocess, even when
+/// parent had non-zero exit code. Subprocess isolation must reset last_exit_code
+/// to match real bash subprocess behavior.
+#[tokio::test]
+async fn exec_vfs_script_initial_exit_code_is_zero() {
+    let mut bash = Bash::new();
+    let fs = bash.fs();
+
+    fs.write_file(Path::new("/check_exit.sh"), b"#!/bin/bash\necho $?\n")
+        .await
+        .unwrap();
+    fs.chmod(Path::new("/check_exit.sh"), 0o755).await.unwrap();
+
+    // Parent has non-zero exit code, then run VFS script
+    let result = bash.exec("false; /check_exit.sh").await.unwrap();
+    assert_eq!(
+        result.stdout.trim(),
+        "0",
+        "VFS script subprocess should start with $?=0 (like real bash); got stdout={:?}",
+        result.stdout
+    );
+}
+
+/// Issue #842: `set -euo pipefail` in VFS script should not trigger false failure
+/// even after a prior non-zero exit code in the parent shell.
+#[tokio::test]
+async fn exec_vfs_script_set_e_after_prior_failure() {
+    let mut bash = Bash::new();
+    let fs = bash.fs();
+
+    fs.write_file(
+        Path::new("/test.sh"),
+        br#"#!/bin/bash
+set -euo pipefail
+MY_VAR="hello"
+echo "${MY_VAR}"
+"#,
+    )
+    .await
+    .unwrap();
+    fs.chmod(Path::new("/test.sh"), 0o755).await.unwrap();
+
+    let result = bash.exec("false; /test.sh").await.unwrap();
+    assert_eq!(
+        result.exit_code, 0,
+        "VFS script with set -e should succeed after prior failure; stdout={:?}, stderr={:?}",
+        result.stdout, result.stderr
+    );
+    assert_eq!(result.stdout.trim(), "hello");
+}
+
+/// Issue #842: Nested VFS scripts with set -e and command substitution.
+#[tokio::test]
+async fn exec_vfs_script_set_e_nested_scripts() {
+    let mut bash = Bash::new();
+    let fs = bash.fs();
+
+    fs.write_file(
+        Path::new("/inner.sh"),
+        br#"#!/bin/bash
+set -euo pipefail
+echo "inner_output"
+"#,
+    )
+    .await
+    .unwrap();
+    fs.chmod(Path::new("/inner.sh"), 0o755).await.unwrap();
+
+    fs.write_file(
+        Path::new("/outer.sh"),
+        br#"#!/bin/bash
+set -euo pipefail
+RESULT="$(/inner.sh)"
+echo "${RESULT}"
+"#,
+    )
+    .await
+    .unwrap();
+    fs.chmod(Path::new("/outer.sh"), 0o755).await.unwrap();
+
+    let result = bash.exec("/outer.sh").await.unwrap();
+    assert_eq!(
+        result.exit_code, 0,
+        "Nested VFS scripts with set -e should work; stdout={:?}, stderr={:?}",
+        result.stdout, result.stderr
+    );
+    assert_eq!(result.stdout.trim(), "inner_output");
+}
