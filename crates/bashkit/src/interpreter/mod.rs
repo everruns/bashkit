@@ -4912,6 +4912,7 @@ impl Interpreter {
         let mut print_mode = false;
         let mut is_readonly = false;
         let mut is_export = false;
+        let mut is_function = false;
         let mut flags = DeclareFlags::default();
         let mut remove_nameref = false;
         let mut is_lowercase = false;
@@ -4926,6 +4927,7 @@ impl Interpreter {
                         'p' => print_mode = true,
                         'r' => is_readonly = true,
                         'x' => is_export = true,
+                        'f' => is_function = true,
                         'l' => is_lowercase = true,
                         'u' => is_uppercase = true,
                         _ => {} // n, a, A, i handled by flags
@@ -4941,6 +4943,33 @@ impl Interpreter {
             } else {
                 names.push(arg);
             }
+        }
+
+        // declare -f: function display mode
+        if is_function {
+            let mut output = String::new();
+            if names.is_empty() {
+                // List all functions
+                let mut func_names: Vec<_> = self.functions.keys().cloned().collect::<Vec<_>>();
+                func_names.sort();
+                for fname in &func_names {
+                    output.push_str(&format!("{} ()\n{{\n    ...\n}}\n", fname));
+                }
+            } else {
+                // Print specific functions — return 1 if any not found
+                for name in &names {
+                    if self.functions.contains_key(*name) {
+                        output.push_str(&format!("{} ()\n{{\n    ...\n}}\n", name));
+                    } else {
+                        let mut result = ExecResult::with_code(String::new(), 1);
+                        result = self.apply_redirections(result, redirects).await?;
+                        return Ok(result);
+                    }
+                }
+            }
+            let mut result = ExecResult::ok(output);
+            result = self.apply_redirections(result, redirects).await?;
+            return Ok(result);
         }
 
         if print_mode {
