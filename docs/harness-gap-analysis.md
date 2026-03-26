@@ -33,8 +33,9 @@ will run inside bashkit against the VFS (no real filesystem needed).
 
 | Issue | Title | Severity |
 |-------|-------|----------|
-| #833 | `sort -n` doesn't extract leading numeric prefix from strings | Critical |
-| #834 | Nameref expansion fails under `set -u` (nounset) | Critical |
+| #846 | `${!ref[@]}` key enumeration empty via nameref to assoc array | Critical |
+| #847 | `${var%$'\n'}` doesn't match newline in suffix removal pattern | Medium |
+| #806 | EXIT trap in `$(...)` — output escapes to parent stdout | Low |
 
 ### Fixed (closed on latest main)
 
@@ -43,15 +44,16 @@ will run inside bashkit against the VFS (no real filesystem needed).
 | #803 | ~~Single-quoted strings inside `$(...)` lose double quotes~~ |
 | #804 | ~~Nameref `+=` append to indexed array doesn't work~~ |
 | #805 | ~~`export -p` produces no output~~ |
-| #806 | ~~EXIT trap in command substitution subshell doesn't fire~~ |
+| #833 | ~~`sort -n` doesn't extract leading numeric prefix from strings~~ |
+| #834 | ~~Nameref expansion fails under `set -u` (nounset)~~ |
 
 ---
 
 ## Test Results (50 patterns, latest main)
 
-**48 pass, 2 fail** on the harness compatibility test suite.
+**61 pass, 3 fail** on the harness compatibility test suite.
 
-### Passing (48/50)
+### Passing (61/64)
 
 | Category | Tests | Status |
 |----------|-------|--------|
@@ -76,12 +78,13 @@ will run inside bashkit against the VFS (no real filesystem needed).
 | Namerefs | Basic read/write, assoc array read/assign, dual namerefs | Pass |
 | Nested cmd sub | `$(basename "$(dirname ...)")` | Pass |
 
-### Failing (2/50)
+### Failing (3/64)
 
 | Test | Issue |
 |------|-------|
-| `sort -n` with string prefixes (`0003-msg.md`) | #833 |
-| `declare -n` under `set -u` | #834 |
+| `${!ref[@]}` key enumeration through nameref | #846 |
+| `${var%$'\n'}` suffix removal with ANSI-C pattern | #847 |
+| EXIT trap output in `$(...)` escapes to parent | #806 |
 
 ---
 
@@ -115,6 +118,7 @@ Remaining work to run harness on bashkit:
 1. **VFS script execution** (#791, #792) — pipe stdin to scripts, subprocess isolation
 2. **`exec` with command** (#794) — execute and exit
 3. **`set -a`** (#793) — auto-export variables
-4. **`sort -n`** (#833) — numeric prefix extraction
-5. **Nameref + nounset** (#834) — `set -u` compatibility
+4. **Nameref key enumeration** (#846) — `${!ref[@]}` through nameref
+5. **ANSI-C in patterns** (#847) — `${var%$'\n'}` suffix removal
 6. **Nameref edge cases** (#801) — complex harness patterns
+7. **Trap in `$(...)`** (#806) — output capture (low priority)
