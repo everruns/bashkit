@@ -5795,12 +5795,36 @@ impl Interpreter {
                             "maximum nesting depth exceeded in command substitution".to_string(),
                         ));
                     }
+                    // Command substitution runs in a subshell: snapshot trap state
+                    // so EXIT traps set inside $() fire and don't leak to parent.
+                    let saved_traps = self.traps.clone();
                     let mut stdout = String::new();
                     for cmd in commands {
                         let cmd_result = self.execute_command(cmd).await?;
                         stdout.push_str(&cmd_result.stdout);
                         self.last_exit_code = cmd_result.exit_code;
                     }
+                    // Fire EXIT trap set inside the command substitution
+                    if let Some(trap_cmd) = self.traps.get("EXIT").cloned() {
+                        let parent_had_same = saved_traps.get("EXIT") == Some(&trap_cmd);
+                        if !parent_had_same {
+                            if let Ok(trap_script) = Parser::with_limits(
+                                &trap_cmd,
+                                self.limits.max_ast_depth,
+                                self.limits.max_parser_operations,
+                            )
+                            .parse()
+                            {
+                                if let Ok(trap_result) =
+                                    self.execute_command_sequence(&trap_script.commands).await
+                                {
+                                    stdout.push_str(&trap_result.stdout);
+                                }
+                            }
+                        }
+                    }
+                    // Restore parent trap state
+                    self.traps = saved_traps;
                     self.counters.pop_function();
                     self.subst_generation += 1;
                     let trimmed = stdout.trim_end_matches('\n');

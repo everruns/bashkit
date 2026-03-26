@@ -185,3 +185,41 @@ echo "$result"
 ### expect
 (x)(y)(z)
 ### end
+
+### subst_exit_trap_captured
+# EXIT trap output should be captured inside $(), not leak to parent
+result="$(trap 'echo TRAPPED' EXIT; echo hello)"
+echo "captured=[${result}]"
+### expect
+captured=[hello
+TRAPPED]
+### end
+
+### subst_exit_trap_with_explicit_exit
+# EXIT trap fires on explicit exit inside $()
+result="$(trap 'echo CLEANUP' EXIT; echo data; exit 0)"
+echo "captured=[${result}]"
+### expect
+captured=[data
+CLEANUP]
+### end
+
+### subst_exit_trap_no_leak
+# Trap output must not leak to parent stdout
+out="$(trap 'echo INSIDE' EXIT; echo body)"
+echo "out=[${out}]"
+### expect
+out=[body
+INSIDE]
+### end
+
+### subst_exit_trap_isolation
+# EXIT trap in $() should not affect parent traps
+trap 'echo PARENT' EXIT
+result="$(trap 'echo CHILD' EXIT; echo inner)"
+echo "result=[${result}]"
+trap - EXIT
+### expect
+result=[inner
+CHILD]
+### end
