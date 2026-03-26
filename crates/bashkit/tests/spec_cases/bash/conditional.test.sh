@@ -181,3 +181,26 @@ correct
 ### expect
 yes
 ### end
+
+### cond_bracket_literal_match
+# Issue #837: [] should be treated as literal when it's an invalid glob
+x="[]"
+if [[ "$x" == "[]" ]]; then echo match; else echo "no match"; fi
+### expect
+match
+### end
+
+### cond_single_bracket_literal
+# Literal [ comparison
+x="["
+[[ "$x" == "[" ]] && echo match || echo "no match"
+### expect
+match
+### end
+
+### cond_valid_glob_bracket
+# Valid glob [a] should still work as pattern
+[[ "a" == [a] ]] && echo match || echo "no match"
+### expect
+match
+### end
