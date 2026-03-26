@@ -2702,6 +2702,12 @@ impl Interpreter {
             positional: positional_args,
         });
 
+        // Track BASH_SOURCE for bash/sh invocations with a script file
+        if let Some(ref file) = script_file {
+            self.bash_source_stack.push(file.clone());
+            self.update_bash_source();
+        }
+
         let mut saved_opts: Vec<(String, Option<String>)> = Vec::new();
         for (var, val) in &shell_opts {
             let prev = self.variables.get(*var).cloned();
@@ -2732,6 +2738,11 @@ impl Interpreter {
             } else {
                 self.variables.remove(&var);
             }
+        }
+        // Pop BASH_SOURCE if we pushed one
+        if script_file.is_some() {
+            self.bash_source_stack.pop();
+            self.update_bash_source();
         }
         self.call_stack.pop();
 
@@ -3627,6 +3638,8 @@ impl Interpreter {
         args: &[String],
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
+        // exec with command args: in a virtual interpreter, build the command
+        // string and execute it via the parser/eval path, then terminate.
         if !args.is_empty() {
             // exec cmd args... — execute command and exit with its exit code.
             // In a real shell this replaces the process; in VFS we run + exit.
@@ -4062,7 +4075,15 @@ impl Interpreter {
         let prev_pipeline_stdin = self.pipeline_stdin.take();
         self.pipeline_stdin = stdin;
 
+        // Track BASH_SOURCE for this script
+        self.bash_source_stack.push(name.to_string());
+        self.update_bash_source();
+
         let result = self.execute(&script).await;
+
+        // Pop BASH_SOURCE before restoring parent state
+        self.bash_source_stack.pop();
+        self.update_bash_source();
 
         // Restore full parent state — child mutations don't propagate
         self.variables = saved_vars;
