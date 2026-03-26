@@ -414,6 +414,8 @@ pub struct Interpreter {
     functions: HashMap<String, FunctionDef>,
     /// Call stack for local variable scoping
     call_stack: Vec<CallFrame>,
+    /// Source file stack for BASH_SOURCE array
+    bash_source_stack: Vec<String>,
     /// Resource limits
     limits: ExecutionLimits,
     /// Session-level resource limits (persist across exec() calls)
@@ -753,6 +755,7 @@ impl Interpreter {
             builtins,
             functions: HashMap::new(),
             call_stack: Vec::new(),
+            bash_source_stack: Vec::new(),
             limits: ExecutionLimits::default(),
             session_limits: SessionLimits::default(),
             memory_limits: crate::limits::MemoryLimits::default(),
@@ -800,6 +803,18 @@ impl Interpreter {
     }
 
     /// Check if errexit (set -e) is enabled.
+    /// Sync the internal bash_source_stack to the BASH_SOURCE indexed array.
+    fn update_bash_source(&mut self) {
+        let arr: HashMap<usize, String> = self
+            .bash_source_stack
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(i, s)| (i, s.clone()))
+            .collect();
+        self.arrays.insert("BASH_SOURCE".to_string(), arr);
+    }
+
     fn is_errexit_enabled(&self) -> bool {
         self.variables
             .get("SHOPT_e")
@@ -4014,6 +4029,11 @@ impl Interpreter {
             positional: args.to_vec(),
         }];
 
+        // Set up BASH_SOURCE for the subprocess
+        let saved_source_stack = self.bash_source_stack.clone();
+        self.bash_source_stack = vec![name.to_string()];
+        self.update_bash_source();
+
         // Forward pipeline stdin so commands inside the script (cat, read, etc.) can consume it
         let prev_pipeline_stdin = self.pipeline_stdin.take();
         self.pipeline_stdin = stdin;
@@ -4030,6 +4050,7 @@ impl Interpreter {
         self.last_exit_code = saved_exit;
         self.aliases = saved_aliases;
         self.coproc_buffers = saved_coproc;
+        self.bash_source_stack = saved_source_stack;
         self.pipeline_stdin = prev_pipeline_stdin;
 
         match result {
@@ -4161,12 +4182,18 @@ impl Interpreter {
             ))
         })?;
 
+        // Track source file for BASH_SOURCE
+        self.bash_source_stack.push(filename.clone());
+        self.update_bash_source();
+
         // Execute the script commands in the current shell context.
         // Use execute_script_body (not execute) to preserve depth counters.
         let exec_result = self.execute_script_body(&script, false).await;
 
-        // Pop source depth (always, even on error)
+        // Pop source depth and BASH_SOURCE (always, even on error)
         self.counters.pop_function();
+        self.bash_source_stack.pop();
+        self.update_bash_source();
 
         let mut result = exec_result?;
 
@@ -4281,6 +4308,11 @@ impl Interpreter {
             .collect();
         let prev_funcname = self.arrays.insert("FUNCNAME".to_string(), funcname_arr);
 
+        // BASH_SOURCE: duplicate current top entry for function calls
+        let current_source = self.bash_source_stack.last().cloned().unwrap_or_default();
+        self.bash_source_stack.push(current_source);
+        self.update_bash_source();
+
         // Forward pipeline stdin to function body
         let prev_pipeline_stdin = self.pipeline_stdin.take();
         self.pipeline_stdin = stdin;
@@ -4291,9 +4323,11 @@ impl Interpreter {
         // Restore previous pipeline stdin
         self.pipeline_stdin = prev_pipeline_stdin;
 
-        // Pop call frame and function counter
+        // Pop call frame, function counter, and BASH_SOURCE
         self.call_stack.pop();
         self.counters.pop_function();
+        self.bash_source_stack.pop();
+        self.update_bash_source();
 
         // Restore previous FUNCNAME (or set from remaining stack)
         if self.call_stack.is_empty() {
