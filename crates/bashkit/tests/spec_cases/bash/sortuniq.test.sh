@@ -268,3 +268,67 @@ a
 b
 c
 ### end
+
+### sort_numeric_prefix_strings
+# sort -n extracts leading numeric prefix from strings
+printf '0003-msg.md\n0001-msg.md\n0002-msg.md\n' | sort -n
+### expect
+0001-msg.md
+0002-msg.md
+0003-msg.md
+### end
+
+### sort_numeric_mixed_prefix_lengths
+# sort -n with mixed prefix lengths
+printf '10-exec\n20-tools\n5-first\n' | sort -n
+### expect
+5-first
+10-exec
+20-tools
+### end
+
+### sort_numeric_nonnumeric_as_zero
+# sort -n treats non-numeric lines as 0, tiebreak lexically
+printf 'zzz\n2-second\naaa\n1-first\n' | sort -n
+### expect
+aaa
+zzz
+1-first
+2-second
+### end
+
+### sort_field_delim_k2
+# sort -t/ -k2,2
+printf 'assemble/20-tools\nassemble/10-init\nassemble/30-end\n' | sort -t/ -k2,2
+### expect
+assemble/10-init
+assemble/20-tools
+assemble/30-end
+### end
+
+### sort_field_delim_k1
+# sort -t/ -k1,1 with equal keys falls back to full line
+printf 'z/20-tools\na/10-init\nm/30-end\n' | sort -t/ -k1,1
+### expect
+a/10-init
+m/30-end
+z/20-tools
+### end
+
+### sort_numeric_reverse
+# sort -n -r
+printf '1\n3\n2\n' | sort -n -r
+### expect
+3
+2
+1
+### end
+
+### sort_numeric_zero_padded
+# sort -n with zero-padded numbers
+printf '003\n010\n001\n' | sort -n
+### expect
+001
+003
+010
+### end
