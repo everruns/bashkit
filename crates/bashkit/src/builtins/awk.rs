@@ -96,7 +96,7 @@ enum AwkOutputTarget {
 #[derive(Debug, Clone)]
 enum AwkAction {
     Print(Vec<AwkExpr>, Option<AwkOutputTarget>),
-    Printf(String, Vec<AwkExpr>, Option<AwkOutputTarget>),
+    Printf(AwkExpr, Vec<AwkExpr>, Option<AwkOutputTarget>),
     Assign(String, AwkExpr),
     ArrayAssign(String, AwkExpr, AwkExpr), // arr[key] = val
     If(AwkExpr, Vec<AwkAction>, Vec<AwkAction>),
@@ -787,15 +787,22 @@ impl<'a> AwkParser<'a> {
             self.skip_whitespace();
         }
 
-        // Parse format string
-        if self.pos >= self.input.len() || self.current_char().unwrap() != '"' {
+        // Parse format string — accepts string literals or expressions
+        if self.pos >= self.input.len() {
             self.in_print_context = false;
             return Err(Error::Execution(
                 "awk: printf requires format string".to_string(),
             ));
         }
 
-        let format = self.parse_string()?;
+        let format_expr = if self.current_char().unwrap() == '"' {
+            // String literal format — parse directly
+            let s = self.parse_string()?;
+            AwkExpr::String(s)
+        } else {
+            // Expression as format string (e.g., printf substr($1,1,1))
+            self.parse_expression()?
+        };
         let mut args = Vec::new();
 
         self.skip_whitespace();
@@ -814,7 +821,7 @@ impl<'a> AwkParser<'a> {
         let target = self.parse_output_target()?;
         self.in_print_context = false;
 
-        Ok(AwkAction::Printf(format, args, target))
+        Ok(AwkAction::Printf(format_expr, args, target))
     }
 
     /// Parse optional output target after print/printf arguments: `> file`, `>> file`, `| cmd`.
@@ -2900,9 +2907,10 @@ impl AwkInterpreter {
                 self.write_output(&text, target);
                 AwkFlow::Continue
             }
-            AwkAction::Printf(format, args, target) => {
+            AwkAction::Printf(format_expr, args, target) => {
+                let format_str = self.eval_expr(format_expr).as_string();
                 let values: Vec<AwkValue> = args.iter().map(|a| self.eval_expr(a)).collect();
-                let text = self.format_string(format, &values);
+                let text = self.format_string(&format_str, &values);
                 self.write_output(&text, target);
                 AwkFlow::Continue
             }
