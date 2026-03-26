@@ -1926,6 +1926,14 @@ impl Interpreter {
                             .await
                             .map(|m| m.size > 0)
                             .unwrap_or(false),
+                        "-t" => {
+                            // fd is a terminal — configurable via _TTY_N variables
+                            let fd_key = format!("_TTY_{}", args[1]);
+                            self.variables
+                                .get(&fd_key)
+                                .map(|v| v == "1")
+                                .unwrap_or(false)
+                        }
                         _ => !args[0].is_empty(),
                     }
                 }

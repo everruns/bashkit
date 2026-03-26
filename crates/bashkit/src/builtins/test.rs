@@ -1,5 +1,6 @@
 //! test builtin command ([ and test)
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -23,7 +24,7 @@ impl Builtin for Test {
 
         let cwd = ctx.cwd.clone();
         // Parse and evaluate the expression
-        let result = evaluate_expression(ctx.args, &ctx.fs, &cwd).await;
+        let result = evaluate_expression(ctx.args, &ctx.fs, &cwd, ctx.variables).await;
 
         if result {
             Ok(ExecResult::ok(String::new()))
@@ -54,7 +55,7 @@ impl Builtin for Bracket {
 
         let cwd = ctx.cwd.clone();
         // Parse and evaluate the expression
-        let result = evaluate_expression(&args, &ctx.fs, &cwd).await;
+        let result = evaluate_expression(&args, &ctx.fs, &cwd, ctx.variables).await;
 
         if result {
             Ok(ExecResult::ok(String::new()))
@@ -79,6 +80,7 @@ fn evaluate_expression<'a>(
     args: &'a [String],
     fs: &'a Arc<dyn FileSystem>,
     cwd: &'a Path,
+    variables: &'a HashMap<String, String>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
     Box::pin(async move {
         if args.is_empty() {
@@ -87,26 +89,26 @@ fn evaluate_expression<'a>(
 
         // Handle negation
         if args[0] == "!" {
-            return !evaluate_expression(&args[1..], fs, cwd).await;
+            return !evaluate_expression(&args[1..], fs, cwd, variables).await;
         }
 
         // Handle parentheses (basic support)
         if args[0] == "(" && args.last().map(|s| s.as_str()) == Some(")") {
-            return evaluate_expression(&args[1..args.len() - 1], fs, cwd).await;
+            return evaluate_expression(&args[1..args.len() - 1], fs, cwd, variables).await;
         }
 
         // Look for logical operators: -o has lowest precedence, then -a.
         // Scan for -o first (split at lowest precedence first).
         for (i, arg) in args.iter().enumerate() {
             if arg == "-o" && i > 0 {
-                return evaluate_expression(&args[..i], fs, cwd).await
-                    || evaluate_expression(&args[i + 1..], fs, cwd).await;
+                return evaluate_expression(&args[..i], fs, cwd, variables).await
+                    || evaluate_expression(&args[i + 1..], fs, cwd, variables).await;
             }
         }
         for (i, arg) in args.iter().enumerate() {
             if arg == "-a" && i > 0 {
-                return evaluate_expression(&args[..i], fs, cwd).await
-                    && evaluate_expression(&args[i + 1..], fs, cwd).await;
+                return evaluate_expression(&args[..i], fs, cwd, variables).await
+                    && evaluate_expression(&args[i + 1..], fs, cwd, variables).await;
             }
         }
 
@@ -118,7 +120,7 @@ fn evaluate_expression<'a>(
             }
             2 => {
                 // Unary operators
-                evaluate_unary(&args[0], &args[1], fs, cwd).await
+                evaluate_unary(&args[0], &args[1], fs, cwd, variables).await
             }
             3 => {
                 // Binary operators
@@ -130,7 +132,13 @@ fn evaluate_expression<'a>(
 }
 
 /// Evaluate a unary test expression
-async fn evaluate_unary(op: &str, arg: &str, fs: &Arc<dyn FileSystem>, cwd: &Path) -> bool {
+async fn evaluate_unary(
+    op: &str,
+    arg: &str,
+    fs: &Arc<dyn FileSystem>,
+    cwd: &Path,
+    variables: &HashMap<String, String>,
+) -> bool {
     match op {
         // String tests
         "-z" => arg.is_empty(),
@@ -211,7 +219,13 @@ async fn evaluate_unary(op: &str, arg: &str, fs: &Arc<dyn FileSystem>, cwd: &Pat
         "-S" => false, // socket (not supported)
         "-b" => false, // block device (not supported)
         "-c" => false, // character device (not supported)
-        "-t" => false, // file descriptor is open and refers to a terminal (not supported)
+        "-t" => {
+            // file descriptor refers to a terminal
+            // In VFS sandbox, defaults to false for all FDs.
+            // Configurable via _TTY_N variables (e.g. _TTY_0=1 for stdin).
+            let fd_key = format!("_TTY_{}", arg);
+            variables.get(&fd_key).map(|v| v == "1").unwrap_or(false)
+        }
 
         _ => false,
     }
