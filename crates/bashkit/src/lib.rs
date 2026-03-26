@@ -1092,6 +1092,26 @@ impl BashBuilder {
         self
     }
 
+    /// Configure whether a file descriptor is reported as a terminal by `[ -t fd ]`.
+    ///
+    /// In a sandboxed VFS environment, all FDs default to non-terminal (false).
+    /// Use this to simulate interactive mode for scripts that check `[ -t 0 ]`
+    /// (stdin), `[ -t 1 ]` (stdout), or `[ -t 2 ]` (stderr).
+    ///
+    /// ```rust
+    /// # use bashkit::Bash;
+    /// let bash = Bash::builder()
+    ///     .tty(0, true)  // stdin is a terminal
+    ///     .tty(1, true)  // stdout is a terminal
+    ///     .build();
+    /// ```
+    pub fn tty(mut self, fd: u32, is_terminal: bool) -> Self {
+        if is_terminal {
+            self.env.insert(format!("_TTY_{}", fd), "1".to_string());
+        }
+        self
+    }
+
     /// Set a fixed Unix epoch for the `date` builtin.
     ///
     /// THREAT[TM-INF-018]: Prevents `date` from leaking real host time.
