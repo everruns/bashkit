@@ -103,3 +103,56 @@ myutil
 ### expect
 found via path
 ### end
+
+### script_exec_pipe_stdin_cat
+# Piped stdin is available to scripts via cat
+cat > /tmp/upper.sh <<'SCRIPT'
+#!/usr/bin/env bash
+cat
+SCRIPT
+chmod +x /tmp/upper.sh
+echo "hello world" | /tmp/upper.sh
+### expect
+hello world
+### end
+
+### script_exec_pipe_stdin_read
+# Piped stdin is available to scripts via read
+cat > /tmp/reader.sh <<'SCRIPT'
+#!/usr/bin/env bash
+read -r line
+echo "got: ${line}"
+SCRIPT
+chmod +x /tmp/reader.sh
+echo "test input" | /tmp/reader.sh
+### expect
+got: test input
+### end
+
+### script_exec_pipe_stdin_path_search
+# Piped stdin works for PATH-based script execution
+mkdir -p /usr/local/bin
+cat > /usr/local/bin/my-tool <<'SCRIPT'
+#!/usr/bin/env bash
+input="$(cat)"
+echo "received: ${input}"
+SCRIPT
+chmod +x /usr/local/bin/my-tool
+export PATH="/usr/local/bin:${PATH}"
+echo "data" | my-tool
+### expect
+received: data
+### end
+
+### script_exec_pipe_stdin_multi_stage
+# Multi-stage pipeline with VFS scripts
+cat > /tmp/wrap.sh <<'SCRIPT'
+#!/usr/bin/env bash
+line="$(cat)"
+echo "[${line}]"
+SCRIPT
+chmod +x /tmp/wrap.sh
+echo "content" | /tmp/wrap.sh
+### expect
+[content]
+### end

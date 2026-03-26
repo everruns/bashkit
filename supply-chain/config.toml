@@ -887,7 +887,7 @@ version = "1.0.106"
 criteria = "safe-to-deploy"
 
 [[exemptions.proptest]]
-version = "1.10.0"
+version = "1.11.0"
 criteria = "safe-to-run"
 
 [[exemptions.pyo3]]
@@ -1371,7 +1371,7 @@ version = "0.1.25"
 criteria = "safe-to-deploy"
 
 [[exemptions.unicode-segmentation]]
-version = "1.12.0"
+version = "1.13.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.unicode-width]]
