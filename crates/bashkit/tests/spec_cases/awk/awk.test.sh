@@ -703,3 +703,24 @@ awk 'BEGIN{print "caf\u00E9"}'
 ### expect
 café
 ### end
+
+### awk_regex_hash_pattern
+# Issue #835: # inside regex pattern should not be treated as comment
+echo '#test' | awk '/#/ { print "matched" }'
+### expect
+matched
+### end
+
+### awk_regex_hash_caret
+# Issue #835: /^#/ pattern
+printf '# heading\nnormal\n' | awk '/^#/ { print "comment:", $0 }'
+### expect
+comment: # heading
+### end
+
+### awk_regex_hash_no_match
+# Regex without # still works
+echo 'abc' | awk '/abc/ { print "yes" }'
+### expect
+yes
+### end

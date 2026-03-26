@@ -402,8 +402,8 @@ fn normalize_awk_newlines(input: &str) -> String {
                     i += 1;
                 }
             }
-            '/' if brace_depth > 0 => {
-                // Potential regex literal — pass through unchanged
+            '/' => {
+                // Regex literal — pass through unchanged (both pattern and expression context)
                 result.push('/');
                 i += 1;
                 while i < chars.len() && chars[i] != '/' {
