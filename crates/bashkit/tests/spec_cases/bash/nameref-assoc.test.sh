@@ -86,14 +86,16 @@ count_entries data
 # Nameref key enumeration via ${!ref[@]} in string context
 show() {
   local -n ref="$1"
-  echo "keys: ${!ref[@]}"
-  echo "values: ${ref[@]}"
+  for k in "${!ref[@]}"; do
+    echo "${k}=${ref[$k]}"
+  done | sort
 }
 declare -A m=([a]=1 [b]=2 [c]=3)
 show m
 ### expect
-keys: a b c
-values: 1 2 3
+a=1
+b=2
+c=3
 ### end
 
 ### nameref_overwrite_assoc_key
