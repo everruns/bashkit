@@ -256,6 +256,13 @@ fn command_not_found_message(name: &str, known_commands: &[&str]) -> String {
 
 /// Check if a path refers to /dev/null after normalization.
 /// Handles attempts to bypass via paths like `/dev/../dev/null`.
+/// Convert bytes to string preserving all byte values (Latin-1/ISO 8859-1 mapping).
+/// Each byte 0x00-0xFF maps to the corresponding Unicode code point.
+/// This avoids the lossy UTF-8 conversion that replaces bytes > 0x7F with U+FFFD.
+fn bytes_to_latin1_string(bytes: &[u8]) -> String {
+    bytes.iter().map(|&b| b as char).collect()
+}
+
 fn is_dev_null(path: &Path) -> bool {
     // Normalize the path to handle .. and . components
     let mut normalized = PathBuf::new();
@@ -2624,7 +2631,7 @@ impl Interpreter {
         } else if let Some(ref file) = script_file {
             let path = self.resolve_path(file);
             match self.fs.read_file(&path).await {
-                Ok(content) => String::from_utf8_lossy(&content).to_string(),
+                Ok(content) => bytes_to_latin1_string(&content),
                 Err(_) => {
                     return Ok(ExecResult::err(
                         format!("{}: {}: No such file or directory\n", shell_name, file),
@@ -3265,7 +3272,7 @@ impl Interpreter {
         for (path_str, commands) in deferred {
             let path = Path::new(&path_str);
             let stdin_data = if let Ok(bytes) = self.fs.read_file(path).await {
-                let s = String::from_utf8_lossy(&bytes).to_string();
+                let s = bytes_to_latin1_string(&bytes);
                 if s.is_empty() { None } else { Some(s) }
             } else {
                 None
@@ -3630,7 +3637,7 @@ impl Interpreter {
                         let target_path = self.expand_word(&redirect.target).await?;
                         let path = self.resolve_path(&target_path);
                         let content = self.fs.read_file(&path).await?;
-                        let text = String::from_utf8_lossy(&content).to_string();
+                        let text = bytes_to_latin1_string(&content);
                         let lines: Vec<String> =
                             text.lines().rev().map(|l| l.to_string()).collect();
                         self.coproc_buffers.insert(fd, lines);
@@ -3889,7 +3896,7 @@ impl Interpreter {
 
         // Read file content
         let content = match self.fs.read_file(&path).await {
-            Ok(c) => String::from_utf8_lossy(&c).to_string(),
+            Ok(c) => bytes_to_latin1_string(&c),
             Err(_) => {
                 return Ok(ExecResult::err(
                     format!("bash: {}: No such file or directory", name),
@@ -3932,7 +3939,7 @@ impl Interpreter {
                     continue;
                 }
                 if let Ok(content) = self.fs.read_file(&candidate).await {
-                    let script_text = String::from_utf8_lossy(&content).to_string();
+                    let script_text = bytes_to_latin1_string(&content);
                     let result = self
                         .execute_script_content(name, &script_text, args, stdin, redirects)
                         .await?;
@@ -4063,7 +4070,7 @@ impl Interpreter {
         let content = if filename.contains('/') {
             let path = self.resolve_path(filename);
             match self.fs.read_file(&path).await {
-                Ok(c) => String::from_utf8_lossy(&c).to_string(),
+                Ok(c) => bytes_to_latin1_string(&c),
                 Err(_) => {
                     return Ok(ExecResult::err(
                         format!("source: {}: No such file or directory", filename),
@@ -4086,7 +4093,7 @@ impl Interpreter {
                 }
                 let candidate = PathBuf::from(dir).join(filename);
                 if let Ok(c) = self.fs.read_file(&candidate).await {
-                    found = Some(String::from_utf8_lossy(&c).to_string());
+                    found = Some(bytes_to_latin1_string(&c));
                     break;
                 }
             }
@@ -4094,7 +4101,7 @@ impl Interpreter {
             if found.is_none() {
                 let path = self.resolve_path(filename);
                 if let Ok(c) = self.fs.read_file(&path).await {
-                    found = Some(String::from_utf8_lossy(&c).to_string());
+                    found = Some(bytes_to_latin1_string(&c));
                 }
             }
             match found {
@@ -5199,7 +5206,7 @@ impl Interpreter {
                         stdin = Some(String::new()); // EOF
                     } else {
                         let content = self.fs.read_file(&path).await?;
-                        stdin = Some(String::from_utf8_lossy(&content).to_string());
+                        stdin = Some(bytes_to_latin1_string(&content));
                     }
                 }
                 RedirectKind::HereString => {
