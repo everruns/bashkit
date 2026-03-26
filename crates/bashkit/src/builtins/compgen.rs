@@ -145,11 +145,48 @@ impl Builtin for Compgen {
             }
         }
 
-        // -c: commands (builtin names)
+        // -c: commands (builtins + functions + aliases + PATH executables)
         if gen_commands {
+            // Builtins
             for &cmd in BUILTIN_COMMANDS {
                 if cmd.starts_with(pfx) {
                     completions.push(cmd.to_string());
+                }
+            }
+            // Functions from shell context
+            if let Some(ref shell) = ctx.shell {
+                for name in shell.functions.keys() {
+                    if name.starts_with(pfx) {
+                        completions.push(name.clone());
+                    }
+                }
+                for name in shell.aliases.keys() {
+                    if name.starts_with(pfx) {
+                        completions.push(name.clone());
+                    }
+                }
+            }
+            // PATH executables from VFS
+            let path_var = ctx
+                .variables
+                .get("PATH")
+                .or_else(|| ctx.env.get("PATH"))
+                .cloned()
+                .unwrap_or_default();
+            for dir in path_var.split(':') {
+                if dir.is_empty() {
+                    continue;
+                }
+                let dir_path = std::path::PathBuf::from(dir);
+                if let Ok(entries) = ctx.fs.read_dir(&dir_path).await {
+                    for entry in entries {
+                        if entry.name.starts_with(pfx)
+                            && entry.metadata.file_type.is_file()
+                            && (entry.metadata.mode & 0o111) != 0
+                        {
+                            completions.push(entry.name);
+                        }
+                    }
                 }
             }
         }

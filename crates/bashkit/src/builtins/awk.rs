@@ -17,9 +17,12 @@
 use async_trait::async_trait;
 use regex::Regex;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::{Builtin, Context, read_text_file};
 use crate::error::{Error, Result};
+use crate::fs::FileSystem;
 use crate::interpreter::ExecResult;
 
 /// awk command - pattern scanning and processing
@@ -73,6 +76,11 @@ enum AwkExpr {
     PreDecrement(String),                    // --var
     InArray(Box<AwkExpr>, String),           // key in arr
     FieldAssign(Box<AwkExpr>, Box<AwkExpr>), // $n = val
+    /// getline [var] < file as expression — returns 1 on success, 0 on EOF, -1 on error
+    GetlineFile {
+        var: Option<String>,
+        file: Box<AwkExpr>,
+    },
 }
 
 /// Output target for print/printf redirection (e.g., `> file`, `>> file`).
@@ -101,6 +109,11 @@ enum AwkAction {
     Continue,
     Delete(String, AwkExpr), // delete arr[key]
     Getline,                 // getline — read next input record into $0
+    /// getline [var] < file — read next line from file
+    GetlineFile {
+        var: Option<String>,
+        file: AwkExpr,
+    },
     #[allow(dead_code)] // Exit code support for future
     Exit(Option<AwkExpr>),
     Return(Option<AwkExpr>),
@@ -671,7 +684,7 @@ impl<'a> AwkParser<'a> {
             return self.parse_delete();
         }
         if self.matches_keyword("getline") {
-            return Ok(AwkAction::Getline);
+            return self.parse_getline();
         }
         if self.matches_keyword("exit") {
             self.skip_whitespace();
@@ -1097,6 +1110,91 @@ impl<'a> AwkParser<'a> {
                 AwkExpr::String("*".to_string()),
             ))
         }
+    }
+
+    /// Parse `getline [var] [< file]`.
+    ///
+    /// Forms:
+    /// - `getline`           — read next input record into $0
+    /// - `getline var`       — read next input record into var
+    /// - `getline var < file` — read next line from file into var
+    /// - `getline < file`    — read next line from file into $0
+    fn parse_getline(&mut self) -> Result<AwkAction> {
+        self.skip_whitespace();
+
+        // Check what follows: variable name, '<', or end of statement
+        let mut var: Option<String> = None;
+
+        if self.pos < self.input.len() {
+            let c = self.current_char().unwrap();
+            // If next char is an identifier start (not '<', ';', '}', etc.), parse variable
+            if c.is_alphabetic() || c == '_' {
+                let start = self.pos;
+                while self.pos < self.input.len() {
+                    let ch = self.current_char().unwrap();
+                    if ch.is_alphanumeric() || ch == '_' {
+                        self.pos += 1;
+                    } else {
+                        break;
+                    }
+                }
+                var = Some(self.input[start..self.pos].to_string());
+                self.skip_whitespace();
+            }
+        }
+
+        // Check for '< file' redirection
+        if self.pos < self.input.len() && self.current_char().unwrap() == '<' {
+            self.pos += 1; // consume '<'
+            self.skip_whitespace();
+            let file = self.parse_primary()?;
+            return Ok(AwkAction::GetlineFile { var, file });
+        }
+
+        // Plain getline (with optional var — but plain `getline var` without
+        // file redirection just reads next input line into var; for now we
+        // treat that the same as plain getline which updates $0).
+        // TODO: `getline var` should store into var without updating $0
+        Ok(AwkAction::Getline)
+    }
+
+    /// Parse `getline [var] [< file]` as an expression returning 1/0/-1.
+    fn parse_getline_expr(&mut self) -> Result<AwkExpr> {
+        self.skip_whitespace();
+
+        let mut var: Option<String> = None;
+
+        if self.pos < self.input.len() {
+            let c = self.current_char().unwrap();
+            if c.is_alphabetic() || c == '_' {
+                let start = self.pos;
+                while self.pos < self.input.len() {
+                    let ch = self.current_char().unwrap();
+                    if ch.is_alphanumeric() || ch == '_' {
+                        self.pos += 1;
+                    } else {
+                        break;
+                    }
+                }
+                var = Some(self.input[start..self.pos].to_string());
+                self.skip_whitespace();
+            }
+        }
+
+        // Check for '< file' redirection
+        if self.pos < self.input.len() && self.current_char().unwrap() == '<' {
+            self.pos += 1; // consume '<'
+            self.skip_whitespace();
+            let file = self.parse_primary()?;
+            return Ok(AwkExpr::GetlineFile {
+                var,
+                file: Box::new(file),
+            });
+        }
+
+        // Plain getline expression without file — use FuncCall to represent
+        // TODO: support plain getline as expression (advance input line)
+        Ok(AwkExpr::FuncCall("__getline".to_string(), vec![]))
     }
 
     /// THREAT[TM-DOS-027]: Track depth on every expression entry
@@ -1693,6 +1791,11 @@ impl<'a> AwkParser<'a> {
             }
             let name = self.input[start..self.pos].to_string();
 
+            // getline [var] [< file] as expression (returns 1/0/-1)
+            if name == "getline" {
+                return self.parse_getline_expr();
+            }
+
             self.skip_whitespace();
             if self.pos < self.input.len() && self.current_char().unwrap() == '(' {
                 // Function call
@@ -1895,6 +1998,13 @@ struct AwkInterpreter {
     /// Buffered file outputs for `>>` redirection (path -> content).
     /// Append mode: content is appended to existing file on flush.
     file_appends: HashMap<String, String>,
+    /// Cached file inputs for `getline var < file` redirection.
+    /// Maps resolved path -> (lines, current_position).
+    file_inputs: HashMap<String, (Vec<String>, usize)>,
+    /// VFS reference for lazy file reads (getline < file).
+    fs: Option<Arc<dyn FileSystem>>,
+    /// Working directory for resolving relative paths.
+    cwd: PathBuf,
 }
 
 impl AwkInterpreter {
@@ -1908,7 +2018,42 @@ impl AwkInterpreter {
             functions: HashMap::new(),
             file_outputs: HashMap::new(),
             file_appends: HashMap::new(),
+            file_inputs: HashMap::new(),
             call_depth: 0,
+            fs: None,
+            cwd: PathBuf::from("/"),
+        }
+    }
+
+    /// Load a file into the `file_inputs` cache if not already present.
+    /// Uses a separate thread + tokio runtime to bridge async VFS → sync context.
+    /// Returns true on success, false on error.
+    fn ensure_file_loaded(&mut self, resolved: &str) -> bool {
+        if self.file_inputs.contains_key(resolved) {
+            return true;
+        }
+        let Some(fs) = &self.fs else {
+            return false;
+        };
+        let fs = fs.clone();
+        let p = PathBuf::from(resolved);
+        // Spawn a thread with its own runtime to avoid blocking the current async runtime.
+        let result = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(fs.read_file(&p))
+        })
+        .join();
+        match result {
+            Ok(Ok(bytes)) => {
+                let text = String::from_utf8_lossy(&bytes).into_owned();
+                let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+                self.file_inputs.insert(resolved.to_string(), (lines, 0));
+                true
+            }
+            _ => false,
         }
     }
 
@@ -2093,6 +2238,37 @@ impl AwkInterpreter {
                     AwkValue::Number(if re.is_match(&s) { 1.0 } else { 0.0 })
                 } else {
                     AwkValue::Number(0.0)
+                }
+            }
+            AwkExpr::GetlineFile { var, file } => {
+                let path_str = self.eval_expr(file).as_string();
+                let resolved = if path_str.starts_with('/') {
+                    path_str.clone()
+                } else {
+                    self.cwd.join(&path_str).to_string_lossy().to_string()
+                };
+
+                if !self.ensure_file_loaded(&resolved) {
+                    return AwkValue::Number(-1.0);
+                }
+
+                let entry = self.file_inputs.get_mut(&resolved).unwrap();
+                if entry.1 < entry.0.len() {
+                    let line = entry.0[entry.1].clone();
+                    entry.1 += 1;
+                    match var {
+                        Some(v) => {
+                            self.state
+                                .variables
+                                .insert(v.clone(), AwkValue::String(line));
+                        }
+                        None => {
+                            self.state.set_line(&line);
+                        }
+                    }
+                    AwkValue::Number(1.0) // success
+                } else {
+                    AwkValue::Number(0.0) // EOF
                 }
             }
         }
@@ -2362,6 +2538,17 @@ impl AwkInterpreter {
                     }
                 } else {
                     AwkValue::String(target)
+                }
+            }
+            "__getline" => {
+                // Plain getline as expression — advance to next input line, return 1/0
+                self.line_index += 1;
+                if self.line_index < self.input_lines.len() {
+                    let line = self.input_lines[self.line_index].clone();
+                    self.state.set_line(&line);
+                    AwkValue::Number(1.0)
+                } else {
+                    AwkValue::Number(0.0)
                 }
             }
             "__array_access" => {
@@ -2860,6 +3047,36 @@ impl AwkInterpreter {
                 }
                 AwkFlow::Continue
             }
+            AwkAction::GetlineFile { var, file } => {
+                // Read next line from file (action context — return value discarded).
+                let path_str = self.eval_expr(file).as_string();
+                let resolved = if path_str.starts_with('/') {
+                    path_str.clone()
+                } else {
+                    self.cwd.join(&path_str).to_string_lossy().to_string()
+                };
+
+                if !self.ensure_file_loaded(&resolved) {
+                    return AwkFlow::Continue;
+                }
+
+                let entry = self.file_inputs.get_mut(&resolved).unwrap();
+                if entry.1 < entry.0.len() {
+                    let line = entry.0[entry.1].clone();
+                    entry.1 += 1;
+                    match var {
+                        Some(v) => {
+                            self.state
+                                .variables
+                                .insert(v.clone(), AwkValue::String(line));
+                        }
+                        None => {
+                            self.state.set_line(&line);
+                        }
+                    }
+                }
+                AwkFlow::Continue
+            }
             AwkAction::Break => AwkFlow::Break,
             AwkAction::Continue => AwkFlow::LoopContinue,
             AwkAction::Exit(expr) => {
@@ -2992,6 +3209,8 @@ impl Builtin for Awk {
         let mut interp = AwkInterpreter::new();
         interp.functions = program.functions.clone();
         interp.state.fs = Self::process_escape_sequences(&field_sep);
+        interp.fs = Some(ctx.fs.clone());
+        interp.cwd = ctx.cwd.clone();
         if csv_mode {
             interp.state.csv_mode = true;
             interp.state.ofs = ",".to_string();
@@ -3940,5 +4159,93 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "café\n");
+    }
+
+    // ========================================================================
+    // getline from file (issue #796)
+    // ========================================================================
+
+    /// Helper: create an in-memory FS with a file, then run awk.
+    async fn run_awk_with_file(
+        args: &[&str],
+        stdin: Option<&str>,
+        file_path: &str,
+        file_content: &str,
+    ) -> Result<ExecResult> {
+        let awk = Awk;
+        let fs = Arc::new(InMemoryFs::new());
+        fs.write_file(std::path::Path::new(file_path), file_content.as_bytes())
+            .await
+            .unwrap();
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            shell: None,
+        };
+
+        awk.execute(ctx).await
+    }
+
+    #[tokio::test]
+    async fn test_awk_getline_file_into_var() {
+        // getline var < "file" reads lines one at a time
+        let result = run_awk_with_file(
+            &[r#"BEGIN{while((getline line < "/tmp/data.txt") > 0) print line}"#],
+            None,
+            "/tmp/data.txt",
+            "alpha\nbeta\ngamma",
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "alpha\nbeta\ngamma\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_getline_file_no_var() {
+        // getline < "file" without variable updates $0
+        let result = run_awk_with_file(
+            &[r#"BEGIN{getline < "/tmp/data.txt"; print}"#],
+            None,
+            "/tmp/data.txt",
+            "first\nsecond",
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "first\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_getline_file_eof() {
+        // getline at EOF keeps variable unchanged
+        let result = run_awk_with_file(
+            &[r#"BEGIN{getline x < "/tmp/f.txt"; getline x < "/tmp/f.txt"; print x}"#],
+            None,
+            "/tmp/f.txt",
+            "only",
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "only\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_getline_file_missing() {
+        // getline from non-existent file should not crash (returns -1 / empty)
+        let result = run_awk(&[r#"BEGIN{getline x < "/no/such/file"; print "ok"}"#], None)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "ok\n");
     }
 }
