@@ -120,10 +120,11 @@ test("WB: stderr truncation on massive error output", (t) => {
 // 3. WHITE-BOX — Sandbox Escape Prevention (TM-ESC)
 // ============================================================================
 
-test("WB: exec builtin blocked (TM-ESC-001)", (t) => {
+test("WB: exec cannot escape sandbox (TM-ESC-001)", (t) => {
   const bash = new Bash();
-  const r = bash.executeSync("exec ls");
-  t.not(r.exitCode, 0, "exec must be blocked");
+  // exec runs commands within VFS sandbox — external binaries don't exist
+  const r = bash.executeSync("exec /bin/bash");
+  t.not(r.exitCode, 0, "exec of external binary must fail in sandbox");
 });
 
 test("WB: /proc filesystem not accessible (TM-ESC-003)", (t) => {
