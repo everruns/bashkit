@@ -433,6 +433,10 @@ fn normalize_awk_newlines(input: &str) -> String {
                     i += 1;
                 }
             }
+            '\\' if i + 1 < chars.len() && chars[i + 1] == '\n' => {
+                // Backslash-newline: line continuation — join lines
+                i += 2;
+            }
             '\n' if brace_depth > 0 => {
                 // Inside action block: replace newline with semicolon
                 result.push(';');

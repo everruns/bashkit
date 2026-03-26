@@ -724,3 +724,24 @@ echo 'abc' | awk '/abc/ { print "yes" }'
 ### expect
 yes
 ### end
+
+### awk_backslash_newline_continuation
+# Issue #836: backslash-newline line continuation
+echo 'test' | awk '{
+    x = 1 + \
+        2
+    print x
+}'
+### expect
+3
+### end
+
+### awk_backslash_newline_condition
+# Issue #836: backslash-newline in condition
+echo '5' | awk '{
+    if ($1 > 3 && \
+        $1 < 10) print "yes"
+}'
+### expect
+yes
+### end
