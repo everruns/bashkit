@@ -3784,13 +3784,13 @@ impl Interpreter {
         // Script execution by path
         if name.contains('/') {
             return self
-                .try_execute_script_by_path(name, &args, &command.redirects)
+                .try_execute_script_by_path(name, &args, stdin, &command.redirects)
                 .await;
         }
 
         // $PATH search
         if let Some(result) = self
-            .try_execute_script_via_path_search(name, &args, &command.redirects)
+            .try_execute_script_via_path_search(name, &args, stdin, &command.redirects)
             .await?
         {
             return Ok(result);
@@ -3820,6 +3820,7 @@ impl Interpreter {
         &mut self,
         name: &str,
         args: &[String],
+        stdin: Option<String>,
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         let path = self.resolve_path(name);
@@ -3862,7 +3863,7 @@ impl Interpreter {
             }
         };
 
-        self.execute_script_content(name, &content, args, redirects)
+        self.execute_script_content(name, &content, args, stdin, redirects)
             .await
     }
 
@@ -3873,6 +3874,7 @@ impl Interpreter {
         &mut self,
         name: &str,
         args: &[String],
+        stdin: Option<String>,
         redirects: &[Redirect],
     ) -> Result<Option<ExecResult>> {
         let path_var = self
@@ -3897,7 +3899,7 @@ impl Interpreter {
                 if let Ok(content) = self.fs.read_file(&candidate).await {
                     let script_text = String::from_utf8_lossy(&content).to_string();
                     let result = self
-                        .execute_script_content(name, &script_text, args, redirects)
+                        .execute_script_content(name, &script_text, args, stdin, redirects)
                         .await?;
                     return Ok(Some(result));
                 }
@@ -3916,6 +3918,7 @@ impl Interpreter {
         name: &str,
         content: &str,
         args: &[String],
+        stdin: Option<String>,
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         // Strip shebang line if present
@@ -3947,10 +3950,15 @@ impl Interpreter {
             positional: args.to_vec(),
         });
 
+        // Forward pipeline stdin so commands inside the script (cat, read, etc.) can consume it
+        let prev_pipeline_stdin = self.pipeline_stdin.take();
+        self.pipeline_stdin = stdin;
+
         let result = self.execute(&script).await;
 
-        // Pop call frame
+        // Pop call frame and restore pipeline stdin
         self.call_stack.pop();
+        self.pipeline_stdin = prev_pipeline_stdin;
 
         match result {
             Ok(mut exec_result) => {
