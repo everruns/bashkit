@@ -3725,6 +3725,22 @@ impl Interpreter {
         };
 
         self.apply_builtin_side_effects(&result);
+
+        // Sync exported variables into env so subprocess isolation can see them
+        if name == "export" && result.exit_code == 0 {
+            for arg in args {
+                if let Some(eq_pos) = arg.find('=') {
+                    let var_name = &arg[..eq_pos];
+                    if let Some(value) = self.variables.get(var_name) {
+                        self.env.insert(var_name.to_string(), value.clone());
+                    }
+                } else if let Some(value) = self.variables.get(arg.as_str()) {
+                    // export NAME (without =) — mark existing variable as exported
+                    self.env.insert(arg.to_string(), value.clone());
+                }
+            }
+        }
+
         self.apply_redirections(result, redirects).await
     }
 
@@ -3943,12 +3959,34 @@ impl Interpreter {
             }
         };
 
+        // Subprocess isolation: path-based script execution only inherits
+        // exported variables (env), not the full parent shell state.
+        // This matches real bash behavior where ./script.sh spawns a subprocess.
+        let saved_vars = self.variables.clone();
+        let saved_arrays = self.arrays.clone();
+        let saved_assoc = self.assoc_arrays.clone();
+        let saved_functions = self.functions.clone();
+        let saved_traps = self.traps.clone();
+        let saved_call_stack = self.call_stack.clone();
+        let saved_exit = self.last_exit_code;
+        let saved_aliases = self.aliases.clone();
+        let saved_coproc = self.coproc_buffers.clone();
+
+        // Child only sees exported variables (env), not all shell variables
+        self.variables = self.env.clone();
+        self.arrays.clear();
+        self.assoc_arrays.clear();
+        self.functions.clear();
+        self.traps.clear();
+        self.aliases.clear();
+        self.coproc_buffers.clear();
+
         // Push call frame: $0 = script name, $1..N = args
-        self.call_stack.push(CallFrame {
+        self.call_stack = vec![CallFrame {
             name: name.to_string(),
             locals: HashMap::new(),
             positional: args.to_vec(),
-        });
+        }];
 
         // Forward pipeline stdin so commands inside the script (cat, read, etc.) can consume it
         let prev_pipeline_stdin = self.pipeline_stdin.take();
@@ -3956,8 +3994,16 @@ impl Interpreter {
 
         let result = self.execute(&script).await;
 
-        // Pop call frame and restore pipeline stdin
-        self.call_stack.pop();
+        // Restore full parent state — child mutations don't propagate
+        self.variables = saved_vars;
+        self.arrays = saved_arrays;
+        self.assoc_arrays = saved_assoc;
+        self.functions = saved_functions;
+        self.traps = saved_traps;
+        self.call_stack = saved_call_stack;
+        self.last_exit_code = saved_exit;
+        self.aliases = saved_aliases;
+        self.coproc_buffers = saved_coproc;
         self.pipeline_stdin = prev_pipeline_stdin;
 
         match result {
