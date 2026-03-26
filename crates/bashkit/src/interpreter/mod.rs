@@ -1532,16 +1532,7 @@ impl Interpreter {
                     });
                 }
                 ControlFlow::None => {
-                    // Check if errexit caused early return from body
-                    if self.is_errexit_enabled() && exit_code != 0 {
-                        return Ok(ExecResult {
-                            stdout,
-                            stderr,
-                            exit_code,
-                            control_flow: ControlFlow::None,
-                            ..Default::default()
-                        });
-                    }
+                    // errexit is already handled by execute_command_sequence_impl
                 }
             }
         }
@@ -1801,16 +1792,7 @@ impl Interpreter {
                     });
                 }
                 ControlFlow::None => {
-                    // Check if errexit caused early return from body
-                    if self.is_errexit_enabled() && exit_code != 0 {
-                        return Ok(ExecResult {
-                            stdout,
-                            stderr,
-                            exit_code,
-                            control_flow: ControlFlow::None,
-                            ..Default::default()
-                        });
-                    }
+                    // errexit is already handled by execute_command_sequence_impl
                 }
             }
 
@@ -2250,16 +2232,7 @@ impl Interpreter {
                     });
                 }
                 ControlFlow::None => {
-                    // Check if errexit caused early return from body
-                    if self.is_errexit_enabled() && exit_code != 0 {
-                        return Ok(ExecResult {
-                            stdout,
-                            stderr,
-                            exit_code,
-                            control_flow: ControlFlow::None,
-                            ..Default::default()
-                        });
-                    }
+                    // errexit is already handled by execute_command_sequence_impl
                 }
             }
         }
@@ -2788,8 +2761,15 @@ impl Interpreter {
                 });
             }
 
-            // Check for errexit (set -e) if enabled
-            if check_errexit && self.is_errexit_enabled() && exit_code != 0 {
+            // Check for errexit (set -e) if enabled.
+            // Skip errexit for commands that are AND-OR lists — per POSIX, set -e
+            // does not exit on failures that are part of && or || chains.
+            // The list executor already handles errexit internally.
+            let is_and_or_list = matches!(
+                command,
+                Command::List(list) if list.rest.iter().any(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or))
+            );
+            if check_errexit && self.is_errexit_enabled() && exit_code != 0 && !is_and_or_list {
                 return Ok(ExecResult {
                     stdout,
                     stderr,
