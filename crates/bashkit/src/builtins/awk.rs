@@ -362,6 +362,91 @@ impl AwkState {
 /// 100 levels × ~2KB = ~200KB, well within typical stack limits.
 const MAX_AWK_PARSER_DEPTH: usize = 100;
 
+/// Preprocess awk program: replace newlines with semicolons inside action blocks.
+/// This makes newlines act as statement separators per POSIX awk spec.
+/// Respects string literals, regex literals, and nested braces.
+fn normalize_awk_newlines(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let chars: Vec<char> = input.chars().collect();
+    let mut i = 0;
+    let mut brace_depth = 0;
+
+    while i < chars.len() {
+        match chars[i] {
+            '{' => {
+                brace_depth += 1;
+                result.push('{');
+                i += 1;
+            }
+            '}' => {
+                if brace_depth > 0 {
+                    brace_depth -= 1;
+                }
+                result.push('}');
+                i += 1;
+            }
+            '"' => {
+                // String literal — pass through unchanged
+                result.push('"');
+                i += 1;
+                while i < chars.len() && chars[i] != '"' {
+                    if chars[i] == '\\' && i + 1 < chars.len() {
+                        result.push(chars[i]);
+                        i += 1;
+                    }
+                    result.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    result.push(chars[i]); // closing "
+                    i += 1;
+                }
+            }
+            '/' if brace_depth > 0 => {
+                // Potential regex literal — pass through unchanged
+                result.push('/');
+                i += 1;
+                while i < chars.len() && chars[i] != '/' {
+                    if chars[i] == '\\' && i + 1 < chars.len() {
+                        result.push(chars[i]);
+                        i += 1;
+                    }
+                    result.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    result.push(chars[i]); // closing /
+                    i += 1;
+                }
+            }
+            '#' => {
+                // Comment — skip to end of line, replace with newline/semicolon
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+                if i < chars.len() {
+                    if brace_depth > 0 {
+                        result.push(';');
+                    } else {
+                        result.push('\n');
+                    }
+                    i += 1;
+                }
+            }
+            '\n' if brace_depth > 0 => {
+                // Inside action block: replace newline with semicolon
+                result.push(';');
+                i += 1;
+            }
+            _ => {
+                result.push(chars[i]);
+                i += 1;
+            }
+        }
+    }
+    result
+}
+
 struct AwkParser<'a> {
     input: &'a str,
     pos: usize,
@@ -636,6 +721,17 @@ impl<'a> AwkParser<'a> {
 
         loop {
             self.skip_whitespace();
+            if self.pos >= self.input.len() {
+                return Err(Error::Execution(
+                    "awk: unterminated action block".to_string(),
+                ));
+            }
+
+            // Skip empty statements (consecutive semicolons from newline normalization)
+            while self.pos < self.input.len() && self.current_char().unwrap() == ';' {
+                self.pos += 1;
+                self.skip_whitespace();
+            }
             if self.pos >= self.input.len() {
                 return Err(Error::Execution(
                     "awk: unterminated action block".to_string(),
@@ -3240,6 +3336,7 @@ impl Builtin for Awk {
             return Err(Error::Execution("awk: no program given".to_string()));
         }
 
+        let program_str = normalize_awk_newlines(&program_str);
         let mut parser = AwkParser::new(&program_str);
         let program = parser.parse()?;
 
