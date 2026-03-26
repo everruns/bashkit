@@ -223,15 +223,18 @@ mod sandbox_escape {
         // Note: current impl stores command but doesn't execute it
     }
 
-    /// Test exec is not implemented (prevents shell escape)
+    /// Test exec cannot escape sandbox — only VFS scripts are reachable
+    ///
+    /// exec now executes commands within the VFS (run + exit). Since the VFS
+    /// doesn't contain /bin/bash, exec /bin/bash still fails with exit 127.
+    /// This preserves the security invariant: no real process replacement.
     #[tokio::test]
     async fn threat_exec_not_available() {
         let mut bash = Bash::new();
 
         let result = bash.exec("exec /bin/bash").await.unwrap();
-        // exec should return command not found (exit 127)
+        // exec tries to run /bin/bash in VFS — doesn't exist, so exit 127
         assert_eq!(result.exit_code, 127);
-        assert!(result.stderr.contains("command not found"));
     }
 
     /// Test external command execution is blocked

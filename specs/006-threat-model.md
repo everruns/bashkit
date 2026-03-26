@@ -343,7 +343,7 @@ taking ownership via `std::mem::take`. Custom builtins persist across multiple c
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-ESC-005 | Shell escape | `exec /bin/bash` | exec not implemented (returns exit 127) | **MITIGATED** |
+| TM-ESC-005 | Shell escape | `exec /bin/bash` | exec runs command within VFS sandbox then exits (no real process replacement); host binaries unreachable | **MITIGATED** |
 | TM-ESC-006 | Subprocess | `./malicious` | Script execution runs within VFS sandbox (no host shell) | **MITIGATED** |
 | TM-ESC-007 | Background proc | `malicious &` | Background not implemented | **MITIGATED** |
 | TM-ESC-008 | eval injection | `eval "$user_input"` | eval runs in sandbox (builtins only) | **MITIGATED** |
