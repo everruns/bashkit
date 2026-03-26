@@ -623,13 +623,10 @@ impl<'a> AwkParser<'a> {
     fn matches_keyword(&mut self, keyword: &str) -> bool {
         if self.input[self.pos..].starts_with(keyword) {
             let after = self.pos + keyword.len();
-            if after >= self.input.len()
-                || !self.input[after..]
-                    .chars()
-                    .next()
-                    .unwrap()
-                    .is_alphanumeric()
-            {
+            if after >= self.input.len() || {
+                let c = self.input[after..].chars().next().unwrap();
+                !c.is_alphanumeric() && c != '_'
+            } {
                 self.pos = after;
                 return true;
             }
@@ -1523,13 +1520,10 @@ impl<'a> AwkParser<'a> {
         for kw in keywords {
             if remaining.starts_with(kw) {
                 let after = self.pos + kw.len();
-                if after >= self.input.len()
-                    || !self.input[after..]
-                        .chars()
-                        .next()
-                        .unwrap()
-                        .is_alphanumeric()
-                {
+                if after >= self.input.len() || {
+                    let c = self.input[after..].chars().next().unwrap();
+                    !c.is_alphanumeric() && c != '_'
+                } {
                     return true;
                 }
             }
