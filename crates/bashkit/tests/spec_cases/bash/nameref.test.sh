@@ -206,3 +206,61 @@ echo $x
 hello
 world
 ### end
+
+### nameref_nounset_basic
+# basic nameref under set -u (issue #834)
+set -u
+target="hello"
+declare -n ref=target
+echo "${ref}"
+### expect
+hello
+### end
+
+### nameref_nounset_local_n
+# local -n inside function under set -u
+set -u
+val="world"
+f() {
+  local -n r=$1
+  echo "$r"
+}
+f val
+### expect
+world
+### end
+
+### nameref_nounset_array
+# nameref to array under set -u
+set -u
+arr=(one two three)
+declare -n ref=arr
+echo "${ref[1]}"
+### expect
+two
+### end
+
+### nameref_nounset_write_through
+# nameref write-through under set -u
+set -u
+target="before"
+declare -n ref=target
+ref="after"
+echo "$target"
+### expect
+after
+### end
+
+### nameref_nounset_harness
+# harness pattern: set -euo pipefail with nameref function
+set -euo pipefail
+get_value() {
+  local -n out=$1
+  out="computed"
+}
+result=""
+get_value result
+echo "$result"
+### expect
+computed
+### end
