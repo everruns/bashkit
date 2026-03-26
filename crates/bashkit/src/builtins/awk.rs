@@ -1878,6 +1878,8 @@ const MAX_AWK_CALL_DEPTH: usize = 64;
 struct AwkInterpreter {
     state: AwkState,
     output: String,
+    /// Stderr output buffer for `/dev/stderr` redirection
+    stderr_output: String,
     /// Lines of current input file (set before main loop)
     input_lines: Vec<String>,
     /// Current line index within input_lines
@@ -1900,6 +1902,7 @@ impl AwkInterpreter {
         Self {
             state: AwkState::default(),
             output: String::new(),
+            stderr_output: String::new(),
             input_lines: Vec::new(),
             line_index: 0,
             functions: HashMap::new(),
@@ -2649,13 +2652,18 @@ impl AwkInterpreter {
     fn write_output(&mut self, text: &str, target: &Option<AwkOutputTarget>) {
         match target {
             None => self.output.push_str(text),
-            Some(AwkOutputTarget::Truncate(expr)) => {
+            Some(AwkOutputTarget::Truncate(expr)) | Some(AwkOutputTarget::Append(expr)) => {
                 let path = self.eval_expr(expr).as_string();
-                self.file_outputs.entry(path).or_default().push_str(text);
-            }
-            Some(AwkOutputTarget::Append(expr)) => {
-                let path = self.eval_expr(expr).as_string();
-                self.file_appends.entry(path).or_default().push_str(text);
+                // Intercept /dev/stderr and /dev/stdout — route to streams, not VFS
+                if path == "/dev/stderr" {
+                    self.stderr_output.push_str(text);
+                } else if path == "/dev/stdout" {
+                    self.output.push_str(text);
+                } else if matches!(target, Some(AwkOutputTarget::Append(_))) {
+                    self.file_appends.entry(path).or_default().push_str(text);
+                } else {
+                    self.file_outputs.entry(path).or_default().push_str(text);
+                }
             }
         }
     }
@@ -3011,7 +3019,9 @@ impl Builtin for Awk {
                     }
                 }
                 Self::flush_file_outputs(&interp, &ctx).await?;
-                return Ok(ExecResult::with_code(interp.output, exit_code.unwrap_or(0)));
+                let mut result = ExecResult::with_code(interp.output, exit_code.unwrap_or(0));
+                result.stderr = interp.stderr_output;
+                return Ok(result);
             }
         }
 
@@ -3089,7 +3099,9 @@ impl Builtin for Awk {
         }
 
         Self::flush_file_outputs(&interp, &ctx).await?;
-        Ok(ExecResult::with_code(interp.output, exit_code.unwrap_or(0)))
+        let mut result = ExecResult::with_code(interp.output, exit_code.unwrap_or(0));
+        result.stderr = interp.stderr_output;
+        Ok(result)
     }
 }
 
