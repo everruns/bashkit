@@ -16,6 +16,17 @@ pub struct Export;
 #[async_trait]
 impl Builtin for Export {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        // Handle `export -p` — print all exported variables
+        if ctx.args.first().map(|s| s.as_str()) == Some("-p") {
+            let mut output = String::new();
+            let mut pairs: Vec<_> = ctx.env.iter().collect();
+            pairs.sort_by_key(|(k, _)| (*k).clone());
+            for (name, value) in pairs {
+                output.push_str(&format!("declare -x {}=\"{}\"\n", name, value));
+            }
+            return Ok(ExecResult::ok(output));
+        }
+
         for arg in ctx.args {
             // Handle NAME=VALUE format
             if let Some(eq_pos) = arg.find('=') {

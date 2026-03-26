@@ -7550,6 +7550,13 @@ impl Interpreter {
         } else {
             value
         };
+        // Check allexport (set -a): auto-export to env
+        let allexport = self
+            .variables
+            .get("SHOPT_a")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+
         for frame in self.call_stack.iter_mut().rev() {
             if let std::collections::hash_map::Entry::Occupied(mut e) =
                 frame.locals.entry(resolved.clone())
@@ -7561,9 +7568,15 @@ impl Interpreter {
                     .variable_bytes
                     .saturating_add(value.len())
                     .saturating_sub(old_val_len);
+                if allexport {
+                    self.env.insert(resolved, value.clone());
+                }
                 e.insert(value);
                 return;
             }
+        }
+        if allexport {
+            self.env.insert(resolved.clone(), value.clone());
         }
         self.insert_variable_checked(resolved, value);
     }
