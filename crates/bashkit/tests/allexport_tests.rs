@@ -46,12 +46,9 @@ async fn allexport_with_source() {
     let mut bash = Bash::new();
     let fs = bash.fs();
 
-    fs.write_file(
-        Path::new("/vars.env"),
-        b"DB_HOST=localhost\nDB_PORT=5432",
-    )
-    .await
-    .unwrap();
+    fs.write_file(Path::new("/vars.env"), b"DB_HOST=localhost\nDB_PORT=5432")
+        .await
+        .unwrap();
 
     fs.write_file(
         Path::new("/check.sh"),
