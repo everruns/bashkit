@@ -525,6 +525,19 @@ impl<'a> Lexer<'a> {
                             continue;
                         }
                     }
+                    // Handle $(...) inside double-quoted word segments
+                    // to preserve single-quoted strings within command substitutions
+                    if c == '$' && quote_char == '"' {
+                        word.push(c);
+                        self.advance();
+                        if self.peek_char() == Some('(') {
+                            word.push('(');
+                            self.advance();
+                            self.read_command_subst_into(&mut word);
+                            continue;
+                        }
+                        continue;
+                    }
                     word.push(c);
                     self.advance();
                 }
