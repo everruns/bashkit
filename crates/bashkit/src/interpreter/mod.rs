@@ -7165,6 +7165,17 @@ impl Interpreter {
                     } else {
                         result.push_str(&expanded);
                     }
+                } else if let Some(&c) = chars.peek()
+                    && matches!(c, '#' | '?' | '$' | '!' | '@' | '*' | '-')
+                {
+                    // Handle special variables: $#, $?, $$, $!, $@, $*, $-
+                    chars.next();
+                    let value = self.expand_variable(&c.to_string());
+                    if value.is_empty() {
+                        result.push('0');
+                    } else {
+                        result.push_str(&value);
+                    }
                 } else {
                     // Handle $var syntax (common in arithmetic)
                     let mut name = String::new();
