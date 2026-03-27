@@ -2565,7 +2565,7 @@ impl<'a> Parser<'a> {
                     }
                     parts.push(WordPart::Literal(ansi));
                 } else if chars.peek() == Some(&'(') {
-                // Check for $( - command substitution or arithmetic
+                    // Check for $( - command substitution or arithmetic
                     chars.next(); // consume first '('
 
                     // Check for $(( - arithmetic expansion
