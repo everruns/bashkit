@@ -2534,8 +2534,38 @@ impl<'a> Parser<'a> {
                     parts.push(WordPart::Literal(std::mem::take(&mut current)));
                 }
 
+                // Check for $'...' - ANSI-C quoting
+                if chars.peek() == Some(&'\'') {
+                    chars.next(); // consume opening '
+                    let mut ansi = String::new();
+                    while let Some(c) = chars.next() {
+                        if c == '\'' {
+                            break;
+                        }
+                        if c == '\\' {
+                            if let Some(esc) = chars.next() {
+                                match esc {
+                                    'n' => ansi.push('\n'),
+                                    't' => ansi.push('\t'),
+                                    'r' => ansi.push('\r'),
+                                    'a' => ansi.push('\x07'),
+                                    'b' => ansi.push('\x08'),
+                                    'e' | 'E' => ansi.push('\x1B'),
+                                    '\\' => ansi.push('\\'),
+                                    '\'' => ansi.push('\''),
+                                    _ => {
+                                        ansi.push('\\');
+                                        ansi.push(esc);
+                                    }
+                                }
+                            }
+                        } else {
+                            ansi.push(c);
+                        }
+                    }
+                    parts.push(WordPart::Literal(ansi));
+                } else if chars.peek() == Some(&'(') {
                 // Check for $( - command substitution or arithmetic
-                if chars.peek() == Some(&'(') {
                     chars.next(); // consume first '('
 
                     // Check for $(( - arithmetic expansion
