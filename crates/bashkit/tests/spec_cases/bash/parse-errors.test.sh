@@ -26,7 +26,6 @@ done
 
 ### parse_unexpected_do
 # do unexpected outside loop - bashkit should reject this
-### skip: TODO parser does not reject unexpected 'do' keyword
 bash -c 'do echo hi' 2>/dev/null
 echo status=$?
 ### expect
@@ -35,7 +34,6 @@ status=2
 
 ### parse_unexpected_rbrace
 # } is a parse error at top level
-### skip: TODO parser does not reject unexpected '}' at top level
 bash -c '}' 2>/dev/null
 echo status=$?
 ### expect
