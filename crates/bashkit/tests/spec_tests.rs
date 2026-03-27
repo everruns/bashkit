@@ -8,7 +8,7 @@
 //! - `### skip: reason` - Skip test entirely (not run in any test)
 //! - `### bash_diff: reason` - Known difference from real bash (runs in spec tests, excluded from comparison)
 //!
-//! ## Skipped Tests (33 total)
+//! ## Skipped Tests (32 total)
 //!
 //! Actual `### skip:` markers across spec test files:
 //!
@@ -24,8 +24,6 @@
 //! - [ ] od output format varies
 //! - [ ] hexdump -C output format varies
 //!
-//! ### nameref.test.sh (1 skipped)
-//! - [ ] parser does not handle local arr=(...) syntax
 //!
 //! ### parse-errors.test.sh (6 skipped)
 //! - [ ] parser does not reject unexpected 'do' keyword
