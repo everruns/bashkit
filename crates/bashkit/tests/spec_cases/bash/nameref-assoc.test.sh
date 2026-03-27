@@ -82,6 +82,22 @@ count_entries data
 3
 ### end
 
+### nameref_assoc_key_enumeration_string
+# Nameref key enumeration via ${!ref[@]} in string context
+show() {
+  local -n ref="$1"
+  for k in "${!ref[@]}"; do
+    echo "${k}=${ref[$k]}"
+  done | sort
+}
+declare -A m=([a]=1 [b]=2 [c]=3)
+show m
+### expect
+a=1
+b=2
+c=3
+### end
+
 ### nameref_overwrite_assoc_key
 # Nameref overwrite existing key in associative array
 update() {
