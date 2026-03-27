@@ -42,18 +42,41 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Node.js versions
           - runtime: node
             version: "20"
+            run: "node"
+            pkg: "npm"
           - runtime: node
             version: "22"
+            run: "node"
+            pkg: "npm"
           - runtime: node
             version: "24"
+            run: "node"
+            pkg: "npm"
           - runtime: node
             version: "latest"
+            run: "node"
+            pkg: "npm"
+          # Bun
           - runtime: bun
             version: "latest"
+            run: "bun"
+            pkg: "bun"
           - runtime: bun
             version: "canary"
+            run: "bun"
+            pkg: "bun"
+          # Deno
+          - runtime: deno
+            version: "2.x"
+            run: "deno run -A"
+            pkg: "npm"
+          - runtime: deno
+            version: "canary"
+            run: "deno run -A"
+            pkg: "npm"
 
     steps:
       - uses: actions/checkout@v6
@@ -70,7 +93,7 @@ jobs:
           node-version: ${{ matrix.version }}
 
       - name: Setup Node.js (for napi build)
-        if: matrix.runtime == 'bun'
+        if: matrix.runtime != 'node'
         uses: actions/setup-node@v6
         with:
           node-version: "22"
@@ -81,22 +104,28 @@ jobs:
         with:
           bun-version: ${{ matrix.version }}
 
+      - name: Setup Deno
+        if: matrix.runtime == 'deno'
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ matrix.version }}
+
       - name: Install dependencies
-        run: ${{ matrix.runtime }} install
+        run: ${{ matrix.pkg }} install
         working-directory: crates/bashkit-js
 
       - name: Build native binding
-        run: ${{ matrix.runtime }} run build
+        run: ${{ matrix.pkg }} run build
         working-directory: crates/bashkit-js
 
       - name: Run tests
-        run: ${{ matrix.runtime == 'node' && 'npm test' || 'bun run test' }}
+        run: ${{ matrix.pkg }} test
         working-directory: crates/bashkit-js
 
       - name: Install example dependencies and link local build
         working-directory: examples
         run: |
-          ${{ matrix.runtime }} install
+          ${{ matrix.pkg }} install
           rm -rf node_modules/@everruns/bashkit
           mkdir -p node_modules/@everruns
           ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
@@ -104,10 +133,10 @@ jobs:
       - name: Run examples (self-contained)
         working-directory: examples
         run: |
-          ${{ matrix.runtime }} bash_basics.mjs
-          ${{ matrix.runtime }} data_pipeline.mjs
-          ${{ matrix.runtime }} llm_tool.mjs
-          ${{ matrix.runtime }} langchain_integration.mjs
+          ${{ matrix.run }} bash_basics.mjs
+          ${{ matrix.run }} data_pipeline.mjs
+          ${{ matrix.run }} llm_tool.mjs
+          ${{ matrix.run }} langchain_integration.mjs
 
       - name: Install Doppler CLI
         if: env.DOPPLER_TOKEN != ''
@@ -117,9 +146,9 @@ jobs:
         if: env.DOPPLER_TOKEN != ''
         working-directory: examples
         run: |
-          doppler run -- ${{ matrix.runtime }} openai_tool.mjs
-          doppler run -- ${{ matrix.runtime }} vercel_ai_tool.mjs
-          doppler run -- ${{ matrix.runtime }} langchain_agent.mjs
+          doppler run -- ${{ matrix.run }} openai_tool.mjs
+          doppler run -- ${{ matrix.run }} vercel_ai_tool.mjs
+          doppler run -- ${{ matrix.run }} langchain_agent.mjs
 
   # Gate job for branch protection
   js-check:
