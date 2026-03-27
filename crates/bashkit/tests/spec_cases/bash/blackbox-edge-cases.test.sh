@@ -587,11 +587,10 @@ file3.txt
 ### end
 
 ### chained_string_operations
-### bash_diff: variable expansion in ${x#$var} operand not supported yet
-# Multiple string operations — bash: "[hello world  ]", bashkit: "[  hello world  ]"
+# Multiple string operations — strip leading whitespace
 x="  hello world  "; x="${x#"${x%%[![:space:]]*}"}"; echo "[$x]"
 ### expect
-[  hello world  ]
+[hello world  ]
 ### end
 
 ### multiline_if

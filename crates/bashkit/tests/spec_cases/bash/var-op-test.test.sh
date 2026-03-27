@@ -248,3 +248,49 @@ empty=
 assoc=v
 assoc=plus
 ### end
+
+### vop_suffix_removal_ansi_c_newline
+# ${var%$'\n'} should strip trailing newline (issue #847)
+str=$'abc\n'
+r1="${str%$'\n'}"
+echo "$r1"
+### expect
+abc
+### end
+
+### vop_suffix_removal_var_newline
+# ${var%${nl}} should strip trailing newline via variable (issue #847)
+nl=$'\n'
+str=$'abc\n'
+r2="${str%${nl}}"
+echo "$r2"
+### expect
+abc
+### end
+
+### vop_prefix_removal_ansi_c_newline
+# ${var#$'\n'} should strip leading newline (issue #847)
+str=$'\nabc'
+r3="${str#$'\n'}"
+echo "$r3"
+### expect
+abc
+### end
+
+### vop_suffix_removal_long_ansi_c
+# ${var%%$'\n'} should strip trailing newline (issue #847)
+str=$'abc\n'
+r4="${str%%$'\n'}"
+echo "$r4"
+### expect
+abc
+### end
+
+### vop_prefix_removal_long_ansi_c
+# ${var##$'\n'} should strip leading newline (issue #847)
+str=$'\nabc'
+r5="${str##$'\n'}"
+echo "$r5"
+### expect
+abc
+### end

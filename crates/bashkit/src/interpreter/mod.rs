@@ -6438,19 +6438,23 @@ impl Interpreter {
             }
             ParameterOp::RemovePrefixShort => {
                 // ${var#pattern} - remove shortest prefix match
-                self.remove_pattern(value, operand, true, false)
+                let expanded = self.expand_operand(operand);
+                self.remove_pattern(value, &expanded, true, false)
             }
             ParameterOp::RemovePrefixLong => {
                 // ${var##pattern} - remove longest prefix match
-                self.remove_pattern(value, operand, true, true)
+                let expanded = self.expand_operand(operand);
+                self.remove_pattern(value, &expanded, true, true)
             }
             ParameterOp::RemoveSuffixShort => {
                 // ${var%pattern} - remove shortest suffix match
-                self.remove_pattern(value, operand, false, false)
+                let expanded = self.expand_operand(operand);
+                self.remove_pattern(value, &expanded, false, false)
             }
             ParameterOp::RemoveSuffixLong => {
                 // ${var%%pattern} - remove longest suffix match
-                self.remove_pattern(value, operand, false, true)
+                let expanded = self.expand_operand(operand);
+                self.remove_pattern(value, &expanded, false, true)
             }
             ParameterOp::ReplaceFirst {
                 pattern,
