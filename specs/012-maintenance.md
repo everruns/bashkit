@@ -119,6 +119,24 @@ Failures persisting **>2 consecutive days** are blocking:
 3. Assign to most recent contributor in failing area
 4. If upstream dep change: pin to known-good rev, open follow-up issue
 
+## Deferred Items
+
+When a maintenance pass identifies issues too large to fix inline (e.g.
+multi-file refactors, cross-cutting changes), the pass must:
+
+1. Create a GitHub issue for each deferred item with clear scope and reproduction steps
+2. Record the issue numbers in the summary below so they are tracked
+
+Deferred items are **not** failures — they are expected for large-scope
+improvements. The requirement is that they are **tracked**, not silently skipped.
+
+### Deferred from 2026-03-27 run
+
+| Issue | Section | Description |
+|-------|---------|-------------|
+| #880  | Simplification | Migrate 27 builtins from manual arg parsing to ArgParser |
+| #881  | Simplification | Extract errexit suppression propagation helper |
+
 ## Automation
 
 Sections dependencies, tests, examples, code quality, and nightly CI are fully
