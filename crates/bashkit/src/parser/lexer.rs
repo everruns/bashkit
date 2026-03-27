@@ -954,6 +954,19 @@ impl<'a> Lexer<'a> {
                         self.advance();
                     }
                 }
+                Some('$') => {
+                    // Check for $'...' ANSI-C quoting in continuation
+                    let mut lookahead = self.chars.clone();
+                    lookahead.next(); // skip $
+                    if lookahead.next() == Some('\'') {
+                        self.advance(); // consume $
+                        self.advance(); // consume opening '
+                        content.push_str(&self.read_dollar_single_quoted_content());
+                    } else {
+                        content.push('$');
+                        self.advance();
+                    }
+                }
                 Some(ch) if self.is_word_char(ch) => {
                     content.push(ch);
                     self.advance();
