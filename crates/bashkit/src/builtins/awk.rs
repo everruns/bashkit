@@ -55,7 +55,6 @@ enum AwkPattern {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Regex and Match used for pattern matching expansion
 enum AwkExpr {
     Number(f64),
     String(String),
@@ -69,7 +68,8 @@ enum AwkExpr {
     Concat(Vec<AwkExpr>),
     FuncCall(String, Vec<AwkExpr>),
     Regex(String),
-    Match(Box<AwkExpr>, String),             // expr ~ /pattern/
+    #[allow(dead_code)] // matched in eval but construction deferred to pattern expansion
+    Match(Box<AwkExpr>, String), // expr ~ /pattern/
     PostIncrement(String),                   // var++
     PostDecrement(String),                   // var--
     PreIncrement(String),                    // ++var
@@ -114,7 +114,6 @@ enum AwkAction {
         var: Option<String>,
         file: AwkExpr,
     },
-    #[allow(dead_code)] // Exit code support for future
     Exit(Option<AwkExpr>),
     Return(Option<AwkExpr>),
     Expression(AwkExpr),
@@ -948,7 +947,7 @@ impl<'a> AwkParser<'a> {
                 Ok(Some(AwkOutputTarget::Truncate(target)))
             }
         } else if c == '|' {
-            // TODO: pipe output (e.g., `print ... | "cmd"`) not yet supported
+            // Pipe output (e.g., `print ... | "cmd"`) not supported in virtual mode
             Err(Error::Execution(
                 "awk: pipe output redirection (|) is not supported".to_string(),
             ))
