@@ -35,13 +35,25 @@ env:
 
 jobs:
   build-and-test:
-    name: Node ${{ matrix.node }}
+    name: ${{ matrix.runtime }} ${{ matrix.version }}
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
       matrix:
-        node: ["20", "22", "24", "latest"]
+        include:
+          - runtime: node
+            version: "20"
+          - runtime: node
+            version: "22"
+          - runtime: node
+            version: "24"
+          - runtime: node
+            version: "latest"
+          - runtime: bun
+            version: "latest"
+          - runtime: bun
+            version: "canary"
 
     steps:
       - uses: actions/checkout@v6
@@ -52,93 +64,39 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Setup Node.js
+        if: matrix.runtime == 'node'
         uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node }}
+          node-version: ${{ matrix.version }}
 
-      - name: Install dependencies
-        run: npm install
-        working-directory: crates/bashkit-js
-
-      - name: Build native binding
-        run: npm run build
-        working-directory: crates/bashkit-js
-
-      - name: Run tests
-        run: npm test
-        working-directory: crates/bashkit-js
-
-      - name: Install example dependencies and link local build
-        working-directory: examples
-        run: |
-          npm install
-          rm -rf node_modules/@everruns/bashkit
-          mkdir -p node_modules/@everruns
-          ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
-
-      - name: Run examples (self-contained)
-        working-directory: examples
-        run: |
-          node bash_basics.mjs
-          node data_pipeline.mjs
-          node llm_tool.mjs
-          node langchain_integration.mjs
-
-      - name: Install Doppler CLI
-        if: env.DOPPLER_TOKEN != ''
-        uses: dopplerhq/cli-action@v4
-
-      - name: Run AI examples
-        if: env.DOPPLER_TOKEN != ''
-        working-directory: examples
-        run: |
-          doppler run -- node openai_tool.mjs
-          doppler run -- node vercel_ai_tool.mjs
-          doppler run -- node langchain_agent.mjs
-
-  bun-test:
-    name: Bun ${{ matrix.bun }}
-    runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        bun: ["latest", "canary"]
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Setup Node.js
+      - name: Setup Node.js (for napi build)
+        if: matrix.runtime == 'bun'
         uses: actions/setup-node@v6
         with:
           node-version: "22"
 
       - name: Setup Bun
+        if: matrix.runtime == 'bun'
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: ${{ matrix.bun }}
+          bun-version: ${{ matrix.version }}
 
       - name: Install dependencies
-        run: bun install
+        run: ${{ matrix.runtime }} install
         working-directory: crates/bashkit-js
 
       - name: Build native binding
-        run: bun run build
+        run: ${{ matrix.runtime }} run build
         working-directory: crates/bashkit-js
 
       - name: Run tests
-        run: bun run test
+        run: ${{ matrix.runtime == 'node' && 'npm test' || 'bun run test' }}
         working-directory: crates/bashkit-js
 
       - name: Install example dependencies and link local build
         working-directory: examples
         run: |
-          bun install
+          ${{ matrix.runtime }} install
           rm -rf node_modules/@everruns/bashkit
           mkdir -p node_modules/@everruns
           ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
@@ -146,10 +104,10 @@ jobs:
       - name: Run examples (self-contained)
         working-directory: examples
         run: |
-          bun bash_basics.mjs
-          bun data_pipeline.mjs
-          bun llm_tool.mjs
-          bun langchain_integration.mjs
+          ${{ matrix.runtime }} bash_basics.mjs
+          ${{ matrix.runtime }} data_pipeline.mjs
+          ${{ matrix.runtime }} llm_tool.mjs
+          ${{ matrix.runtime }} langchain_integration.mjs
 
       - name: Install Doppler CLI
         if: env.DOPPLER_TOKEN != ''
@@ -159,24 +117,20 @@ jobs:
         if: env.DOPPLER_TOKEN != ''
         working-directory: examples
         run: |
-          doppler run -- bun openai_tool.mjs
-          doppler run -- bun vercel_ai_tool.mjs
-          doppler run -- bun langchain_agent.mjs
+          doppler run -- ${{ matrix.runtime }} openai_tool.mjs
+          doppler run -- ${{ matrix.runtime }} vercel_ai_tool.mjs
+          doppler run -- ${{ matrix.runtime }} langchain_agent.mjs
 
   # Gate job for branch protection
   js-check:
     name: JS Check
     if: always()
-    needs: [build-and-test, bun-test]
+    needs: [build-and-test]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
         run: |
           if [[ "${{ needs.build-and-test.result }}" != "success" ]]; then
             echo "JS build/test failed"
-            exit 1
-          fi
-          if [[ "${{ needs.bun-test.result }}" != "success" ]]; then
-            echo "Bun test failed"
             exit 1
           fi
