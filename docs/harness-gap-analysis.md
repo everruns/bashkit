@@ -19,13 +19,12 @@ will run inside bashkit against the VFS (no real filesystem needed).
 
 ## Open Issues
 
-### Bugs (3 remaining)
+### Bugs (2 remaining)
 
 | Issue | Title | Severity |
 |-------|-------|----------|
-| #846 | `${!ref[@]}` key enumeration empty via nameref to assoc array | Critical |
-| #847 | `${var%$'\n'}` doesn't match newline in suffix removal pattern | Medium |
-| #806 | EXIT trap in `$(...)` — output escapes to parent stdout | Low |
+| #861 | Assoc array subscripts evaluated as arithmetic instead of literal strings | Critical |
+| #862 | `$'\n'` not expanded when concatenated in function argument position | Medium |
 
 ### Validation needed
 
@@ -44,14 +43,17 @@ will run inside bashkit against the VFS (no real filesystem needed).
 | #803 | ~~Single-quoted strings inside `$(...)` lose double quotes~~ |
 | #804 | ~~Nameref `+=` append to indexed array doesn't work~~ |
 | #805 | ~~`export -p` produces no output~~ |
+| #806 | ~~EXIT trap in `$(...)` — output escapes to parent stdout~~ |
 | #833 | ~~`sort -n` doesn't extract leading numeric prefix from strings~~ |
 | #834 | ~~Nameref expansion fails under `set -u` (nounset)~~ |
+| #846 | ~~`${!ref[@]}` key enumeration empty via nameref to assoc array~~ |
+| #847 | ~~`${var%$'\n'}` doesn't match newline in suffix removal pattern~~ |
 
 ---
 
 ## Test Results (74 patterns, latest main)
 
-**71 pass, 3 fail** across bash syntax tests and feature verification.
+**72 pass, 2 fail** across bash syntax tests and feature verification.
 
 ### Feature tests (10/10 pass)
 
@@ -68,7 +70,7 @@ will run inside bashkit against the VFS (no real filesystem needed).
 | #794 exec stops | statements after `exec` are not reached | Pass |
 | #794 exec exit code | exit code propagated from exec'd script | Pass |
 
-### Bash syntax tests (61/64 pass)
+### Bash syntax tests (62/64 pass)
 
 | Category | Tests | Status |
 |----------|-------|--------|
@@ -90,16 +92,15 @@ will run inside bashkit against the VFS (no real filesystem needed).
 | Text tools | `sed -n s///p`, `awk` frontmatter, `nl -ba`, `sort -n` | Pass |
 | File tools | `basename`, `ls -1`, `mkdir -p`, `mktemp`, `wc -c` | Pass |
 | Misc | `readonly`, `command -v`, `export -p`, `trap EXIT`, brace groups | Pass |
-| Namerefs | Basic read/write, assoc array read/assign, dual namerefs | Pass |
+| Namerefs | Basic read/write, assoc array assign, dual namerefs, `+=` | Pass |
 | Nested cmd sub | `$(basename "$(dirname ...)")` | Pass |
 
-### Failing (3/64)
+### Failing (2/64)
 
 | Test | Issue |
 |------|-------|
-| `${!ref[@]}` key enumeration through nameref | #846 |
-| `${var%$'\n'}` suffix removal with ANSI-C pattern | #847 |
-| EXIT trap output in `$(...)` escapes to parent | #806 |
+| Assoc array `${map[x]}` when variable `x` exists in scope | #861 |
+| `"str"$'\n'"str"` concatenation in function argument | #862 |
 
 ---
 
@@ -125,13 +126,17 @@ Use `BashBuilder::tty()` (added in #830) to configure if needed.
 
 ## Summary
 
-After three rounds of rebasing on latest main, **71 of 74 harness patterns
-pass**. The 4 critical feature gaps (stdin piping, subprocess isolation,
-`set -a`, `exec` with command) and 4 bugs discovered in earlier runs have
-all been fixed upstream.
+After four rounds of rebasing on latest main, **72 of 74 harness patterns
+pass**. All 12 previously-filed issues (4 features, 8 bugs) have been fixed
+upstream.
 
-**3 remaining bugs** to fix before harness can fully run:
+**2 remaining bugs** to fix before harness can fully run:
 
-1. **`${!ref[@]}` through nameref** (#846) — critical for tool/hook discovery
-2. **`${var%$'\n'}`** (#847) — medium, used for message body trimming
-3. **Trap in `$(...)`** (#806) — low priority, cleanup traps only
+1. **Assoc array subscript evaluation** (#861) — critical, `${map[key]}`
+   resolves `key` as a variable instead of a literal string when a variable
+   of that name exists in scope. Affects every associative array lookup in
+   harness (tool_map, hook_map, prov_map, etc.).
+
+2. **ANSI-C in function arguments** (#862) — medium, `"str"$'\n'"str"` as
+   a direct function argument doesn't expand the `$'\n'`. Workaround:
+   assign to variable first.
