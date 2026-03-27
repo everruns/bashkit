@@ -1142,7 +1142,8 @@ impl Interpreter {
             // Run ERR trap on non-zero exit (unless in conditional chain)
             if exit_code != 0 {
                 let suppressed = matches!(command, Command::List(_))
-                    || matches!(command, Command::Pipeline(p) if p.negated);
+                    || matches!(command, Command::Pipeline(p) if p.negated)
+                    || result.errexit_suppressed;
                 if !suppressed {
                     self.run_err_trap(&mut stdout, &mut stderr).await;
                 }
@@ -1151,9 +1152,12 @@ impl Interpreter {
             // errexit (set -e): stop on non-zero exit for top-level simple commands.
             // List commands handle errexit internally (with && / || chain awareness).
             // Negated pipelines (! cmd) explicitly handle the exit code.
+            // Compound commands (for/while/until) propagate errexit_suppressed when
+            // their body ends with an AND-OR chain failure.
             if self.is_errexit_enabled() && exit_code != 0 {
                 let suppressed = matches!(command, Command::List(_))
-                    || matches!(command, Command::Pipeline(p) if p.negated);
+                    || matches!(command, Command::Pipeline(p) if p.negated)
+                    || result.errexit_suppressed;
                 if !suppressed {
                     break;
                 }
@@ -3129,7 +3133,7 @@ impl Interpreter {
                     if let Some(index_str) = &assignment.index {
                         let resolved_name = self.resolve_nameref(&assignment.name).to_string();
                         if self.assoc_arrays.contains_key(&resolved_name) {
-                            let key = self.expand_variable_or_literal(index_str);
+                            let key = self.expand_assoc_key(index_str).await?;
                             let is_new_entry = self
                                 .assoc_arrays
                                 .get(&resolved_name)
@@ -7789,6 +7793,18 @@ impl Interpreter {
         }
         // Bare names are literal string keys — do NOT look up as variables.
         s.to_string()
+    }
+
+    /// Expand an associative array key with full word expansion.
+    /// Unlike `expand_variable_or_literal`, this handles command substitutions
+    /// (`$(...)`, backticks) and all other expansion types. (Issue #872)
+    async fn expand_assoc_key(&mut self, s: &str) -> Result<String> {
+        if s.contains('$') || s.contains('`') {
+            let word = crate::parser::Parser::parse_word_string(s);
+            self.expand_word(&word).await
+        } else {
+            Ok(s.to_string())
+        }
     }
 
     /// THREAT[TM-INJ-009]: Check if a variable name is an internal marker.
