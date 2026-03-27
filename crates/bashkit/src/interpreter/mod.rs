@@ -7714,15 +7714,18 @@ impl Interpreter {
         s.to_string()
     }
 
-    /// Expand an associative array key with full word expansion.
-    /// Unlike `expand_variable_or_literal`, this handles command substitutions
-    /// (`$(...)`, backticks) and all other expansion types. (Issue #872)
+    /// Fully expand an associative array key, including command substitutions.
+    /// Falls back to `expand_variable_or_literal` for keys without `$(` or backtick.
     async fn expand_assoc_key(&mut self, s: &str) -> Result<String> {
-        if s.contains('$') || s.contains('`') {
-            let word = crate::parser::Parser::parse_word_string(s);
+        if s.contains("$(") || s.contains('`') {
+            let word = Parser::parse_word_string_with_limits(
+                s,
+                self.limits.max_ast_depth,
+                self.limits.max_parser_operations,
+            );
             self.expand_word(&word).await
         } else {
-            Ok(s.to_string())
+            Ok(self.expand_variable_or_literal(s))
         }
     }
 
