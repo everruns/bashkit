@@ -5,7 +5,7 @@
 //! Usage:
 //!   rg PATTERN [PATH...]
 //!   rg -i PATTERN file          # case insensitive
-//!   rg -n PATTERN file          # show line numbers (default)
+//!   rg -n PATTERN file          # show line numbers (off by default in non-tty)
 //!   rg -c PATTERN file          # count matches
 //!   rg -l PATTERN file          # files with matches
 //!   rg -v PATTERN file          # invert match
@@ -46,7 +46,7 @@ impl RgOptions {
             pattern: String::new(),
             paths: Vec::new(),
             ignore_case: false,
-            line_numbers: true, // rg shows line numbers by default
+            line_numbers: false, // non-tty: suppress line numbers (real rg behavior)
             count_only: false,
             files_with_matches: false,
             invert_match: false,
@@ -68,6 +68,7 @@ impl RgOptions {
                     match chars[j] {
                         'i' => opts.ignore_case = true,
                         'n' => opts.line_numbers = true,
+                        'N' => opts.line_numbers = false,
                         'c' => opts.count_only = true,
                         'l' => opts.files_with_matches = true,
                         'v' => opts.invert_match = true,
@@ -89,6 +90,8 @@ impl RgOptions {
                     // no-op
                 } else if opt == "no-line-number" {
                     opts.line_numbers = false;
+                } else if opt == "line-number" {
+                    opts.line_numbers = true;
                 }
                 // ignore other long options
             } else {
@@ -472,7 +475,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rg_line_numbers_default() {
+    async fn test_rg_no_line_numbers_default() {
+        // Non-tty: line numbers suppressed by default (like real rg)
         let result = run_rg(
             &["world", "/test.txt"],
             None,
@@ -480,7 +484,68 @@ mod tests {
         )
         .await;
         assert_eq!(result.exit_code, 0);
-        // Line numbers on by default, "world" is on line 2
-        assert!(result.stdout.contains("2:"));
+        assert_eq!(result.stdout.trim(), "world");
+        assert!(!result.stdout.contains("2:"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_line_numbers_explicit() {
+        // -n flag enables line numbers
+        let result = run_rg(
+            &["-n", "world", "/test.txt"],
+            None,
+            &[("/test.txt", b"hello\nworld\n")],
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("2:world"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_no_line_number_flag_short() {
+        // -N flag explicitly disables line numbers
+        let result = run_rg(
+            &["-N", "world", "/test.txt"],
+            None,
+            &[("/test.txt", b"hello\nworld\n")],
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "world");
+    }
+
+    #[tokio::test]
+    async fn test_rg_no_line_number_flag_long() {
+        // --no-line-number flag explicitly disables line numbers
+        let result = run_rg(
+            &["--no-line-number", "world", "/test.txt"],
+            None,
+            &[("/test.txt", b"hello\nworld\n")],
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "world");
+    }
+
+    #[tokio::test]
+    async fn test_rg_line_number_long_flag() {
+        // --line-number flag enables line numbers
+        let result = run_rg(
+            &["--line-number", "world", "/test.txt"],
+            None,
+            &[("/test.txt", b"hello\nworld\n")],
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("2:world"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_stdin_no_line_numbers() {
+        // Stdin piped: no line numbers by default
+        let result = run_rg(&["hello"], Some("hello world\n"), &[]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "hello world");
+        assert!(!result.stdout.contains("1:"));
     }
 }
