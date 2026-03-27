@@ -1142,7 +1142,8 @@ impl Interpreter {
             // Run ERR trap on non-zero exit (unless in conditional chain)
             if exit_code != 0 {
                 let suppressed = matches!(command, Command::List(_))
-                    || matches!(command, Command::Pipeline(p) if p.negated);
+                    || matches!(command, Command::Pipeline(p) if p.negated)
+                    || result.errexit_suppressed;
                 if !suppressed {
                     self.run_err_trap(&mut stdout, &mut stderr).await;
                 }
@@ -1151,9 +1152,12 @@ impl Interpreter {
             // errexit (set -e): stop on non-zero exit for top-level simple commands.
             // List commands handle errexit internally (with && / || chain awareness).
             // Negated pipelines (! cmd) explicitly handle the exit code.
+            // Compound commands (for/while/until) propagate errexit_suppressed when
+            // their body ends with an AND-OR chain failure.
             if self.is_errexit_enabled() && exit_code != 0 {
                 let suppressed = matches!(command, Command::List(_))
-                    || matches!(command, Command::Pipeline(p) if p.negated);
+                    || matches!(command, Command::Pipeline(p) if p.negated)
+                    || result.errexit_suppressed;
                 if !suppressed {
                     break;
                 }
