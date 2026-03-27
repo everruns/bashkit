@@ -1151,9 +1151,12 @@ impl Interpreter {
             // errexit (set -e): stop on non-zero exit for top-level simple commands.
             // List commands handle errexit internally (with && / || chain awareness).
             // Negated pipelines (! cmd) explicitly handle the exit code.
+            // Compound commands whose body ended with an AND-OR list failure
+            // propagate errexit_suppressed to avoid false errexit triggers.
             if self.is_errexit_enabled() && exit_code != 0 {
                 let suppressed = matches!(command, Command::List(_))
-                    || matches!(command, Command::Pipeline(p) if p.negated);
+                    || matches!(command, Command::Pipeline(p) if p.negated)
+                    || result.errexit_suppressed;
                 if !suppressed {
                     break;
                 }
@@ -1457,6 +1460,7 @@ impl Interpreter {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
+        let mut last_errexit_suppressed = false;
 
         // Get iteration values: expand fields, then apply brace/glob expansion
         let values: Vec<String> = if let Some(words) = &for_cmd.words {
@@ -1512,6 +1516,7 @@ impl Interpreter {
             stdout.push_str(&result.stdout);
             stderr.push_str(&result.stderr);
             exit_code = result.exit_code;
+            last_errexit_suppressed = result.errexit_suppressed;
 
             // Check for break/continue
             match result.control_flow {
@@ -1564,6 +1569,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            errexit_suppressed: last_errexit_suppressed,
             ..Default::default()
         })
     }
@@ -2180,6 +2186,7 @@ impl Interpreter {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
+        let mut last_errexit_suppressed = false;
 
         // Reset loop counter for this loop
         self.counters.reset_loop();
@@ -2215,6 +2222,7 @@ impl Interpreter {
             stdout.push_str(&result.stdout);
             stderr.push_str(&result.stderr);
             exit_code = result.exit_code;
+            last_errexit_suppressed = result.errexit_suppressed;
 
             // Check for break/continue
             match result.control_flow {
@@ -2264,6 +2272,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            errexit_suppressed: last_errexit_suppressed,
             ..Default::default()
         })
     }
@@ -2782,6 +2791,7 @@ impl Interpreter {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
+        let mut last_errexit_suppressed = false;
 
         for command in commands {
             let emit_before = self.output_emit_count;
@@ -2790,6 +2800,7 @@ impl Interpreter {
             stdout.push_str(&result.stdout);
             stderr.push_str(&result.stderr);
             exit_code = result.exit_code;
+            last_errexit_suppressed = result.errexit_suppressed;
             self.last_exit_code = exit_code;
 
             // Propagate control flow
@@ -2807,11 +2818,14 @@ impl Interpreter {
             // Skip errexit for commands that are AND-OR lists — per POSIX, set -e
             // does not exit on failures that are part of && or || chains.
             // The list executor already handles errexit internally.
+            // Also skip errexit when the result was already suppressed (e.g. a
+            // compound command whose body ended with an AND-OR list failure).
             let is_and_or_list = matches!(
                 command,
                 Command::List(list) if list.rest.iter().any(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or))
             );
-            if check_errexit && self.is_errexit_enabled() && exit_code != 0 && !is_and_or_list {
+            let errexit_suppressed = is_and_or_list || result.errexit_suppressed;
+            if check_errexit && self.is_errexit_enabled() && exit_code != 0 && !errexit_suppressed {
                 return Ok(ExecResult {
                     stdout,
                     stderr,
@@ -2827,6 +2841,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            errexit_suppressed: last_errexit_suppressed,
             ..Default::default()
         })
     }
@@ -3099,6 +3114,10 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            // When a list with && or || operators exits non-zero, suppress
+            // errexit in the caller so compound commands (for/while) don't
+            // accidentally trigger set -e for expected AND-OR failures.
+            errexit_suppressed: has_conditional_operators && exit_code != 0,
             ..Default::default()
         })
     }
@@ -3112,7 +3131,7 @@ impl Interpreter {
                     if let Some(index_str) = &assignment.index {
                         let resolved_name = self.resolve_nameref(&assignment.name).to_string();
                         if self.assoc_arrays.contains_key(&resolved_name) {
-                            let key = self.expand_variable_or_literal(index_str);
+                            let key = self.expand_assoc_key(index_str).await?;
                             let is_new_entry = self
                                 .assoc_arrays
                                 .get(&resolved_name)
@@ -4584,7 +4603,7 @@ impl Interpreter {
             {
                 let arr_name = &arg[..bracket];
                 let key = &arg[bracket + 1..arg.len() - 1];
-                let expanded_key = self.expand_variable_or_literal(key);
+                let expanded_key = self.expand_assoc_key(key).await?;
                 let resolved_name = self.resolve_nameref(arr_name).to_string();
                 if let Some(arr) = self.assoc_arrays.get_mut(&resolved_name) {
                     arr.remove(&expanded_key);
@@ -7772,6 +7791,18 @@ impl Interpreter {
         }
         // Bare names are literal string keys — do NOT look up as variables.
         s.to_string()
+    }
+
+    /// Async version of associative array key expansion that handles command
+    /// substitutions like `$(basename "$f")` in subscript position.
+    /// Bare names without `$` remain literal strings per bash semantics.
+    async fn expand_assoc_key(&mut self, s: &str) -> Result<String> {
+        if s.contains('$') || s.contains('`') {
+            let word = crate::parser::Parser::parse_word_string(s);
+            self.expand_word(&word).await
+        } else {
+            Ok(s.to_string())
+        }
     }
 
     /// THREAT[TM-INJ-009]: Check if a variable name is an internal marker.

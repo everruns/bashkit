@@ -89,6 +89,32 @@ echo "reached"
     assert!(result.stdout.contains("reached"));
 }
 
+/// set -e: [[ false ]] && assignment inside for loop should not exit
+#[tokio::test]
+async fn set_e_and_list_assignment_in_for_loop() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -euo pipefail
+result=""
+for src in yes no; do
+  [[ "${src}" == "yes" ]] && result="${src}"
+done
+echo "result: ${result}"
+"#,
+        )
+        .await
+        .unwrap();
+    assert!(
+        result.stdout.contains("result: yes"),
+        "expected 'result: yes', got stdout={:?} stderr={:?} exit={}",
+        result.stdout,
+        result.stderr,
+        result.exit_code
+    );
+}
+
 /// set -e should still exit on non-AND-OR failures
 #[tokio::test]
 async fn set_e_exits_on_plain_failure() {

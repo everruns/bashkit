@@ -66,6 +66,10 @@ pub struct ExecResult {
     /// Structured side effects from builtin execution.
     /// The interpreter processes these after the builtin returns.
     pub side_effects: Vec<BuiltinSideEffect>,
+    /// When true, the non-zero exit code came from an AND-OR list context
+    /// and should NOT trigger errexit in the caller. Per POSIX, `set -e`
+    /// does not exit when the failure was part of a `&&` or `||` chain.
+    pub errexit_suppressed: bool,
 }
 
 impl ExecResult {
