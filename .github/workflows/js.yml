@@ -96,16 +96,87 @@ jobs:
           doppler run -- node vercel_ai_tool.mjs
           doppler run -- node langchain_agent.mjs
 
+  bun-test:
+    name: Bun ${{ matrix.bun }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        bun: ["latest", "canary"]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ matrix.bun }}
+
+      - name: Install dependencies
+        run: bun install
+        working-directory: crates/bashkit-js
+
+      - name: Build native binding
+        run: bun run build
+        working-directory: crates/bashkit-js
+
+      - name: Run tests
+        run: bun run test
+        working-directory: crates/bashkit-js
+
+      - name: Install example dependencies and link local build
+        working-directory: examples
+        run: |
+          bun install
+          rm -rf node_modules/@everruns/bashkit
+          mkdir -p node_modules/@everruns
+          ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
+
+      - name: Run examples (self-contained)
+        working-directory: examples
+        run: |
+          bun bash_basics.mjs
+          bun data_pipeline.mjs
+          bun llm_tool.mjs
+          bun langchain_integration.mjs
+
+      - name: Install Doppler CLI
+        if: env.DOPPLER_TOKEN != ''
+        uses: dopplerhq/cli-action@v4
+
+      - name: Run AI examples
+        if: env.DOPPLER_TOKEN != ''
+        working-directory: examples
+        run: |
+          doppler run -- bun openai_tool.mjs
+          doppler run -- bun vercel_ai_tool.mjs
+          doppler run -- bun langchain_agent.mjs
+
   # Gate job for branch protection
   js-check:
     name: JS Check
     if: always()
-    needs: [build-and-test]
+    needs: [build-and-test, bun-test]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
         run: |
           if [[ "${{ needs.build-and-test.result }}" != "success" ]]; then
             echo "JS build/test failed"
+            exit 1
+          fi
+          if [[ "${{ needs.bun-test.result }}" != "success" ]]; then
+            echo "Bun test failed"
             exit 1
           fi
