@@ -7752,9 +7752,13 @@ impl Interpreter {
         result
     }
 
-    /// Expand a variable by name, checking local scope, positional params, shell vars, then env
     /// Expand a string as a variable reference, or return as literal.
     /// Used for associative array keys which may be variable refs or literals.
+    ///
+    /// In real bash, associative array subscripts are treated as literal strings
+    /// unless they contain explicit `$var` or `${var}` references. A bare name
+    /// like `key` in `${assoc[key]}` is the string "key", NOT the value of
+    /// variable `$key`. (Issue #861)
     fn expand_variable_or_literal(&self, s: &str) -> String {
         // Handle $var and ${var} references in assoc array keys
         let trimmed = s.trim();
@@ -7762,9 +7766,7 @@ impl Interpreter {
             let var_name = var_name.trim_start_matches('{').trim_end_matches('}');
             return self.expand_variable(var_name);
         }
-        if let Some(val) = self.variables.get(s) {
-            return val.clone();
-        }
+        // Bare names are literal string keys — do NOT look up as variables.
         s.to_string()
     }
 
