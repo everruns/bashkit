@@ -1,0 +1,180 @@
+# Prebuilt CLI binaries — dispatched by release.yml after GitHub Release is created.
+# GITHUB_TOKEN-created releases don't trigger `release: published` (anti-recursion).
+# The Release workflow dispatches this workflow explicitly, same pattern as everruns/everruns.
+name: Publish CLI Binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.1.13)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build CLI (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            archive: bashkit-aarch64-apple-darwin.tar.gz
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            archive: bashkit-x86_64-apple-darwin.tar.gz
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive: bashkit-x86_64-unknown-linux-gnu.tar.gz
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "cli-${{ matrix.target }}"
+
+      - name: Build CLI binary
+        run: cargo build --release --target ${{ matrix.target }} -p bashkit-cli --no-default-features
+
+      - name: Package binary
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf "$GITHUB_WORKSPACE/${{ matrix.archive }}" bashkit
+          cd "$GITHUB_WORKSPACE"
+          shasum -a 256 "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ inputs.tag }}" \
+            "${{ matrix.archive }}" \
+            "${{ matrix.archive }}.sha256" \
+            --clobber
+
+  update-homebrew:
+    name: Update Homebrew formula
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download SHA256 checksums from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu; do
+            gh release download "$TAG" \
+              --repo "${{ github.repository }}" \
+              --pattern "bashkit-${target}.tar.gz.sha256"
+          done
+
+      - name: Generate Homebrew formula
+        run: |
+          TAG="${{ inputs.tag }}"
+          VERSION="${TAG#v}"
+
+          # Validate checksum files exist and are non-empty
+          for f in bashkit-aarch64-apple-darwin.tar.gz.sha256 \
+                   bashkit-x86_64-apple-darwin.tar.gz.sha256 \
+                   bashkit-x86_64-unknown-linux-gnu.tar.gz.sha256; do
+            if [[ ! -s "$f" ]]; then
+              echo "Error: checksum file '$f' is missing or empty." >&2
+              exit 1
+            fi
+          done
+
+          SHA_ARM64=$(awk '{print $1}' bashkit-aarch64-apple-darwin.tar.gz.sha256)
+          SHA_X86_64_MACOS=$(awk '{print $1}' bashkit-x86_64-apple-darwin.tar.gz.sha256)
+          SHA_LINUX=$(awk '{print $1}' bashkit-x86_64-unknown-linux-gnu.tar.gz.sha256)
+
+          for var in SHA_ARM64 SHA_X86_64_MACOS SHA_LINUX; do
+            if [[ -z "${!var}" ]]; then
+              echo "Error: extracted $var is empty." >&2
+              exit 1
+            fi
+          done
+
+          BASE_URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${TAG}"
+
+          cat > bashkit.rb <<FORMULA
+          # typed: false
+          # frozen_string_literal: true
+
+          class Bashkit < Formula
+            desc "Virtual bash interpreter with sandboxed execution"
+            homepage "${{ github.server_url }}/${{ github.repository }}"
+            version "${VERSION}"
+            license "Apache-2.0"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "${BASE_URL}/bashkit-aarch64-apple-darwin.tar.gz"
+                sha256 "${SHA_ARM64}"
+              else
+                url "${BASE_URL}/bashkit-x86_64-apple-darwin.tar.gz"
+                sha256 "${SHA_X86_64_MACOS}"
+              end
+            end
+
+            on_linux do
+              depends_on arch: :x86_64
+              url "${BASE_URL}/bashkit-x86_64-unknown-linux-gnu.tar.gz"
+              sha256 "${SHA_LINUX}"
+            end
+
+            def install
+              bin.install "bashkit"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/bashkit --version")
+            end
+          end
+          FORMULA
+
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' bashkit.rb
+
+          echo "Generated formula:"
+          cat bashkit.rb
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v3
+
+      - name: Push formula to homebrew-tap
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          VERSION="${TAG#v}"
+
+          # Fetch the GitHub PAT from Doppler (has push access to homebrew-tap)
+          GH_PAT=$(doppler secrets get GITHUB_TOKEN --plain)
+
+          # Clone the tap repo
+          git clone "https://x-access-token:${GH_PAT}@github.com/everruns/homebrew-tap.git" tap
+          cp bashkit.rb tap/Formula/bashkit.rb
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/bashkit.rb
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "bashkit ${VERSION}"
+          git push origin main

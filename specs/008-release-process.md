@@ -170,8 +170,31 @@ The CI workflows handle this automatically on GitHub Release.
 ### release.yml
 
 - **Trigger**: Push to `main` with commit message starting with `chore(release): prepare v`
-- **Actions**: Creates GitHub Release with tag and release notes from CHANGELOG
+- **Actions**: Creates GitHub Release with tag and release notes from CHANGELOG, then dispatches publish and binary build workflows
 - **File**: `.github/workflows/release.yml`
+
+### cli-binaries.yml
+
+- **Trigger**: Dispatched by release.yml after GitHub Release is created
+- **Actions**: Builds prebuilt CLI binaries for macOS (ARM64, x86_64) and Linux (x86_64), uploads to GitHub Release, updates Homebrew formula
+- **File**: `.github/workflows/cli-binaries.yml`
+- **Secret required**: `DOPPLER_TOKEN` (for Homebrew tap push via Doppler-managed GitHub PAT)
+
+#### CLI binary matrix
+
+| OS | Target | Runner |
+|----|--------|--------|
+| macOS | aarch64-apple-darwin | macos-latest |
+| macOS | x86_64-apple-darwin | macos-13 |
+| Linux | x86_64-unknown-linux-gnu | ubuntu-latest |
+
+#### Homebrew
+
+After binaries are built, the workflow generates a Homebrew formula and pushes it to `everruns/homebrew-tap`. Users install via:
+
+```bash
+brew install everruns/tap/bashkit
+```
 
 ### publish.yml
 
@@ -294,7 +317,8 @@ Note: Yanked versions can still be used by existing Cargo.lock files but won't b
 
 Each release includes:
 
-- **GitHub Release**: Tag, release notes, source archives
+- **GitHub Release**: Tag, release notes, source archives, prebuilt CLI binaries (macOS ARM64/x86_64, Linux x86_64)
 - **crates.io**: Published crates for `cargo add bashkit`
 - **PyPI**: Pre-built wheels for `pip install bashkit`
 - **npm**: Native NAPI-RS bindings for `npm install @everruns/bashkit`
+- **Homebrew**: Formula at `everruns/homebrew-tap` for `brew install everruns/tap/bashkit`
