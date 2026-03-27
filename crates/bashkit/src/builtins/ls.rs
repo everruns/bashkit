@@ -79,6 +79,10 @@ impl Builtin for Ls {
         let mut output = String::new();
         let multiple_paths = paths.len() > 1 || opts.recursive;
 
+        // Separate file and directory arguments (like real ls)
+        let mut file_args: Vec<(&str, crate::fs::Metadata)> = Vec::new();
+        let mut dir_args: Vec<(usize, &str, std::path::PathBuf)> = Vec::new();
+
         for (i, path_str) in paths.iter().enumerate() {
             let path = resolve_path(ctx.cwd, path_str);
 
@@ -93,37 +97,44 @@ impl Builtin for Ls {
                 ));
             }
 
-            // Check if it's a file or directory
             let metadata = ctx.fs.stat(&path).await?;
 
             if metadata.file_type.is_file() {
-                // Single file - just list it
-                let name = Path::new(path_str)
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| path_str.to_string());
-
-                if opts.long {
-                    output.push_str(&format_long_entry(&name, &metadata, opts.human));
-                } else {
-                    output.push_str(&name);
-                    output.push('\n');
-                }
+                file_args.push((path_str, metadata));
             } else {
-                // Directory
-                if let Err(e) = list_directory(
-                    &ctx,
-                    &path,
-                    path_str,
-                    &mut output,
-                    &opts,
-                    multiple_paths,
-                    i > 0,
-                )
-                .await
-                {
-                    return Ok(ExecResult::err(format!("ls: {}\n", e), 2));
-                }
+                dir_args.push((i, path_str, path));
+            }
+        }
+
+        // Sort file arguments by time if -t, preserving original paths
+        if opts.sort_by_time {
+            file_args.sort_by(|a, b| b.1.modified.cmp(&a.1.modified));
+        }
+
+        // Output file arguments first (preserving path as given by user)
+        for (path_str, metadata) in &file_args {
+            if opts.long {
+                output.push_str(&format_long_entry(path_str, metadata, opts.human));
+            } else {
+                output.push_str(path_str);
+                output.push('\n');
+            }
+        }
+
+        // Then output directory listings
+        for (i, path_str, path) in &dir_args {
+            if let Err(e) = list_directory(
+                &ctx,
+                path,
+                path_str,
+                &mut output,
+                &opts,
+                multiple_paths,
+                *i > 0 || !file_args.is_empty(),
+            )
+            .await
+            {
+                return Ok(ExecResult::err(format!("ls: {}\n", e), 2));
             }
         }
 
