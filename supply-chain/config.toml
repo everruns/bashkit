@@ -102,10 +102,6 @@ criteria = "safe-to-deploy"
 version = "1.16.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.aws-lc-sys]]
-version = "0.39.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.base64]]
 version = "0.22.1"
 criteria = "safe-to-deploy"
