@@ -132,6 +132,47 @@ echo "${m[key]}"
 hello world
 ### end
 
+### assoc_literal_key_not_variable
+# Issue #861: subscripts should be literal strings, not variable lookups
+x="outside"
+declare -A map=([x]=found [outside]=wrong)
+echo "${map[x]}"
+### expect
+found
+### end
+
+### assoc_literal_key_numeric_variable
+i=999
+declare -A assoc=([i]=correct [999]=incorrect)
+echo "${assoc[i]}"
+### expect
+correct
+### end
+
+### assoc_assignment_literal_key
+x="other"
+declare -A m6
+m6[x]="at-x"
+m6[other]="at-other"
+echo "${m6[x]} ${m6[other]}"
+### expect
+at-x at-other
+### end
+
+### assoc_loop_key_variable_does_not_interfere
+a="wrong_a"
+b="wrong_b"
+c="wrong_c"
+declare -A data=([a]=1 [b]=2 [c]=3)
+for k in "${!data[@]}"; do
+  echo "${k}=${data[$k]}"
+done | sort
+### expect
+a=1
+b=2
+c=3
+### end
+
 ### assoc_iteration
 declare -A m
 m[a]="1"
