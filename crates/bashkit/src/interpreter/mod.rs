@@ -7277,8 +7277,14 @@ impl Interpreter {
         // ${#arr[@]} or ${#arr[*]} — array length
         if let Some(rest) = inner.strip_prefix('#') {
             if let Some(bracket) = rest.find('[') {
+                // Guard against malformed input like ${#[} where bracket+1 > len-1
+                let end = rest.len().saturating_sub(1);
+                if bracket + 1 > end {
+                    // Malformed — treat as string length of empty var
+                    return "0".to_string();
+                }
                 let arr_name = &rest[..bracket];
-                let idx = &rest[bracket + 1..rest.len().saturating_sub(1)];
+                let idx = &rest[bracket + 1..end];
                 if idx == "@" || idx == "*" {
                     if let Some(arr) = self.arrays.get(arr_name) {
                         return arr.len().to_string();
