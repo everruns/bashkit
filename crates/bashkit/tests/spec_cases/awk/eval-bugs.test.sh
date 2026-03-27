@@ -17,3 +17,39 @@ printf 'feat(auth): add OAuth2\n' | awk 'match($0, /^([a-z]+)\(([^)]+)\): (.*)/,
 ### expect
 feat auth add OAuth2
 ### end
+
+### awk_keyword_prefix_identifier
+# Bug #852: identifiers starting with keywords split incorrectly
+# e.g. print_sp parsed as keyword "print" + variable "_sp"
+echo test | awk 'BEGIN { print_sp=0; print_sp++; print print_sp }'
+### expect
+1
+### end
+
+### awk_keyword_prefix_identifier_printf
+# Bug #852: printf_count must not split into printf + _count
+echo test | awk 'BEGIN { printf_count=5; print printf_count }'
+### expect
+5
+### end
+
+### awk_keyword_prefix_identifier_delete
+# Bug #852: delete_flag must not split into delete + _flag
+echo test | awk 'BEGIN { delete_flag=42; print delete_flag }'
+### expect
+42
+### end
+
+### awk_keyword_prefix_identifier_return_val
+# Bug #852: return_val must not split into return + _val
+echo test | awk 'function f() { return_val=99; return return_val } BEGIN { print f() }'
+### expect
+99
+### end
+
+### awk_keyword_prefix_identifier_if_done
+# Bug #852: if_done must not split into if + _done
+echo test | awk 'BEGIN { if_done=1; while_running=2; for_each=3; print if_done, while_running, for_each }'
+### expect
+1 2 3
+### end
