@@ -165,11 +165,12 @@ fn parse_head_args(args: &[String], default: usize) -> Result<(usize, bool, Vec<
     Ok((count, byte_mode, files))
 }
 
-/// Take the first N bytes from text
+/// Take the first N bytes from text.
+/// Uses char-level truncation so that Latin-1 encoded binary data
+/// (e.g. from /dev/urandom where each byte maps to one char) is
+/// counted correctly — each char represents one original byte.
 fn take_first_bytes(text: &str, n: usize) -> String {
-    let bytes = text.as_bytes();
-    let take = bytes.len().min(n);
-    String::from_utf8_lossy(&bytes[..take]).to_string()
+    text.chars().take(n).collect()
 }
 
 /// Parse arguments for tail command, including +N "from start" syntax.

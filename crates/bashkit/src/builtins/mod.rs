@@ -220,6 +220,13 @@ pub(crate) async fn read_text_file(
         .await
         .map_err(|e| ExecResult::err(format!("{cmd_name}: {}: {e}\n", path.display()), 1))?;
 
+    // Binary device files (/dev/urandom, /dev/random): preserve raw bytes as
+    // Latin-1 (ISO 8859-1) so each byte 0x00-0xFF maps 1:1 to a char.
+    // This lets `tr -dc 'a-z0-9' < /dev/urandom | head -c N` work correctly.
+    if path == Path::new("/dev/urandom") || path == Path::new("/dev/random") {
+        return Ok(content.iter().map(|&b| b as char).collect());
+    }
+
     Ok(String::from_utf8_lossy(&content).into_owned())
 }
 

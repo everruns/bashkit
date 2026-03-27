@@ -319,10 +319,12 @@ impl Builtin for Tr {
 
         let mut set1 = expand_char_set(non_flag_args[0]);
         if complement {
-            // Complement: use all ASCII chars NOT in set1
+            // Complement: use all byte-range chars (0-255) NOT in set1.
+            // Covers full Latin-1 range so binary data from /dev/urandom
+            // (where each byte maps to one char) is handled correctly.
             let original = set1.clone();
-            set1 = (0u8..=127)
-                .map(|b| b as char)
+            set1 = (0u16..=255)
+                .map(|b| b as u8 as char)
                 .filter(|c| !original.contains(c))
                 .collect();
         }
