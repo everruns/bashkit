@@ -1152,8 +1152,7 @@ impl Interpreter {
             // errexit (set -e): stop on non-zero exit for top-level simple commands.
             // List commands handle errexit internally (with && / || chain awareness).
             // Negated pipelines (! cmd) explicitly handle the exit code.
-            // Compound commands (for/while/until) propagate errexit_suppressed when
-            // their body ends with an AND-OR chain failure.
+            // Compound commands propagate errexit_suppressed from inner AND-OR chains.
             if self.is_errexit_enabled() && exit_code != 0 {
                 let suppressed = matches!(command, Command::List(_))
                     || matches!(command, Command::Pipeline(p) if p.negated)
