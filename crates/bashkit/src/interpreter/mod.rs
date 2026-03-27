@@ -1457,6 +1457,7 @@ impl Interpreter {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
+        let mut last_errexit_suppressed = false;
 
         // Get iteration values: expand fields, then apply brace/glob expansion
         let values: Vec<String> = if let Some(words) = &for_cmd.words {
@@ -1512,6 +1513,7 @@ impl Interpreter {
             stdout.push_str(&result.stdout);
             stderr.push_str(&result.stderr);
             exit_code = result.exit_code;
+            last_errexit_suppressed = result.errexit_suppressed;
 
             // Check for break/continue
             match result.control_flow {
@@ -1564,6 +1566,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            errexit_suppressed: last_errexit_suppressed,
             ..Default::default()
         })
     }
@@ -1748,6 +1751,7 @@ impl Interpreter {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
+        let mut last_errexit_suppressed = false;
 
         // Execute initialization
         if !arith_for.init.is_empty() {
@@ -1776,6 +1780,7 @@ impl Interpreter {
             stdout.push_str(&result.stdout);
             stderr.push_str(&result.stderr);
             exit_code = result.exit_code;
+            last_errexit_suppressed = result.errexit_suppressed;
 
             // Check for break/continue
             match result.control_flow {
@@ -1829,6 +1834,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            errexit_suppressed: last_errexit_suppressed,
             ..Default::default()
         })
     }
@@ -2180,6 +2186,7 @@ impl Interpreter {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
+        let mut last_errexit_suppressed = false;
 
         // Reset loop counter for this loop
         self.counters.reset_loop();
@@ -2215,6 +2222,7 @@ impl Interpreter {
             stdout.push_str(&result.stdout);
             stderr.push_str(&result.stderr);
             exit_code = result.exit_code;
+            last_errexit_suppressed = result.errexit_suppressed;
 
             // Check for break/continue
             match result.control_flow {
@@ -2264,6 +2272,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            errexit_suppressed: last_errexit_suppressed,
             ..Default::default()
         })
     }
@@ -2782,6 +2791,7 @@ impl Interpreter {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0;
+        let mut last_errexit_suppressed = false;
 
         for command in commands {
             let emit_before = self.output_emit_count;
@@ -2807,11 +2817,15 @@ impl Interpreter {
             // Skip errexit for commands that are AND-OR lists — per POSIX, set -e
             // does not exit on failures that are part of && or || chains.
             // The list executor already handles errexit internally.
+            // Also skip when the result has errexit_suppressed set — this means
+            // a compound command (loop, etc.) ended with an AND-OR list exit code
+            // that should not propagate errexit to the caller.
             let is_and_or_list = matches!(
                 command,
                 Command::List(list) if list.rest.iter().any(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or))
             );
-            if check_errexit && self.is_errexit_enabled() && exit_code != 0 && !is_and_or_list {
+            let suppress = is_and_or_list || result.errexit_suppressed;
+            if check_errexit && self.is_errexit_enabled() && exit_code != 0 && !suppress {
                 return Ok(ExecResult {
                     stdout,
                     stderr,
@@ -2820,6 +2834,7 @@ impl Interpreter {
                     ..Default::default()
                 });
             }
+            last_errexit_suppressed = suppress && exit_code != 0;
         }
 
         Ok(ExecResult {
@@ -2827,6 +2842,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            errexit_suppressed: last_errexit_suppressed,
             ..Default::default()
         })
     }
@@ -3099,6 +3115,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
+            errexit_suppressed: has_conditional_operators && exit_code != 0,
             ..Default::default()
         })
     }
