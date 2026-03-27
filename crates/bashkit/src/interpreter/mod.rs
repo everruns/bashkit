@@ -5437,6 +5437,174 @@ impl Interpreter {
         mut result: ExecResult,
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
+        // Model fd destinations to handle left-to-right evaluation order correctly.
+        // In bash, `2>&1 >file` means: fd2 duplicates fd1's current target (stdout),
+        // THEN fd1 is redirected to file. So fd2->stdout, fd1->file.
+        // We track where each fd points and resolve content routing at the end.
+
+        // Use fd-table modeling when DupOutput coexists with file redirects.
+        // Without this, `>file 2>&1` or `2>&1 >file` would route content
+        // incorrectly because simple sequential application can't track
+        // that a dup should alias the file target rather than the buffer.
+        let has_dup = redirects
+            .iter()
+            .any(|r| matches!(r.kind, RedirectKind::DupOutput));
+        let has_file = redirects.iter().any(|r| {
+            matches!(
+                r.kind,
+                RedirectKind::Output
+                    | RedirectKind::Clobber
+                    | RedirectKind::Append
+                    | RedirectKind::OutputBoth
+            )
+        });
+        let needs_fd_table = has_dup && has_file;
+
+        if !needs_fd_table {
+            // Fast path: no dup-then-redirect combos, use simple direct application.
+            return self.apply_redirections_simple(result, redirects).await;
+        }
+
+        // Fd routing table: track where fd1 (stdout) and fd2 (stderr) point.
+        #[derive(Clone, Debug)]
+        enum FdTarget {
+            /// The original stdout buffer (returned in result.stdout)
+            Stdout,
+            /// The original stderr buffer (returned in result.stderr)
+            Stderr,
+            /// Write to a file (path, display_name, append)
+            File(PathBuf, String, bool),
+            /// Discard output
+            DevNull,
+        }
+
+        let mut fd1_target = FdTarget::Stdout;
+        let mut fd2_target = FdTarget::Stderr;
+
+        // Build the fd routing table by processing redirects left-to-right.
+        for redirect in redirects {
+            match redirect.kind {
+                RedirectKind::Output | RedirectKind::Clobber => {
+                    let target_path = self.expand_word(&redirect.target).await?;
+                    let path = self.resolve_path(&target_path);
+                    if is_dev_null(&path) {
+                        match redirect.fd {
+                            Some(2) => fd2_target = FdTarget::DevNull,
+                            _ => fd1_target = FdTarget::DevNull,
+                        }
+                    } else {
+                        // noclobber check
+                        if redirect.kind == RedirectKind::Output
+                            && self.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
+                            && self.fs.stat(&path).await.is_ok()
+                        {
+                            result.stdout = String::new();
+                            result.stderr =
+                                format!("bash: {}: cannot overwrite existing file\n", target_path);
+                            result.exit_code = 1;
+                            return Ok(result);
+                        }
+                        let target = FdTarget::File(path, target_path, false);
+                        match redirect.fd {
+                            Some(2) => fd2_target = target,
+                            _ => fd1_target = target,
+                        }
+                    }
+                }
+                RedirectKind::Append => {
+                    let target_path = self.expand_word(&redirect.target).await?;
+                    let path = self.resolve_path(&target_path);
+                    if is_dev_null(&path) {
+                        match redirect.fd {
+                            Some(2) => fd2_target = FdTarget::DevNull,
+                            _ => fd1_target = FdTarget::DevNull,
+                        }
+                    } else {
+                        let target = FdTarget::File(path, target_path, true);
+                        match redirect.fd {
+                            Some(2) => fd2_target = target,
+                            _ => fd1_target = target,
+                        }
+                    }
+                }
+                RedirectKind::OutputBoth => {
+                    let target_path = self.expand_word(&redirect.target).await?;
+                    let path = self.resolve_path(&target_path);
+                    if is_dev_null(&path) {
+                        fd1_target = FdTarget::DevNull;
+                        fd2_target = FdTarget::DevNull;
+                    } else {
+                        fd1_target = FdTarget::File(path.clone(), target_path.clone(), false);
+                        fd2_target = FdTarget::File(path, target_path, false);
+                    }
+                }
+                RedirectKind::DupOutput => {
+                    let target = self.expand_word(&redirect.target).await?;
+                    let target_fd: i32 = target.parse().unwrap_or(1);
+                    let src_fd = redirect.fd.unwrap_or(1);
+                    // Duplicate: make src_fd point where target_fd currently points
+                    match (src_fd, target_fd) {
+                        (2, 1) => fd2_target = fd1_target.clone(),
+                        (1, 2) => fd1_target = fd2_target.clone(),
+                        _ => {}
+                    }
+                }
+                RedirectKind::Input
+                | RedirectKind::HereString
+                | RedirectKind::HereDoc
+                | RedirectKind::HereDocStrip
+                | RedirectKind::DupInput => {
+                    // Input redirections handled elsewhere
+                }
+            }
+        }
+
+        // Route original stdout/stderr content to final destinations.
+        let orig_stdout = std::mem::take(&mut result.stdout);
+        let orig_stderr = std::mem::take(&mut result.stderr);
+
+        // Collect file writes to handle same-file merging.
+        let mut file_writes: std::collections::HashMap<PathBuf, (String, String, bool)> =
+            std::collections::HashMap::new();
+
+        for (content, target) in [(&orig_stdout, &fd1_target), (&orig_stderr, &fd2_target)] {
+            match target {
+                FdTarget::Stdout => result.stdout.push_str(content),
+                FdTarget::Stderr => result.stderr.push_str(content),
+                FdTarget::DevNull => {}
+                FdTarget::File(path, display_name, append) => {
+                    let entry = file_writes
+                        .entry(path.clone())
+                        .or_insert_with(|| (String::new(), display_name.clone(), *append));
+                    entry.0.push_str(content);
+                }
+            }
+        }
+
+        // Write accumulated file content
+        for (path, (content, display_name, append)) in &file_writes {
+            let write_result = if *append {
+                self.fs.append_file(path, content.as_bytes()).await
+            } else {
+                self.fs.write_file(path, content.as_bytes()).await
+            };
+            if let Err(e) = write_result {
+                result.stderr = format!("bash: {}: {}\n", display_name, e);
+                result.exit_code = 1;
+                return Ok(result);
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Simple redirect application without fd-table modeling.
+    /// Used when there are no DupOutput redirects followed by other redirects.
+    async fn apply_redirections_simple(
+        &mut self,
+        mut result: ExecResult,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
         for redirect in redirects {
             match redirect.kind {
                 RedirectKind::Output | RedirectKind::Clobber => {

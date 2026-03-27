@@ -212,3 +212,36 @@ END
 ### expect
 value is expanded
 ### end
+
+### redirect_2_to_1_then_file
+# 2>&1 >file: stderr captured, stdout to file (left-to-right order)
+f() { echo "stdout_line"; echo "stderr_line" >&2; }
+result=$(f 2>&1 >/tmp/redir_order.txt)
+echo "result=[$result]"
+cat /tmp/redir_order.txt
+### expect
+result=[stderr_line]
+stdout_line
+### end
+
+### redirect_file_then_2_to_1
+# >file 2>&1: both stdout and stderr go to file, nothing captured
+g() { echo "out"; echo "err" >&2; }
+result=$(g >/tmp/redir_order2.txt 2>&1)
+echo "result=[$result]"
+cat /tmp/redir_order2.txt
+### expect
+result=[]
+out
+err
+### end
+
+### redirect_2_to_1_only
+# 2>&1 alone: stderr merges into stdout (both captured)
+i() { echo "out"; echo "err" >&2; }
+result=$(i 2>&1)
+echo "result=[$result]"
+### expect
+result=[out
+err]
+### end
