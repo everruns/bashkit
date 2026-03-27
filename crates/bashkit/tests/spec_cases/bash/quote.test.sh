@@ -274,3 +274,60 @@ echo 'say "hi"'
 ### expect
 say "hi"
 ### end
+
+### quote_ansi_c_concat_func_arg
+# Issue #862: $'\n' concatenated in function argument position
+show() { printf '%q\n' "$1"; }
+show "a"$'\n'"b"
+### expect
+$'a\nb'
+### end
+
+### quote_ansi_c_tab_concat_func_arg
+# $'\t' concatenated in function argument position
+show() { printf '%q\n' "$1"; }
+show "a"$'\t'"b"
+### expect
+$'a\tb'
+### end
+
+### quote_ansi_c_sole_arg
+# $'\n' as sole function argument
+show() { printf '%q\n' "$1"; }
+show $'\n'
+### expect
+$'\n'
+### end
+
+### quote_ansi_c_at_start
+# $'\n' at start of concatenation
+show() { printf '%q\n' "$1"; }
+show $'\n'"after"
+### expect
+$'\nafter'
+### end
+
+### quote_ansi_c_at_end
+# $'\n' at end of concatenation
+show() { printf '%q\n' "$1"; }
+show "before"$'\n'
+### expect
+$'before\n'
+### end
+
+### quote_ansi_c_multiple_segments
+# Multiple ANSI-C segments concatenated
+show() { printf '%q\n' "$1"; }
+show "a"$'\n'"b"$'\t'"c"
+### expect
+$'a\nb\tc'
+### end
+
+### quote_ansi_c_via_variable_baseline
+# Baseline: ANSI-C via variable works
+show() { printf '%q\n' "$1"; }
+x="a"$'\n'"b"
+show "${x}"
+### expect
+$'a\nb'
+### end
