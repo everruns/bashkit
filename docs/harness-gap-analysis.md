@@ -17,90 +17,80 @@ will run inside bashkit against the VFS (no real filesystem needed).
 
 ---
 
-## Open Issues
+## Status: All 98 harness patterns pass
 
-### Bugs (2 remaining)
+All 14 issues filed during this analysis have been resolved on main.
 
-| Issue | Title | Severity |
+### Issues filed and fixed
+
+| Issue | Title | Category |
 |-------|-------|----------|
-| #861 | Assoc array subscripts evaluated as arithmetic instead of literal strings | Critical |
-| #862 | `$'\n'` not expanded when concatenated in function argument position | Medium |
+| #791 | Pipe stdin to VFS script execution | Feature |
+| #792 | Subprocess isolation for VFS script-by-path | Feature |
+| #793 | Implement `set -a` (allexport) | Feature |
+| #794 | `exec` with command argument — execute and don't return | Feature |
+| #803 | Single-quoted strings inside `$(...)` lose double quotes | Bug |
+| #804 | Nameref `+=` append to indexed array doesn't work | Bug |
+| #805 | `export -p` produces no output | Bug |
+| #806 | EXIT trap in `$(...)` — output escapes to parent stdout | Bug |
+| #833 | `sort -n` doesn't extract leading numeric prefix from strings | Bug |
+| #834 | Nameref expansion fails under `set -u` (nounset) | Bug |
+| #846 | `${!ref[@]}` key enumeration empty via nameref to assoc array | Bug |
+| #847 | `${var%$'\n'}` doesn't match newline in suffix removal pattern | Bug |
+| #861 | Assoc array subscripts evaluated as arithmetic instead of literal strings | Bug |
+| #862 | `$'\n'` not expanded when concatenated in function argument position | Bug |
 
-### Validation needed
-
-| Issue | Title | Status |
-|-------|-------|--------|
-| #801 | `local -n` nameref with associative arrays — harness patterns | Needs testing |
-
-### Fixed (closed on latest main)
+### Validation pending
 
 | Issue | Title |
 |-------|-------|
-| #791 | ~~Pipe stdin to VFS script execution~~ |
-| #792 | ~~Subprocess isolation for VFS script-by-path~~ |
-| #793 | ~~Implement `set -a` (allexport)~~ |
-| #794 | ~~`exec` with command argument — execute and don't return~~ |
-| #803 | ~~Single-quoted strings inside `$(...)` lose double quotes~~ |
-| #804 | ~~Nameref `+=` append to indexed array doesn't work~~ |
-| #805 | ~~`export -p` produces no output~~ |
-| #806 | ~~EXIT trap in `$(...)` — output escapes to parent stdout~~ |
-| #833 | ~~`sort -n` doesn't extract leading numeric prefix from strings~~ |
-| #834 | ~~Nameref expansion fails under `set -u` (nounset)~~ |
-| #846 | ~~`${!ref[@]}` key enumeration empty via nameref to assoc array~~ |
-| #847 | ~~`${var%$'\n'}` doesn't match newline in suffix removal pattern~~ |
+| #801 | `local -n` nameref with associative arrays — extended harness patterns |
 
 ---
 
-## Test Results (74 patterns, latest main)
+## Test Results (98 patterns, latest main)
 
-**72 pass, 2 fail** across bash syntax tests and feature verification.
+**98 pass, 0 fail.**
 
-### Feature tests (10/10 pass)
+### Feature tests (10/10)
 
-| Feature | Test | Status |
-|---------|------|--------|
-| #791 stdin pipe | `echo data \| ./script.sh` | Pass |
-| #791 read stdin | `echo data \| ./reader.sh` (uses `read -r`) | Pass |
-| #791 multi-stage | `echo {} \| ./a.sh \| ./b.sh` (jq pipeline) | Pass |
-| #792 isolation | child doesn't see parent's non-exported vars | Pass |
-| #792 no side effects | child's variable changes don't affect parent | Pass |
-| #793 set -a | `set -a; source .env; set +a` exports vars | Pass |
-| #793 set +a | variables after `set +a` are not exported | Pass |
-| #794 exec runs | `exec ./target.sh` runs the target script | Pass |
-| #794 exec stops | statements after `exec` are not reached | Pass |
-| #794 exec exit code | exit code propagated from exec'd script | Pass |
+| Feature | Test |
+|---------|------|
+| Stdin pipe | `echo data \| ./script.sh`, `read -r`, multi-stage jq pipeline |
+| Subprocess isolation | child only sees exports, no side effects on parent |
+| `set -a` | `set -a; source .env; set +a` exports, `set +a` stops |
+| `exec` | runs target, stops execution, propagates exit code |
 
-### Bash syntax tests (62/64 pass)
+### Bash syntax tests (64/64)
 
-| Category | Tests | Status |
-|----------|-------|--------|
-| Shell options | `set -euo pipefail` | Pass |
-| Associative arrays | `declare -A`, `${!map[@]}`, key assignment | Pass |
-| Indexed arrays | `+=`, `${#arr[@]}`, `${arr[*]}` | Pass |
-| Parameter expansion | `:-`, `:+`, `:?`, `%`, `%%`, `#`, `##`, `/`, `//` | Pass |
-| Control flow | `case`, C-style `for`, reverse `for`, `while read` | Pass |
-| Quoting | Single-quoted here-doc, here-string, ANSI-C `$'\n'` | Pass |
-| Arithmetic | `10#` base prefix, ternary `?:` | Pass |
-| Regex | `[[ =~ ]]` with `BASH_REMATCH` | Pass |
-| Boolean idiom | `${in_fm}` as command (true/false) | Pass |
-| String ops | `+=` concat with `$'\n'`, `printf '%.0s'` repeat | Pass |
-| Glob in `[[ ]]` | `[[ " $list " == *" $name "* ]]` | Pass |
-| Functions | `local` scoping, return values | Pass |
-| Process sub | `mapfile -t < <(cmd)`, `while read < <(cmd)` | Pass |
-| Date | `date -Iseconds` ISO format | Pass |
-| JSON (jq) | `-r`, `--argjson`, `-n --arg`, array build, `length` | Pass |
-| Text tools | `sed -n s///p`, `awk` frontmatter, `nl -ba`, `sort -n` | Pass |
-| File tools | `basename`, `ls -1`, `mkdir -p`, `mktemp`, `wc -c` | Pass |
-| Misc | `readonly`, `command -v`, `export -p`, `trap EXIT`, brace groups | Pass |
-| Namerefs | Basic read/write, assoc array assign, dual namerefs, `+=` | Pass |
-| Nested cmd sub | `$(basename "$(dirname ...)")` | Pass |
+| Category | Tests |
+|----------|-------|
+| Shell options | `set -euo pipefail` |
+| Associative arrays | `declare -A`, `${!map[@]}`, key assignment, subscript as literal string |
+| Indexed arrays | `+=`, `${#arr[@]}`, `${arr[*]}` |
+| Parameter expansion | `:-`, `:+`, `:?`, `%`, `%%`, `#`, `##`, `/`, `//`, `%$'\n'` |
+| Control flow | `case`, C-style `for`, reverse `for`, `while read` |
+| Quoting | Single-quoted here-doc, here-string, ANSI-C `$'\n'`, concat in args |
+| Arithmetic | `10#` base prefix, ternary `?:` |
+| Regex | `[[ =~ ]]` with `BASH_REMATCH` |
+| Boolean idiom | `${in_fm}` as command (true/false) |
+| String ops | `+=` concat with `$'\n'`, `printf '%.0s'` repeat, trim trailing newline |
+| Glob in `[[ ]]` | `[[ " $list " == *" $name "* ]]` |
+| Functions | `local` scoping, return values |
+| Process sub | `mapfile -t < <(cmd)`, `while read < <(cmd)` |
+| Date | `date -Iseconds` ISO format |
+| JSON (jq) | `-r`, `--argjson`, `-n --arg`, array build, `length` |
+| Text tools | `sed -n s///p`, `awk` frontmatter, `nl -ba`, `sort -n` |
+| File tools | `basename`, `ls -1`, `mkdir -p`, `mktemp`, `wc -c`, `grep -cF` |
+| Misc | `readonly`, `command -v`, `export -p`, `trap EXIT`, brace groups |
+| Namerefs | read/write, assoc read/assign, dual namerefs, `+=` append, key enum |
+| Nested cmd sub | `$(basename "$(dirname ...)")` |
 
-### Failing (2/64)
+### Additional tests (24/24)
 
-| Test | Issue |
-|------|-------|
-| Assoc array `${map[x]}` when variable `x` exists in scope | #861 |
-| `"str"$'\n'"str"` concatenation in function argument | #862 |
+wc -l, sed, ls+sort, grep, wc -c, mktemp, nested cmd sub, awk, `${var/pat/rep}`,
+nameref read/write/assoc/dual, trap EXIT in subshell, command -v, export -p,
+arithmetic ternary, `${var:?}`, nl, single-quoted JSON in `$()`, jq via var.
 
 ---
 
@@ -126,17 +116,10 @@ Use `BashBuilder::tty()` (added in #830) to configure if needed.
 
 ## Summary
 
-After four rounds of rebasing on latest main, **72 of 74 harness patterns
-pass**. All 12 previously-filed issues (4 features, 8 bugs) have been fixed
-upstream.
+**All 98 harness compatibility patterns pass on latest main.** Over 5 rounds
+of testing, 14 issues were filed (4 features, 10 bugs) and all were resolved
+upstream. Bashkit now supports every bash feature required by the harness
+agent framework.
 
-**2 remaining bugs** to fix before harness can fully run:
-
-1. **Assoc array subscript evaluation** (#861) — critical, `${map[key]}`
-   resolves `key` as a variable instead of a literal string when a variable
-   of that name exists in scope. Affects every associative array lookup in
-   harness (tool_map, hook_map, prov_map, etc.).
-
-2. **ANSI-C in function arguments** (#862) — medium, `"str"$'\n'"str"` as
-   a direct function argument doesn't expand the `$'\n'`. Workaround:
-   assign to variable first.
+Remaining step: configure HTTP allowlist and TTY detection, then run the
+actual harness codebase end-to-end on the VFS.
