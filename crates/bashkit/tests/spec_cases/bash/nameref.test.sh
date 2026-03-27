@@ -264,3 +264,57 @@ echo "$result"
 ### expect
 computed
 ### end
+
+### nameref_assoc_default_value
+# ${ref[key]:-default} through nameref to assoc array (issue #801)
+declare -A m=([x]=1 [y]=2)
+f() {
+  local -n ref="$1"
+  echo "${ref[x]:-EMPTY}"
+  echo "${ref[y]:-EMPTY}"
+  echo "${ref[z]:-EMPTY}"
+}
+f m
+### expect
+1
+2
+EMPTY
+### end
+
+### nameref_assoc_replacement
+# ${ref[key]:+alt} through nameref to assoc array
+declare -A m=([a]=val)
+f() {
+  local -n ref="$1"
+  echo "${ref[a]:+found}"
+  echo "${ref[missing]:+found}"
+}
+f m
+### expect
+found
+
+### end
+
+### nameref_assoc_subscript_at_default
+# ${ref[@]:-default} through nameref to assoc array
+declare -A m=([k]=v)
+f() {
+  local -n ref="$1"
+  echo "${ref[@]:-EMPTY}"
+}
+f m
+### expect
+v
+### end
+
+### nameref_assoc_subscript_at_empty
+# ${ref[@]:-default} through nameref to empty assoc array
+declare -A m
+f() {
+  local -n ref="$1"
+  echo "${ref[@]:-EMPTY}"
+}
+f m
+### expect
+EMPTY
+### end
