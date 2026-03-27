@@ -29,8 +29,21 @@ async fn test_dev_null_stdout_redirect() {
 #[tokio::test]
 async fn test_dev_null_stderr_redirect() {
     let mut bash = Bash::builder().build();
-    // Use a command that produces stderr
-    let result = bash.exec("echo error >&2 2>/dev/null").await.unwrap();
+    // Produce real stderr output and redirect it to /dev/null
+    let result = bash.exec("echo error 2>/dev/null >&2").await.unwrap();
+    assert_eq!(result.stderr, "");
+    assert_eq!(result.stdout, "");
+    assert_eq!(result.exit_code, 0);
+}
+
+#[tokio::test]
+async fn test_dev_null_stderr_redirect_direct() {
+    let mut bash = Bash::builder().build();
+    // Direct stderr → /dev/null without fd dup interaction
+    let result = bash
+        .exec("f() { echo err >&2; }; f 2>/dev/null")
+        .await
+        .unwrap();
     assert_eq!(result.stderr, "");
     assert_eq!(result.exit_code, 0);
 }
@@ -46,7 +59,11 @@ async fn test_dev_null_append_stdout() {
 #[tokio::test]
 async fn test_dev_null_append_stderr() {
     let mut bash = Bash::builder().build();
-    let result = bash.exec("echo error >&2 2>>/dev/null").await.unwrap();
+    // Produce real stderr and append-redirect it to /dev/null
+    let result = bash
+        .exec("f() { echo err >&2; }; f 2>>/dev/null")
+        .await
+        .unwrap();
     assert_eq!(result.stderr, "");
     assert_eq!(result.exit_code, 0);
 }

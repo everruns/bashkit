@@ -2741,6 +2741,26 @@ impl Interpreter {
         }
     }
 }
+
+/// Fd target for redirect fd-table modeling.
+/// Bash processes redirects left-to-right, building an fd table where each
+/// dup copies the *current* target of the source fd. This matters for
+/// patterns like `2>&1 >file` where stderr must capture stdout's original
+/// destination before stdout is redirected to the file.
+#[derive(Clone, Debug)]
+enum FdTarget {
+    /// The original stdout pipe (terminal / command-substitution capture).
+    Stdout,
+    /// The original stderr pipe.
+    Stderr,
+    /// Write (truncate) to a file.
+    WriteFile(PathBuf, String),
+    /// Append to a file.
+    AppendFile(PathBuf, String),
+    /// Discard (/dev/null).
+    DevNull,
+}
+
 impl Interpreter {
     /// Execute a sequence of commands (with errexit checking)
     async fn execute_command_sequence(&mut self, commands: &[Command]) -> Result<ExecResult> {
@@ -5437,20 +5457,36 @@ impl Interpreter {
         mut result: ExecResult,
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
+        // Skip the fd-table path when there are no DupOutput redirects mixed
+        // with file redirects — the simple single-pass logic is sufficient and
+        // avoids any behavioural delta for the common case.
+        let has_dup_output = redirects.iter().any(|r| r.kind == RedirectKind::DupOutput);
+        let has_file_redirect = redirects.iter().any(|r| {
+            matches!(
+                r.kind,
+                RedirectKind::Output
+                    | RedirectKind::Clobber
+                    | RedirectKind::Append
+                    | RedirectKind::OutputBoth
+            )
+        });
+
+        if has_dup_output && has_file_redirect {
+            return self.apply_redirections_fd_table(result, redirects).await;
+        }
+
+        // --- Fast path: no mixed dup+file redirects ---
         for redirect in redirects {
             match redirect.kind {
                 RedirectKind::Output | RedirectKind::Clobber => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    // Handle /dev/null at interpreter level - cannot be bypassed
                     if is_dev_null(&path) {
-                        // Discard output without calling filesystem
                         match redirect.fd {
                             Some(2) => result.stderr = String::new(),
                             _ => result.stdout = String::new(),
                         }
                     } else {
-                        // noclobber check: > fails if file exists (>| bypasses)
                         if redirect.kind == RedirectKind::Output
                             && self.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
                             && self.fs.stat(&path).await.is_ok()
@@ -5461,14 +5497,11 @@ impl Interpreter {
                             result.exit_code = 1;
                             return Ok(result);
                         }
-                        // Check which fd we're redirecting
                         match redirect.fd {
                             Some(2) => {
-                                // 2> - redirect stderr to file
                                 if let Err(e) =
                                     self.fs.write_file(&path, result.stderr.as_bytes()).await
                                 {
-                                    // Redirect failed - set exit code and report error
                                     result.stderr = format!("bash: {}: {}\n", target_path, e);
                                     result.exit_code = 1;
                                     return Ok(result);
@@ -5476,11 +5509,9 @@ impl Interpreter {
                                 result.stderr = String::new();
                             }
                             _ => {
-                                // Default (stdout) - write stdout to file
                                 if let Err(e) =
                                     self.fs.write_file(&path, result.stdout.as_bytes()).await
                                 {
-                                    // Redirect failed - output is lost, set exit code and report error
                                     result.stdout = String::new();
                                     result.stderr = format!("bash: {}: {}\n", target_path, e);
                                     result.exit_code = 1;
@@ -5494,18 +5525,14 @@ impl Interpreter {
                 RedirectKind::Append => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    // Handle /dev/null at interpreter level - cannot be bypassed
                     if is_dev_null(&path) {
-                        // Discard output without calling filesystem
                         match redirect.fd {
                             Some(2) => result.stderr = String::new(),
                             _ => result.stdout = String::new(),
                         }
                     } else {
-                        // Check which fd we're appending
                         match redirect.fd {
                             Some(2) => {
-                                // 2>> - append stderr to file
                                 if let Err(e) =
                                     self.fs.append_file(&path, result.stderr.as_bytes()).await
                                 {
@@ -5516,11 +5543,9 @@ impl Interpreter {
                                 result.stderr = String::new();
                             }
                             _ => {
-                                // Default (stdout) - append stdout to file
                                 if let Err(e) =
                                     self.fs.append_file(&path, result.stdout.as_bytes()).await
                                 {
-                                    // Redirect failed - output is lost
                                     result.stdout = String::new();
                                     result.stderr = format!("bash: {}: {}\n", target_path, e);
                                     result.exit_code = 1;
@@ -5532,16 +5557,12 @@ impl Interpreter {
                     }
                 }
                 RedirectKind::OutputBoth => {
-                    // &> - redirect both stdout and stderr to file
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    // Handle /dev/null at interpreter level - cannot be bypassed
                     if is_dev_null(&path) {
-                        // Discard both outputs without calling filesystem
                         result.stdout = String::new();
                         result.stderr = String::new();
                     } else {
-                        // Write both stdout and stderr to file
                         let combined = format!("{}{}", result.stdout, result.stderr);
                         if let Err(e) = self.fs.write_file(&path, combined.as_bytes()).await {
                             result.stderr = format!("bash: {}: {}\n", target_path, e);
@@ -5553,40 +5574,170 @@ impl Interpreter {
                     }
                 }
                 RedirectKind::DupOutput => {
-                    // Handle fd duplication (e.g., 2>&1, >&2)
                     let target = self.expand_word(&redirect.target).await?;
                     let target_fd: i32 = target.parse().unwrap_or(1);
                     let src_fd = redirect.fd.unwrap_or(1);
 
                     match (src_fd, target_fd) {
                         (2, 1) => {
-                            // 2>&1 - redirect stderr to stdout
                             result.stdout.push_str(&result.stderr);
                             result.stderr = String::new();
                         }
                         (1, 2) => {
-                            // >&2 or 1>&2 - redirect stdout to stderr
                             result.stderr.push_str(&result.stdout);
                             result.stdout = String::new();
                         }
-                        _ => {
-                            // Other fd duplications not yet supported
-                        }
+                        _ => {}
                     }
                 }
                 RedirectKind::Input
                 | RedirectKind::HereString
                 | RedirectKind::HereDoc
-                | RedirectKind::HereDocStrip => {
-                    // Input redirections handled in process_input_redirections
+                | RedirectKind::HereDocStrip => {}
+                RedirectKind::DupInput => {}
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Apply redirections using an fd-table model for correct left-to-right
+    /// ordering when DupOutput and file redirects are mixed (e.g. `2>&1 >file`).
+    async fn apply_redirections_fd_table(
+        &mut self,
+        mut result: ExecResult,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        // Build fd table: fd1 = stdout pipe, fd2 = stderr pipe
+        let mut fd1 = FdTarget::Stdout;
+        let mut fd2 = FdTarget::Stderr;
+
+        for redirect in redirects {
+            match redirect.kind {
+                RedirectKind::Output | RedirectKind::Clobber => {
+                    let target_path = self.expand_word(&redirect.target).await?;
+                    let path = self.resolve_path(&target_path);
+
+                    if redirect.kind == RedirectKind::Output
+                        && self.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
+                        && !is_dev_null(&path)
+                        && self.fs.stat(&path).await.is_ok()
+                    {
+                        result.stdout = String::new();
+                        result.stderr =
+                            format!("bash: {}: cannot overwrite existing file\n", target_path);
+                        result.exit_code = 1;
+                        return Ok(result);
+                    }
+
+                    let target = if is_dev_null(&path) {
+                        FdTarget::DevNull
+                    } else {
+                        FdTarget::WriteFile(path, target_path)
+                    };
+                    match redirect.fd {
+                        Some(2) => fd2 = target,
+                        _ => fd1 = target,
+                    }
                 }
-                RedirectKind::DupInput => {
-                    // Input fd duplication - handled in process_input_redirections
-                    // for coproc FDs; other cases not yet supported
+                RedirectKind::Append => {
+                    let target_path = self.expand_word(&redirect.target).await?;
+                    let path = self.resolve_path(&target_path);
+                    let target = if is_dev_null(&path) {
+                        FdTarget::DevNull
+                    } else {
+                        FdTarget::AppendFile(path, target_path)
+                    };
+                    match redirect.fd {
+                        Some(2) => fd2 = target,
+                        _ => fd1 = target,
+                    }
+                }
+                RedirectKind::OutputBoth => {
+                    let target_path = self.expand_word(&redirect.target).await?;
+                    let path = self.resolve_path(&target_path);
+                    let target = if is_dev_null(&path) {
+                        FdTarget::DevNull
+                    } else {
+                        FdTarget::WriteFile(path, target_path)
+                    };
+                    fd1 = target.clone();
+                    fd2 = target;
+                }
+                RedirectKind::DupOutput => {
+                    let target = self.expand_word(&redirect.target).await?;
+                    let target_fd: i32 = target.parse().unwrap_or(1);
+                    let src_fd = redirect.fd.unwrap_or(1);
+
+                    match (src_fd, target_fd) {
+                        (2, 1) => fd2 = fd1.clone(),
+                        (1, 2) => fd1 = fd2.clone(),
+                        _ => {}
+                    }
+                }
+                RedirectKind::Input
+                | RedirectKind::HereString
+                | RedirectKind::HereDoc
+                | RedirectKind::HereDocStrip
+                | RedirectKind::DupInput => {}
+            }
+        }
+
+        // Route original stdout/stderr based on final fd table.
+        // Collect file writes to avoid double-borrow issues.
+        let orig_stdout = std::mem::take(&mut result.stdout);
+        let orig_stderr = std::mem::take(&mut result.stderr);
+
+        // Determine what goes where
+        let mut new_stdout = String::new();
+        let mut new_stderr = String::new();
+        // file_path -> (content, is_append, display_path)
+        let mut file_writes: std::collections::HashMap<PathBuf, (String, bool, String)> =
+            std::collections::HashMap::new();
+
+        for (data, fd_target) in [(&orig_stdout, &fd1), (&orig_stderr, &fd2)].iter() {
+            if data.is_empty() {
+                continue;
+            }
+            match fd_target {
+                FdTarget::Stdout => new_stdout.push_str(data),
+                FdTarget::Stderr => new_stderr.push_str(data),
+                FdTarget::DevNull => {}
+                FdTarget::WriteFile(path, display) => {
+                    file_writes
+                        .entry(path.clone())
+                        .or_insert_with(|| (String::new(), false, display.clone()))
+                        .0
+                        .push_str(data);
+                }
+                FdTarget::AppendFile(path, display) => {
+                    file_writes
+                        .entry(path.clone())
+                        .or_insert_with(|| (String::new(), true, display.clone()))
+                        .0
+                        .push_str(data);
                 }
             }
         }
 
+        // Write files
+        for (path, (content, is_append, display_path)) in &file_writes {
+            let write_result = if *is_append {
+                self.fs.append_file(path, content.as_bytes()).await
+            } else {
+                self.fs.write_file(path, content.as_bytes()).await
+            };
+            if let Err(e) = write_result {
+                new_stderr = format!("bash: {}: {}\n", display_path, e);
+                result.exit_code = 1;
+                result.stdout = new_stdout;
+                result.stderr = new_stderr;
+                return Ok(result);
+            }
+        }
+
+        result.stdout = new_stdout;
+        result.stderr = new_stderr;
         Ok(result)
     }
 
