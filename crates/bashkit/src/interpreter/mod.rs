@@ -6312,12 +6312,14 @@ impl Interpreter {
             .strip_suffix("[@]")
             .or_else(|| name.strip_suffix("[*]"))
         {
+            // Resolve nameref: if arr_name is a nameref, follow it to the target
+            let resolved_arr_name = self.resolve_nameref(arr_name);
             let sep = if is_star {
                 self.get_ifs_separator()
             } else {
                 " ".to_string()
             };
-            if let Some(arr) = self.assoc_arrays.get(arr_name) {
+            if let Some(arr) = self.assoc_arrays.get(resolved_arr_name) {
                 let is_set = !arr.is_empty();
                 let mut keys: Vec<_> = arr.keys().collect();
                 keys.sort();
@@ -6325,7 +6327,7 @@ impl Interpreter {
                     keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
                 return (is_set, values.join(&sep));
             }
-            if let Some(arr) = self.arrays.get(arr_name) {
+            if let Some(arr) = self.arrays.get(resolved_arr_name) {
                 let is_set = !arr.is_empty();
                 let mut indices: Vec<_> = arr.keys().collect();
                 indices.sort();
@@ -6343,15 +6345,17 @@ impl Interpreter {
             && name.ends_with(']')
         {
             let arr_name = &name[..bracket];
+            // Resolve nameref: if arr_name is a nameref, follow it to the target
+            let resolved_arr_name = self.resolve_nameref(arr_name);
             let key = &name[bracket + 1..name.len() - 1];
-            if let Some(arr) = self.assoc_arrays.get(arr_name) {
+            if let Some(arr) = self.assoc_arrays.get(resolved_arr_name) {
                 let expanded_key = self.expand_variable_or_literal(key);
                 return match arr.get(&expanded_key) {
                     Some(v) => (true, v.clone()),
                     None => (false, String::new()),
                 };
             }
-            if let Some(arr) = self.arrays.get(arr_name)
+            if let Some(arr) = self.arrays.get(resolved_arr_name)
                 && let Ok(idx) = key.parse::<usize>()
             {
                 return match arr.get(&idx) {
