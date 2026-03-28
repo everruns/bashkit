@@ -18,11 +18,17 @@ dependency rot, or security gaps ship in a release.
 
 ### Dependencies
 
-- All direct dependencies at latest compatible versions
+- All direct dependencies at latest versions, including major/breaking upgrades
+- Upgrade procedure for each outdated dependency:
+  1. Bump version constraint in `Cargo.toml` (workspace or crate-level)
+  2. Run `cargo build` — fix any compilation errors from API changes
+  3. Run `cargo test` — fix any test failures
+  4. If upgrade requires non-trivial refactoring (>50 lines changed), defer to a
+     tracked GitHub issue instead of blocking the maintenance pass
+- `cargo update` run after all version bumps to lock latest patch versions
 - No known CVEs in dependency tree
 - License and advisory checks pass (`deny.toml`)
 - Supply chain audit passes
-- Major version bumps evaluated and upgraded where safe
 
 ### Security
 
