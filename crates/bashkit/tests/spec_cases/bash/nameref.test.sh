@@ -44,7 +44,7 @@ jam
 
 ### nameref_local_dynamic_scope
 # pass local array by reference via dynamic scoping
-### skip: TODO parser does not handle local arr=(...) syntax (indexed array after command name)
+### bash_diff: nameref + local array by reference
 show_value() {
   local -n array_name=$1
   local idx=$2

@@ -56,7 +56,7 @@ These decisions are documented in [`specs/008-posix-compliance.md`](../specs/008
 
 Bashkit uses multiple layers of security testing:
 
-**Threat model tests** — Over 50 tests in `threat_model_tests.rs` that directly
+**Threat model tests** — 185 tests in `threat_model_tests.rs` that directly
 validate mitigations against documented threat IDs. Each test maps to a specific
 `TM-*` threat.
 

@@ -3827,4 +3827,16 @@ mod trace_events {
             "should record CommandExit with code 127 for not-found"
         );
     }
+
+    // TM-DOS-029: Malformed ${#[} must not panic (fuzz crash from CI)
+    #[tokio::test]
+    async fn arithmetic_malformed_brace_length_no_panic() {
+        let mut bash = Bash::new();
+        // Input discovered by arithmetic_fuzz: [${#[
+        // Triggered panic "byte range starts at 1 but ends at 0" in
+        // expand_brace_expr_in_arithmetic when rest="[" and bracket=0.
+        let r = bash.exec("echo $((0 + ${#[}))").await.unwrap();
+        // Should not panic — just return 0 for malformed expression
+        assert_eq!(r.exit_code, 0);
+    }
 }

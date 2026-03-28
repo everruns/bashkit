@@ -1142,7 +1142,8 @@ impl Interpreter {
             // Run ERR trap on non-zero exit (unless in conditional chain)
             if exit_code != 0 {
                 let suppressed = matches!(command, Command::List(_))
-                    || matches!(command, Command::Pipeline(p) if p.negated);
+                    || matches!(command, Command::Pipeline(p) if p.negated)
+                    || result.errexit_suppressed;
                 if !suppressed {
                     self.run_err_trap(&mut stdout, &mut stderr).await;
                 }
@@ -1151,9 +1152,12 @@ impl Interpreter {
             // errexit (set -e): stop on non-zero exit for top-level simple commands.
             // List commands handle errexit internally (with && / || chain awareness).
             // Negated pipelines (! cmd) explicitly handle the exit code.
+            // Compound commands (for/while/until) propagate errexit_suppressed when
+            // their body ends with an AND-OR chain failure.
             if self.is_errexit_enabled() && exit_code != 0 {
                 let suppressed = matches!(command, Command::List(_))
-                    || matches!(command, Command::Pipeline(p) if p.negated);
+                    || matches!(command, Command::Pipeline(p) if p.negated)
+                    || result.errexit_suppressed;
                 if !suppressed {
                     break;
                 }
@@ -3129,7 +3133,7 @@ impl Interpreter {
                     if let Some(index_str) = &assignment.index {
                         let resolved_name = self.resolve_nameref(&assignment.name).to_string();
                         if self.assoc_arrays.contains_key(&resolved_name) {
-                            let key = self.expand_variable_or_literal(index_str);
+                            let key = self.expand_assoc_key(index_str).await?;
                             let is_new_entry = self
                                 .assoc_arrays
                                 .get(&resolved_name)
@@ -4421,11 +4425,9 @@ impl Interpreter {
                     if is_internal_variable(var_name) {
                         continue;
                     }
-                    // Handle compound array assignment: local -a arr=(1 2 3)
-                    if (flags.array || flags.assoc)
-                        && value.starts_with('(')
-                        && value.ends_with(')')
-                    {
+                    // Handle compound array assignment: local arr=(1 2 3) or local -a/-A arr=(...)
+                    let is_compound = value.starts_with('(') && value.ends_with(')');
+                    if is_compound {
                         let inner = &value[1..value.len() - 1];
                         if flags.assoc {
                             let arr = self.assoc_arrays.entry(var_name.to_string()).or_default();
@@ -4539,7 +4541,54 @@ impl Interpreter {
                     if is_internal_variable(var_name) {
                         continue;
                     }
-                    if flags.nameref {
+                    let is_compound = value.starts_with('(') && value.ends_with(')');
+                    if is_compound {
+                        let inner = &value[1..value.len() - 1];
+                        if flags.assoc {
+                            let arr = self.assoc_arrays.entry(var_name.to_string()).or_default();
+                            arr.clear();
+                            let mut rest = inner.trim();
+                            while let Some(bracket_start) = rest.find('[') {
+                                if let Some(bracket_end) = rest[bracket_start..].find(']') {
+                                    let key = &rest[bracket_start + 1..bracket_start + bracket_end];
+                                    let after = &rest[bracket_start + bracket_end + 1..];
+                                    if let Some(eq_rest) = after.strip_prefix('=') {
+                                        let eq_rest = eq_rest.trim_start();
+                                        let (val, remainder) =
+                                            if let Some(stripped) = eq_rest.strip_prefix('"') {
+                                                if let Some(end_q) = stripped.find('"') {
+                                                    (
+                                                        &stripped[..end_q],
+                                                        stripped[end_q + 1..].trim_start(),
+                                                    )
+                                                } else {
+                                                    (stripped.trim_end_matches('"'), "")
+                                                }
+                                            } else {
+                                                match eq_rest.find(char::is_whitespace) {
+                                                    Some(sp) => {
+                                                        (&eq_rest[..sp], eq_rest[sp..].trim_start())
+                                                    }
+                                                    None => (eq_rest, ""),
+                                                }
+                                            };
+                                        arr.insert(key.to_string(), val.to_string());
+                                        rest = remainder;
+                                    } else {
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                        } else {
+                            let arr = self.arrays.entry(var_name.to_string()).or_default();
+                            arr.clear();
+                            for (idx, val) in inner.split_whitespace().enumerate() {
+                                arr.insert(idx, val.trim_matches('"').to_string());
+                            }
+                        }
+                    } else if flags.nameref {
                         self.variables
                             .insert(format!("_NAMEREF_{}", var_name), value.to_string());
                     } else {
@@ -7176,6 +7225,17 @@ impl Interpreter {
                     } else {
                         result.push_str(&expanded);
                     }
+                } else if let Some(&c) = chars.peek()
+                    && matches!(c, '#' | '?' | '$' | '!' | '@' | '*' | '-')
+                {
+                    // Handle special variables: $#, $?, $$, $!, $@, $*, $-
+                    chars.next();
+                    let value = self.expand_variable(&c.to_string());
+                    if value.is_empty() {
+                        result.push('0');
+                    } else {
+                        result.push_str(&value);
+                    }
                 } else {
                     // Handle $var syntax (common in arithmetic)
                     let mut name = String::new();
@@ -7284,8 +7344,14 @@ impl Interpreter {
         // ${#arr[@]} or ${#arr[*]} — array length
         if let Some(rest) = inner.strip_prefix('#') {
             if let Some(bracket) = rest.find('[') {
+                // Guard against malformed input like ${#[} where bracket+1 > len-1
+                let end = rest.len().saturating_sub(1);
+                if bracket + 1 > end {
+                    // Malformed — treat as string length of empty var
+                    return "0".to_string();
+                }
                 let arr_name = &rest[..bracket];
-                let idx = &rest[bracket + 1..rest.len().saturating_sub(1)];
+                let idx = &rest[bracket + 1..end];
                 if idx == "@" || idx == "*" {
                     if let Some(arr) = self.arrays.get(arr_name) {
                         return arr.len().to_string();
@@ -7800,6 +7866,18 @@ impl Interpreter {
         }
         // Bare names are literal string keys — do NOT look up as variables.
         s.to_string()
+    }
+
+    /// Expand an associative array key with full word expansion.
+    /// Unlike `expand_variable_or_literal`, this handles command substitutions
+    /// (`$(...)`, backticks) and all other expansion types. (Issue #872)
+    async fn expand_assoc_key(&mut self, s: &str) -> Result<String> {
+        if s.contains('$') || s.contains('`') {
+            let word = crate::parser::Parser::parse_word_string(s);
+            self.expand_word(&word).await
+        } else {
+            Ok(s.to_string())
+        }
     }
 
     /// THREAT[TM-INJ-009]: Check if a variable name is an internal marker.
