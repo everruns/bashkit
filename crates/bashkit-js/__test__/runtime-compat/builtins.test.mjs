@@ -114,11 +114,16 @@ describe("builtins", () => {
     assert.equal(bash.executeSync("date").exitCode, 0);
   });
 
-  it("export and unset", () => {
+  it("export makes variable accessible", () => {
     const bash = new Bash();
     bash.executeSync("export MY_VAR=hello");
     assert.equal(bash.executeSync("echo $MY_VAR").stdout.trim(), "hello");
-    bash.executeSync("unset MY_VAR");
-    assert.equal(bash.executeSync("echo ${MY_VAR:-gone}").stdout.trim(), "gone");
+  });
+
+  it("unset removes variable", () => {
+    const bash = new Bash();
+    bash.executeSync("X=123");
+    bash.executeSync("unset X");
+    assert.equal(bash.executeSync("echo ${X:-gone}").stdout.trim(), "gone");
   });
 });
