@@ -10,7 +10,17 @@ Each section below is an outcome to achieve, not a script to follow. Use whateve
 
 ### 1. Dependencies are current and clean
 
-Ensure all direct dependencies are up to date, no CVEs exist, and license/advisory/supply-chain checks pass.
+Ensure all direct dependencies are at their latest versions — including major/breaking upgrades. Don't just run `cargo update`; also check `cargo outdated` for major version bumps and update the version constraints in `Cargo.toml` accordingly.
+
+For each outdated dependency (including major bumps):
+1. Bump the version constraint in workspace `Cargo.toml` (or crate-level if not in workspace)
+2. Run `cargo build` — fix compilation errors from API changes
+3. Run `cargo test` — fix test failures
+4. If an upgrade requires non-trivial refactoring (>50 lines changed), defer it to a tracked GitHub issue
+
+After all bumps, run `cargo update` to lock latest patch versions.
+
+Ensure no CVEs exist and license/advisory/supply-chain checks pass.
 
 Key tools: `cargo update`, `cargo outdated`, `cargo audit`, `cargo deny check`, `just vet`
 
