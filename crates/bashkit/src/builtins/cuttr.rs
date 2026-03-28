@@ -41,54 +41,41 @@ impl Builtin for Cut {
         let mut files = Vec::new();
 
         // Parse arguments
-        let mut i = 0;
-        while i < ctx.args.len() {
-            let arg = &ctx.args[i];
-            if arg == "-d" {
-                i += 1;
-                if i < ctx.args.len() {
-                    delimiter = ctx.args[i].chars().next().unwrap_or('\t');
-                }
-            } else if let Some(d) = arg.strip_prefix("-d") {
-                delimiter = d.chars().next().unwrap_or('\t');
-            } else if arg == "-f" {
-                i += 1;
-                if i < ctx.args.len() {
-                    spec = ctx.args[i].clone();
-                    mode = CutMode::Fields;
-                }
-            } else if let Some(f) = arg.strip_prefix("-f") {
-                spec = f.to_string();
+        let mut p = super::arg_parser::ArgParser::new(ctx.args);
+        while !p.is_done() {
+            if let Some(val) = p.flag_value_opt("-d") {
+                delimiter = val.chars().next().unwrap_or('\t');
+            } else if let Some(val) = p.flag_value_opt("-f") {
+                spec = val.to_string();
                 mode = CutMode::Fields;
-            } else if arg == "-c" || arg == "-b" {
-                i += 1;
-                if i < ctx.args.len() {
-                    spec = ctx.args[i].clone();
-                    mode = CutMode::Chars;
-                }
-            } else if let Some(c) = arg.strip_prefix("-c") {
-                spec = c.to_string();
+            } else if let Some(val) = p.flag_value_opt("-c") {
+                spec = val.to_string();
                 mode = CutMode::Chars;
-            } else if let Some(b) = arg.strip_prefix("-b") {
-                spec = b.to_string();
+            } else if let Some(val) = p.flag_value_opt("-b") {
+                spec = val.to_string();
                 mode = CutMode::Chars;
-            } else if arg == "-s" {
+            } else if p.flag("-s") {
                 only_delimited = true;
-            } else if arg == "-z" {
+            } else if p.flag("-z") {
                 zero_terminated = true;
-            } else if arg == "--complement" {
+            } else if p.flag("--complement") {
                 complement = true;
-            } else if let Some(od) = arg.strip_prefix("--output-delimiter=") {
-                output_delimiter = Some(od.to_string());
-            } else if arg == "--output-delimiter" {
-                i += 1;
-                if i < ctx.args.len() {
-                    output_delimiter = Some(ctx.args[i].clone());
+            } else if let Some(val) = p
+                .current()
+                .and_then(|s| s.strip_prefix("--output-delimiter="))
+            {
+                output_delimiter = Some(val.to_string());
+                p.advance();
+            } else if p.flag("--output-delimiter") {
+                if let Some(val) = p.positional() {
+                    output_delimiter = Some(val.to_string());
                 }
-            } else if !arg.starts_with('-') {
-                files.push(arg.clone());
+            } else if let Some(arg) = p.current().filter(|s| !s.starts_with('-')) {
+                files.push(arg.to_string());
+                p.advance();
+            } else {
+                p.advance();
             }
-            i += 1;
         }
 
         if spec.is_empty() {

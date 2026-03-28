@@ -330,30 +330,35 @@ impl Builtin for Date {
         let mut rfc2822 = false;
         let mut iso8601: Option<String> = None;
 
-        let mut i = 0;
-        while i < ctx.args.len() {
-            let arg = &ctx.args[i];
-            if arg == "-u" || arg == "--utc" {
+        let mut p = super::arg_parser::ArgParser::new(ctx.args);
+        while !p.is_done() {
+            if p.flag_any(&["-u", "--utc"]) {
                 utc = true;
-            } else if arg == "-d" || arg == "--date" {
-                i += 1;
-                if i < ctx.args.len() {
-                    date_str = Some(ctx.args[i].clone());
-                }
-            } else if let Some(val) = arg.strip_prefix("--date=") {
+            } else if let Some(val) = p.current().and_then(|s| s.strip_prefix("--date=")) {
                 date_str = Some(strip_surrounding_quotes(val).to_string());
-            } else if arg == "-R" || arg == "--rfc-2822" || arg == "--rfc-email" {
+                p.advance();
+            } else if let Some(val) = p.flag_value_opt("-d") {
+                date_str = Some(val.to_string());
+            } else if p.flag("--date") {
+                if let Some(val) = p.positional() {
+                    date_str = Some(val.to_string());
+                }
+            } else if p.flag_any(&["-R", "--rfc-2822", "--rfc-email"]) {
                 rfc2822 = true;
-            } else if arg == "-I" || arg == "--iso-8601" {
+            } else if let Some(val) = p.current().and_then(|s| s.strip_prefix("--iso-8601=")) {
+                iso8601 = Some(val.to_string());
+                p.advance();
+            } else if p.flag_any(&["-I", "--iso-8601"]) {
                 iso8601 = Some("date".to_string());
-            } else if let Some(val) = arg.strip_prefix("-I") {
+            } else if let Some(val) = p.current().and_then(|s| s.strip_prefix("-I")) {
                 iso8601 = Some(val.to_string());
-            } else if let Some(val) = arg.strip_prefix("--iso-8601=") {
-                iso8601 = Some(val.to_string());
-            } else if arg.starts_with('+') {
-                format_arg = Some(arg.clone());
+                p.advance();
+            } else if let Some(arg) = p.current().filter(|s| s.starts_with('+')) {
+                format_arg = Some(arg.to_string());
+                p.advance();
+            } else {
+                p.advance();
             }
-            i += 1;
         }
 
         // Get the datetime to format
