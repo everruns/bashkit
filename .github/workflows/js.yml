@@ -119,7 +119,7 @@ jobs:
         working-directory: crates/bashkit-js
 
       - name: Run tests
-        run: ${{ matrix.pkg }} test
+        run: ${{ matrix.pkg }} run test
         working-directory: crates/bashkit-js
 
       - name: Install example dependencies and link local build
