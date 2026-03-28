@@ -301,6 +301,74 @@ Some features are intentionally excluded from fuzzing:
 - `wc` - Output formatting differs (column alignment)
 - Filesystem operations - Bashkit uses virtual filesystem
 
+## JavaScript Runtime Compatibility Tests
+
+### Motivation
+
+The NAPI-RS JS bindings must work across Node.js, Bun, and Deno. The primary
+test suite uses ava (a Node-specific test runner), so it can only validate Node.
+To prove the bindings work under other runtimes, we maintain a separate
+**runtime-compat** test suite using only `node:test` and `node:assert` — APIs
+supported natively by all three runtimes.
+
+### Architecture
+
+```
+crates/bashkit-js/__test__/
+├── *.spec.ts                  # ava tests (Node only, TypeScript)
+└── runtime-compat/
+    ├── _setup.mjs             # Shared: loads native NAPI binding
+    ├── basics.test.mjs        # Constructors, execution, variables, reset, isolation
+    ├── builtins.test.mjs      # grep, sed, awk, sort, uniq, tr, cut, jq, etc.
+    ├── control-flow.test.mjs  # if/elif, for, while, case, functions, subshells
+    ├── error-handling.test.mjs # Exit codes, BashError, recovery, parse errors
+    ├── filesystem.test.mjs    # File I/O, pipes, redirection, heredocs
+    ├── vfs.test.mjs           # VFS API (writeFile, readFile, mkdir, exists, remove)
+    ├── tool-metadata.test.mjs # BashTool name, version, schemas, systemPrompt
+    ├── security.test.mjs      # Resource limits, sandbox escape, path traversal
+    └── scripts.test.mjs       # Real-world patterns: JSON pipelines, large output
+```
+
+### CI Matrix
+
+All runtimes build with npm (napi-rs requires Node tooling). Test execution:
+
+| Runtime | Versions | ava tests | runtime-compat | Examples |
+|---------|----------|-----------|----------------|----------|
+| Node    | 20, 22, 24, latest | Yes | Yes | Yes |
+| Bun     | latest, canary | No | Yes | Yes |
+| Deno    | 2.x, canary | No | Yes | Yes |
+
+- **Node** runs both ava (full functional suite) and runtime-compat (via `node --test`)
+- **Bun/Deno** run runtime-compat files directly with their native runtimes
+- All runtimes run the example `.mjs` files
+
+### Maintenance Rules
+
+1. **When adding a new ava test**: consider if it covers a new API surface or
+   behavior that should also be validated across runtimes. If so, add a
+   corresponding test to the appropriate `runtime-compat/*.test.mjs` file.
+2. **runtime-compat tests use only** `node:test`, `node:assert`, and
+   `node:module` — no npm dependencies. This ensures they run under all runtimes.
+3. **Files are plain `.mjs`** (not TypeScript) to avoid transpilation steps.
+4. **Shared setup** lives in `_setup.mjs` — it loads the native binding via
+   `createRequire` which works in Node, Bun, and Deno.
+5. **Keep files focused** — one file per concern area, mirroring the ava test
+   structure. Each file should be independently runnable.
+
+### Running Locally
+
+```bash
+# Node (native test runner)
+node --test crates/bashkit-js/__test__/runtime-compat/*.test.mjs
+
+# Bun
+for f in crates/bashkit-js/__test__/runtime-compat/*.test.mjs; do bun "$f"; done
+
+# Deno
+for f in crates/bashkit-js/__test__/runtime-compat/*.test.mjs; do deno run -A "$f"; done
+```
+
 ## Alternatives Considered
 
 ### Bash test suite

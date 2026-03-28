@@ -35,13 +35,40 @@ env:
 
 jobs:
   build-and-test:
-    name: Node ${{ matrix.node }}
+    name: ${{ matrix.runtime }} ${{ matrix.version }}
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
       matrix:
-        node: ["20", "22", "24", "latest"]
+        include:
+          # Node.js versions
+          - runtime: node
+            version: "20"
+            run: "node"
+          - runtime: node
+            version: "22"
+            run: "node"
+          - runtime: node
+            version: "24"
+            run: "node"
+          - runtime: node
+            version: "latest"
+            run: "node"
+          # Bun
+          - runtime: bun
+            version: "latest"
+            run: "bun"
+          - runtime: bun
+            version: "canary"
+            run: "bun"
+          # Deno
+          - runtime: deno
+            version: "2.x"
+            run: "deno run -A"
+          - runtime: deno
+            version: "canary"
+            run: "deno run -A"
 
     steps:
       - uses: actions/checkout@v6
@@ -52,9 +79,28 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Setup Node.js
+        if: matrix.runtime == 'node'
         uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node }}
+          node-version: ${{ matrix.version }}
+
+      - name: Setup Node.js (for napi build)
+        if: matrix.runtime != 'node'
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Setup Bun
+        if: matrix.runtime == 'bun'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ matrix.version }}
+
+      - name: Setup Deno
+        if: matrix.runtime == 'deno'
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ matrix.version }}
 
       - name: Install dependencies
         run: npm install
@@ -64,8 +110,28 @@ jobs:
         run: npm run build
         working-directory: crates/bashkit-js
 
-      - name: Run tests
+      - name: Run ava tests (Node only)
+        if: matrix.runtime == 'node'
         run: npm test
+        working-directory: crates/bashkit-js
+
+      - name: Run runtime-compat tests (Node)
+        if: matrix.runtime == 'node'
+        run: node --test __test__/runtime-compat/*.test.mjs
+        working-directory: crates/bashkit-js
+
+      - name: Run runtime-compat tests (Bun)
+        if: matrix.runtime == 'bun'
+        run: bun test __test__/runtime-compat/
+        working-directory: crates/bashkit-js
+
+      - name: Run runtime-compat tests (Deno)
+        if: matrix.runtime == 'deno'
+        run: |
+          for f in __test__/runtime-compat/*.test.mjs; do
+            echo "--- $f ---"
+            deno run -A "$f"
+          done
         working-directory: crates/bashkit-js
 
       - name: Install example dependencies and link local build
@@ -79,10 +145,10 @@ jobs:
       - name: Run examples (self-contained)
         working-directory: examples
         run: |
-          node bash_basics.mjs
-          node data_pipeline.mjs
-          node llm_tool.mjs
-          node langchain_integration.mjs
+          ${{ matrix.run }} bash_basics.mjs
+          ${{ matrix.run }} data_pipeline.mjs
+          ${{ matrix.run }} llm_tool.mjs
+          ${{ matrix.run }} langchain_integration.mjs
 
       - name: Install Doppler CLI
         if: env.DOPPLER_TOKEN != ''
@@ -92,9 +158,9 @@ jobs:
         if: env.DOPPLER_TOKEN != ''
         working-directory: examples
         run: |
-          doppler run -- node openai_tool.mjs
-          doppler run -- node vercel_ai_tool.mjs
-          doppler run -- node langchain_agent.mjs
+          doppler run -- ${{ matrix.run }} openai_tool.mjs
+          doppler run -- ${{ matrix.run }} vercel_ai_tool.mjs
+          doppler run -- ${{ matrix.run }} langchain_agent.mjs
 
   # Gate job for branch protection
   js-check:
