@@ -117,6 +117,93 @@ impl ExecResult {
     }
 }
 
+/// Action for the caller's loop after processing a loop body iteration.
+pub(crate) enum LoopAction {
+    /// Continue normally (no control flow signal).
+    None,
+    /// Break out of the current loop.
+    Break,
+    /// Continue to next iteration of the current loop.
+    Continue,
+    /// Exit the loop immediately and return this result to the caller.
+    /// Used for multi-level break/continue propagation and return.
+    Exit(ExecResult),
+}
+
+/// Accumulates stdout/stderr/exit_code/errexit_suppressed across loop
+/// iterations and handles break/continue/return control flow propagation.
+///
+/// Eliminates duplicated tracking in for, arithmetic-for, and while/until loops.
+pub(crate) struct LoopAccumulator {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+    pub errexit_suppressed: bool,
+}
+
+impl LoopAccumulator {
+    pub fn new() -> Self {
+        Self {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+            errexit_suppressed: false,
+        }
+    }
+
+    /// Accumulate a loop body result and classify the control flow action.
+    ///
+    /// Appends stdout/stderr, updates exit_code and errexit_suppressed.
+    /// For multi-level break/continue or return, builds a propagation
+    /// `ExecResult` and returns `LoopAction::Exit`.
+    pub fn accumulate(&mut self, result: ExecResult) -> LoopAction {
+        self.stdout.push_str(&result.stdout);
+        self.stderr.push_str(&result.stderr);
+        self.exit_code = result.exit_code;
+        self.errexit_suppressed = result.errexit_suppressed;
+
+        match result.control_flow {
+            ControlFlow::Break(n) if n <= 1 => LoopAction::Break,
+            ControlFlow::Break(n) => LoopAction::Exit(self.build_exit(ControlFlow::Break(n - 1))),
+            ControlFlow::Continue(n) if n <= 1 => LoopAction::Continue,
+            ControlFlow::Continue(n) => {
+                LoopAction::Exit(self.build_exit(ControlFlow::Continue(n - 1)))
+            }
+            ControlFlow::Return(code) => {
+                LoopAction::Exit(self.build_exit(ControlFlow::Return(code)))
+            }
+            ControlFlow::None => LoopAction::None,
+        }
+    }
+
+    /// Consume into a final `ExecResult` with `ControlFlow::None`.
+    pub fn finish(self) -> ExecResult {
+        ExecResult {
+            stdout: self.stdout,
+            stderr: self.stderr,
+            exit_code: self.exit_code,
+            control_flow: ControlFlow::None,
+            errexit_suppressed: self.errexit_suppressed,
+            ..Default::default()
+        }
+    }
+
+    /// Build an exit result, draining accumulated stdout/stderr.
+    fn build_exit(&mut self, control_flow: ControlFlow) -> ExecResult {
+        let exit_code = match control_flow {
+            ControlFlow::Return(code) => code,
+            _ => self.exit_code,
+        };
+        ExecResult {
+            stdout: std::mem::take(&mut self.stdout),
+            stderr: std::mem::take(&mut self.stderr),
+            exit_code,
+            control_flow,
+            ..Default::default()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,5 +400,102 @@ mod tests {
         let dbg = format!("{:?}", cf);
         assert!(dbg.contains("Break"));
         assert!(dbg.contains("3"));
+    }
+
+    // --- LoopAccumulator ---
+
+    #[test]
+    fn loop_acc_accumulate_none() {
+        let mut acc = LoopAccumulator::new();
+        let r = ExecResult {
+            stdout: "out".into(),
+            stderr: "err".into(),
+            exit_code: 2,
+            errexit_suppressed: true,
+            ..Default::default()
+        };
+        assert!(matches!(acc.accumulate(r), LoopAction::None));
+        assert_eq!(acc.stdout, "out");
+        assert_eq!(acc.stderr, "err");
+        assert_eq!(acc.exit_code, 2);
+        assert!(acc.errexit_suppressed);
+    }
+
+    #[test]
+    fn loop_acc_accumulate_break_level_1() {
+        let mut acc = LoopAccumulator::new();
+        let r = ExecResult {
+            control_flow: ControlFlow::Break(1),
+            ..Default::default()
+        };
+        assert!(matches!(acc.accumulate(r), LoopAction::Break));
+    }
+
+    #[test]
+    fn loop_acc_accumulate_break_level_3() {
+        let mut acc = LoopAccumulator::new();
+        acc.stdout.push_str("prev ");
+        let r = ExecResult {
+            stdout: "body".into(),
+            control_flow: ControlFlow::Break(3),
+            ..Default::default()
+        };
+        match acc.accumulate(r) {
+            LoopAction::Exit(result) => {
+                assert_eq!(result.control_flow, ControlFlow::Break(2));
+                assert_eq!(result.stdout, "prev body");
+            }
+            other => panic!("expected Exit, got {:?}", std::mem::discriminant(&other)),
+        }
+    }
+
+    #[test]
+    fn loop_acc_accumulate_continue_level_1() {
+        let mut acc = LoopAccumulator::new();
+        let r = ExecResult {
+            control_flow: ControlFlow::Continue(1),
+            ..Default::default()
+        };
+        assert!(matches!(acc.accumulate(r), LoopAction::Continue));
+    }
+
+    #[test]
+    fn loop_acc_accumulate_return() {
+        let mut acc = LoopAccumulator::new();
+        let r = ExecResult {
+            control_flow: ControlFlow::Return(42),
+            ..Default::default()
+        };
+        match acc.accumulate(r) {
+            LoopAction::Exit(result) => {
+                assert_eq!(result.control_flow, ControlFlow::Return(42));
+                assert_eq!(result.exit_code, 42);
+            }
+            other => panic!("expected Exit, got {:?}", std::mem::discriminant(&other)),
+        }
+    }
+
+    #[test]
+    fn loop_acc_finish() {
+        let mut acc = LoopAccumulator::new();
+        let r1 = ExecResult {
+            stdout: "a".into(),
+            exit_code: 1,
+            errexit_suppressed: true,
+            ..Default::default()
+        };
+        acc.accumulate(r1);
+        let r2 = ExecResult {
+            stdout: "b".into(),
+            exit_code: 0,
+            errexit_suppressed: false,
+            ..Default::default()
+        };
+        acc.accumulate(r2);
+        let final_result = acc.finish();
+        assert_eq!(final_result.stdout, "ab");
+        assert_eq!(final_result.exit_code, 0);
+        assert!(!final_result.errexit_suppressed);
+        assert_eq!(final_result.control_flow, ControlFlow::None);
     }
 }

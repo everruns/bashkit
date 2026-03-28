@@ -1058,6 +1058,10 @@ criteria = "safe-to-deploy"
 version = "2.1.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.rustc-hash]]
+version = "2.1.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.rustc_version]]
 version = "0.4.1"
 criteria = "safe-to-deploy"
