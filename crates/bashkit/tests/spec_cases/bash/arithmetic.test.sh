@@ -493,3 +493,26 @@ echo $x
 ### expect
 42
 ### end
+
+### arith_special_var_hash
+# $# in arithmetic context
+set -- a b c
+echo "argc: $#"
+(( $# > 0 )) && echo "true" || echo "false"
+(( 3 > 0 )) && echo "true2" || echo "false2"
+x=$#
+(( x > 0 )) && echo "true3" || echo "false3"
+### expect
+argc: 3
+true
+true2
+true3
+### end
+
+### arith_special_var_question
+# $? in arithmetic context
+true
+(( $? == 0 )) && echo "zero" || echo "nonzero"
+### expect
+zero
+### end
