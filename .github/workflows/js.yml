@@ -46,37 +46,29 @@ jobs:
           - runtime: node
             version: "20"
             run: "node"
-            pkg: "npm"
           - runtime: node
             version: "22"
             run: "node"
-            pkg: "npm"
           - runtime: node
             version: "24"
             run: "node"
-            pkg: "npm"
           - runtime: node
             version: "latest"
             run: "node"
-            pkg: "npm"
           # Bun
           - runtime: bun
             version: "latest"
             run: "bun"
-            pkg: "bun"
           - runtime: bun
             version: "canary"
             run: "bun"
-            pkg: "bun"
           # Deno
           - runtime: deno
             version: "2.x"
             run: "deno run -A"
-            pkg: "npm"
           - runtime: deno
             version: "canary"
             run: "deno run -A"
-            pkg: "npm"
 
     steps:
       - uses: actions/checkout@v6
@@ -111,21 +103,27 @@ jobs:
           deno-version: ${{ matrix.version }}
 
       - name: Install dependencies
-        run: ${{ matrix.pkg }} install
+        run: npm install
         working-directory: crates/bashkit-js
 
       - name: Build native binding
-        run: ${{ matrix.pkg }} run build
+        run: npm run build
         working-directory: crates/bashkit-js
 
-      - name: Run tests
-        run: ${{ matrix.pkg }} run test
+      - name: Run ava tests (Node only)
+        if: matrix.runtime == 'node'
+        run: npm test
+        working-directory: crates/bashkit-js
+
+      - name: Run runtime-compat tests
+        if: matrix.runtime != 'node'
+        run: ${{ matrix.run }} __test__/runtime-compat.test.mjs
         working-directory: crates/bashkit-js
 
       - name: Install example dependencies and link local build
         working-directory: examples
         run: |
-          ${{ matrix.pkg }} install
+          npm install
           rm -rf node_modules/@everruns/bashkit
           mkdir -p node_modules/@everruns
           ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
