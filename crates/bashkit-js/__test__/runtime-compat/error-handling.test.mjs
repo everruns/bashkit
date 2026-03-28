@@ -3,7 +3,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { Bash } from "./_setup.mjs";
+import { Bash, BashError } from "./_setup.mjs";
 
 describe("error handling", () => {
   it("failed command has non-zero exit code", () => {

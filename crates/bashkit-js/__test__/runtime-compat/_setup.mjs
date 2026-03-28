@@ -1,9 +1,5 @@
 // Shared setup for runtime-compat tests.
-// Loads the native NAPI binding via createRequire (works in Node, Bun, Deno).
+// Loads the wrapper module (which re-exports native NAPI binding with
+// executeSyncOrThrow, BashError, etc.) — works in Node, Bun, Deno.
 
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.url);
-const native = require("../../index.cjs");
-
-export const { Bash, BashTool, getVersion } = native;
+export { Bash, BashTool, BashError, getVersion } from "../../wrapper.js";

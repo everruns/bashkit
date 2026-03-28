@@ -107,11 +107,15 @@ describe("builtins", () => {
     );
   });
 
-  it("seq, printf, date, export/unset", () => {
+  it("seq, printf, date", () => {
     const bash = new Bash();
     assert.equal(bash.executeSync("seq 1 5").stdout.trim(), "1\n2\n3\n4\n5");
     assert.equal(bash.executeSync('printf "Hello %s" "World"').stdout, "Hello World");
     assert.equal(bash.executeSync("date").exitCode, 0);
+  });
+
+  it("export and unset", () => {
+    const bash = new Bash();
     bash.executeSync("export MY_VAR=hello");
     assert.equal(bash.executeSync("echo $MY_VAR").stdout.trim(), "hello");
     bash.executeSync("unset MY_VAR");

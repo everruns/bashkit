@@ -120,12 +120,17 @@ jobs:
         run: node --test __test__/runtime-compat/*.test.mjs
         working-directory: crates/bashkit-js
 
-      - name: Run runtime-compat tests (Bun/Deno)
-        if: matrix.runtime != 'node'
+      - name: Run runtime-compat tests (Bun)
+        if: matrix.runtime == 'bun'
+        run: bun test __test__/runtime-compat/
+        working-directory: crates/bashkit-js
+
+      - name: Run runtime-compat tests (Deno)
+        if: matrix.runtime == 'deno'
         run: |
           for f in __test__/runtime-compat/*.test.mjs; do
             echo "--- $f ---"
-            ${{ matrix.run }} "$f"
+            deno run -A "$f"
           done
         working-directory: crates/bashkit-js
 
