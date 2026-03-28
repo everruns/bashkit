@@ -4425,11 +4425,9 @@ impl Interpreter {
                     if is_internal_variable(var_name) {
                         continue;
                     }
-                    // Handle compound array assignment: local -a arr=(1 2 3)
-                    if (flags.array || flags.assoc)
-                        && value.starts_with('(')
-                        && value.ends_with(')')
-                    {
+                    // Handle compound array assignment: local arr=(1 2 3) or local -a/-A arr=(...)
+                    let is_compound = value.starts_with('(') && value.ends_with(')');
+                    if is_compound {
                         let inner = &value[1..value.len() - 1];
                         if flags.assoc {
                             let arr = self.assoc_arrays.entry(var_name.to_string()).or_default();
@@ -4538,7 +4536,54 @@ impl Interpreter {
                     if is_internal_variable(var_name) {
                         continue;
                     }
-                    if flags.nameref {
+                    let is_compound = value.starts_with('(') && value.ends_with(')');
+                    if is_compound {
+                        let inner = &value[1..value.len() - 1];
+                        if flags.assoc {
+                            let arr = self.assoc_arrays.entry(var_name.to_string()).or_default();
+                            arr.clear();
+                            let mut rest = inner.trim();
+                            while let Some(bracket_start) = rest.find('[') {
+                                if let Some(bracket_end) = rest[bracket_start..].find(']') {
+                                    let key = &rest[bracket_start + 1..bracket_start + bracket_end];
+                                    let after = &rest[bracket_start + bracket_end + 1..];
+                                    if let Some(eq_rest) = after.strip_prefix('=') {
+                                        let eq_rest = eq_rest.trim_start();
+                                        let (val, remainder) =
+                                            if let Some(stripped) = eq_rest.strip_prefix('"') {
+                                                if let Some(end_q) = stripped.find('"') {
+                                                    (
+                                                        &stripped[..end_q],
+                                                        stripped[end_q + 1..].trim_start(),
+                                                    )
+                                                } else {
+                                                    (stripped.trim_end_matches('"'), "")
+                                                }
+                                            } else {
+                                                match eq_rest.find(char::is_whitespace) {
+                                                    Some(sp) => {
+                                                        (&eq_rest[..sp], eq_rest[sp..].trim_start())
+                                                    }
+                                                    None => (eq_rest, ""),
+                                                }
+                                            };
+                                        arr.insert(key.to_string(), val.to_string());
+                                        rest = remainder;
+                                    } else {
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                        } else {
+                            let arr = self.arrays.entry(var_name.to_string()).or_default();
+                            arr.clear();
+                            for (idx, val) in inner.split_whitespace().enumerate() {
+                                arr.insert(idx, val.trim_matches('"').to_string());
+                            }
+                        }
+                    } else if flags.nameref {
                         self.variables
                             .insert(format!("_NAMEREF_{}", var_name), value.to_string());
                     } else {

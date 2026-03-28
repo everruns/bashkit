@@ -212,3 +212,26 @@ echo "${arr[@]}"
 ### expect
 10 20 30 40 99
 ### end
+
+### local_array_compound_assignment
+# local arr=(a b c) should initialize the array
+myfunc() {
+  local arr=(one two three)
+  echo "count: ${#arr[@]}"
+  echo "values: ${arr[*]}"
+}
+myfunc
+### expect
+count: 3
+values: one two three
+### end
+
+### local_array_compound_in_global
+# local arr=(...) at global scope should also work
+local arr=(x y z)
+echo "${#arr[@]}"
+echo "${arr[1]}"
+### expect
+3
+y
+### end
