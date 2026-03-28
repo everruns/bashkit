@@ -23,35 +23,38 @@ impl Builtin for Base64 {
         let mut wrap = 76usize;
         let mut file: Option<String> = None;
 
-        let mut i = 0;
-        while i < ctx.args.len() {
-            match ctx.args[i].as_str() {
-                "-d" | "--decode" => decode = true,
-                "-w" => {
-                    i += 1;
-                    if i >= ctx.args.len() {
+        let mut p = super::arg_parser::ArgParser::new(ctx.args);
+        while !p.is_done() {
+            if p.flag_any(&["-d", "--decode"]) {
+                decode = true;
+            } else if let Some(val) = p.current().and_then(|s| s.strip_prefix("--wrap=")) {
+                wrap = val.parse().unwrap_or(76);
+                p.advance();
+            } else {
+                match p.flag_value("-w", "base64") {
+                    Ok(Some(val)) => wrap = val.parse().unwrap_or(76),
+                    Err(_) => {
                         return Ok(ExecResult::err(
-                            "base64: option requires an argument -- 'w'\n".to_string(),
+                            "base64: option requires an argument -- 'w'\n",
                             1,
                         ));
                     }
-                    wrap = ctx.args[i].parse().unwrap_or(76);
-                }
-                s if s.starts_with("--wrap=") => {
-                    wrap = s[7..].parse().unwrap_or(76);
-                }
-                "-i" | "--ignore-garbage" => { /* silently accept */ }
-                s if s.starts_with('-') && s != "-" => {
-                    return Ok(ExecResult::err(
-                        format!("base64: invalid option -- '{}'\n", &s[1..]),
-                        1,
-                    ));
-                }
-                _ => {
-                    file = Some(ctx.args[i].clone());
+                    Ok(None) => {
+                        if p.flag_any(&["-i", "--ignore-garbage"]) {
+                            // silently accept
+                        } else if let Some(flag) =
+                            p.current().filter(|s| s.starts_with('-') && s.len() > 1)
+                        {
+                            return Ok(ExecResult::err(
+                                format!("base64: invalid option -- '{}'\n", &flag[1..]),
+                                1,
+                            ));
+                        } else if let Some(arg) = p.positional() {
+                            file = Some(arg.to_string());
+                        }
+                    }
                 }
             }
-            i += 1;
         }
 
         // Get input: from file, stdin, or empty
