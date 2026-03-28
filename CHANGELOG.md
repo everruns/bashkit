@@ -2,6 +2,71 @@
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-03-28
+
+### Highlights
+
+- **Massive Bash compatibility push** — 25+ interpreter fixes covering errexit, namerefs, associative arrays, arithmetic expansion, redirects, glob patterns, and ANSI-C quoting
+- **AWK engine hardened** — 8 fixes for regex literals, newline handling, printf, keyword tokenization, and multi-file FILENAME support
+- **New Bash features** — `set -a` (allexport), `BASH_SOURCE` array, `exec` with command replacement, `declare -f`, `compgen -c` PATH scanning
+- **Prebuilt CLI binaries** — macOS (ARM64/x86_64) and Linux x86_64 binaries now published to GitHub Releases with Homebrew formula
+- **Dependency upgrades** — jaq 3.0, digest crates 0.11
+
+### What's Changed
+
+* feat(deps): upgrade jaq to 3.0, digest crates to 0.11 ([#893](https://github.com/everruns/bashkit/pull/893)) by @chaliy
+* chore(deps): require major version upgrades in maintenance checklist ([#892](https://github.com/everruns/bashkit/pull/892)) by @chaliy
+* ci(js): add Bun and Deno to JS CI matrix with runtime-compat tests ([#889](https://github.com/everruns/bashkit/pull/889)) by @chaliy
+* fix(interpreter): handle compound array assignment in local builtin ([#888](https://github.com/everruns/bashkit/pull/888)) by @chaliy
+* fix(interpreter): expand special variables ($#, $?, etc.) in arithmetic ([#887](https://github.com/everruns/bashkit/pull/887)) by @chaliy
+* chore: pre-release maintenance (test counts, fuzz fix, code cleanup) ([#885](https://github.com/everruns/bashkit/pull/885)) by @chaliy
+* fix(interpreter): set -e should not trigger on compound commands with && chain failure ([#879](https://github.com/everruns/bashkit/pull/879)) by @chaliy
+* fix(interpreter): expand assoc array keys with command substitutions ([#878](https://github.com/everruns/bashkit/pull/878)) by @chaliy
+* feat(release): add prebuilt CLI binary builds and Homebrew formula ([#871](https://github.com/everruns/bashkit/pull/871)) by @chaliy
+* fix(builtins): preserve raw bytes from /dev/urandom through pipeline ([#870](https://github.com/everruns/bashkit/pull/870)) by @chaliy
+* fix(interpreter): resolve namerefs in parameter expansion for assoc array subscripts ([#869](https://github.com/everruns/bashkit/pull/869)) by @chaliy
+* fix(interpreter): propagate errexit_suppressed through compound commands ([#868](https://github.com/everruns/bashkit/pull/868)) by @chaliy
+* test(parser): unskip parse_unexpected_do and parse_unexpected_rbrace ([#866](https://github.com/everruns/bashkit/pull/866)) by @chaliy
+* fix(parser): expand $'\n' ANSI-C quoting in concatenated function args ([#865](https://github.com/everruns/bashkit/pull/865)) by @chaliy
+* fix(interpreter): treat assoc array subscripts as literal strings ([#864](https://github.com/everruns/bashkit/pull/864)) by @chaliy
+* fix(interpreter): correct left-to-right redirect ordering for fd dup + file combos ([#863](https://github.com/everruns/bashkit/pull/863)) by @chaliy
+* fix(parser): handle $'...' ANSI-C quoting in parameter expansion patterns ([#856](https://github.com/everruns/bashkit/pull/856)) by @chaliy
+* fix(awk): check word boundary before emitting keyword tokens ([#859](https://github.com/everruns/bashkit/pull/859)) by @chaliy
+* fix(builtins): preserve full path in ls output for file arguments ([#858](https://github.com/everruns/bashkit/pull/858)) by @chaliy
+* fix(builtins): suppress rg line numbers by default (non-tty behavior) ([#857](https://github.com/everruns/bashkit/pull/857)) by @chaliy
+* fix(interpreter): resolve nameref for ${!ref[@]} key enumeration ([#855](https://github.com/everruns/bashkit/pull/855)) by @chaliy
+* fix(interpreter): fire EXIT trap inside command substitution subshell ([#854](https://github.com/everruns/bashkit/pull/854)) by @chaliy
+* fix(js): update exec security test for sandbox-safe exec behavior ([#851](https://github.com/everruns/bashkit/pull/851)) by @chaliy
+* fix(interpreter): reset last_exit_code in VFS subprocess isolation ([#850](https://github.com/everruns/bashkit/pull/850)) by @chaliy
+* fix(interpreter): treat invalid glob bracket expressions as literals ([#845](https://github.com/everruns/bashkit/pull/845)) by @chaliy
+* fix(awk): support backslash-newline line continuation ([#841](https://github.com/everruns/bashkit/pull/841)) by @chaliy
+* fix(awk): treat # inside regex literals as literal, not comment ([#840](https://github.com/everruns/bashkit/pull/840)) by @chaliy
+* fix(interpreter): resolve namerefs before nounset check ([#839](https://github.com/everruns/bashkit/pull/839)) by @chaliy
+* fix(builtins): sort -n extracts leading numeric prefix from strings ([#838](https://github.com/everruns/bashkit/pull/838)) by @chaliy
+* feat(interpreter): implement BASH_SOURCE array variable ([#832](https://github.com/everruns/bashkit/pull/832)) by @chaliy
+* fix(awk): treat newlines as statement separators in action blocks ([#831](https://github.com/everruns/bashkit/pull/831)) by @chaliy
+* feat(api): add BashBuilder::tty() for configurable terminal detection ([#830](https://github.com/everruns/bashkit/pull/830)) by @chaliy
+* fix(awk): accept expressions as printf format string ([#829](https://github.com/everruns/bashkit/pull/829)) by @chaliy
+* fix(vfs): preserve raw bytes when reading /dev/urandom ([#828](https://github.com/everruns/bashkit/pull/828)) by @chaliy
+* fix(awk): evaluate regex literals against $0 in boolean context ([#827](https://github.com/everruns/bashkit/pull/827)) by @chaliy
+* fix(parser): preserve double quotes inside $() in double-quoted strings ([#826](https://github.com/everruns/bashkit/pull/826)) by @chaliy
+* fix(interpreter): set -e respects AND-OR lists in functions and loops ([#824](https://github.com/everruns/bashkit/pull/824)) by @chaliy
+* test(allexport): add regression tests for set -a behavior ([#823](https://github.com/everruns/bashkit/pull/823)) by @chaliy
+* fix(builtins): implement `declare -f` for function display and lookup ([#822](https://github.com/everruns/bashkit/pull/822)) by @chaliy
+* feat(interpreter): nameref resolution for associative array operations ([#821](https://github.com/everruns/bashkit/pull/821)) by @chaliy
+* test(awk): add spec tests for delete array (already implemented) ([#820](https://github.com/everruns/bashkit/pull/820)) by @chaliy
+* feat(compgen): scan PATH directories for executables in compgen -c ([#819](https://github.com/everruns/bashkit/pull/819)) by @chaliy
+* feat(test): configurable -t fd terminal detection ([#818](https://github.com/everruns/bashkit/pull/818)) by @chaliy
+* feat(awk): route /dev/stderr and /dev/stdout to interpreter streams ([#817](https://github.com/everruns/bashkit/pull/817)) by @chaliy
+* feat(awk): implement FILENAME built-in variable for multi-file processing ([#816](https://github.com/everruns/bashkit/pull/816)) by @chaliy
+* feat(interpreter): exec with command argument — execute and don't return ([#815](https://github.com/everruns/bashkit/pull/815)) by @chaliy
+* feat(interpreter): implement set -a (allexport) ([#814](https://github.com/everruns/bashkit/pull/814)) by @chaliy
+* feat(interpreter): subprocess isolation for VFS script-by-path execution ([#813](https://github.com/everruns/bashkit/pull/813)) by @chaliy
+* feat(interpreter): pipe stdin to VFS script execution ([#812](https://github.com/everruns/bashkit/pull/812)) by @chaliy
+* refactor(scripted_tool): ScriptingToolSet returns tools() instead of implementing Tool ([#789](https://github.com/everruns/bashkit/pull/789)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.13...v0.1.14
+
 ## [0.1.13] - 2026-03-23
 
 ### Highlights
