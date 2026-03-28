@@ -490,7 +490,8 @@ echo 'null' | jq '.foo // "default"'
 
 ### jq_try
 # Try-catch handles runtime errors gracefully
-echo 'null' | jq 'try .foo catch "error"'
+# .foo on null returns null (not an error), so use error/0 to trigger catch
+echo '1' | jq 'try error catch "error"'
 ### expect
 "error"
 ### end
