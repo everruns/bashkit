@@ -115,9 +115,18 @@ jobs:
         run: npm test
         working-directory: crates/bashkit-js
 
-      - name: Run runtime-compat tests
+      - name: Run runtime-compat tests (Node)
+        if: matrix.runtime == 'node'
+        run: node --test __test__/runtime-compat/*.test.mjs
+        working-directory: crates/bashkit-js
+
+      - name: Run runtime-compat tests (Bun/Deno)
         if: matrix.runtime != 'node'
-        run: ${{ matrix.run }} __test__/runtime-compat.test.mjs
+        run: |
+          for f in __test__/runtime-compat/*.test.mjs; do
+            echo "--- $f ---"
+            ${{ matrix.run }} "$f"
+          done
         working-directory: crates/bashkit-js
 
       - name: Install example dependencies and link local build
