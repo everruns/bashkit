@@ -291,7 +291,7 @@ version = "0.2.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.ctor]]
-version = "0.6.3"
+version = "0.8.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.ctor-proc-macro]]
@@ -315,7 +315,7 @@ version = "0.2.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.dtor]]
-version = "0.1.1"
+version = "0.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.dtor-proc-macro]]
@@ -575,7 +575,7 @@ version = "2.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.insta]]
-version = "1.47.0"
+version = "1.47.1"
 criteria = "safe-to-run"
 
 [[exemptions.instant]]
@@ -731,11 +731,11 @@ version = "1.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.nalgebra]]
-version = "0.33.2"
+version = "0.33.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi]]
-version = "3.8.3"
+version = "3.8.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi-build]]
@@ -743,7 +743,7 @@ version = "2.3.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi-derive]]
-version = "3.5.2"
+version = "3.5.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi-derive-backend]]
@@ -1719,11 +1719,11 @@ version = "0.8.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy]]
-version = "0.8.47"
+version = "0.8.48"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy-derive]]
-version = "0.8.47"
+version = "0.8.48"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerofrom]]
