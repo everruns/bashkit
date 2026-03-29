@@ -18,7 +18,7 @@
 use async_trait::async_trait;
 use regex::Regex;
 
-use super::search_common::{build_search_regex, collect_files_recursive, parse_numeric_flag_arg};
+use super::search_common::{build_search_regex, collect_files_recursive};
 use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
@@ -57,15 +57,38 @@ impl RgOptions {
         };
 
         let mut positional = Vec::new();
-        let mut i = 0;
+        let mut p = super::arg_parser::ArgParser::new(args);
 
-        while i < args.len() {
-            let arg = &args[i];
-            if arg.starts_with('-') && arg.len() > 1 && !arg.starts_with("--") {
+        while !p.is_done() {
+            if let Ok(Some(val)) = p.flag_value("-m", "rg") {
+                opts.max_count = Some(
+                    val.parse()
+                        .map_err(|_| Error::Execution(format!("rg: invalid -m value: {val}")))?,
+                );
+            } else if p.flag("--no-filename") {
+                opts.no_filename = true;
+            } else if p.flag("--no-line-number") {
+                opts.line_numbers = false;
+            } else if p.flag("--line-number") {
+                opts.line_numbers = true;
+            } else if p.flag("--color") {
+                // no-op (may have separate value arg like "never", skip it)
+            } else if p.current().is_some_and(|s| s.starts_with("--color=")) {
+                // --color=VALUE is a no-op
+                p.advance();
+            } else if p.is_flag() {
+                // Combined short flags like -inFw
+                // Safe: is_flag() guarantees current() is Some
+                let arg = p.current().expect("is_flag guarantees Some");
+                if arg.starts_with("--") {
+                    // Unknown long option, skip
+                    p.advance();
+                    continue;
+                }
                 let chars: Vec<char> = arg[1..].chars().collect();
-                let mut j = 0;
-                while j < chars.len() {
-                    match chars[j] {
+                p.advance();
+                for (j, &c) in chars.iter().enumerate() {
+                    match c {
                         'i' => opts.ignore_case = true,
                         'n' => opts.line_numbers = true,
                         'N' => opts.line_numbers = false,
@@ -75,29 +98,31 @@ impl RgOptions {
                         'w' => opts.word_boundary = true,
                         'F' => opts.fixed_strings = true,
                         'm' => {
-                            opts.max_count =
-                                Some(parse_numeric_flag_arg(&chars, j, &mut i, args, "rg", "-m")?);
+                            // Rest of this flag group or next arg is the value
+                            let rest: String = chars[j + 1..].iter().collect();
+                            let num_str = if !rest.is_empty() {
+                                rest
+                            } else {
+                                match p.positional() {
+                                    Some(v) => v.to_string(),
+                                    None => {
+                                        return Err(Error::Execution(
+                                            "rg: -m requires an argument".to_string(),
+                                        ));
+                                    }
+                                }
+                            };
+                            opts.max_count = Some(num_str.parse().map_err(|_| {
+                                Error::Execution(format!("rg: invalid -m value: {num_str}"))
+                            })?);
                             break;
                         }
                         _ => {} // ignore unknown
                     }
-                    j += 1;
                 }
-            } else if let Some(opt) = arg.strip_prefix("--") {
-                if opt == "no-filename" {
-                    opts.no_filename = true;
-                } else if opt == "color" || opt.starts_with("color=") {
-                    // no-op
-                } else if opt == "no-line-number" {
-                    opts.line_numbers = false;
-                } else if opt == "line-number" {
-                    opts.line_numbers = true;
-                }
-                // ignore other long options
-            } else {
-                positional.push(arg.clone());
+            } else if let Some(arg) = p.positional() {
+                positional.push(arg.to_string());
             }
-            i += 1;
         }
 
         if positional.is_empty() {

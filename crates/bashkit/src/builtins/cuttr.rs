@@ -281,13 +281,12 @@ impl Builtin for Tr {
         let mut complement = false;
 
         // Parse flags (can be combined like -ds, -cd)
-        let mut non_flag_args: Vec<&String> = Vec::new();
-        for arg in ctx.args.iter() {
-            if arg.starts_with('-')
-                && arg.len() > 1
-                && arg.chars().skip(1).all(|ch| "dscC".contains(ch))
-            {
-                for ch in arg.chars().skip(1) {
+        let mut non_flag_args: Vec<String> = Vec::new();
+        let mut p = super::arg_parser::ArgParser::new(ctx.args);
+        while !p.is_done() {
+            let flags = p.bool_flags("dscC");
+            if !flags.is_empty() {
+                for ch in flags {
                     match ch {
                         'd' => delete = true,
                         's' => squeeze = true,
@@ -295,8 +294,8 @@ impl Builtin for Tr {
                         _ => {}
                     }
                 }
-            } else {
-                non_flag_args.push(arg);
+            } else if let Some(arg) = p.positional() {
+                non_flag_args.push(arg.to_string());
             }
         }
 
@@ -304,7 +303,7 @@ impl Builtin for Tr {
             return Ok(ExecResult::err("tr: missing operand\n".to_string(), 1));
         }
 
-        let mut set1 = expand_char_set(non_flag_args[0]);
+        let mut set1 = expand_char_set(&non_flag_args[0]);
         if complement {
             // Complement: use all byte-range chars (0-255) NOT in set1.
             // Covers full Latin-1 range so binary data from /dev/urandom
@@ -321,7 +320,7 @@ impl Builtin for Tr {
         let result = if delete && squeeze {
             // -ds: delete SET1 chars, then squeeze SET2 chars
             let set2 = if non_flag_args.len() >= 2 {
-                expand_char_set(non_flag_args[1])
+                expand_char_set(&non_flag_args[1])
             } else {
                 set1.clone()
             };
@@ -343,7 +342,7 @@ impl Builtin for Tr {
                 ));
             }
 
-            let set2 = expand_char_set(non_flag_args[1]);
+            let set2 = expand_char_set(&non_flag_args[1]);
 
             let translated: String = stdin
                 .chars()

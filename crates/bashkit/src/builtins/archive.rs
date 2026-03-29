@@ -91,13 +91,18 @@ impl Builtin for Tar {
         let mut files: Vec<String> = Vec::new();
 
         // Parse arguments
-        let mut i = 0;
-        while i < ctx.args.len() {
-            let arg = &ctx.args[i];
-            if arg.starts_with('-') && !arg.starts_with("--") {
-                // Track whether 'f' or 'C' consumed the next arg
-                let mut consumed_next = false;
-                for c in arg[1..].chars() {
+        let mut p = super::arg_parser::ArgParser::new(ctx.args);
+        while !p.is_done() {
+            if let Some(val) = p.flag_value_opt("-f") {
+                archive_file = Some(val.to_string());
+            } else if let Some(val) = p.flag_value_opt("-C") {
+                change_dir = Some(val.to_string());
+            } else if p.is_flag() {
+                // Combined short flags like -czf where f/C take the next arg
+                let arg = p.current().unwrap();
+                let chars: Vec<char> = arg[1..].chars().collect();
+                p.advance();
+                for c in &chars {
                     match c {
                         'c' => create = true,
                         'x' => extract = true,
@@ -105,28 +110,24 @@ impl Builtin for Tar {
                         'v' => verbose = true,
                         'z' => gzip = true,
                         'O' => to_stdout = true,
-                        'f' => {
-                            i += 1;
-                            consumed_next = true;
-                            if i >= ctx.args.len() {
+                        'f' => match p.positional() {
+                            Some(val) => archive_file = Some(val.to_string()),
+                            None => {
                                 return Ok(ExecResult::err(
                                     "tar: option requires an argument -- 'f'\n".to_string(),
                                     2,
                                 ));
                             }
-                            archive_file = Some(ctx.args[i].clone());
-                        }
-                        'C' => {
-                            i += 1;
-                            consumed_next = true;
-                            if i >= ctx.args.len() {
+                        },
+                        'C' => match p.positional() {
+                            Some(val) => change_dir = Some(val.to_string()),
+                            None => {
                                 return Ok(ExecResult::err(
                                     "tar: option requires an argument -- 'C'\n".to_string(),
                                     2,
                                 ));
                             }
-                            change_dir = Some(ctx.args[i].clone());
-                        }
+                        },
                         _ => {
                             return Ok(ExecResult::err(
                                 format!("tar: invalid option -- '{}'\n", c),
@@ -134,14 +135,10 @@ impl Builtin for Tar {
                             ));
                         }
                     }
-                    if consumed_next {
-                        break;
-                    }
                 }
-            } else {
-                files.push(arg.clone());
+            } else if let Some(arg) = p.positional() {
+                files.push(arg.to_string());
             }
-            i += 1;
         }
 
         // Check for exactly one of -c, -x, -t

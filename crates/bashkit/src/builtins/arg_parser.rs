@@ -192,6 +192,26 @@ impl<'a> ArgParser<'a> {
             .map(|s| s.starts_with('-') && s.len() > 1)
             .unwrap_or(false)
     }
+
+    /// Try to consume combined boolean short flags (e.g., `-rnuf`).
+    ///
+    /// If the current arg starts with `-` (not `--`), has length > 1, and
+    /// every character after `-` is in `allowed`, advances and returns the
+    /// matched chars. Otherwise returns an empty vec without advancing.
+    pub fn bool_flags(&mut self, allowed: &str) -> Vec<char> {
+        if let Some(arg) = self.current()
+            && arg.starts_with('-')
+            && !arg.starts_with("--")
+            && arg.len() > 1
+        {
+            let chars: Vec<char> = arg[1..].chars().collect();
+            if chars.iter().all(|c| allowed.contains(*c)) {
+                self.advance();
+                return chars;
+            }
+        }
+        Vec::new()
+    }
 }
 
 #[cfg(test)]
@@ -329,6 +349,50 @@ mod tests {
         p.advance(); // skip -v
         p.advance(); // skip cmd
         assert_eq!(p.rest().len(), 2);
+    }
+
+    #[test]
+    fn test_bool_flags() {
+        let a = args(&["-rnuf", "file"]);
+        let mut p = ArgParser::new(&a);
+        let flags = p.bool_flags("rnufsz");
+        assert_eq!(flags, vec!['r', 'n', 'u', 'f']);
+        assert_eq!(p.current(), Some("file"));
+    }
+
+    #[test]
+    fn test_bool_flags_no_match_unknown_char() {
+        let a = args(&["-rxn", "file"]);
+        let mut p = ArgParser::new(&a);
+        let flags = p.bool_flags("rn"); // 'x' not allowed
+        assert!(flags.is_empty());
+        assert_eq!(p.current(), Some("-rxn")); // not advanced
+    }
+
+    #[test]
+    fn test_bool_flags_long_flag_ignored() {
+        let a = args(&["--verbose"]);
+        let mut p = ArgParser::new(&a);
+        let flags = p.bool_flags("verbose");
+        assert!(flags.is_empty());
+    }
+
+    #[test]
+    fn test_bool_flags_single_dash_ignored() {
+        let a = args(&["-"]);
+        let mut p = ArgParser::new(&a);
+        let flags = p.bool_flags("abc");
+        assert!(flags.is_empty());
+        assert_eq!(p.current(), Some("-")); // not advanced
+    }
+
+    #[test]
+    fn test_bool_flags_single_char() {
+        let a = args(&["-v"]);
+        let mut p = ArgParser::new(&a);
+        let flags = p.bool_flags("v");
+        assert_eq!(flags, vec!['v']);
+        assert!(p.is_done());
     }
 
     #[test]
