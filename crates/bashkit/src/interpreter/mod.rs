@@ -5370,6 +5370,9 @@ impl Interpreter {
                 builtins::BuiltinSideEffect::SetLastExitCode(code) => {
                     self.last_exit_code = *code;
                 }
+                builtins::BuiltinSideEffect::SetVariable { name, value } => {
+                    self.set_variable(name.clone(), value.clone());
+                }
             }
         }
     }
