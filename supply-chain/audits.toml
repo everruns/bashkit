@@ -5,3 +5,13 @@
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 version = "0.39.1"
+
+[[audits.hybrid-array]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+version = "0.4.9"
+
+[[audits.iri-string]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+version = "0.7.12"
