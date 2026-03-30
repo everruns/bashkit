@@ -1457,10 +1457,7 @@ impl Interpreter {
             ));
         }
 
-        let mut stdout = String::new();
-        let mut stderr = String::new();
-        let mut exit_code = 0;
-        let mut last_errexit_suppressed = false;
+        let mut acc = state::LoopAccumulator::new();
 
         // Get iteration values: expand fields, then apply brace/glob expansion
         let values: Vec<String> = if let Some(words) = &for_cmd.words {
@@ -1513,65 +1510,15 @@ impl Interpreter {
             let emit_before = self.output_emit_count;
             let result = self.execute_command_sequence(&for_cmd.body).await?;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-            stdout.push_str(&result.stdout);
-            stderr.push_str(&result.stderr);
-            exit_code = result.exit_code;
-            last_errexit_suppressed = result.errexit_suppressed;
-
-            // Check for break/continue
-            match result.control_flow {
-                ControlFlow::Break(n) => {
-                    if n <= 1 {
-                        break;
-                    } else {
-                        // Propagate break with decremented count
-                        return Ok(ExecResult {
-                            stdout,
-                            stderr,
-                            exit_code,
-                            control_flow: ControlFlow::Break(n - 1),
-                            ..Default::default()
-                        });
-                    }
-                }
-                ControlFlow::Continue(n) => {
-                    if n <= 1 {
-                        continue;
-                    } else {
-                        // Propagate continue with decremented count
-                        return Ok(ExecResult {
-                            stdout,
-                            stderr,
-                            exit_code,
-                            control_flow: ControlFlow::Continue(n - 1),
-                            ..Default::default()
-                        });
-                    }
-                }
-                ControlFlow::Return(code) => {
-                    // Propagate return
-                    return Ok(ExecResult {
-                        stdout,
-                        stderr,
-                        exit_code: code,
-                        control_flow: ControlFlow::Return(code),
-                        ..Default::default()
-                    });
-                }
-                ControlFlow::None => {
-                    // errexit is already handled by execute_command_sequence_impl
-                }
+            match acc.accumulate(result) {
+                state::LoopAction::None => {}
+                state::LoopAction::Break => break,
+                state::LoopAction::Continue => continue,
+                state::LoopAction::Exit(r) => return Ok(r),
             }
         }
 
-        Ok(ExecResult {
-            stdout,
-            stderr,
-            exit_code,
-            control_flow: ControlFlow::None,
-            errexit_suppressed: last_errexit_suppressed,
-            ..Default::default()
-        })
+        Ok(acc.finish())
     }
 
     /// Execute a select loop: select var in list; do body; done
@@ -1751,10 +1698,7 @@ impl Interpreter {
         &mut self,
         arith_for: &ArithmeticForCommand,
     ) -> Result<ExecResult> {
-        let mut stdout = String::new();
-        let mut stderr = String::new();
-        let mut exit_code = 0;
-        let mut last_errexit_suppressed = false;
+        let mut acc = state::LoopAccumulator::new();
 
         // Execute initialization
         if !arith_for.init.is_empty() {
@@ -1780,50 +1724,10 @@ impl Interpreter {
             let emit_before = self.output_emit_count;
             let result = self.execute_command_sequence(&arith_for.body).await?;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-            stdout.push_str(&result.stdout);
-            stderr.push_str(&result.stderr);
-            exit_code = result.exit_code;
-            last_errexit_suppressed = result.errexit_suppressed;
-
-            // Check for break/continue
-            match result.control_flow {
-                ControlFlow::Break(n) => {
-                    if n <= 1 {
-                        break;
-                    } else {
-                        return Ok(ExecResult {
-                            stdout,
-                            stderr,
-                            exit_code,
-                            control_flow: ControlFlow::Break(n - 1),
-                            ..Default::default()
-                        });
-                    }
-                }
-                ControlFlow::Continue(n) => {
-                    if n > 1 {
-                        return Ok(ExecResult {
-                            stdout,
-                            stderr,
-                            exit_code,
-                            control_flow: ControlFlow::Continue(n - 1),
-                            ..Default::default()
-                        });
-                    }
-                    // n <= 1: continue to next iteration (after step)
-                }
-                ControlFlow::Return(code) => {
-                    return Ok(ExecResult {
-                        stdout,
-                        stderr,
-                        exit_code: code,
-                        control_flow: ControlFlow::Return(code),
-                        ..Default::default()
-                    });
-                }
-                ControlFlow::None => {
-                    // errexit is already handled by execute_command_sequence_impl
-                }
+            match acc.accumulate(result) {
+                state::LoopAction::None | state::LoopAction::Continue => {}
+                state::LoopAction::Break => break,
+                state::LoopAction::Exit(r) => return Ok(r),
             }
 
             // Execute step
@@ -1832,14 +1736,7 @@ impl Interpreter {
             }
         }
 
-        Ok(ExecResult {
-            stdout,
-            stderr,
-            exit_code,
-            control_flow: ControlFlow::None,
-            errexit_suppressed: last_errexit_suppressed,
-            ..Default::default()
-        })
+        Ok(acc.finish())
     }
 
     /// Execute an arithmetic command ((expression))
@@ -2186,10 +2083,7 @@ impl Interpreter {
         body: &[Command],
         break_on_zero: bool,
     ) -> Result<ExecResult> {
-        let mut stdout = String::new();
-        let mut stderr = String::new();
-        let mut exit_code = 0;
-        let mut last_errexit_suppressed = false;
+        let mut acc = state::LoopAccumulator::new();
 
         // Reset loop counter for this loop
         self.counters.reset_loop();
@@ -2207,8 +2101,8 @@ impl Interpreter {
                 &condition_result.stderr,
                 emit_before_cond,
             );
-            stdout.push_str(&condition_result.stdout);
-            stderr.push_str(&condition_result.stderr);
+            acc.stdout.push_str(&condition_result.stdout);
+            acc.stderr.push_str(&condition_result.stderr);
             let should_break = if break_on_zero {
                 condition_result.exit_code == 0
             } else {
@@ -2222,62 +2116,15 @@ impl Interpreter {
             let emit_before = self.output_emit_count;
             let result = self.execute_command_sequence(body).await?;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-            stdout.push_str(&result.stdout);
-            stderr.push_str(&result.stderr);
-            exit_code = result.exit_code;
-            last_errexit_suppressed = result.errexit_suppressed;
-
-            // Check for break/continue
-            match result.control_flow {
-                ControlFlow::Break(n) => {
-                    if n <= 1 {
-                        break;
-                    } else {
-                        return Ok(ExecResult {
-                            stdout,
-                            stderr,
-                            exit_code,
-                            control_flow: ControlFlow::Break(n - 1),
-                            ..Default::default()
-                        });
-                    }
-                }
-                ControlFlow::Continue(n) => {
-                    if n <= 1 {
-                        continue;
-                    } else {
-                        return Ok(ExecResult {
-                            stdout,
-                            stderr,
-                            exit_code,
-                            control_flow: ControlFlow::Continue(n - 1),
-                            ..Default::default()
-                        });
-                    }
-                }
-                ControlFlow::Return(code) => {
-                    return Ok(ExecResult {
-                        stdout,
-                        stderr,
-                        exit_code: code,
-                        control_flow: ControlFlow::Return(code),
-                        ..Default::default()
-                    });
-                }
-                ControlFlow::None => {
-                    // errexit is already handled by execute_command_sequence_impl
-                }
+            match acc.accumulate(result) {
+                state::LoopAction::None => {}
+                state::LoopAction::Break => break,
+                state::LoopAction::Continue => continue,
+                state::LoopAction::Exit(r) => return Ok(r),
             }
         }
 
-        Ok(ExecResult {
-            stdout,
-            stderr,
-            exit_code,
-            control_flow: ControlFlow::None,
-            errexit_suppressed: last_errexit_suppressed,
-            ..Default::default()
-        })
+        Ok(acc.finish())
     }
 
     /// Execute a case statement

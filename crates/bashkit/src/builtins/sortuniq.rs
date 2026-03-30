@@ -129,65 +129,44 @@ impl Builtin for Sort {
         let mut zero_terminated = false;
         let mut files = Vec::new();
 
-        let mut i = 0;
-        while i < ctx.args.len() {
-            let arg = &ctx.args[i];
-            if arg == "-t" {
-                i += 1;
-                if i < ctx.args.len() {
-                    delimiter = ctx.args[i].chars().next();
-                }
-            } else if let Some(d) = arg.strip_prefix("-t") {
-                delimiter = d.chars().next();
-            } else if arg == "-k" {
-                i += 1;
-                if i < ctx.args.len() {
-                    // Parse key: "2" or "2,2" or "2n"
-                    let key_spec = &ctx.args[i];
-                    let field_str: String = key_spec
-                        .chars()
-                        .take_while(|c| c.is_ascii_digit())
-                        .collect();
-                    key_field = field_str.parse().ok();
-                    // Check for type suffix in key spec
-                    if key_spec.contains('n') {
-                        numeric = true;
-                    }
-                    if key_spec.contains('r') {
-                        reverse = true;
-                    }
-                }
-            } else if let Some(k) = arg.strip_prefix("-k") {
-                let field_str: String = k.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let mut p = super::arg_parser::ArgParser::new(ctx.args);
+        while !p.is_done() {
+            if let Some(val) = p.flag_value_opt("-t") {
+                delimiter = val.chars().next();
+            } else if let Some(val) = p.flag_value_opt("-k") {
+                // Parse key: "2" or "2,2" or "2n"
+                let field_str: String = val.chars().take_while(|c| c.is_ascii_digit()).collect();
                 key_field = field_str.parse().ok();
-                if k.contains('n') {
+                if val.contains('n') {
                     numeric = true;
                 }
-            } else if arg == "-o" {
-                i += 1;
-                if i < ctx.args.len() {
-                    output_file = Some(ctx.args[i].clone());
+                if val.contains('r') {
+                    reverse = true;
                 }
-            } else if arg.starts_with('-') && !arg.starts_with("--") {
-                for c in arg.chars().skip(1) {
-                    match c {
-                        'r' => reverse = true,
-                        'n' => numeric = true,
-                        'u' => unique = true,
-                        'f' => fold_case = true,
-                        's' => stable = true,
-                        'c' | 'C' => check_sorted = true,
-                        'h' => human_numeric = true,
-                        'M' => month_sort = true,
-                        'm' => merge = true,
-                        'z' => zero_terminated = true,
-                        _ => {}
-                    }
-                }
+            } else if let Some(val) = p.flag_value_opt("-o") {
+                output_file = Some(val.to_string());
             } else {
-                files.push(arg.clone());
+                let flags = p.bool_flags("rnufscChMmz");
+                if !flags.is_empty() {
+                    for c in flags {
+                        match c {
+                            'r' => reverse = true,
+                            'n' => numeric = true,
+                            'u' => unique = true,
+                            'f' => fold_case = true,
+                            's' => stable = true,
+                            'c' | 'C' => check_sorted = true,
+                            'h' => human_numeric = true,
+                            'M' => month_sort = true,
+                            'm' => merge = true,
+                            'z' => zero_terminated = true,
+                            _ => {}
+                        }
+                    }
+                } else if let Some(arg) = p.positional() {
+                    files.push(arg.to_string());
+                }
             }
-            i += 1;
         }
 
         // Collect all input
@@ -421,33 +400,26 @@ impl Builtin for Uniq {
         let mut skip_fields: usize = 0;
         let mut files = Vec::new();
 
-        let mut idx = 0;
-        while idx < ctx.args.len() {
-            let arg = &ctx.args[idx];
-            if arg == "-f" {
-                idx += 1;
-                if idx < ctx.args.len() {
-                    skip_fields = ctx.args[idx].parse().unwrap_or(0);
-                }
-            } else if let Some(n) = arg
-                .strip_prefix("-f")
-                .filter(|s| s.chars().all(|c| c.is_ascii_digit()))
-            {
-                skip_fields = n.parse().unwrap_or(0);
-            } else if arg.starts_with('-') && !arg.starts_with("--") {
-                for c in arg.chars().skip(1) {
-                    match c {
-                        'c' => count = true,
-                        'd' => only_duplicates = true,
-                        'u' => only_unique = true,
-                        'i' => case_insensitive = true,
-                        _ => {}
-                    }
-                }
+        let mut p = super::arg_parser::ArgParser::new(ctx.args);
+        while !p.is_done() {
+            if let Some(val) = p.flag_value_opt("-f") {
+                skip_fields = val.parse().unwrap_or(0);
             } else {
-                files.push(arg.clone());
+                let flags = p.bool_flags("cdui");
+                if !flags.is_empty() {
+                    for c in flags {
+                        match c {
+                            'c' => count = true,
+                            'd' => only_duplicates = true,
+                            'u' => only_unique = true,
+                            'i' => case_insensitive = true,
+                            _ => {}
+                        }
+                    }
+                } else if let Some(arg) = p.positional() {
+                    files.push(arg.to_string());
+                }
             }
-            idx += 1;
         }
 
         // Get input lines

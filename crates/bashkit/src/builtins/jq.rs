@@ -7,12 +7,122 @@
 //!   jq '.[] | .id' < data.json
 
 use async_trait::async_trait;
-use jaq_core::{Compiler, Ctx, RcIter, load};
+use jaq_core::load::{Arena, File, Loader};
+use jaq_core::{Compiler, Ctx, Vars, data};
 use jaq_json::Val;
+use jaq_std::input::{HasInputs, Inputs, RcIter};
 
 use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
+
+/// Custom DataT that holds both the LUT and a shared input iterator.
+/// Required by jaq 3.0 for `input`/`inputs` filter support.
+struct InputData<V>(std::marker::PhantomData<V>);
+
+impl<V: jaq_core::ValT + 'static> data::DataT for InputData<V> {
+    type V<'a> = V;
+    type Data<'a> = InputDataRef<'a, V>;
+}
+
+#[derive(Clone)]
+struct InputDataRef<'a, V: jaq_core::ValT + 'static> {
+    lut: &'a jaq_core::Lut<InputData<V>>,
+    inputs: &'a RcIter<dyn Iterator<Item = std::result::Result<V, String>> + 'a>,
+}
+
+impl<'a, V: jaq_core::ValT + 'static> data::HasLut<'a, InputData<V>> for InputDataRef<'a, V> {
+    fn lut(&self) -> &'a jaq_core::Lut<InputData<V>> {
+        self.lut
+    }
+}
+
+impl<'a, V: jaq_core::ValT + 'static> HasInputs<'a, V> for InputDataRef<'a, V> {
+    fn inputs(&self) -> Inputs<'a, V> {
+        self.inputs
+    }
+}
+
+/// Convert serde_json::Value to jaq Val.
+fn serde_to_val(v: serde_json::Value) -> Val {
+    match v {
+        serde_json::Value::Null => Val::Null,
+        serde_json::Value::Bool(b) => Val::from(b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                if let Ok(i) = isize::try_from(i) {
+                    Val::from(i)
+                } else {
+                    Val::from(i as f64)
+                }
+            } else if let Some(f) = n.as_f64() {
+                Val::from(f)
+            } else {
+                Val::from(0isize) // unreachable in practice
+            }
+        }
+        serde_json::Value::String(s) => Val::from(s),
+        serde_json::Value::Array(arr) => arr.into_iter().map(serde_to_val).collect(),
+        serde_json::Value::Object(map) => Val::obj(
+            map.into_iter()
+                .map(|(k, v)| (Val::from(k), serde_to_val(v)))
+                .collect(),
+        ),
+    }
+}
+
+/// Convert jaq Val to serde_json::Value for output formatting.
+fn val_to_serde(v: &Val) -> serde_json::Value {
+    match v {
+        Val::Null => serde_json::Value::Null,
+        Val::Bool(b) => serde_json::Value::Bool(*b),
+        Val::Num(n) => {
+            // Use Display to get the number string, then parse
+            let s = format!("{n}");
+            if let Ok(i) = s.parse::<i64>() {
+                serde_json::Value::Number(serde_json::Number::from(i))
+            } else if let Ok(f) = s.parse::<f64>() {
+                serde_json::Number::from_f64(f)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
+            } else {
+                serde_json::Value::Null
+            }
+        }
+        Val::BStr(_) | Val::TStr(_) => {
+            // Extract string bytes and convert to UTF-8
+            let displayed = format!("{v}");
+            // Val's Display wraps strings in quotes — strip them
+            if displayed.starts_with('"') && displayed.ends_with('"') {
+                // Parse the JSON string to unescape
+                serde_json::from_str(&displayed).unwrap_or(serde_json::Value::String(displayed))
+            } else {
+                serde_json::Value::String(displayed)
+            }
+        }
+        Val::Arr(a) => serde_json::Value::Array(a.iter().map(val_to_serde).collect()),
+        Val::Obj(o) => {
+            let map: serde_json::Map<String, serde_json::Value> = o
+                .iter()
+                .map(|(k, v)| {
+                    let key = match k {
+                        Val::TStr(_) | Val::BStr(_) => {
+                            let s = format!("{k}");
+                            if s.starts_with('"') && s.ends_with('"') {
+                                serde_json::from_str::<String>(&s).unwrap_or(s)
+                            } else {
+                                s
+                            }
+                        }
+                        _ => format!("{k}"),
+                    };
+                    (key, val_to_serde(v))
+                })
+                .collect();
+            serde_json::Value::Object(map)
+        }
+    }
+}
 
 /// THREAT[TM-DOS-027]: Maximum nesting depth for JSON input values.
 /// Prevents stack overflow when jaq evaluates deeply nested JSON structures
@@ -307,8 +417,11 @@ impl Builtin for Jq {
         }
 
         // Set up the loader with standard library definitions
-        let loader = load::Loader::new(jaq_std::defs().chain(jaq_json::defs()));
-        let arena = load::Arena::default();
+        let defs = jaq_core::defs()
+            .chain(jaq_std::defs())
+            .chain(jaq_json::defs());
+        let loader = Loader::new(defs);
+        let arena = Arena::default();
 
         // Build shell env as a JSON object for the custom `env` filter.
         // SECURITY: This avoids calling std::env::set_var() which is
@@ -333,7 +446,7 @@ impl Builtin for Jq {
         let filter = compat_filter.as_str();
 
         // Parse the filter
-        let program = load::File {
+        let program = File {
             code: filter,
             path: (),
         };
@@ -358,9 +471,16 @@ impl Builtin for Jq {
         // a def that reads from our injected global variable.
         let mut var_names: Vec<&str> = var_bindings.iter().map(|(n, _)| n.as_str()).collect();
         var_names.push(ENV_VAR_NAME);
-        let native_funs = jaq_std::funs()
-            .filter(|(name, _, _)| *name != "env")
-            .chain(jaq_json::funs());
+        type D = InputData<Val>;
+        let input_funs: Vec<jaq_core::native::Fun<D>> = jaq_std::input::funs::<D>()
+            .into_vec()
+            .into_iter()
+            .map(|(name, arity, run)| (name, arity, jaq_core::Native::<D>::new(run)))
+            .collect();
+        let native_funs = jaq_core::funs::<D>()
+            .chain(jaq_std::funs::<D>().filter(|(name, _, _)| *name != "env"))
+            .chain(input_funs)
+            .chain(jaq_json::funs::<D>());
         let compiler = Compiler::default()
             .with_funs(native_funs)
             .with_global_vars(var_names.iter().copied());
@@ -384,26 +504,26 @@ impl Builtin for Jq {
         // Build list of inputs to process
         let inputs_to_process: Vec<Val> = if null_input {
             // -n flag: use null as input
-            vec![Val::from(serde_json::Value::Null)]
+            vec![Val::Null]
         } else if raw_input && slurp {
             // -Rs flag: read entire input as single string
-            vec![Val::from(serde_json::Value::String(input.to_string()))]
+            vec![Val::from(input.to_string())]
         } else if raw_input {
             // -R flag: each line becomes a JSON string value
             input
                 .lines()
-                .map(|line| Val::from(serde_json::Value::String(line.to_string())))
+                .map(|line| Val::from(line.to_string()))
                 .collect()
         } else if slurp {
             // -s flag: read all inputs into a single array
             match Self::parse_json_values(input) {
-                Ok(vals) => vec![Val::from(serde_json::Value::Array(vals))],
+                Ok(vals) => vec![serde_to_val(serde_json::Value::Array(vals))],
                 Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 5)),
             }
         } else {
             // Parse all JSON values from input (handles multi-line and NDJSON)
             match Self::parse_json_values(input) {
-                Ok(json_vals) => json_vals.into_iter().map(Val::from).collect(),
+                Ok(json_vals) => json_vals.into_iter().map(serde_to_val).collect(),
                 Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 5)),
             }
         };
@@ -414,10 +534,12 @@ impl Builtin for Jq {
 
         // Shared input iterator: main loop pops one value per filter run,
         // and jaq's input/inputs functions consume from the same source.
-        let shared_inputs = RcIter::new(inputs_to_process.into_iter().map(Ok::<Val, String>));
+        let iter: Box<dyn Iterator<Item = std::result::Result<Val, String>>> =
+            Box::new(inputs_to_process.into_iter().map(Ok::<Val, String>));
+        let shared_inputs = RcIter::new(iter);
 
         // Pre-convert env object to jaq Val once (reused for each input)
-        let env_val = Val::from(env_obj);
+        let env_val = serde_to_val(env_obj);
 
         for jaq_input in &shared_inputs {
             let jaq_input: Val = match jaq_input {
@@ -431,16 +553,20 @@ impl Builtin for Jq {
             // plus the env object as the last global variable.
             let mut var_vals: Vec<Val> = var_bindings
                 .iter()
-                .map(|(_, v)| Val::from(v.clone()))
+                .map(|(_, v)| serde_to_val(v.clone()))
                 .collect();
             var_vals.push(env_val.clone());
-            let ctx = Ctx::new(var_vals, &shared_inputs);
-            for result in filter.run((ctx, jaq_input)) {
+            let data = InputDataRef {
+                lut: &filter.lut,
+                inputs: &shared_inputs,
+            };
+            let ctx = Ctx::<InputData<Val>>::new(data, Vars::new(var_vals));
+            for result in filter.id.run((ctx, jaq_input)) {
                 match result {
                     Ok(val) => {
                         has_output = true;
                         // Convert back to serde_json::Value and format
-                        let json: serde_json::Value = val.into();
+                        let json = val_to_serde(&val);
 
                         // Track for -e exit status
                         if !matches!(
