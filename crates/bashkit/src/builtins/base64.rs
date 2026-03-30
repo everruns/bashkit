@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use base64::Engine;
 
+use super::arg_parser::ArgParser;
 use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -23,37 +24,27 @@ impl Builtin for Base64 {
         let mut wrap = 76usize;
         let mut file: Option<String> = None;
 
-        let mut p = super::arg_parser::ArgParser::new(ctx.args);
-        while !p.is_done() {
-            if p.flag_any(&["-d", "--decode"]) {
+        let mut parser = ArgParser::new(ctx.args);
+        while !parser.is_done() {
+            if parser.flag_any(&["-d", "--decode"]) {
                 decode = true;
-            } else if let Some(val) = p.current().and_then(|s| s.strip_prefix("--wrap=")) {
+            } else if let Some(val) = parser.current().and_then(|s| s.strip_prefix("--wrap=")) {
                 wrap = val.parse().unwrap_or(76);
-                p.advance();
-            } else {
-                match p.flag_value("-w", "base64") {
-                    Ok(Some(val)) => wrap = val.parse().unwrap_or(76),
-                    Err(_) => {
-                        return Ok(ExecResult::err(
-                            "base64: option requires an argument -- 'w'\n",
-                            1,
-                        ));
-                    }
-                    Ok(None) => {
-                        if p.flag_any(&["-i", "--ignore-garbage"]) {
-                            // silently accept
-                        } else if let Some(flag) =
-                            p.current().filter(|s| s.starts_with('-') && s.len() > 1)
-                        {
-                            return Ok(ExecResult::err(
-                                format!("base64: invalid option -- '{}'\n", &flag[1..]),
-                                1,
-                            ));
-                        } else if let Some(arg) = p.positional() {
-                            file = Some(arg.to_string());
-                        }
-                    }
+                parser.advance();
+            } else if let Some(val) = match parser.flag_value("-w", "base64") {
+                Ok(v) => v,
+                Err(e) => return Ok(ExecResult::err(format!("{e}\n"), 1)),
+            } {
+                wrap = val.parse().unwrap_or(76);
+            } else if parser.flag_any(&["-i", "--ignore-garbage"]) {
+                // silently accept
+            } else if parser.is_flag() {
+                if let Some(s) = parser.positional() {
+                    let msg = format!("base64: invalid option -- '{}'\n", &s[1..]);
+                    return Ok(ExecResult::err(msg, 1));
                 }
+            } else if let Some(arg) = parser.positional() {
+                file = Some(arg.to_string());
             }
         }
 
@@ -86,10 +77,7 @@ impl Builtin for Base64 {
                     let output = String::from_utf8_lossy(&bytes).to_string();
                     Ok(ExecResult::ok(output))
                 }
-                Err(e) => Ok(ExecResult::err(
-                    format!("base64: invalid input: {}\n", e),
-                    1,
-                )),
+                Err(e) => Ok(ExecResult::err(format!("base64: invalid input: {e}\n"), 1)),
             }
         } else {
             // Encode
@@ -107,7 +95,7 @@ impl Builtin for Base64 {
                 wrapped.push('\n');
                 wrapped
             } else {
-                format!("{}\n", encoded)
+                format!("{encoded}\n")
             };
             Ok(ExecResult::ok(output))
         }
