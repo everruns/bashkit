@@ -191,6 +191,30 @@ echo "SHOULD NOT APPEAR"
     assert!(!result.stdout.contains("SHOULD NOT APPEAR"));
 }
 
+/// set -e: && chain failure at end of for loop body should NOT exit (issue #873)
+#[tokio::test]
+async fn set_e_and_chain_at_end_of_for_body() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -euo pipefail
+result=""
+for src in yes no; do
+  [[ "${src}" == "yes" ]] && result="${src}"
+done
+echo "result: ${result}"
+"#,
+        )
+        .await
+        .unwrap();
+    assert!(
+        result.stdout.contains("result: yes"),
+        "should print 'result: yes' but got: {:?}",
+        result.stdout
+    );
+}
+
 /// set -e should still exit on non-AND-OR failures
 #[tokio::test]
 async fn set_e_exits_on_plain_failure() {
