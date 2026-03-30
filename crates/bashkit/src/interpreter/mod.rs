@@ -4353,6 +4353,11 @@ impl Interpreter {
                         .unwrap()
                         .locals
                         .insert(arg.to_string(), String::new());
+                    if flags.assoc {
+                        self.assoc_arrays.entry(arg.to_string()).or_default();
+                    } else if flags.array {
+                        self.arrays.entry(arg.to_string()).or_default();
+                    }
                     if flags.integer {
                         self.variables
                             .insert(format!("_INTEGER_{}", arg), "1".to_string());
@@ -4437,7 +4442,13 @@ impl Interpreter {
                             .insert(var_name.to_string(), value.to_string());
                     }
                 } else if !is_internal_variable(arg) {
-                    self.insert_variable_checked(arg.to_string(), String::new());
+                    if flags.assoc {
+                        self.assoc_arrays.entry(arg.to_string()).or_default();
+                    } else if flags.array {
+                        self.arrays.entry(arg.to_string()).or_default();
+                    } else {
+                        self.insert_variable_checked(arg.to_string(), String::new());
+                    }
                 }
             }
         }

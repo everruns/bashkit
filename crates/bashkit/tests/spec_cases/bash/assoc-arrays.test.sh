@@ -173,6 +173,35 @@ b=2
 c=3
 ### end
 
+### assoc_local_declare_then_assign
+myfunc() {
+  local -A m
+  m["a"]="1"
+  m["b"]="2"
+  echo "count: ${#m[@]}"
+  for k in "${!m[@]}"; do echo "key=$k"; done | sort
+}
+myfunc
+### expect
+count: 2
+key=a
+key=b
+### end
+
+### assoc_local_keys_in_cmdsub
+myfunc() {
+  local -A m
+  m["a"]="1"
+  m["b"]="2"
+  result="$(printf '%s\n' "${!m[@]}" | sort)"
+  echo "result: [$result]"
+}
+myfunc
+### expect
+result: [a
+b]
+### end
+
 ### assoc_iteration
 declare -A m
 m[a]="1"
