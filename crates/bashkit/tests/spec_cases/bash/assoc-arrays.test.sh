@@ -202,6 +202,16 @@ result: [a
 b]
 ### end
 
+### assoc_key_command_substitution
+declare -A m=()
+m["$(echo hello)"]="world"
+echo "count: ${#m[@]}"
+for k in "${!m[@]}"; do echo "key=[$k] val=[${m[$k]}]"; done
+### expect
+count: 1
+key=[hello] val=[world]
+### end
+
 ### assoc_iteration
 declare -A m
 m[a]="1"
