@@ -158,27 +158,30 @@ impl Builtin for Read {
             var_args
         };
 
-        // Assign words to variables
+        // Assign words to variables via side effects (respects local scoping)
+        let mut result = ExecResult::ok(String::new());
         for (i, var_name) in var_names.iter().enumerate() {
             // THREAT[TM-INJ-009]: Block internal variable prefix injection via read
             if is_internal_variable(var_name) {
                 continue;
             }
-            if i == var_names.len() - 1 {
+            let value = if i == var_names.len() - 1 {
                 // Last variable gets all remaining words
                 let remaining: Vec<&str> = words.iter().skip(i).copied().collect();
-                let value = remaining.join(" ");
-                ctx.variables.insert(var_name.to_string(), value);
+                remaining.join(" ")
             } else if i < words.len() {
-                ctx.variables
-                    .insert(var_name.to_string(), words[i].to_string());
+                words[i].to_string()
             } else {
                 // Not enough words - set to empty
-                ctx.variables.insert(var_name.to_string(), String::new());
-            }
+                String::new()
+            };
+            result.side_effects.push(BuiltinSideEffect::SetVariable {
+                name: var_name.to_string(),
+                value,
+            });
         }
 
-        Ok(ExecResult::ok(String::new()))
+        Ok(result)
     }
 }
 
@@ -197,6 +200,17 @@ mod tests {
         let variables = HashMap::new();
         fs.mkdir(&cwd, true).await.unwrap();
         (fs, cwd, variables)
+    }
+
+    /// Extract SetVariable side effects into a map for easy assertion.
+    fn extract_vars(result: &ExecResult) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        for effect in &result.side_effects {
+            if let BuiltinSideEffect::SetVariable { name, value } = effect {
+                map.insert(name.clone(), value.clone());
+            }
+        }
+        map
     }
 
     // ==================== no stdin ====================
@@ -228,7 +242,8 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(variables.get("REPLY").unwrap(), "hello world");
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("REPLY").unwrap(), "hello world");
     }
 
     // ==================== read into named variable ====================
@@ -248,7 +263,8 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(variables.get("MY_VAR").unwrap(), "test_value");
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("MY_VAR").unwrap(), "test_value");
     }
 
     // ==================== read into multiple variables ====================
@@ -268,10 +284,11 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(variables.get("A").unwrap(), "one");
-        assert_eq!(variables.get("B").unwrap(), "two");
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("A").unwrap(), "one");
+        assert_eq!(vars.get("B").unwrap(), "two");
         // Last var gets remaining words
-        assert_eq!(variables.get("C").unwrap(), "three four");
+        assert_eq!(vars.get("C").unwrap(), "three four");
     }
 
     #[tokio::test]
@@ -289,9 +306,10 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(variables.get("A").unwrap(), "one");
-        assert_eq!(variables.get("B").unwrap(), "");
-        assert_eq!(variables.get("C").unwrap(), "");
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("A").unwrap(), "one");
+        assert_eq!(vars.get("B").unwrap(), "");
+        assert_eq!(vars.get("C").unwrap(), "");
     }
 
     // ==================== -r flag (raw mode) ====================
@@ -311,7 +329,8 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(variables.get("LINE").unwrap(), "hello\\world");
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("LINE").unwrap(), "hello\\world");
     }
 
     #[tokio::test]
@@ -329,8 +348,9 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
+        let vars = extract_vars(&result);
         // Without -r, backslash-newline is line continuation
-        assert_eq!(variables.get("LINE").unwrap(), "helloworld");
+        assert_eq!(vars.get("LINE").unwrap(), "helloworld");
     }
 
     // ==================== -n flag (read N chars) ====================
@@ -350,7 +370,8 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(variables.get("CHUNK").unwrap(), "abc");
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("CHUNK").unwrap(), "abc");
     }
 
     #[tokio::test]
@@ -368,7 +389,8 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(variables.get("CHUNK").unwrap(), "hi");
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("CHUNK").unwrap(), "hi");
     }
 
     // ==================== -d flag (delimiter) ====================
@@ -388,7 +410,8 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(variables.get("FIELD").unwrap(), "first");
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("FIELD").unwrap(), "first");
     }
 
     // ==================== -a flag (array mode) ====================
@@ -458,7 +481,8 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(variables.get("V").unwrap(), "path\\to\\file");
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("V").unwrap(), "path\\to\\file");
     }
 
     // ==================== multiline input ====================
@@ -478,7 +502,8 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(variables.get("LINE").unwrap(), "first");
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("LINE").unwrap(), "first");
     }
 
     // ==================== custom IFS ====================
@@ -499,8 +524,9 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(variables.get("A").unwrap(), "foo");
-        assert_eq!(variables.get("B").unwrap(), "bar baz");
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("A").unwrap(), "foo");
+        assert_eq!(vars.get("B").unwrap(), "bar baz");
     }
 
     #[tokio::test]
@@ -524,10 +550,11 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(variables.get("A").unwrap(), "one");
-        assert_eq!(variables.get("B").unwrap(), "");
-        assert_eq!(variables.get("C").unwrap(), "three");
-        assert_eq!(variables.get("D").unwrap(), "");
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("A").unwrap(), "one");
+        assert_eq!(vars.get("B").unwrap(), "");
+        assert_eq!(vars.get("C").unwrap(), "three");
+        assert_eq!(vars.get("D").unwrap(), "");
     }
 
     #[tokio::test]
@@ -546,6 +573,7 @@ mod tests {
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(variables.get("LINE").unwrap(), "no splitting here");
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("LINE").unwrap(), "no splitting here");
     }
 }

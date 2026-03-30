@@ -42,6 +42,8 @@ pub enum BuiltinSideEffect {
     ClearHistory,
     /// Set the last exit code (for wait builtin).
     SetLastExitCode(i32),
+    /// Set a shell variable (respects local scoping via `set_variable`).
+    SetVariable { name: String, value: String },
 }
 
 /// Result of executing a bash script.
