@@ -155,7 +155,7 @@ jobs:
           cat bashkit.rb
 
       - name: Install Doppler CLI
-        uses: dopplerhq/cli-action@v3
+        uses: dopplerhq/cli-action@v4
 
       - name: Push formula to homebrew-tap
         env:
