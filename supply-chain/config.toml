@@ -575,7 +575,7 @@ version = "2.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.insta]]
-version = "1.47.1"
+version = "1.47.2"
 criteria = "safe-to-run"
 
 [[exemptions.instant]]
