@@ -2470,6 +2470,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_read_respects_local_scope() {
+        // Regression: `local k; read -r k <<< "val"` must set k in local scope
+        let mut bash = Bash::new();
+        let result = bash
+            .exec(
+                r#"
+fn() { local k; read -r k <<< "test"; echo "$k"; }
+fn
+"#,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "test\n");
+    }
+
+    #[tokio::test]
+    async fn test_read_local_in_while_loop() {
+        // Regression: local var + while-read from process substitution
+        let mut bash = Bash::new();
+        let result = bash
+            .exec(
+                r#"
+fn() {
+  declare -A m=([a]=1 [b]=2)
+  local k
+  while IFS= read -r k; do echo "k=$k"; done < <(printf "%s\n" "${!m[@]}" | sort)
+}
+fn
+"#,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "k=a\nk=b\n");
+    }
+
+    #[tokio::test]
     async fn test_glob_star() {
         let mut bash = Bash::new();
         // Create some files
