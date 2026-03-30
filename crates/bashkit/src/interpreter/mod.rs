@@ -7980,13 +7980,16 @@ impl Interpreter {
 
     /// Get the separator for `[*]` array joins: first char of IFS, or space if IFS unset.
     fn get_ifs_separator(&self) -> String {
-        match self.variables.get("IFS") {
-            Some(ifs) => ifs
-                .chars()
+        let ifs = self.expand_variable("IFS");
+        if ifs.is_empty() && !self.is_variable_set("IFS") {
+            // IFS unset: default separator is space
+            " ".to_string()
+        } else {
+            // IFS set (possibly empty): first char or empty
+            ifs.chars()
                 .next()
                 .map(|c| c.to_string())
-                .unwrap_or_default(),
-            None => " ".to_string(),
+                .unwrap_or_default()
         }
     }
 

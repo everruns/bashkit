@@ -2486,6 +2486,26 @@ fn
     }
 
     #[tokio::test]
+    async fn test_local_ifs_array_join() {
+        // Regression: local IFS=":" must affect "${arr[*]}" joining
+        let mut bash = Bash::new();
+        let result = bash
+            .exec(
+                r#"
+fn() {
+  local arr=(a b c)
+  local IFS=":"
+  echo "${arr[*]}"
+}
+fn
+"#,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "a:b:c\n");
+    }
+
+    #[tokio::test]
     async fn test_glob_star() {
         let mut bash = Bash::new();
         // Create some files
