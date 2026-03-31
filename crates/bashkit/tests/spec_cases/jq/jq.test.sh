@@ -933,6 +933,33 @@ jq -n --argjson obj '{"a":1}' '$obj.a'
 1
 ### end
 
+### jq_arg_field_assignment
+# --arg with field assignment using herestring
+jq --arg name "John" '.greeting = "Hello " + $name' <<< '{}'
+### expect
+{
+  "greeting": "Hello John"
+}
+### end
+
+### jq_argjson_field_assignment
+# --argjson with numeric field assignment
+jq --argjson count 42 '.total = $count' <<< '{}'
+### expect
+{
+  "total": 42
+}
+### end
+
+### jq_arg_dynamic_key
+# --arg with dynamic key using .[$key]
+jq --arg key "name" --arg val "Alice" '.[$key] = $val' <<< '{}'
+### expect
+{
+  "name": "Alice"
+}
+### end
+
 ### jq_combined_flags_snr
 # Three combined short flags -snr
 jq -snr '"hello"'
