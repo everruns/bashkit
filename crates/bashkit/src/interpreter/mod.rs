@@ -610,6 +610,7 @@ impl Interpreter {
             "seq" => Seq,
             "expr" => Expr,
             "bc" => Bc,
+            "numfmt" => Numfmt,
             // Misc utilities
             "yes" => Yes,
             "sleep" => Sleep,
