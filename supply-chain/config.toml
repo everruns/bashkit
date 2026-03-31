@@ -507,11 +507,11 @@ version = "1.10.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.hybrid-array]]
-version = "0.4.8"
+version = "0.4.10"
 criteria = "safe-to-deploy"
 
 [[exemptions.hyper]]
-version = "1.8.1"
+version = "1.9.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.hyper-rustls]]
