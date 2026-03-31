@@ -86,4 +86,4 @@ mod client;
 pub use allowlist::{NetworkAllowlist, UrlMatch};
 
 #[cfg(feature = "http_client")]
-pub use client::{HttpClient, Method, Response};
+pub use client::{HttpClient, HttpHandler, Method, Response};

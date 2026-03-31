@@ -842,3 +842,57 @@ mod decompression_security {
         assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
     }
 }
+
+// =============================================================================
+// CUSTOM HTTP HANDLER TESTS
+// =============================================================================
+
+mod custom_handler {
+    use super::*;
+    use bashkit::{HttpHandler, HttpResponse as Response};
+
+    struct MockHandler;
+
+    #[async_trait::async_trait]
+    impl HttpHandler for MockHandler {
+        async fn request(
+            &self,
+            _method: &str,
+            _url: &str,
+            _body: Option<&[u8]>,
+            _headers: &[(String, String)],
+        ) -> std::result::Result<Response, String> {
+            Ok(Response {
+                status: 200,
+                headers: vec![("content-type".to_string(), "text/plain".to_string())],
+                body: b"mocked-response".to_vec(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_handler_intercepts_requests() {
+        let allowlist = NetworkAllowlist::allow_all();
+        let mut bash = Bash::builder()
+            .network(allowlist)
+            .http_handler(Box::new(MockHandler))
+            .build();
+
+        let result = bash.exec("curl -s https://example.com").await.unwrap();
+        assert_eq!(result.stdout.trim(), "mocked-response");
+    }
+
+    #[tokio::test]
+    async fn custom_handler_allowlist_still_enforced() {
+        // Even with a custom handler, the allowlist should be checked first
+        let allowlist = NetworkAllowlist::new(); // empty = blocks all
+        let mut bash = Bash::builder()
+            .network(allowlist)
+            .http_handler(Box::new(MockHandler))
+            .build();
+
+        let result = bash.exec("curl -s https://example.com 2>&1").await.unwrap();
+        // Should be blocked by allowlist, not reaching the handler
+        assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+}

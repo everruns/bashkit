@@ -34,6 +34,31 @@ pub const MAX_TIMEOUT_SECS: u64 = 600;
 /// Minimum allowed timeout (1 second) - prevents instant timeouts that waste resources
 pub const MIN_TIMEOUT_SECS: u64 = 1;
 
+/// Trait for custom HTTP request handling.
+///
+/// Embedders can implement this trait to intercept, proxy, log, cache,
+/// or mock HTTP requests made by scripts running in the sandbox.
+///
+/// The allowlist check happens _before_ the handler is called, so the
+/// security boundary stays in bashkit.
+///
+/// # Default
+///
+/// When no custom handler is set, `HttpClient` uses `reqwest` directly.
+#[async_trait::async_trait]
+pub trait HttpHandler: Send + Sync {
+    /// Handle an HTTP request and return a response.
+    ///
+    /// Called after the URL has been validated against the allowlist.
+    async fn request(
+        &self,
+        method: &str,
+        url: &str,
+        body: Option<&[u8]>,
+        headers: &[(String, String)],
+    ) -> std::result::Result<Response, String>;
+}
+
 /// HTTP client with allowlist-based access control.
 ///
 /// # Security Features
@@ -48,6 +73,8 @@ pub struct HttpClient {
     default_timeout: Duration,
     /// Maximum response body size in bytes
     max_response_bytes: usize,
+    /// Optional custom HTTP handler for request interception
+    handler: Option<Box<dyn HttpHandler>>,
 }
 
 /// HTTP request method
@@ -134,7 +161,17 @@ impl HttpClient {
             allowlist,
             default_timeout: timeout,
             max_response_bytes,
+            handler: None,
         }
+    }
+
+    /// Set a custom HTTP handler for request interception.
+    ///
+    /// The handler is called after the URL allowlist check, so the security
+    /// boundary stays in bashkit. The default reqwest-based handler is used
+    /// when no custom handler is set.
+    pub fn set_handler(&mut self, handler: Box<dyn HttpHandler>) {
+        self.handler = Some(handler);
     }
 
     fn client(&self) -> Result<&Client> {
@@ -199,6 +236,22 @@ impl HttpClient {
             UrlMatch::Invalid { reason } => {
                 return Err(Error::Network(format!("invalid URL: {}", reason)));
             }
+        }
+
+        // Delegate to custom handler if set
+        if let Some(handler) = &self.handler {
+            let method_str = match method {
+                Method::Get => "GET",
+                Method::Post => "POST",
+                Method::Put => "PUT",
+                Method::Delete => "DELETE",
+                Method::Head => "HEAD",
+                Method::Patch => "PATCH",
+            };
+            return handler
+                .request(method_str, url, body, headers)
+                .await
+                .map_err(Error::Network);
         }
 
         // Build request
@@ -351,6 +404,22 @@ impl HttpClient {
             UrlMatch::Invalid { reason } => {
                 return Err(Error::Network(format!("invalid URL: {}", reason)));
             }
+        }
+
+        // Delegate to custom handler if set (timeouts are the handler's responsibility)
+        if let Some(handler) = &self.handler {
+            let method_str = match method {
+                Method::Get => "GET",
+                Method::Post => "POST",
+                Method::Put => "PUT",
+                Method::Delete => "DELETE",
+                Method::Head => "HEAD",
+                Method::Patch => "PATCH",
+            };
+            return handler
+                .request(method_str, url, body, headers)
+                .await
+                .map_err(Error::Network);
         }
 
         // Use the custom timeout client if any timeout is specified, otherwise use default client
