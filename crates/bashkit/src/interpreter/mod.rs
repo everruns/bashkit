@@ -1408,6 +1408,16 @@ impl Interpreter {
                 self.last_exit_code = saved_exit;
                 self.aliases = saved_aliases;
                 self.coproc_buffers = saved_coproc;
+
+                // Consume Exit control flow at subshell boundary — exit only
+                // terminates the subshell, not the parent shell.
+                if let Ok(ref mut res) = result
+                    && let ControlFlow::Exit(code) = res.control_flow
+                {
+                    res.exit_code = code;
+                    res.control_flow = ControlFlow::None;
+                }
+
                 result
             }
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
@@ -1677,6 +1687,15 @@ impl Interpreter {
                         stderr,
                         exit_code: code,
                         control_flow: ControlFlow::Return(code),
+                        ..Default::default()
+                    });
+                }
+                ControlFlow::Exit(code) => {
+                    return Ok(ExecResult {
+                        stdout,
+                        stderr,
+                        exit_code: code,
+                        control_flow: ControlFlow::Exit(code),
                         ..Default::default()
                     });
                 }
@@ -5880,6 +5899,9 @@ impl Interpreter {
                         let cmd_result = self.execute_command(cmd).await?;
                         stdout.push_str(&cmd_result.stdout);
                         self.last_exit_code = cmd_result.exit_code;
+                        if matches!(cmd_result.control_flow, ControlFlow::Exit(_)) {
+                            break;
+                        }
                     }
                     // Fire EXIT trap set inside the command substitution
                     if let Some(trap_cmd) = self.traps.get("EXIT").cloned()
