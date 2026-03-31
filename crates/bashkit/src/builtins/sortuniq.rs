@@ -536,8 +536,7 @@ impl Builtin for Sort {
                         ord
                     }
                 } else {
-                    let ord =
-                        compare_keys(a, b, numeric, human_numeric, month_sort, fold_case);
+                    let ord = compare_keys(a, b, numeric, human_numeric, month_sort, fold_case);
                     if ord == std::cmp::Ordering::Equal {
                         a.cmp(b)
                     } else {
