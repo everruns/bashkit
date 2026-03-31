@@ -451,7 +451,11 @@ pub use scripted_tool::{
 };
 
 #[cfg(feature = "http_client")]
-pub use network::HttpClient;
+pub use network::{HttpClient, HttpHandler};
+
+/// Re-exported network response type for custom HTTP handler implementations.
+#[cfg(feature = "http_client")]
+pub use network::Response as HttpResponse;
 
 #[cfg(feature = "git")]
 pub use git::GitClient;
@@ -1000,6 +1004,9 @@ pub struct BashBuilder {
     /// Network allowlist for curl/wget builtins
     #[cfg(feature = "http_client")]
     network_allowlist: Option<NetworkAllowlist>,
+    /// Custom HTTP handler for request interception
+    #[cfg(feature = "http_client")]
+    http_handler: Option<Box<dyn network::HttpHandler>>,
     /// Logging configuration
     #[cfg(feature = "logging")]
     log_config: Option<logging::LogConfig>,
@@ -1164,6 +1171,51 @@ impl BashBuilder {
     #[cfg(feature = "http_client")]
     pub fn network(mut self, allowlist: NetworkAllowlist) -> Self {
         self.network_allowlist = Some(allowlist);
+        self
+    }
+
+    /// Set a custom HTTP handler for request interception.
+    ///
+    /// The handler is called after the URL allowlist check, so the security
+    /// boundary stays in bashkit. Use this for:
+    /// - Corporate proxies
+    /// - Logging/auditing
+    /// - Caching responses
+    /// - Rate limiting
+    /// - Mocking HTTP responses in tests
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use bashkit::network::HttpHandler;
+    ///
+    /// struct MyHandler;
+    ///
+    /// #[async_trait::async_trait]
+    /// impl HttpHandler for MyHandler {
+    ///     async fn request(
+    ///         &self,
+    ///         method: &str,
+    ///         url: &str,
+    ///         body: Option<&[u8]>,
+    ///         headers: &[(String, String)],
+    ///     ) -> Result<bashkit::network::Response, String> {
+    ///         Ok(bashkit::network::Response {
+    ///             status: 200,
+    ///             headers: vec![],
+    ///             body: b"mocked".to_vec(),
+    ///         })
+    ///     }
+    /// }
+    ///
+    /// let bash = Bash::builder()
+    ///     .network(NetworkAllowlist::allow_all())
+    ///     .http_handler(Box::new(MyHandler))
+    ///     .build();
+    /// ```
+    #[cfg(feature = "http_client")]
+    pub fn http_handler(mut self, handler: Box<dyn network::HttpHandler>) -> Self {
+        self.http_handler = Some(handler);
         self
     }
 
@@ -1625,6 +1677,8 @@ impl BashBuilder {
             self.history_file,
             #[cfg(feature = "http_client")]
             self.network_allowlist,
+            #[cfg(feature = "http_client")]
+            self.http_handler,
             #[cfg(feature = "logging")]
             self.log_config,
             #[cfg(feature = "git")]
@@ -1710,6 +1764,7 @@ impl BashBuilder {
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
         history_file: Option<PathBuf>,
         #[cfg(feature = "http_client")] network_allowlist: Option<NetworkAllowlist>,
+        #[cfg(feature = "http_client")] http_handler: Option<Box<dyn network::HttpHandler>>,
         #[cfg(feature = "logging")] log_config: Option<logging::LogConfig>,
         #[cfg(feature = "git")] git_config: Option<GitConfig>,
     ) -> Bash {
@@ -1754,7 +1809,10 @@ impl BashBuilder {
         // Configure HTTP client for network builtins
         #[cfg(feature = "http_client")]
         if let Some(allowlist) = network_allowlist {
-            let client = network::HttpClient::new(allowlist);
+            let mut client = network::HttpClient::new(allowlist);
+            if let Some(handler) = http_handler {
+                client.set_handler(handler);
+            }
             interpreter.set_http_client(client);
         }
 
