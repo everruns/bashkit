@@ -127,10 +127,7 @@ fn round_value(val: f64, mode: RoundMode) -> f64 {
 fn parse_number(input: &str, from: Scale) -> std::result::Result<f64, String> {
     let s = input.trim();
     if s.is_empty() {
-        return Err(format!(
-            "numfmt: invalid number: '{}'\n",
-            input.trim_end()
-        ));
+        return Err(format!("numfmt: invalid number: '{}'\n", input.trim_end()));
     }
 
     match from {
@@ -160,11 +157,7 @@ fn parse_number(input: &str, from: Scale) -> std::result::Result<f64, String> {
                 _ => false,
             };
 
-            let table = if use_iec {
-                IEC_SUFFIXES
-            } else {
-                SI_SUFFIXES
-            };
+            let table = if use_iec { IEC_SUFFIXES } else { SI_SUFFIXES };
 
             for &(c, factor) in table {
                 if first_char == c {
