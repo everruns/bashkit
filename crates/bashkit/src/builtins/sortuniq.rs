@@ -25,20 +25,150 @@ use crate::interpreter::ExecResult;
 ///   -o   Write output to FILE
 pub struct Sort;
 
-/// Extract the sort key from a line based on field delimiter and key spec
-fn extract_key(line: &str, delimiter: Option<char>, key_field: usize) -> String {
-    if let Some(delim) = delimiter {
-        line.split(delim)
-            .nth(key_field.saturating_sub(1))
-            .unwrap_or("")
-            .to_string()
-    } else {
-        // Default: whitespace-separated fields
-        line.split_whitespace()
-            .nth(key_field.saturating_sub(1))
-            .unwrap_or("")
-            .to_string()
+/// A parsed sort key definition from `-k KEYDEF`.
+/// Format: `START[.CHAR][FLAGS][,END[.CHAR][FLAGS]]`
+#[derive(Clone, Debug)]
+struct KeySpec {
+    start_field: usize,
+    start_char: usize, // 0 = whole field
+    end_field: usize,  // 0 = end of line
+    end_char: usize,   // 0 = end of field
+    numeric: bool,
+    reverse: bool,
+    fold_case: bool,
+    human_numeric: bool,
+    month_sort: bool,
+    #[allow(dead_code)] // Used when combined with sort -V feature
+    version_sort: bool,
+}
+
+impl KeySpec {
+    /// Parse a KEYDEF string like "2", "2,3", "2.3,3.4", "2n,2", "2nr"
+    fn parse(spec: &str) -> Self {
+        let (start_part, end_part) = if let Some(comma) = spec.find(',') {
+            (&spec[..comma], Some(&spec[comma + 1..]))
+        } else {
+            (spec, None)
+        };
+
+        let (start_field, start_char, start_flags) = Self::parse_field_spec(start_part);
+        let (end_field, end_char, end_flags) = if let Some(ep) = end_part {
+            let (f, c, fl) = Self::parse_field_spec(ep);
+            (f, c, fl)
+        } else {
+            (0, 0, String::new())
+        };
+
+        // Merge flags from both start and end parts
+        let all_flags: String = format!("{}{}", start_flags, end_flags);
+
+        KeySpec {
+            start_field,
+            start_char,
+            end_field,
+            end_char,
+            numeric: all_flags.contains('n'),
+            reverse: all_flags.contains('r'),
+            fold_case: all_flags.contains('f'),
+            human_numeric: all_flags.contains('h'),
+            month_sort: all_flags.contains('M'),
+            version_sort: all_flags.contains('V'),
+        }
     }
+
+    /// Parse "FIELD[.CHAR][FLAGS]" → (field, char_pos, flags_string)
+    fn parse_field_spec(s: &str) -> (usize, usize, String) {
+        let mut i = 0;
+        let chars: Vec<char> = s.chars().collect();
+        // Parse field number
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            i += 1;
+        }
+        let field: usize = s[..i].parse().unwrap_or(0);
+
+        // Parse optional .CHAR
+        let mut char_pos = 0;
+        if i < chars.len() && chars[i] == '.' {
+            i += 1;
+            let start = i;
+            while i < chars.len() && chars[i].is_ascii_digit() {
+                i += 1;
+            }
+            char_pos = s[start..i].parse().unwrap_or(0);
+        }
+
+        // Remaining chars are flags
+        let flags = s[i..].to_string();
+        (field, char_pos, flags)
+    }
+}
+
+/// Split a line into fields using the given delimiter
+fn split_fields(line: &str, delimiter: Option<char>) -> Vec<&str> {
+    if let Some(delim) = delimiter {
+        line.split(delim).collect()
+    } else {
+        line.split_whitespace().collect()
+    }
+}
+
+/// Extract the sort key from a line based on field delimiter and key spec
+fn extract_key_spec(line: &str, delimiter: Option<char>, key: &KeySpec) -> String {
+    let fields = split_fields(line, delimiter);
+    if fields.is_empty() || key.start_field == 0 {
+        return line.to_string();
+    }
+
+    let start_idx = key.start_field.saturating_sub(1);
+    if start_idx >= fields.len() {
+        return String::new();
+    }
+
+    let end_idx = if key.end_field == 0 {
+        fields.len() - 1
+    } else {
+        (key.end_field.saturating_sub(1)).min(fields.len() - 1)
+    };
+
+    if start_idx > end_idx {
+        return String::new();
+    }
+
+    if start_idx == end_idx {
+        let field = fields[start_idx];
+        let start_c = if key.start_char > 0 {
+            (key.start_char - 1).min(field.len())
+        } else {
+            0
+        };
+        let end_c = if key.end_char > 0 {
+            key.end_char.min(field.len())
+        } else {
+            field.len()
+        };
+        if start_c >= end_c {
+            return String::new();
+        }
+        return field[start_c..end_c].to_string();
+    }
+
+    // Multi-field key
+    let mut result = String::new();
+    for (i, field) in fields.iter().enumerate().take(end_idx + 1).skip(start_idx) {
+        if i > start_idx {
+            result.push(delimiter.unwrap_or(' '));
+        }
+        if i == start_idx && key.start_char > 0 {
+            let sc = (key.start_char - 1).min(field.len());
+            result.push_str(&field[sc..]);
+        } else if i == end_idx && key.end_char > 0 {
+            let ec = key.end_char.min(field.len());
+            result.push_str(&field[..ec]);
+        } else {
+            result.push_str(field);
+        }
+    }
+    result
 }
 
 /// Extract leading numeric prefix from a string for `sort -n`.
@@ -194,7 +324,7 @@ impl Builtin for Sort {
         let mut version_sort = false;
         let mut merge = false;
         let mut delimiter: Option<char> = None;
-        let mut key_field: Option<usize> = None;
+        let mut key_specs: Vec<KeySpec> = Vec::new();
         let mut output_file: Option<String> = None;
         let mut zero_terminated = false;
         let mut files = Vec::new();
@@ -204,15 +334,7 @@ impl Builtin for Sort {
             if let Some(val) = p.flag_value_opt("-t") {
                 delimiter = val.chars().next();
             } else if let Some(val) = p.flag_value_opt("-k") {
-                // Parse key: "2" or "2,2" or "2n"
-                let field_str: String = val.chars().take_while(|c| c.is_ascii_digit()).collect();
-                key_field = field_str.parse().ok();
-                if val.contains('n') {
-                    numeric = true;
-                }
-                if val.contains('r') {
-                    reverse = true;
-                }
+                key_specs.push(KeySpec::parse(val));
             } else if let Some(val) = p.flag_value_opt("-o") {
                 output_file = Some(val.to_string());
             } else {
@@ -351,48 +473,76 @@ impl Builtin for Sort {
         }
 
         // Get the key extractor
-        let get_key = |line: &str| -> String {
-            if let Some(kf) = key_field {
-                extract_key(line, delimiter, kf)
+        /// Compare two keys using the specified sort mode flags
+        fn compare_keys(
+            ka: &str,
+            kb: &str,
+            is_numeric: bool,
+            is_human: bool,
+            is_month: bool,
+            is_fold_case: bool,
+        ) -> std::cmp::Ordering {
+            if is_human {
+                let na = parse_human_numeric(ka);
+                let nb = parse_human_numeric(kb);
+                na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
+            } else if is_month {
+                month_ordinal(ka).cmp(&month_ordinal(kb))
+            } else if is_numeric {
+                let na = extract_numeric_prefix(ka);
+                let nb = extract_numeric_prefix(kb);
+                na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
+            } else if is_fold_case {
+                ka.to_lowercase().cmp(&kb.to_lowercase())
             } else {
-                line.to_string()
+                ka.cmp(kb)
             }
-        };
+        }
 
         // Sort the lines
         let sort_fn = |a: &String, b: &String| -> std::cmp::Ordering {
-            let ka = get_key(a);
-            let kb = get_key(b);
-            if version_sort {
-                version_cmp(&ka, &kb)
-            } else if human_numeric {
-                let na = parse_human_numeric(&ka);
-                let nb = parse_human_numeric(&kb);
-                na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
-            } else if month_sort {
-                let ma = month_ordinal(&ka);
-                let mb = month_ordinal(&kb);
-                ma.cmp(&mb)
-            } else if numeric {
-                let na = extract_numeric_prefix(&ka);
-                let nb = extract_numeric_prefix(&kb);
-                match na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal) {
-                    std::cmp::Ordering::Equal => a.cmp(b),
-                    ord => ord,
+            if !key_specs.is_empty() {
+                // Multi-key sort: compare by each key spec in order
+                for key in &key_specs {
+                    let ka = extract_key_spec(a, delimiter, key);
+                    let kb = extract_key_spec(b, delimiter, key);
+                    // Per-key flags override global flags
+                    let ord = if key.version_sort || version_sort {
+                        version_cmp(&ka, &kb)
+                    } else {
+                        compare_keys(
+                            &ka,
+                            &kb,
+                            key.numeric || numeric,
+                            key.human_numeric || human_numeric,
+                            key.month_sort || month_sort,
+                            key.fold_case || fold_case,
+                        )
+                    };
+                    let ord = if key.reverse { ord.reverse() } else { ord };
+                    if ord != std::cmp::Ordering::Equal {
+                        return ord;
+                    }
                 }
-            } else if fold_case {
-                let ord = ka.to_lowercase().cmp(&kb.to_lowercase());
-                if ord == std::cmp::Ordering::Equal && key_field.is_some() {
-                    a.cmp(b)
-                } else {
-                    ord
-                }
+                // All keys equal — fall back to full-line comparison
+                a.cmp(b)
             } else {
-                let ord = ka.cmp(&kb);
-                if ord == std::cmp::Ordering::Equal && key_field.is_some() {
-                    a.cmp(b)
+                // No key specs — use global flags on whole line
+                if version_sort {
+                    let ord = version_cmp(a, b);
+                    if ord == std::cmp::Ordering::Equal {
+                        a.cmp(b)
+                    } else {
+                        ord
+                    }
                 } else {
-                    ord
+                    let ord =
+                        compare_keys(a, b, numeric, human_numeric, month_sort, fold_case);
+                    if ord == std::cmp::Ordering::Equal {
+                        a.cmp(b)
+                    } else {
+                        ord
+                    }
                 }
             }
         };
@@ -761,11 +911,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_extract_key() {
-        assert_eq!(extract_key("a:b:c", Some(':'), 2), "b");
-        assert_eq!(extract_key("hello world", None, 1), "hello");
-        assert_eq!(extract_key("hello world", None, 2), "world");
-        assert_eq!(extract_key("x", None, 5), "");
+    async fn test_extract_key_spec() {
+        let key = KeySpec::parse("2");
+        assert_eq!(extract_key_spec("a:b:c", Some(':'), &key), "b");
+        let key1 = KeySpec::parse("1");
+        assert_eq!(extract_key_spec("hello world", None, &key1), "hello");
+        let key2 = KeySpec::parse("2");
+        assert_eq!(extract_key_spec("hello world", None, &key2), "world");
+        let key5 = KeySpec::parse("5");
+        assert_eq!(extract_key_spec("x", None, &key5), "");
+    }
+
+    #[tokio::test]
+    async fn test_keyspec_parse() {
+        let k = KeySpec::parse("2n,3r");
+        assert_eq!(k.start_field, 2);
+        assert_eq!(k.end_field, 3);
+        assert!(k.numeric);
+        assert!(k.reverse);
+
+        let k2 = KeySpec::parse("1.2,1.5f");
+        assert_eq!(k2.start_field, 1);
+        assert_eq!(k2.start_char, 2);
+        assert_eq!(k2.end_field, 1);
+        assert_eq!(k2.end_char, 5);
+        assert!(k2.fold_case);
+    }
+
+    #[tokio::test]
+    async fn test_version_cmp() {
+        assert_eq!(version_cmp("1.2", "1.10"), std::cmp::Ordering::Less);
+        assert_eq!(version_cmp("2.0", "1.9"), std::cmp::Ordering::Greater);
+        assert_eq!(version_cmp("1.0", "1.0"), std::cmp::Ordering::Equal);
     }
 
     #[tokio::test]
