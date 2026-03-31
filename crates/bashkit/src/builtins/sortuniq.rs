@@ -92,6 +92,75 @@ fn parse_human_numeric(s: &str) -> f64 {
     num_part.parse::<f64>().unwrap_or(0.0) * multiplier
 }
 
+/// Compare two strings using version/natural sort order.
+/// Splits strings into alternating non-digit and digit chunks and compares
+/// each: non-digit chunks lexically, digit chunks numerically.
+fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let mut ai = a.chars().peekable();
+    let mut bi = b.chars().peekable();
+
+    loop {
+        match (ai.peek(), bi.peek()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            _ => {}
+        }
+
+        // Collect non-digit prefix from both
+        let mut a_text = String::new();
+        let mut b_text = String::new();
+        while let Some(&c) = ai.peek() {
+            if c.is_ascii_digit() {
+                break;
+            }
+            a_text.push(c);
+            ai.next();
+        }
+        while let Some(&c) = bi.peek() {
+            if c.is_ascii_digit() {
+                break;
+            }
+            b_text.push(c);
+            bi.next();
+        }
+        if a_text != b_text {
+            return a_text.cmp(&b_text);
+        }
+
+        // Collect digit chunk from both
+        let mut a_num = String::new();
+        let mut b_num = String::new();
+        while let Some(&c) = ai.peek() {
+            if !c.is_ascii_digit() {
+                break;
+            }
+            a_num.push(c);
+            ai.next();
+        }
+        while let Some(&c) = bi.peek() {
+            if !c.is_ascii_digit() {
+                break;
+            }
+            b_num.push(c);
+            bi.next();
+        }
+        if a_num.is_empty() && b_num.is_empty() {
+            continue;
+        }
+        let an: u64 = a_num.parse().unwrap_or(0);
+        let bn: u64 = b_num.parse().unwrap_or(0);
+        if an != bn {
+            return an.cmp(&bn);
+        }
+        // Equal numeric value but different representations (e.g. "01" vs "1"):
+        // shorter string (fewer leading zeros) sorts first
+        if a_num.len() != b_num.len() {
+            return a_num.len().cmp(&b_num.len());
+        }
+    }
+}
+
 /// Parse month abbreviation to ordinal (1-12, 0 for unknown)
 fn month_ordinal(s: &str) -> u32 {
     match s.trim().to_uppercase().as_str() {
@@ -122,6 +191,7 @@ impl Builtin for Sort {
         let mut check_sorted = false;
         let mut human_numeric = false;
         let mut month_sort = false;
+        let mut version_sort = false;
         let mut merge = false;
         let mut delimiter: Option<char> = None;
         let mut key_field: Option<usize> = None;
@@ -146,7 +216,7 @@ impl Builtin for Sort {
             } else if let Some(val) = p.flag_value_opt("-o") {
                 output_file = Some(val.to_string());
             } else {
-                let flags = p.bool_flags("rnufscChMmz");
+                let flags = p.bool_flags("rnufscChMmVz");
                 if !flags.is_empty() {
                     for c in flags {
                         match c {
@@ -157,6 +227,7 @@ impl Builtin for Sort {
                             's' => stable = true,
                             'c' | 'C' => check_sorted = true,
                             'h' => human_numeric = true,
+                            'V' => version_sort = true,
                             'M' => month_sort = true,
                             'm' => merge = true,
                             'z' => zero_terminated = true,
@@ -292,7 +363,9 @@ impl Builtin for Sort {
         let sort_fn = |a: &String, b: &String| -> std::cmp::Ordering {
             let ka = get_key(a);
             let kb = get_key(b);
-            if human_numeric {
+            if version_sort {
+                version_cmp(&ka, &kb)
+            } else if human_numeric {
                 let na = parse_human_numeric(&ka);
                 let nb = parse_human_numeric(&kb);
                 na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)

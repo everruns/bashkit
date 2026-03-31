@@ -332,3 +332,50 @@ printf '003\n010\n001\n' | sort -n
 003
 010
 ### end
+
+### sort_version_basic
+# sort -V with version numbers
+printf '1.10\n1.2\n1.1\n' | sort -V
+### expect
+1.1
+1.2
+1.10
+### end
+
+### sort_version_semver
+# sort -V with semantic versions
+printf 'v2.0.1\nv1.9.0\nv2.0.0\nv1.10.0\n' | sort -V
+### expect
+v1.9.0
+v1.10.0
+v2.0.0
+v2.0.1
+### end
+
+### sort_version_files
+# sort -V with filenames containing version numbers
+printf 'file-1.10.txt\nfile-1.2.txt\nfile-1.1.txt\n' | sort -V
+### expect
+file-1.1.txt
+file-1.2.txt
+file-1.10.txt
+### end
+
+### sort_version_reverse
+# sort -rV reverse version sort
+printf '1.1\n1.10\n1.2\n' | sort -rV
+### expect
+1.10
+1.2
+1.1
+### end
+
+### sort_version_mixed
+# sort -V with mixed content
+printf 'a1\na10\na2\na20\n' | sort -V
+### expect
+a1
+a2
+a10
+a20
+### end
