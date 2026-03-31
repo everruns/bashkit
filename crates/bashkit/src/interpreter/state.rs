@@ -11,6 +11,8 @@ pub enum ControlFlow {
     Continue(u32),
     /// Return from a function (with exit code)
     Return(i32),
+    /// Exit the shell (with exit code)
+    Exit(i32),
 }
 
 /// Structured side-effect channel for builtins that need to communicate
@@ -174,6 +176,7 @@ impl LoopAccumulator {
             ControlFlow::Return(code) => {
                 LoopAction::Exit(self.build_exit(ControlFlow::Return(code)))
             }
+            ControlFlow::Exit(code) => LoopAction::Exit(self.build_exit(ControlFlow::Exit(code))),
             ControlFlow::None => LoopAction::None,
         }
     }
@@ -193,7 +196,7 @@ impl LoopAccumulator {
     /// Build an exit result, draining accumulated stdout/stderr.
     fn build_exit(&mut self, control_flow: ControlFlow) -> ExecResult {
         let exit_code = match control_flow {
-            ControlFlow::Return(code) => code,
+            ControlFlow::Return(code) | ControlFlow::Exit(code) => code,
             _ => self.exit_code,
         };
         ExecResult {

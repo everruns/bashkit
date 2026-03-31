@@ -56,9 +56,11 @@ impl Builtin for Exit {
             .unwrap_or(0)
             & 0xFF;
 
-        // For now, we just return the exit code
-        // In a full implementation, this would terminate the shell
-        Ok(ExecResult::err(String::new(), exit_code))
+        Ok(ExecResult {
+            exit_code,
+            control_flow: ControlFlow::Exit(exit_code),
+            ..Default::default()
+        })
     }
 }
 

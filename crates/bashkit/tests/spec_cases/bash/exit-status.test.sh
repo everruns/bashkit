@@ -168,3 +168,74 @@ false || false; echo $?
 1
 0
 ### end
+
+### exit_in_if_block
+# exit inside if block terminates script
+if true; then echo before; exit 0; fi
+echo SHOULD_NOT_REACH
+### expect
+before
+### end
+
+### exit_in_if_block_with_code
+# exit with non-zero code inside if block
+if true; then exit 42; fi
+echo SHOULD_NOT_REACH
+### exit_code: 42
+### expect
+### end
+
+### exit_in_while_loop
+# exit inside while loop terminates script
+i=0
+while true; do
+  echo "iter $i"
+  if [ "$i" -eq 1 ]; then exit 0; fi
+  i=$((i + 1))
+done
+echo SHOULD_NOT_REACH
+### expect
+iter 0
+iter 1
+### end
+
+### exit_in_for_loop
+# exit inside for loop terminates script
+for x in a b c; do
+  echo "$x"
+  if [ "$x" = "b" ]; then exit 5; fi
+done
+echo SHOULD_NOT_REACH
+### exit_code: 5
+### expect
+a
+b
+### end
+
+### exit_in_case_block
+# exit inside case block terminates script
+case "yes" in
+  yes) echo matched; exit 0 ;;
+esac
+echo SHOULD_NOT_REACH
+### expect
+matched
+### end
+
+### exit_in_subshell_does_not_propagate
+# exit inside subshell only terminates the subshell
+(exit 7)
+echo "after subshell: $?"
+### expect
+after subshell: 7
+### end
+
+### exit_in_function
+# exit inside function terminates the whole script
+f() { echo in_func; exit 3; }
+f
+echo SHOULD_NOT_REACH
+### exit_code: 3
+### expect
+in_func
+### end
