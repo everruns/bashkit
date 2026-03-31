@@ -86,4 +86,110 @@ impl Error {
             column: 0,
         }
     }
+
+    /// THREAT[TM-INF-016]: Create an I/O error with sanitized message.
+    /// Strips host-internal paths from the error message to prevent information
+    /// leakage to the sandbox guest.
+    pub fn io_sanitized(err: std::io::Error) -> Self {
+        Self::Io(std::io::Error::new(
+            err.kind(),
+            sanitize_error_message(&err.to_string()),
+        ))
+    }
+
+    /// THREAT[TM-INF-016]: Create a network error with sanitized message.
+    /// Strips resolved IPs, TLS details, and DNS info from reqwest errors.
+    pub fn network_sanitized(context: &str, err: &dyn std::fmt::Display) -> Self {
+        Self::Network(format!(
+            "{}: {}",
+            context,
+            sanitize_error_message(&err.to_string())
+        ))
+    }
+}
+
+/// THREAT[TM-INF-016]: Sanitize error messages to prevent information leakage.
+/// Strips:
+/// - Host filesystem paths (anything starting with /)
+/// - Resolved IP addresses (IPv4 and IPv6)
+/// - TLS/SSL negotiation details
+fn sanitize_error_message(msg: &str) -> String {
+    use std::sync::LazyLock;
+
+    static PATH_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(
+            r#"(/(?:home|usr|var|etc|opt|root|proc|sys|run|snap|nix|mnt|media)[/][^\s:"']+)"#,
+        )
+        .expect("path regex")
+    });
+    static IPV4_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?\b").expect("ipv4 regex")
+    });
+    static IPV6_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"\[?[0-9a-fA-F:]{3,39}\]?(:\d+)?").expect("ipv6 regex")
+    });
+    static TLS_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?i)(ssl|tls)\s*(handshake|negotiation|error|alert)[^.;]*[.;]?")
+            .expect("tls regex")
+    });
+
+    let mut result = msg.to_string();
+
+    // Strip absolute host paths (preserve VFS paths like /tmp, /dev/null)
+    result = PATH_RE.replace_all(&result, "<path>").to_string();
+
+    // Strip IPv4 addresses
+    result = IPV4_RE.replace_all(&result, "<address>").to_string();
+
+    // Strip IPv6 addresses (only if :: present to avoid false positives)
+    if result.contains("::") {
+        result = IPV6_RE.replace_all(&result, "<address>").to_string();
+    }
+
+    // Strip TLS/SSL handshake details
+    result = TLS_RE.replace_all(&result, "<tls-error>").to_string();
+
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_strips_host_paths() {
+        let msg = "No such file: /home/user/.config/bashkit/settings.json";
+        let sanitized = sanitize_error_message(msg);
+        assert!(!sanitized.contains("/home/user"));
+        assert!(sanitized.contains("<path>"));
+    }
+
+    #[test]
+    fn sanitize_strips_ipv4() {
+        let msg = "connection refused: 192.168.1.100:8080";
+        let sanitized = sanitize_error_message(msg);
+        assert!(!sanitized.contains("192.168"));
+        assert!(sanitized.contains("<address>"));
+    }
+
+    #[test]
+    fn sanitize_strips_tls_details() {
+        let msg = "SSL handshake failed with cipher TLS_AES_256_GCM;";
+        let sanitized = sanitize_error_message(msg);
+        assert!(!sanitized.contains("cipher"));
+        assert!(sanitized.contains("<tls-error>"));
+    }
+
+    #[test]
+    fn sanitize_preserves_safe_paths() {
+        let msg = "file not found: /tmp/script.sh";
+        let sanitized = sanitize_error_message(msg);
+        assert!(sanitized.contains("/tmp/script.sh"));
+    }
+
+    #[test]
+    fn sanitize_preserves_generic_messages() {
+        let msg = "operation timed out";
+        assert_eq!(sanitize_error_message(msg), msg);
+    }
 }

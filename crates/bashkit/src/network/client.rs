@@ -217,7 +217,7 @@ impl HttpClient {
         let response = request
             .send()
             .await
-            .map_err(|e| Error::Network(format!("request failed: {}", e)))?;
+            .map_err(|e| Error::network_sanitized("request failed", &e))?;
 
         // Extract response data
         let status = response.status().as_u16();
@@ -259,7 +259,7 @@ impl HttpClient {
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result
-                .map_err(|e| Error::Network(format!("failed to read response chunk: {}", e)))?;
+                .map_err(|e| Error::network_sanitized("failed to read response chunk", &e))?;
 
             // Check if adding this chunk would exceed the limit
             if body.len() + chunk.len() > self.max_response_bytes {
@@ -367,7 +367,7 @@ impl HttpClient {
                 |s| Duration::from_secs(clamp_timeout(s)),
             );
             build_client(timeout, Some(connect_timeout))
-                .map_err(|e| Error::Network(format!("failed to create client: {}", e)))?
+                .map_err(|e| Error::network_sanitized("failed to create client", &e))?
         } else {
             self.client()?.clone()
         };
@@ -390,7 +390,7 @@ impl HttpClient {
             if e.is_timeout() {
                 Error::Network("operation timed out".to_string())
             } else {
-                Error::Network(format!("request failed: {}", e))
+                Error::network_sanitized("request failed", &e)
             }
         })?;
 
