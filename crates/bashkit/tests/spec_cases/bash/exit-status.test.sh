@@ -239,3 +239,27 @@ echo SHOULD_NOT_REACH
 ### expect
 in_func
 ### end
+
+### if_condition_stdout
+# stdout from if condition is preserved
+if echo "from_condition"; then echo "from_body"; fi
+### expect
+from_condition
+from_body
+### end
+
+### if_negated_condition_stdout
+# stdout from negated if condition
+if ! echo "negated"; then echo "no"; else echo "yes"; fi
+### expect
+negated
+yes
+### end
+
+### if_condition_pipeline_stdout
+# stdout from pipeline in if condition
+if echo "hello" | cat; then echo "ok"; fi
+### expect
+hello
+ok
+### end
