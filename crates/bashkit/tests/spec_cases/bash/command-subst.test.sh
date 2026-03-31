@@ -223,3 +223,33 @@ trap - EXIT
 result=[inner
 CHILD]
 ### end
+
+### subst_function_isolation
+# Functions defined in $() should not leak to parent shell
+x=$(function foo() { echo "sub"; }; echo "ok")
+echo "$x"
+foo 2>/dev/null
+echo "exit=$?"
+### expect
+ok
+exit=127
+### end
+
+### subst_variable_isolation
+# Variables set in $() should not leak to parent shell
+myvar="before"
+x=$(myvar="inside"; echo "ok")
+echo "$x"
+echo "$myvar"
+### expect
+ok
+before
+### end
+
+### subst_alias_isolation
+# Aliases set in $() should not leak to parent shell
+x=$(alias myalias='echo aliased' 2>/dev/null; echo "ok")
+echo "$x"
+### expect
+ok
+### end
