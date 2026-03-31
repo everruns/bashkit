@@ -1408,6 +1408,14 @@ impl Interpreter {
                 self.last_exit_code = saved_exit;
                 self.aliases = saved_aliases;
                 self.coproc_buffers = saved_coproc;
+                // Consume Exit control flow at subshell boundary — in bash,
+                // exit in a subshell only terminates the subshell.
+                if let Ok(ref mut res) = result
+                    && let ControlFlow::Exit(code) = res.control_flow
+                {
+                    res.exit_code = code;
+                    res.control_flow = ControlFlow::None;
+                }
                 result
             }
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
@@ -1422,29 +1430,69 @@ impl Interpreter {
 
     /// Execute an if statement
     async fn execute_if(&mut self, if_cmd: &IfCommand) -> Result<ExecResult> {
+        // Accumulate stdout/stderr from all condition evaluations
+        let mut cond_stdout = String::new();
+        let mut cond_stderr = String::new();
+
         // Execute condition (no errexit checking - conditions are expected to fail)
         let condition_result = self.execute_condition_sequence(&if_cmd.condition).await?;
+        cond_stdout.push_str(&condition_result.stdout);
+        cond_stderr.push_str(&condition_result.stderr);
+
+        // Propagate exit control flow from condition
+        if let ControlFlow::Exit(_) = condition_result.control_flow {
+            return Ok(ExecResult {
+                stdout: cond_stdout,
+                stderr: cond_stderr,
+                ..condition_result
+            });
+        }
 
         if condition_result.exit_code == 0 {
             // Condition succeeded, execute then branch
-            return self.execute_command_sequence(&if_cmd.then_branch).await;
+            let mut result = self.execute_command_sequence(&if_cmd.then_branch).await?;
+            result.stdout = cond_stdout + &result.stdout;
+            result.stderr = cond_stderr + &result.stderr;
+            return Ok(result);
         }
 
         // Check elif branches
         for (elif_condition, elif_body) in &if_cmd.elif_branches {
             let elif_result = self.execute_condition_sequence(elif_condition).await?;
+            cond_stdout.push_str(&elif_result.stdout);
+            cond_stderr.push_str(&elif_result.stderr);
+
+            if let ControlFlow::Exit(_) = elif_result.control_flow {
+                return Ok(ExecResult {
+                    stdout: cond_stdout,
+                    stderr: cond_stderr,
+                    ..elif_result
+                });
+            }
+
             if elif_result.exit_code == 0 {
-                return self.execute_command_sequence(elif_body).await;
+                let mut result = self.execute_command_sequence(elif_body).await?;
+                result.stdout = cond_stdout + &result.stdout;
+                result.stderr = cond_stderr + &result.stderr;
+                return Ok(result);
             }
         }
 
         // Execute else branch if present
         if let Some(else_branch) = &if_cmd.else_branch {
-            return self.execute_command_sequence(else_branch).await;
+            let mut result = self.execute_command_sequence(else_branch).await?;
+            result.stdout = cond_stdout + &result.stdout;
+            result.stderr = cond_stderr + &result.stderr;
+            return Ok(result);
         }
 
-        // No branch executed, return success
-        Ok(ExecResult::ok(String::new()))
+        // No branch executed, return condition output with success exit code
+        Ok(ExecResult {
+            stdout: cond_stdout,
+            stderr: cond_stderr,
+            exit_code: 0,
+            ..Default::default()
+        })
     }
 
     /// Execute a for loop
@@ -1677,6 +1725,15 @@ impl Interpreter {
                         stderr,
                         exit_code: code,
                         control_flow: ControlFlow::Return(code),
+                        ..Default::default()
+                    });
+                }
+                ControlFlow::Exit(code) => {
+                    return Ok(ExecResult {
+                        stdout,
+                        stderr,
+                        exit_code: code,
+                        control_flow: ControlFlow::Exit(code),
                         ..Default::default()
                     });
                 }
@@ -5880,6 +5937,10 @@ impl Interpreter {
                         let cmd_result = self.execute_command(cmd).await?;
                         stdout.push_str(&cmd_result.stdout);
                         self.last_exit_code = cmd_result.exit_code;
+                        // Exit in command substitution stops further commands
+                        if matches!(cmd_result.control_flow, ControlFlow::Exit(_)) {
+                            break;
+                        }
                     }
                     // Fire EXIT trap set inside the command substitution
                     if let Some(trap_cmd) = self.traps.get("EXIT").cloned()
