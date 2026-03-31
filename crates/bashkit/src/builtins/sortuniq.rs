@@ -56,7 +56,8 @@ impl KeySpec {
             let (f, c, fl) = Self::parse_field_spec(ep);
             (f, c, fl)
         } else {
-            (0, 0, String::new())
+            // No comma: -k2 means "field 2 only" (same as -k2,2)
+            (start_field, 0, String::new())
         };
 
         // Merge flags from both start and end parts
