@@ -40,3 +40,49 @@ ls /tmp/lssingle/test.txt
 ### expect
 /tmp/lssingle/test.txt
 ### end
+
+### ls_classify_directory
+# ls -F should append / to directories
+mkdir -p /tmp/lsclass/subdir
+echo x > /tmp/lsclass/file.txt
+ls -F /tmp/lsclass
+### expect
+file.txt
+subdir/
+### end
+
+### ls_classify_executable
+# ls -F should append * to executable files
+mkdir -p /tmp/lsexec
+echo x > /tmp/lsexec/script.sh
+chmod 755 /tmp/lsexec/script.sh
+echo y > /tmp/lsexec/data.txt
+ls -F /tmp/lsexec
+### expect
+data.txt
+script.sh*
+### end
+
+### ls_classify_file_arg
+# ls -F with file argument should append indicator
+mkdir -p /tmp/lscf
+mkdir -p /tmp/lscf/mydir
+echo x > /tmp/lscf/normal.txt
+ls -F /tmp/lscf/mydir /tmp/lscf/normal.txt
+### expect
+/tmp/lscf/normal.txt
+
+/tmp/lscf/mydir:
+### end
+
+### ls_classify_long
+### bash_diff: bashkit ls -l omits 'total' line
+# ls -lF should append indicators in long format
+mkdir -p /tmp/lslf
+mkdir -p /tmp/lslf/sub
+echo x > /tmp/lslf/file.txt
+ls -lF /tmp/lslf | grep -v "^total" | awk '{print $NF}'
+### expect
+file.txt
+sub/
+### end
