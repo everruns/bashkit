@@ -400,7 +400,7 @@ All execution stays within the virtual interpreter — no OS subprocess is spawn
 | TM-INF-013 | Host env leak via jq | jq now uses custom `$__bashkit_env__` variable, not `std::env` | — | **FIXED** (2026-03 audit verified) |
 | TM-INF-014 | Real PID leak via $$ | `$$` now returns virtual PID (1) instead of real process ID | — | **FIXED** (2026-03 audit verified) |
 | TM-INF-015 | URL credentials in errors | Allowlist "blocked" error echoes full URL including credentials | — | **OPEN** |
-| TM-INF-016 | Internal state in error messages | `std::io::Error`, reqwest errors, Debug-formatted errors leak host paths/IPs/TLS info | — | **OPEN** |
+| TM-INF-016 | Internal state in error messages | `std::io::Error`, reqwest errors, Debug-formatted errors leak host paths/IPs/TLS info | `sanitize_error_message()` strips paths/IPs/TLS; `Error::network_sanitized()` wraps reqwest | **FIXED** |
 | TM-INF-019 | `envsubst` exposes all env vars | `envsubst` substitutes `$VAR`/`${VAR}` from `ctx.env` — scripts can probe any env var | Same as TM-INF-001 (caller controls env) | **CALLER RISK** |
 | TM-INF-020 | `template` exposes env vars via `{{var}}` | Template builtin looks up variables from env as fallback after shell vars and JSON data | Same as TM-INF-001 (caller controls env) | **CALLER RISK** |
 
@@ -1291,7 +1291,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Python config preservation on reset | TM-PY-026 | Store and reapply builder config | **NEEDED** |
 | JSON conversion depth limit | TM-PY-027 | Depth counter in `py_to_json`/`json_to_py` | **NEEDED** |
 | Cyclic nameref detection | TM-INJ-011 | Track visited names, emit error on cycle | **NEEDED** |
-| Error message sanitization gaps | TM-INF-016 | Consistent Display format, wrap external errors | **NEEDED** |
+| Error message sanitization gaps | TM-INF-016 | Consistent Display format, wrap external errors | **DONE** |
 | 32-bit integer safety | TM-DOS-040 | `usize::try_from()` for `u64` casts | **NEEDED** |
 
 ### Open Controls (From 2026-03 Deep Audit)
