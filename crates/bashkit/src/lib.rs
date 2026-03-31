@@ -421,7 +421,8 @@ pub use builtins::{Builtin, Context as BuiltinContext};
 pub use error::{Error, Result};
 pub use fs::{
     DirEntry, FileSystem, FileSystemExt, FileType, FsBackend, FsLimitExceeded, FsLimits, FsUsage,
-    InMemoryFs, Metadata, MountableFs, OverlayFs, PosixFs, SearchCapabilities, SearchCapable,
+    InMemoryFs, LazyLoader, Metadata, MountableFs, OverlayFs, PosixFs, SearchCapabilities,
+    SearchCapable,
     SearchMatch, SearchProvider, SearchQuery, SearchResults, VfsSnapshot, normalize_path,
     verify_filesystem_requirements,
 };
@@ -973,6 +974,13 @@ struct MountedFile {
     mode: u32,
 }
 
+struct MountedLazyFile {
+    path: PathBuf,
+    size_hint: u64,
+    mode: u32,
+    loader: LazyLoader,
+}
+
 /// A real host directory to mount in the VFS during builder construction.
 #[cfg(feature = "realfs")]
 struct MountedRealDir {
@@ -1001,6 +1009,8 @@ pub struct BashBuilder {
     custom_builtins: HashMap<String, Box<dyn Builtin>>,
     /// Files to mount in the virtual filesystem
     mounted_files: Vec<MountedFile>,
+    /// Lazy files to mount (loaded on first read)
+    mounted_lazy_files: Vec<MountedLazyFile>,
     /// Network allowlist for curl/wget builtins
     #[cfg(feature = "http_client")]
     network_allowlist: Option<NetworkAllowlist>,
@@ -1491,6 +1501,46 @@ impl BashBuilder {
         self
     }
 
+    /// Mount a lazy file whose content is loaded on first read.
+    ///
+    /// The `loader` closure is called at most once when the file is first read.
+    /// If the file is overwritten before being read, the loader is never called.
+    /// `stat()` returns metadata using `size_hint` without triggering the load.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::Bash;
+    /// use std::sync::Arc;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::builder()
+    ///     .mount_lazy("/data/large.csv", 1024, Arc::new(|| {
+    ///         b"id,name\n1,Alice\n".to_vec()
+    ///     }))
+    ///     .build();
+    ///
+    /// let result = bash.exec("cat /data/large.csv").await?;
+    /// assert_eq!(result.stdout, "id,name\n1,Alice\n");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn mount_lazy(
+        mut self,
+        path: impl Into<PathBuf>,
+        size_hint: u64,
+        loader: LazyLoader,
+    ) -> Self {
+        self.mounted_lazy_files.push(MountedLazyFile {
+            path: path.into(),
+            size_hint,
+            mode: 0o644,
+            loader,
+        });
+        self
+    }
+
     /// Mount a real host directory as a readonly overlay at the VFS root.
     ///
     /// Files from `host_path` become visible at the same paths inside the VFS.
@@ -1644,16 +1694,21 @@ impl BashBuilder {
         #[cfg(feature = "realfs")]
         let base_fs = Self::apply_real_mounts(&self.real_mounts, base_fs);
 
-        // Layer 2: If there are mounted text files, wrap in an OverlayFs
-        let base_fs: Arc<dyn FileSystem> = if self.mounted_files.is_empty() {
-            base_fs
-        } else {
+        // Layer 2: If there are mounted text/lazy files, wrap in an OverlayFs
+        let has_mounts = !self.mounted_files.is_empty() || !self.mounted_lazy_files.is_empty();
+        let base_fs: Arc<dyn FileSystem> = if has_mounts {
             let overlay = OverlayFs::new(base_fs);
-            // Add mounted files to the overlay layer
             for mf in &self.mounted_files {
                 overlay.upper().add_file(&mf.path, &mf.content, mf.mode);
             }
+            for lf in self.mounted_lazy_files {
+                overlay
+                    .upper()
+                    .add_lazy_file(&lf.path, lf.size_hint, lf.mode, lf.loader);
+            }
             Arc::new(overlay)
+        } else {
+            base_fs
         };
 
         // Layer 3: Wrap in MountableFs for post-build live mount/unmount

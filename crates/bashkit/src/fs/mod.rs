@@ -408,7 +408,7 @@ mod traits;
 
 pub use backend::FsBackend;
 pub use limits::{FsLimitExceeded, FsLimits, FsUsage};
-pub use memory::{InMemoryFs, VfsSnapshot};
+pub use memory::{InMemoryFs, LazyLoader, VfsSnapshot};
 pub use mountable::MountableFs;
 pub use overlay::OverlayFs;
 pub use posix::PosixFs;

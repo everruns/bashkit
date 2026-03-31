@@ -42,7 +42,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 
 use super::limits::{FsLimits, FsUsage};
@@ -170,10 +170,24 @@ pub struct InMemoryFs {
     limits: FsLimits,
 }
 
-#[derive(Debug, Clone)]
+/// Lazy file content loader type.
+///
+/// Called at most once when the file is first read. The loader is never called
+/// if the file is overwritten before being read.
+pub type LazyLoader = Arc<dyn Fn() -> Vec<u8> + Send + Sync>;
+
 enum FsEntry {
     File {
         content: Vec<u8>,
+        metadata: Metadata,
+    },
+    /// A file whose content is loaded on first read.
+    ///
+    /// `stat()` returns metadata without triggering the load.
+    /// On first `read_file()`, the loader is called and the entry is replaced
+    /// with a regular `File`. If written before read, the loader is never called.
+    LazyFile {
+        loader: LazyLoader,
         metadata: Metadata,
     },
     Directory {
@@ -187,6 +201,61 @@ enum FsEntry {
         content: Vec<u8>,
         metadata: Metadata,
     },
+}
+
+impl Clone for FsEntry {
+    fn clone(&self) -> Self {
+        match self {
+            Self::File { content, metadata } => Self::File {
+                content: content.clone(),
+                metadata: metadata.clone(),
+            },
+            Self::LazyFile { loader, metadata } => Self::LazyFile {
+                loader: Arc::clone(loader),
+                metadata: metadata.clone(),
+            },
+            Self::Directory { metadata } => Self::Directory {
+                metadata: metadata.clone(),
+            },
+            Self::Symlink { target, metadata } => Self::Symlink {
+                target: target.clone(),
+                metadata: metadata.clone(),
+            },
+            Self::Fifo { content, metadata } => Self::Fifo {
+                content: content.clone(),
+                metadata: metadata.clone(),
+            },
+        }
+    }
+}
+
+impl std::fmt::Debug for FsEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::File { content, metadata } => f
+                .debug_struct("File")
+                .field("content_len", &content.len())
+                .field("metadata", metadata)
+                .finish(),
+            Self::LazyFile { metadata, .. } => f
+                .debug_struct("LazyFile")
+                .field("metadata", metadata)
+                .finish(),
+            Self::Directory { metadata } => {
+                f.debug_struct("Directory").field("metadata", metadata).finish()
+            }
+            Self::Symlink { target, metadata } => f
+                .debug_struct("Symlink")
+                .field("target", target)
+                .field("metadata", metadata)
+                .finish(),
+            Self::Fifo { content, metadata } => f
+                .debug_struct("Fifo")
+                .field("content_len", &content.len())
+                .field("metadata", metadata)
+                .finish(),
+        }
+    }
 }
 
 /// A snapshot of the virtual filesystem state.
@@ -423,6 +492,11 @@ impl InMemoryFs {
                 FsEntry::Directory { .. } => {
                     dir_count += 1;
                 }
+                FsEntry::LazyFile { metadata, .. } => {
+                    // Lazy files count by their declared metadata size
+                    total_bytes += metadata.size;
+                    file_count += 1;
+                }
                 FsEntry::Symlink { .. } => {
                     // THREAT[TM-DOS-045]: Symlinks count toward file count
                     file_count += 1;
@@ -517,7 +591,24 @@ impl InMemoryFs {
     /// # }
     /// ```
     pub fn snapshot(&self) -> VfsSnapshot {
-        let entries = self.entries.read().unwrap();
+        // Use write lock to materialize any lazy files before snapshotting
+        let mut entries = self.entries.write().unwrap();
+
+        // Materialize all lazy files
+        let lazy_paths: Vec<PathBuf> = entries
+            .iter()
+            .filter(|(_, e)| matches!(e, FsEntry::LazyFile { .. }))
+            .map(|(p, _)| p.clone())
+            .collect();
+        for path in lazy_paths {
+            if let Some(FsEntry::LazyFile { loader, metadata }) = entries.remove(&path) {
+                let content = loader();
+                let mut metadata = metadata;
+                metadata.size = content.len() as u64;
+                entries.insert(path, FsEntry::File { content, metadata });
+            }
+        }
+
         let mut files = Vec::new();
 
         for (path, entry) in entries.iter() {
@@ -530,6 +621,10 @@ impl InMemoryFs {
                         },
                         mode: metadata.mode,
                     });
+                }
+                FsEntry::LazyFile { .. } => {
+                    // All lazy files were materialized above
+                    unreachable!()
                 }
                 FsEntry::Directory { metadata } => {
                     files.push(VfsEntry {
@@ -780,6 +875,78 @@ impl InMemoryFs {
             },
         );
     }
+
+    /// Add a lazy file whose content is loaded on first read.
+    ///
+    /// The `loader` closure is called at most once when the file is first read.
+    /// If the file is overwritten before being read, the loader is never called.
+    /// `stat()` returns metadata without triggering the load.
+    ///
+    /// `size_hint` is used for metadata and resource-limit accounting before
+    /// the content is actually loaded.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::InMemoryFs;
+    /// use std::sync::Arc;
+    ///
+    /// let fs = InMemoryFs::new();
+    /// fs.add_lazy_file("/data/large.bin", 1024, 0o644, Arc::new(|| {
+    ///     vec![0u8; 1024]
+    /// }));
+    /// ```
+    pub fn add_lazy_file(
+        &self,
+        path: impl AsRef<Path>,
+        size_hint: u64,
+        mode: u32,
+        loader: LazyLoader,
+    ) {
+        let path = Self::normalize_path(path.as_ref());
+
+        if self.limits.validate_path(&path).is_err() {
+            return;
+        }
+
+        let mut entries = self.entries.write().unwrap();
+
+        // Ensure parent directories exist
+        if let Some(parent) = path.parent() {
+            let mut current = PathBuf::from("/");
+            for component in parent.components().skip(1) {
+                current.push(component);
+                if !entries.contains_key(&current) {
+                    entries.insert(
+                        current.clone(),
+                        FsEntry::Directory {
+                            metadata: Metadata {
+                                file_type: FileType::Directory,
+                                size: 0,
+                                mode: 0o755,
+                                modified: SystemTime::now(),
+                                created: SystemTime::now(),
+                            },
+                        },
+                    );
+                }
+            }
+        }
+
+        entries.insert(
+            path,
+            FsEntry::LazyFile {
+                loader,
+                metadata: Metadata {
+                    file_type: FileType::File,
+                    size: size_hint,
+                    mode,
+                    modified: SystemTime::now(),
+                    created: SystemTime::now(),
+                },
+            },
+        );
+    }
 }
 
 #[async_trait]
@@ -818,13 +985,52 @@ impl FileSystem for InMemoryFs {
             return Ok(Self::generate_random_bytes());
         }
 
-        let entries = self.entries.read().unwrap();
-
-        match entries.get(&path) {
-            Some(FsEntry::File { content, .. }) | Some(FsEntry::Fifo { content, .. }) => {
-                Ok(content.clone())
+        // First try with a read lock for the common (non-lazy) case
+        {
+            let entries = self.entries.read().unwrap();
+            match entries.get(&path) {
+                Some(FsEntry::File { content, .. }) | Some(FsEntry::Fifo { content, .. }) => {
+                    return Ok(content.clone());
+                }
+                Some(FsEntry::Directory { .. }) => {
+                    return Err(IoError::other("is a directory").into());
+                }
+                Some(FsEntry::Symlink { .. }) => {
+                    return Err(
+                        IoError::new(ErrorKind::NotFound, "file not found").into(),
+                    );
+                }
+                Some(FsEntry::LazyFile { .. }) => {
+                    // Need write lock to materialize — fall through
+                }
+                None => {
+                    return Err(IoError::new(ErrorKind::NotFound, "file not found").into());
+                }
             }
-            Some(FsEntry::Directory { .. }) => Err(IoError::other("is a directory").into()),
+        }
+
+        // Materialize lazy file: acquire write lock
+        let mut entries = self.entries.write().unwrap();
+        match entries.get(&path) {
+            Some(FsEntry::LazyFile { .. }) => {
+                // Extract loader, call it, replace entry
+                if let Some(FsEntry::LazyFile { loader, metadata }) = entries.remove(&path) {
+                    let content = loader();
+                    let mut metadata = metadata;
+                    metadata.size = content.len() as u64;
+                    let result = content.clone();
+                    entries.insert(path, FsEntry::File { content, metadata });
+                    return Ok(result);
+                }
+                unreachable!()
+            }
+            // Another thread may have materialized it between lock releases
+            Some(FsEntry::File { content, .. }) | Some(FsEntry::Fifo { content, .. }) => {
+                return Ok(content.clone());
+            }
+            Some(FsEntry::Directory { .. }) => {
+                return Err(IoError::other("is a directory").into());
+            }
             Some(FsEntry::Symlink { .. }) => {
                 // Symlinks are intentionally not followed for security (TM-ESC-002, TM-DOS-011)
                 Err(IoError::new(ErrorKind::NotFound, "file not found").into())
@@ -975,6 +1181,22 @@ impl FileSystem for InMemoryFs {
                 );
                 return Ok(());
             }
+            Some(FsEntry::LazyFile { .. }) => {
+                // Materialize lazy file before appending
+                if let Some(FsEntry::LazyFile { loader, metadata }) = entries.remove(&path) {
+                    let loaded = loader();
+                    let mut metadata = metadata;
+                    metadata.size = loaded.len() as u64;
+                    entries.insert(
+                        path.clone(),
+                        FsEntry::File {
+                            content: loaded,
+                            metadata,
+                        },
+                    );
+                }
+                // Fall through to append logic below
+            }
             Some(FsEntry::File { .. } | FsEntry::Fifo { .. }) => {
                 // Fall through to append logic below
             }
@@ -1060,7 +1282,12 @@ impl FileSystem for InMemoryFs {
                     Some(FsEntry::Directory { .. }) => {
                         // Directory exists, continue to next component
                     }
-                    Some(FsEntry::File { .. } | FsEntry::Symlink { .. } | FsEntry::Fifo { .. }) => {
+                    Some(
+                        FsEntry::File { .. }
+                        | FsEntry::LazyFile { .. }
+                        | FsEntry::Symlink { .. }
+                        | FsEntry::Fifo { .. },
+                    ) => {
                         // File, symlink, or fifo exists at path - cannot create directory
                         return Err(IoError::new(ErrorKind::AlreadyExists, "file exists").into());
                     }
@@ -1144,7 +1371,12 @@ impl FileSystem for InMemoryFs {
                     entries.remove(&path);
                 }
             }
-            Some(FsEntry::File { .. } | FsEntry::Symlink { .. } | FsEntry::Fifo { .. }) => {
+            Some(
+                FsEntry::File { .. }
+                | FsEntry::LazyFile { .. }
+                | FsEntry::Symlink { .. }
+                | FsEntry::Fifo { .. },
+            ) => {
                 entries.remove(&path);
             }
             None => {
@@ -1164,6 +1396,7 @@ impl FileSystem for InMemoryFs {
 
         match entries.get(&path) {
             Some(FsEntry::File { metadata, .. })
+            | Some(FsEntry::LazyFile { metadata, .. })
             | Some(FsEntry::Directory { metadata })
             | Some(FsEntry::Symlink { metadata, .. })
             | Some(FsEntry::Fifo { metadata, .. }) => Ok(metadata.clone()),
@@ -1191,6 +1424,7 @@ impl FileSystem for InMemoryFs {
 
                         let metadata = match entry {
                             FsEntry::File { metadata, .. }
+                            | FsEntry::LazyFile { metadata, .. }
                             | FsEntry::Directory { metadata }
                             | FsEntry::Symlink { metadata, .. }
                             | FsEntry::Fifo { metadata, .. } => metadata.clone(),
@@ -1321,6 +1555,7 @@ impl FileSystem for InMemoryFs {
 
         match entries.get_mut(&path) {
             Some(FsEntry::File { metadata, .. })
+            | Some(FsEntry::LazyFile { metadata, .. })
             | Some(FsEntry::Directory { metadata })
             | Some(FsEntry::Symlink { metadata, .. })
             | Some(FsEntry::Fifo { metadata, .. }) => {
@@ -1973,5 +2208,96 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(content.len(), 8192);
+    }
+
+    #[tokio::test]
+    async fn test_lazy_file_read() {
+        let fs = InMemoryFs::new();
+        let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let called_clone = Arc::clone(&called);
+        fs.add_lazy_file(
+            "/tmp/lazy.txt",
+            5,
+            0o644,
+            Arc::new(move || {
+                called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                b"hello".to_vec()
+            }),
+        );
+
+        // stat should not trigger loading
+        let meta = fs.stat(Path::new("/tmp/lazy.txt")).await.unwrap();
+        assert_eq!(meta.file_type, FileType::File);
+        assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
+
+        // read triggers loading
+        let content = fs.read_file(Path::new("/tmp/lazy.txt")).await.unwrap();
+        assert_eq!(content, b"hello");
+        assert!(called.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn test_lazy_file_write_before_read_skips_loader() {
+        let fs = InMemoryFs::new();
+        let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let called_clone = Arc::clone(&called);
+        fs.add_lazy_file(
+            "/tmp/lazy.txt",
+            5,
+            0o644,
+            Arc::new(move || {
+                called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                b"lazy".to_vec()
+            }),
+        );
+
+        // write before read replaces the lazy entry
+        fs.write_file(Path::new("/tmp/lazy.txt"), b"eager")
+            .await
+            .unwrap();
+        let content = fs.read_file(Path::new("/tmp/lazy.txt")).await.unwrap();
+        assert_eq!(content, b"eager");
+        // loader was never called
+        assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn test_lazy_file_exists_and_readdir() {
+        let fs = InMemoryFs::new();
+        fs.add_lazy_file(
+            "/tmp/lazy.txt",
+            10,
+            0o644,
+            Arc::new(|| b"content".to_vec()),
+        );
+
+        assert!(fs.exists(Path::new("/tmp/lazy.txt")).await.unwrap());
+
+        let entries = fs.read_dir(Path::new("/tmp")).await.unwrap();
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"lazy.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_lazy_file_snapshot_materializes() {
+        let fs = InMemoryFs::new();
+        fs.add_lazy_file(
+            "/tmp/lazy.txt",
+            6,
+            0o644,
+            Arc::new(|| b"snappy".to_vec()),
+        );
+
+        let snapshot = fs.snapshot();
+        // After snapshot, the entry should be a regular file
+        let content = fs.read_file(Path::new("/tmp/lazy.txt")).await.unwrap();
+        assert_eq!(content, b"snappy");
+
+        // Verify snapshot contains the file
+        let has_file = snapshot
+            .entries
+            .iter()
+            .any(|e| e.path == Path::new("/tmp/lazy.txt"));
+        assert!(has_file);
     }
 }
