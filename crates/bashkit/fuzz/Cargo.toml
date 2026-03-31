@@ -45,3 +45,10 @@ path = "fuzz_targets/arithmetic_fuzz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "glob_fuzz"
+path = "fuzz_targets/glob_fuzz.rs"
+test = false
+doc = false
+bench = false

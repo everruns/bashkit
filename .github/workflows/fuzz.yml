@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [parser_fuzz, lexer_fuzz, arithmetic_fuzz]
+        target: [parser_fuzz, lexer_fuzz, arithmetic_fuzz, glob_fuzz]
 
     steps:
       - uses: actions/checkout@v6
