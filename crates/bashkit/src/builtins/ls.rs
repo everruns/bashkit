@@ -19,11 +19,12 @@ struct LsOptions {
     one_per_line: bool,
     recursive: bool,
     sort_by_time: bool,
+    classify: bool,
 }
 
 /// The ls builtin - list directory contents.
 ///
-/// Usage: ls [-l] [-a] [-h] [-1] [-R] [-t] [PATH...]
+/// Usage: ls [-l] [-a] [-h] [-1] [-R] [-t] [-F] [PATH...]
 ///
 /// Options:
 ///   -l   Use long listing format
@@ -32,6 +33,7 @@ struct LsOptions {
 ///   -1   One entry per line
 ///   -R   List subdirectories recursively
 ///   -t   Sort by modification time, newest first
+///   -F   Append indicator (/ for dirs, * for executables, @ for symlinks, | for FIFOs)
 pub struct Ls;
 
 #[async_trait]
@@ -44,12 +46,15 @@ impl Builtin for Ls {
             one_per_line: false,
             recursive: false,
             sort_by_time: false,
+            classify: false,
         };
 
         // Parse flags
         let mut paths: Vec<&str> = Vec::new();
         for arg in ctx.args {
-            if arg.starts_with('-') && arg.len() > 1 && !arg.starts_with("--") {
+            if arg == "--classify" {
+                opts.classify = true;
+            } else if arg.starts_with('-') && arg.len() > 1 && !arg.starts_with("--") {
                 for c in arg[1..].chars() {
                     match c {
                         'l' => opts.long = true,
@@ -58,6 +63,7 @@ impl Builtin for Ls {
                         '1' => opts.one_per_line = true,
                         'R' => opts.recursive = true,
                         't' => opts.sort_by_time = true,
+                        'F' => opts.classify = true,
                         _ => {
                             return Ok(ExecResult::err(
                                 format!("ls: invalid option -- '{}'\n", c),
@@ -114,9 +120,20 @@ impl Builtin for Ls {
         // Output file arguments first (preserving path as given by user)
         for (path_str, metadata) in &file_args {
             if opts.long {
-                output.push_str(&format_long_entry(path_str, metadata, opts.human));
+                let mut entry = format_long_entry(path_str, metadata, opts.human);
+                if opts.classify {
+                    // Insert suffix before the trailing newline
+                    let suffix = classify_suffix(metadata);
+                    if !suffix.is_empty() {
+                        entry.insert_str(entry.len() - 1, suffix);
+                    }
+                }
+                output.push_str(&entry);
             } else {
                 output.push_str(path_str);
+                if opts.classify {
+                    output.push_str(classify_suffix(metadata));
+                }
                 output.push('\n');
             }
         }
@@ -186,18 +203,14 @@ async fn list_directory(
 
     if opts.long {
         for entry in &filtered {
-            output.push_str(&format_long_entry(&entry.name, &entry.metadata, opts.human));
-            if opts.recursive && entry.metadata.file_type.is_dir() {
-                subdirs.push((
-                    path.join(&entry.name),
-                    format!("{}/{}", display_path, entry.name),
-                ));
+            let mut line = format_long_entry(&entry.name, &entry.metadata, opts.human);
+            if opts.classify {
+                let suffix = classify_suffix(&entry.metadata);
+                if !suffix.is_empty() {
+                    line.insert_str(line.len() - 1, suffix);
+                }
             }
-        }
-    } else if opts.one_per_line {
-        for entry in &filtered {
-            output.push_str(&entry.name);
-            output.push('\n');
+            output.push_str(&line);
             if opts.recursive && entry.metadata.file_type.is_dir() {
                 subdirs.push((
                     path.join(&entry.name),
@@ -206,9 +219,11 @@ async fn list_directory(
             }
         }
     } else {
-        // Simple columnar output (simplified - one per line for now)
         for entry in &filtered {
             output.push_str(&entry.name);
+            if opts.classify {
+                output.push_str(classify_suffix(&entry.metadata));
+            }
             output.push('\n');
             if opts.recursive && entry.metadata.file_type.is_dir() {
                 subdirs.push((
@@ -231,6 +246,20 @@ async fn list_directory(
     }
 
     Ok(())
+}
+
+/// Return the classify indicator character for a file type.
+/// `/` for directories, `*` for executables, `@` for symlinks, `|` for FIFOs.
+fn classify_suffix(metadata: &crate::fs::Metadata) -> &'static str {
+    match metadata.file_type {
+        FileType::Directory => "/",
+        FileType::Symlink => "@",
+        FileType::Fifo => "|",
+        FileType::File => {
+            // Executable if any execute bit is set
+            if metadata.mode & 0o111 != 0 { "*" } else { "" }
+        }
+    }
 }
 
 fn format_long_entry(name: &str, metadata: &crate::fs::Metadata, human: bool) -> String {
