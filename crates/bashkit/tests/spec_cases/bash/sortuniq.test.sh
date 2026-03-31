@@ -379,3 +379,49 @@ a2
 a10
 a20
 ### end
+
+### sort_key_end_field
+# sort -k with start,end field spec
+printf 'c 3\na 1\nb 2\n' | sort -k2,2
+### expect
+a 1
+b 2
+c 3
+### end
+
+### sort_key_numeric_per_key
+# sort -k with per-key numeric flag
+printf 'a 10\nb 2\nc 1\n' | sort -k2n,2
+### expect
+c 1
+b 2
+a 10
+### end
+
+### sort_key_multiple
+# sort with multiple -k keys (primary lexical, secondary numeric)
+printf 'b 2\na 10\na 2\nb 1\n' | sort -k1,1 -k2n,2
+### expect
+a 2
+a 10
+b 1
+b 2
+### end
+
+### sort_key_reverse_per_key
+# sort -k with per-key reverse flag
+printf 'a 1\nb 2\nc 3\n' | sort -k2r,2
+### expect
+c 3
+b 2
+a 1
+### end
+
+### sort_key_char_position
+# sort -k with character positions
+printf 'abc\naab\nabc\n' | sort -k1.2,1.2
+### expect
+aab
+abc
+abc
+### end
