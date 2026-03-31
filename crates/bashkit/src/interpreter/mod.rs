@@ -2071,34 +2071,63 @@ impl Interpreter {
 
         // Handle pre-increment/decrement: ++var or --var
         if let Some(stripped) = expr.strip_prefix("++") {
-            let var_name = stripped.trim();
-            let current = self.evaluate_arithmetic(var_name);
-            let new_value = current + 1;
-            self.set_variable(var_name.to_string(), new_value.to_string());
-            return new_value;
+            let trimmed = stripped.trim_start();
+            // Extract the variable name (leading identifier chars)
+            let var_end = trimmed
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .unwrap_or(trimmed.len());
+            let var_name = &trimmed[..var_end];
+            if !var_name.is_empty() && is_valid_var_name(var_name) {
+                let current = self.evaluate_arithmetic(var_name);
+                let new_value = current + 1;
+                self.set_variable(var_name.to_string(), new_value.to_string());
+                let rest = trimmed[var_end..].trim();
+                if rest.is_empty() {
+                    return new_value;
+                }
+                // Complex expression: substitute the incremented value and evaluate
+                // e.g. "++i > 3" → increment i, then evaluate "1 > 3"
+                let full_expr = format!("{new_value}{rest}");
+                return self.evaluate_arithmetic(&full_expr);
+            }
         }
         if let Some(stripped) = expr.strip_prefix("--") {
-            let var_name = stripped.trim();
-            let current = self.evaluate_arithmetic(var_name);
-            let new_value = current - 1;
-            self.set_variable(var_name.to_string(), new_value.to_string());
-            return new_value;
+            let trimmed = stripped.trim_start();
+            let var_end = trimmed
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .unwrap_or(trimmed.len());
+            let var_name = &trimmed[..var_end];
+            if !var_name.is_empty() && is_valid_var_name(var_name) {
+                let current = self.evaluate_arithmetic(var_name);
+                let new_value = current - 1;
+                self.set_variable(var_name.to_string(), new_value.to_string());
+                let rest = trimmed[var_end..].trim();
+                if rest.is_empty() {
+                    return new_value;
+                }
+                let full_expr = format!("{new_value}{rest}");
+                return self.evaluate_arithmetic(&full_expr);
+            }
         }
 
         // Handle post-increment/decrement: var++ or var--
         if let Some(stripped) = expr.strip_suffix("++") {
             let var_name = stripped.trim();
-            let current = self.evaluate_arithmetic(var_name);
-            let new_value = current + 1;
-            self.set_variable(var_name.to_string(), new_value.to_string());
-            return current; // Return old value for post-increment
+            if is_valid_var_name(var_name) {
+                let current = self.evaluate_arithmetic(var_name);
+                let new_value = current + 1;
+                self.set_variable(var_name.to_string(), new_value.to_string());
+                return current; // Return old value for post-increment
+            }
         }
         if let Some(stripped) = expr.strip_suffix("--") {
             let var_name = stripped.trim();
-            let current = self.evaluate_arithmetic(var_name);
-            let new_value = current - 1;
-            self.set_variable(var_name.to_string(), new_value.to_string());
-            return current; // Return old value for post-decrement
+            if is_valid_var_name(var_name) {
+                let current = self.evaluate_arithmetic(var_name);
+                let new_value = current - 1;
+                self.set_variable(var_name.to_string(), new_value.to_string());
+                return current; // Return old value for post-decrement
+            }
         }
 
         // No side effects, just evaluate
@@ -7182,8 +7211,9 @@ impl Interpreter {
                         break;
                     }
                 }
-                // Check for array access: name[expr]
+
                 if chars.peek() == Some(&'[') {
+                    // Check for array access: name[expr]
                     chars.next(); // consume '['
                     let mut index_expr = String::new();
                     let mut bracket_depth = 1;

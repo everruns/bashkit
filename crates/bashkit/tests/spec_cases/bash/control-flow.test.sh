@@ -468,3 +468,35 @@ echo "1" | select x in a b; do echo "$x"; done
 a
 
 ### end
+
+### arith_preincrement_and_break
+# (( ++i > N )) && break should only break when expression is true
+i=0
+while true; do
+  echo "iter $i"
+  (( ++i > 3 )) && break
+done
+echo "done"
+### expect
+iter 0
+iter 1
+iter 2
+iter 3
+done
+### end
+
+### arith_predecrement_and_break
+# (( --i < 0 )) && break should only break when expression is true
+i=3
+while true; do
+  echo "iter $i"
+  (( --i < 0 )) && break
+done
+echo "done"
+### expect
+iter 3
+iter 2
+iter 1
+iter 0
+done
+### end
