@@ -241,9 +241,10 @@ impl std::fmt::Debug for FsEntry {
                 .debug_struct("LazyFile")
                 .field("metadata", metadata)
                 .finish(),
-            Self::Directory { metadata } => {
-                f.debug_struct("Directory").field("metadata", metadata).finish()
-            }
+            Self::Directory { metadata } => f
+                .debug_struct("Directory")
+                .field("metadata", metadata)
+                .finish(),
             Self::Symlink { target, metadata } => f
                 .debug_struct("Symlink")
                 .field("target", target)
@@ -996,9 +997,7 @@ impl FileSystem for InMemoryFs {
                     return Err(IoError::other("is a directory").into());
                 }
                 Some(FsEntry::Symlink { .. }) => {
-                    return Err(
-                        IoError::new(ErrorKind::NotFound, "file not found").into(),
-                    );
+                    return Err(IoError::new(ErrorKind::NotFound, "file not found").into());
                 }
                 Some(FsEntry::LazyFile { .. }) => {
                     // Need write lock to materialize — fall through
@@ -2264,12 +2263,7 @@ mod tests {
     #[tokio::test]
     async fn test_lazy_file_exists_and_readdir() {
         let fs = InMemoryFs::new();
-        fs.add_lazy_file(
-            "/tmp/lazy.txt",
-            10,
-            0o644,
-            Arc::new(|| b"content".to_vec()),
-        );
+        fs.add_lazy_file("/tmp/lazy.txt", 10, 0o644, Arc::new(|| b"content".to_vec()));
 
         assert!(fs.exists(Path::new("/tmp/lazy.txt")).await.unwrap());
 
@@ -2281,12 +2275,7 @@ mod tests {
     #[tokio::test]
     async fn test_lazy_file_snapshot_materializes() {
         let fs = InMemoryFs::new();
-        fs.add_lazy_file(
-            "/tmp/lazy.txt",
-            6,
-            0o644,
-            Arc::new(|| b"snappy".to_vec()),
-        );
+        fs.add_lazy_file("/tmp/lazy.txt", 6, 0o644, Arc::new(|| b"snappy".to_vec()));
 
         let snapshot = fs.snapshot();
         // After snapshot, the entry should be a regular file
