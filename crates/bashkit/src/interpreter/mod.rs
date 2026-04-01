@@ -3121,12 +3121,13 @@ impl Interpreter {
                 AssignmentValue::Array(words) => {
                     let mut expanded_values = Vec::new();
                     for word in words.iter() {
-                        let has_command_subst = word
-                            .parts
-                            .iter()
-                            .any(|p| matches!(p, WordPart::CommandSubstitution(_)));
+                        let has_unquoted_command_subst = !word.quoted
+                            && word
+                                .parts
+                                .iter()
+                                .any(|p| matches!(p, WordPart::CommandSubstitution(_)));
                         let value = self.expand_word(word).await?;
-                        expanded_values.push((value, has_command_subst));
+                        expanded_values.push((value, has_unquoted_command_subst));
                     }
 
                     // Resolve nameref for array assignments
@@ -3139,13 +3140,13 @@ impl Interpreter {
                         0
                     };
 
-                    for (value, has_command_subst) in expanded_values {
-                        if has_command_subst && !value.is_empty() {
+                    for (value, has_unquoted_command_subst) in expanded_values {
+                        if has_unquoted_command_subst && !value.is_empty() {
                             for part in value.split_whitespace() {
                                 arr.insert(idx, part.to_string());
                                 idx += 1;
                             }
-                        } else if !value.is_empty() || !has_command_subst {
+                        } else if !value.is_empty() || !has_unquoted_command_subst {
                             arr.insert(idx, value);
                             idx += 1;
                         }

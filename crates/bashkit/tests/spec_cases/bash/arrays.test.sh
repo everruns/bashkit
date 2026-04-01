@@ -235,3 +235,41 @@ echo "${arr[1]}"
 3
 y
 ### end
+
+### array_append_quoted_command_subst
+# Quoted command substitution in array append should be a single element
+arr=()
+arr+=("$(echo "hello world foo")")
+echo "${#arr[@]}"
+echo "${arr[0]}"
+### expect
+1
+hello world foo
+### end
+
+### array_append_unquoted_command_subst
+# Unquoted command substitution in array append should word-split
+arr=($(echo "a b c"))
+echo "${#arr[@]}"
+echo "${arr[0]}"
+echo "${arr[1]}"
+echo "${arr[2]}"
+### expect
+3
+a
+b
+c
+### end
+
+### array_append_quoted_multiline_command_subst
+# Quoted command substitution preserving newlines in array element
+arr=()
+arr+=("$(printf 'line1\nline2\nline3')")
+echo "${#arr[@]}"
+echo "${arr[0]}"
+### expect
+1
+line1
+line2
+line3
+### end

@@ -1786,6 +1786,10 @@ impl<'a> Parser<'a> {
                 | Some(tokens::Token::LiteralWord(elem))
                 | Some(tokens::Token::QuotedWord(elem)) => {
                     let elem_clone = elem.clone();
+                    let is_quoted = matches!(
+                        &self.current_token,
+                        Some(tokens::Token::LiteralWord(_)) | Some(tokens::Token::QuotedWord(_))
+                    );
                     let word = if matches!(&self.current_token, Some(tokens::Token::LiteralWord(_)))
                     {
                         Word {
@@ -1793,7 +1797,11 @@ impl<'a> Parser<'a> {
                             quoted: true,
                         }
                     } else {
-                        self.parse_word(elem_clone)
+                        let mut w = self.parse_word(elem_clone);
+                        if is_quoted {
+                            w.quoted = true;
+                        }
+                        w
                     };
                     elements.push(word);
                     self.advance();
