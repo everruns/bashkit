@@ -380,9 +380,10 @@
 //! # Guides
 //!
 //! - [`custom_builtins_guide`] - Creating custom builtins
-//! - `python_guide` - Embedded Python (Monty) guide (requires `python` feature)
 //! - [`compatibility_scorecard`] - Feature parity tracking
-//! - `logging_guide` - Structured logging with security (requires `logging` feature)
+//! - [`live_mounts_guide`] - Live mount/unmount on running instances
+//! - [`python_guide`] - Embedded Python (Monty) guide (requires `python` feature)
+//! - [`logging_guide`] - Structured logging with security (requires `logging` feature)
 //!
 //! # Resources
 //!
