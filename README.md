@@ -12,11 +12,15 @@ Virtual bash interpreter for multi-tenant environments. Written in Rust.
 
 - **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance
 - **Sandboxed, in-process execution** - No real filesystem access by default
-- **Virtual filesystem** - InMemoryFs, OverlayFs, MountableFs
-- **Resource limits** - Command count, loop iterations, function depth
+- **Virtual filesystem** - InMemoryFs, OverlayFs, MountableFs with optional RealFs backend (`realfs` feature)
+- **Resource limits** - Command count, loop iterations, function depth, output size, parser fuel
 - **Network allowlist** - Control HTTP access per-domain
 - **Custom builtins** - Extend with domain-specific commands
+- **LLM tool contract** - `BashTool` with discovery metadata, streaming output, and system prompts
+- **Scripted tool orchestration** - Compose ToolDef+callback pairs into multi-tool bash scripts (`scripted_tool` feature)
+- **MCP server** - Model Context Protocol endpoint via `bashkit mcp`
 - **Async-first** - Built on tokio
+- **Language bindings** - Python (PyO3) and JavaScript/Node.js (NAPI-RS) with TypeScript support
 - **Experimental: Git support** - Virtual git operations on the virtual filesystem (`git` feature)
 - **Experimental: Python support** - Embedded Python interpreter via [Monty](https://github.com/pydantic/monty) (`python` feature)
 
@@ -36,7 +40,10 @@ bashkit = "0.1"
 Optional features:
 
 ```bash
-cargo add bashkit --features git      # Virtual git operations
+cargo add bashkit --features git              # Virtual git operations
+cargo add bashkit --features python           # Embedded Python interpreter
+cargo add bashkit --features realfs           # Real filesystem backend
+cargo add bashkit --features scripted_tool    # Tool orchestration framework
 ```
 
 ## Quick Start
@@ -102,34 +109,48 @@ assert_eq!(output.result["stdout"], "hello\nworld\n");
 
 | Category | Commands |
 |----------|----------|
-| Core | `echo`, `printf`, `cat`, `nl`, `read` |
-| Navigation | `cd`, `pwd`, `ls`, `find`, `pushd`, `popd`, `dirs` |
+| Core | `echo`, `printf`, `cat`, `nl`, `read`, `mapfile`, `readarray` |
+| Navigation | `cd`, `pwd`, `ls`, `tree`, `find`, `pushd`, `popd`, `dirs` |
 | Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[` |
-| Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times`, `declare`, `typeset`, `let` |
-| Shell | `bash`, `sh` (virtual re-invocation), `:`, `trap`, `caller`, `getopts`, `shopt` |
-| Text processing | `grep`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr` |
-| File operations | `mkdir`, `mktemp`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath` |
+| Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times`, `declare`, `typeset`, `let`, `alias`, `unalias` |
+| Shell | `bash`, `sh` (virtual re-invocation), `:`, `trap`, `caller`, `getopts`, `shopt`, `command`, `type`, `which`, `hash`, `compgen`, `fc`, `help` |
+| Text processing | `grep`, `rg`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr`, `fold`, `expand`, `unexpand`, `join`, `iconv` |
+| File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `split` |
 | File inspection | `file`, `stat`, `less` |
-| Archives | `tar`, `gzip`, `gunzip` |
-| Byte tools | `od`, `xxd`, `hexdump` |
-| Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill` |
+| Archives | `tar`, `gzip`, `gunzip`, `zip`, `unzip` |
+| Byte tools | `od`, `xxd`, `hexdump`, `base64` |
+| Checksums | `md5sum`, `sha1sum`, `sha256sum` |
+| Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `bc`, `clear` |
 | Disk | `df`, `du` |
 | Pipeline | `xargs`, `tee` |
 | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
-| Network | `curl`, `wget` (requires allowlist) |
+| Data formats | `csv`, `json`, `yaml`, `tomlq`, `template`, `envsubst` |
+| Network | `curl`, `wget` (requires allowlist), `http` |
+| DevOps | `assert`, `dotenv`, `glob`, `log`, `retry`, `semver`, `verify`, `parallel`, `patch` |
 | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature) |
 
 ## Shell Features
 
-- Variables and parameter expansion (`$VAR`, `${VAR:-default}`, `${#VAR}`)
-- Command substitution (`$(cmd)`)
-- Arithmetic expansion (`$((1 + 2))`)
-- Pipelines and redirections (`|`, `>`, `>>`, `<`, `<<<`, `2>&1`)
-- Control flow (`if`/`elif`/`else`, `for`, `while`, `case`)
-- Functions (POSIX and bash-style)
-- Arrays (`arr=(a b c)`, `${arr[@]}`, `${#arr[@]}`)
-- Glob expansion (`*`, `?`)
-- Here documents (`<<EOF`)
+- Variables and parameter expansion (`$VAR`, `${VAR:-default}`, `${#VAR}`, `${var@Q}`, case conversion `${var^^}`)
+- Command substitution (`$(cmd)`, `` `cmd` ``)
+- Arithmetic expansion (`$((1 + 2))`, `declare -i`, `let`)
+- Pipelines and redirections (`|`, `>`, `>>`, `<`, `<<<`, `2>&1`, `&>`)
+- Control flow (`if`/`elif`/`else`, `for`, `while`, `until`, `case` with `;;`/`;&`/`;;&`, `select`)
+- Functions (POSIX and bash-style) with dynamic scoping, FUNCNAME stack, `caller`
+- Indexed arrays (`arr=(a b c)`, `${arr[@]}`, `${#arr[@]}`, slicing, `+=`)
+- Associative arrays (`declare -A map=([key]=val)`)
+- Nameref variables (`declare -n`)
+- Brace expansion (`{a,b,c}`, `{1..10}`, `{01..05}`)
+- Glob expansion (`*`, `?`) and extended globs (`@()`, `?()`, `*()`, `+()`, `!()`)
+- Glob options (`dotglob`, `nullglob`, `failglob`, `nocaseglob`, `globstar`)
+- Here documents (`<<EOF`, `<<-EOF` with tab stripping, `<<<` here-strings)
+- Process substitution (`<(cmd)`, `>(cmd)`)
+- Coprocesses (`coproc`)
+- Background execution (`&`) with `wait`
+- Shell options (`set -euxo pipefail`, `shopt`)
+- Alias expansion
+- Trap handling (`trap cmd EXIT`, `trap cmd ERR`)
+- `[[ ]]` conditionals with regex matching (`=~`, BASH_REMATCH)
 
 ## Configuration
 
@@ -248,6 +269,13 @@ bashkit-cli run script.sh
 
 # Interactive REPL
 bashkit-cli repl
+
+# MCP server (Model Context Protocol)
+bashkit-cli mcp
+
+# Mount real filesystem (read-only or read-write)
+bashkit-cli run script.sh --mount-ro /data
+bashkit-cli run script.sh --mount-rw /workspace
 ```
 
 ## Development
@@ -291,7 +319,9 @@ just bench-list         # List all benchmarks
 
 See [crates/bashkit-bench/README.md](crates/bashkit-bench/README.md) for methodology and assumptions.
 
-## Python Bindings
+## Language Bindings
+
+### Python
 
 Python bindings with LangChain integration are available in [crates/bashkit-python](crates/bashkit-python/README.md).
 
@@ -304,6 +334,25 @@ print(tool.help())
 result = await tool.execute("echo 'Hello, World!'")
 print(result.stdout)
 ```
+
+### JavaScript / Node.js
+
+NAPI-RS bindings with TypeScript support. Available as `@everruns/bashkit` on npm.
+
+```typescript
+import { BashTool } from '@everruns/bashkit';
+
+const tool = new BashTool({ username: 'agent', hostname: 'sandbox' });
+const result = await tool.execute("echo 'Hello, World!'");
+console.log(result.stdout);
+
+// Direct VFS access
+await tool.writeFile('/tmp/data.txt', 'hello');
+const content = await tool.readFile('/tmp/data.txt');
+```
+
+Platform matrix: macOS (x86_64, aarch64), Linux (x86_64, aarch64), Windows (x86_64), WASM.
+See [crates/bashkit-js](crates/bashkit-js/) for details.
 
 ## Security
 
