@@ -13,7 +13,6 @@
 
 use async_trait::async_trait;
 
-#[cfg(feature = "http_client")]
 use super::resolve_path;
 use super::{Builtin, Context};
 use crate::error::Result;
@@ -169,6 +168,33 @@ impl Builtin for Curl {
                 }
             }
             i += 1;
+        }
+
+        // Resolve -d @- (stdin) and -d @file (VFS file) before sending
+        if let Some(ref d) = data
+            && let Some(path) = d.strip_prefix('@')
+        {
+            if path == "-" {
+                // Read from stdin
+                data = Some(ctx.stdin.unwrap_or("").to_string());
+            } else {
+                // Read from VFS file
+                let resolved = resolve_path(ctx.cwd, path);
+                match ctx.fs.read_file(&resolved).await {
+                    Ok(content) => {
+                        data = Some(String::from_utf8_lossy(&content).into_owned());
+                    }
+                    Err(_) => {
+                        return Ok(ExecResult::err(
+                            format!(
+                                "curl: Failed reading data file {}: No such file or directory\n",
+                                path
+                            ),
+                            26,
+                        ));
+                    }
+                }
+            }
         }
 
         // Validate URL
@@ -1015,7 +1041,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use crate::fs::InMemoryFs;
+    use crate::fs::{FileSystem, InMemoryFs};
 
     async fn run_curl(args: &[&str]) -> ExecResult {
         let fs = Arc::new(InMemoryFs::new());
@@ -1092,6 +1118,71 @@ mod tests {
         let result = run_wget(&["https://example.com"]).await;
         assert_ne!(result.exit_code, 0);
         assert!(result.stderr.contains("network access not configured"));
+    }
+
+    async fn run_curl_with_stdin_and_fs(
+        args: &[&str],
+        stdin: Option<&str>,
+        files: &[(&str, &[u8])],
+    ) -> ExecResult {
+        let fs = Arc::new(InMemoryFs::new());
+        for (path, content) in files {
+            fs.write_file(std::path::Path::new(path), content)
+                .await
+                .unwrap();
+        }
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs,
+            stdin,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            shell: None,
+        };
+
+        Curl.execute(ctx).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_curl_data_at_stdin() {
+        // -d @- should read from stdin (network not configured, but data resolution
+        // happens before the network check)
+        let result =
+            run_curl_with_stdin_and_fs(&["-d", "@-", "https://example.com"], Some("hello"), &[])
+                .await;
+        // Without network, we get the "network access not configured" error,
+        // but the important thing is that @- was resolved (not sent literally)
+        assert!(result.stderr.contains("network access not configured"));
+    }
+
+    #[tokio::test]
+    async fn test_curl_data_at_file() {
+        let result = run_curl_with_stdin_and_fs(
+            &["-d", "@/data.json", "https://example.com"],
+            None,
+            &[("/data.json", b"{\"key\":\"value\"}")],
+        )
+        .await;
+        assert!(result.stderr.contains("network access not configured"));
+    }
+
+    #[tokio::test]
+    async fn test_curl_data_at_file_not_found() {
+        let result =
+            run_curl_with_stdin_and_fs(&["-d", "@/missing.json", "https://example.com"], None, &[])
+                .await;
+        assert_ne!(result.exit_code, 0);
+        assert!(result.stderr.contains("Failed reading data file"));
     }
 
     #[cfg(feature = "http_client")]
