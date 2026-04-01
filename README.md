@@ -10,13 +10,19 @@ Virtual bash interpreter for multi-tenant environments. Written in Rust.
 
 ## Features
 
+- **Secure by default** - No process spawning, no filesystem access, no network access unless explicitly enabled. [60+ threats](specs/006-threat-model.md) analyzed and mitigated
 - **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance
-- **Sandboxed, in-process execution** - No real filesystem access by default
-- **Virtual filesystem** - InMemoryFs, OverlayFs, MountableFs
-- **Resource limits** - Command count, loop iterations, function depth
-- **Network allowlist** - Control HTTP access per-domain
+- **Sandboxed, in-process execution** - All 150 commands reimplemented in Rust, no `fork`/`exec`
+- **Virtual filesystem** - InMemoryFs, OverlayFs, MountableFs with optional RealFs backend (`realfs` feature)
+- **Resource limits** - Command count, loop iterations, function depth, output size, filesystem size, parser fuel
+- **Network allowlist** - HTTP access denied by default, per-domain control
+- **Multi-tenant isolation** - Each interpreter instance is fully independent
 - **Custom builtins** - Extend with domain-specific commands
+- **LLM tool contract** - `BashTool` with discovery metadata, streaming output, and system prompts
+- **Scripted tool orchestration** - Compose ToolDef+callback pairs into multi-tool bash scripts (`scripted_tool` feature)
+- **MCP server** - Model Context Protocol endpoint via `bashkit mcp`
 - **Async-first** - Built on tokio
+- **Language bindings** - Python (PyO3) and JavaScript/TypeScript (NAPI-RS) for Node.js, Bun, and Deno
 - **Experimental: Git support** - Virtual git operations on the virtual filesystem (`git` feature)
 - **Experimental: Python support** - Embedded Python interpreter via [Monty](https://github.com/pydantic/monty) (`python` feature)
 
@@ -36,7 +42,10 @@ bashkit = "0.1"
 Optional features:
 
 ```bash
-cargo add bashkit --features git      # Virtual git operations
+cargo add bashkit --features git              # Virtual git operations
+cargo add bashkit --features python           # Embedded Python interpreter
+cargo add bashkit --features realfs           # Real filesystem backend
+cargo add bashkit --features scripted_tool    # Tool orchestration framework
 ```
 
 ## Quick Start
@@ -102,34 +111,48 @@ assert_eq!(output.result["stdout"], "hello\nworld\n");
 
 | Category | Commands |
 |----------|----------|
-| Core | `echo`, `printf`, `cat`, `nl`, `read` |
-| Navigation | `cd`, `pwd`, `ls`, `find`, `pushd`, `popd`, `dirs` |
+| Core | `echo`, `printf`, `cat`, `nl`, `read`, `mapfile`, `readarray` |
+| Navigation | `cd`, `pwd`, `ls`, `tree`, `find`, `pushd`, `popd`, `dirs` |
 | Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[` |
-| Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times`, `declare`, `typeset`, `let` |
-| Shell | `bash`, `sh` (virtual re-invocation), `:`, `trap`, `caller`, `getopts`, `shopt` |
-| Text processing | `grep`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr` |
-| File operations | `mkdir`, `mktemp`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath` |
+| Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times`, `declare`, `typeset`, `let`, `alias`, `unalias` |
+| Shell | `bash`, `sh` (virtual re-invocation), `:`, `trap`, `caller`, `getopts`, `shopt`, `command`, `type`, `which`, `hash`, `compgen`, `fc`, `help` |
+| Text processing | `grep`, `rg`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr`, `fold`, `expand`, `unexpand`, `join`, `iconv` |
+| File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `split` |
 | File inspection | `file`, `stat`, `less` |
-| Archives | `tar`, `gzip`, `gunzip` |
-| Byte tools | `od`, `xxd`, `hexdump` |
-| Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill` |
+| Archives | `tar`, `gzip`, `gunzip`, `zip`, `unzip` |
+| Byte tools | `od`, `xxd`, `hexdump`, `base64` |
+| Checksums | `md5sum`, `sha1sum`, `sha256sum` |
+| Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `bc`, `clear` |
 | Disk | `df`, `du` |
 | Pipeline | `xargs`, `tee` |
 | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
-| Network | `curl`, `wget` (requires allowlist) |
+| Data formats | `csv`, `json`, `yaml`, `tomlq`, `template`, `envsubst` |
+| Network | `curl`, `wget` (requires allowlist), `http` |
+| DevOps | `assert`, `dotenv`, `glob`, `log`, `retry`, `semver`, `verify`, `parallel`, `patch` |
 | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature) |
 
 ## Shell Features
 
-- Variables and parameter expansion (`$VAR`, `${VAR:-default}`, `${#VAR}`)
-- Command substitution (`$(cmd)`)
-- Arithmetic expansion (`$((1 + 2))`)
-- Pipelines and redirections (`|`, `>`, `>>`, `<`, `<<<`, `2>&1`)
-- Control flow (`if`/`elif`/`else`, `for`, `while`, `case`)
-- Functions (POSIX and bash-style)
-- Arrays (`arr=(a b c)`, `${arr[@]}`, `${#arr[@]}`)
-- Glob expansion (`*`, `?`)
-- Here documents (`<<EOF`)
+- Variables and parameter expansion (`$VAR`, `${VAR:-default}`, `${#VAR}`, `${var@Q}`, case conversion `${var^^}`)
+- Command substitution (`$(cmd)`, `` `cmd` ``)
+- Arithmetic expansion (`$((1 + 2))`, `declare -i`, `let`)
+- Pipelines and redirections (`|`, `>`, `>>`, `<`, `<<<`, `2>&1`, `&>`)
+- Control flow (`if`/`elif`/`else`, `for`, `while`, `until`, `case` with `;;`/`;&`/`;;&`, `select`)
+- Functions (POSIX and bash-style) with dynamic scoping, FUNCNAME stack, `caller`
+- Indexed arrays (`arr=(a b c)`, `${arr[@]}`, `${#arr[@]}`, slicing, `+=`)
+- Associative arrays (`declare -A map=([key]=val)`)
+- Nameref variables (`declare -n`)
+- Brace expansion (`{a,b,c}`, `{1..10}`, `{01..05}`)
+- Glob expansion (`*`, `?`) and extended globs (`@()`, `?()`, `*()`, `+()`, `!()`)
+- Glob options (`dotglob`, `nullglob`, `failglob`, `nocaseglob`, `globstar`)
+- Here documents (`<<EOF`, `<<-EOF` with tab stripping, `<<<` here-strings)
+- Process substitution (`<(cmd)`, `>(cmd)`)
+- Coprocesses (`coproc`)
+- Background execution (`&`) with `wait`
+- Shell options (`set -euxo pipefail`, `shopt`)
+- Alias expansion
+- Trap handling (`trap cmd EXIT`, `trap cmd ERR`)
+- `[[ ]]` conditionals with regex matching (`=~`, BASH_REMATCH)
 
 ## Configuration
 
@@ -244,10 +267,17 @@ mountable.mount("/data", Arc::new(InMemoryFs::new()));
 
 ```bash
 # Run a script
-bashkit-cli run script.sh
+bashkit run script.sh
 
 # Interactive REPL
-bashkit-cli repl
+bashkit repl
+
+# MCP server (Model Context Protocol)
+bashkit mcp
+
+# Mount real filesystem (read-only or read-write)
+bashkit run script.sh --mount-ro /data
+bashkit run script.sh --mount-rw /workspace
 ```
 
 ## Development
@@ -291,7 +321,9 @@ just bench-list         # List all benchmarks
 
 See [crates/bashkit-bench/README.md](crates/bashkit-bench/README.md) for methodology and assumptions.
 
-## Python Bindings
+## Language Bindings
+
+### Python
 
 Python bindings with LangChain integration are available in [crates/bashkit-python](crates/bashkit-python/README.md).
 
@@ -305,9 +337,49 @@ result = await tool.execute("echo 'Hello, World!'")
 print(result.stdout)
 ```
 
+### JavaScript / TypeScript
+
+NAPI-RS bindings for Node.js, Bun, and Deno. Available as `@everruns/bashkit` on npm.
+
+```typescript
+import { BashTool } from '@everruns/bashkit';
+
+const tool = new BashTool({ username: 'agent', hostname: 'sandbox' });
+const result = await tool.execute("echo 'Hello, World!'");
+console.log(result.stdout);
+
+// Direct VFS access
+await tool.writeFile('/tmp/data.txt', 'hello');
+const content = await tool.readFile('/tmp/data.txt');
+```
+
+Platform matrix: macOS (x86_64, aarch64), Linux (x86_64, aarch64), Windows (x86_64), WASM.
+See [crates/bashkit-js](crates/bashkit-js/) for details.
+
 ## Security
 
-Bashkit is designed as a virtual interpreter with sandboxed execution for untrusted scripts. See the [security policy](SECURITY.md) for reporting vulnerabilities and the [threat model](specs/006-threat-model.md) for detailed analysis of 60+ identified threats.
+Bashkit is built for running untrusted scripts from AI agents and users. Security is a core design goal, not an afterthought.
+
+### Defense in Depth
+
+| Layer | Protection |
+|-------|------------|
+| **No process spawning** | All 150 commands are reimplemented in Rust — no `fork`, `exec`, or shell escape |
+| **Virtual filesystem** | Scripts see an in-memory FS by default; no host filesystem access unless explicitly mounted |
+| **Network allowlist** | HTTP access is denied by default; each domain must be explicitly allowed |
+| **Resource limits** | Configurable caps on commands (10K), loop iterations (100K), function depth (100), output (10MB), input (10MB) |
+| **Filesystem limits** | Max total bytes (100MB), max file size (10MB), max file count (10K) — prevents zip bombs, tar bombs, and append floods |
+| **Parser limits** | Timeout (5s), fuel budget (100K ops), AST depth (100) — prevents pathological input from hanging the interpreter |
+| **Multi-tenant isolation** | Each `Bash` instance is fully isolated — no shared state between tenants |
+| **Panic recovery** | All builtins wrapped in `catch_unwind` — a panic in one command doesn't crash the host |
+| **Path traversal prevention** | RealFs backend canonicalizes paths to prevent `../../etc/passwd` escapes |
+| **Unicode security** | 68 byte-boundary tests across builtins; zero-width character rejection in VFS paths |
+
+### Threat Model
+
+60+ identified threats across 11 categories (DoS, sandbox escape, info disclosure, injection, network, isolation, internal errors, git, logging, Python, Unicode) — each with a stable ID, mitigation status, and test coverage.
+
+See the [threat model](specs/006-threat-model.md) for the full analysis and [security policy](SECURITY.md) for reporting vulnerabilities.
 
 ## Other Virtual Bash Implementations
 
