@@ -33,6 +33,7 @@ All threats use a stable ID format: `TM-<CATEGORY>-<NUMBER>`
 | TM-GIT | Git Security | Repository access, identity leak, remote operations |
 | TM-LOG | Logging Security | Sensitive data in logs, log injection, log volume attacks |
 | TM-PY | Python Security | Embedded Python sandbox escape, VFS isolation, resource limits |
+| TM-TS | TypeScript Security | Embedded TypeScript sandbox escape, VFS isolation, resource limits |
 | TM-UNI | Unicode Security | Byte-boundary panics, invisible chars, homoglyphs, normalization |
 
 ### Adding New Threats
@@ -1595,6 +1596,117 @@ filesystem.
 | Path.absolute() | identity (no symlink resolution) | Path |
 | os.getenv() | ctx.env lookup | str/None |
 | os.environ | ctx.env dict | dict |
+
+---
+
+## TypeScript / ZapCode Security (TM-TS)
+
+> **Experimental.** ZapCode is an early-stage TypeScript interpreter that may
+> have undiscovered crash or security bugs. Resource limits are enforced by
+> ZapCode's VM. This integration should be treated as experimental.
+>
+> **Opt-in only.** TypeScript builtins (ts, node, deno, bun) are NOT registered
+> by default. They require both the `typescript` Cargo feature flag AND an
+> explicit `.typescript()` call on the builder. Without both, these commands
+> are unavailable.
+
+BashKit embeds the ZapCode TypeScript interpreter (zapcode-core) with VFS
+bridging via external function suspend/resume. TypeScript code can access the
+virtual filesystem through registered external functions. This section covers
+threats specific to the TypeScript builtin.
+
+### Architecture
+
+```
+TypeScript code → ZapCode VM → ExternalFn suspend → BashKit VFS bridge → resume
+```
+
+ZapCode never touches the real filesystem. External function calls suspend the
+VM, BashKit intercepts and dispatches to the VFS, then resumes execution.
+
+### Opt-in Design
+
+TypeScript execution requires **two explicit opt-in steps**:
+
+1. **Cargo feature flag**: `features = ["typescript"]` — compiles zapcode-core
+2. **Builder registration**: `.typescript()` — registers ts/node/deno/bun commands
+
+Without step 1, the dependency is not compiled. Without step 2, the commands
+are not available even if compiled. This matches the Python builtin pattern.
+
+### Threats
+
+| ID | Threat | Severity | Mitigation | Test |
+|----|--------|----------|------------|------|
+| TM-TS-001 | Infinite loop via `while (true) {}` | High | ZapCode time limit (default 30s) | `threat_ts_infinite_loop` |
+| TM-TS-002 | Memory exhaustion via large allocation | High | ZapCode max_memory (64MB) + max_allocations (1M) | `threat_ts_memory_exhaustion` |
+| TM-TS-003 | Stack overflow via deep recursion | High | ZapCode max_stack_depth (512) | `threat_ts_stack_overflow` |
+| TM-TS-004 | Allocation bomb (many small objects) | High | ZapCode max_allocations (1M) | `threat_ts_allocation_bomb` |
+| TM-TS-005 | Real filesystem access via VFS | Critical | VFS bridge reads only from BashKit VFS, not host | `threat_ts_vfs_no_real_fs` |
+| TM-TS-006 | VFS write escapes to host | Critical | VFS bridge writes only to BashKit VFS | `threat_ts_vfs_write_sandboxed` |
+| TM-TS-007 | Path traversal (../../etc/passwd) | High | VFS resolves paths within sandbox boundaries | `threat_ts_vfs_path_traversal` |
+| TM-TS-008 | Bash/TypeScript VFS data corruption | Medium | Shared VFS by design; no cross-tenant access | `threat_ts_vfs_bash_ts_shared` |
+| TM-TS-009 | Crash on missing file | Medium | Error string returned, not panic | `threat_ts_vfs_error_handling` |
+| TM-TS-010 | VFS mkdir escape | Medium | mkdir operates only in VFS | `threat_ts_vfs_mkdir_sandboxed` |
+| TM-TS-011 | VFS operations escape to host /tmp | Critical | All operations go through BashKit VFS | `threat_ts_vfs_no_host_escape` |
+| TM-TS-012 | Error info leakage via stdout | Medium | Errors go to stderr, not stdout | `threat_ts_error_isolation` |
+| TM-TS-013 | Syntax error crashes host | Medium | Non-zero exit code, error on stderr | `threat_ts_syntax_error_exit` |
+| TM-TS-014 | Exit code not propagated | Low | Exit code flows to bash $? | `threat_ts_exit_code_propagation` |
+| TM-TS-015 | Empty code crashes | Low | Non-zero exit, error message | `threat_ts_empty_code` |
+| TM-TS-016 | Pipeline error leakage | Medium | Errors on stderr, not passed to pipe | `threat_ts_pipeline_error_handling` |
+| TM-TS-017 | Unknown options accepted | Low | Unknown flags return non-zero | `threat_ts_unknown_options` |
+| TM-TS-018 | TypeScript bypasses BashKit limits | Medium | Command budget still enforced | `threat_ts_respects_bash_limits` |
+| TM-TS-019 | Command subst captures errors | Medium | Only stdout captured by $() | `threat_ts_subst_captures_stdout` |
+| TM-TS-020 | Bash var expansion injection | Medium | By-design; use single quotes to prevent | `threat_ts_variable_expansion` |
+| TM-TS-021 | Shell command execution from TS | Critical | No process/subprocess/exec globals | `threat_ts_no_shell_exec` |
+| TM-TS-022 | Script reads from host filesystem | Critical | Script file loaded via VFS | `threat_ts_script_from_vfs` |
+| TM-TS-023 | Shebang line injection | Low | Shebang stripped safely | `threat_ts_shebang_stripped` |
+
+### Blocked Language Features
+
+ZapCode blocks these at the language level (not just runtime):
+
+| Feature | Status | Rationale |
+|---------|--------|-----------|
+| `eval()` | Blocked | Dynamic code execution escape |
+| `Function()` constructor | Blocked | Dynamic code generation |
+| `import` / `require` | Blocked | Module system not implemented |
+| `process` global | Blocked | No Node.js process API |
+| `Deno` global | Blocked | No Deno runtime API |
+| `Bun` global | Blocked | No Bun runtime API |
+| `globalThis.process` | Blocked | No runtime globals |
+| `__proto__` mutation | Blocked | Prototype pollution prevention |
+
+### VFS Bridge Security Properties
+
+1. **No real filesystem access**: All VFS-bridged functions go through BashKit's
+   VFS. `/etc/passwd` in TypeScript reads from VFS, not the host.
+2. **Shared VFS with bash**: Files written by `echo > file` are readable by
+   TypeScript's `readFile()`, and vice versa. This is intentional.
+3. **Path resolution**: Relative paths are resolved against the shell's cwd.
+   Path traversal (`../..`) is constrained by VFS path normalization.
+4. **Error handling**: VFS errors return error strings to TypeScript, not panics.
+5. **Resource isolation**: ZapCode's own limits (time, memory, stack, allocations)
+   are enforced independently of BashKit's shell limits.
+
+### Supported VFS Operations
+
+| Operation | External Function | Return Type |
+|-----------|------------------|-------------|
+| Read file | readFile(path) | string |
+| Write file | writeFile(path, content) | undefined |
+| Check existence | exists(path) | boolean |
+| List directory | readDir(path) | string[] |
+| Create directory | mkdir(path) | undefined |
+| Delete file/dir | remove(path) | undefined |
+| File metadata | stat(path) | JSON string |
+
+### Known Limitation
+
+`ZapcodeSnapshot::resume()` does not expose the VM's accumulated stdout.
+This means `console.log()` output produced *after* a VFS call (external
+function) is not captured. Use the return-value pattern instead — the last
+expression's value is printed. This is a `zapcode-core` API limitation.
 
 ---
 

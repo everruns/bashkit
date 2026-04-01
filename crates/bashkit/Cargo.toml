@@ -134,6 +134,14 @@ name = "python_external_functions"
 required-features = ["python"]
 
 [[example]]
+name = "typescript_scripts"
+required-features = ["typescript"]
+
+[[example]]
+name = "typescript_external_functions"
+required-features = ["typescript"]
+
+[[example]]
 name = "realfs_readonly"
 required-features = ["realfs"]
 

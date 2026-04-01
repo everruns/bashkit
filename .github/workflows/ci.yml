@@ -118,6 +118,7 @@ jobs:
           cargo run --example live_mounts
           cargo run --example git_workflow --features git
           cargo run --example python_external_functions --features python
+          cargo run --example typescript_external_functions --features typescript
           cargo run --example realfs_readonly --features realfs
           cargo run --example realfs_readwrite --features realfs
 

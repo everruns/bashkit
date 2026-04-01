@@ -3840,3 +3840,130 @@ mod trace_events {
         assert_eq!(r.exit_code, 0);
     }
 }
+
+// =============================================================================
+// TYPESCRIPT / ZAPCODE SECURITY (TM-TS)
+//
+// Threat model tests for the embedded TypeScript interpreter (zapcode-core).
+// NOTE: TypeScript is opt-in — requires `typescript` feature AND builder call.
+// =============================================================================
+
+#[cfg(feature = "typescript")]
+mod typescript_security {
+    use super::*;
+    use bashkit::TypeScriptLimits;
+    use std::time::Duration;
+
+    fn bash_with_ts() -> Bash {
+        Bash::builder()
+            .typescript_with_limits(TypeScriptLimits::default())
+            .build()
+    }
+
+    fn bash_with_ts_tight() -> Bash {
+        Bash::builder()
+            .typescript_with_limits(
+                TypeScriptLimits::default()
+                    .max_duration(Duration::from_secs(3))
+                    .max_memory(4 * 1024 * 1024)
+                    .max_allocations(50_000)
+                    .max_stack_depth(100),
+            )
+            .build()
+    }
+
+    /// TM-TS-001: TypeScript infinite loop blocked by time limit
+    #[tokio::test]
+    async fn threat_ts_infinite_loop() {
+        let mut bash = bash_with_ts_tight();
+        let result = bash.exec("ts -c \"while (true) {}\"").await.unwrap();
+        assert_ne!(result.exit_code, 0, "Infinite loop should not succeed");
+    }
+
+    /// TM-TS-002: TypeScript memory exhaustion blocked
+    #[tokio::test]
+    async fn threat_ts_memory_exhaustion() {
+        let mut bash = bash_with_ts_tight();
+        let result = bash
+            .exec("ts -c \"const arr: number[] = []; while (true) { arr.push(1); }\"")
+            .await
+            .unwrap();
+        assert_ne!(result.exit_code, 0, "Memory bomb should not succeed");
+    }
+
+    /// TM-TS-003: TypeScript stack overflow blocked
+    #[tokio::test]
+    async fn threat_ts_stack_overflow() {
+        let mut bash = bash_with_ts_tight();
+        let result = bash
+            .exec("ts -c \"const f = (): number => f(); f()\"")
+            .await
+            .unwrap();
+        assert_ne!(result.exit_code, 0, "Stack overflow should not succeed");
+    }
+
+    /// TM-TS-005: TypeScript VFS reads only from BashKit VFS
+    #[tokio::test]
+    async fn threat_ts_vfs_no_real_fs() {
+        let mut bash = bash_with_ts();
+        let result = bash
+            .exec("ts -c \"const c = await readFile('/etc/passwd'); console.log(c)\"")
+            .await
+            .unwrap();
+        assert!(
+            !result.stdout.contains("root:"),
+            "Should not read real /etc/passwd"
+        );
+    }
+
+    /// TM-TS-007: TypeScript VFS path traversal blocked
+    #[tokio::test]
+    async fn threat_ts_vfs_path_traversal() {
+        let mut bash = bash_with_ts();
+        let result = bash
+            .exec("ts -c \"const c = await readFile('/tmp/../../../etc/passwd'); console.log(c)\"")
+            .await
+            .unwrap();
+        assert!(
+            !result.stdout.contains("root:"),
+            "Path traversal must not escape VFS"
+        );
+    }
+
+    /// TM-TS-012: TypeScript error output goes to stderr
+    #[tokio::test]
+    async fn threat_ts_error_isolation() {
+        let mut bash = bash_with_ts();
+        let result = bash
+            .exec("ts -c \"throw new Error('test')\"")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 1);
+    }
+
+    /// TM-TS-021: TypeScript cannot execute shell commands
+    #[tokio::test]
+    async fn threat_ts_no_shell_exec() {
+        let mut bash = bash_with_ts();
+        let result = bash
+            .exec("ts -c \"console.log(process.env.HOME)\"")
+            .await
+            .unwrap();
+        assert_ne!(result.exit_code, 0, "process.env should not exist");
+        assert!(
+            !result.stdout.contains("/home"),
+            "Should not access env vars via process"
+        );
+    }
+
+    /// Opt-in verification: ts NOT available without builder call
+    #[tokio::test]
+    async fn threat_ts_optin_not_default() {
+        let mut bash = Bash::builder().build();
+        let result = bash.exec("ts -c \"console.log('hi')\"").await.unwrap();
+        assert_ne!(
+            result.exit_code, 0,
+            "ts should not be available without .typescript()"
+        );
+    }
+}
