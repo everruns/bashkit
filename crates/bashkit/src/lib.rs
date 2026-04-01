@@ -469,7 +469,9 @@ pub use builtins::{PythonExternalFnHandler, PythonExternalFns, PythonLimits};
 pub use monty::{ExcType, ExtFunctionResult, MontyException, MontyObject};
 
 #[cfg(feature = "typescript")]
-pub use builtins::{TypeScriptExternalFnHandler, TypeScriptExternalFns, TypeScriptLimits};
+pub use builtins::{
+    TypeScriptConfig, TypeScriptExternalFnHandler, TypeScriptExternalFns, TypeScriptLimits,
+};
 // Re-export zapcode-core types needed by external handler consumers.
 #[cfg(feature = "typescript")]
 pub use zapcode_core::Value as ZapcodeValue;
@@ -1377,7 +1379,7 @@ impl BashBuilder {
         )
     }
 
-    /// Enable embedded TypeScript/JavaScript execution via ZapCode with default limits.
+    /// Enable embedded TypeScript/JavaScript execution via ZapCode with defaults.
     ///
     /// Registers `ts`, `typescript`, `node`, `deno`, and `bun` builtins.
     /// Requires the `typescript` feature.
@@ -1390,42 +1392,73 @@ impl BashBuilder {
     /// ```
     #[cfg(feature = "typescript")]
     pub fn typescript(self) -> Self {
-        self.typescript_with_limits(builtins::TypeScriptLimits::default())
+        self.typescript_with_config(builtins::TypeScriptConfig::default())
     }
 
     /// Enable embedded TypeScript with custom resource limits.
     ///
     /// See [`BashBuilder::typescript`] for details.
+    #[cfg(feature = "typescript")]
+    pub fn typescript_with_limits(self, limits: builtins::TypeScriptLimits) -> Self {
+        self.typescript_with_config(builtins::TypeScriptConfig::default().limits(limits))
+    }
+
+    /// Enable embedded TypeScript with full configuration control.
     ///
     /// # Example
     ///
     /// ```rust,ignore
-    /// use bashkit::TypeScriptLimits;
+    /// use bashkit::{TypeScriptConfig, TypeScriptLimits};
     /// use std::time::Duration;
     ///
+    /// // Only ts/typescript commands, no node/deno/bun aliases
     /// let bash = Bash::builder()
-    ///     .typescript_with_limits(TypeScriptLimits::default().max_duration(Duration::from_secs(5)))
+    ///     .typescript_with_config(TypeScriptConfig::default().compat_aliases(false))
+    ///     .build();
+    ///
+    /// // Disable unsupported-mode hints
+    /// let bash = Bash::builder()
+    ///     .typescript_with_config(TypeScriptConfig::default().unsupported_mode_hint(false))
+    ///     .build();
+    ///
+    /// // Custom limits + no compat aliases
+    /// let bash = Bash::builder()
+    ///     .typescript_with_config(
+    ///         TypeScriptConfig::default()
+    ///             .limits(TypeScriptLimits::default().max_duration(Duration::from_secs(5)))
+    ///             .compat_aliases(false)
+    ///     )
     ///     .build();
     /// ```
     #[cfg(feature = "typescript")]
-    pub fn typescript_with_limits(self, limits: builtins::TypeScriptLimits) -> Self {
-        self.builtin(
-            "ts",
-            Box::new(builtins::TypeScript::with_limits(limits.clone())),
-        )
-        .builtin(
-            "typescript",
-            Box::new(builtins::TypeScript::with_limits(limits.clone())),
-        )
-        .builtin(
-            "node",
-            Box::new(builtins::TypeScript::with_limits(limits.clone())),
-        )
-        .builtin(
-            "deno",
-            Box::new(builtins::TypeScript::with_limits(limits.clone())),
-        )
-        .builtin("bun", Box::new(builtins::TypeScript::with_limits(limits)))
+    pub fn typescript_with_config(self, config: builtins::TypeScriptConfig) -> Self {
+        let mut builder = self
+            .builtin(
+                "ts",
+                Box::new(builtins::TypeScript::from_config(&config, "ts")),
+            )
+            .builtin(
+                "typescript",
+                Box::new(builtins::TypeScript::from_config(&config, "typescript")),
+            );
+
+        if config.enable_compat_aliases {
+            builder = builder
+                .builtin(
+                    "node",
+                    Box::new(builtins::TypeScript::from_config(&config, "node")),
+                )
+                .builtin(
+                    "deno",
+                    Box::new(builtins::TypeScript::from_config(&config, "deno")),
+                )
+                .builtin(
+                    "bun",
+                    Box::new(builtins::TypeScript::from_config(&config, "bun")),
+                );
+        }
+
+        builder
     }
 
     /// Enable embedded TypeScript with external function handlers.
@@ -1438,41 +1471,18 @@ impl BashBuilder {
         external_fns: Vec<String>,
         handler: builtins::TypeScriptExternalFnHandler,
     ) -> Self {
-        self.builtin(
-            "ts",
-            Box::new(
-                builtins::TypeScript::with_limits(limits.clone())
-                    .with_external_handler(external_fns.clone(), handler.clone()),
-            ),
-        )
-        .builtin(
-            "typescript",
-            Box::new(
-                builtins::TypeScript::with_limits(limits.clone())
-                    .with_external_handler(external_fns.clone(), handler.clone()),
-            ),
-        )
-        .builtin(
-            "node",
-            Box::new(
-                builtins::TypeScript::with_limits(limits.clone())
-                    .with_external_handler(external_fns.clone(), handler.clone()),
-            ),
-        )
-        .builtin(
-            "deno",
-            Box::new(
-                builtins::TypeScript::with_limits(limits.clone())
-                    .with_external_handler(external_fns.clone(), handler.clone()),
-            ),
-        )
-        .builtin(
-            "bun",
-            Box::new(
-                builtins::TypeScript::with_limits(limits)
-                    .with_external_handler(external_fns, handler),
-            ),
-        )
+        let config = builtins::TypeScriptConfig::default().limits(limits);
+
+        let make = |cmd_name: &str| {
+            builtins::TypeScript::from_config(&config, cmd_name)
+                .with_external_handler(external_fns.clone(), handler.clone())
+        };
+
+        self.builtin("ts", Box::new(make("ts")))
+            .builtin("typescript", Box::new(make("typescript")))
+            .builtin("node", Box::new(make("node")))
+            .builtin("deno", Box::new(make("deno")))
+            .builtin("bun", Box::new(make("bun")))
     }
 
     /// Register a custom builtin command.

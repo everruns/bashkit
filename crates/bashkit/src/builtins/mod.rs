@@ -208,7 +208,8 @@ pub use python::{Python, PythonExternalFnHandler, PythonExternalFns, PythonLimit
 
 #[cfg(feature = "typescript")]
 pub use typescript::{
-    TypeScript, TypeScriptExternalFnHandler, TypeScriptExternalFns, TypeScriptLimits,
+    TypeScript, TypeScriptConfig, TypeScriptExternalFnHandler, TypeScriptExternalFns,
+    TypeScriptLimits,
 };
 
 use async_trait::async_trait;

@@ -566,6 +566,86 @@ mod optin_verification {
             assert_eq!(r.exit_code, 0, "{cmd} should work after opt-in");
         }
     }
+
+    /// When compat_aliases=false, only ts/typescript are registered
+    #[tokio::test]
+    async fn compat_aliases_disabled() {
+        use bashkit::TypeScriptConfig;
+        let mut bash = Bash::builder()
+            .typescript_with_config(TypeScriptConfig::default().compat_aliases(false))
+            .build();
+
+        // ts and typescript should work
+        let r = bash.exec("ts -c \"console.log('ok')\"").await.unwrap();
+        assert_eq!(r.exit_code, 0, "ts should work");
+
+        let r = bash
+            .exec("typescript -c \"console.log('ok')\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0, "typescript should work");
+
+        // node, deno, bun should NOT be available
+        for cmd in &["node", "deno", "bun"] {
+            let r = bash
+                .exec(&format!("{cmd} -e \"console.log('hi')\""))
+                .await
+                .unwrap();
+            assert_ne!(
+                r.exit_code, 0,
+                "{cmd} should not be available with compat_aliases=false"
+            );
+        }
+    }
+
+    /// Unsupported mode hints show helpful text for node --inspect
+    #[tokio::test]
+    async fn unsupported_mode_hint_node_inspect() {
+        let mut bash = Bash::builder().typescript().build();
+        let r = bash.exec("node --inspect app.js").await.unwrap();
+        assert_ne!(r.exit_code, 0);
+        assert!(
+            r.stderr.contains("hint:"),
+            "should show hint text for --inspect"
+        );
+        assert!(
+            r.stderr.contains("ZapCode"),
+            "should mention ZapCode in hint"
+        );
+    }
+
+    /// Unsupported mode hints show helpful text for deno subcommands
+    #[tokio::test]
+    async fn unsupported_mode_hint_deno_run() {
+        let mut bash = Bash::builder().typescript().build();
+        let r = bash.exec("deno run script.ts").await.unwrap();
+        assert_ne!(r.exit_code, 0);
+        assert!(r.stderr.contains("hint:"));
+    }
+
+    /// Unsupported mode hints show helpful text for bun subcommands
+    #[tokio::test]
+    async fn unsupported_mode_hint_bun_install() {
+        let mut bash = Bash::builder().typescript().build();
+        let r = bash.exec("bun install").await.unwrap();
+        assert_ne!(r.exit_code, 0);
+        assert!(r.stderr.contains("hint:"));
+    }
+
+    /// Hints can be disabled via config
+    #[tokio::test]
+    async fn unsupported_mode_hint_disabled() {
+        use bashkit::TypeScriptConfig;
+        let mut bash = Bash::builder()
+            .typescript_with_config(TypeScriptConfig::default().unsupported_mode_hint(false))
+            .build();
+        let r = bash.exec("node --inspect app.js").await.unwrap();
+        assert_ne!(r.exit_code, 0);
+        assert!(
+            !r.stderr.contains("hint:"),
+            "should NOT show hint when disabled"
+        );
+    }
 }
 
 // =============================================================================

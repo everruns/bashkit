@@ -161,6 +161,84 @@ const VFS_FUNCTIONS: &[&str] = &[
     "stat",
 ];
 
+/// Configuration for the TypeScript builtin.
+///
+/// Controls which command aliases are registered and whether unsupported
+/// execution modes produce helpful hint text.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use bashkit::{Bash, TypeScriptConfig, TypeScriptLimits};
+///
+/// // Default: all aliases + hints enabled
+/// let bash = Bash::builder().typescript().build();
+///
+/// // Only ts/typescript, no node/deno/bun aliases
+/// let bash = Bash::builder()
+///     .typescript_with_config(TypeScriptConfig::default().compat_aliases(false))
+///     .build();
+///
+/// // Disable unsupported-mode hints (errors only, no help text)
+/// let bash = Bash::builder()
+///     .typescript_with_config(TypeScriptConfig::default().unsupported_mode_hint(false))
+///     .build();
+///
+/// // Custom limits + selective config
+/// let bash = Bash::builder()
+///     .typescript_with_config(
+///         TypeScriptConfig::default()
+///             .limits(TypeScriptLimits::default().max_duration(Duration::from_secs(5)))
+///             .compat_aliases(false)
+///     )
+///     .build();
+/// ```
+#[derive(Debug, Clone)]
+pub struct TypeScriptConfig {
+    /// Resource limits for the ZapCode interpreter.
+    pub limits: TypeScriptLimits,
+    /// Register `node`, `deno`, `bun` aliases in addition to `ts`/`typescript`.
+    /// Default: true.
+    pub enable_compat_aliases: bool,
+    /// Show helpful hint text when unsupported execution modes are used
+    /// (e.g. `node --inspect`, `deno run`, `bun install`).
+    /// Default: true.
+    pub enable_unsupported_mode_hint: bool,
+}
+
+impl Default for TypeScriptConfig {
+    fn default() -> Self {
+        Self {
+            limits: TypeScriptLimits::default(),
+            enable_compat_aliases: true,
+            enable_unsupported_mode_hint: true,
+        }
+    }
+}
+
+impl TypeScriptConfig {
+    /// Set resource limits.
+    #[must_use]
+    pub fn limits(mut self, limits: TypeScriptLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Enable or disable `node`/`deno`/`bun` compat aliases (default: true).
+    #[must_use]
+    pub fn compat_aliases(mut self, enable: bool) -> Self {
+        self.enable_compat_aliases = enable;
+        self
+    }
+
+    /// Enable or disable hint text for unsupported execution modes (default: true).
+    #[must_use]
+    pub fn unsupported_mode_hint(mut self, enable: bool) -> Self {
+        self.enable_unsupported_mode_hint = enable;
+        self
+    }
+}
+
 /// The ts/node/deno/bun builtin command.
 ///
 /// Executes TypeScript/JavaScript code using the embedded ZapCode interpreter.
@@ -183,22 +261,30 @@ pub struct TypeScript {
     pub limits: TypeScriptLimits,
     /// Optional user-provided external function configuration.
     external_fns: Option<TypeScriptExternalFns>,
+    /// Show hint text for unsupported execution modes.
+    unsupported_mode_hint: bool,
+    /// The command name this builtin was registered as (e.g. "ts", "node").
+    cmd_name: String,
 }
 
 impl TypeScript {
-    /// Create with default limits.
+    /// Create with default limits, registered as "ts".
     pub fn new() -> Self {
         Self {
             limits: TypeScriptLimits::default(),
             external_fns: None,
+            unsupported_mode_hint: true,
+            cmd_name: "ts".to_string(),
         }
     }
 
-    /// Create with custom limits.
-    pub fn with_limits(limits: TypeScriptLimits) -> Self {
+    /// Create from a config, with a specific command name.
+    pub fn from_config(config: &TypeScriptConfig, cmd_name: &str) -> Self {
         Self {
-            limits,
+            limits: config.limits.clone(),
             external_fns: None,
+            unsupported_mode_hint: config.enable_unsupported_mode_hint,
+            cmd_name: cmd_name.to_string(),
         }
     }
 
@@ -222,6 +308,97 @@ impl Default for TypeScript {
     }
 }
 
+/// Known flags/subcommands from Node.js, Deno, and Bun that are not supported.
+const UNSUPPORTED_NODE_FLAGS: &[&str] = &[
+    "--inspect",
+    "--inspect-brk",
+    "--prof",
+    "--watch",
+    "--experimental-modules",
+    "--loader",
+    "--require",
+    "--preserve-symlinks",
+    "--max-old-space-size",
+    "--expose-gc",
+    "--harmony",
+    "--trace-warnings",
+    "--no-warnings",
+    "--pending-deprecation",
+];
+
+const UNSUPPORTED_DENO_SUBCOMMANDS: &[&str] = &[
+    "run",
+    "compile",
+    "install",
+    "uninstall",
+    "lint",
+    "fmt",
+    "test",
+    "bench",
+    "check",
+    "serve",
+    "task",
+    "repl",
+    "upgrade",
+    "doc",
+    "publish",
+    "add",
+    "remove",
+    "init",
+    "info",
+    "cache",
+    "eval",
+    "coverage",
+    "types",
+    "completions",
+];
+
+const UNSUPPORTED_BUN_SUBCOMMANDS: &[&str] = &[
+    "run", "install", "add", "remove", "update", "link", "unlink", "pm", "build", "init", "test",
+    "x", "create",
+];
+
+/// Format a hint message for unsupported execution modes.
+fn unsupported_mode_message(cmd: &str, arg: &str) -> String {
+    let base = format!("{cmd}: unsupported option or subcommand: {arg}\n");
+    let runtime = match cmd {
+        "node" => "Node.js",
+        "deno" => "Deno",
+        "bun" => "Bun",
+        _ => "a full runtime",
+    };
+    let flag = if cmd == "ts" || cmd == "typescript" {
+        "-c"
+    } else {
+        "-e"
+    };
+    format!(
+        "{base}\
+         hint: This is an embedded TypeScript interpreter (ZapCode), not {runtime}.\n\
+         hint: Only inline execution is supported:\n\
+         hint:   {cmd} {flag} \"console.log('hello')\"   # run inline code\n\
+         hint:   {cmd} script.ts                       # run file from VFS\n\
+         hint:   echo \"code\" | {cmd}                    # pipe code via stdin\n"
+    )
+}
+
+/// Check if an argument is a known unsupported flag/subcommand for the given command.
+fn is_unsupported_mode(cmd: &str, arg: &str) -> bool {
+    // Node.js unsupported flags
+    if UNSUPPORTED_NODE_FLAGS.iter().any(|f| arg.starts_with(f)) {
+        return true;
+    }
+    // Deno subcommands
+    if cmd == "deno" && UNSUPPORTED_DENO_SUBCOMMANDS.contains(&arg) {
+        return true;
+    }
+    // Bun subcommands
+    if cmd == "bun" && UNSUPPORTED_BUN_SUBCOMMANDS.contains(&arg) {
+        return true;
+    }
+    false
+}
+
 #[async_trait]
 impl Builtin for TypeScript {
     fn llm_hint(&self) -> Option<&'static str> {
@@ -236,6 +413,7 @@ impl Builtin for TypeScript {
 
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         let args = ctx.args;
+        let cmd = &self.cmd_name;
 
         // ts --version / ts -V / node --version / etc.
         if args.first().map(|s| s.as_str()) == Some("--version")
@@ -248,16 +426,15 @@ impl Builtin for TypeScript {
         if args.first().map(|s| s.as_str()) == Some("--help")
             || args.first().map(|s| s.as_str()) == Some("-h")
         {
-            return Ok(ExecResult::ok(
-                "usage: ts [-c cmd | -e cmd | file | -] [arg ...]\n\
+            return Ok(ExecResult::ok(format!(
+                "usage: {cmd} [-c cmd | -e cmd | file | -] [arg ...]\n\
                  Options:\n  \
                  -c cmd : execute code from string\n  \
                  -e cmd : execute code from string (Node.js compat)\n  \
                  file   : execute code from file (VFS)\n  \
                  -      : read code from stdin\n  \
                  -V     : print version\n"
-                    .to_string(),
-            ));
+            )));
         }
 
         let (code, _filename) = if let Some(first) = args.first() {
@@ -267,7 +444,7 @@ impl Builtin for TypeScript {
                     let code = args.get(1).map(|s| s.as_str()).unwrap_or("");
                     if code.is_empty() {
                         return Ok(ExecResult::err(
-                            format!("ts: option {} requires argument\n", first),
+                            format!("{cmd}: option {} requires argument\n", first),
                             2,
                         ));
                     }
@@ -280,12 +457,26 @@ impl Builtin for TypeScript {
                             (input.to_string(), "<stdin>".to_string())
                         }
                         _ => {
-                            return Ok(ExecResult::err("ts: no input from stdin\n".to_string(), 1));
+                            return Ok(ExecResult::err(format!("{cmd}: no input from stdin\n"), 1));
                         }
                     }
                 }
                 arg if arg.starts_with('-') => {
-                    return Ok(ExecResult::err(format!("ts: unknown option: {arg}\n"), 2));
+                    // Check for known unsupported flags from Node/Deno/Bun
+                    if self.unsupported_mode_hint && is_unsupported_mode(cmd, arg) {
+                        return Ok(ExecResult::err(unsupported_mode_message(cmd, arg), 2));
+                    }
+                    return Ok(ExecResult::err(
+                        format!("{cmd}: unknown option: {arg}\n"),
+                        2,
+                    ));
+                }
+                arg if !arg.contains('.')
+                    && self.unsupported_mode_hint
+                    && is_unsupported_mode(cmd, arg) =>
+                {
+                    // Check for known unsupported subcommands (e.g. "deno run", "bun install")
+                    return Ok(ExecResult::err(unsupported_mode_message(cmd, arg), 2));
                 }
                 script_path => {
                     // ts script.ts / node script.js
@@ -295,7 +486,9 @@ impl Builtin for TypeScript {
                             Ok(code) => (code, script_path.to_string()),
                             Err(_) => {
                                 return Ok(ExecResult::err(
-                                    format!("ts: can't decode file '{script_path}': not UTF-8\n"),
+                                    format!(
+                                        "{cmd}: can't decode file '{script_path}': not UTF-8\n"
+                                    ),
                                     1,
                                 ));
                             }
@@ -303,7 +496,7 @@ impl Builtin for TypeScript {
                         Err(_) => {
                             return Ok(ExecResult::err(
                                 format!(
-                                    "ts: can't open file '{script_path}': No such file or directory\n"
+                                    "{cmd}: can't open file '{script_path}': No such file or directory\n"
                                 ),
                                 2,
                             ));
@@ -319,8 +512,20 @@ impl Builtin for TypeScript {
             (input.to_string(), "<stdin>".to_string())
         } else {
             // No args, no stdin — interactive mode not supported
+            if self.unsupported_mode_hint {
+                return Ok(ExecResult::err(
+                    format!(
+                        "{cmd}: interactive mode not supported\n\
+                         hint: Use inline execution instead:\n\
+                         hint:   {cmd} -c \"console.log('hello')\"   # run inline code\n\
+                         hint:   {cmd} script.ts                    # run file from VFS\n\
+                         hint:   echo \"code\" | {cmd}                # pipe code via stdin\n"
+                    ),
+                    1,
+                ));
+            }
             return Ok(ExecResult::err(
-                "ts: interactive mode not supported in virtual mode\n".to_string(),
+                format!("{cmd}: interactive mode not supported in virtual mode\n"),
                 1,
             ));
         };
@@ -976,5 +1181,120 @@ mod tests {
         let hint = ts.llm_hint().unwrap();
         assert!(hint.contains("TypeScript"));
         assert!(hint.contains("ZapCode"));
+    }
+
+    // --- Config tests ---
+
+    #[test]
+    fn test_config_defaults() {
+        let config = TypeScriptConfig::default();
+        assert!(config.enable_compat_aliases);
+        assert!(config.enable_unsupported_mode_hint);
+    }
+
+    #[test]
+    fn test_config_builder() {
+        let config = TypeScriptConfig::default()
+            .compat_aliases(false)
+            .unsupported_mode_hint(false)
+            .limits(TypeScriptLimits::default().max_duration(Duration::from_secs(5)));
+        assert!(!config.enable_compat_aliases);
+        assert!(!config.enable_unsupported_mode_hint);
+        assert_eq!(config.limits.max_duration, Duration::from_secs(5));
+    }
+
+    // --- Unsupported mode hint tests ---
+
+    #[tokio::test]
+    async fn test_unsupported_node_inspect() {
+        let ts = TypeScript::from_config(&TypeScriptConfig::default(), "node");
+        let args = vec!["--inspect".to_string()];
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+        let mut cwd = PathBuf::from("/home/user");
+        let fs = Arc::new(InMemoryFs::new());
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
+        let r = ts.execute(ctx).await.unwrap();
+        assert_eq!(r.exit_code, 2);
+        assert!(r.stderr.contains("hint:"), "should contain hint text");
+        assert!(r.stderr.contains("Node.js"), "should mention Node.js");
+        assert!(r.stderr.contains("node -e"), "should suggest -e flag");
+    }
+
+    #[tokio::test]
+    async fn test_unsupported_deno_run() {
+        let ts = TypeScript::from_config(&TypeScriptConfig::default(), "deno");
+        let args = vec!["run".to_string()];
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+        let mut cwd = PathBuf::from("/home/user");
+        let fs = Arc::new(InMemoryFs::new());
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
+        let r = ts.execute(ctx).await.unwrap();
+        assert_eq!(r.exit_code, 2);
+        assert!(r.stderr.contains("hint:"));
+        assert!(r.stderr.contains("Deno"));
+    }
+
+    #[tokio::test]
+    async fn test_unsupported_bun_install() {
+        let ts = TypeScript::from_config(&TypeScriptConfig::default(), "bun");
+        let args = vec!["install".to_string()];
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+        let mut cwd = PathBuf::from("/home/user");
+        let fs = Arc::new(InMemoryFs::new());
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
+        let r = ts.execute(ctx).await.unwrap();
+        assert_eq!(r.exit_code, 2);
+        assert!(r.stderr.contains("hint:"));
+        assert!(r.stderr.contains("Bun"));
+    }
+
+    #[tokio::test]
+    async fn test_hint_disabled() {
+        let config = TypeScriptConfig::default().unsupported_mode_hint(false);
+        let ts = TypeScript::from_config(&config, "node");
+        let args = vec!["--inspect".to_string()];
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+        let mut cwd = PathBuf::from("/home/user");
+        let fs = Arc::new(InMemoryFs::new());
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
+        let r = ts.execute(ctx).await.unwrap();
+        assert_eq!(r.exit_code, 2);
+        // When hints disabled, just get the basic error
+        assert!(!r.stderr.contains("hint:"), "should not contain hint text");
+        assert!(r.stderr.contains("unknown option"));
+    }
+
+    #[tokio::test]
+    async fn test_interactive_mode_hint() {
+        let ts = TypeScript::from_config(&TypeScriptConfig::default(), "ts");
+        let args: Vec<String> = vec![];
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+        let mut cwd = PathBuf::from("/home/user");
+        let fs = Arc::new(InMemoryFs::new());
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
+        let r = ts.execute(ctx).await.unwrap();
+        assert_eq!(r.exit_code, 1);
+        assert!(r.stderr.contains("hint:"), "should contain hint text");
+        assert!(r.stderr.contains("ts -c"), "should suggest -c flag");
+    }
+
+    #[tokio::test]
+    async fn test_interactive_mode_hint_disabled() {
+        let config = TypeScriptConfig::default().unsupported_mode_hint(false);
+        let ts = TypeScript::from_config(&config, "ts");
+        let args: Vec<String> = vec![];
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+        let mut cwd = PathBuf::from("/home/user");
+        let fs = Arc::new(InMemoryFs::new());
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
+        let r = ts.execute(ctx).await.unwrap();
+        assert_eq!(r.exit_code, 1);
+        assert!(!r.stderr.contains("hint:"), "should not contain hint text");
     }
 }
