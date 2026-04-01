@@ -42,7 +42,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | 012-maintenance | Pre-release maintenance requirements |
 | 013-python-package | Python package, PyPI wheels, platform matrix |
 | 014-scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |
-| 015-zapcode-runtime | Embedded TypeScript via ZapCode, VFS bridging, resource limits |
+| 016-zapcode-runtime | Embedded TypeScript via ZapCode, VFS bridging, resource limits |
 
 ### Documentation
 

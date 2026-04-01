@@ -1,4 +1,4 @@
-# 015: ZapCode TypeScript Runtime
+# 016: ZapCode TypeScript Runtime
 
 > **Experimental.** ZapCode is an early-stage TypeScript interpreter. Resource
 > limits are enforced by ZapCode's VM. Do not rely on it for untrusted-input
