@@ -608,60 +608,34 @@ async fn process_vm_result(
     cwd: &Path,
     external_fns: Option<&TypeScriptExternalFns>,
 ) -> Result<ExecResult> {
-    let mut stdout = result.stdout;
+    let stdout = result.stdout;
+    let mut state = result.state;
 
-    match result.state {
-        VmState::Complete(value) => {
-            // If the result is not undefined and there was no print output,
-            // display the result (like Node REPL behavior for expressions)
-            if !matches!(value, Value::Undefined) && stdout.is_empty() {
-                stdout = format!("{}\n", value.to_js_string());
+    loop {
+        match state {
+            VmState::Complete(value) => {
+                let mut out = stdout;
+                // If the result is not undefined and there was no print output,
+                // display the result (like Node REPL behavior for expressions)
+                if !matches!(value, Value::Undefined) && out.is_empty() {
+                    out = format!("{}\n", value.to_js_string());
+                }
+                return Ok(ExecResult::ok(out));
             }
-            Ok(ExecResult::ok(stdout))
-        }
-        VmState::Suspended {
-            function_name,
-            args,
-            snapshot,
-        } => {
-            // Handle external function call
-            let return_value =
-                handle_external_call(&function_name, &args, fs, cwd, external_fns).await;
+            VmState::Suspended {
+                function_name,
+                args,
+                snapshot,
+            } => {
+                let return_value =
+                    handle_external_call(&function_name, &args, fs, cwd, external_fns).await;
 
-            // Resume execution with the return value
-            let mut state = match snapshot.resume(return_value) {
-                Ok(s) => s,
-                Err(e) => {
-                    return Ok(format_error_with_output(e, &stdout));
-                }
-            };
-
-            // Continue the suspend/resume loop
-            loop {
-                match state {
-                    VmState::Complete(value) => {
-                        if !matches!(value, Value::Undefined) && stdout.is_empty() {
-                            stdout = format!("{}\n", value.to_js_string());
-                        }
-                        return Ok(ExecResult::ok(stdout));
+                state = match snapshot.resume(return_value) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return Ok(format_error_with_output(e, &stdout));
                     }
-                    VmState::Suspended {
-                        function_name,
-                        args,
-                        snapshot,
-                    } => {
-                        let return_value =
-                            handle_external_call(&function_name, &args, fs, cwd, external_fns)
-                                .await;
-
-                        state = match snapshot.resume(return_value) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                return Ok(format_error_with_output(e, &stdout));
-                            }
-                        };
-                    }
-                }
+                };
             }
         }
     }
