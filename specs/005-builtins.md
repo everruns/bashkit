@@ -161,7 +161,7 @@ persist in shell variables as usual.
 
 #### Network
 - `curl` - HTTP client (requires http_client feature + allowlist)
-  - Options: `-s/--silent`, `-o FILE`, `-X METHOD`, `-d DATA`, `-H HEADER`, `-I/--head`, `-f/--fail`, `-L/--location`, `-w FORMAT`, `--compressed`, `-u/--user`, `-A/--user-agent`, `-e/--referer`, `-v/--verbose`, `-m/--max-time`, `--connect-timeout`
+  - Options: `-s/--silent`, `-o FILE`, `-X METHOD`, `-d DATA` (supports `@-` for stdin, `@file` for VFS file), `-H HEADER`, `-I/--head`, `-f/--fail`, `-L/--location`, `-w FORMAT`, `--compressed`, `-u/--user`, `-A/--user-agent`, `-e/--referer`, `-v/--verbose`, `-m/--max-time`, `--connect-timeout`
   - Security: URL allowlist enforced, 10MB response limit, timeouts clamped to [1s, 10min], zip bomb protection via size-limited decompression
 - `wget` - Download files (requires http_client feature + allowlist)
   - Options: `-q/--quiet`, `-O FILE`, `--spider`, `--header`, `-U/--user-agent`, `--post-data`, `-t/--tries`, `-T/--timeout`, `--connect-timeout`
