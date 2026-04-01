@@ -20,7 +20,7 @@ Virtual bash interpreter for multi-tenant environments. Written in Rust.
 - **Scripted tool orchestration** - Compose ToolDef+callback pairs into multi-tool bash scripts (`scripted_tool` feature)
 - **MCP server** - Model Context Protocol endpoint via `bashkit mcp`
 - **Async-first** - Built on tokio
-- **Language bindings** - Python (PyO3) and JavaScript/Node.js (NAPI-RS) with TypeScript support
+- **Language bindings** - Python (PyO3) and JavaScript/TypeScript (NAPI-RS) for Node.js, Bun, and Deno
 - **Experimental: Git support** - Virtual git operations on the virtual filesystem (`git` feature)
 - **Experimental: Python support** - Embedded Python interpreter via [Monty](https://github.com/pydantic/monty) (`python` feature)
 
@@ -335,9 +335,9 @@ result = await tool.execute("echo 'Hello, World!'")
 print(result.stdout)
 ```
 
-### JavaScript / Node.js
+### JavaScript / TypeScript
 
-NAPI-RS bindings with TypeScript support. Available as `@everruns/bashkit` on npm.
+NAPI-RS bindings for Node.js, Bun, and Deno. Available as `@everruns/bashkit` on npm.
 
 ```typescript
 import { BashTool } from '@everruns/bashkit';

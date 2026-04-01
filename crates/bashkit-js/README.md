@@ -1,11 +1,13 @@
 # @everruns/bashkit
 
-Sandboxed bash interpreter for JavaScript/TypeScript. Native NAPI-RS bindings to the [bashkit](https://github.com/everruns/bashkit) Rust core.
+Sandboxed bash interpreter for JavaScript/TypeScript. Native NAPI-RS bindings to the [bashkit](https://github.com/everruns/bashkit) Rust core. Works with Node.js, Bun, and Deno.
 
 ## Install
 
 ```bash
-npm install @everruns/bashkit
+npm install @everruns/bashkit   # Node.js
+bun add @everruns/bashkit       # Bun
+deno add npm:@everruns/bashkit  # Deno
 ```
 
 ## Usage
