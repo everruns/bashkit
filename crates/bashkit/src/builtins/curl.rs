@@ -1182,7 +1182,26 @@ mod tests {
             run_curl_with_stdin_and_fs(&["-d", "@/missing.json", "https://example.com"], None, &[])
                 .await;
         assert_ne!(result.exit_code, 0);
+        assert_eq!(result.exit_code, 26);
         assert!(result.stderr.contains("Failed reading data file"));
+    }
+
+    #[tokio::test]
+    async fn test_curl_data_at_stdin_none() {
+        // -d @- with no stdin should resolve to empty string
+        let result =
+            run_curl_with_stdin_and_fs(&["-d", "@-", "https://example.com"], None, &[]).await;
+        // Should proceed past data resolution (get network error, not a data error)
+        assert!(result.stderr.contains("network access not configured"));
+    }
+
+    #[tokio::test]
+    async fn test_curl_data_literal_no_at() {
+        // Regular -d without @ prefix should pass through unchanged
+        let result =
+            run_curl_with_stdin_and_fs(&["-d", "plain-data", "https://example.com"], None, &[])
+                .await;
+        assert!(result.stderr.contains("network access not configured"));
     }
 
     #[cfg(feature = "http_client")]
