@@ -88,6 +88,15 @@ fs = bash.fs()
 fs.mkdir("/data", recursive=True)
 fs.write_file("/data/blob.bin", b"\x00\x01hello")
 assert fs.read_file("/data/blob.bin") == b"\x00\x01hello"
+
+# Additional filesystem operations
+fs.append_file("/data/blob.bin", b" world")
+fs.copy("/data/blob.bin", "/data/backup.bin")
+fs.rename("/data/backup.bin", "/data/copy.bin")
+info = fs.stat("/data/blob.bin")       # dict with size, type, etc.
+entries = fs.read_dir("/data")         # detailed directory listing
+fs.symlink("/data/link", "/data/blob.bin")
+fs.chmod("/data/blob.bin", 0o644)
 ```
 
 ### Live Mounts
@@ -159,6 +168,13 @@ bash_tool = create_bash_tool()
 # Use with any PydanticAI agent
 ```
 
+### Deep Agents
+
+```python
+from bashkit.deepagents import BashkitBackend, BashkitMiddleware
+# Use with Deep Agents framework
+```
+
 ## ScriptedTool — Multi-Tool Orchestration
 
 Compose Python callbacks as bash builtins. An LLM writes a single bash script that pipes, loops, and branches across all registered tools.
@@ -191,7 +207,10 @@ print(result.stdout)  # Alice
 
 - `execute(commands: str) -> ExecResult` — execute commands asynchronously
 - `execute_sync(commands: str) -> ExecResult` — execute commands synchronously
+- `execute_or_throw(commands: str) -> ExecResult` — async, raises on non-zero exit
+- `execute_sync_or_throw(commands: str) -> ExecResult` — sync, raises on non-zero exit
 - `reset()` — reset interpreter state
+- `fs() -> FileSystem` — direct filesystem access
 
 ### BashTool
 
@@ -212,12 +231,31 @@ Convenience wrapper for AI agents. Inherits all execution methods from `Bash`, p
 - `success: bool` — True if exit_code == 0
 - `to_dict() -> dict` — convert to dictionary
 
+### FileSystem
+
+- `mkdir(path, recursive=False)` — create directory
+- `write_file(path, content)` — write bytes to file
+- `read_file(path) -> bytes` — read file contents
+- `append_file(path, content)` — append bytes to file
+- `exists(path) -> bool` — check if path exists
+- `remove(path, recursive=False)` — delete file/directory
+- `stat(path) -> dict` — file metadata (size, type, etc.)
+- `read_dir(path) -> list` — detailed directory listing
+- `rename(src, dst)` — rename file/directory
+- `copy(src, dst)` — copy file
+- `symlink(link, target)` — create symlink
+- `chmod(path, mode)` — change file permissions
+- `read_link(path) -> str` — read symlink target
+
 ### ScriptedTool
 
 - `add_tool(name, description, callback, schema=None)` — register a tool
 - `execute(script: str) -> ExecResult` — execute script asynchronously
 - `execute_sync(script: str) -> ExecResult` — execute script synchronously
+- `execute_or_throw(script: str) -> ExecResult` — async, raises on non-zero exit
+- `execute_sync_or_throw(script: str) -> ExecResult` — sync, raises on non-zero exit
 - `env(key: str, value: str)` — set environment variable
+- `tool_count() -> int` — number of registered tools
 
 ## How it works
 
