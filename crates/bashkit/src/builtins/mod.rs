@@ -113,6 +113,9 @@ mod git;
 #[cfg(feature = "python")]
 mod python;
 
+#[cfg(feature = "typescript")]
+mod typescript;
+
 pub use alias::{Alias, Unalias};
 pub use archive::{Gunzip, Gzip, Tar};
 pub use assert::Assert;
@@ -202,6 +205,11 @@ pub use git::Git;
 
 #[cfg(feature = "python")]
 pub use python::{Python, PythonExternalFnHandler, PythonExternalFns, PythonLimits};
+
+#[cfg(feature = "typescript")]
+pub use typescript::{
+    TypeScript, TypeScriptExternalFnHandler, TypeScriptExternalFns, TypeScriptLimits,
+};
 
 use async_trait::async_trait;
 use std::collections::HashMap;

@@ -468,6 +468,12 @@ pub use builtins::{PythonExternalFnHandler, PythonExternalFns, PythonLimits};
 #[cfg(feature = "python")]
 pub use monty::{ExcType, ExtFunctionResult, MontyException, MontyObject};
 
+#[cfg(feature = "typescript")]
+pub use builtins::{TypeScriptExternalFnHandler, TypeScriptExternalFns, TypeScriptLimits};
+// Re-export zapcode-core types needed by external handler consumers.
+#[cfg(feature = "typescript")]
+pub use zapcode_core::Value as ZapcodeValue;
+
 /// Logging utilities module
 ///
 /// Provides structured logging with security features including sensitive data redaction.
@@ -1367,6 +1373,104 @@ impl BashBuilder {
             "python3",
             Box::new(
                 builtins::Python::with_limits(limits).with_external_handler(external_fns, handler),
+            ),
+        )
+    }
+
+    /// Enable embedded TypeScript/JavaScript execution via ZapCode with default limits.
+    ///
+    /// Registers `ts`, `typescript`, `node`, `deno`, and `bun` builtins.
+    /// Requires the `typescript` feature.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let bash = Bash::builder().typescript().build();
+    /// bash.exec("ts -c \"console.log('hello')\"").await?;
+    /// ```
+    #[cfg(feature = "typescript")]
+    pub fn typescript(self) -> Self {
+        self.typescript_with_limits(builtins::TypeScriptLimits::default())
+    }
+
+    /// Enable embedded TypeScript with custom resource limits.
+    ///
+    /// See [`BashBuilder::typescript`] for details.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use bashkit::TypeScriptLimits;
+    /// use std::time::Duration;
+    ///
+    /// let bash = Bash::builder()
+    ///     .typescript_with_limits(TypeScriptLimits::default().max_duration(Duration::from_secs(5)))
+    ///     .build();
+    /// ```
+    #[cfg(feature = "typescript")]
+    pub fn typescript_with_limits(self, limits: builtins::TypeScriptLimits) -> Self {
+        self.builtin(
+            "ts",
+            Box::new(builtins::TypeScript::with_limits(limits.clone())),
+        )
+        .builtin(
+            "typescript",
+            Box::new(builtins::TypeScript::with_limits(limits.clone())),
+        )
+        .builtin(
+            "node",
+            Box::new(builtins::TypeScript::with_limits(limits.clone())),
+        )
+        .builtin(
+            "deno",
+            Box::new(builtins::TypeScript::with_limits(limits.clone())),
+        )
+        .builtin("bun", Box::new(builtins::TypeScript::with_limits(limits)))
+    }
+
+    /// Enable embedded TypeScript with external function handlers.
+    ///
+    /// See [`TypeScriptExternalFnHandler`] for handler details.
+    #[cfg(feature = "typescript")]
+    pub fn typescript_with_external_handler(
+        self,
+        limits: builtins::TypeScriptLimits,
+        external_fns: Vec<String>,
+        handler: builtins::TypeScriptExternalFnHandler,
+    ) -> Self {
+        self.builtin(
+            "ts",
+            Box::new(
+                builtins::TypeScript::with_limits(limits.clone())
+                    .with_external_handler(external_fns.clone(), handler.clone()),
+            ),
+        )
+        .builtin(
+            "typescript",
+            Box::new(
+                builtins::TypeScript::with_limits(limits.clone())
+                    .with_external_handler(external_fns.clone(), handler.clone()),
+            ),
+        )
+        .builtin(
+            "node",
+            Box::new(
+                builtins::TypeScript::with_limits(limits.clone())
+                    .with_external_handler(external_fns.clone(), handler.clone()),
+            ),
+        )
+        .builtin(
+            "deno",
+            Box::new(
+                builtins::TypeScript::with_limits(limits.clone())
+                    .with_external_handler(external_fns.clone(), handler.clone()),
+            ),
+        )
+        .builtin(
+            "bun",
+            Box::new(
+                builtins::TypeScript::with_limits(limits)
+                    .with_external_handler(external_fns, handler),
             ),
         )
     }

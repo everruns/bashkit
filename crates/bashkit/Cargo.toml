@@ -69,6 +69,9 @@ tracing = { workspace = true, optional = true }
 # Embedded Python interpreter (optional)
 monty = { git = "https://github.com/pydantic/monty", rev = "e59c8fa", optional = true }
 
+# Embedded TypeScript interpreter (optional)
+zapcode-core = { version = "1.5", optional = true }
+
 [features]
 default = []
 http_client = ["reqwest"]
@@ -89,6 +92,9 @@ scripted_tool = []
 # Enable python/python3 builtins via embedded Monty interpreter
 # Monty is a git dep (not yet on crates.io) — feature unavailable from registry
 python = ["dep:monty"]
+# Enable ts/node/deno/bun builtins via embedded ZapCode TypeScript interpreter
+# Usage: cargo build --features typescript
+typescript = ["dep:zapcode-core"]
 # Enable RealFs backend for accessing host filesystem directories
 # WARNING: This intentionally breaks the sandbox boundary.
 # Usage: cargo build --features realfs
