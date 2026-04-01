@@ -10,11 +10,13 @@ Virtual bash interpreter for multi-tenant environments. Written in Rust.
 
 ## Features
 
+- **Secure by default** - No process spawning, no filesystem access, no network access unless explicitly enabled. [60+ threats](specs/006-threat-model.md) analyzed and mitigated
 - **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance
-- **Sandboxed, in-process execution** - No real filesystem access by default
+- **Sandboxed, in-process execution** - All 150 commands reimplemented in Rust, no `fork`/`exec`
 - **Virtual filesystem** - InMemoryFs, OverlayFs, MountableFs with optional RealFs backend (`realfs` feature)
-- **Resource limits** - Command count, loop iterations, function depth, output size, parser fuel
-- **Network allowlist** - Control HTTP access per-domain
+- **Resource limits** - Command count, loop iterations, function depth, output size, filesystem size, parser fuel
+- **Network allowlist** - HTTP access denied by default, per-domain control
+- **Multi-tenant isolation** - Each interpreter instance is fully independent
 - **Custom builtins** - Extend with domain-specific commands
 - **LLM tool contract** - `BashTool` with discovery metadata, streaming output, and system prompts
 - **Scripted tool orchestration** - Compose ToolDef+callback pairs into multi-tool bash scripts (`scripted_tool` feature)
@@ -356,7 +358,28 @@ See [crates/bashkit-js](crates/bashkit-js/) for details.
 
 ## Security
 
-Bashkit is designed as a virtual interpreter with sandboxed execution for untrusted scripts. See the [security policy](SECURITY.md) for reporting vulnerabilities and the [threat model](specs/006-threat-model.md) for detailed analysis of 60+ identified threats.
+Bashkit is built for running untrusted scripts from AI agents and users. Security is a core design goal, not an afterthought.
+
+### Defense in Depth
+
+| Layer | Protection |
+|-------|------------|
+| **No process spawning** | All 150 commands are reimplemented in Rust — no `fork`, `exec`, or shell escape |
+| **Virtual filesystem** | Scripts see an in-memory FS by default; no host filesystem access unless explicitly mounted |
+| **Network allowlist** | HTTP access is denied by default; each domain must be explicitly allowed |
+| **Resource limits** | Configurable caps on commands (10K), loop iterations (100K), function depth (100), output (10MB), input (10MB) |
+| **Filesystem limits** | Max total bytes (100MB), max file size (10MB), max file count (10K) — prevents zip bombs, tar bombs, and append floods |
+| **Parser limits** | Timeout (5s), fuel budget (100K ops), AST depth (100) — prevents pathological input from hanging the interpreter |
+| **Multi-tenant isolation** | Each `Bash` instance is fully isolated — no shared state between tenants |
+| **Panic recovery** | All builtins wrapped in `catch_unwind` — a panic in one command doesn't crash the host |
+| **Path traversal prevention** | RealFs backend canonicalizes paths to prevent `../../etc/passwd` escapes |
+| **Unicode security** | 68 byte-boundary tests across builtins; zero-width character rejection in VFS paths |
+
+### Threat Model
+
+60+ identified threats across 11 categories (DoS, sandbox escape, info disclosure, injection, network, isolation, internal errors, git, logging, Python, Unicode) — each with a stable ID, mitigation status, and test coverage.
+
+See the [threat model](specs/006-threat-model.md) for the full analysis and [security policy](SECURITY.md) for reporting vulnerabilities.
 
 ## Other Virtual Bash Implementations
 
