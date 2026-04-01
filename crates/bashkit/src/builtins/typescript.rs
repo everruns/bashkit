@@ -44,14 +44,16 @@ const DEFAULT_MAX_ALLOCATIONS: usize = 1_000_000;
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust
 /// use bashkit::TypeScriptLimits;
+/// use std::time::Duration;
 ///
 /// let limits = TypeScriptLimits::default()
 ///     .max_duration(Duration::from_secs(5))
 ///     .max_memory(16 * 1024 * 1024);
 ///
-/// let bash = Bash::builder().typescript_with_limits(limits).build();
+/// assert_eq!(limits.max_duration, Duration::from_secs(5));
+/// assert_eq!(limits.max_memory, 16 * 1024 * 1024);
 /// ```
 #[derive(Debug, Clone)]
 pub struct TypeScriptLimits {
@@ -166,33 +168,41 @@ const VFS_FUNCTIONS: &[&str] = &[
 /// Controls which command aliases are registered and whether unsupported
 /// execution modes produce helpful hint text.
 ///
-/// # Example
+/// # Examples
 ///
-/// ```rust,ignore
-/// use bashkit::{Bash, TypeScriptConfig, TypeScriptLimits};
+/// ```rust
+/// use bashkit::{TypeScriptConfig, TypeScriptLimits};
+/// use std::time::Duration;
 ///
 /// // Default: all aliases + hints enabled
-/// let bash = Bash::builder().typescript().build();
+/// let config = TypeScriptConfig::default();
+/// assert!(config.enable_compat_aliases);
+/// assert!(config.enable_unsupported_mode_hint);
 ///
 /// // Only ts/typescript, no node/deno/bun aliases
+/// let config = TypeScriptConfig::default().compat_aliases(false);
+/// assert!(!config.enable_compat_aliases);
+///
+/// // Custom limits + selective config
+/// let config = TypeScriptConfig::default()
+///     .limits(TypeScriptLimits::default().max_duration(Duration::from_secs(5)))
+///     .compat_aliases(false)
+///     .unsupported_mode_hint(false);
+/// assert_eq!(config.limits.max_duration, Duration::from_secs(5));
+/// assert!(!config.enable_compat_aliases);
+/// assert!(!config.enable_unsupported_mode_hint);
+/// ```
+///
+/// Use with the builder:
+///
+/// ```rust,no_run
+/// use bashkit::{Bash, TypeScriptConfig};
+///
+/// # fn main() {
 /// let bash = Bash::builder()
 ///     .typescript_with_config(TypeScriptConfig::default().compat_aliases(false))
 ///     .build();
-///
-/// // Disable unsupported-mode hints (errors only, no help text)
-/// let bash = Bash::builder()
-///     .typescript_with_config(TypeScriptConfig::default().unsupported_mode_hint(false))
-///     .build();
-///
-/// // Custom limits + selective config
-/// let bash = Bash::builder()
-///     .typescript_with_config(
-///         TypeScriptConfig::default()
-///             .limits(TypeScriptLimits::default().max_duration(Duration::from_secs(5)))
-///             .compat_aliases(false)
-///     )
-///     .build();
-/// ```
+/// # }
 #[derive(Debug, Clone)]
 pub struct TypeScriptConfig {
     /// Resource limits for the ZapCode interpreter.

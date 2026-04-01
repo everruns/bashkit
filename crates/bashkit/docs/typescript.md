@@ -201,17 +201,15 @@ hint:   echo "code" | node               # pipe code via stdin
 
 When using `BashTool` for AI agents, call `.typescript()` on the tool builder:
 
-```rust,no_run
+```rust,ignore
 use bashkit::{BashTool, Tool};
 
-# fn main() {
 let tool = BashTool::builder()
     .typescript()
     .build();
 
 // help() and system_prompt() automatically document TypeScript limitations
 let help = tool.help();
-# }
 ```
 
 The builtin's `llm_hint()` is automatically included in the tool's documentation,

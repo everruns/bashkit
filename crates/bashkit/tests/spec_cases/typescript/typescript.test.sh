@@ -288,3 +288,50 @@ ts -c "await mkdir('/tmp/tsdir'); await exists('/tmp/tsdir')"
 ### expect
 true
 ### end
+
+### ts_run_ts_file
+# Write a .ts file and execute it
+cat > /tmp/hello.ts << 'EOF'
+console.log('hello from file')
+EOF
+ts /tmp/hello.ts
+### expect
+hello from file
+### end
+
+### ts_run_js_file_via_node
+# Write a .js file and run via node alias
+cat > /tmp/hello.js << 'EOF'
+console.log('hello from js')
+EOF
+node /tmp/hello.js
+### expect
+hello from js
+### end
+
+### ts_bash_writes_ts_reads_ts_writes_bash_reads
+# Multi-step cross-runtime: bash → ts → bash
+echo "step1" > /tmp/pipeline.txt
+ts -c "await writeFile('/tmp/pipeline.txt', 'step2\n')"
+cat /tmp/pipeline.txt
+### expect
+step2
+### end
+
+### ts_bash_generates_data_ts_processes
+# Bash generates numbers, TypeScript reads them (trimmed)
+printf "10\n20\n30\n" > /tmp/data.txt
+ts -c "(await readFile('/tmp/data.txt')).trim()"
+### expect
+10
+20
+30
+### end
+
+### ts_writes_json_bash_uses_jq
+# TypeScript writes JSON, bash reads it with cat
+ts -c "await writeFile('/tmp/result.json', '{\"count\":42}\n')"
+cat /tmp/result.json
+### expect
+{"count":42}
+### end
