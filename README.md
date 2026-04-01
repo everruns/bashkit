@@ -265,17 +265,17 @@ mountable.mount("/data", Arc::new(InMemoryFs::new()));
 
 ```bash
 # Run a script
-bashkit-cli run script.sh
+bashkit run script.sh
 
 # Interactive REPL
-bashkit-cli repl
+bashkit repl
 
 # MCP server (Model Context Protocol)
-bashkit-cli mcp
+bashkit mcp
 
 # Mount real filesystem (read-only or read-write)
-bashkit-cli run script.sh --mount-ro /data
-bashkit-cli run script.sh --mount-rw /workspace
+bashkit run script.sh --mount-ro /data
+bashkit run script.sh --mount-rw /workspace
 ```
 
 ## Development
