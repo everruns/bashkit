@@ -2089,6 +2089,21 @@ pub mod threat_model {}
 #[doc = include_str!("../docs/python.md")]
 pub mod python_guide {}
 
+/// Guide for embedded TypeScript execution via the ZapCode interpreter.
+///
+/// This guide covers:
+/// - Quick start with `Bash::builder().typescript()`
+/// - Inline code, script files, pipelines
+/// - VFS bridging via `readFile()`/`writeFile()` external functions
+/// - Resource limits via `TypeScriptLimits`
+/// - Configuration via `TypeScriptConfig` (compat aliases, unsupported-mode hints)
+/// - LLM tool integration
+///
+/// **Related:** [`BashBuilder::typescript`], [`TypeScriptLimits`], [`TypeScriptConfig`], [`threat_model`]
+#[cfg(feature = "typescript")]
+#[doc = include_str!("../docs/typescript.md")]
+pub mod typescript_guide {}
+
 /// Guide for live mount/unmount on a running Bash instance.
 ///
 /// This guide covers:
