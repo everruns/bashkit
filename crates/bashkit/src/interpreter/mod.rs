@@ -6900,6 +6900,9 @@ impl Interpreter {
     }
 
     /// Remove prefix/suffix using glob_match for patterns with brackets or extglob.
+    ///
+    /// THREAT[TM-DOS]: Cap glob_match invocations to prevent O(n^2) CPU
+    /// exhaustion on long strings with bracket/extglob patterns.
     fn remove_pattern_glob(
         &self,
         value: &str,
@@ -6907,11 +6910,17 @@ impl Interpreter {
         prefix: bool,
         longest: bool,
     ) -> String {
+        const MAX_GLOB_MATCH_CALLS: usize = 10_000;
         let chars: Vec<char> = value.chars().collect();
+        let mut calls = 0usize;
         if prefix {
             // Try each prefix length; shortest = first match, longest = last match
             let mut last_match = None;
             for i in 0..=chars.len() {
+                calls += 1;
+                if calls > MAX_GLOB_MATCH_CALLS {
+                    break;
+                }
                 let candidate: String = chars[..i].iter().collect();
                 if self.glob_match(&candidate, pattern) {
                     if !longest {
@@ -6927,6 +6936,10 @@ impl Interpreter {
             // Suffix removal: try each suffix length
             let mut last_match = None;
             for i in (0..=chars.len()).rev() {
+                calls += 1;
+                if calls > MAX_GLOB_MATCH_CALLS {
+                    break;
+                }
                 let candidate: String = chars[i..].iter().collect();
                 if self.glob_match(&candidate, pattern) {
                     if !longest {
