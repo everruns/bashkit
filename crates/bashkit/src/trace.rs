@@ -224,7 +224,15 @@ const SECRET_SUFFIXES: &[&str] = &[
     "_PASS",
     "_CREDENTIAL",
 ];
-const SECRET_HEADERS: &[&str] = &["authorization", "x-api-key", "x-auth-token"];
+const SECRET_HEADERS: &[&str] = &[
+    "authorization",
+    "x-api-key",
+    "x-auth-token",
+    "cookie",
+    "proxy-authorization",
+    "set-cookie",
+    "x-csrf-token",
+];
 
 /// Redact secret patterns from trace event details.
 fn redact_details(details: TraceEventDetails) -> TraceEventDetails {
@@ -239,6 +247,7 @@ fn redact_details(details: TraceEventDetails) -> TraceEventDetails {
 }
 
 /// Redact secret values in command arguments.
+// THREAT[TM-LOG-001]: Redact credentials from trace output in all flag formats
 fn redact_argv(argv: &[String]) -> Vec<String> {
     let mut result = Vec::with_capacity(argv.len());
     let mut redact_next = false;
@@ -252,14 +261,52 @@ fn redact_argv(argv: &[String]) -> Vec<String> {
 
         let lower = arg.to_lowercase();
 
-        // Check for -H "Authorization: Bearer xxx" style headers
-        if lower == "-h" || lower == "--header" {
+        // --header "value" or -H "value" (standalone flags — redact next arg)
+        if lower == "-h" || lower == "--header" || lower == "--user" || lower == "-u" {
             result.push(arg.clone());
             redact_next = true;
             continue;
         }
 
-        // Check for "Authorization: xxx" or "Bearer xxx" inline
+        // --header=Authorization: Bearer xxx (= concatenated form)
+        if let Some(eq_pos) = arg
+            .find('=')
+            .filter(|_| lower.starts_with("--header=") || lower.starts_with("--user="))
+        {
+            let header_val = &arg[eq_pos + 1..];
+            let header_lower = header_val.to_lowercase();
+            if SECRET_HEADERS
+                .iter()
+                .any(|h| header_lower.starts_with(&format!("{h}:")))
+                || lower.starts_with("--user=")
+            {
+                result.push(format!("{}=[REDACTED]", &arg[..eq_pos]));
+            } else {
+                result.push(arg.clone());
+            }
+            continue;
+        }
+
+        // -HAuthorization: Bearer xxx (concatenated -H form)
+        if (lower.starts_with("-h") && lower.len() > 2 && !lower.starts_with("-h="))
+            || (lower.starts_with("-u") && lower.len() > 2 && !lower.starts_with("-u="))
+        {
+            let prefix = &arg[..2]; // -H or -u
+            let val = &arg[2..];
+            let val_lower = val.to_lowercase();
+            if lower.starts_with("-u")
+                || SECRET_HEADERS
+                    .iter()
+                    .any(|h| val_lower.starts_with(&format!("{h}:")))
+            {
+                result.push(format!("{prefix}[REDACTED]"));
+            } else {
+                result.push(arg.clone());
+            }
+            continue;
+        }
+
+        // Check for "Authorization: xxx" or "Cookie: xxx" inline
         if SECRET_HEADERS
             .iter()
             .any(|h| lower.starts_with(&format!("{h}:")))
@@ -408,5 +455,69 @@ mod tests {
         } else {
             panic!("wrong event type");
         }
+    }
+
+    #[test]
+    fn test_redact_user_flag() {
+        let argv = vec![
+            "curl".into(),
+            "--user".into(),
+            "admin:password123".into(),
+            "https://api.example.com".into(),
+        ];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted[2], "[REDACTED]");
+    }
+
+    #[test]
+    fn test_redact_short_user_flag() {
+        let argv = vec![
+            "curl".into(),
+            "-u".into(),
+            "admin:password123".into(),
+            "https://api.example.com".into(),
+        ];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted[2], "[REDACTED]");
+    }
+
+    #[test]
+    fn test_redact_header_equals_form() {
+        let argv = vec![
+            "curl".into(),
+            "--header=Authorization: Bearer token".into(),
+            "https://api.example.com".into(),
+        ];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted[1], "--header=[REDACTED]");
+    }
+
+    #[test]
+    fn test_redact_concatenated_h_flag() {
+        let argv = vec![
+            "curl".into(),
+            "-HAuthorization: Bearer secret".into(),
+            "https://api.example.com".into(),
+        ];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted[1], "-H[REDACTED]");
+    }
+
+    #[test]
+    fn test_redact_cookie_header() {
+        let argv = vec!["curl".into(), "cookie: session=abc123".into()];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted[1], "cookie: [REDACTED]");
+    }
+
+    #[test]
+    fn test_redact_proxy_authorization() {
+        let argv = vec![
+            "curl".into(),
+            "-H".into(),
+            "Proxy-Authorization: Basic abc".into(),
+        ];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted[2], "[REDACTED]");
     }
 }
