@@ -6681,6 +6681,10 @@ impl Interpreter {
     }
 
     /// Replace pattern in value
+    /// THREAT[TM-DOS]: Maximum expansion result size (10MB) to prevent memory
+    /// amplification in global pattern replacement.
+    const MAX_EXPANSION_RESULT_BYTES: usize = 10 * 1024 * 1024;
+
     fn replace_pattern(
         &self,
         value: &str,
@@ -6747,8 +6751,12 @@ impl Interpreter {
                     if let Some(pos) = value.find(suffix) {
                         let after = &value[pos + suffix.len()..];
                         if global {
-                            return replacement.to_string()
+                            let result = replacement.to_string()
                                 + &self.replace_pattern(after, pattern, replacement, true);
+                            if result.len() > Self::MAX_EXPANSION_RESULT_BYTES {
+                                return value.to_string();
+                            }
+                            return result;
                         } else {
                             return replacement.to_string() + after;
                         }
@@ -6766,7 +6774,11 @@ impl Interpreter {
 
         // Simple string replacement
         if global {
-            value.replace(pattern, replacement)
+            let result = value.replace(pattern, replacement);
+            if result.len() > Self::MAX_EXPANSION_RESULT_BYTES {
+                return value.to_string();
+            }
+            result
         } else {
             value.replacen(pattern, replacement, 1)
         }
