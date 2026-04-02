@@ -13,10 +13,7 @@ pub struct Read;
 impl Builtin for Read {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         // Get the input to read from stdin
-        let input = match ctx.stdin {
-            Some(s) => s.to_string(),
-            None => return Ok(ExecResult::err("", 1)),
-        };
+        let input = ctx.stdin.map(|s| s.to_string());
 
         // Parse flags
         let mut raw_mode = false; // -r: don't interpret backslashes
@@ -81,6 +78,31 @@ impl Builtin for Read {
             }
         }
         let _ = prompt; // prompt is for interactive use, ignored in non-interactive
+
+        // EOF with no data: clear all target variables to empty and return 1.
+        // This prevents the common `while read line || [[ -n "$line" ]]`
+        // pattern from looping infinitely on the stale last value.
+        let input = match input {
+            Some(s) => s,
+            None => {
+                let var_names: Vec<&str> = if var_args.is_empty() {
+                    vec!["REPLY"]
+                } else {
+                    var_args
+                };
+                let mut result = ExecResult::err("", 1);
+                for var_name in &var_names {
+                    if is_internal_variable(var_name) {
+                        continue;
+                    }
+                    result.side_effects.push(BuiltinSideEffect::SetVariable {
+                        name: var_name.to_string(),
+                        value: String::new(),
+                    });
+                }
+                return Ok(result);
+            }
+        };
 
         // Extract input based on delimiter or nchars
         let line = if let Some(n) = nchars {
