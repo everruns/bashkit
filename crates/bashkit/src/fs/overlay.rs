@@ -806,6 +806,15 @@ impl FileSystemExt for OverlayFs {
     fn limits(&self) -> FsLimits {
         self.limits.clone()
     }
+
+    fn vfs_snapshot(&self) -> Option<super::VfsSnapshot> {
+        Some(self.upper.snapshot())
+    }
+
+    fn vfs_restore(&self, snapshot: &super::VfsSnapshot) -> bool {
+        self.upper.restore(snapshot);
+        true
+    }
 }
 
 #[cfg(test)]

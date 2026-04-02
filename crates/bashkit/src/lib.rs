@@ -412,6 +412,7 @@ pub mod parser;
 /// Requires the `scripted_tool` feature.
 #[cfg(feature = "scripted_tool")]
 pub mod scripted_tool;
+mod snapshot;
 /// Tool contract for LLM integration
 pub mod tool;
 /// Structured execution trace events.
@@ -434,6 +435,7 @@ pub use limits::{
     ExecutionCounters, ExecutionLimits, LimitExceeded, MemoryBudget, MemoryLimits, SessionLimits,
 };
 pub use network::NetworkAllowlist;
+pub use snapshot::Snapshot;
 pub use tool::BashToolBuilder as ToolBuilder;
 pub use tool::{
     BashTool, BashToolBuilder, Tool, ToolError, ToolExecution, ToolImage, ToolOutput,

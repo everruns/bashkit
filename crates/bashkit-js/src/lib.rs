@@ -366,6 +366,60 @@ impl Bash {
     }
 
     // ========================================================================
+    // Snapshot / Resume
+    // ========================================================================
+
+    /// Serialize interpreter state (shell variables, VFS contents, counters) to bytes.
+    ///
+    /// Returns a `Buffer` (Uint8Array) that can be persisted and used with
+    /// `Bash.fromSnapshot()` to restore the session later.
+    #[napi]
+    pub fn snapshot(&self) -> napi::Result<napi::bindgen_prelude::Buffer> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let bytes = bash
+                .snapshot()
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            Ok(napi::bindgen_prelude::Buffer::from(bytes))
+        })
+    }
+
+    /// Restore interpreter state from a snapshot previously created with `snapshot()`.
+    #[napi]
+    pub fn restore_snapshot(&self, data: napi::bindgen_prelude::Buffer) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let mut bash = s.inner.lock().await;
+            bash.restore_snapshot(&data)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Create a new Bash instance from a snapshot.
+    #[napi(factory)]
+    pub fn from_snapshot(data: napi::bindgen_prelude::Buffer) -> napi::Result<Self> {
+        let bash =
+            RustBash::from_snapshot(&data).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
+        Ok(Self {
+            state: Arc::new(SharedState {
+                inner: Mutex::new(bash),
+                rt: tokio::sync::Mutex::new(rt),
+                cancelled: Arc::new(AtomicBool::new(false)),
+                username: None,
+                hostname: None,
+                max_commands: None,
+                max_loop_iterations: None,
+                python: false,
+                external_functions: Vec::new(),
+                external_handler: None,
+            }),
+        })
+    }
+
+    // ========================================================================
     // VFS — direct filesystem access
     // ========================================================================
 

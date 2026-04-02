@@ -1004,6 +1004,17 @@ impl Interpreter {
         self.traps = state.traps.clone();
     }
 
+    /// Get a reference to the current execution counters.
+    pub fn counters(&self) -> &crate::limits::ExecutionCounters {
+        &self.counters
+    }
+
+    /// Restore session-level counters from a snapshot.
+    pub fn restore_session_counters(&mut self, session_commands: u64, session_exec_calls: u64) {
+        self.counters.session_commands = session_commands;
+        self.counters.session_exec_calls = session_exec_calls;
+    }
+
     /// Set an output callback for streaming output during execution.
     ///
     /// When set, the interpreter calls this callback with `(stdout_chunk, stderr_chunk)`

@@ -1,6 +1,6 @@
 //! Tests for VFS snapshot/restore and shell state snapshot/restore
 
-use bashkit::{Bash, FileSystem, InMemoryFs};
+use bashkit::{Bash, FileSystem, InMemoryFs, Snapshot};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -254,4 +254,136 @@ async fn shell_options_survive_snapshot_roundtrip() {
         Some("1"),
         "pipefail should survive snapshot/restore roundtrip"
     );
+}
+
+// ==================== Byte-level snapshot / from_snapshot ====================
+
+#[tokio::test]
+async fn snapshot_to_bytes_and_restore() {
+    let mut bash = Bash::new();
+    bash.exec("x=42; mkdir /tmp/work; echo 'data' > /tmp/work/file.txt")
+        .await
+        .unwrap();
+
+    let bytes = bash.snapshot().unwrap();
+    assert!(!bytes.is_empty());
+
+    let mut bash2 = Bash::from_snapshot(&bytes).unwrap();
+
+    // Verify shell state
+    let r = bash2.exec("echo $x").await.unwrap();
+    assert_eq!(r.stdout.trim(), "42");
+
+    // Verify VFS contents
+    let r = bash2.exec("cat /tmp/work/file.txt").await.unwrap();
+    assert_eq!(r.stdout.trim(), "data");
+}
+
+#[tokio::test]
+async fn snapshot_preserves_arrays() {
+    let mut bash = Bash::new();
+    bash.exec("arr=(one two three); declare -A map=([k1]=v1 [k2]=v2)")
+        .await
+        .unwrap();
+
+    let bytes = bash.snapshot().unwrap();
+    let mut bash2 = Bash::from_snapshot(&bytes).unwrap();
+
+    let r = bash2.exec("echo ${arr[1]}").await.unwrap();
+    assert_eq!(r.stdout.trim(), "two");
+
+    let r = bash2.exec("echo ${map[k2]}").await.unwrap();
+    assert_eq!(r.stdout.trim(), "v2");
+}
+
+#[tokio::test]
+async fn snapshot_preserves_env() {
+    let mut bash = Bash::new();
+    bash.exec("export MY_VAR=hello").await.unwrap();
+
+    let bytes = bash.snapshot().unwrap();
+    let mut bash2 = Bash::from_snapshot(&bytes).unwrap();
+
+    let r = bash2.exec("echo $MY_VAR").await.unwrap();
+    assert_eq!(r.stdout.trim(), "hello");
+}
+
+#[tokio::test]
+async fn snapshot_preserves_cwd() {
+    let mut bash = Bash::new();
+    bash.exec("mkdir -p /project && cd /project").await.unwrap();
+
+    let bytes = bash.snapshot().unwrap();
+    let mut bash2 = Bash::from_snapshot(&bytes).unwrap();
+
+    let r = bash2.exec("pwd").await.unwrap();
+    assert_eq!(r.stdout.trim(), "/project");
+}
+
+#[tokio::test]
+async fn snapshot_restore_into_existing_instance() {
+    let mut bash = Bash::new();
+    bash.exec("x=42; echo 'data' > /tmp/saved.txt")
+        .await
+        .unwrap();
+
+    let bytes = bash.snapshot().unwrap();
+
+    // Make changes
+    bash.exec("x=99; echo 'changed' > /tmp/saved.txt")
+        .await
+        .unwrap();
+
+    // Restore into same instance
+    bash.restore_snapshot(&bytes).unwrap();
+
+    let r = bash.exec("echo $x").await.unwrap();
+    assert_eq!(r.stdout.trim(), "42");
+
+    let r = bash.exec("cat /tmp/saved.txt").await.unwrap();
+    assert_eq!(r.stdout.trim(), "data");
+}
+
+#[tokio::test]
+async fn snapshot_struct_serialization() {
+    let mut bash = Bash::new();
+    bash.exec("greeting='hello world'").await.unwrap();
+
+    let bytes = bash.snapshot().unwrap();
+    let snap = Snapshot::from_bytes(&bytes).unwrap();
+
+    assert_eq!(snap.version, 1);
+    assert_eq!(
+        snap.shell.variables.get("greeting").map(|s| s.as_str()),
+        Some("hello world")
+    );
+
+    // Re-serialize and verify roundtrip
+    let bytes2 = snap.to_bytes().unwrap();
+    let snap2 = Snapshot::from_bytes(&bytes2).unwrap();
+    assert_eq!(
+        snap2.shell.variables.get("greeting"),
+        snap.shell.variables.get("greeting")
+    );
+}
+
+#[tokio::test]
+async fn snapshot_invalid_data_returns_error() {
+    let result = Bash::from_snapshot(b"not valid json");
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn snapshot_session_counters_transferred() {
+    let mut bash = Bash::new();
+    // Run some commands to increment session counters
+    bash.exec("echo 1; echo 2; echo 3").await.unwrap();
+    bash.exec("echo 4").await.unwrap();
+
+    let bytes = bash.snapshot().unwrap();
+    let snap = Snapshot::from_bytes(&bytes).unwrap();
+
+    // Session counters should be > 0
+    assert!(snap.session_commands > 0);
+    assert!(snap.session_exec_calls > 0);
 }

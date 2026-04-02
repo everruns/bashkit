@@ -153,6 +153,23 @@ pub trait FileSystemExt: Send + Sync {
     fn limits(&self) -> FsLimits {
         FsLimits::unlimited()
     }
+
+    /// Take a snapshot of the filesystem contents for serialization.
+    ///
+    /// Returns `None` if this filesystem implementation doesn't support snapshots.
+    /// The default implementation returns `None`. `InMemoryFs` and filesystems
+    /// wrapping it (e.g. `MountableFs`, `OverlayFs`) return `Some(snapshot)`.
+    fn vfs_snapshot(&self) -> Option<super::VfsSnapshot> {
+        None
+    }
+
+    /// Restore filesystem contents from a snapshot.
+    ///
+    /// Returns `false` if this filesystem doesn't support restore.
+    /// The default implementation returns `false`.
+    fn vfs_restore(&self, _snapshot: &super::VfsSnapshot) -> bool {
+        false
+    }
 }
 
 /// Async virtual filesystem trait.

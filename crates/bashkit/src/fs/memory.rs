@@ -1612,6 +1612,15 @@ impl FileSystemExt for InMemoryFs {
     fn limits(&self) -> FsLimits {
         self.limits.clone()
     }
+
+    fn vfs_snapshot(&self) -> Option<VfsSnapshot> {
+        Some(self.snapshot())
+    }
+
+    fn vfs_restore(&self, snapshot: &VfsSnapshot) -> bool {
+        self.restore(snapshot);
+        true
+    }
 }
 
 #[cfg(test)]

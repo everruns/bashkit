@@ -282,6 +282,52 @@ export class Bash {
     this.native.reset();
   }
 
+  // Snapshot / Resume
+
+  /**
+   * Serialize interpreter state (variables, VFS, counters) to a Uint8Array.
+   *
+   * The snapshot can be persisted to disk, sent over the network, and later
+   * used with `Bash.fromSnapshot()` to restore the session.
+   *
+   * @example
+   * ```typescript
+   * const bash = new Bash();
+   * await bash.execute("x=42");
+   * const snapshot = bash.snapshot();
+   * // persist snapshot...
+   * const bash2 = Bash.fromSnapshot(snapshot);
+   * const r = await bash2.execute("echo $x"); // "42\n"
+   * ```
+   */
+  snapshot(): Uint8Array {
+    return this.native.snapshot();
+  }
+
+  /**
+   * Restore interpreter state from a previously captured snapshot.
+   * Preserves current configuration (limits, builtins) but replaces
+   * shell state and VFS contents.
+   */
+  restoreSnapshot(data: Uint8Array): void {
+    this.native.restoreSnapshot(Buffer.from(data));
+  }
+
+  /**
+   * Create a new Bash instance from a snapshot.
+   *
+   * @example
+   * ```typescript
+   * const snapshot = existingBash.snapshot();
+   * const restored = Bash.fromSnapshot(snapshot);
+   * ```
+   */
+  static fromSnapshot(data: Uint8Array): Bash {
+    const instance = new Bash();
+    instance.native = NativeBash.fromSnapshot(Buffer.from(data));
+    return instance;
+  }
+
   // VFS — direct filesystem access
 
   /** Read a file from the virtual filesystem as a UTF-8 string. */
