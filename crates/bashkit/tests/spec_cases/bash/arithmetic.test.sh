@@ -406,6 +406,41 @@ echo $((5 >= 3)); echo $((5 >= 5)); echo $((4 >= 5))
 0
 ### end
 
+### arith_cmd_ge_false
+# (( a >= b )) should be false when a < b
+(( 3 >= 5 )); echo $?
+### expect
+1
+### end
+
+### arith_cmd_ge_true
+# (( a >= b )) should be true when a > b
+(( 5 >= 3 )); echo $?
+### expect
+0
+### end
+
+### arith_cmd_ge_equal
+# (( a >= b )) should be true when a == b
+(( 5 >= 5 )); echo $?
+### expect
+0
+### end
+
+### arith_cmd_ge_nospace
+# (( a>=b )) without spaces
+(( 3>=5 )); echo $?
+### expect
+1
+### end
+
+### arith_cmd_le_nospace
+# (( a<=b )) without spaces
+(( 5<=3 )); echo $?
+### expect
+1
+### end
+
 ### let_basic
 # let evaluates arithmetic and assigns
 let x=5+3
