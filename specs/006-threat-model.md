@@ -606,6 +606,8 @@ allowlist.allow("https://api.example.com");
 | TM-NET-013 | Gzip bomb / Zip bomb | 10KB gzip → 10GB decompressed | Auto-decompression disabled | **MITIGATED** |
 | TM-NET-014 | DNS rebind via redirect | Redirect to rebinded IP | Manual redirect requires allowlist check | **MITIGATED** |
 | TM-NET-018 | JSON body injection | `http POST url name='x","admin":true'` via unescaped string formatting | Use `serde_json` for JSON construction | **MITIGATED** |
+| TM-NET-019 | Query param injection | `http GET url q=='foo&admin=true'` injects extra params | URL-encode via `url::form_urlencoded` | **MITIGATED** |
+| TM-NET-020 | Form body injection | `http --form POST url user='x&role=admin'` injects extra fields | URL-encode via `url::form_urlencoded` | **MITIGATED** |
 
 **Current Risk**: LOW - Multiple mitigations in place
 
