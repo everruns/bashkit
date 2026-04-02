@@ -82,3 +82,33 @@ echo "$var"
 ### expect
 hel
 ### end
+
+### read_eof_clears_variable
+# read at EOF with no data should clear the variable
+printf "one\ntwo" | {
+  count=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    echo "$line"
+    count=$((count + 1))
+    [[ $count -gt 5 ]] && break
+  done
+}
+### expect
+one
+two
+### end
+
+### read_eof_partial_line
+# read returns 1 but captures partial line without trailing newline
+printf "complete\npartial" | {
+  lines=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    lines+=("$line")
+    [[ ${#lines[@]} -gt 5 ]] && break
+  done
+  printf '%s\n' "${lines[@]}"
+}
+### expect
+complete
+partial
+### end
