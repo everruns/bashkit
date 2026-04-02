@@ -2539,7 +2539,12 @@ impl<'a> Parser<'a> {
         let mut current = String::new();
 
         while let Some(ch) = chars.next() {
-            if ch == '$' {
+            if ch == '\x00' {
+                // NUL sentinel from lexer: next char is a literal (escaped in source).
+                if let Some(literal_ch) = chars.next() {
+                    current.push(literal_ch);
+                }
+            } else if ch == '$' {
                 // Flush current literal
                 if !current.is_empty() {
                     parts.push(WordPart::Literal(std::mem::take(&mut current)));
