@@ -2448,6 +2448,17 @@ impl<'a> Parser<'a> {
                             cmd_str.push_str(&format!(" {}> ", fd));
                             self.advance();
                         }
+                        Some(tokens::Token::LeftBrace) => {
+                            if !cmd_str.is_empty() {
+                                cmd_str.push(' ');
+                            }
+                            cmd_str.push('{');
+                            self.advance();
+                        }
+                        Some(tokens::Token::RightBrace) => {
+                            cmd_str.push_str(" }");
+                            self.advance();
+                        }
                         Some(tokens::Token::Newline) => {
                             cmd_str.push('\n');
                             self.advance();
