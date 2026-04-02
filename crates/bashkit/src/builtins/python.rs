@@ -316,8 +316,17 @@ impl Builtin for Python {
 
         // Merge env and variables so exported vars (set via `export`) are visible
         // to Python's os.getenv(). Variables override env (bash semantics).
+        // THREAT[TM-INF]: Filter internal markers and SHOPT_* to prevent
+        // information disclosure via os.environ (issue #999).
         let mut merged_env = ctx.env.clone();
-        merged_env.extend(ctx.variables.iter().map(|(k, v)| (k.clone(), v.clone())));
+        merged_env.extend(
+            ctx.variables
+                .iter()
+                .filter(|(k, _)| {
+                    !crate::interpreter::is_internal_variable(k) && !k.starts_with("SHOPT_")
+                })
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
 
         run_python(
             &code,
