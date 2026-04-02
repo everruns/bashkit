@@ -1002,6 +1002,21 @@ impl Interpreter {
         self.last_exit_code = state.last_exit_code;
         self.aliases = state.aliases.clone();
         self.traps = state.traps.clone();
+        // Recompute memory budget from restored state to prevent desync
+        let func_count = self.functions.len();
+        let func_bytes: usize = self
+            .functions
+            .values()
+            .map(|f| format!("{:?}", f.body).len())
+            .sum();
+        self.memory_budget = crate::limits::MemoryBudget::recompute_from_state(
+            &self.variables,
+            &self.arrays,
+            &self.assoc_arrays,
+            func_count,
+            func_bytes,
+            Self::is_internal_variable,
+        );
     }
 
     /// Get a reference to the current execution counters.
@@ -1377,6 +1392,7 @@ impl Interpreter {
                 let saved_exit = self.last_exit_code;
                 let saved_aliases = self.aliases.clone();
                 let saved_coproc = self.coproc_buffers.clone();
+                let saved_memory_budget = self.memory_budget.clone();
 
                 let mut result = self.execute_command_sequence(commands).await;
 
@@ -1420,6 +1436,7 @@ impl Interpreter {
                 self.last_exit_code = saved_exit;
                 self.aliases = saved_aliases;
                 self.coproc_buffers = saved_coproc;
+                self.memory_budget = saved_memory_budget;
 
                 // Consume Exit control flow at subshell boundary — exit only
                 // terminates the subshell, not the parent shell.
@@ -3982,6 +3999,7 @@ impl Interpreter {
         let saved_exit = self.last_exit_code;
         let saved_aliases = self.aliases.clone();
         let saved_coproc = self.coproc_buffers.clone();
+        let saved_memory_budget = self.memory_budget.clone();
 
         // Child only sees exported variables (env), not all shell variables.
         // Reset last_exit_code so $? starts at 0 (matches real bash subprocess).
@@ -4024,6 +4042,7 @@ impl Interpreter {
         self.last_exit_code = saved_exit;
         self.aliases = saved_aliases;
         self.coproc_buffers = saved_coproc;
+        self.memory_budget = saved_memory_budget;
         self.bash_source_stack = saved_source_stack;
         self.pipeline_stdin = prev_pipeline_stdin;
 
@@ -5968,6 +5987,7 @@ impl Interpreter {
                     let saved_assoc = self.assoc_arrays.clone();
                     let saved_aliases = self.aliases.clone();
                     let saved_cwd = self.cwd.clone();
+                    let saved_memory_budget = self.memory_budget.clone();
                     let mut stdout = String::new();
                     for cmd in commands {
                         let cmd_result = self.execute_command(cmd).await?;
@@ -5999,6 +6019,7 @@ impl Interpreter {
                     self.assoc_arrays = saved_assoc;
                     self.aliases = saved_aliases;
                     self.cwd = saved_cwd;
+                    self.memory_budget = saved_memory_budget;
                     self.counters.pop_function();
                     self.subst_generation += 1;
                     let trimmed = stdout.trim_end_matches('\n');
