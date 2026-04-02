@@ -1370,11 +1370,10 @@ say "hello"
 ### end
 
 ### escaped_dollar
-### bash_diff: echo "\$HOME" — bashkit expands the variable instead of treating \$ as literal (#668)
-# Escaped dollar sign — bash: "$HOME", bashkit: "/home/sandbox"
+# Escaped dollar sign — bash treats \$ in double quotes as literal $
 echo "\$HOME"
 ### expect
-/home/sandbox
+$HOME
 ### end
 
 ### escaped_backtick

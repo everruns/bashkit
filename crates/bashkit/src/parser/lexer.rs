@@ -416,7 +416,14 @@ impl<'a> Lexer<'a> {
                                 '\n' => {
                                     self.advance();
                                 }
-                                '"' | '\\' | '$' | '`' => {
+                                '$' => {
+                                    // Use NUL sentinel so parse_word() treats this
+                                    // as a literal '$' rather than a variable expansion.
+                                    word.push('\x00');
+                                    word.push('$');
+                                    self.advance();
+                                }
+                                '"' | '\\' | '`' => {
                                     word.push(next);
                                     self.advance();
                                 }
@@ -512,7 +519,14 @@ impl<'a> Lexer<'a> {
                                     // \<newline> is line continuation: discard both
                                     self.advance();
                                 }
-                                '"' | '\\' | '$' | '`' => {
+                                '$' => {
+                                    // Use NUL sentinel so parse_word() treats this
+                                    // as a literal '$' rather than a variable expansion.
+                                    word.push('\x00');
+                                    word.push('$');
+                                    self.advance();
+                                }
+                                '"' | '\\' | '`' => {
                                     word.push(next);
                                     self.advance();
                                 }
@@ -568,7 +582,12 @@ impl<'a> Lexer<'a> {
                                     '\n' => {
                                         self.advance();
                                     }
-                                    '"' | '\\' | '$' | '`' => {
+                                    '$' => {
+                                        word.push('\x00');
+                                        word.push('$');
+                                        self.advance();
+                                    }
+                                    '"' | '\\' | '`' => {
                                         word.push(next);
                                         self.advance();
                                     }
@@ -937,7 +956,12 @@ impl<'a> Lexer<'a> {
                             self.advance();
                             if let Some(next) = self.peek_char() {
                                 match next {
-                                    '"' | '\\' | '$' | '`' => {
+                                    '$' => {
+                                        content.push('\x00');
+                                        content.push('$');
+                                        self.advance();
+                                    }
+                                    '"' | '\\' | '`' => {
                                         content.push(next);
                                         self.advance();
                                     }
@@ -1108,7 +1132,14 @@ impl<'a> Lexer<'a> {
                                 // \<newline> is line continuation: discard both
                                 self.advance();
                             }
-                            '"' | '\\' | '$' | '`' => {
+                            '$' => {
+                                // Use NUL sentinel so parse_word() treats this
+                                // as a literal '$' rather than a variable expansion.
+                                content.push('\x00');
+                                content.push('$');
+                                self.advance();
+                            }
+                            '"' | '\\' | '`' => {
                                 content.push(next);
                                 self.advance();
                             }
@@ -1332,7 +1363,12 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     if let Some(esc) = self.peek_char() {
                         match esc {
-                            '"' | '\\' | '$' | '`' => {
+                            '$' => {
+                                content.push('\x00');
+                                content.push('$');
+                                self.advance();
+                            }
+                            '"' | '\\' | '`' => {
                                 content.push(esc);
                                 self.advance();
                             }
