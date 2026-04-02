@@ -9,13 +9,14 @@ use crate::interpreter::ExecResult;
 
 /// The tree builtin command.
 ///
-/// Usage: tree [-a] [-d] [-L level] [-I pattern] [PATH...]
+/// Usage: tree [-a] [-d] [-L level] [-I pattern] [--noreport] [PATH...]
 ///
 /// Options:
-///   -a          Show hidden files
-///   -d          Directories only
-///   -L level    Limit depth to level
-///   -I pattern  Exclude files matching pattern
+///   -a            Show hidden files
+///   -d            Directories only
+///   -L level      Limit depth to level
+///   -I pattern    Exclude files matching pattern
+///   --noreport    Suppress directory/file count report
 pub struct Tree;
 
 struct TreeOptions {
@@ -23,6 +24,7 @@ struct TreeOptions {
     dirs_only: bool,
     max_depth: Option<usize>,
     exclude_pattern: Option<String>,
+    noreport: bool,
 }
 
 struct TreeCounts {
@@ -38,6 +40,7 @@ impl Builtin for Tree {
             dirs_only: false,
             max_depth: None,
             exclude_pattern: None,
+            noreport: false,
         };
 
         let mut paths: Vec<&str> = Vec::new();
@@ -60,11 +63,25 @@ impl Builtin for Tree {
             } else if let Some(val) = p.flag_value_opt("-I") {
                 opts.exclude_pattern = Some(val.to_string());
             } else if p.is_flag() {
-                // Handle combined flags like -ad
                 let Some(s) = p.current() else {
                     p.advance();
                     continue;
                 };
+                // Handle long options (--foo) before short-flag loop
+                if s.starts_with("--") {
+                    match s {
+                        "--noreport" => opts.noreport = true,
+                        _ => {
+                            return Ok(ExecResult::err(
+                                format!("tree: unrecognized option '{}'\n", s),
+                                1,
+                            ));
+                        }
+                    }
+                    p.advance();
+                    continue;
+                }
+                // Handle combined short flags like -ad
                 for ch in s[1..].chars() {
                     match ch {
                         'a' => opts.show_hidden = true,
@@ -108,20 +125,22 @@ impl Builtin for Tree {
             let mut counts = TreeCounts { dirs: 0, files: 0 };
             build_tree(&ctx, &root, "", &opts, 0, &mut counts, &mut output).await;
 
-            if opts.dirs_only {
-                output.push_str(&format!(
-                    "\n{} director{}\n",
-                    counts.dirs,
-                    if counts.dirs == 1 { "y" } else { "ies" }
-                ));
-            } else {
-                output.push_str(&format!(
-                    "\n{} director{}, {} file{}\n",
-                    counts.dirs,
-                    if counts.dirs == 1 { "y" } else { "ies" },
-                    counts.files,
-                    if counts.files == 1 { "" } else { "s" }
-                ));
+            if !opts.noreport {
+                if opts.dirs_only {
+                    output.push_str(&format!(
+                        "\n{} director{}\n",
+                        counts.dirs,
+                        if counts.dirs == 1 { "y" } else { "ies" }
+                    ));
+                } else {
+                    output.push_str(&format!(
+                        "\n{} director{}, {} file{}\n",
+                        counts.dirs,
+                        if counts.dirs == 1 { "y" } else { "ies" },
+                        counts.files,
+                        if counts.files == 1 { "" } else { "s" }
+                    ));
+                }
             }
         }
 
@@ -380,5 +399,26 @@ mod tests {
         let result = run_tree(&["-z"], fs).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("invalid option"));
+    }
+
+    #[tokio::test]
+    async fn test_tree_noreport() {
+        let fs = setup_fs().await;
+        let result = run_tree(&["--noreport", "/project"], fs).await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("/project"));
+        assert!(result.stdout.contains("src"));
+        assert!(result.stdout.contains("Cargo.toml"));
+        // --noreport should suppress the summary line
+        assert!(!result.stdout.contains("director"));
+        assert!(!result.stdout.contains("file"));
+    }
+
+    #[tokio::test]
+    async fn test_tree_unknown_long_option() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        let result = run_tree(&["--bogus"], fs).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("unrecognized option"));
     }
 }
