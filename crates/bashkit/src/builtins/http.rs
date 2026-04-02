@@ -204,6 +204,7 @@ fn build_url_with_query(base_url: &str, items: &[ItemType]) -> String {
 }
 
 /// Build JSON body from items using serde_json for proper escaping.
+// THREAT[TM-NET-018]: serde_json prevents JSON injection via special characters in values
 fn build_json_body(items: &[ItemType]) -> String {
     let mut map = serde_json::Map::new();
     for item in items {
@@ -620,7 +621,10 @@ mod tests {
 
     #[test]
     fn test_json_body_raw_field_unchanged() {
-        let items = vec![ItemType::JsonRawField("count".to_string(), "42".to_string())];
+        let items = vec![ItemType::JsonRawField(
+            "count".to_string(),
+            "42".to_string(),
+        )];
         let body = build_json_body(&items);
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["count"].as_i64().unwrap(), 42);

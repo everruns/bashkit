@@ -605,6 +605,7 @@ allowlist.allow("https://api.example.com");
 | TM-NET-012 | Chunked encoding bomb | Infinite chunked response | Response size limit (streaming) | **MITIGATED** |
 | TM-NET-013 | Gzip bomb / Zip bomb | 10KB gzip → 10GB decompressed | Auto-decompression disabled | **MITIGATED** |
 | TM-NET-014 | DNS rebind via redirect | Redirect to rebinded IP | Manual redirect requires allowlist check | **MITIGATED** |
+| TM-NET-018 | JSON body injection | `http POST url name='x","admin":true'` via unescaped string formatting | Use `serde_json` for JSON construction | **MITIGATED** |
 
 **Current Risk**: LOW - Multiple mitigations in place
 
