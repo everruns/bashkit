@@ -203,24 +203,27 @@ fn build_url_with_query(base_url: &str, items: &[ItemType]) -> String {
     format!("{}{}{}", base_url, sep, params.join("&"))
 }
 
-/// Build JSON body from items.
+/// Build JSON body from items using serde_json for proper escaping.
 fn build_json_body(items: &[ItemType]) -> String {
-    let mut fields = Vec::new();
+    let mut map = serde_json::Map::new();
     for item in items {
         match item {
             ItemType::JsonField(k, v) => {
-                fields.push(format!("  \"{}\": \"{}\"", k, v));
+                map.insert(k.clone(), serde_json::Value::String(v.clone()));
             }
             ItemType::JsonRawField(k, v) => {
-                fields.push(format!("  \"{}\": {}", k, v));
+                // Raw values are pre-formatted JSON (numbers, booleans, etc.)
+                let raw: serde_json::Value =
+                    serde_json::from_str(v).unwrap_or(serde_json::Value::String(v.clone()));
+                map.insert(k.clone(), raw);
             }
             _ => {}
         }
     }
-    if fields.is_empty() {
+    if map.is_empty() {
         return String::new();
     }
-    format!("{{\n{}\n}}", fields.join(",\n"))
+    serde_json::to_string_pretty(&serde_json::Value::Object(map)).unwrap_or_default()
 }
 
 /// Build form body from items.
@@ -586,5 +589,40 @@ mod tests {
                 "search term".to_string()
             ))
         );
+    }
+
+    #[test]
+    fn test_json_body_escapes_quotes() {
+        let items = vec![ItemType::JsonField(
+            "name".to_string(),
+            r#"test","admin":true,"x":"y"#.to_string(),
+        )];
+        let body = build_json_body(&items);
+        // Must produce valid JSON — injected field must NOT appear as separate key
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            parsed["name"].as_str().unwrap(),
+            r#"test","admin":true,"x":"y"#
+        );
+        assert!(parsed.get("admin").is_none());
+    }
+
+    #[test]
+    fn test_json_body_escapes_backslash_and_newline() {
+        let items = vec![ItemType::JsonField(
+            "msg".to_string(),
+            "line1\nline2\\end".to_string(),
+        )];
+        let body = build_json_body(&items);
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["msg"].as_str().unwrap(), "line1\nline2\\end");
+    }
+
+    #[test]
+    fn test_json_body_raw_field_unchanged() {
+        let items = vec![ItemType::JsonRawField("count".to_string(), "42".to_string())];
+        let body = build_json_body(&items);
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["count"].as_i64().unwrap(), 42);
     }
 }
