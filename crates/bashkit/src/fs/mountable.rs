@@ -496,6 +496,16 @@ impl FileSystemExt for MountableFs {
         let (fs, resolved) = self.resolve(path);
         fs.mkfifo(&resolved, mode).await
     }
+
+    fn vfs_snapshot(&self) -> Option<super::VfsSnapshot> {
+        // Delegate to root filesystem
+        self.root.vfs_snapshot()
+    }
+
+    fn vfs_restore(&self, snapshot: &super::VfsSnapshot) -> bool {
+        // Delegate to root filesystem
+        self.root.vfs_restore(snapshot)
+    }
 }
 
 #[cfg(test)]
