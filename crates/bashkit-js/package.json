@@ -19,6 +19,9 @@
     },
     "./openai": {
       "default": "./openai.js"
+    },
+    "./ai": {
+      "default": "./ai.js"
     }
   },
   "license": "MIT",
@@ -53,6 +56,8 @@
     "anthropic.d.ts",
     "openai.js",
     "openai.d.ts",
+    "ai.js",
+    "ai.d.ts",
     "index.cjs",
     "index.d.ts",
     "index.d.cts",
