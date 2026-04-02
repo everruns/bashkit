@@ -152,6 +152,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 | VFS limit bypass (TM-ESC-012) | `add_file()` skips limits | Restrict API visibility | **OPEN** |
 | OverlayFs upper() exposed (TM-ESC-013) | `upper()` returns unlimited FS | Restrict visibility | **OPEN** |
 | Custom builtins lost (TM-ESC-014) | `std::mem::take` empties builtins | Arc-cloned builtins | **FIXED** |
+| Symlink overlay rename (TM-ESC-016) | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks | **FIXED** |
 
 **Process Escape:**
 

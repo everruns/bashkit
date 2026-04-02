@@ -320,6 +320,7 @@ max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
 | TM-ESC-002 | Symlink escape | `ln -s /etc/passwd /tmp/x` | Symlinks not followed | **MITIGATED** |
 | TM-ESC-003 | Real FS access | Direct syscalls | No real FS by default | **MITIGATED** |
 | TM-ESC-004 | Mount escape | Mount real paths | MountableFs controlled | **MITIGATED** |
+| TM-ESC-016 | Symlink escape via overlay rename | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks as symlinks | **FIXED** |
 
 **Current Risk**: MEDIUM - Two open escape vectors (TM-ESC-012, TM-ESC-013) need remediation
 
@@ -341,6 +342,13 @@ or return a view that enforces the overlay's limits.
 
 **TM-ESC-014**: Fixed. `BashTool::create_bash()` now clones `Arc`-wrapped builtins instead of
 taking ownership via `std::mem::take`. Custom builtins persist across multiple calls. See `tool.rs:659-662`.
+
+**TM-ESC-016**: Fixed. `OverlayFs::rename` and `copy` previously used `read_file()` + `write_file()`
+which silently failed on symlinks (since `read_file` intentionally doesn't follow symlinks per
+TM-ESC-002). A symlink could not be renamed at all, but the underlying design gap meant any future
+relaxation of symlink-following policy could expose the target. Fix: `rename`/`copy` now detect
+symlinks via `stat()` and use `read_link()` + `symlink()` to preserve them. Same fix applied to
+`MountableFs` cross-mount operations. See `fs/overlay.rs` and `fs/mountable.rs`.
 
 #### 2.2 Process Escape
 
