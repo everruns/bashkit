@@ -297,3 +297,48 @@ async fn direct_fs_api_exists() {
     assert!(fs.exists(Path::new("/mnt/data/hello.txt")).await.unwrap());
     assert!(!fs.exists(Path::new("/mnt/data/nope.txt")).await.unwrap());
 }
+
+// ==================== Symlink sandbox escape prevention (Issue #979) ====================
+
+#[tokio::test]
+async fn realfs_symlink_absolute_escape_blocked() {
+    let dir = setup_host_dir();
+    let mut bash = Bash::builder()
+        .mount_real_readwrite_at(dir.path(), "/mnt/workspace")
+        .build();
+
+    // Attempt to create a symlink pointing to /etc/passwd
+    let r = bash
+        .exec("ln -s /etc/passwd /mnt/workspace/escape 2>&1; echo $?")
+        .await
+        .unwrap();
+    // Should fail with non-zero exit code
+    assert!(
+        r.stdout.trim().ends_with('1')
+            || r.stdout.contains("not allowed")
+            || r.stdout.contains("Permission denied"),
+        "Symlink creation should be blocked, got: {}",
+        r.stdout
+    );
+}
+
+#[tokio::test]
+async fn realfs_symlink_relative_escape_blocked() {
+    let dir = setup_host_dir();
+    let mut bash = Bash::builder()
+        .mount_real_readwrite_at(dir.path(), "/mnt/workspace")
+        .build();
+
+    // Attempt relative path traversal via symlink
+    let r = bash
+        .exec("ln -s ../../../../etc/passwd /mnt/workspace/escape 2>&1; echo $?")
+        .await
+        .unwrap();
+    assert!(
+        r.stdout.trim().ends_with('1')
+            || r.stdout.contains("not allowed")
+            || r.stdout.contains("Permission denied"),
+        "Relative symlink escape should be blocked, got: {}",
+        r.stdout
+    );
+}

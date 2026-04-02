@@ -369,23 +369,16 @@ impl FsBackend for RealFs {
         Ok(())
     }
 
-    async fn symlink(&self, target: &Path, link: &Path) -> Result<()> {
-        self.check_writable()?;
-        let real_link = self.resolve(link)?;
-        // Store the target as-is (virtual path) - symlinks are stored but
-        // not followed per security policy (TM-ESC-002)
-        #[cfg(unix)]
-        tokio::fs::symlink(target, &real_link).await?;
-        #[cfg(not(unix))]
-        {
-            let _ = (target, &real_link);
-            return Err(IoError::new(
-                ErrorKind::Unsupported,
-                "symlinks not supported on this platform",
-            )
-            .into());
-        }
-        Ok(())
+    /// THREAT[TM-ESC-003]: Symlink creation is blocked in RealFs to prevent
+    /// sandbox escape. Even though bashkit itself doesn't follow symlinks
+    /// (TM-ESC-002), any external process sharing the directory tree would
+    /// follow them, enabling reads/writes to arbitrary host paths.
+    async fn symlink(&self, _target: &Path, _link: &Path) -> Result<()> {
+        Err(IoError::new(
+            ErrorKind::PermissionDenied,
+            "symlink creation is not allowed in RealFs (sandbox security)",
+        )
+        .into())
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
