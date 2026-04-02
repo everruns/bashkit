@@ -1,0 +1,195 @@
+/**
+ * OpenAI SDK adapter for Bashkit.
+ *
+ * Returns a ready-to-use `{ system, tools, handler }` object for OpenAI's
+ * `chat.completions.create()` API.
+ *
+ * @example
+ * ```typescript
+ * import OpenAI from "openai";
+ * import { bashTool } from "@everruns/bashkit/openai";
+ *
+ * const client = new OpenAI();
+ * const bash = bashTool();
+ *
+ * const response = await client.chat.completions.create({
+ *   model: "gpt-4.1-mini",
+ *   tools: bash.tools,
+ *   messages: [
+ *     { role: "system", content: bash.system },
+ *     { role: "user", content: "Create a file with today's date" },
+ *   ],
+ * });
+ *
+ * for (const call of response.choices[0].message.tool_calls ?? []) {
+ *   const result = await bash.handler(call);
+ *   // send result back as tool message
+ * }
+ * ```
+ *
+ * @packageDocumentation
+ */
+
+import { Bash, BashTool } from "./wrapper.js";
+import type { BashOptions, ExecResult } from "./wrapper.js";
+
+/** Options for configuring the bash tool adapter. */
+export interface BashToolOptions extends Omit<BashOptions, "files"> {
+  /** Pre-populate VFS files. Keys are absolute paths, values are file contents. */
+  files?: Record<string, string>;
+}
+
+/** OpenAI function tool definition (matches the `tools` array in chat.completions.create). */
+interface OpenAITool {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: "object";
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+  };
+}
+
+/** OpenAI tool_call from a chat completion response. */
+interface OpenAIToolCall {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+/** Result from handling a tool call, ready to send as a tool message. */
+export interface ToolResult {
+  role: "tool";
+  tool_call_id: string;
+  content: string;
+}
+
+/** Return value of `bashTool()`. */
+export interface BashToolAdapter {
+  /** System prompt describing bash capabilities and constraints. */
+  system: string;
+  /** Tool definitions for OpenAI's chat.completions.create() API. */
+  tools: OpenAITool[];
+  /** Handler that executes a tool_call and returns a tool message. */
+  handler: (toolCall: OpenAIToolCall) => Promise<ToolResult>;
+  /** The underlying Bash instance for direct access. */
+  bash: Bash;
+}
+
+function formatOutput(result: ExecResult): string {
+  let output = result.stdout;
+  if (result.stderr) {
+    output += (output ? "\n" : "") + `STDERR: ${result.stderr}`;
+  }
+  if (result.exitCode !== 0) {
+    output += (output ? "\n" : "") + `[Exit code: ${result.exitCode}]`;
+  }
+  return output || "(no output)";
+}
+
+/**
+ * Create a bash tool adapter for the OpenAI SDK.
+ *
+ * Returns `{ system, tools, handler }` that plugs directly into
+ * `client.chat.completions.create()`.
+ *
+ * @param options - Configuration for the bash interpreter
+ *
+ * @example
+ * ```typescript
+ * import OpenAI from "openai";
+ * import { bashTool } from "@everruns/bashkit/openai";
+ *
+ * const client = new OpenAI();
+ * const bash = bashTool({ files: { "/data.txt": "42" } });
+ *
+ * const response = await client.chat.completions.create({
+ *   model: "gpt-4.1-nano",
+ *   tools: bash.tools,
+ *   messages: [
+ *     { role: "system", content: bash.system },
+ *     { role: "user", content: "What's in /data.txt?" },
+ *   ],
+ * });
+ * ```
+ */
+export function bashTool(options?: BashToolOptions): BashToolAdapter {
+  const { files, ...bashOptions } = options ?? {};
+
+  const bashToolInstance = new BashTool(bashOptions);
+  const bash = new Bash(bashOptions);
+
+  if (files) {
+    for (const [path, content] of Object.entries(files)) {
+      bash.writeFile(path, content);
+    }
+  }
+
+  const system = bashToolInstance.systemPrompt();
+
+  const tools: OpenAITool[] = [
+    {
+      type: "function",
+      function: {
+        name: "bash",
+        description: bashToolInstance.description(),
+        parameters: {
+          type: "object",
+          properties: {
+            commands: {
+              type: "string",
+              description:
+                "Bash commands to execute. State persists between calls.",
+            },
+          },
+          required: ["commands"],
+        },
+      },
+    },
+  ];
+
+  const handler = async (toolCall: OpenAIToolCall): Promise<ToolResult> => {
+    let commands: string;
+    try {
+      const args = JSON.parse(toolCall.function.arguments);
+      commands = args.commands;
+    } catch {
+      return {
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: "Error: invalid JSON in function arguments",
+      };
+    }
+
+    if (!commands) {
+      return {
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: "Error: missing 'commands' parameter",
+      };
+    }
+
+    try {
+      const result = await bash.execute(commands);
+      return {
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: formatOutput(result),
+      };
+    } catch (err) {
+      return {
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  };
+
+  return { system, tools, handler, bash };
+}
