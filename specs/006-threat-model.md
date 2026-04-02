@@ -406,6 +406,7 @@ All execution stays within the virtual interpreter — no OS subprocess is spawn
 | TM-INF-016 | Internal state in error messages | `std::io::Error`, reqwest errors, Debug-formatted errors leak host paths/IPs/TLS info | `sanitize_error_message()` strips paths/IPs/TLS; `Error::network_sanitized()` wraps reqwest | **FIXED** |
 | TM-INF-019 | `envsubst` exposes all env vars | `envsubst` substitutes `$VAR`/`${VAR}` from `ctx.env` — scripts can probe any env var | Same as TM-INF-001 (caller controls env) | **CALLER RISK** |
 | TM-INF-020 | `template` exposes env vars via `{{var}}` | Template builtin looks up variables from env as fallback after shell vars and JSON data | Same as TM-INF-001 (caller controls env) | **CALLER RISK** |
+| TM-INF-021 | Stack backtrace information disclosure | Panics leak internal source paths, dependency versions, and function names via stderr | Custom panic hook suppresses backtraces in CLI | **MITIGATED** |
 
 **TM-INF-013**: The jq builtin (`builtins/jq.rs:414-421`) calls `std::env::set_var()` to expose
 shell variables to jaq's `env` function. This also makes host process env vars (API keys, tokens)

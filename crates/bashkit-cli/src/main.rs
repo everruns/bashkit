@@ -161,7 +161,27 @@ fn apply_real_mounts(
     builder
 }
 
+/// Format a panic payload into a sanitized error message.
+// THREAT[TM-INF-021]: No file paths, line numbers, or dependency versions in output.
+fn format_panic_message(payload: &dyn std::any::Any) -> String {
+    let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unexpected error".to_string()
+    };
+    format!("bashkit: internal error: {msg}")
+}
+
 fn main() -> Result<()> {
+    // THREAT[TM-INF-021]: Suppress stack backtraces to prevent information disclosure.
+    // Custom panic hook emits a sanitized message without file paths, line numbers,
+    // or dependency versions that could be exploited by attackers.
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{}", format_panic_message(info.payload()));
+    }));
+
     let args = Args::parse();
 
     match cli_mode(&args) {
@@ -409,5 +429,30 @@ mod tests {
 
         let content = std::fs::read_to_string(dir.path().join("r.txt")).unwrap();
         assert_eq!(content, "result\n");
+    }
+
+    #[test]
+    fn panic_message_str_payload() {
+        let msg = format_panic_message(&"something went wrong" as &dyn std::any::Any);
+        assert_eq!(msg, "bashkit: internal error: something went wrong");
+        assert!(!msg.contains(".rs:"));
+        assert!(!msg.contains("cargo"));
+    }
+
+    #[test]
+    fn panic_message_string_payload() {
+        let payload = String::from("Formatting argument out of range");
+        let msg = format_panic_message(&payload as &dyn std::any::Any);
+        assert_eq!(
+            msg,
+            "bashkit: internal error: Formatting argument out of range"
+        );
+    }
+
+    #[test]
+    fn panic_message_unknown_payload() {
+        let payload = 42i32;
+        let msg = format_panic_message(&payload as &dyn std::any::Any);
+        assert_eq!(msg, "bashkit: internal error: unexpected error");
     }
 }
