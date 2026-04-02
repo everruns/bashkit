@@ -1412,7 +1412,11 @@ impl<'a> Lexer<'a> {
     /// Check if the content starting with { looks like a brace expansion
     /// Brace expansion: {a,b,c} or {1..5} (contains , or ..)
     /// Brace group: { cmd; } (contains spaces, semicolons, newlines)
+    /// THREAT[TM-DOS]: Caps lookahead to prevent O(n^2) scanning when input
+    /// contains many unmatched `{` characters (issue #997).
     fn looks_like_brace_expansion(&self) -> bool {
+        const MAX_LOOKAHEAD: usize = 10_000;
+
         // Clone the iterator to peek ahead without consuming
         let mut chars = self.chars.clone();
 
@@ -1425,8 +1429,13 @@ impl<'a> Lexer<'a> {
         let mut has_comma = false;
         let mut has_dot_dot = false;
         let mut prev_char = None;
+        let mut scanned = 0usize;
 
         for ch in chars {
+            scanned += 1;
+            if scanned > MAX_LOOKAHEAD {
+                return false;
+            }
             match ch {
                 '{' => depth += 1,
                 '}' => {
