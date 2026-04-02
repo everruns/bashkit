@@ -101,3 +101,32 @@ a
 b
 c
 ### end
+
+### process_subst_group_pipe
+### bash_diff: requires /dev/fd/
+# { ... } | cmd inside < <(...) should produce output
+while IFS= read -r line; do echo "$line"; done < <({ echo "a"; echo "b"; } | cat)
+### expect
+a
+b
+### end
+
+### process_subst_group_pipe_tac
+### bash_diff: requires /dev/fd/
+# { ... } | tac inside < <(...)
+while IFS= read -r line; do echo "$line"; done < <({ echo "1"; echo "2"; echo "3"; } | tac)
+### expect
+3
+2
+1
+### end
+
+### process_subst_group_pipe_sort
+### bash_diff: requires /dev/fd/
+# { ... } | sort inside < <(...)
+while IFS= read -r line; do echo "$line"; done < <({ echo "c"; echo "a"; echo "b"; } | sort)
+### expect
+a
+b
+c
+### end
