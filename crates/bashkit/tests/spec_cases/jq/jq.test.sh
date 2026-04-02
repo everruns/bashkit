@@ -1000,3 +1000,17 @@ printf 'a,b\n1,2\n' | jq -Rs 'split("\n") | map(select(length>0))'
   "1,2"
 ]
 ### end
+
+### jq_raw_slurp_empty_stdin
+# jq -Rs on empty stdin should produce empty JSON string
+printf '' | jq -Rs '.'
+### expect
+""
+### end
+
+### jq_raw_slurp_normal
+# jq -Rs on normal input (no regression)
+printf 'hello' | jq -Rs '.'
+### expect
+"hello"
+### end

@@ -412,7 +412,8 @@ impl Builtin for Jq {
         };
 
         // If no input and not null_input mode, return empty
-        if input.trim().is_empty() && !null_input {
+        // (but not for -Rs: raw_input+slurp should produce "" for empty stdin)
+        if input.trim().is_empty() && !null_input && !(raw_input && slurp) {
             return Ok(ExecResult::ok(String::new()));
         }
 
@@ -1359,6 +1360,13 @@ mod tests {
         .unwrap();
         assert!(result.contains("a,b,c"));
         assert!(result.contains("1,2,3"));
+    }
+
+    #[tokio::test]
+    async fn test_jq_raw_input_slurp_empty_stdin() {
+        // -Rs on empty stdin should produce "" (empty JSON string), not nothing
+        let result = run_jq_with_args(&["-Rs", "."], "").await.unwrap();
+        assert_eq!(result.trim(), "\"\"");
     }
 
     // --- Process env pollution tests (issue #410) ---
