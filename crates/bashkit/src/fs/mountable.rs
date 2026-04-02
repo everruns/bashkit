@@ -429,10 +429,18 @@ impl FileSystem for MountableFs {
         if Arc::ptr_eq(&from_fs, &to_fs) {
             from_fs.rename(&from_resolved, &to_resolved).await
         } else {
-            // Cross-mount rename: copy then delete
-            let content = from_fs.read_file(&from_resolved).await?;
-            to_fs.write_file(&to_resolved, &content).await?;
-            from_fs.remove(&from_resolved, false).await
+            // Cross-mount rename: handle symlinks specially since read_file
+            // intentionally doesn't follow them (THREAT[TM-ESC-002]).
+            let meta = from_fs.stat(&from_resolved).await?;
+            if meta.file_type == FileType::Symlink {
+                let target = from_fs.read_link(&from_resolved).await?;
+                to_fs.symlink(&target, &to_resolved).await?;
+                from_fs.remove(&from_resolved, false).await
+            } else {
+                let content = from_fs.read_file(&from_resolved).await?;
+                to_fs.write_file(&to_resolved, &content).await?;
+                from_fs.remove(&from_resolved, false).await
+            }
         }
     }
 
@@ -445,9 +453,15 @@ impl FileSystem for MountableFs {
         if Arc::ptr_eq(&from_fs, &to_fs) {
             from_fs.copy(&from_resolved, &to_resolved).await
         } else {
-            // Cross-mount copy
-            let content = from_fs.read_file(&from_resolved).await?;
-            to_fs.write_file(&to_resolved, &content).await
+            // Cross-mount copy: handle symlinks specially (THREAT[TM-ESC-002]).
+            let meta = from_fs.stat(&from_resolved).await?;
+            if meta.file_type == FileType::Symlink {
+                let target = from_fs.read_link(&from_resolved).await?;
+                to_fs.symlink(&target, &to_resolved).await
+            } else {
+                let content = from_fs.read_file(&from_resolved).await?;
+                to_fs.write_file(&to_resolved, &content).await
+            }
         }
     }
 

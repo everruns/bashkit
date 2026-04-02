@@ -679,13 +679,22 @@ impl FileSystem for OverlayFs {
         let from = Self::normalize_path(from);
         let to = Self::normalize_path(to);
 
-        // Read from source (checking both layers)
+        // THREAT[TM-ESC-002]: Check if source is a symlink first.
+        // Symlinks must be moved as symlinks, not dereferenced via read_file
+        // (which would fail since InMemoryFs intentionally doesn't follow them).
+        let meta = self.stat(&from).await?;
+        if meta.file_type == FileType::Symlink {
+            let target = self.read_link(&from).await?;
+            self.check_write_limits(0)?;
+            self.remove_whiteout(&to);
+            self.upper.symlink(&target, &to).await?;
+            self.remove(&from, false).await?;
+            return Ok(());
+        }
+
+        // Regular file: read content and write to new location
         let content = self.read_file(&from).await?;
-
-        // Write to destination in upper
         self.write_file(&to, &content).await?;
-
-        // Delete source (will add whiteout if needed)
         self.remove(&from, false).await?;
 
         Ok(())
@@ -702,10 +711,17 @@ impl FileSystem for OverlayFs {
         let from = Self::normalize_path(from);
         let to = Self::normalize_path(to);
 
-        // Read from source (checking both layers)
-        let content = self.read_file(&from).await?;
+        // THREAT[TM-ESC-002]: Copy symlinks as symlinks, not via read_file.
+        let meta = self.stat(&from).await?;
+        if meta.file_type == FileType::Symlink {
+            let target = self.read_link(&from).await?;
+            self.check_write_limits(0)?;
+            self.remove_whiteout(&to);
+            return self.upper.symlink(&target, &to).await;
+        }
 
-        // Write to destination in upper
+        // Regular file
+        let content = self.read_file(&from).await?;
         self.write_file(&to, &content).await
     }
 
