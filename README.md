@@ -6,7 +6,7 @@
 [![docs.rs](https://img.shields.io/docsrs/bashkit)](https://docs.rs/bashkit)
 [![Repo: Agent Friendly](https://img.shields.io/badge/Repo-Agent%20Friendly-blue)](AGENTS.md)
 
-Virtual bash interpreter for multi-tenant environments. Written in Rust.
+Virtual sandbox. Written in Rust.
 
 ## Features
 

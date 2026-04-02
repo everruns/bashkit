@@ -1,4 +1,4 @@
-//! Bashkit - Virtual bash interpreter for multi-tenant environments
+//! Bashkit - Virtual sandbox
 //!
 //! Virtual bash interpreter for AI agents, CI/CD pipelines, and code sandboxes.
 //! Written in Rust.

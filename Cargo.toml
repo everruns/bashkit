@@ -1,4 +1,4 @@
-# Bashkit - Virtual bash interpreter for multi-tenant environments
+# Bashkit - Virtual sandbox
 # Part of the Everruns ecosystem
 # See specs/ for design decisions
 
@@ -12,7 +12,7 @@ edition = "2024"
 license = "MIT"
 authors = ["Everruns"]
 repository = "https://github.com/everruns/bashkit"
-description = "Virtual bash interpreter for multi-tenant environments"
+description = "Virtual sandbox"
 keywords = ["bash", "virtual", "ai", "agent", "everruns"]
 categories = ["command-line-utilities", "parser-implementations"]
 
