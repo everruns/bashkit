@@ -682,11 +682,34 @@ impl<'a> Lexer<'a> {
                             }
                         }
                     } else {
-                        // Command substitution $(...) - track nested parens
+                        // THREAT[TM-DOS]: Track substitution nesting depth to
+                        // enforce max_subst_depth consistently in both quoted
+                        // and unquoted contexts (issue #996).
                         let mut depth = 1;
+                        let mut subst_depth = 1usize;
                         while let Some(c) = self.peek_char() {
                             word.push(c);
                             self.advance();
+                            if c == '$' && self.peek_char() == Some('(') {
+                                subst_depth += 1;
+                                if subst_depth > self.max_subst_depth {
+                                    // Depth limit exceeded — consume remaining
+                                    // parens and stop nesting deeper.
+                                    while let Some(ic) = self.peek_char() {
+                                        word.push(ic);
+                                        self.advance();
+                                        if ic == '(' {
+                                            depth += 1;
+                                        } else if ic == ')' {
+                                            depth -= 1;
+                                            if depth == 0 {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
                             if c == '(' {
                                 depth += 1;
                             } else if c == ')' {
