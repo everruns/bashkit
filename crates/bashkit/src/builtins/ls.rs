@@ -334,6 +334,8 @@ fn human_readable_size(size: u64) -> String {
 /// Options for find command
 struct FindOptions {
     name_pattern: Option<String>,
+    /// -path pattern: match against the full display path
+    path_pattern: Option<String>,
     type_filter: Option<char>,
     max_depth: Option<usize>,
     min_depth: Option<usize>,
@@ -342,6 +344,10 @@ struct FindOptions {
     exec_args: Vec<String>,
     /// true if -exec uses + (batch mode), false for \; (per-file mode)
     exec_batch: bool,
+    /// Negate the -name predicate
+    negate_name: bool,
+    /// Negate the -path predicate
+    negate_path: bool,
 }
 
 /// The find builtin - search for files.
@@ -366,13 +372,17 @@ fn parse_find_args(args: &[String]) -> std::result::Result<(Vec<String>, FindOpt
     let mut paths: Vec<String> = Vec::new();
     let mut opts = FindOptions {
         name_pattern: None,
+        path_pattern: None,
         type_filter: None,
         max_depth: None,
         min_depth: None,
         printf_format: None,
         exec_args: Vec::new(),
         exec_batch: false,
+        negate_name: false,
+        negate_path: false,
     };
+    let mut negate_next = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -387,6 +397,24 @@ fn parse_find_args(args: &[String]) -> std::result::Result<(Vec<String>, FindOpt
                     ));
                 }
                 opts.name_pattern = Some(args[i].clone());
+                if negate_next {
+                    opts.negate_name = true;
+                    negate_next = false;
+                }
+            }
+            "-path" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(ExecResult::err(
+                        "find: missing argument to '-path'\n".to_string(),
+                        1,
+                    ));
+                }
+                opts.path_pattern = Some(args[i].clone());
+                if negate_next {
+                    opts.negate_path = true;
+                    negate_next = false;
+                }
             }
             "-type" => {
                 i += 1;
@@ -469,7 +497,7 @@ fn parse_find_args(args: &[String]) -> std::result::Result<(Vec<String>, FindOpt
                 }
             }
             "-not" | "!" => {
-                // Negation - skip (not fully supported)
+                negate_next = true;
             }
             s if s.starts_with('-') => {
                 return Err(ExecResult::err(
@@ -501,12 +529,15 @@ async fn collect_find_paths(
     // Reuse find_recursive but with a temporary output buffer
     let temp_opts = FindOptions {
         name_pattern: opts.name_pattern.clone(),
+        path_pattern: opts.path_pattern.clone(),
         type_filter: opts.type_filter,
         max_depth: opts.max_depth,
         min_depth: opts.min_depth,
         printf_format: None, // Don't format, just collect paths
         exec_args: Vec::new(),
         exec_batch: false,
+        negate_name: opts.negate_name,
+        negate_path: opts.negate_path,
     };
     let mut output = String::new();
     for path_str in search_paths {
@@ -672,7 +703,19 @@ fn find_recursive<'a>(
 
         // Check name pattern
         let name_matches = match &opts.name_pattern {
-            Some(pattern) => glob_match(&entry_name, pattern),
+            Some(pattern) => {
+                let m = glob_match(&entry_name, pattern);
+                if opts.negate_name { !m } else { m }
+            }
+            None => true,
+        };
+
+        // Check path pattern
+        let path_matches = match &opts.path_pattern {
+            Some(pattern) => {
+                let m = glob_match(display_path, pattern);
+                if opts.negate_path { !m } else { m }
+            }
             None => true,
         };
 
@@ -683,7 +726,7 @@ fn find_recursive<'a>(
         };
 
         // Output if matches (or if no filters, show everything)
-        if type_matches && name_matches && above_min_depth {
+        if type_matches && name_matches && path_matches && above_min_depth {
             if let Some(ref fmt) = opts.printf_format {
                 output.push_str(&find_printf_format(fmt, display_path, &metadata));
             } else {

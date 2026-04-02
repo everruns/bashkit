@@ -191,6 +191,34 @@ find /tmp/totally_nonexistent_path 2>&1
 find: '/tmp/totally_nonexistent_path': No such file or directory
 ### end
 
+### find_path_predicate
+# find -path should filter by path pattern
+mkdir -p /tmp/fp_test/a/b
+touch /tmp/fp_test/a/b/file.txt /tmp/fp_test/top.txt
+find /tmp/fp_test -path '*/a/*' | sort
+### expect
+/tmp/fp_test/a/b
+/tmp/fp_test/a/b/file.txt
+### end
+
+### find_not_name
+# find -not -name should negate
+mkdir -p /tmp/fn_test
+touch /tmp/fn_test/keep.txt /tmp/fn_test/skip.log
+find /tmp/fn_test -maxdepth 1 -type f -not -name '*.log'
+### expect
+/tmp/fn_test/keep.txt
+### end
+
+### find_not_path_exclude
+# find -not -path should exclude paths
+mkdir -p /tmp/fnp_test/.git /tmp/fnp_test/src
+touch /tmp/fnp_test/src/main.rs /tmp/fnp_test/.git/config
+find /tmp/fnp_test -type f -not -path '*/.git/*' | sort
+### expect
+/tmp/fnp_test/src/main.rs
+### end
+
 ### ls_recursive
 # ls -R should list nested directories
 mkdir -p /tmp/lsrec/a/b
