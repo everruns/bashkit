@@ -410,11 +410,14 @@ async fn execute_curl_request(
     };
 
     // Make the request
-    let body = if multipart_body.is_some() {
-        multipart_body.as_deref()
+    let initial_body = if multipart_body.is_some() {
+        multipart_body.as_deref().map(|b| b.to_vec())
     } else {
-        data.map(|d| d.as_bytes())
+        data.map(|d| d.as_bytes().to_vec())
     };
+    let mut current_body = initial_body;
+    let mut current_method = http_method;
+    let mut current_headers = header_pairs.clone();
     let mut current_url = url.to_string();
     let mut redirect_count = 0;
     const MAX_REDIRECTS: u32 = 10;
@@ -422,7 +425,7 @@ async fn execute_curl_request(
     loop {
         if verbose {
             verbose_output.push_str(&format!("> {} {} HTTP/1.1\r\n", method, current_url));
-            for (name, value) in &header_pairs {
+            for (name, value) in &current_headers {
                 verbose_output.push_str(&format!("> {}: {}\r\n", name, value));
             }
             verbose_output.push_str(">\r\n");
@@ -430,10 +433,10 @@ async fn execute_curl_request(
 
         let result = http_client
             .request_with_timeouts(
-                http_method,
+                current_method,
                 &current_url,
-                body,
-                &header_pairs,
+                current_body.as_deref(),
+                &current_headers,
                 max_time,
                 connect_timeout,
             )
@@ -471,7 +474,28 @@ async fn execute_curl_request(
                         .iter()
                         .find(|(k, _)| k.eq_ignore_ascii_case("location"))
                     {
-                        current_url = resolve_redirect_url(&current_url, location);
+                        let prev_url = current_url.clone();
+                        current_url = resolve_redirect_url(&prev_url, location);
+
+                        // THREAT[TM-NET]: Strip sensitive headers on cross-origin
+                        // redirect to prevent credential leakage (issue #998).
+                        if !same_origin(&prev_url, &current_url) {
+                            current_headers.retain(|(name, _)| {
+                                !SENSITIVE_HEADERS
+                                    .iter()
+                                    .any(|s| name.eq_ignore_ascii_case(s))
+                            });
+                        }
+
+                        // THREAT[TM-NET]: Convert POST to GET on 301/302/303
+                        // per HTTP spec — drop body (issue #998).
+                        if matches!(response.status, 301..=303)
+                            && matches!(current_method, Method::Post)
+                        {
+                            current_method = Method::Get;
+                            current_body = None;
+                        }
+
                         continue;
                     }
                 }
@@ -602,14 +626,14 @@ fn resolve_redirect_url(base: &str, location: &str) -> String {
     if location.starts_with("http://") || location.starts_with("https://") {
         location.to_string()
     } else if location.starts_with('/') {
-        // Absolute path - combine with base scheme and host
+        // Absolute path - combine with base scheme, host, and port
         if let Ok(base_url) = url::Url::parse(base) {
-            format!(
-                "{}://{}{}",
-                base_url.scheme(),
-                base_url.host_str().unwrap_or(""),
-                location
-            )
+            let host = base_url.host_str().unwrap_or("");
+            if let Some(port) = base_url.port() {
+                format!("{}://{}:{}{}", base_url.scheme(), host, port, location)
+            } else {
+                format!("{}://{}{}", base_url.scheme(), host, location)
+            }
         } else {
             location.to_string()
         }
@@ -623,6 +647,19 @@ fn resolve_redirect_url(base: &str, location: &str) -> String {
         location.to_string()
     }
 }
+
+/// Check if two URLs have the same origin (scheme + host + port).
+fn same_origin(a: &str, b: &str) -> bool {
+    let (Ok(a_url), Ok(b_url)) = (url::Url::parse(a), url::Url::parse(b)) else {
+        return false;
+    };
+    a_url.scheme() == b_url.scheme()
+        && a_url.host_str() == b_url.host_str()
+        && a_url.port_or_known_default() == b_url.port_or_known_default()
+}
+
+/// Sensitive headers that must not be forwarded cross-origin on redirect.
+const SENSITIVE_HEADERS: &[&str] = &["authorization", "cookie", "proxy-authorization"];
 
 /// Format the -w/--write-out output.
 #[cfg(feature = "http_client")]
@@ -1253,6 +1290,73 @@ mod tests {
                 resolve_redirect_url(base, "relative"),
                 "https://example.com/original/relative"
             );
+        }
+
+        #[test]
+        fn test_resolve_redirect_url_preserves_port() {
+            let base = "http://localhost:8080/original";
+            assert_eq!(
+                resolve_redirect_url(base, "/new/path"),
+                "http://localhost:8080/new/path"
+            );
+        }
+
+        #[test]
+        fn test_resolve_redirect_url_no_port() {
+            let base = "https://example.com/original";
+            assert_eq!(
+                resolve_redirect_url(base, "/new"),
+                "https://example.com/new"
+            );
+        }
+
+        #[test]
+        fn test_same_origin_true() {
+            assert!(same_origin(
+                "https://example.com/path1",
+                "https://example.com/path2"
+            ));
+        }
+
+        #[test]
+        fn test_same_origin_false_different_host() {
+            assert!(!same_origin(
+                "https://example.com/path",
+                "https://other.com/path"
+            ));
+        }
+
+        #[test]
+        fn test_same_origin_false_different_port() {
+            assert!(!same_origin(
+                "http://localhost:8080/path",
+                "http://localhost:9090/path"
+            ));
+        }
+
+        #[test]
+        fn test_same_origin_false_different_scheme() {
+            assert!(!same_origin(
+                "http://example.com/path",
+                "https://example.com/path"
+            ));
+        }
+
+        #[test]
+        fn test_sensitive_headers_stripped_cross_origin() {
+            let headers = vec![
+                ("Authorization".to_string(), "Bearer secret".to_string()),
+                ("Content-Type".to_string(), "application/json".to_string()),
+                ("Cookie".to_string(), "session=abc".to_string()),
+            ];
+            let mut filtered = headers.clone();
+            filtered.retain(|(name, _)| {
+                !SENSITIVE_HEADERS
+                    .iter()
+                    .any(|s| name.eq_ignore_ascii_case(s))
+            });
+            assert_eq!(filtered.len(), 1);
+            assert_eq!(filtered[0].0, "Content-Type");
         }
     }
 }
