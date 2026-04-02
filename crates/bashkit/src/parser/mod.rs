@@ -1482,6 +1482,18 @@ impl<'a> Parser<'a> {
         pattern
     }
 
+    /// Check if current token starts with `=` (e.g., Word("=5") from `>=5`).
+    /// If so, return the rest of the word after `=`.
+    fn current_token_starts_with_eq(&self) -> Option<String> {
+        match &self.current_token {
+            Some(tokens::Token::Assignment) => Some(String::new()),
+            Some(tokens::Token::Word(w)) | Some(tokens::Token::LiteralWord(w)) => {
+                w.strip_prefix('=').map(|rest| rest.to_string())
+            }
+            _ => None,
+        }
+    }
+
     fn parse_arithmetic_command(&mut self) -> Result<CompoundCommand> {
         self.advance(); // consume '(('
 
@@ -1531,12 +1543,30 @@ impl<'a> Parser<'a> {
                 }
                 // Handle operators that are normally special tokens but valid in arithmetic
                 Some(tokens::Token::RedirectIn) => {
-                    expr.push('<');
                     self.advance();
+                    // Check if next token starts with '=' to form '<='
+                    if let Some(rest) = self.current_token_starts_with_eq() {
+                        expr.push_str("<=");
+                        if !rest.is_empty() {
+                            expr.push_str(&rest);
+                        }
+                        self.advance();
+                    } else {
+                        expr.push('<');
+                    }
                 }
                 Some(tokens::Token::RedirectOut) => {
-                    expr.push('>');
                     self.advance();
+                    // Check if next token starts with '=' to form '>='
+                    if let Some(rest) = self.current_token_starts_with_eq() {
+                        expr.push_str(">=");
+                        if !rest.is_empty() {
+                            expr.push_str(&rest);
+                        }
+                        self.advance();
+                    } else {
+                        expr.push('>');
+                    }
                 }
                 Some(tokens::Token::And) => {
                     expr.push_str("&&");
@@ -1552,6 +1582,49 @@ impl<'a> Parser<'a> {
                 }
                 Some(tokens::Token::Background) => {
                     expr.push('&');
+                    self.advance();
+                }
+                Some(tokens::Token::Assignment) => {
+                    expr.push('=');
+                    self.advance();
+                }
+                // In arithmetic context, N> is a number followed by >, not a fd redirect
+                Some(tokens::Token::RedirectFd(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    if let Some(rest) = self.current_token_starts_with_eq() {
+                        // N>= → number >= ...
+                        expr.push_str(&format!("{}>=", fd));
+                        if !rest.is_empty() {
+                            expr.push_str(&rest);
+                        }
+                        self.advance();
+                    } else {
+                        expr.push_str(&format!("{}>", fd));
+                    }
+                }
+                Some(tokens::Token::RedirectFdAppend(fd)) => {
+                    // N>> in arithmetic is N >> (right shift)
+                    let fd = *fd;
+                    expr.push_str(&format!("{}>>", fd));
+                    self.advance();
+                }
+                Some(tokens::Token::RedirectFdIn(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    if let Some(rest) = self.current_token_starts_with_eq() {
+                        expr.push_str(&format!("{}<=", fd));
+                        if !rest.is_empty() {
+                            expr.push_str(&rest);
+                        }
+                        self.advance();
+                    } else {
+                        expr.push_str(&format!("{}<", fd));
+                    }
+                }
+                Some(tokens::Token::RedirectAppend) => {
+                    // >> in arithmetic is right shift
+                    expr.push_str(">>");
                     self.advance();
                 }
                 None => {
