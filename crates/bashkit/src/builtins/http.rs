@@ -184,23 +184,27 @@ fn parse_http_args(args: &[String]) -> std::result::Result<HttpConfig, String> {
     })
 }
 
-/// Build query string from query params.
+/// Build query string from query params with proper URL encoding.
+// THREAT[TM-NET-019]: URL-encode query params to prevent parameter injection
 fn build_url_with_query(base_url: &str, items: &[ItemType]) -> String {
-    let params: Vec<String> = items
+    let query_items: Vec<(&str, &str)> = items
         .iter()
         .filter_map(|item| {
             if let ItemType::QueryParam(k, v) = item {
-                Some(format!("{}={}", k, v))
+                Some((k.as_str(), v.as_str()))
             } else {
                 None
             }
         })
         .collect();
-    if params.is_empty() {
+    if query_items.is_empty() {
         return base_url.to_string();
     }
+    let encoded: String = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(query_items)
+        .finish();
     let sep = if base_url.contains('?') { "&" } else { "?" };
-    format!("{}{}{}", base_url, sep, params.join("&"))
+    format!("{}{}{}", base_url, sep, encoded)
 }
 
 /// Build JSON body from items using serde_json for proper escaping.
@@ -227,19 +231,22 @@ fn build_json_body(items: &[ItemType]) -> String {
     serde_json::to_string_pretty(&serde_json::Value::Object(map)).unwrap_or_default()
 }
 
-/// Build form body from items.
+/// Build form body from items with proper URL encoding.
+// THREAT[TM-NET-020]: URL-encode form values to prevent field injection
 fn build_form_body(items: &[ItemType]) -> String {
-    let pairs: Vec<String> = items
+    let form_items: Vec<(&str, &str)> = items
         .iter()
         .filter_map(|item| {
             if let ItemType::JsonField(k, v) = item {
-                Some(format!("{}={}", k, v))
+                Some((k.as_str(), v.as_str()))
             } else {
                 None
             }
         })
         .collect();
-    pairs.join("&")
+    url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(form_items)
+        .finish()
 }
 
 /// Format the parsed request for display.
@@ -628,5 +635,49 @@ mod tests {
         let body = build_json_body(&items);
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["count"].as_i64().unwrap(), 42);
+    }
+
+    #[test]
+    fn test_query_param_injection_encoded() {
+        let items = vec![ItemType::QueryParam(
+            "q".to_string(),
+            "foo&admin=true".to_string(),
+        )];
+        let url = build_url_with_query("https://example.com", &items);
+        // The & in the value must be encoded, not treated as a param separator
+        assert!(!url.contains("admin=true"));
+        assert!(url.contains("q=foo%26admin%3Dtrue") || url.contains("q=foo%26admin=true"));
+    }
+
+    #[test]
+    fn test_query_param_normal_value() {
+        let items = vec![ItemType::QueryParam(
+            "search".to_string(),
+            "hello world".to_string(),
+        )];
+        let url = build_url_with_query("https://example.com", &items);
+        assert!(url.contains("search=hello"));
+    }
+
+    #[test]
+    fn test_form_body_injection_encoded() {
+        let items = vec![ItemType::JsonField(
+            "user".to_string(),
+            "admin&role=superadmin".to_string(),
+        )];
+        let body = build_form_body(&items);
+        // The & in the value must be encoded
+        assert!(!body.contains("role=superadmin"));
+        assert!(
+            body.contains("user=admin%26role%3Dsuperadmin")
+                || body.contains("user=admin%26role%3Dsuperadmin")
+        );
+    }
+
+    #[test]
+    fn test_form_body_normal_value() {
+        let items = vec![ItemType::JsonField("name".to_string(), "test".to_string())];
+        let body = build_form_body(&items);
+        assert_eq!(body, "name=test");
     }
 }
