@@ -395,10 +395,32 @@ impl Bash {
     }
 
     /// Create a new Bash instance from a snapshot.
+    ///
+    /// Accepts optional `BashOptions` to re-apply execution limits.
+    /// Without options, safe defaults are used (not unlimited).
     #[napi(factory)]
-    pub fn from_snapshot(data: napi::bindgen_prelude::Buffer) -> napi::Result<Self> {
-        let bash =
-            RustBash::from_snapshot(&data).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    pub fn from_snapshot(
+        data: napi::bindgen_prelude::Buffer,
+        options: Option<BashOptions>,
+    ) -> napi::Result<Self> {
+        let opts = options.unwrap_or_else(default_opts);
+
+        // Build a configured Bash instance with proper limits, then restore snapshot state
+        let mut bash = build_bash(
+            opts.username.as_deref(),
+            opts.hostname.as_deref(),
+            opts.max_commands,
+            opts.max_loop_iterations,
+            opts.files.as_ref(),
+            opts.python.unwrap_or(false),
+            &opts.external_functions.clone().unwrap_or_default(),
+            None,
+        );
+        // restore_snapshot preserves the instance's limits while restoring shell state
+        bash.restore_snapshot(&data)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+        let cancelled = bash.cancellation_token();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -407,13 +429,13 @@ impl Bash {
             state: Arc::new(SharedState {
                 inner: Mutex::new(bash),
                 rt: tokio::sync::Mutex::new(rt),
-                cancelled: Arc::new(AtomicBool::new(false)),
-                username: None,
-                hostname: None,
-                max_commands: None,
-                max_loop_iterations: None,
-                python: false,
-                external_functions: Vec::new(),
+                cancelled,
+                username: opts.username,
+                hostname: opts.hostname,
+                max_commands: opts.max_commands,
+                max_loop_iterations: opts.max_loop_iterations,
+                python: opts.python.unwrap_or(false),
+                external_functions: opts.external_functions.unwrap_or_default(),
                 external_handler: None,
             }),
         })

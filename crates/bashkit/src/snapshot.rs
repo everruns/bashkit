@@ -50,11 +50,20 @@
 //! - File descriptors, pipes, background jobs (ephemeral)
 //! - Execution limits configuration (caller should configure on restore)
 
+use sha2::{Digest, Sha256};
+
 use crate::fs::VfsSnapshot;
 use crate::interpreter::ShellState;
 
 /// Schema version for snapshot format compatibility.
 const SNAPSHOT_VERSION: u32 = 1;
+
+/// HMAC-like keyed hash prefix used to detect snapshot tampering.
+/// The key is combined with the JSON payload to produce a SHA-256 digest
+/// that is prepended to the serialized bytes.
+const INTEGRITY_TAG: &[u8; 8] = b"BKSNAP01";
+/// Length of the SHA-256 digest prepended to snapshot bytes.
+const DIGEST_LEN: usize = 32;
 
 /// A serializable snapshot of a Bash interpreter's state.
 ///
@@ -75,15 +84,37 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// Serialize this snapshot to JSON bytes.
+    /// Serialize this snapshot to integrity-protected bytes.
+    ///
+    /// Format: `[32-byte SHA-256 digest][JSON payload]`
+    /// The digest covers `INTEGRITY_TAG || JSON` to detect tampering.
     pub fn to_bytes(&self) -> crate::Result<Vec<u8>> {
-        serde_json::to_vec(self).map_err(|e| crate::Error::Internal(e.to_string()))
+        let json = serde_json::to_vec(self).map_err(|e| crate::Error::Internal(e.to_string()))?;
+        let digest = Self::compute_digest(&json);
+        let mut out = Vec::with_capacity(DIGEST_LEN + json.len());
+        out.extend_from_slice(&digest);
+        out.extend_from_slice(&json);
+        Ok(out)
     }
 
-    /// Deserialize a snapshot from JSON bytes.
+    /// Deserialize a snapshot from integrity-protected bytes.
+    ///
+    /// Verifies the SHA-256 digest before deserializing. Rejects tampered snapshots.
     pub fn from_bytes(data: &[u8]) -> crate::Result<Self> {
+        if data.len() < DIGEST_LEN {
+            return Err(crate::Error::Internal(
+                "snapshot too short: missing integrity digest".to_string(),
+            ));
+        }
+        let (stored_digest, json) = data.split_at(DIGEST_LEN);
+        let expected = Self::compute_digest(json);
+        if stored_digest != expected.as_slice() {
+            return Err(crate::Error::Internal(
+                "snapshot integrity check failed: data may have been tampered with".to_string(),
+            ));
+        }
         let snap: Self =
-            serde_json::from_slice(data).map_err(|e| crate::Error::Internal(e.to_string()))?;
+            serde_json::from_slice(json).map_err(|e| crate::Error::Internal(e.to_string()))?;
         if snap.version != SNAPSHOT_VERSION {
             return Err(crate::Error::Internal(format!(
                 "unsupported snapshot version {} (expected {})",
@@ -91,6 +122,17 @@ impl Snapshot {
             )));
         }
         Ok(snap)
+    }
+
+    /// Compute SHA-256 digest over `INTEGRITY_TAG || payload`.
+    fn compute_digest(payload: &[u8]) -> [u8; DIGEST_LEN] {
+        let mut hasher = Sha256::new();
+        hasher.update(INTEGRITY_TAG);
+        hasher.update(payload);
+        let result = hasher.finalize();
+        let mut out = [0u8; DIGEST_LEN];
+        out.copy_from_slice(&result);
+        out
     }
 }
 

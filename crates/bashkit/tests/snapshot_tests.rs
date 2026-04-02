@@ -387,3 +387,76 @@ async fn snapshot_session_counters_transferred() {
     assert!(snap.session_commands > 0);
     assert!(snap.session_exec_calls > 0);
 }
+
+// ==================== Integrity verification (Issue #977) ====================
+
+#[tokio::test]
+async fn snapshot_tampered_bytes_rejected() {
+    let mut bash = Bash::new();
+    bash.exec("x=42").await.unwrap();
+
+    let mut bytes = bash.snapshot().unwrap();
+
+    // Tamper with a byte in the JSON payload (after the 32-byte digest)
+    if bytes.len() > 40 {
+        bytes[40] ^= 0xFF;
+    }
+
+    let result = Bash::from_snapshot(&bytes);
+    assert!(result.is_err());
+    let err_msg = result.err().expect("should be error").to_string();
+    assert!(
+        err_msg.contains("integrity"),
+        "Error should mention integrity: {}",
+        err_msg
+    );
+}
+
+#[tokio::test]
+async fn snapshot_truncated_rejected() {
+    let result = Bash::from_snapshot(&[0u8; 10]);
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn snapshot_modified_digest_rejected() {
+    let mut bash = Bash::new();
+    bash.exec("x=42").await.unwrap();
+
+    let mut bytes = bash.snapshot().unwrap();
+
+    // Modify the digest (first 32 bytes)
+    bytes[0] ^= 0xFF;
+
+    let result = Bash::from_snapshot(&bytes);
+    assert!(result.is_err());
+}
+
+// ==================== Limits preserved after restore (Issue #978) ====================
+
+#[tokio::test]
+async fn restore_snapshot_preserves_limits() {
+    use bashkit::ExecutionLimits;
+
+    let limits = ExecutionLimits::new().max_commands(5);
+
+    // Create a bash instance with strict command limit
+    let mut bash = Bash::builder().limits(limits.clone()).build();
+    bash.exec("x=42").await.unwrap();
+    let bytes = bash.snapshot().unwrap();
+
+    // Create a new instance with same limits, then restore snapshot state
+    let mut restored = Bash::builder().limits(limits).build();
+    restored.restore_snapshot(&bytes).unwrap();
+
+    // Verify state was restored (simple command within limit)
+    let r = restored.exec("echo $x").await.unwrap();
+    assert_eq!(r.stdout.trim(), "42");
+
+    // Verify limits are still enforced — many commands should hit the limit
+    let r = restored
+        .exec("echo 1; echo 2; echo 3; echo 4; echo 5; echo 6; echo 7; echo 8; echo 9; echo 10")
+        .await;
+    // Should hit the command limit and return an error
+    assert!(r.is_err(), "Should hit max_commands limit after restore");
+}
