@@ -4605,6 +4605,10 @@ impl Interpreter {
                 self.variables.remove(&format!("_NAMEREF_{}", arg));
             } else {
                 let resolved = self.resolve_nameref(arg).to_string();
+                // THREAT[TM-INJ-009]: Block unset of internal marker variables
+                if is_internal_variable(&resolved) {
+                    continue;
+                }
                 // THREAT[TM-INJ-019]: Refuse to unset readonly variables
                 if self
                     .variables

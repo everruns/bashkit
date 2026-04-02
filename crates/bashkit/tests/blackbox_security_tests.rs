@@ -252,6 +252,49 @@ mod finding_readonly_bypass {
         );
     }
 
+    /// Issue #1006: unset _READONLY_* marker cannot bypass readonly protection.
+    #[tokio::test]
+    async fn unset_readonly_marker_blocked() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec(
+                r#"
+                readonly IMPORTANT=secret
+                unset _READONLY_IMPORTANT 2>/dev/null
+                IMPORTANT=hacked 2>/dev/null
+                echo "IMPORTANT=$IMPORTANT"
+                "#,
+            )
+            .await
+            .unwrap();
+        assert!(
+            result.stdout.contains("IMPORTANT=secret"),
+            "readonly was bypassed by unsetting _READONLY_ marker, got: {}",
+            result.stdout
+        );
+    }
+
+    /// Unset of normal non-readonly variables still works.
+    #[tokio::test]
+    async fn unset_normal_variable_works() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec(
+                r#"
+                FOO=hello
+                unset FOO
+                echo "FOO=${FOO:-empty}"
+                "#,
+            )
+            .await
+            .unwrap();
+        assert!(
+            result.stdout.contains("FOO=empty"),
+            "expected FOO to be unset, got: {}",
+            result.stdout
+        );
+    }
+
     /// TM-INJ-020: declare cannot overwrite readonly variables.
     #[tokio::test]
     async fn declare_cannot_overwrite_readonly() {

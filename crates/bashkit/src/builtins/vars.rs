@@ -13,13 +13,37 @@ pub struct Unset;
 
 #[async_trait]
 impl Builtin for Unset {
+    // THREAT[TM-INJ-009]: Block unset of internal variables and readonly variables
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        let mut stderr = String::new();
+        let mut exit_code = 0;
         for name in ctx.args {
+            // Block unsetting internal marker variables (_READONLY_, _NAMEREF_, etc.)
+            if is_internal_variable(name) {
+                stderr.push_str(&format!(
+                    "bash: unset: {name}: cannot unset: readonly variable\n"
+                ));
+                exit_code = 1;
+                continue;
+            }
+            // Block unsetting readonly variables
+            let readonly_key = format!("_READONLY_{name}");
+            if ctx.variables.contains_key(&readonly_key) {
+                stderr.push_str(&format!(
+                    "bash: unset: {name}: cannot unset: readonly variable\n"
+                ));
+                exit_code = 1;
+                continue;
+            }
             ctx.variables.remove(name);
             // Note: env is immutable in our model - environment variables
             // are inherited and can't be unset by the shell
         }
-        Ok(ExecResult::ok(String::new()))
+        Ok(ExecResult {
+            stderr,
+            exit_code,
+            ..Default::default()
+        })
     }
 }
 
