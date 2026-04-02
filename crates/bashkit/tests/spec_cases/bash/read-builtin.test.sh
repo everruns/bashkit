@@ -112,3 +112,17 @@ printf "complete\npartial" | {
 complete
 partial
 ### end
+
+### read_custom_ifs_comma
+# read should split on custom IFS
+IFS=","; read -r a b c <<< "one,two,three"; echo "$a|$b|$c"
+### expect
+one|two|three
+### end
+
+### read_custom_ifs_colon
+# read -ra should split into array on custom IFS
+IFS=":"; read -ra parts <<< "a:b:c"; echo "${#parts[@]} ${parts[1]}"
+### expect
+3 b
+### end

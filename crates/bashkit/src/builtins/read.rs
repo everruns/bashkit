@@ -131,7 +131,13 @@ impl Builtin for Read {
         // Split line by IFS (default: space, tab, newline)
         // IFS whitespace chars (space, tab, newline) collapse runs and trim.
         // Non-whitespace IFS chars preserve empty fields between consecutive delimiters.
-        let ifs = ctx.env.get("IFS").map(|s| s.as_str()).unwrap_or(" \t\n");
+        // Check shell variables first (IFS=","), then env, then default.
+        let ifs = ctx
+            .variables
+            .get("IFS")
+            .or_else(|| ctx.env.get("IFS"))
+            .map(|s| s.as_str())
+            .unwrap_or(" \t\n");
         let words: Vec<&str> = if ifs.is_empty() {
             // Empty IFS means no word splitting
             vec![&line]
@@ -188,9 +194,17 @@ impl Builtin for Read {
                 continue;
             }
             let value = if i == var_names.len() - 1 {
-                // Last variable gets all remaining words
+                // Last variable gets all remaining words joined by first IFS char
                 let remaining: Vec<&str> = words.iter().skip(i).copied().collect();
-                remaining.join(" ")
+                let ifs_non_ws: Vec<char> = ifs.chars().filter(|c| !" \t\n".contains(*c)).collect();
+                let join_sep = if !ifs_non_ws.is_empty() {
+                    // Non-whitespace IFS: join with the first non-whitespace IFS char
+                    ifs_non_ws[0].to_string()
+                } else {
+                    // Whitespace-only IFS: join with space
+                    " ".to_string()
+                };
+                remaining.join(&join_sep)
             } else if i < words.len() {
                 words[i].to_string()
             } else {
@@ -548,7 +562,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         let vars = extract_vars(&result);
         assert_eq!(vars.get("A").unwrap(), "foo");
-        assert_eq!(vars.get("B").unwrap(), "bar baz");
+        assert_eq!(vars.get("B").unwrap(), "bar:baz");
     }
 
     #[tokio::test]
@@ -597,5 +611,54 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         let vars = extract_vars(&result);
         assert_eq!(vars.get("LINE").unwrap(), "no splitting here");
+    }
+
+    #[tokio::test]
+    async fn read_ifs_from_shell_variables() {
+        // IFS set as a shell variable (not env) — the common case (IFS=",")
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        variables.insert("IFS".to_string(), ",".to_string());
+        let args = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("one,two,three"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("A").unwrap(), "one");
+        assert_eq!(vars.get("B").unwrap(), "two");
+        assert_eq!(vars.get("C").unwrap(), "three");
+    }
+
+    #[tokio::test]
+    async fn read_ifs_from_shell_variables_array() {
+        // IFS=: with read -ra should split into array
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        variables.insert("IFS".to_string(), ":".to_string());
+        let args = vec!["-ra".to_string(), "parts".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("a:b:c"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        match &result.side_effects[0] {
+            BuiltinSideEffect::SetArray { name, elements } => {
+                assert_eq!(name, "parts");
+                assert_eq!(elements, &["a", "b", "c"]);
+            }
+            _ => panic!("Expected SetArray side effect"),
+        }
     }
 }
