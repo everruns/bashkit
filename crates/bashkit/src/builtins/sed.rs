@@ -788,6 +788,7 @@ impl Builtin for Sed {
         };
 
         let mut output = String::new();
+        let mut warnings = String::new();
         let mut modified_files: Vec<(String, String)> = Vec::new();
 
         for (filename, content) in inputs {
@@ -890,6 +891,12 @@ impl Builtin for Sed {
                     }
                 }
 
+                if iterations >= max_iterations {
+                    warnings.push_str(&format!(
+                        "sed: warning: branch/label loop limit ({max_iterations}) reached on line {line_num}; output may be truncated\n"
+                    ));
+                }
+
                 hold_space = state.hold_space;
 
                 // Insert text comes before the line
@@ -947,7 +954,16 @@ impl Builtin for Sed {
             }
         }
 
-        Ok(ExecResult::ok(output))
+        if warnings.is_empty() {
+            Ok(ExecResult::ok(output))
+        } else {
+            Ok(ExecResult {
+                stdout: output,
+                stderr: warnings,
+                exit_code: 0,
+                ..Default::default()
+            })
+        }
     }
 }
 
@@ -1163,5 +1179,28 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result.stdout, "ax\nbeginy\nmiddley\nendy\nax\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_branch_loop_limit_emits_warning() {
+        // This sed script loops via branch, doubling 'a' each iteration.
+        // With 1000 iteration limit, it should emit a warning.
+        let result = run_sed(&[":loop; s/a/aa/; /a\\{2000\\}/!b loop"], Some("a"))
+            .await
+            .unwrap();
+        assert!(
+            result.stderr.contains("loop limit"),
+            "expected warning on stderr, got: {}",
+            result.stderr
+        );
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_sed_normal_branch_no_warning() {
+        // A simple branch that completes well under the limit
+        let result = run_sed(&["s/hello/world/"], Some("hello")).await.unwrap();
+        assert!(result.stderr.is_empty());
+        assert_eq!(result.stdout, "world\n");
     }
 }
