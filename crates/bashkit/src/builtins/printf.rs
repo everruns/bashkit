@@ -62,6 +62,9 @@ impl Builtin for Printf {
 }
 
 /// Parsed format specification
+// Max precision to prevent panics in Rust's format! macro (u16::MAX limit)
+const MAX_PRECISION: usize = 10000;
+
 struct FormatSpec {
     left_align: bool,
     zero_pad: bool,
@@ -137,7 +140,7 @@ impl FormatSpec {
             if prec_str.is_empty() {
                 Some(0)
             } else {
-                prec_str.parse().ok()
+                prec_str.parse().ok().map(|p: usize| p.min(MAX_PRECISION))
             }
         } else {
             None
@@ -729,5 +732,23 @@ mod tests {
             "日本",
             "should handle CJK chars"
         );
+    }
+
+    #[test]
+    fn test_large_precision_no_panic() {
+        // Must not panic on precision > 65535
+        let args = vec!["1.0".to_string()];
+        let mut idx = 0;
+        let result = format_string("%.99999f", &args, &mut idx);
+        // Should produce output without panicking — precision clamped
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_normal_precision_still_works() {
+        let args = vec!["3.14159".to_string()];
+        let mut idx = 0;
+        let result = format_string("%.2f", &args, &mut idx);
+        assert_eq!(result, "3.14");
     }
 }
