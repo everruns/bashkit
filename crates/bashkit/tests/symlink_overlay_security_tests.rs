@@ -3,7 +3,7 @@
 //! THREAT[TM-ESC-002]: Validates that symlinks cannot be used to escape
 //! mount boundaries, especially after rename/move operations.
 
-use bashkit::{Bash, FileSystem, InMemoryFs, OverlayFs};
+use bashkit::{Bash, FileSystem, InMemoryFs, MountableFs, OverlayFs};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -132,6 +132,74 @@ async fn symlink_rename_cannot_escape_mount_via_read() {
     // (symlinks are intentionally not followed — TM-ESC-002)
     let result = overlay.read_file(Path::new("/sandbox/moved")).await;
     assert!(result.is_err(), "read_file on symlink must not follow it");
+}
+
+/// Cross-mount rename of a symlink in MountableFs must preserve the symlink.
+#[tokio::test]
+async fn mountable_cross_mount_rename_preserves_symlink() {
+    let root = Arc::new(InMemoryFs::new());
+    let mount_a = Arc::new(InMemoryFs::new());
+    let mount_b = Arc::new(InMemoryFs::new());
+
+    // Create a symlink in mount_a
+    mount_a
+        .symlink(Path::new("/target.txt"), Path::new("/link"))
+        .await
+        .unwrap();
+
+    let mountable = MountableFs::new(root as Arc<dyn FileSystem>);
+    mountable
+        .mount("/mnt/a", mount_a as Arc<dyn FileSystem>)
+        .unwrap();
+    mountable
+        .mount("/mnt/b", mount_b as Arc<dyn FileSystem>)
+        .unwrap();
+
+    // Cross-mount rename: /mnt/a/link -> /mnt/b/link
+    mountable
+        .rename(Path::new("/mnt/a/link"), Path::new("/mnt/b/link"))
+        .await
+        .unwrap();
+
+    // Should be a symlink in mount_b
+    let target = mountable.read_link(Path::new("/mnt/b/link")).await.unwrap();
+    assert_eq!(target, Path::new("/target.txt"));
+
+    // Source should be gone
+    assert!(!mountable.exists(Path::new("/mnt/a/link")).await.unwrap());
+}
+
+/// Cross-mount copy of a symlink in MountableFs must preserve the symlink.
+#[tokio::test]
+async fn mountable_cross_mount_copy_preserves_symlink() {
+    let root = Arc::new(InMemoryFs::new());
+    let mount_a = Arc::new(InMemoryFs::new());
+    let mount_b = Arc::new(InMemoryFs::new());
+
+    mount_a
+        .symlink(Path::new("/target.txt"), Path::new("/link"))
+        .await
+        .unwrap();
+
+    let mountable = MountableFs::new(root as Arc<dyn FileSystem>);
+    mountable
+        .mount("/mnt/a", mount_a as Arc<dyn FileSystem>)
+        .unwrap();
+    mountable
+        .mount("/mnt/b", mount_b as Arc<dyn FileSystem>)
+        .unwrap();
+
+    // Cross-mount copy
+    mountable
+        .copy(Path::new("/mnt/a/link"), Path::new("/mnt/b/link"))
+        .await
+        .unwrap();
+
+    // Both should be symlinks
+    let target_a = mountable.read_link(Path::new("/mnt/a/link")).await.unwrap();
+    let target_b = mountable.read_link(Path::new("/mnt/b/link")).await.unwrap();
+    assert_eq!(target_a, Path::new("/target.txt"));
+    assert_eq!(target_b, Path::new("/target.txt"));
 }
 
 /// mv of a symlink in a bash session should work and preserve the symlink.
