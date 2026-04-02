@@ -11,9 +11,11 @@ use crate::interpreter::ExecResult;
 /// Usage: diff [-u] [-q] FILE1 FILE2
 ///
 /// Options:
-///   -u         Output in unified format (default)
+///   -u         Output in unified format
 ///   -q         Report only whether files differ
 ///   --brief    Same as -q
+///
+/// Default output is normal (ed-style) format, matching `/usr/bin/diff`.
 pub struct Diff;
 
 struct DiffOptions {
@@ -23,7 +25,7 @@ struct DiffOptions {
 
 fn parse_diff_args(args: &[String]) -> (DiffOptions, Vec<String>) {
     let mut opts = DiffOptions {
-        unified: true,
+        unified: false,
         brief: false,
     };
     let mut files = Vec::new();
@@ -104,6 +106,101 @@ enum DiffLine<'a> {
     Context(&'a str),
     Added(&'a str),
     Removed(&'a str),
+}
+
+/// Format diff output in normal (ed-style) format, the default for `/usr/bin/diff`.
+///
+/// Normal format uses commands like `1c1`, `2a3`, `3d2` followed by `< ` / `> ` lines.
+fn format_normal(diff: &[DiffLine<'_>]) -> String {
+    let mut output = String::new();
+
+    let mut old_line: usize = 1;
+    let mut new_line: usize = 1;
+    let mut i = 0;
+
+    while i < diff.len() {
+        match diff[i] {
+            DiffLine::Context(_) => {
+                old_line += 1;
+                new_line += 1;
+                i += 1;
+            }
+            DiffLine::Removed(_) | DiffLine::Added(_) => {
+                // Collect contiguous removed then added lines
+                let old_start = old_line;
+                let new_start = new_line;
+                let mut removed = Vec::new();
+                let mut added = Vec::new();
+
+                // Collect removed lines first
+                while i < diff.len() && matches!(diff[i], DiffLine::Removed(_)) {
+                    if let DiffLine::Removed(line) = diff[i] {
+                        removed.push(line);
+                    }
+                    old_line += 1;
+                    i += 1;
+                }
+                // Then collect added lines
+                while i < diff.len() && matches!(diff[i], DiffLine::Added(_)) {
+                    if let DiffLine::Added(line) = diff[i] {
+                        added.push(line);
+                    }
+                    new_line += 1;
+                    i += 1;
+                }
+
+                // Determine command type
+                let old_end = old_start + removed.len() - if removed.is_empty() { 0 } else { 1 };
+                let new_end = new_start + added.len() - if added.is_empty() { 0 } else { 1 };
+
+                if !removed.is_empty() && !added.is_empty() {
+                    // Change
+                    let old_range = if removed.len() == 1 {
+                        format!("{}", old_start)
+                    } else {
+                        format!("{},{}", old_start, old_end)
+                    };
+                    let new_range = if added.len() == 1 {
+                        format!("{}", new_start)
+                    } else {
+                        format!("{},{}", new_start, new_end)
+                    };
+                    output.push_str(&format!("{}c{}\n", old_range, new_range));
+                    for line in &removed {
+                        output.push_str(&format!("< {}\n", line));
+                    }
+                    output.push_str("---\n");
+                    for line in &added {
+                        output.push_str(&format!("> {}\n", line));
+                    }
+                } else if !removed.is_empty() {
+                    // Delete
+                    let old_range = if removed.len() == 1 {
+                        format!("{}", old_start)
+                    } else {
+                        format!("{},{}", old_start, old_end)
+                    };
+                    output.push_str(&format!("{}d{}\n", old_range, new_start - 1));
+                    for line in &removed {
+                        output.push_str(&format!("< {}\n", line));
+                    }
+                } else if !added.is_empty() {
+                    // Add
+                    let new_range = if added.len() == 1 {
+                        format!("{}", new_start)
+                    } else {
+                        format!("{},{}", new_start, new_end)
+                    };
+                    output.push_str(&format!("{}a{}\n", old_start - 1, new_range));
+                    for line in &added {
+                        output.push_str(&format!("> {}\n", line));
+                    }
+                }
+            }
+        }
+    }
+
+    output
 }
 
 fn format_unified(file1: &str, file2: &str, diff: &[DiffLine<'_>]) -> String {
@@ -276,7 +373,11 @@ impl Builtin for Diff {
 
         let diff = compute_diff(&lines1, &lines2);
 
-        let output = format_unified(&files[0], &files[1], &diff);
+        let output = if opts.unified {
+            format_unified(&files[0], &files[1], &diff)
+        } else {
+            format_normal(&diff)
+        };
 
         // diff returns exit code 1 when files differ, output goes to stdout
         Ok(ExecResult::with_code(output, 1))
@@ -342,10 +443,10 @@ mod tests {
         )
         .await;
         assert_eq!(result.exit_code, 1);
-        assert!(result.stdout.contains("--- /a.txt"));
-        assert!(result.stdout.contains("+++ /b.txt"));
-        assert!(result.stdout.contains("-world"));
-        assert!(result.stdout.contains("+earth"));
+        // Default is normal format
+        assert!(result.stdout.contains("2c2"));
+        assert!(result.stdout.contains("< world"));
+        assert!(result.stdout.contains("> earth"));
     }
 
     #[tokio::test]
@@ -357,7 +458,9 @@ mod tests {
         )
         .await;
         assert_eq!(result.exit_code, 1);
-        assert!(result.stdout.contains("+c"));
+        // Normal format: add command
+        assert!(result.stdout.contains("2a3"));
+        assert!(result.stdout.contains("> c"));
     }
 
     #[tokio::test]
@@ -369,7 +472,9 @@ mod tests {
         )
         .await;
         assert_eq!(result.exit_code, 1);
-        assert!(result.stdout.contains("-c"));
+        // Normal format: delete command
+        assert!(result.stdout.contains("3d2"));
+        assert!(result.stdout.contains("< c"));
     }
 
     #[tokio::test]
@@ -405,7 +510,7 @@ mod tests {
         )
         .await;
         assert_eq!(result.exit_code, 1);
-        assert!(result.stdout.contains("+hello"));
+        assert!(result.stdout.contains("> hello"));
     }
 
     #[tokio::test]
@@ -448,16 +553,18 @@ mod tests {
         )
         .await;
         assert_eq!(result.exit_code, 1);
-        assert!(result.stdout.contains("-line2"));
-        assert!(result.stdout.contains("+modified"));
+        // Normal format: change command
+        assert!(result.stdout.contains("2c2"));
+        assert!(result.stdout.contains("< line2"));
+        assert!(result.stdout.contains("> modified"));
     }
 
     #[tokio::test]
     async fn test_diff_stdin() {
         let result = run_diff(&["-", "/b.txt"], Some("hello\n"), &[("/b.txt", b"world\n")]).await;
         assert_eq!(result.exit_code, 1);
-        assert!(result.stdout.contains("-hello"));
-        assert!(result.stdout.contains("+world"));
+        assert!(result.stdout.contains("< hello"));
+        assert!(result.stdout.contains("> world"));
     }
 
     #[tokio::test]
@@ -472,9 +579,45 @@ mod tests {
         )
         .await;
         assert_eq!(result.exit_code, 1);
-        assert!(result.stdout.contains("-b"));
-        assert!(result.stdout.contains("+B"));
-        assert!(result.stdout.contains("-d"));
-        assert!(result.stdout.contains("+D"));
+        // Normal format
+        assert!(result.stdout.contains("< b"));
+        assert!(result.stdout.contains("> B"));
+        assert!(result.stdout.contains("< d"));
+        assert!(result.stdout.contains("> D"));
+    }
+
+    #[tokio::test]
+    async fn test_diff_normal_format_default() {
+        // Default format should be normal (ed-style), not unified
+        let result = run_diff(
+            &["/a.txt", "/b.txt"],
+            None,
+            &[("/a.txt", b"a\n"), ("/b.txt", b"b\n")],
+        )
+        .await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stdout.starts_with("1c1\n"));
+        assert!(result.stdout.contains("< a"));
+        assert!(result.stdout.contains("---\n"));
+        assert!(result.stdout.contains("> b"));
+        // Should NOT contain unified format markers
+        assert!(!result.stdout.contains("---  "));
+        assert!(!result.stdout.contains("+++"));
+        assert!(!result.stdout.contains("@@"));
+    }
+
+    #[tokio::test]
+    async fn test_diff_unified_with_flag() {
+        // -u flag should produce unified format
+        let result = run_diff(
+            &["-u", "/a.txt", "/b.txt"],
+            None,
+            &[("/a.txt", b"a\n"), ("/b.txt", b"b\n")],
+        )
+        .await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stdout.contains("--- /a.txt"));
+        assert!(result.stdout.contains("+++ /b.txt"));
+        assert!(result.stdout.contains("@@"));
     }
 }

@@ -36,3 +36,19 @@ echo done
 ### expect
 done
 ### end
+
+### diff_default_normal_format
+# diff default format should be normal (ed-style)
+echo "a" > /tmp/diff1.txt; echo "b" > /tmp/diff2.txt
+diff /tmp/diff1.txt /tmp/diff2.txt | head -1
+### expect
+1c1
+### end
+
+### diff_unified_with_flag
+# diff -u should produce unified format (grep for unified marker)
+echo "a" > /tmp/diff1.txt; echo "b" > /tmp/diff2.txt
+diff -u /tmp/diff1.txt /tmp/diff2.txt | grep -c "^@@"
+### expect
+1
+### end
