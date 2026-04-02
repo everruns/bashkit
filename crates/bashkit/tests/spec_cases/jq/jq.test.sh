@@ -829,8 +829,9 @@ echo '{"a":1}' | jq --tab '.'
 ### end
 
 ### jq_join_output
-# Join output mode suppresses newlines between outputs
+# Join output mode suppresses newlines between and after outputs
 echo '["a","b"]' | jq -j '.[]'
+printf '\n'
 ### expect
 ab
 ### end
