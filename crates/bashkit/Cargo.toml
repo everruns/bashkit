@@ -100,6 +100,10 @@ typescript = ["dep:zapcode-core"]
 # Usage: cargo build --features realfs
 realfs = []
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 pretty_assertions = { workspace = true }
