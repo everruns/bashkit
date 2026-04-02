@@ -3147,14 +3147,29 @@ impl Interpreter {
                     }
                 }
                 AssignmentValue::Array(words) => {
-                    let mut expanded_values = Vec::new();
+                    // Expand each word, applying IFS word splitting for unquoted
+                    // variable expansions: x="a b"; arr=($x) → arr=([0]="a" [1]="b")
+                    // Quoted words (e.g., '' or "foo") are kept as single elements.
+                    let mut all_fields = Vec::new();
                     for word in words.iter() {
-                        let has_command_subst = word
-                            .parts
-                            .iter()
-                            .any(|p| matches!(p, WordPart::CommandSubstitution(_)));
-                        let value = self.expand_word(word).await?;
-                        expanded_values.push((value, has_command_subst));
+                        let is_unquoted_expansion = !word.quoted
+                            && word.parts.iter().any(|p| {
+                                matches!(
+                                    p,
+                                    WordPart::Variable(_)
+                                        | WordPart::CommandSubstitution(_)
+                                        | WordPart::ArithmeticExpansion(_)
+                                        | WordPart::ParameterExpansion { .. }
+                                        | WordPart::ArrayAccess { .. }
+                                )
+                            });
+                        if is_unquoted_expansion {
+                            let fields = self.expand_word_to_fields(word).await?;
+                            all_fields.extend(fields);
+                        } else {
+                            let value = self.expand_word(word).await?;
+                            all_fields.push(value);
+                        }
                     }
 
                     // Resolve nameref for array assignments
@@ -3167,16 +3182,9 @@ impl Interpreter {
                         0
                     };
 
-                    for (value, has_command_subst) in expanded_values {
-                        if has_command_subst && !value.is_empty() {
-                            for part in value.split_whitespace() {
-                                arr.insert(idx, part.to_string());
-                                idx += 1;
-                            }
-                        } else if !value.is_empty() || !has_command_subst {
-                            arr.insert(idx, value);
-                            idx += 1;
-                        }
+                    for field in all_fields {
+                        arr.insert(idx, field);
+                        idx += 1;
                     }
                 }
             }

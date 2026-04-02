@@ -235,3 +235,21 @@ echo "${arr[1]}"
 3
 y
 ### end
+
+### unquoted_expansion_word_split_in_array
+# arr=($x) should word-split on IFS
+x="alpha beta gamma"
+arr=($x)
+echo "${#arr[@]}"
+echo "${arr[1]}"
+### expect
+3
+beta
+### end
+
+### unquoted_expansion_custom_ifs_in_array
+# arr=($x) with custom IFS
+IFS=","; x="a,b,c"; arr=($x); echo "${#arr[@]}"
+### expect
+3
+### end
