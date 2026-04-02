@@ -672,8 +672,9 @@ impl Builtin for Jq {
             }
         }
 
-        // Ensure output ends with newline if there's output (for consistency)
-        if !output.is_empty() && !output.ends_with('\n') {
+        // Ensure output ends with newline if there's output (for consistency),
+        // but not when -j/--join-output is set (it suppresses trailing newline).
+        if !join_output && !output.is_empty() && !output.ends_with('\n') {
             output.push('\n');
         }
 
