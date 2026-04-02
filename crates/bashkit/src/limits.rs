@@ -692,6 +692,40 @@ impl MemoryBudget {
         self.function_count = self.function_count.saturating_sub(1);
         self.function_body_bytes = self.function_body_bytes.saturating_sub(body_bytes);
     }
+
+    /// Recompute budget from actual variable/array state.
+    ///
+    /// Used after `restore_shell_state` where the budget was not serialized
+    /// alongside the snapshot. `is_internal` should return true for variable
+    /// names that are internal markers (not user-visible).
+    pub fn recompute_from_state<F>(
+        variables: &std::collections::HashMap<String, String>,
+        arrays: &std::collections::HashMap<String, std::collections::HashMap<usize, String>>,
+        assoc_arrays: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+        function_count: usize,
+        function_body_bytes: usize,
+        is_internal: F,
+    ) -> Self
+    where
+        F: Fn(&str) -> bool,
+    {
+        let mut budget = Self::default();
+        for (k, v) in variables {
+            if !is_internal(k) {
+                budget.variable_count += 1;
+                budget.variable_bytes += k.len() + v.len();
+            }
+        }
+        for arr in arrays.values() {
+            budget.array_entries += arr.len();
+        }
+        for arr in assoc_arrays.values() {
+            budget.array_entries += arr.len();
+        }
+        budget.function_count = function_count;
+        budget.function_body_bytes = function_body_bytes;
+        budget
+    }
 }
 
 #[cfg(test)]
