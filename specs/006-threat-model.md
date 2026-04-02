@@ -268,6 +268,8 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 | TM-DOS-056 | `source` self-recursion stack overflow | Script that sources itself causes unbounded recursion; function depth limit doesn't apply to `source` | — | **OPEN** |
 | TM-DOS-057 | `sleep` bypasses execution timeout | `sleep`, `(sleep N)`, `echo x \| sleep N`, `sleep N & wait`, `timeout N sleep N` all ignore `ExecutionLimits::timeout` | — | **OPEN** |
 | TM-DOS-058 | Single-builtin unbounded output | `seq 1 1000000` produces 1M lines despite command limit; single builtin call generates unbounded output (see also #648) | — | **OPEN** |
+| TM-DOS-059 | Parameter expansion replacement bomb | `${x//a/$(printf 'b%.0s' {1..1000})}` on large `x` amplifies output multiplicatively (10K × 1K = 10MB) | `max_total_variable_bytes` + `max_stdout_bytes` | **MITIGATED** |
+| TM-DOS-060 | Sparse array huge-index allocation | `arr[999999999]=x` could allocate ~1B empty slots if arrays are Vec-backed; negative indices could cause OOB | HashMap-based arrays; `max_array_entries` caps total entries | **MITIGATED** |
 
 **TM-DOS-051**: `builtins/yaml.rs` — `parse_yaml_block`, `parse_yaml_map`, `parse_yaml_list` recurse
 on nested YAML structures with no depth counter. Crafted YAML with 1000+ nesting levels causes stack

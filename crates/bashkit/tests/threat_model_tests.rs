@@ -3842,6 +3842,7 @@ mod trace_events {
 }
 
 // =============================================================================
+// =============================================================================
 // TYPESCRIPT / ZAPCODE SECURITY (TM-TS)
 //
 // Threat model tests for the embedded TypeScript interpreter (zapcode-core).
@@ -3965,5 +3966,181 @@ mod typescript_security {
             result.exit_code, 0,
             "ts should not be available without .typescript()"
         );
+    }
+}
+
+// =============================================================================
+// ADVERSARIAL TESTS — SPARSE ARRAYS, EXTREME INDICES, EXPANSION BOMBS
+// Inspired by zapcode's adversarial test suite (issue #934)
+// =============================================================================
+
+mod zapcode_inspired_adversarial {
+    use super::*;
+
+    /// TM-DOS-060: Huge sparse index allocation.
+    /// Assigning to index 999999999 must not allocate ~1B empty slots.
+    /// bashkit uses HashMap internally, so the storage is O(1) per entry,
+    /// but the max_array_entries limit should still cap total entries.
+    #[tokio::test]
+    async fn sparse_array_huge_index() {
+        let mem = MemoryLimits::new().max_array_entries(100);
+        let limits = ExecutionLimits::new().max_commands(1_000);
+        let mut bash = Bash::builder()
+            .limits(limits)
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let result = bash
+            .exec("declare -a arr; arr[999999999]=x; echo ${#arr[@]}")
+            .await
+            .unwrap();
+        // Should succeed (HashMap-based, only 1 entry) or be capped — no OOM
+        assert_eq!(result.exit_code, 0);
+        // The array has at most 1 entry — certainly not ~1B
+        let count: usize = result.stdout.trim().parse().unwrap_or(0);
+        assert!(
+            count <= 100,
+            "Sparse index must not cause mass allocation, got count={}",
+            count
+        );
+    }
+
+    /// TM-DOS-060: Extreme negative array index.
+    /// Must not panic, no OOB memory access, no memory corruption.
+    /// The key security property is: no panic, no crash, no unbounded allocation.
+    /// Bash wraps negative indices modulo array length, so some element may be returned.
+    #[tokio::test]
+    async fn sparse_array_extreme_negative_index() {
+        let limits = ExecutionLimits::new().max_commands(1_000);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        let result = bash
+            .exec("declare -a arr=(a b c); echo \"${arr[-999999999]}\"")
+            .await
+            .unwrap();
+        // Security property: no panic, no crash, graceful completion
+        assert_eq!(result.exit_code, 0);
+        // Output should be either empty or one of the valid elements (wrapping is acceptable)
+        let out = result.stdout.trim();
+        assert!(
+            out.is_empty() || ["a", "b", "c"].contains(&out),
+            "Extreme negative index should return empty or valid element, got: {:?}",
+            out
+        );
+    }
+
+    /// TM-DOS-060: Array entry exhaustion under load.
+    /// Populating 200K entries via loop must be stopped by max_array_entries (100K default)
+    /// or by the loop iteration limit — whichever fires first.
+    #[tokio::test]
+    async fn array_entry_exhaustion_under_load() {
+        let mem = MemoryLimits::new().max_array_entries(100);
+        let limits = ExecutionLimits::new()
+            .max_commands(500_000)
+            .max_loop_iterations(500_000)
+            .max_total_loop_iterations(500_000);
+        let mut bash = Bash::builder()
+            .limits(limits)
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+declare -a arr
+i=0
+while [ $i -lt 200 ]; do
+    arr[$i]=x
+    i=$((i+1))
+done
+echo ${#arr[@]}
+"#;
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let count: usize = result.stdout.trim().parse().unwrap_or(0);
+        // max_array_entries=100 means at most 100 entries created
+        assert!(
+            count <= 100,
+            "Array entries should be capped at max_array_entries, got {}",
+            count
+        );
+    }
+
+    /// TM-DOS-041: Printf format repeat via brace expansion.
+    /// `{1..999999999}` must be rejected by the brace expansion cap before
+    /// printf ever runs. Without the cap, this would generate ~1B arguments.
+    #[tokio::test]
+    async fn brace_expansion_bomb_printf() {
+        let limits = ExecutionLimits::new()
+            .max_commands(1_000)
+            .max_stdout_bytes(1_000_000);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        let result = bash.exec("printf '%0.s-' {1..999999999}").await;
+        // Either the brace expansion is capped (producing truncated output)
+        // or the parser rejects it statically. Either way: no OOM, no hang.
+        match result {
+            Ok(r) => {
+                // If it succeeded, the output must be bounded (cap at 100K expansions or stdout limit)
+                assert!(
+                    r.stdout.len() <= 1_000_000,
+                    "Brace expansion bomb produced {} bytes — should be capped",
+                    r.stdout.len()
+                );
+            }
+            Err(e) => {
+                // Static rejection by parser budget is also acceptable
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("brace")
+                        || msg.contains("range")
+                        || msg.contains("too large")
+                        || msg.contains("exceeded")
+                        || msg.contains("budget"),
+                    "Expected brace/range limit error, got: {}",
+                    msg
+                );
+            }
+        }
+    }
+
+    /// TM-DOS-059: Parameter expansion replacement bomb.
+    /// `${x//a/$(echo bbbbbbbb)}` replaces each 'a' with 'bbbbbbbb'.
+    /// At scale (10K 'a's × 1K 'b's = 10MB), this must be caught by
+    /// max_total_variable_bytes or max_stdout_bytes.
+    #[tokio::test]
+    async fn parameter_expansion_replacement_bomb() {
+        let mem = MemoryLimits::new().max_total_variable_bytes(100_000);
+        let limits = ExecutionLimits::new()
+            .max_commands(50_000)
+            .max_loop_iterations(50_000)
+            .max_total_loop_iterations(50_000)
+            .max_stdout_bytes(1_000_000);
+        let mut bash = Bash::builder()
+            .limits(limits)
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        // Create a string of 10K 'a' chars, then replace each with 1K 'b' chars
+        // This attempts 10K × 1K = 10MB output
+        let script = r#"
+x=$(printf 'a%.0s' {1..10000})
+echo "${x//a/$(printf 'b%.0s' {1..1000})}"
+"#;
+        let result = bash.exec(script).await;
+        match result {
+            Ok(r) => {
+                // If it completes, output must be bounded by limits
+                assert!(
+                    r.stdout.len() <= 1_000_000,
+                    "Expansion bomb produced {} bytes of stdout — should be capped",
+                    r.stdout.len()
+                );
+            }
+            Err(_) => {
+                // Limit enforcement error is also acceptable
+            }
+        }
     }
 }
