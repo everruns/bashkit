@@ -276,7 +276,8 @@ Features that may be added in the future (not intentionally excluded):
 `parallel`, `patch`, `rg`, `template`, `tomlq`, `yaml`, `zip`, `unzip`,
 `alias`, `unalias`,
 `git` (requires `git` feature, see [010-git-support.md](010-git-support.md)),
-`python`, `python3` (requires `python` feature, see [011-python-builtin.md](011-python-builtin.md))
+`python`, `python3` (requires `python` feature, see [011-python-builtin.md](011-python-builtin.md)),
+`ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature, see [016-zapcode-runtime.md](016-zapcode-runtime.md))
 
 ### Not Yet Implemented
 

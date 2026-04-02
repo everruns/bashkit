@@ -250,6 +250,10 @@ criteria = "safe-to-deploy"
 version = "0.8.7"
 criteria = "safe-to-deploy"
 
+[[exemptions.cow-utils]]
+version = "0.1.3"
+criteria = "safe-to-deploy"
+
 [[exemptions.cpufeatures]]
 version = "0.3.0"
 criteria = "safe-to-deploy"
@@ -314,6 +318,10 @@ criteria = "safe-to-deploy"
 version = "0.2.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.dragonbox_ecma]]
+version = "0.1.12"
+criteria = "safe-to-deploy"
+
 [[exemptions.dtor]]
 version = "0.3.0"
 criteria = "safe-to-deploy"
@@ -360,6 +368,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.fancy-regex]]
 version = "0.17.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.fastrand]]
+version = "2.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.fastrand]]
@@ -750,6 +762,10 @@ criteria = "safe-to-deploy"
 version = "0.2.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.nonmax]]
+version = "0.5.5"
+criteria = "safe-to-deploy"
+
 [[exemptions.num-bigint]]
 version = "0.4.6"
 criteria = "safe-to-deploy"
@@ -790,6 +806,70 @@ criteria = "safe-to-deploy"
 version = "1.1.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.owo-colors]]
+version = "4.3.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc-miette]]
+version = "2.7.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc-miette-derive]]
+version = "2.7.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc_allocator]]
+version = "0.117.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc_ast]]
+version = "0.117.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc_ast_macros]]
+version = "0.117.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc_data_structures]]
+version = "0.117.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc_diagnostics]]
+version = "0.117.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc_ecmascript]]
+version = "0.117.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc_estree]]
+version = "0.117.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc_index]]
+version = "4.1.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc_parser]]
+version = "0.117.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc_regular_expression]]
+version = "0.117.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc_span]]
+version = "0.117.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc_str]]
+version = "0.117.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.oxc_syntax]]
+version = "0.117.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.page_size]]
 version = "0.6.0"
 criteria = "safe-to-run"
@@ -818,6 +898,10 @@ criteria = "safe-to-deploy"
 version = "0.11.3"
 criteria = "safe-to-deploy"
 
+[[exemptions.phf]]
+version = "0.13.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.phf_codegen]]
 version = "0.11.3"
 criteria = "safe-to-deploy"
@@ -826,8 +910,20 @@ criteria = "safe-to-deploy"
 version = "0.11.3"
 criteria = "safe-to-deploy"
 
+[[exemptions.phf_generator]]
+version = "0.13.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.phf_macros]]
+version = "0.13.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.phf_shared]]
 version = "0.11.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.phf_shared]]
+version = "0.13.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.pin-project-lite]]
@@ -1134,6 +1230,10 @@ criteria = "safe-to-deploy"
 version = "1.0.27"
 criteria = "safe-to-deploy"
 
+[[exemptions.seq-macro]]
+version = "0.3.6"
+criteria = "safe-to-deploy"
+
 [[exemptions.serde]]
 version = "1.0.228"
 criteria = "safe-to-deploy"
@@ -1202,6 +1302,10 @@ criteria = "safe-to-deploy"
 version = "1.15.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.smawk]]
+version = "0.3.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.socket2]]
 version = "0.6.3"
 criteria = "safe-to-deploy"
@@ -1268,6 +1372,10 @@ criteria = "safe-to-run"
 
 [[exemptions.testing_table]]
 version = "0.3.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.textwrap]]
+version = "0.16.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.thiserror]]
@@ -1370,8 +1478,16 @@ criteria = "safe-to-deploy"
 version = "0.1.4"
 criteria = "safe-to-run"
 
+[[exemptions.unicode-id-start]]
+version = "1.4.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.unicode-ident]]
 version = "1.0.24"
+criteria = "safe-to-deploy"
+
+[[exemptions.unicode-linebreak]]
+version = "0.1.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.unicode-normalization]]
@@ -1696,6 +1812,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.yoke-derive]]
 version = "0.8.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.zapcode-core]]
+version = "1.5.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy]]

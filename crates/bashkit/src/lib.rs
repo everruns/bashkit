@@ -468,6 +468,14 @@ pub use builtins::{PythonExternalFnHandler, PythonExternalFns, PythonLimits};
 #[cfg(feature = "python")]
 pub use monty::{ExcType, ExtFunctionResult, MontyException, MontyObject};
 
+#[cfg(feature = "typescript")]
+pub use builtins::{
+    TypeScriptConfig, TypeScriptExternalFnHandler, TypeScriptExternalFns, TypeScriptLimits,
+};
+// Re-export zapcode-core types needed by external handler consumers.
+#[cfg(feature = "typescript")]
+pub use zapcode_core::Value as ZapcodeValue;
+
 /// Logging utilities module
 ///
 /// Provides structured logging with security features including sensitive data redaction.
@@ -1371,6 +1379,112 @@ impl BashBuilder {
         )
     }
 
+    /// Enable embedded TypeScript/JavaScript execution via ZapCode with defaults.
+    ///
+    /// Registers `ts`, `typescript`, `node`, `deno`, and `bun` builtins.
+    /// Requires the `typescript` feature.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let bash = Bash::builder().typescript().build();
+    /// bash.exec("ts -c \"console.log('hello')\"").await?;
+    /// ```
+    #[cfg(feature = "typescript")]
+    pub fn typescript(self) -> Self {
+        self.typescript_with_config(builtins::TypeScriptConfig::default())
+    }
+
+    /// Enable embedded TypeScript with custom resource limits.
+    ///
+    /// See [`BashBuilder::typescript`] for details.
+    #[cfg(feature = "typescript")]
+    pub fn typescript_with_limits(self, limits: builtins::TypeScriptLimits) -> Self {
+        self.typescript_with_config(builtins::TypeScriptConfig::default().limits(limits))
+    }
+
+    /// Enable embedded TypeScript with full configuration control.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use bashkit::{TypeScriptConfig, TypeScriptLimits};
+    /// use std::time::Duration;
+    ///
+    /// // Only ts/typescript commands, no node/deno/bun aliases
+    /// let bash = Bash::builder()
+    ///     .typescript_with_config(TypeScriptConfig::default().compat_aliases(false))
+    ///     .build();
+    ///
+    /// // Disable unsupported-mode hints
+    /// let bash = Bash::builder()
+    ///     .typescript_with_config(TypeScriptConfig::default().unsupported_mode_hint(false))
+    ///     .build();
+    ///
+    /// // Custom limits + no compat aliases
+    /// let bash = Bash::builder()
+    ///     .typescript_with_config(
+    ///         TypeScriptConfig::default()
+    ///             .limits(TypeScriptLimits::default().max_duration(Duration::from_secs(5)))
+    ///             .compat_aliases(false)
+    ///     )
+    ///     .build();
+    /// ```
+    #[cfg(feature = "typescript")]
+    pub fn typescript_with_config(self, config: builtins::TypeScriptConfig) -> Self {
+        let mut builder = self
+            .builtin(
+                "ts",
+                Box::new(builtins::TypeScript::from_config(&config, "ts")),
+            )
+            .builtin(
+                "typescript",
+                Box::new(builtins::TypeScript::from_config(&config, "typescript")),
+            );
+
+        if config.enable_compat_aliases {
+            builder = builder
+                .builtin(
+                    "node",
+                    Box::new(builtins::TypeScript::from_config(&config, "node")),
+                )
+                .builtin(
+                    "deno",
+                    Box::new(builtins::TypeScript::from_config(&config, "deno")),
+                )
+                .builtin(
+                    "bun",
+                    Box::new(builtins::TypeScript::from_config(&config, "bun")),
+                );
+        }
+
+        builder
+    }
+
+    /// Enable embedded TypeScript with external function handlers.
+    ///
+    /// See [`TypeScriptExternalFnHandler`] for handler details.
+    #[cfg(feature = "typescript")]
+    pub fn typescript_with_external_handler(
+        self,
+        limits: builtins::TypeScriptLimits,
+        external_fns: Vec<String>,
+        handler: builtins::TypeScriptExternalFnHandler,
+    ) -> Self {
+        let config = builtins::TypeScriptConfig::default().limits(limits);
+
+        let make = |cmd_name: &str| {
+            builtins::TypeScript::from_config(&config, cmd_name)
+                .with_external_handler(external_fns.clone(), handler.clone())
+        };
+
+        self.builtin("ts", Box::new(make("ts")))
+            .builtin("typescript", Box::new(make("typescript")))
+            .builtin("node", Box::new(make("node")))
+            .builtin("deno", Box::new(make("deno")))
+            .builtin("bun", Box::new(make("bun")))
+    }
+
     /// Register a custom builtin command.
     ///
     /// Custom builtins extend bashkit with domain-specific commands that can be
@@ -1974,6 +2088,21 @@ pub mod threat_model {}
 #[cfg(feature = "python")]
 #[doc = include_str!("../docs/python.md")]
 pub mod python_guide {}
+
+/// Guide for embedded TypeScript execution via the ZapCode interpreter.
+///
+/// This guide covers:
+/// - Quick start with `Bash::builder().typescript()`
+/// - Inline code, script files, pipelines
+/// - VFS bridging via `readFile()`/`writeFile()` external functions
+/// - Resource limits via `TypeScriptLimits`
+/// - Configuration via `TypeScriptConfig` (compat aliases, unsupported-mode hints)
+/// - LLM tool integration
+///
+/// **Related:** [`BashBuilder::typescript`], [`TypeScriptLimits`], [`TypeScriptConfig`], [`threat_model`]
+#[cfg(feature = "typescript")]
+#[doc = include_str!("../docs/typescript.md")]
+pub mod typescript_guide {}
 
 /// Guide for live mount/unmount on a running Bash instance.
 ///

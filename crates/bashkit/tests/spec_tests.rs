@@ -263,6 +263,80 @@ async fn python_spec_tests() {
     );
 }
 
+/// Run all typescript spec tests (requires typescript feature)
+#[cfg(feature = "typescript")]
+#[tokio::test]
+async fn typescript_spec_tests() {
+    use bashkit::Bash;
+    use spec_runner::run_spec_test_with;
+
+    let dir = spec_cases_dir().join("typescript");
+    let all_tests = load_spec_tests(&dir);
+
+    if all_tests.is_empty() {
+        println!("No typescript spec tests found in {:?}", dir);
+        return;
+    }
+
+    // TypeScript tests need the typescript builtin registered via builder
+    let make_bash = || Bash::builder().typescript().build();
+
+    let mut summary = TestSummary::default();
+    let mut failures = Vec::new();
+
+    for (file, tests) in &all_tests {
+        for test in tests {
+            if test.skip {
+                summary.add(
+                    &spec_runner::TestResult {
+                        name: test.name.clone(),
+                        passed: false,
+                        bashkit_stdout: String::new(),
+                        bashkit_exit_code: 0,
+                        expected_stdout: String::new(),
+                        expected_exit_code: None,
+                        real_bash_stdout: None,
+                        real_bash_exit_code: None,
+                        error: None,
+                    },
+                    true,
+                );
+                continue;
+            }
+
+            let result = run_spec_test_with(test, make_bash).await;
+            summary.add(&result, false);
+
+            if !result.passed {
+                failures.push((file.clone(), result));
+            }
+        }
+    }
+
+    println!("\n=== TYPESCRIPT Spec Tests ===");
+    println!(
+        "Total: {} | Passed: {} | Failed: {} | Skipped: {}",
+        summary.total, summary.passed, summary.failed, summary.skipped
+    );
+
+    for (file, result) in &failures {
+        if !result.passed {
+            println!("\n[{}] {}", file, result.name);
+            if let Some(ref err) = result.error {
+                println!("  Error: {}", err);
+            }
+            println!("  Expected: {:?}", result.expected_stdout);
+            println!("  Got:      {:?}", result.bashkit_stdout);
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} typescript tests failed",
+        failures.len()
+    );
+}
+
 async fn run_category_tests(
     name: &str,
     all_tests: std::collections::HashMap<String, Vec<spec_runner::SpecTest>>,

@@ -25,6 +25,7 @@ Virtual bash interpreter for multi-tenant environments. Written in Rust.
 - **Language bindings** - Python (PyO3) and JavaScript/TypeScript (NAPI-RS) for Node.js, Bun, and Deno
 - **Experimental: Git support** - Virtual git operations on the virtual filesystem (`git` feature)
 - **Experimental: Python support** - Embedded Python interpreter via [Monty](https://github.com/pydantic/monty) (`python` feature)
+- **Experimental: TypeScript support** - Embedded TypeScript interpreter via [ZapCode](https://github.com/TheUncharted/zapcode) (`typescript` feature)
 
 ## Install
 
@@ -44,6 +45,7 @@ Optional features:
 ```bash
 cargo add bashkit --features git              # Virtual git operations
 cargo add bashkit --features python           # Embedded Python interpreter
+cargo add bashkit --features typescript       # Embedded TypeScript interpreter
 cargo add bashkit --features realfs           # Real filesystem backend
 cargo add bashkit --features scripted_tool    # Tool orchestration framework
 ```
@@ -129,7 +131,7 @@ assert_eq!(output.result["stdout"], "hello\nworld\n");
 | Data formats | `csv`, `json`, `yaml`, `tomlq`, `template`, `envsubst` |
 | Network | `curl`, `wget` (requires allowlist), `http` |
 | DevOps | `assert`, `dotenv`, `glob`, `log`, `retry`, `semver`, `verify`, `parallel`, `patch` |
-| Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature) |
+| Experimental | `python`, `python3` (requires `python` feature), `ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature), `git` (requires `git` feature) |
 
 ## Shell Features
 
@@ -247,6 +249,47 @@ bash.exec("cat /tmp/data.txt").await?; // "hello from python"
 Stdlib modules: `math`, `re`, `pathlib`, `os` (getenv/environ), `sys`, `typing`.
 Limitations: no `open()` (use `pathlib.Path`), no network, no classes, no third-party imports.
 See [crates/bashkit/docs/python.md](crates/bashkit/docs/python.md) for the full guide.
+
+## Experimental: TypeScript Support
+
+Enable the `typescript` feature to embed the [ZapCode](https://github.com/TheUncharted/zapcode) TypeScript interpreter (pure Rust, no V8).
+TypeScript code runs in-memory with configurable resource limits and VFS bridging via external function suspend/resume.
+
+```toml
+[dependencies]
+bashkit = { version = "0.1", features = ["typescript"] }
+```
+
+```rust
+use bashkit::Bash;
+
+let mut bash = Bash::builder().typescript().build();
+
+// Inline code (ts, node, deno, bun aliases all work)
+bash.exec("ts -c \"console.log(2 ** 10)\"").await?;
+bash.exec("node -e \"console.log('hello')\"").await?;
+
+// Script files from VFS
+bash.exec("ts /tmp/script.ts").await?;
+
+// VFS bridging: readFile/writeFile async functions
+bash.exec(r#"ts -c "await writeFile('/tmp/data.txt', 'hello from ts')"#).await?;
+bash.exec("cat /tmp/data.txt").await?; // "hello from ts"
+```
+
+Compat aliases (`node`, `deno`, `bun`) and unsupported-mode hints are configurable:
+
+```rust
+use bashkit::{Bash, TypeScriptConfig};
+
+// Only ts/typescript, no compat aliases
+let bash = Bash::builder()
+    .typescript_with_config(TypeScriptConfig::default().compat_aliases(false))
+    .build();
+```
+
+Limitations: no `import`/`require`, no `eval()`, no network, no `process`/`Deno`/`Bun` globals.
+See [crates/bashkit/docs/typescript.md](crates/bashkit/docs/typescript.md) for the full guide.
 
 ## Virtual Filesystem
 
