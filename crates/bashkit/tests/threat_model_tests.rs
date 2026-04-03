@@ -1049,11 +1049,12 @@ mod edge_cases {
     async fn command_not_found_stderr_format() {
         let mut bash = Bash::new();
 
-        let result = bash.exec("ssh").await.unwrap();
+        // Use rsync which is never a builtin (ssh may be with ssh feature)
+        let result = bash.exec("rsync").await.unwrap();
         assert_eq!(result.exit_code, 127);
         // Should match bash format: "bash: cmd: command not found"
         assert!(
-            result.stderr.starts_with("bash: ssh: command not found"),
+            result.stderr.starts_with("bash: rsync: command not found"),
             "stderr should match bash format, got: {}",
             result.stderr
         );
@@ -1066,7 +1067,8 @@ mod edge_cases {
 
         // Commands that are NOT implemented as builtins
         // Note: git is a builtin (returns exit 1 when not configured, not 127)
-        for cmd in &["ssh", "apt", "yum", "docker", "vim", "nano"] {
+        // Note: ssh/scp/sftp are builtins when ssh feature is enabled
+        for cmd in &["apt", "yum", "docker", "vim", "nano", "rsync"] {
             let result = bash.exec(cmd).await.unwrap();
             assert_eq!(
                 result.exit_code, 127,

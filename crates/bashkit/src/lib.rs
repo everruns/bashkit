@@ -413,6 +413,7 @@ pub mod parser;
 #[cfg(feature = "scripted_tool")]
 pub mod scripted_tool;
 mod snapshot;
+mod ssh;
 /// Tool contract for LLM integration
 pub mod tool;
 /// Structured execution trace events.
@@ -436,6 +437,7 @@ pub use limits::{
 };
 pub use network::NetworkAllowlist;
 pub use snapshot::Snapshot;
+pub use ssh::{SshAllowlist, SshConfig};
 pub use tool::BashToolBuilder as ToolBuilder;
 pub use tool::{
     BashTool, BashToolBuilder, Tool, ToolError, ToolExecution, ToolImage, ToolOutput,
@@ -465,6 +467,9 @@ pub use network::{BotAuthConfig, BotAuthError, BotAuthPublicKey, derive_bot_auth
 
 #[cfg(feature = "git")]
 pub use git::GitClient;
+
+#[cfg(feature = "ssh")]
+pub use ssh::{SshClient, SshHandler, SshOutput, SshTarget};
 
 #[cfg(feature = "python")]
 pub use builtins::{PythonExternalFnHandler, PythonExternalFns, PythonLimits};
@@ -1039,6 +1044,12 @@ pub struct BashBuilder {
     /// Git configuration for git builtins
     #[cfg(feature = "git")]
     git_config: Option<GitConfig>,
+    /// SSH configuration for ssh/scp/sftp builtins
+    #[cfg(feature = "ssh")]
+    ssh_config: Option<SshConfig>,
+    /// Custom SSH handler for transport interception
+    #[cfg(feature = "ssh")]
+    ssh_handler: Option<Box<dyn ssh::SshHandler>>,
     /// Real host directories to mount in the VFS
     #[cfg(feature = "realfs")]
     real_mounts: Vec<MountedRealDir>,
@@ -1344,6 +1355,42 @@ impl BashBuilder {
     #[cfg(feature = "git")]
     pub fn git(mut self, config: GitConfig) -> Self {
         self.git_config = Some(config);
+        self
+    }
+
+    /// Configure SSH access for ssh/scp/sftp builtins.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, SshConfig};
+    ///
+    /// let bash = Bash::builder()
+    ///     .ssh(SshConfig::new()
+    ///         .allow("*.supabase.co")
+    ///         .default_user("root"))
+    ///     .build();
+    /// ```
+    ///
+    /// # Threat Mitigations
+    ///
+    /// - TM-SSH-001: Unauthorized host access - host allowlist (default-deny)
+    /// - TM-SSH-002: Credential leakage - keys from VFS only
+    /// - TM-SSH-005: Connection hang - configurable timeouts
+    #[cfg(feature = "ssh")]
+    pub fn ssh(mut self, config: SshConfig) -> Self {
+        self.ssh_config = Some(config);
+        self
+    }
+
+    /// Set a custom SSH handler for transport interception.
+    ///
+    /// Embedders can implement [`SshHandler`] to mock, proxy, log, or
+    /// rate-limit SSH operations. The allowlist check happens before
+    /// the handler is called.
+    #[cfg(feature = "ssh")]
+    pub fn ssh_handler(mut self, handler: Box<dyn ssh::SshHandler>) -> Self {
+        self.ssh_handler = Some(handler);
         self
     }
 
@@ -1888,6 +1935,10 @@ impl BashBuilder {
             self.log_config,
             #[cfg(feature = "git")]
             self.git_config,
+            #[cfg(feature = "ssh")]
+            self.ssh_config,
+            #[cfg(feature = "ssh")]
+            self.ssh_handler,
         )
     }
 
@@ -1973,6 +2024,8 @@ impl BashBuilder {
         #[cfg(feature = "bot-auth")] bot_auth_config: Option<network::BotAuthConfig>,
         #[cfg(feature = "logging")] log_config: Option<logging::LogConfig>,
         #[cfg(feature = "git")] git_config: Option<GitConfig>,
+        #[cfg(feature = "ssh")] ssh_config: Option<SshConfig>,
+        #[cfg(feature = "ssh")] ssh_handler: Option<Box<dyn ssh::SshHandler>>,
     ) -> Bash {
         #[cfg(feature = "logging")]
         let log_config = log_config.unwrap_or_default();
@@ -2031,6 +2084,16 @@ impl BashBuilder {
         if let Some(config) = git_config {
             let client = git::GitClient::new(config);
             interpreter.set_git_client(client);
+        }
+
+        // Configure SSH client for ssh/scp/sftp builtins
+        #[cfg(feature = "ssh")]
+        if let Some(config) = ssh_config {
+            let mut client = ssh::SshClient::new(config);
+            if let Some(handler) = ssh_handler {
+                client.set_handler(handler);
+            }
+            interpreter.set_ssh_client(client);
         }
 
         // Configure persistent history file
@@ -2145,6 +2208,13 @@ pub mod python_guide {}
 #[cfg(feature = "typescript")]
 #[doc = include_str!("../docs/typescript.md")]
 pub mod typescript_guide {}
+
+/// Guide for SSH/SCP/SFTP remote operations.
+///
+/// **Related:** [`BashBuilder::ssh`], [`SshConfig`], [`SshAllowlist`], [`threat_model`]
+#[cfg(feature = "ssh")]
+#[doc = include_str!("../docs/ssh.md")]
+pub mod ssh_guide {}
 
 /// Guide for live mount/unmount on a running Bash instance.
 ///

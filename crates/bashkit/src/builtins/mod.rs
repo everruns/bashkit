@@ -114,6 +114,9 @@ pub(crate) const MAX_FORMAT_WIDTH: usize = 10_000;
 #[cfg(feature = "git")]
 mod git;
 
+#[cfg(feature = "ssh")]
+mod ssh;
+
 #[cfg(feature = "python")]
 mod python;
 
@@ -206,6 +209,9 @@ pub use zip_cmd::{Unzip, Zip};
 
 #[cfg(feature = "git")]
 pub use git::Git;
+
+#[cfg(feature = "ssh")]
+pub use ssh::{Scp, Sftp, Ssh};
 
 #[cfg(feature = "python")]
 pub use python::{Python, PythonExternalFnHandler, PythonExternalFns, PythonLimits};
@@ -400,6 +406,14 @@ pub struct Context<'a> {
     #[cfg(feature = "git")]
     pub git_client: Option<&'a crate::git::GitClient>,
 
+    /// SSH client for ssh/scp/sftp operations.
+    ///
+    /// Only available when the `ssh` feature is enabled and
+    /// an [`SshConfig`](crate::SshConfig) is configured via
+    /// [`BashBuilder::ssh`](crate::BashBuilder::ssh).
+    #[cfg(feature = "ssh")]
+    pub ssh_client: Option<&'a crate::ssh::SshClient>,
+
     /// Direct access to interpreter shell state.
     ///
     /// Provides internal builtins with:
@@ -439,6 +453,8 @@ impl<'a> Context<'a> {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         }
     }

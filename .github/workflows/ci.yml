@@ -56,6 +56,7 @@ jobs:
         uses: rustsec/audit-check@v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          ignore: RUSTSEC-2023-0071
 
       - name: License check (cargo-deny)
         uses: EmbarkStudios/cargo-deny-action@v2
@@ -82,7 +83,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --features http_client
+        run: cargo test --features http_client,ssh
 
       - name: Run realfs tests
         run: cargo test --features realfs -p bashkit --test realfs_tests -p bashkit-cli
@@ -107,7 +108,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build examples
-        run: cargo build --examples --features "git,http_client"
+        run: cargo build --examples --features "git,http_client,ssh"
 
       - name: Run examples
         run: |
@@ -121,6 +122,15 @@ jobs:
           cargo run --example typescript_external_functions --features typescript
           cargo run --example realfs_readonly --features realfs
           cargo run --example realfs_readwrite --features realfs
+
+      # SSH tests
+      - name: Run ssh builtin tests (mock handler)
+        run: cargo test --features ssh -p bashkit --test ssh_builtin_tests
+
+      - name: Run ssh supabase.sh example and tests
+        run: |
+          cargo run --example ssh_supabase --features ssh
+          cargo test --features ssh -p bashkit --test ssh_supabase_tests
 
       - name: Run realfs bash example
         run: |

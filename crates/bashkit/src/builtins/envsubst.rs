@@ -196,6 +196,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
         Envsubst.execute(ctx).await.expect("envsubst failed")
