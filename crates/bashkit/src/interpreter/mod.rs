@@ -7516,7 +7516,64 @@ impl Interpreter {
             return String::new();
         }
 
+        // Check for parameter expansion operators (%, %%, #, ##, :-, etc.)
+        // If present, handle expansion with the operator applied.
+        let has_operator = inner.contains("%%")
+            || inner.contains('%')
+            || (inner.contains('#') && !inner.starts_with('#'))
+            || inner.contains(":-");
+        if has_operator {
+            return self.expand_param_op_in_arithmetic(inner);
+        }
+
         // ${var} — plain variable
+        self.expand_variable(inner)
+    }
+
+    /// Expand a parameter expansion with operators inside arithmetic context.
+    /// Handles common cases like ${var%%-*}, ${var##prefix}, etc.
+    fn expand_param_op_in_arithmetic(&self, inner: &str) -> String {
+        // ${var%%pattern} — remove longest suffix
+        if let Some(pos) = inner.find("%%") {
+            let name = &inner[..pos];
+            let pattern = &inner[pos + 2..];
+            let value = self.expand_variable(name);
+            return self.remove_pattern(&value, pattern, false, true);
+        }
+        // ${var%pattern} — remove shortest suffix
+        if let Some(pos) = inner.find('%') {
+            let name = &inner[..pos];
+            let pattern = &inner[pos + 1..];
+            let value = self.expand_variable(name);
+            return self.remove_pattern(&value, pattern, false, false);
+        }
+        // ${var##pattern} — remove longest prefix
+        if let Some(pos) = inner.find("##") {
+            let name = &inner[..pos];
+            let pattern = &inner[pos + 2..];
+            let value = self.expand_variable(name);
+            return self.remove_pattern(&value, pattern, true, true);
+        }
+        // ${var#pattern} — remove shortest prefix (but not ${#var} length)
+        if let Some(pos) = inner.find('#')
+            && pos > 0
+        {
+            let name = &inner[..pos];
+            let pattern = &inner[pos + 1..];
+            let value = self.expand_variable(name);
+            return self.remove_pattern(&value, pattern, true, false);
+        }
+        // ${var:-default}
+        if let Some(pos) = inner.find(":-") {
+            let name = &inner[..pos];
+            let default = &inner[pos + 2..];
+            let value = self.expand_variable(name);
+            if value.is_empty() {
+                return default.to_string();
+            }
+            return value;
+        }
+        // Fallback
         self.expand_variable(inner)
     }
 
