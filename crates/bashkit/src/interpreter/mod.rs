@@ -2680,7 +2680,16 @@ impl Interpreter {
         self.insert_variable_checked("OPTIND".to_string(), "1".to_string());
         self.variables.remove("_OPTCHAR_IDX");
 
+        // Forward piped stdin to child when executing a script file or -c command
+        let saved_stdin = self.pipeline_stdin.take();
+        if script_file.is_some() || is_command_mode {
+            self.pipeline_stdin = stdin.clone();
+        }
+
         let result = self.execute(&script).await;
+
+        // Restore stdin
+        self.pipeline_stdin = saved_stdin;
 
         // Restore state
         if let Some(val) = saved_optind {
