@@ -1822,13 +1822,20 @@ impl Interpreter {
     /// Returns exit code 0 if result is non-zero, 1 if result is zero
     /// Execute a [[ conditional expression ]]
     async fn execute_conditional(&mut self, words: &[Word]) -> Result<ExecResult> {
-        // Expand all words
-        let mut expanded = Vec::new();
-        for word in words {
-            expanded.push(self.expand_word(word).await?);
+        // Evaluate with lazy expansion to support short-circuit semantics.
+        // In `[[ -n "${X:-}" && "$X" != "off" ]]`, if the left side is false,
+        // the right side must NOT be expanded (to avoid set -u errors).
+        let result = self.evaluate_conditional_words(words).await;
+        // If a nounset error occurred during evaluation, propagate it.
+        if let Some(err_msg) = self.nounset_error.take() {
+            self.last_exit_code = 1;
+            return Ok(ExecResult {
+                stderr: err_msg,
+                exit_code: 1,
+                control_flow: ControlFlow::Return(1),
+                ..Default::default()
+            });
         }
-
-        let result = self.evaluate_conditional(&expanded).await;
         let exit_code = if result { 0 } else { 1 };
         self.last_exit_code = exit_code;
 
@@ -1838,6 +1845,72 @@ impl Interpreter {
             exit_code,
             control_flow: ControlFlow::None,
             ..Default::default()
+        })
+    }
+
+    /// Evaluate [[ ]] from raw words with lazy expansion for short-circuit.
+    fn evaluate_conditional_words<'a>(
+        &'a mut self,
+        words: &'a [Word],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
+        Box::pin(async move {
+            if words.is_empty() {
+                return false;
+            }
+
+            // Helper: get literal text of a word (for operators like &&, ||, !, (, ))
+            let word_literal = |w: &Word| -> Option<String> {
+                if w.parts.len() == 1
+                    && let WordPart::Literal(s) = &w.parts[0]
+                {
+                    return Some(s.clone());
+                }
+                None
+            };
+
+            // Handle negation
+            if word_literal(&words[0]).as_deref() == Some("!") {
+                return !self.evaluate_conditional_words(&words[1..]).await;
+            }
+
+            // Handle parentheses
+            if word_literal(&words[0]).as_deref() == Some("(")
+                && word_literal(&words[words.len() - 1]).as_deref() == Some(")")
+            {
+                return self
+                    .evaluate_conditional_words(&words[1..words.len() - 1])
+                    .await;
+            }
+
+            // Look for || (lowest precedence), then && — scan right to left
+            for i in (0..words.len()).rev() {
+                if word_literal(&words[i]).as_deref() == Some("||") && i > 0 {
+                    let left = self.evaluate_conditional_words(&words[..i]).await;
+                    if left {
+                        return true; // short-circuit: skip right side
+                    }
+                    return self.evaluate_conditional_words(&words[i + 1..]).await;
+                }
+            }
+            for i in (0..words.len()).rev() {
+                if word_literal(&words[i]).as_deref() == Some("&&") && i > 0 {
+                    let left = self.evaluate_conditional_words(&words[..i]).await;
+                    if !left {
+                        return false; // short-circuit: skip right side
+                    }
+                    return self.evaluate_conditional_words(&words[i + 1..]).await;
+                }
+            }
+
+            // Leaf: expand words and evaluate as a simple condition
+            let mut expanded = Vec::new();
+            for word in words {
+                match self.expand_word(word).await {
+                    Ok(s) => expanded.push(s),
+                    Err(_) => return false,
+                }
+            }
+            self.evaluate_conditional(&expanded).await
         })
     }
 
