@@ -1438,13 +1438,17 @@ impl Interpreter {
                 self.coproc_buffers = saved_coproc;
                 self.memory_budget = saved_memory_budget;
 
-                // Consume Exit control flow at subshell boundary — exit only
-                // terminates the subshell, not the parent shell.
-                if let Ok(ref mut res) = result
-                    && let ControlFlow::Exit(code) = res.control_flow
-                {
-                    res.exit_code = code;
-                    res.control_flow = ControlFlow::None;
+                // Consume Exit and Return control flow at subshell boundary —
+                // they only terminate the subshell, not the parent shell.
+                // Return is used by ${var:?msg} error handling and nounset errors.
+                if let Ok(ref mut res) = result {
+                    match res.control_flow {
+                        ControlFlow::Exit(code) | ControlFlow::Return(code) => {
+                            res.exit_code = code;
+                            res.control_flow = ControlFlow::None;
+                        }
+                        _ => {}
+                    }
                 }
 
                 result

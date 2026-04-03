@@ -129,3 +129,11 @@ echo "$@"
 x y
 a b c
 ### end
+
+### parameter_error_in_subshell_contained
+# ${var:?msg} error in subshell should not kill parent
+(unset NOSUCHVAR; echo "${NOSUCHVAR:?gone}" 2>/dev/null)
+echo "survived: $?"
+### expect
+survived: 1
+### end
