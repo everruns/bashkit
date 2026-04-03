@@ -8371,7 +8371,8 @@ impl Interpreter {
                         cmd.push(c);
                     }
                 }
-                // Execute the command and substitute
+                // Execute the command and substitute in a subshell context:
+                // save/restore mutable state so mutations don't leak.
                 let parser = Parser::with_limits(
                     &cmd,
                     self.limits.max_ast_depth,
@@ -8382,8 +8383,24 @@ impl Interpreter {
                         if self.counters.push_function(&self.limits).is_err() {
                             result.push('0');
                         } else {
+                            let saved_vars = self.variables.clone();
+                            let saved_arrays = self.arrays.clone();
+                            let saved_assoc = self.assoc_arrays.clone();
+                            let saved_functions = self.functions.clone();
+                            let saved_traps = self.traps.clone();
+                            let saved_aliases = self.aliases.clone();
+                            let saved_cwd = self.cwd.clone();
+                            let saved_memory_budget = self.memory_budget.clone();
                             let cmd_result =
                                 self.execute_command_sequence(&script.commands).await?;
+                            self.variables = saved_vars;
+                            self.arrays = saved_arrays;
+                            self.assoc_arrays = saved_assoc;
+                            self.functions = saved_functions;
+                            self.traps = saved_traps;
+                            self.aliases = saved_aliases;
+                            self.cwd = saved_cwd;
+                            self.memory_budget = saved_memory_budget;
                             self.counters.pop_function();
                             let trimmed = cmd_result.stdout.trim_end_matches('\n');
                             if trimmed.is_empty() {
