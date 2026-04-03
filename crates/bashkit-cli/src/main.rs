@@ -185,7 +185,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     match cli_mode(&args) {
-        CliMode::Mcp => run_mcp(),
+        CliMode::Mcp => run_mcp(args),
         CliMode::Command | CliMode::Script => {
             let output = run_oneshot(args)?;
             print!("{}", output.stdout);
@@ -202,12 +202,12 @@ fn main() -> Result<()> {
     }
 }
 
-fn run_mcp() -> Result<()> {
+fn run_mcp(args: Args) -> Result<()> {
     Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("Failed to build MCP runtime")?
-        .block_on(mcp::run())
+        .block_on(mcp::run(move || build_bash(&args)))
 }
 
 fn run_oneshot(args: Args) -> Result<RunOutput> {
