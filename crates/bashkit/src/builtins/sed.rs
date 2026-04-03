@@ -515,8 +515,13 @@ fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, 
                 .replace_all(&replacement, r"$${$1}")
                 .to_string();
 
-            // Convert \n → newline, \t → tab in replacement
-            let replacement = replacement.replace("\\n", "\n").replace("\\t", "\t");
+            // Convert \n → newline, \t → tab, \/ → /, \\ → \ in replacement
+            let replacement = replacement
+                .replace("\\\\", "\x01") // Temporarily escape literal \\
+                .replace("\\n", "\n")
+                .replace("\\t", "\t")
+                .replace("\\/", "/")
+                .replace("\x01", "\\"); // Restore literal backslash
 
             // Parse nth occurrence from flags (e.g., "2" in s/a/b/2)
             let nth = flags

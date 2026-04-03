@@ -552,3 +552,24 @@ BAR
 BAR
 baz
 ### end
+
+### sed_unescape_slash_in_replacement
+# \/ in replacement should produce literal /
+echo "abc" | sed 's/b/\//'
+### expect
+a/c
+### end
+
+### sed_regex_groups_with_slash
+# back-references with \/ in replacement
+echo "2026-01-15" | sed 's/\([0-9]*\)-\([0-9]*\)-\([0-9]*\)/\3\/\2\/\1/'
+### expect
+15/01/2026
+### end
+
+### sed_escaped_backslash_in_replacement
+# \\ in replacement should produce literal backslash
+echo "abc" | sed 's/b/\\/'
+### expect
+a\c
+### end
