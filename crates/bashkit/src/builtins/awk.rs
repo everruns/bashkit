@@ -2078,6 +2078,10 @@ enum AwkFlow {
 /// THREAT[TM-DOS-027]: Maximum recursion depth for awk user-defined function calls.
 const MAX_AWK_CALL_DEPTH: usize = 64;
 
+/// THREAT[TM-DOS-027]: Maximum total AWK output size (stdout + stderr + file redirects)
+/// to prevent memory exhaustion. 10 MB.
+const MAX_AWK_OUTPUT_BYTES: usize = 10_000_000;
+
 struct AwkInterpreter {
     state: AwkState,
     output: String,
@@ -2964,8 +2968,22 @@ impl AwkInterpreter {
         result
     }
 
+    /// Total bytes buffered across all output streams.
+    fn total_output_bytes(&self) -> usize {
+        self.output.len()
+            + self.stderr_output.len()
+            + self.file_outputs.values().map(|v| v.len()).sum::<usize>()
+            + self.file_appends.values().map(|v| v.len()).sum::<usize>()
+    }
+
     /// Write text to stdout buffer or to a file output buffer based on the target.
-    fn write_output(&mut self, text: &str, target: &Option<AwkOutputTarget>) {
+    /// Returns `false` if the write would exceed [`MAX_AWK_OUTPUT_BYTES`].
+    fn write_output(&mut self, text: &str, target: &Option<AwkOutputTarget>) -> bool {
+        if self.total_output_bytes() + text.len() > MAX_AWK_OUTPUT_BYTES {
+            self.stderr_output
+                .push_str("awk: output limit exceeded (max 10MB)\n");
+            return false;
+        }
         match target {
             None => self.output.push_str(text),
             Some(AwkOutputTarget::Truncate(expr)) | Some(AwkOutputTarget::Append(expr)) => {
@@ -2982,6 +3000,7 @@ impl AwkInterpreter {
                 }
             }
         }
+        true
     }
 
     /// Execute action. Returns flow control signal.
@@ -2997,14 +3016,18 @@ impl AwkInterpreter {
                     .collect();
                 let mut text = parts.join(&self.state.ofs);
                 text.push_str(&self.state.ors);
-                self.write_output(&text, target);
+                if !self.write_output(&text, target) {
+                    return AwkFlow::Exit(Some(2));
+                }
                 AwkFlow::Continue
             }
             AwkAction::Printf(format_expr, args, target) => {
                 let format_str = self.eval_expr(format_expr).as_string();
                 let values: Vec<AwkValue> = args.iter().map(|a| self.eval_expr(a)).collect();
                 let text = self.format_string(&format_str, &values);
-                self.write_output(&text, target);
+                if !self.write_output(&text, target) {
+                    return AwkFlow::Exit(Some(2));
+                }
                 AwkFlow::Continue
             }
             AwkAction::Assign(name, expr) => {
@@ -4378,5 +4401,55 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "ok\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_output_limit_exceeded() {
+        // Each iteration prints a 1000-char line. 100k iters = ~100MB >> 10MB limit.
+        let result = run_awk(
+            &[r#"BEGIN { s = sprintf("%1000s", "x"); for(i=0;i<100000;i++) print s }"#],
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.exit_code, 2);
+        assert!(
+            result.stderr.contains("output limit exceeded"),
+            "stderr should mention output limit: {}",
+            result.stderr
+        );
+        assert!(
+            result.stdout.len() <= 11_000_000,
+            "stdout should be bounded: {} bytes",
+            result.stdout.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_awk_output_under_limit_ok() {
+        // Small output well under 10MB should succeed normally
+        let result = run_awk(&[r#"BEGIN { for(i=0;i<100;i++) print "hello" }"#], None)
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<&str> = result.stdout.trim().split('\n').collect();
+        assert_eq!(lines.len(), 100);
+    }
+
+    #[tokio::test]
+    async fn test_awk_file_redirect_output_limit() {
+        // File redirect output should also be bounded
+        let result = run_awk(
+            &[r#"BEGIN { s = sprintf("%1000s", "x"); for(i=0;i<100000;i++) print s > "/tmp/out" }"#],
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.exit_code, 2);
+        assert!(
+            result.stderr.contains("output limit exceeded"),
+            "stderr should mention output limit: {}",
+            result.stderr
+        );
     }
 }
