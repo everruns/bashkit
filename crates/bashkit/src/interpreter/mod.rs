@@ -3643,14 +3643,17 @@ impl Interpreter {
         for redirect in redirects {
             match redirect.kind {
                 RedirectKind::Input => {
+                    let target_path = self.expand_word(&redirect.target).await?;
+                    let path = self.resolve_path(&target_path);
+                    let content = self.fs.read_file(&path).await?;
+                    let text = bytes_to_latin1_string(&content);
                     if let Some(fd) = redirect.fd {
-                        let target_path = self.expand_word(&redirect.target).await?;
-                        let path = self.resolve_path(&target_path);
-                        let content = self.fs.read_file(&path).await?;
-                        let text = bytes_to_latin1_string(&content);
                         let lines: Vec<String> =
                             text.lines().rev().map(|l| l.to_string()).collect();
                         self.coproc_buffers.insert(fd, lines);
+                    } else {
+                        // exec < file: redirect stdin for subsequent commands
+                        self.pipeline_stdin = Some(text);
                     }
                 }
                 RedirectKind::DupInput => {

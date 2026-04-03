@@ -81,3 +81,13 @@ echo "after exec redirect"
 ### expect
 after exec redirect
 ### end
+
+### exec_stdin_redirect
+# exec < file should redirect stdin for subsequent commands
+echo "from file" > /tmp/exec_stdin_test.txt
+exec < /tmp/exec_stdin_test.txt
+read -r line
+echo "got: $line"
+### expect
+got: from file
+### end
