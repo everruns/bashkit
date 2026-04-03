@@ -1775,6 +1775,15 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
 // ============================================================================
 
 fn monty_to_py(py: Python<'_>, obj: &MontyObject) -> PyResult<Py<PyAny>> {
+    monty_to_py_inner(py, obj, 0)
+}
+
+fn monty_to_py_inner(py: Python<'_>, obj: &MontyObject, depth: usize) -> PyResult<Py<PyAny>> {
+    if depth > MAX_NESTING_DEPTH {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "MontyObject nesting depth exceeds maximum of 64",
+        ));
+    }
     match obj {
         MontyObject::None => Ok(py.None()),
         MontyObject::Bool(b) => Ok(b.into_pyobject(py)?.to_owned().into_any().unbind()),
@@ -1793,28 +1802,28 @@ fn monty_to_py(py: Python<'_>, obj: &MontyObject) -> PyResult<Py<PyAny>> {
         MontyObject::Tuple(items) => {
             let py_items = items
                 .iter()
-                .map(|v| monty_to_py(py, v))
+                .map(|v| monty_to_py_inner(py, v, depth + 1))
                 .collect::<PyResult<Vec<_>>>()?;
             Ok(PyTuple::new(py, &py_items)?.into_any().unbind())
         }
         MontyObject::List(items) => {
             let py_items = items
                 .iter()
-                .map(|v| monty_to_py(py, v))
+                .map(|v| monty_to_py_inner(py, v, depth + 1))
                 .collect::<PyResult<Vec<_>>>()?;
             Ok(PyList::new(py, &py_items)?.into_any().unbind())
         }
         MontyObject::Set(items) => {
             let py_items = items
                 .iter()
-                .map(|v| monty_to_py(py, v))
+                .map(|v| monty_to_py_inner(py, v, depth + 1))
                 .collect::<PyResult<Vec<_>>>()?;
             Ok(PySet::new(py, &py_items)?.into_any().unbind())
         }
         MontyObject::FrozenSet(items) => {
             let py_items = items
                 .iter()
-                .map(|v| monty_to_py(py, v))
+                .map(|v| monty_to_py_inner(py, v, depth + 1))
                 .collect::<PyResult<Vec<_>>>()?;
             Ok(PyFrozenSet::new(py, &py_items)?.into_any().unbind())
         }
@@ -1826,7 +1835,7 @@ fn monty_to_py(py: Python<'_>, obj: &MontyObject) -> PyResult<Py<PyAny>> {
         } => {
             let dict = PyDict::new(py);
             for (name, value) in field_names.iter().zip(values.iter()) {
-                dict.set_item(name, monty_to_py(py, value)?)?;
+                dict.set_item(name, monty_to_py_inner(py, value, depth + 1)?)?;
             }
             Ok(dict.into_any().unbind())
         }
@@ -1835,7 +1844,10 @@ fn monty_to_py(py: Python<'_>, obj: &MontyObject) -> PyResult<Py<PyAny>> {
             // DictPairs only implements IntoIterator (consuming), so clone is required
             // to iterate without moving out of the match guard.
             for (k, v) in dict_pairs.clone() {
-                dict.set_item(monty_to_py(py, &k)?, monty_to_py(py, &v)?)?;
+                dict.set_item(
+                    monty_to_py_inner(py, &k, depth + 1)?,
+                    monty_to_py_inner(py, &v, depth + 1)?,
+                )?;
             }
             Ok(dict.into_any().unbind())
         }
@@ -1844,10 +1856,23 @@ fn monty_to_py(py: Python<'_>, obj: &MontyObject) -> PyResult<Py<PyAny>> {
     }
 }
 
+fn py_to_monty(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<MontyObject> {
+    py_to_monty_inner(py, obj, 0)
+}
+
 // `py` is used directly in `is_instance_of`, `import`, and `cast` calls — not only
 // forwarded in recursive calls — so clippy's "only used in recursion" is a false positive.
 #[allow(clippy::only_used_in_recursion)]
-fn py_to_monty(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<MontyObject> {
+fn py_to_monty_inner(
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+    depth: usize,
+) -> PyResult<MontyObject> {
+    if depth > MAX_NESTING_DEPTH {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Python object nesting depth exceeds maximum of 64",
+        ));
+    }
     if obj.is_none() {
         return Ok(MontyObject::None);
     }
@@ -1885,35 +1910,40 @@ fn py_to_monty(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<MontyObject> 
     if let Ok(tuple) = obj.cast::<PyTuple>() {
         let items = tuple
             .iter()
-            .map(|v| py_to_monty(py, &v))
+            .map(|v| py_to_monty_inner(py, &v, depth + 1))
             .collect::<PyResult<Vec<_>>>()?;
         return Ok(MontyObject::Tuple(items));
     }
     if let Ok(list) = obj.cast::<PyList>() {
         let items = list
             .iter()
-            .map(|v| py_to_monty(py, &v))
+            .map(|v| py_to_monty_inner(py, &v, depth + 1))
             .collect::<PyResult<Vec<_>>>()?;
         return Ok(MontyObject::List(items));
     }
     if let Ok(dict) = obj.cast::<PyDict>() {
         let pairs: Vec<(MontyObject, MontyObject)> = dict
             .iter()
-            .map(|(k, v)| Ok((py_to_monty(py, &k)?, py_to_monty(py, &v)?)))
+            .map(|(k, v)| {
+                Ok((
+                    py_to_monty_inner(py, &k, depth + 1)?,
+                    py_to_monty_inner(py, &v, depth + 1)?,
+                ))
+            })
             .collect::<PyResult<Vec<_>>>()?;
         return Ok(MontyObject::dict(pairs));
     }
     if let Ok(set) = obj.cast::<PySet>() {
         let items = set
             .iter()
-            .map(|v| py_to_monty(py, &v))
+            .map(|v| py_to_monty_inner(py, &v, depth + 1))
             .collect::<PyResult<Vec<_>>>()?;
         return Ok(MontyObject::Set(items));
     }
     if let Ok(fset) = obj.cast::<PyFrozenSet>() {
         let items = fset
             .iter()
-            .map(|v| py_to_monty(py, &v))
+            .map(|v| py_to_monty_inner(py, &v, depth + 1))
             .collect::<PyResult<Vec<_>>>()?;
         return Ok(MontyObject::FrozenSet(items));
     }
