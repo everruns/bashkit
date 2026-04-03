@@ -4794,6 +4794,7 @@ impl Interpreter {
                     continue;
                 }
                 self.variables.remove(&resolved);
+                self.env.remove(&resolved);
                 self.arrays.remove(&resolved);
                 self.assoc_arrays.remove(&resolved);
                 for frame in self.call_stack.iter_mut().rev() {
