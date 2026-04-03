@@ -11,6 +11,29 @@ use regex::{Regex, RegexBuilder};
 use crate::error::{Error, Result};
 use crate::fs::FileSystem;
 
+/// Default compiled-regex size limit (1 MB).
+pub(crate) const REGEX_SIZE_LIMIT: usize = 1_000_000;
+
+/// Default DFA size limit (1 MB).
+pub(crate) const REGEX_DFA_SIZE_LIMIT: usize = 1_000_000;
+
+/// Build a regex with enforced size limits.
+pub(crate) fn build_regex(pattern: &str) -> std::result::Result<Regex, regex::Error> {
+    build_regex_opts(pattern, false)
+}
+
+/// Build a regex with enforced size limits and optional case-insensitivity.
+pub(crate) fn build_regex_opts(
+    pattern: &str,
+    case_insensitive: bool,
+) -> std::result::Result<Regex, regex::Error> {
+    RegexBuilder::new(pattern)
+        .case_insensitive(case_insensitive)
+        .size_limit(REGEX_SIZE_LIMIT)
+        .dfa_size_limit(REGEX_DFA_SIZE_LIMIT)
+        .build()
+}
+
 /// Recursively collect all files under the given directories in the VFS.
 ///
 /// Returns sorted list of file paths (directories are traversed but not included).
@@ -60,9 +83,7 @@ pub(crate) fn build_search_regex(
         pat
     };
 
-    RegexBuilder::new(&pat)
-        .case_insensitive(ignore_case)
-        .build()
+    build_regex_opts(&pat, ignore_case)
         .map_err(|e| Error::Execution(format!("{}: invalid pattern: {}", cmd_name, e)))
 }
 
