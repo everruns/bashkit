@@ -1799,6 +1799,10 @@ version = "0.244.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.writeable]]
+version = "0.6.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.writeable]]
 version = "0.6.3"
 criteria = "safe-to-deploy"
 
