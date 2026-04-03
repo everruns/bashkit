@@ -6,7 +6,7 @@
 [![docs.rs](https://img.shields.io/docsrs/bashkit)](https://docs.rs/bashkit)
 [![Repo: Agent Friendly](https://img.shields.io/badge/Repo-Agent%20Friendly-blue)](AGENTS.md)
 
-Virtual sandbox. Written in Rust.
+Awesomely fast virtual sandbox with bash and file system. Written in Rust.
 
 ## Features
 

@@ -1,4 +1,4 @@
-//! Bashkit - Virtual sandbox
+//! Bashkit - Awesomely fast virtual sandbox with bash and file system
 //!
 //! Virtual bash interpreter for AI agents, CI/CD pipelines, and code sandboxes.
 //! Written in Rust.
