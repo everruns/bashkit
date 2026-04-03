@@ -62,8 +62,8 @@ impl Builtin for Printf {
 }
 
 /// Parsed format specification
-// Max precision to prevent panics in Rust's format! macro (u16::MAX limit)
-const MAX_PRECISION: usize = 10000;
+// Max width/precision to prevent memory exhaustion from huge format specifiers
+const MAX_FORMAT_WIDTH: usize = 10000;
 
 struct FormatSpec {
     left_align: bool,
@@ -119,7 +119,10 @@ impl FormatSpec {
         let width = if width_str.is_empty() {
             None
         } else {
-            width_str.parse().ok()
+            width_str
+                .parse()
+                .ok()
+                .map(|w: usize| w.min(MAX_FORMAT_WIDTH))
         };
 
         // Parse precision
@@ -140,7 +143,10 @@ impl FormatSpec {
             if prec_str.is_empty() {
                 Some(0)
             } else {
-                prec_str.parse().ok().map(|p: usize| p.min(MAX_PRECISION))
+                prec_str
+                    .parse()
+                    .ok()
+                    .map(|p: usize| p.min(MAX_FORMAT_WIDTH))
             }
         } else {
             None

@@ -2490,7 +2490,14 @@ impl AwkInterpreter {
                 }
                 let format = self.eval_expr(&args[0]).as_string();
                 let values: Vec<AwkValue> = args[1..].iter().map(|a| self.eval_expr(a)).collect();
-                AwkValue::String(self.format_string(&format, &values))
+                match self.format_string(&format, &values) {
+                    Ok(s) => AwkValue::String(s),
+                    Err(e) => {
+                        self.stderr_output.push_str(&e);
+                        self.stderr_output.push('\n');
+                        AwkValue::String(String::new())
+                    }
+                }
             }
             "toupper" => {
                 if args.is_empty() {
@@ -2768,7 +2775,14 @@ impl AwkInterpreter {
         return_value
     }
 
-    fn format_string(&self, format: &str, values: &[AwkValue]) -> String {
+    /// Max width/precision for format specifiers to prevent memory exhaustion
+    const MAX_FORMAT_WIDTH: usize = 10000;
+
+    fn format_string(
+        &self,
+        format: &str,
+        values: &[AwkValue],
+    ) -> std::result::Result<String, String> {
         let mut result = String::new();
         let mut chars = format.chars().peekable();
         let mut value_idx = 0;
@@ -2839,8 +2853,17 @@ impl AwkInterpreter {
                         break;
                     }
                 }
-                if !w.is_empty() {
-                    width = w.parse().ok();
+                if !w.is_empty()
+                    && let Ok(w_val) = w.parse::<usize>()
+                {
+                    if w_val > Self::MAX_FORMAT_WIDTH {
+                        return Err(format!(
+                            "awk: format width {} exceeds maximum ({})",
+                            w_val,
+                            Self::MAX_FORMAT_WIDTH
+                        ));
+                    }
+                    width = Some(w_val);
                 }
 
                 // Parse precision
@@ -2857,8 +2880,17 @@ impl AwkInterpreter {
                     }
                     precision = if p.is_empty() {
                         Some(0)
+                    } else if let Ok(p_val) = p.parse::<usize>() {
+                        if p_val > Self::MAX_FORMAT_WIDTH {
+                            return Err(format!(
+                                "awk: format precision {} exceeds maximum ({})",
+                                p_val,
+                                Self::MAX_FORMAT_WIDTH
+                            ));
+                        }
+                        Some(p_val)
                     } else {
-                        p.parse().ok()
+                        None
                     };
                 }
 
@@ -2967,7 +2999,7 @@ impl AwkInterpreter {
             }
         }
 
-        result
+        Ok(result)
     }
 
     /// Total bytes buffered across all output streams.
@@ -3026,11 +3058,19 @@ impl AwkInterpreter {
             AwkAction::Printf(format_expr, args, target) => {
                 let format_str = self.eval_expr(format_expr).as_string();
                 let values: Vec<AwkValue> = args.iter().map(|a| self.eval_expr(a)).collect();
-                let text = self.format_string(&format_str, &values);
-                if !self.write_output(&text, target) {
-                    return AwkFlow::Exit(Some(2));
+                match self.format_string(&format_str, &values) {
+                    Ok(text) => {
+                        if !self.write_output(&text, target) {
+                            return AwkFlow::Exit(Some(2));
+                        }
+                        AwkFlow::Continue
+                    }
+                    Err(e) => {
+                        self.stderr_output.push_str(&e);
+                        self.stderr_output.push('\n');
+                        AwkFlow::Exit(Some(2))
+                    }
                 }
-                AwkFlow::Continue
             }
             AwkAction::Assign(name, expr) => {
                 let value = self.eval_expr(expr);
