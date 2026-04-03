@@ -2686,7 +2686,19 @@ impl Interpreter {
             self.pipeline_stdin = stdin.clone();
         }
 
+        // Set BASH_SOURCE for script file execution
+        if let Some(ref file) = script_file {
+            self.bash_source_stack.push(file.clone());
+            self.update_bash_source();
+        }
+
         let result = self.execute(&script).await;
+
+        // Restore BASH_SOURCE
+        if script_file.is_some() {
+            self.bash_source_stack.pop();
+            self.update_bash_source();
+        }
 
         // Restore stdin
         self.pipeline_stdin = saved_stdin;
