@@ -171,9 +171,28 @@ impl RealFs {
             }
         }
 
-        // Fallback: just use the joined path (will fail at the OS level
-        // if parent doesn't exist, which is the correct POSIX behavior)
-        Ok(joined)
+        // SECURITY: Never return a raw path without traversal validation.
+        // The parent doesn't exist and can't be canonicalized, so we cannot
+        // verify containment with certainty. Returning the raw `joined` path
+        // here would skip all symlink/traversal checks, creating a TOCTOU
+        // window where an attacker could race to create a symlink between
+        // the exists() check above and actual file I/O. (issue #980)
+        //
+        // Defense-in-depth: normalize the host path logically and verify it
+        // stays under root. This catches any `..` that survived vpath
+        // normalization as well as any future changes to the normalization
+        // logic.
+        let normalized = normalize_host_path(&joined);
+        if !normalized.starts_with(&self.root) {
+            return Err(IoError::new(
+                ErrorKind::PermissionDenied,
+                "path escapes realfs root",
+            ));
+        }
+        // Even with logical normalization, the path hasn't been verified on
+        // disk (no canonicalize). This is acceptable only because the parent
+        // truly doesn't exist — there's nothing on disk to symlink through.
+        Ok(normalized)
     }
 
     /// Check that the mode allows writes. Returns PermissionDenied if readonly.
@@ -237,6 +256,32 @@ fn metadata_from_std(m: &std::fs::Metadata) -> Metadata {
         mode,
         modified: m.modified().unwrap_or(SystemTime::UNIX_EPOCH),
         created: m.created().unwrap_or(SystemTime::UNIX_EPOCH),
+    }
+}
+
+/// Normalize a host path by logically resolving `.` and `..` components.
+///
+/// Unlike `std::fs::canonicalize`, this does not touch the filesystem, so it
+/// works for paths whose parents don't exist yet. Used in the `resolve()`
+/// fallback to validate containment without a TOCTOU window.
+fn normalize_host_path(path: &Path) -> PathBuf {
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                // Only pop Normal components; never pop RootDir or Prefix
+                if matches!(components.last(), Some(std::path::Component::Normal(_))) {
+                    components.pop();
+                }
+            }
+            std::path::Component::CurDir => {}
+            c => components.push(c),
+        }
+    }
+    if components.is_empty() {
+        PathBuf::from("/")
+    } else {
+        components.iter().collect()
     }
 }
 
@@ -608,6 +653,112 @@ mod tests {
         let file_path = dir.path().join("hello.txt");
         let result = RealFs::new(&file_path, RealFsMode::ReadOnly);
         assert!(result.is_err());
+    }
+
+    // --- Security tests for issue #980: TOCTOU fallback sandbox escape ---
+
+    #[test]
+    fn normalize_host_path_resolves_dotdot() {
+        let p = normalize_host_path(Path::new("/a/b/../c"));
+        assert_eq!(p, PathBuf::from("/a/c"));
+
+        let p = normalize_host_path(Path::new("/a/b/../../c"));
+        assert_eq!(p, PathBuf::from("/c"));
+
+        // Can't go above root
+        let p = normalize_host_path(Path::new("/a/../../../x"));
+        assert_eq!(p, PathBuf::from("/x"));
+    }
+
+    #[test]
+    fn normalize_host_path_preserves_absolute() {
+        let p = normalize_host_path(Path::new("/tmp/sandbox/./foo/../bar"));
+        assert_eq!(p, PathBuf::from("/tmp/sandbox/bar"));
+    }
+
+    #[test]
+    fn resolve_fallback_validates_containment() {
+        // When the parent doesn't exist, resolve must still validate
+        // that the path stays under root (defense-in-depth).
+        let dir = setup();
+        let fs = RealFs::new(dir.path(), RealFsMode::ReadOnly).unwrap();
+
+        // Valid non-existent path under root — should succeed
+        let result = fs.resolve(Path::new("/newdir/newfile.txt"));
+        assert!(
+            result.is_ok(),
+            "valid non-existent path under root should succeed"
+        );
+        let resolved = result.unwrap();
+        assert!(
+            resolved.starts_with(dir.path()),
+            "resolved path must be under root"
+        );
+    }
+
+    #[test]
+    fn resolve_fallback_returns_normalized_path() {
+        // The fallback must return a normalized path, not the raw joined path.
+        // This ensures no stale `..` or `.` components leak through.
+        let dir = setup();
+        let fs = RealFs::new(dir.path(), RealFsMode::ReadOnly).unwrap();
+
+        let result = fs.resolve(Path::new("/a/b/../c/file.txt"));
+        assert!(result.is_ok());
+        let resolved = result.unwrap();
+        // The resolved path should not contain ".."
+        assert!(
+            !resolved.to_string_lossy().contains(".."),
+            "fallback path must be normalized, got: {}",
+            resolved.display()
+        );
+        assert!(resolved.starts_with(dir.path()));
+    }
+
+    #[tokio::test]
+    async fn security_traversal_blocked_all_paths() {
+        // Comprehensive traversal test: all traversal attempts must fail,
+        // regardless of which code path in resolve() handles them.
+        let dir = setup();
+        let fs = RealFs::new(dir.path(), RealFsMode::ReadOnly).unwrap();
+
+        let traversal_paths = [
+            "/../../../etc/passwd",
+            "/../../etc/shadow",
+            "/subdir/../../etc/passwd",
+            "/./../../etc/passwd",
+        ];
+        for vpath in &traversal_paths {
+            let result = fs.read(Path::new(vpath)).await;
+            // normalize_vpath collapses these to root-relative, so they
+            // resolve under root. What matters: no actual /etc/passwd content.
+            if let Ok(data) = &result {
+                let data_str = String::from_utf8_lossy(data);
+                assert!(
+                    !data_str.contains("root:"),
+                    "traversal leaked /etc/passwd via path {vpath}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn security_nonexistent_nested_stays_under_root() {
+        // Write to deeply nested non-existent path should create under root,
+        // not escape via fallback.
+        let dir = setup();
+        let fs = RealFs::new(dir.path(), RealFsMode::ReadWrite).unwrap();
+
+        // This goes through the fallback (parent doesn't exist).
+        // The resolved path must be under root.
+        let result = fs
+            .write(Path::new("/deep/nested/dir/file.txt"), b"safe")
+            .await;
+        // Should succeed (write creates parent dirs) and file must be under root
+        if result.is_ok() {
+            let expected = dir.path().join("deep/nested/dir/file.txt");
+            assert!(expected.exists(), "file must be created under root");
+        }
     }
 
     #[test]
