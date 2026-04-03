@@ -475,6 +475,9 @@ pub struct Interpreter {
     coproc_buffers: HashMap<i32, Vec<String>>,
     /// Next virtual FD to assign for coproc read ends (starts at 63, like bash).
     coproc_next_fd: i32,
+    /// Persistent fd output table set by `exec N>/path` redirections.
+    /// Maps fd number to its output target. Used by `>&N` redirections.
+    exec_fd_table: HashMap<i32, FdTarget>,
     /// Cancellation token: when set to `true`, execution aborts at the next
     /// command boundary with `Error::Cancelled`.
     cancelled: Arc<AtomicBool>,
@@ -783,6 +786,7 @@ impl Interpreter {
             subst_generation: 0,
             coproc_buffers: HashMap::new(),
             coproc_next_fd: 63,
+            exec_fd_table: HashMap::new(),
             cancelled: Arc::new(AtomicBool::new(false)),
             deferred_proc_subs: Vec::new(),
         }
@@ -3668,6 +3672,51 @@ impl Interpreter {
                         self.coproc_buffers.remove(&fd);
                     }
                 }
+                RedirectKind::Output | RedirectKind::Clobber => {
+                    let fd = redirect.fd.unwrap_or(1);
+                    let target_path = self.expand_word(&redirect.target).await?;
+                    let path = self.resolve_path(&target_path);
+                    if is_dev_null(&path) {
+                        self.exec_fd_table.insert(fd, FdTarget::DevNull);
+                    } else {
+                        // Truncate file on open (like real exec >file)
+                        let _ = self.fs.write_file(&path, b"").await;
+                        self.exec_fd_table
+                            .insert(fd, FdTarget::WriteFile(path, target_path));
+                    }
+                }
+                RedirectKind::Append => {
+                    let fd = redirect.fd.unwrap_or(1);
+                    let target_path = self.expand_word(&redirect.target).await?;
+                    let path = self.resolve_path(&target_path);
+                    if is_dev_null(&path) {
+                        self.exec_fd_table.insert(fd, FdTarget::DevNull);
+                    } else {
+                        self.exec_fd_table
+                            .insert(fd, FdTarget::AppendFile(path, target_path));
+                    }
+                }
+                RedirectKind::DupOutput => {
+                    let target = self.expand_word(&redirect.target).await?;
+                    let fd = redirect.fd.unwrap_or(1);
+                    if target == "-" {
+                        // exec N>&- closes the fd
+                        self.exec_fd_table.remove(&fd);
+                    } else if let Ok(target_fd) = target.parse::<i32>() {
+                        // exec N>&M duplicates fd M to fd N
+                        let target_entry = if target_fd == 1 {
+                            FdTarget::Stdout
+                        } else if target_fd == 2 {
+                            FdTarget::Stderr
+                        } else {
+                            self.exec_fd_table
+                                .get(&target_fd)
+                                .cloned()
+                                .unwrap_or(FdTarget::Stdout)
+                        };
+                        self.exec_fd_table.insert(fd, target_entry);
+                    }
+                }
                 _ => {}
             }
         }
@@ -5625,16 +5674,33 @@ impl Interpreter {
                     let target_fd: i32 = target.parse().unwrap_or(1);
                     let src_fd = redirect.fd.unwrap_or(1);
 
-                    match (src_fd, target_fd) {
-                        (2, 1) => {
-                            result.stdout.push_str(&result.stderr);
-                            result.stderr = String::new();
+                    // Check exec_fd_table for persistent fd targets
+                    if let Some(fd_target) = self.exec_fd_table.get(&target_fd).cloned() {
+                        let data = if src_fd == 2 {
+                            std::mem::take(&mut result.stderr)
+                        } else {
+                            std::mem::take(&mut result.stdout)
+                        };
+                        match &fd_target {
+                            FdTarget::Stdout => result.stdout.push_str(&data),
+                            FdTarget::Stderr => result.stderr.push_str(&data),
+                            FdTarget::DevNull => {}
+                            FdTarget::WriteFile(path, _) | FdTarget::AppendFile(path, _) => {
+                                self.fs.append_file(path, data.as_bytes()).await?;
+                            }
                         }
-                        (1, 2) => {
-                            result.stderr.push_str(&result.stdout);
-                            result.stdout = String::new();
+                    } else {
+                        match (src_fd, target_fd) {
+                            (2, 1) => {
+                                result.stdout.push_str(&result.stderr);
+                                result.stderr = String::new();
+                            }
+                            (1, 2) => {
+                                result.stderr.push_str(&result.stdout);
+                                result.stdout = String::new();
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
                 RedirectKind::Input
@@ -5716,10 +5782,18 @@ impl Interpreter {
                     let target_fd: i32 = target.parse().unwrap_or(1);
                     let src_fd = redirect.fd.unwrap_or(1);
 
-                    match (src_fd, target_fd) {
-                        (2, 1) => fd2 = fd1.clone(),
-                        (1, 2) => fd1 = fd2.clone(),
-                        _ => {}
+                    // Look up exec_fd_table for persistent fd targets
+                    if let Some(exec_target) = self.exec_fd_table.get(&target_fd).cloned() {
+                        match src_fd {
+                            2 => fd2 = exec_target,
+                            _ => fd1 = exec_target,
+                        }
+                    } else {
+                        match (src_fd, target_fd) {
+                            (2, 1) => fd2 = fd1.clone(),
+                            (1, 2) => fd1 = fd2.clone(),
+                            _ => {}
+                        }
                     }
                 }
                 RedirectKind::Input
