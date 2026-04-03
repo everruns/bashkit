@@ -6174,19 +6174,53 @@ impl Interpreter {
                         result.push_str(&sliced.join(" "));
                     }
                 }
-                WordPart::IndirectExpansion(name) => {
+                WordPart::IndirectExpansion {
+                    name,
+                    operator,
+                    operand,
+                    colon_variant,
+                } => {
                     let nameref_key = format!("_NAMEREF_{}", name);
-                    if let Some(target) = self.variables.get(&nameref_key).cloned() {
-                        result.push_str(&target);
+                    let is_nameref = self.variables.contains_key(&nameref_key);
+
+                    if is_nameref && operator.is_none() {
+                        // Nameref without operator: ${!ref} returns the
+                        // name the nameref points to (original behavior).
+                        if let Some(target) = self.variables.get(&nameref_key).cloned() {
+                            result.push_str(&target);
+                        }
                     } else {
-                        let var_name = self.expand_variable(name);
-                        if let Some(arr) = self.arrays.get(&var_name) {
-                            if let Some(first) = arr.get(&0) {
-                                result.push_str(first);
-                            }
+                        // Resolve the indirect target variable name
+                        let resolved_name =
+                            if let Some(target) = self.variables.get(&nameref_key).cloned() {
+                                target
+                            } else {
+                                self.expand_variable(name)
+                            };
+
+                        if let Some(op) = operator {
+                            // Indirect + operator: resolve indirect, then
+                            // apply op to the target variable
+                            let (is_set, value) = self.resolve_param_expansion_name(&resolved_name);
+                            let expanded = self.apply_parameter_op(
+                                &value,
+                                &resolved_name,
+                                op,
+                                operand,
+                                *colon_variant,
+                                is_set,
+                            );
+                            result.push_str(&expanded);
                         } else {
-                            let value = self.expand_variable(&var_name);
-                            result.push_str(&value);
+                            // Plain indirect expansion (no operator)
+                            if let Some(arr) = self.arrays.get(&resolved_name) {
+                                if let Some(first) = arr.get(&0) {
+                                    result.push_str(first);
+                                }
+                            } else {
+                                let value = self.expand_variable(&resolved_name);
+                                result.push_str(&value);
+                            }
                         }
                     }
                 }
@@ -10308,6 +10342,23 @@ echo "count=$COUNT"
         // Issue #672: ${!ref} should resolve to array's first element
         let result = run_script(r#"arr=(a b c); ref=arr; echo ${!ref}"#).await;
         assert_eq!(result.stdout.trim(), "a");
+    }
+
+    #[tokio::test]
+    async fn test_indirect_expansion_with_default() {
+        // Issue #937: ${!var:-default} should compose indirect + default
+        let result =
+            run_script(r#"name="TARGET"; TARGET="value"; echo "${!name:-fallback}""#).await;
+        assert_eq!(result.stdout.trim(), "value");
+
+        let result = run_script(r#"name="MISSING"; echo "${!name:-fallback}""#).await;
+        assert_eq!(result.stdout.trim(), "fallback");
+
+        let result = run_script(r#"name="EMPTY"; EMPTY=""; echo "${!name:-fallback}""#).await;
+        assert_eq!(result.stdout.trim(), "fallback");
+
+        let result = run_script(r#"name="UNSET"; echo "${!name:=assigned}""#).await;
+        assert_eq!(result.stdout.trim(), "assigned");
     }
 
     #[tokio::test]

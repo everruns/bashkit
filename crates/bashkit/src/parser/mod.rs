@@ -2756,7 +2756,16 @@ impl<'a> Parser<'a> {
                         chars.next(); // consume '!'
                         let mut var_name = String::new();
                         while let Some(&c) = chars.peek() {
-                            if c == '}' || c == '[' || c == '*' || c == '@' {
+                            if c == '}'
+                                || c == '['
+                                || c == '*'
+                                || c == '@'
+                                || c == ':'
+                                || c == '-'
+                                || c == '='
+                                || c == '+'
+                                || c == '?'
+                            {
                                 break;
                             }
                             var_name.push(chars.next().unwrap());
@@ -2783,9 +2792,70 @@ impl<'a> Parser<'a> {
                                 parts.push(WordPart::Variable(format!("!{}[{}]", var_name, index)));
                             }
                         } else if chars.peek() == Some(&'}') {
-                            // ${!var} - indirect expansion
+                            // ${!var} - indirect expansion (no operator)
                             chars.next(); // consume '}'
-                            parts.push(WordPart::IndirectExpansion(var_name));
+                            parts.push(WordPart::IndirectExpansion {
+                                name: var_name,
+                                operator: None,
+                                operand: String::new(),
+                                colon_variant: false,
+                            });
+                        } else if chars.peek() == Some(&':') {
+                            // ${!var:op} - indirect expansion with colon operator
+                            let mut lookahead = chars.clone();
+                            lookahead.next(); // skip ':'
+                            if matches!(
+                                lookahead.peek(),
+                                Some(&'-') | Some(&'=') | Some(&'+') | Some(&'?')
+                            ) {
+                                chars.next(); // consume ':'
+                                let op_char = chars.next().unwrap();
+                                let operand = self.read_brace_operand(&mut chars);
+                                let operator = match op_char {
+                                    '-' => ParameterOp::UseDefault,
+                                    '=' => ParameterOp::AssignDefault,
+                                    '+' => ParameterOp::UseReplacement,
+                                    '?' => ParameterOp::Error,
+                                    _ => unreachable!(),
+                                };
+                                parts.push(WordPart::IndirectExpansion {
+                                    name: var_name,
+                                    operator: Some(operator),
+                                    operand,
+                                    colon_variant: true,
+                                });
+                            } else {
+                                // Not a param op after ':', treat as prefix match fallback
+                                let mut suffix = String::new();
+                                while let Some(&c) = chars.peek() {
+                                    if c == '}' {
+                                        chars.next();
+                                        break;
+                                    }
+                                    suffix.push(chars.next().unwrap());
+                                }
+                                parts.push(WordPart::Variable(format!("!{}{}", var_name, suffix)));
+                            }
+                        } else if matches!(
+                            chars.peek(),
+                            Some(&'-') | Some(&'=') | Some(&'+') | Some(&'?')
+                        ) {
+                            // ${!var-op} - indirect expansion with non-colon operator
+                            let op_char = chars.next().unwrap();
+                            let operand = self.read_brace_operand(&mut chars);
+                            let operator = match op_char {
+                                '-' => ParameterOp::UseDefault,
+                                '=' => ParameterOp::AssignDefault,
+                                '+' => ParameterOp::UseReplacement,
+                                '?' => ParameterOp::Error,
+                                _ => unreachable!(),
+                            };
+                            parts.push(WordPart::IndirectExpansion {
+                                name: var_name,
+                                operator: Some(operator),
+                                operand,
+                                colon_variant: false,
+                            });
                         } else {
                             // ${!prefix*} or ${!prefix@} - prefix matching
                             let mut suffix = String::new();
