@@ -3265,7 +3265,21 @@ impl Interpreter {
                                         | WordPart::ArrayAccess { .. }
                                 )
                             });
-                        if is_unquoted_expansion {
+                        // "${arr[@]}" or "$@" in array context should splat
+                        // individual elements, not join into a single string.
+                        let is_quoted_splat = word.quoted
+                            && word.parts.len() == 1
+                            && matches!(
+                                &word.parts[0],
+                                WordPart::ArrayAccess { index, .. } if index == "@"
+                            );
+                        let is_quoted_positional_splat = word.quoted
+                            && word.parts.len() == 1
+                            && matches!(
+                                &word.parts[0],
+                                WordPart::Variable(name) if name == "@"
+                            );
+                        if is_unquoted_expansion || is_quoted_splat || is_quoted_positional_splat {
                             let fields = self.expand_word_to_fields(word).await?;
                             all_fields.extend(fields);
                         } else {
