@@ -347,7 +347,26 @@ impl fmt::Display for Word {
                         write!(f, "${{{}[@]:{}}}", name, offset)?
                     }
                 }
-                WordPart::IndirectExpansion(name) => write!(f, "${{!{}}}", name)?,
+                WordPart::IndirectExpansion {
+                    name,
+                    operator,
+                    operand,
+                    colon_variant,
+                } => {
+                    if let Some(op) = operator {
+                        let c = if *colon_variant { ":" } else { "" };
+                        let op_char = match op {
+                            ParameterOp::UseDefault => "-",
+                            ParameterOp::AssignDefault => "=",
+                            ParameterOp::UseReplacement => "+",
+                            ParameterOp::Error => "?",
+                            _ => "",
+                        };
+                        write!(f, "${{!{}{}{}{}}}", name, c, op_char, operand)?
+                    } else {
+                        write!(f, "${{!{}}}", name)?
+                    }
+                }
                 WordPart::PrefixMatch(prefix) => write!(f, "${{!{}*}}", prefix)?,
                 WordPart::ProcessSubstitution { commands, is_input } => {
                     let prefix = if *is_input { "<" } else { ">" };
@@ -402,7 +421,13 @@ pub enum WordPart {
         length: Option<String>,
     },
     /// Indirect expansion `${!var}` - expands to value of variable named by var's value
-    IndirectExpansion(String),
+    /// Optionally composed with an operator: `${!var:-default}`, `${!var:=val}`, etc.
+    IndirectExpansion {
+        name: String,
+        operator: Option<ParameterOp>,
+        operand: String,
+        colon_variant: bool,
+    },
     /// Prefix matching `${!prefix*}` or `${!prefix@}` - names of variables with given prefix
     PrefixMatch(String),
     /// Process substitution <(cmd) or >(cmd)
@@ -658,7 +683,12 @@ mod tests {
     #[test]
     fn word_display_indirect_expansion() {
         let w = Word {
-            parts: vec![WordPart::IndirectExpansion("ref".into())],
+            parts: vec![WordPart::IndirectExpansion {
+                name: "ref".into(),
+                operator: None,
+                operand: String::new(),
+                colon_variant: false,
+            }],
             quoted: false,
         };
         assert_eq!(format!("{w}"), "${!ref}");
