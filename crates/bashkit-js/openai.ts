@@ -30,7 +30,7 @@
  * @packageDocumentation
  */
 
-import { Bash, BashTool } from "./wrapper.js";
+import { BashTool } from "./wrapper.js";
 import type { BashOptions, ExecResult } from "./wrapper.js";
 
 /** Options for configuring the bash tool adapter. */
@@ -78,8 +78,8 @@ export interface BashToolAdapter {
   tools: OpenAITool[];
   /** Handler that executes a tool_call and returns a tool message. */
   handler: (toolCall: OpenAIToolCall) => Promise<ToolResult>;
-  /** The underlying Bash instance for direct access. */
-  bash: Bash;
+  /** The underlying BashTool instance for direct access. */
+  bash: BashTool;
 }
 
 function formatOutput(result: ExecResult): string {
@@ -122,8 +122,7 @@ function formatOutput(result: ExecResult): string {
 export function bashTool(options?: BashToolOptions): BashToolAdapter {
   const { files, ...bashOptions } = options ?? {};
 
-  const bashToolInstance = new BashTool(bashOptions);
-  const bash = new Bash(bashOptions);
+  const bash = new BashTool(bashOptions);
 
   if (files) {
     for (const [path, content] of Object.entries(files)) {
@@ -131,14 +130,14 @@ export function bashTool(options?: BashToolOptions): BashToolAdapter {
     }
   }
 
-  const system = bashToolInstance.systemPrompt();
+  const system = bash.systemPrompt();
 
   const tools: OpenAITool[] = [
     {
       type: "function",
       function: {
         name: "bash",
-        description: bashToolInstance.description(),
+        description: bash.description(),
         parameters: {
           type: "object",
           properties: {
