@@ -8,6 +8,7 @@
 //! - URLs must match the configured allowlist
 //! - Response size is limited (default: 10MB) to prevent memory exhaustion
 //! - Timeouts prevent hanging on unresponsive servers
+//! - Multipart field names/filenames are sanitized to prevent header injection (issue #985)
 //! - Redirects are not followed automatically (to prevent allowlist bypass)
 //! - Compression decompression is size-limited to prevent zip bombs
 
@@ -205,6 +206,17 @@ impl Builtin for Curl {
             }
         };
 
+        // Validate multipart field names early to reject injection attempts
+        // even when network is not configured (defense in depth).
+        for field in &form_fields {
+            if let Some(eq_pos) = field.find('=') {
+                let name = &field[..eq_pos];
+                if let Err(e) = sanitize_multipart_name(name, "field name") {
+                    return Ok(ExecResult::err(e, 2));
+                }
+            }
+        }
+
         // Check if network is configured
         #[cfg(feature = "http_client")]
         {
@@ -266,6 +278,18 @@ impl Builtin for Curl {
             1,
         ))
     }
+}
+
+/// Sanitize a multipart field name or filename to prevent header injection.
+/// Rejects CR/LF characters (which could inject headers) and escapes double quotes.
+fn sanitize_multipart_name(value: &str, label: &str) -> std::result::Result<String, String> {
+    if value.contains('\r') || value.contains('\n') {
+        return Err(format!(
+            "curl: multipart {} contains illegal newline characters\n",
+            label
+        ));
+    }
+    Ok(value.replace('"', "\\\""))
 }
 
 /// Execute the actual curl request when http_client feature is enabled.
@@ -364,6 +388,13 @@ async fn execute_curl_request(
             if let Some(eq_pos) = field.find('=') {
                 let name = &field[..eq_pos];
                 let value = &field[eq_pos + 1..];
+
+                // Sanitize field name to prevent header injection
+                let safe_name = match sanitize_multipart_name(name, "field name") {
+                    Ok(n) => n,
+                    Err(e) => return Ok(ExecResult::err(e, 2)),
+                };
+
                 body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
                 if let Some(file_path) = value.strip_prefix('@') {
                     // File upload: key=@filepath[;type=mime]
@@ -383,10 +414,17 @@ async fn execute_curl_request(
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_else(|| "file".to_string());
+
+                    // Sanitize filename to prevent header injection
+                    let safe_filename = match sanitize_multipart_name(&filename, "filename") {
+                        Ok(n) => n,
+                        Err(e) => return Ok(ExecResult::err(e, 2)),
+                    };
+
                     body.extend_from_slice(
                         format!(
                             "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
-                            name, filename
+                            safe_name, safe_filename
                         )
                         .as_bytes(),
                     );
@@ -395,8 +433,11 @@ async fn execute_curl_request(
                 } else {
                     // Text field: key=value
                     body.extend_from_slice(
-                        format!("Content-Disposition: form-data; name=\"{}\"\r\n\r\n", name)
-                            .as_bytes(),
+                        format!(
+                            "Content-Disposition: form-data; name=\"{}\"\r\n\r\n",
+                            safe_name
+                        )
+                        .as_bytes(),
                     );
                     body.extend_from_slice(value.as_bytes());
                 }
@@ -1357,6 +1398,77 @@ mod tests {
             });
             assert_eq!(filtered.len(), 1);
             assert_eq!(filtered[0].0, "Content-Type");
+        }
+
+        #[test]
+        fn test_sanitize_multipart_name_normal() {
+            let result = sanitize_multipart_name("field1", "field name").unwrap();
+            assert_eq!(result, "field1");
+        }
+
+        #[test]
+        fn test_sanitize_multipart_name_escapes_quotes() {
+            let result = sanitize_multipart_name("fie\"ld", "field name").unwrap();
+            assert_eq!(result, "fie\\\"ld");
+        }
+
+        #[test]
+        fn test_sanitize_multipart_name_rejects_cr() {
+            let result = sanitize_multipart_name("field\r\nInjected: header", "field name");
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("illegal newline"));
+        }
+
+        #[test]
+        fn test_sanitize_multipart_name_rejects_lf() {
+            let result = sanitize_multipart_name("field\nInjected: header", "field name");
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("illegal newline"));
+        }
+
+        #[test]
+        fn test_sanitize_multipart_name_rejects_bare_cr() {
+            let result = sanitize_multipart_name("field\rname", "filename");
+            assert!(result.is_err());
+        }
+
+        #[tokio::test]
+        async fn test_curl_multipart_field_name_with_quotes() {
+            // Field name with quotes should be escaped, not cause injection
+            let result = run_curl_with_stdin_and_fs(
+                &["-F", "fie\"ld=value", "https://example.com"],
+                None,
+                &[],
+            )
+            .await;
+            // Should reach network error (field name accepted after escaping)
+            assert!(result.stderr.contains("network access not configured"));
+        }
+
+        #[tokio::test]
+        async fn test_curl_multipart_field_name_with_newline_rejected() {
+            // Field name with newline must be rejected
+            let result = run_curl_with_stdin_and_fs(
+                &["-F", "field\r\nInjected: evil=value", "https://example.com"],
+                None,
+                &[],
+            )
+            .await;
+            assert_ne!(result.exit_code, 0);
+            assert!(result.stderr.contains("illegal newline"));
+        }
+
+        #[tokio::test]
+        async fn test_curl_multipart_normal_field_works() {
+            // Normal field names should work fine
+            let result = run_curl_with_stdin_and_fs(
+                &["-F", "username=alice", "https://example.com"],
+                None,
+                &[],
+            )
+            .await;
+            // Should reach network error (multipart built successfully)
+            assert!(result.stderr.contains("network access not configured"));
         }
     }
 }
