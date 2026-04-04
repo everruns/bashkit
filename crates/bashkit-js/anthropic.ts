@@ -31,7 +31,7 @@
  * @packageDocumentation
  */
 
-import { Bash, BashTool } from "./wrapper.js";
+import { BashTool } from "./wrapper.js";
 import type { BashOptions, ExecResult } from "./wrapper.js";
 
 /** Options for configuring the bash tool adapter. */
@@ -75,8 +75,8 @@ export interface BashToolAdapter {
   tools: AnthropicTool[];
   /** Handler that executes a tool_use block and returns a tool_result. */
   handler: (toolUse: ToolUseBlock) => Promise<ToolResult>;
-  /** The underlying Bash instance for direct access. */
-  bash: Bash;
+  /** The underlying BashTool instance for direct access. */
+  bash: BashTool;
 }
 
 function formatOutput(result: ExecResult): string {
@@ -118,8 +118,7 @@ function formatOutput(result: ExecResult): string {
 export function bashTool(options?: BashToolOptions): BashToolAdapter {
   const { files, ...bashOptions } = options ?? {};
 
-  const bashToolInstance = new BashTool(bashOptions);
-  const bash = new Bash(bashOptions);
+  const bash = new BashTool(bashOptions);
 
   // Pre-populate VFS files
   if (files) {
@@ -128,12 +127,12 @@ export function bashTool(options?: BashToolOptions): BashToolAdapter {
     }
   }
 
-  const system = bashToolInstance.systemPrompt();
+  const system = bash.systemPrompt();
 
   const tools: AnthropicTool[] = [
     {
       name: "bash",
-      description: bashToolInstance.description(),
+      description: bash.description(),
       input_schema: {
         type: "object",
         properties: {
