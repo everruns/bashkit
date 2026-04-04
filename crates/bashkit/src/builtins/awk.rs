@@ -2084,6 +2084,10 @@ const MAX_AWK_CALL_DEPTH: usize = 64;
 /// to prevent memory exhaustion. 10 MB.
 const MAX_AWK_OUTPUT_BYTES: usize = 10_000_000;
 
+/// THREAT[TM-DOS-028]: Maximum number of distinct files cached by `getline var < file`.
+/// Prevents memory exhaustion from opening hundreds of large files.
+const MAX_GETLINE_CACHED_FILES: usize = 100;
+
 struct AwkInterpreter {
     state: AwkState,
     output: String,
@@ -2137,6 +2141,10 @@ impl AwkInterpreter {
     fn ensure_file_loaded(&mut self, resolved: &str) -> bool {
         if self.file_inputs.contains_key(resolved) {
             return true;
+        }
+        // Guard: cap number of cached files to prevent memory exhaustion
+        if self.file_inputs.len() >= MAX_GETLINE_CACHED_FILES {
+            return false;
         }
         let Some(fs) = &self.fs else {
             return false;
@@ -4493,5 +4501,130 @@ mod tests {
             "stderr should mention output limit: {}",
             result.stderr
         );
+    }
+
+    /// Helper: run AWK with a caller-provided VFS.
+    async fn run_awk_with_custom_fs(
+        args: &[&str],
+        stdin: Option<&str>,
+        fs: Arc<InMemoryFs>,
+    ) -> Result<ExecResult> {
+        let awk = Awk;
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            shell: None,
+        };
+
+        awk.execute(ctx).await
+    }
+
+    #[tokio::test]
+    async fn test_awk_getline_file_cache_limit_exceeded() {
+        // Opening more than MAX_GETLINE_CACHED_FILES distinct files must fail
+        // gracefully (getline returns -1 for new files beyond the limit).
+        use crate::fs::FsLimits;
+
+        let limits = FsLimits {
+            max_file_count: 200_000,
+            max_total_bytes: 200_000_000,
+            ..FsLimits::default()
+        };
+        let fs = Arc::new(InMemoryFs::with_limits(limits));
+        let count = MAX_GETLINE_CACHED_FILES + 5;
+        for i in 0..count {
+            fs.write_file(
+                std::path::Path::new(&format!("/tmp/f{i}.txt")),
+                format!("line{i}").as_bytes(),
+            )
+            .await
+            .unwrap();
+        }
+
+        // AWK program: read one line from each file, count successes
+        let prog = format!(
+            r#"BEGIN{{ ok=0; for(i=0;i<{count};i++) {{ f="/tmp/f"i".txt"; if((getline x < f)>0) ok++ }} print ok }}"#,
+        );
+        let result = run_awk_with_custom_fs(&[&prog], None, fs).await.unwrap();
+        let ok: usize = result.stdout.trim().parse().unwrap();
+        // Exactly MAX_GETLINE_CACHED_FILES should succeed, rest should fail
+        assert_eq!(ok, MAX_GETLINE_CACHED_FILES);
+    }
+
+    #[tokio::test]
+    async fn test_awk_getline_file_cache_within_limit() {
+        // Opening a reasonable number of files should all succeed.
+        let fs = Arc::new(InMemoryFs::new());
+        let count = 10;
+        for i in 0..count {
+            fs.write_file(
+                std::path::Path::new(&format!("/tmp/f{i}.txt")),
+                format!("data{i}").as_bytes(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let prog = format!(
+            r#"BEGIN{{ ok=0; for(i=0;i<{count};i++) {{ f="/tmp/f"i".txt"; if((getline x < f)>0) ok++ }} print ok }}"#,
+        );
+        let result = run_awk_with_custom_fs(&[&prog], None, fs).await.unwrap();
+        let ok: usize = result.stdout.trim().parse().unwrap();
+        assert_eq!(ok, count);
+    }
+
+    #[tokio::test]
+    async fn test_awk_getline_file_size_limit() {
+        // A file exceeding FsLimits::max_file_size is rejected by getline.
+        // Defense-in-depth: VFS also enforces limits, so a file at exactly
+        // the boundary is accepted while one over is rejected at VFS level.
+        use crate::fs::FsLimits;
+
+        let limits = FsLimits {
+            max_file_size: 100,
+            ..FsLimits::unlimited()
+        };
+        let fs = Arc::new(InMemoryFs::with_limits(limits));
+        // Write a file within limits -- should be readable via getline.
+        fs.write_file(std::path::Path::new("/tmp/ok.txt"), &[b'a'; 100])
+            .await
+            .unwrap();
+        // Attempt to write an oversized file -- VFS rejects it, so getline
+        // returns -1 (file not found).
+        let _ = fs
+            .write_file(std::path::Path::new("/tmp/big.txt"), &[b'x'; 101])
+            .await;
+
+        // Within-limit file succeeds
+        let result = run_awk_with_custom_fs(
+            &[r#"BEGIN{r=(getline x < "/tmp/ok.txt"); print r}"#],
+            None,
+            fs.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "1\n");
+
+        // Over-limit file fails (not stored by VFS)
+        let result = run_awk_with_custom_fs(
+            &[r#"BEGIN{r=(getline x < "/tmp/big.txt"); print r}"#],
+            None,
+            fs,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "-1\n");
     }
 }
