@@ -1,4 +1,5 @@
 ### awk_printf_huge_width_rejected
+### bash_diff: bashkit caps printf width to prevent OOM; real bash allows unlimited width
 # printf with enormous width should error, not OOM
 echo "" | awk '{printf "%999999999d", 1}' 2>&1
 echo "exit: $?"
@@ -22,6 +23,7 @@ echo "" | awk '{printf "%10000d\n", 1}' | wc -c
 ### end
 
 ### awk_printf_huge_precision_rejected
+### bash_diff: bashkit caps printf precision to prevent OOM; real bash allows unlimited precision
 # Huge precision should also error
 echo "" | awk '{printf "%.999999999f", 1}' 2>&1
 echo "exit: $?"
