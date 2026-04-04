@@ -485,6 +485,8 @@ pub enum ParameterOp {
 pub struct Redirect {
     /// File descriptor (default: 1 for output, 0 for input)
     pub fd: Option<i32>,
+    /// Variable name for `{var}` fd-variable redirects (e.g. `exec {myfd}>&-`)
+    pub fd_var: Option<String>,
     /// Type of redirection
     pub kind: RedirectKind,
     /// Target (file, fd, or heredoc content)
@@ -921,6 +923,7 @@ mod tests {
             args: vec![Word::literal("hi")],
             redirects: vec![Redirect {
                 fd: Some(1),
+                fd_var: None,
                 kind: RedirectKind::Output,
                 target: Word::literal("out.txt"),
             }],
@@ -1049,6 +1052,7 @@ mod tests {
     fn redirect_default_fd_none() {
         let r = Redirect {
             fd: None,
+            fd_var: None,
             kind: RedirectKind::Input,
             target: Word::literal("input.txt"),
         };
