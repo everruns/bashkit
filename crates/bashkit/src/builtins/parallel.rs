@@ -106,14 +106,35 @@ fn parse_parallel_args(args: &[String]) -> std::result::Result<ParallelConfig, S
     })
 }
 
+/// Maximum number of cartesian product combinations allowed.
+/// Prevents exponential memory blowup with many `:::` groups.
+const MAX_CARTESIAN_PRODUCT: usize = 100_000;
+
 /// Generate the cartesian product of multiple argument groups.
-fn cartesian_product(groups: &[Vec<String>]) -> Vec<Vec<String>> {
+///
+/// Returns an error if the total number of combinations would exceed
+/// `MAX_CARTESIAN_PRODUCT` to prevent exponential memory blowup.
+fn cartesian_product(groups: &[Vec<String>]) -> std::result::Result<Vec<Vec<String>>, String> {
     if groups.is_empty() {
-        return vec![vec![]];
+        return Ok(vec![vec![]]);
     }
+
+    // Pre-calculate total combinations to reject before allocating.
+    groups
+        .iter()
+        .try_fold(1usize, |acc, g| {
+            acc.checked_mul(g.len())
+                .filter(|&n| n <= MAX_CARTESIAN_PRODUCT)
+        })
+        .ok_or_else(|| {
+            format!(
+                "parallel: cartesian product too large (exceeds {MAX_CARTESIAN_PRODUCT} combinations)"
+            )
+        })?;
+
     let mut result = vec![vec![]];
     for group in groups {
-        let mut new_result = Vec::new();
+        let mut new_result = Vec::with_capacity(result.len() * group.len());
         for existing in &result {
             for item in group {
                 let mut combo = existing.clone();
@@ -123,7 +144,7 @@ fn cartesian_product(groups: &[Vec<String>]) -> Vec<Vec<String>> {
         }
         result = new_result;
     }
-    result
+    Ok(result)
 }
 
 /// Build a command string by substituting `{}` with the argument.
@@ -187,7 +208,10 @@ impl Builtin for Parallel {
             ));
         }
 
-        let combinations = cartesian_product(&config.arg_groups);
+        let combinations = match cartesian_product(&config.arg_groups) {
+            Ok(c) => c,
+            Err(e) => return Ok(ExecResult::err(format!("{e}\n"), 1)),
+        };
         let num_commands = combinations.len();
         let effective_jobs = config.jobs.unwrap_or(num_commands as u32);
 
@@ -350,5 +374,41 @@ mod tests {
                 .stdout
                 .contains("not supported in virtual environment")
         );
+    }
+
+    #[test]
+    fn test_cartesian_product_small() {
+        let groups = vec![
+            vec!["a".to_string(), "b".to_string()],
+            vec!["1".to_string(), "2".to_string()],
+        ];
+        let result = cartesian_product(&groups).unwrap();
+        assert_eq!(result.len(), 4);
+        assert!(result.contains(&vec!["a".to_string(), "1".to_string()]));
+        assert!(result.contains(&vec!["b".to_string(), "2".to_string()]));
+    }
+
+    #[test]
+    fn test_cartesian_product_exceeds_limit() {
+        // 20 groups of 4 elements each = 4^20 = ~1 trillion combinations
+        let groups: Vec<Vec<String>> = (0..20)
+            .map(|_| vec!["a".into(), "b".into(), "c".into(), "d".into()])
+            .collect();
+        let result = cartesian_product(&groups);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cartesian product too large"));
+    }
+
+    #[tokio::test]
+    async fn test_cartesian_product_limit_via_builtin() {
+        // Build args: echo ::: a b c d ::: a b c d ... (20 groups)
+        let mut args: Vec<&str> = vec!["echo"];
+        for _ in 0..20 {
+            args.push(":::");
+            args.extend(["a", "b", "c", "d"]);
+        }
+        let result = run_parallel(&args).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("cartesian product too large"));
     }
 }
