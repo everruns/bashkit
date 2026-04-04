@@ -3743,13 +3743,20 @@ impl Interpreter {
             });
         }
         for redirect in redirects {
+            // Resolve fd from either explicit fd or {var} fd-variable syntax
+            let resolved_fd_var: Option<i32> = redirect.fd_var.as_ref().and_then(|var_name| {
+                self.variables
+                    .get(var_name)
+                    .and_then(|val| val.parse::<i32>().ok())
+            });
             match redirect.kind {
                 RedirectKind::Input => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     let content = self.fs.read_file(&path).await?;
                     let text = bytes_to_latin1_string(&content);
-                    if let Some(fd) = redirect.fd {
+                    let fd = redirect.fd.or(resolved_fd_var);
+                    if let Some(fd) = fd {
                         let lines: Vec<String> =
                             text.lines().rev().map(|l| l.to_string()).collect();
                         self.coproc_buffers.insert(fd, lines);
@@ -3760,14 +3767,15 @@ impl Interpreter {
                 }
                 RedirectKind::DupInput => {
                     let target = self.expand_word(&redirect.target).await?;
+                    let fd = redirect.fd.or(resolved_fd_var);
                     if target == "-"
-                        && let Some(fd) = redirect.fd
+                        && let Some(fd) = fd
                     {
                         self.coproc_buffers.remove(&fd);
                     }
                 }
                 RedirectKind::Output | RedirectKind::Clobber => {
-                    let fd = redirect.fd.unwrap_or(1);
+                    let fd = redirect.fd.or(resolved_fd_var).unwrap_or(1);
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     if is_dev_null(&path) {
@@ -3780,7 +3788,7 @@ impl Interpreter {
                     }
                 }
                 RedirectKind::Append => {
-                    let fd = redirect.fd.unwrap_or(1);
+                    let fd = redirect.fd.or(resolved_fd_var).unwrap_or(1);
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     if is_dev_null(&path) {
@@ -3792,7 +3800,7 @@ impl Interpreter {
                 }
                 RedirectKind::DupOutput => {
                     let target = self.expand_word(&redirect.target).await?;
-                    let fd = redirect.fd.unwrap_or(1);
+                    let fd = redirect.fd.or(resolved_fd_var).unwrap_or(1);
                     if target == "-" {
                         // exec N>&- closes the fd
                         self.exec_fd_table.remove(&fd);
@@ -5508,6 +5516,7 @@ impl Interpreter {
                 let inner_redirects = if let Some(ref stdin_data) = command.stdin {
                     vec![Redirect {
                         fd: None,
+                        fd_var: None,
                         kind: RedirectKind::HereString,
                         target: Word::literal(stdin_data.trim_end_matches('\n').to_string()),
                     }]
@@ -5551,6 +5560,7 @@ impl Interpreter {
                     let cmd_redirects = if let Some(ref stdin_data) = cmd.stdin {
                         vec![Redirect {
                             fd: None,
+                            fd_var: None,
                             kind: RedirectKind::HereString,
                             target: Word::literal(stdin_data.trim_end_matches('\n').to_string()),
                         }]
