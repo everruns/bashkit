@@ -90,6 +90,20 @@ fn strip_path(path: &str, strip: usize) -> String {
     }
 }
 
+/// Validate that a path does not escape the working directory via `..` components.
+/// Rejects any path containing a literal `..` path segment to prevent directory traversal.
+fn validate_path(path: &str) -> std::result::Result<(), String> {
+    for component in path.split('/') {
+        if component == ".." {
+            return Err(format!(
+                "patch: rejecting path '{}': contains '..' traversal",
+                path
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Parse unified diff text into file diffs
 fn parse_unified_diff(input: &str) -> Vec<FileDiff> {
     let mut diffs = Vec::new();
@@ -314,7 +328,13 @@ impl Builtin for Patch {
                         &diff.new_path
                     }
                 };
-                strip_path(raw_path, opts.strip)
+                let stripped = strip_path(raw_path, opts.strip);
+                if let Err(e) = validate_path(&stripped) {
+                    output.push_str(&format!("{}\n", e));
+                    had_error = true;
+                    continue;
+                }
+                stripped
             };
 
             let path = resolve_path(ctx.cwd, &target);
@@ -606,6 +626,75 @@ mod tests {
         assert_eq!(hunk.old_count, 1);
         assert_eq!(hunk.new_start, 5);
         assert_eq!(hunk.new_count, 2);
+    }
+
+    // --- Security tests for path traversal (issue #989) ---
+
+    #[tokio::test]
+    async fn test_patch_rejects_path_traversal() {
+        let diff = "\
+--- a/../../../etc/passwd
++++ b/../../../etc/passwd
+@@ -1,1 +1,1 @@
+-root:x:0:0:root:/root:/bin/bash
++pwned
+";
+        let (result, _fs) = run_patch(&["-p1"], diff, &[]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(
+            result.stderr.contains(".."),
+            "error should mention path traversal: {}",
+            result.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_patch_rejects_embedded_dotdot() {
+        let diff = "\
+--- a/foo/../../secret.txt
++++ b/foo/../../secret.txt
+@@ -1,1 +1,1 @@
+-old
++new
+";
+        let (result, _fs) = run_patch(&["-p1"], diff, &[("/secret.txt", b"old\n")]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains(".."));
+    }
+
+    #[tokio::test]
+    async fn test_patch_allows_clean_path_after_strip() {
+        let diff = "\
+--- a/main.rs
++++ b/main.rs
+@@ -1,1 +1,1 @@
+-old
++new
+";
+        let (result, _fs) = run_patch(&["-p1"], diff, &[("/main.rs", b"old\n")]).await;
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_strip_path_preserves_dotdot() {
+        assert_eq!(
+            strip_path("a/../../../etc/passwd", 1),
+            "../../../etc/passwd"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_path_rejects_dotdot() {
+        assert!(validate_path("../../../etc/passwd").is_err());
+        assert!(validate_path("foo/../../bar").is_err());
+        assert!(validate_path("..").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_path_allows_clean() {
+        assert!(validate_path("foo/bar/baz.txt").is_ok());
+        assert!(validate_path("file.txt").is_ok());
+        assert!(validate_path("a/b/c").is_ok());
     }
 
     #[tokio::test]
