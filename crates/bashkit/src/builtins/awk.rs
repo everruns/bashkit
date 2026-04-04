@@ -17,6 +17,8 @@
 use async_trait::async_trait;
 use regex::Regex;
 use std::collections::HashMap;
+
+use super::search_common::build_regex;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -686,7 +688,7 @@ impl<'a> AwkParser<'a> {
                 if c == '/' {
                     let pattern = &self.input[start..self.pos];
                     self.pos += 1;
-                    let regex = Regex::new(pattern)
+                    let regex = build_regex(pattern)
                         .map_err(|e| Error::Execution(format!("awk: invalid regex: {}", e)))?;
                     return Ok(Some(AwkPattern::Regex(regex)));
                 } else if c == '\\' {
@@ -2162,7 +2164,7 @@ impl AwkInterpreter {
     fn eval_expr_as_bool(&mut self, expr: &AwkExpr) -> bool {
         if let AwkExpr::Regex(pattern) = expr {
             let line = self.state.get_field(0).as_string();
-            if let Ok(re) = Regex::new(pattern) {
+            if let Ok(re) = build_regex(pattern) {
                 return re.is_match(&line);
             }
             return false;
@@ -2236,7 +2238,7 @@ impl AwkInterpreter {
                         AwkValue::Number(if lb || rb { 1.0 } else { 0.0 })
                     }
                     "~" => {
-                        if let Ok(re) = Regex::new(&r.as_string()) {
+                        if let Ok(re) = build_regex(&r.as_string()) {
                             AwkValue::Number(if re.is_match(&l.as_string()) {
                                 1.0
                             } else {
@@ -2247,7 +2249,7 @@ impl AwkInterpreter {
                         }
                     }
                     "!~" => {
-                        if let Ok(re) = Regex::new(&r.as_string()) {
+                        if let Ok(re) = build_regex(&r.as_string()) {
                             AwkValue::Number(if !re.is_match(&l.as_string()) {
                                 1.0
                             } else {
@@ -2363,7 +2365,7 @@ impl AwkInterpreter {
             }
             AwkExpr::Match(expr, pattern) => {
                 let s = self.eval_expr(expr).as_string();
-                if let Ok(re) = Regex::new(pattern) {
+                if let Ok(re) = build_regex(pattern) {
                     AwkValue::Number(if re.is_match(&s) { 1.0 } else { 0.0 })
                 } else {
                     AwkValue::Number(0.0)
@@ -2514,7 +2516,7 @@ impl AwkInterpreter {
 
                 let target = self.eval_expr(&target_expr).as_string();
 
-                if let Ok(re) = Regex::new(&pattern) {
+                if let Ok(re) = build_regex(&pattern) {
                     let (result, count) = if name == "gsub" {
                         let count = re.find_iter(&target).count();
                         (
@@ -2600,7 +2602,7 @@ impl AwkInterpreter {
                 } else {
                     None
                 };
-                if let Ok(re) = Regex::new(&pattern) {
+                if let Ok(re) = build_regex(&pattern) {
                     if let Some(caps) = re.captures(&s) {
                         let m = caps.get(0).unwrap();
                         let rstart = m.start() + 1; // awk is 1-indexed
@@ -2648,7 +2650,7 @@ impl AwkInterpreter {
                 } else {
                     self.state.get_field(0).as_string()
                 };
-                if let Ok(re) = Regex::new(&pattern) {
+                if let Ok(re) = build_regex(&pattern) {
                     if how == "g" || how == "G" {
                         AwkValue::String(re.replace_all(&target, replacement.as_str()).to_string())
                     } else {

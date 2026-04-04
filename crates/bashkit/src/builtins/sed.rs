@@ -19,7 +19,9 @@
 #![allow(clippy::unwrap_used)]
 
 use async_trait::async_trait;
-use regex::{Regex, RegexBuilder};
+use regex::Regex;
+
+use super::search_common::{build_regex, build_regex_opts};
 
 use super::{Builtin, Context, read_text_file};
 use crate::error::{Error, Result};
@@ -341,7 +343,7 @@ fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
                     Error::Execution("sed: unterminated address regex".to_string())
                 })?;
                 let pattern = &after_slash[..end2];
-                let regex = Regex::new(pattern)
+                let regex = build_regex(pattern)
                     .map_err(|e| Error::Execution(format!("sed: invalid regex: {}", e)))?;
                 if num == 0 {
                     return Ok((Some(Address::ZeroRegex(regex)), &after_slash[end2 + 1..]));
@@ -377,7 +379,7 @@ fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
             .find('/')
             .ok_or_else(|| Error::Execution("sed: unterminated address regex".to_string()))?;
         let pattern = &s[1..end + 1];
-        let regex = Regex::new(pattern)
+        let regex = build_regex(pattern)
             .map_err(|e| Error::Execution(format!("sed: invalid regex: {}", e)))?;
         let rest = &s[end + 2..];
 
@@ -398,7 +400,7 @@ fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
                     Error::Execution("sed: unterminated address regex".to_string())
                 })?;
                 let pattern2 = &after_slash[..end2];
-                let regex2 = Regex::new(pattern2)
+                let regex2 = build_regex(pattern2)
                     .map_err(|e| Error::Execution(format!("sed: invalid regex: {}", e)))?;
                 return Ok((
                     Some(Address::RegexRange(regex, regex2)),
@@ -496,9 +498,7 @@ fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, 
             };
             // Build regex with optional case-insensitive flag
             let case_insensitive = flags.contains('i');
-            let regex = RegexBuilder::new(&pattern)
-                .case_insensitive(case_insensitive)
-                .build()
+            let regex = build_regex_opts(&pattern, case_insensitive)
                 .map_err(|e| Error::Execution(format!("sed: invalid pattern: {}", e)))?;
 
             // Convert sed replacement syntax to regex replacement syntax

@@ -37,9 +37,9 @@
 //!   grep --line-buffered pattern # line-buffered (no-op)
 
 use async_trait::async_trait;
-use regex::{Regex, RegexBuilder};
+use regex::Regex;
 
-use super::search_common::parse_numeric_flag_arg;
+use super::search_common::{build_regex_opts, parse_numeric_flag_arg};
 use super::{Builtin, Context};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
@@ -295,9 +295,7 @@ impl GrepOptions {
             combined
         };
 
-        RegexBuilder::new(&final_pattern)
-            .case_insensitive(self.ignore_case)
-            .build()
+        build_regex_opts(&final_pattern, self.ignore_case)
             .map_err(|e| Error::Execution(format!("grep: invalid pattern: {}", e)))
     }
 }
