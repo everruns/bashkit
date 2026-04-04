@@ -13,6 +13,7 @@
 //! - **Timeouts**: 30 second default prevents hanging on slow servers
 //! - **No automatic redirects**: Prevents allowlist bypass via redirect chains
 //! - **Zip bomb protection**: Compressed responses are size-limited during decompression
+//! - **Request signing** (opt-in, `bot-auth` feature): Ed25519 signatures per RFC 9421 on all outbound requests
 //!
 //! # Usage
 //!
@@ -79,11 +80,17 @@
 
 mod allowlist;
 
+#[cfg(feature = "bot-auth")]
+pub mod bot_auth;
+
 #[cfg(feature = "http_client")]
 mod client;
 
 #[allow(unused_imports)] // UrlMatch is used internally but may not be exported
 pub use allowlist::{NetworkAllowlist, UrlMatch};
+
+#[cfg(feature = "bot-auth")]
+pub use bot_auth::{BotAuthConfig, BotAuthError, BotAuthPublicKey, derive_bot_auth_public_key};
 
 #[cfg(feature = "http_client")]
 pub use client::{HttpClient, HttpHandler, Method, Response};

@@ -460,6 +460,9 @@ pub use network::{HttpClient, HttpHandler};
 #[cfg(feature = "http_client")]
 pub use network::Response as HttpResponse;
 
+#[cfg(feature = "bot-auth")]
+pub use network::{BotAuthConfig, BotAuthError, BotAuthPublicKey, derive_bot_auth_public_key};
+
 #[cfg(feature = "git")]
 pub use git::GitClient;
 
@@ -1027,6 +1030,9 @@ pub struct BashBuilder {
     /// Custom HTTP handler for request interception
     #[cfg(feature = "http_client")]
     http_handler: Option<Box<dyn network::HttpHandler>>,
+    /// Bot-auth config for transparent request signing
+    #[cfg(feature = "bot-auth")]
+    bot_auth_config: Option<network::BotAuthConfig>,
     /// Logging configuration
     #[cfg(feature = "logging")]
     log_config: Option<logging::LogConfig>,
@@ -1236,6 +1242,32 @@ impl BashBuilder {
     #[cfg(feature = "http_client")]
     pub fn http_handler(mut self, handler: Box<dyn network::HttpHandler>) -> Self {
         self.http_handler = Some(handler);
+        self
+    }
+
+    /// Enable transparent request signing for all outbound HTTP requests.
+    ///
+    /// When configured, every HTTP request made by curl/wget/http builtins
+    /// is signed with Ed25519 per RFC 9421 / web-bot-auth profile. No CLI
+    /// arguments or script changes needed — signing is fully transparent.
+    ///
+    /// Signing failures are non-blocking: the request is sent unsigned.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use bashkit::{Bash, NetworkAllowlist};
+    /// use bashkit::network::BotAuthConfig;
+    ///
+    /// let bash = Bash::builder()
+    ///     .network(NetworkAllowlist::new().allow("https://api.example.com"))
+    ///     .bot_auth(BotAuthConfig::from_seed([42u8; 32])
+    ///         .with_agent_fqdn("bot.example.com"))
+    ///     .build();
+    /// ```
+    #[cfg(feature = "bot-auth")]
+    pub fn bot_auth(mut self, config: network::BotAuthConfig) -> Self {
+        self.bot_auth_config = Some(config);
         self
     }
 
@@ -1850,6 +1882,8 @@ impl BashBuilder {
             self.network_allowlist,
             #[cfg(feature = "http_client")]
             self.http_handler,
+            #[cfg(feature = "bot-auth")]
+            self.bot_auth_config,
             #[cfg(feature = "logging")]
             self.log_config,
             #[cfg(feature = "git")]
@@ -1936,6 +1970,7 @@ impl BashBuilder {
         history_file: Option<PathBuf>,
         #[cfg(feature = "http_client")] network_allowlist: Option<NetworkAllowlist>,
         #[cfg(feature = "http_client")] http_handler: Option<Box<dyn network::HttpHandler>>,
+        #[cfg(feature = "bot-auth")] bot_auth_config: Option<network::BotAuthConfig>,
         #[cfg(feature = "logging")] log_config: Option<logging::LogConfig>,
         #[cfg(feature = "git")] git_config: Option<GitConfig>,
     ) -> Bash {
@@ -1983,6 +2018,10 @@ impl BashBuilder {
             let mut client = network::HttpClient::new(allowlist);
             if let Some(handler) = http_handler {
                 client.set_handler(handler);
+            }
+            #[cfg(feature = "bot-auth")]
+            if let Some(bot_auth) = bot_auth_config {
+                client.set_bot_auth(bot_auth);
             }
             interpreter.set_http_client(client);
         }

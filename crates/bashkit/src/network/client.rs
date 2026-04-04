@@ -75,6 +75,9 @@ pub struct HttpClient {
     max_response_bytes: usize,
     /// Optional custom HTTP handler for request interception
     handler: Option<Box<dyn HttpHandler>>,
+    /// Optional bot-auth config for transparent request signing
+    #[cfg(feature = "bot-auth")]
+    bot_auth: Option<super::bot_auth::BotAuthConfig>,
 }
 
 /// HTTP request method
@@ -162,6 +165,8 @@ impl HttpClient {
             default_timeout: timeout,
             max_response_bytes,
             handler: None,
+            #[cfg(feature = "bot-auth")]
+            bot_auth: None,
         }
     }
 
@@ -172,6 +177,47 @@ impl HttpClient {
     /// when no custom handler is set.
     pub fn set_handler(&mut self, handler: Box<dyn HttpHandler>) {
         self.handler = Some(handler);
+    }
+
+    /// Enable bot-auth request signing.
+    ///
+    /// When set, all outbound HTTP requests are transparently signed with
+    /// Ed25519 per RFC 9421 / web-bot-auth profile. No CLI arguments needed.
+    /// Signing failures are non-blocking — the request is sent unsigned.
+    #[cfg(feature = "bot-auth")]
+    pub fn set_bot_auth(&mut self, config: super::bot_auth::BotAuthConfig) {
+        self.bot_auth = Some(config);
+    }
+
+    /// Produce bot-auth signing headers for the given URL.
+    /// Non-blocking: signing failures return an empty vec (request sent unsigned).
+    #[cfg(feature = "bot-auth")]
+    fn bot_auth_headers(&self, url: &str) -> Vec<(String, String)> {
+        let Some(ref bot_auth) = self.bot_auth else {
+            return Vec::new();
+        };
+        let Ok(parsed) = url::Url::parse(url) else {
+            return Vec::new();
+        };
+        let Some(authority) = parsed.host_str() else {
+            return Vec::new();
+        };
+        match bot_auth.sign_request(authority) {
+            Ok(headers) => {
+                let mut result = vec![
+                    ("signature".to_string(), headers.signature),
+                    ("signature-input".to_string(), headers.signature_input),
+                ];
+                if let Some(fqdn) = headers.signature_agent {
+                    result.push(("signature-agent".to_string(), fqdn));
+                }
+                result
+            }
+            Err(_e) => {
+                // Non-blocking: signing failure must not prevent the request
+                Vec::new()
+            }
+        }
     }
 
     fn client(&self) -> Result<&Client> {
@@ -238,6 +284,12 @@ impl HttpClient {
             }
         }
 
+        // Compute bot-auth signing headers (transparent, non-blocking)
+        #[cfg(feature = "bot-auth")]
+        let signing_headers = self.bot_auth_headers(url);
+        #[cfg(not(feature = "bot-auth"))]
+        let signing_headers: Vec<(String, String)> = Vec::new();
+
         // Delegate to custom handler if set
         if let Some(handler) = &self.handler {
             let method_str = match method {
@@ -248,8 +300,16 @@ impl HttpClient {
                 Method::Head => "HEAD",
                 Method::Patch => "PATCH",
             };
+            if signing_headers.is_empty() {
+                return handler
+                    .request(method_str, url, body, headers)
+                    .await
+                    .map_err(Error::Network);
+            }
+            let mut all_headers: Vec<(String, String)> = headers.to_vec();
+            all_headers.extend(signing_headers);
             return handler
-                .request(method_str, url, body, headers)
+                .request(method_str, url, body, &all_headers)
                 .await
                 .map_err(Error::Network);
         }
@@ -259,6 +319,11 @@ impl HttpClient {
 
         // Add custom headers
         for (name, value) in headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+
+        // Add bot-auth signing headers
+        for (name, value) in &signing_headers {
             request = request.header(name.as_str(), value.as_str());
         }
 
@@ -406,6 +471,12 @@ impl HttpClient {
             }
         }
 
+        // Compute bot-auth signing headers (transparent, non-blocking)
+        #[cfg(feature = "bot-auth")]
+        let signing_headers = self.bot_auth_headers(url);
+        #[cfg(not(feature = "bot-auth"))]
+        let signing_headers: Vec<(String, String)> = Vec::new();
+
         // Delegate to custom handler if set (timeouts are the handler's responsibility)
         if let Some(handler) = &self.handler {
             let method_str = match method {
@@ -416,8 +487,16 @@ impl HttpClient {
                 Method::Head => "HEAD",
                 Method::Patch => "PATCH",
             };
+            if signing_headers.is_empty() {
+                return handler
+                    .request(method_str, url, body, headers)
+                    .await
+                    .map_err(Error::Network);
+            }
+            let mut all_headers: Vec<(String, String)> = headers.to_vec();
+            all_headers.extend(signing_headers);
             return handler
-                .request(method_str, url, body, headers)
+                .request(method_str, url, body, &all_headers)
                 .await
                 .map_err(Error::Network);
         }
@@ -446,6 +525,11 @@ impl HttpClient {
 
         // Add custom headers
         for (name, value) in headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+
+        // Add bot-auth signing headers
+        for (name, value) in &signing_headers {
             request = request.header(name.as_str(), value.as_str());
         }
 
