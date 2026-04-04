@@ -13,6 +13,7 @@
 //! - **Timeouts**: 30 second default prevents hanging on slow servers
 //! - **No automatic redirects**: Prevents allowlist bypass via redirect chains
 //! - **Zip bomb protection**: Compressed responses are size-limited during decompression
+//! - **Request signing** (opt-in, `bot-auth` feature): Ed25519 signatures per RFC 9421 on all outbound requests
 //!
 //! # Usage
 //!

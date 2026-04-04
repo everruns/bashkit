@@ -31,7 +31,16 @@ BotAuthConfig::sign_request(authority)
 Signature + Signature-Input + Signature-Agent headers
 ```
 
-Signing happens in `HttpClient` at the same layer as the allowlist check — both the default reqwest path and custom `HttpHandler` path receive signing headers.
+Signing happens in `HttpClient` at the same layer as the allowlist check. **All** outbound HTTP paths are covered:
+
+| Path | Signed | How |
+|------|--------|-----|
+| `HttpClient::request_with_headers` (default reqwest) | Yes | `bot_auth_headers()` injected before `request.send()` |
+| `HttpClient::request_with_timeouts` (per-request timeout) | Yes | Same `bot_auth_headers()` injection |
+| Custom `HttpHandler` | Yes | Signing headers merged into the handler's `headers` slice |
+| Redirects (manual follow in curl/wget) | Yes | Each redirect is a new `HttpClient` request, re-signed with the new authority |
+
+Every HTTP builtin — `curl`, `wget`, `http` — goes through `HttpClient`, so signing is guaranteed for all outbound requests when configured. No builtin can bypass signing.
 
 ## API
 

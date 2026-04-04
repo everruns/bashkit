@@ -617,8 +617,11 @@ allowlist.allow("https://api.example.com");
 | TM-NET-018 | JSON body injection | `http POST url name='x","admin":true'` via unescaped string formatting | Use `serde_json` for JSON construction | **MITIGATED** |
 | TM-NET-019 | Query param injection | `http GET url q=='foo&admin=true'` injects extra params | URL-encode via `url::form_urlencoded` | **MITIGATED** |
 | TM-NET-020 | Form body injection | `http --form POST url user='x&role=admin'` injects extra fields | URL-encode via `url::form_urlencoded` | **MITIGATED** |
+| TM-NET-021 | Bot identity spoofing | Forge requests as a trusted bot | Ed25519 request signing (bot-auth feature, `specs/017-request-signing.md`) | **MITIGATED** (opt-in) |
 
 **Current Risk**: LOW - Multiple mitigations in place
+
+**Bot-auth signing** (feature `bot-auth`): When configured, all outbound HTTP requests from curl/wget/http builtins are transparently signed with Ed25519 per RFC 9421. Signing is non-blocking — failures send requests unsigned. See `specs/017-request-signing.md`.
 
 **Implementation**: `network/client.rs`
 ```rust

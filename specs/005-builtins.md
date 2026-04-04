@@ -166,6 +166,12 @@ persist in shell variables as usual.
 - `wget` - Download files (requires http_client feature + allowlist)
   - Options: `-q/--quiet`, `-O FILE`, `--spider`, `--header`, `-U/--user-agent`, `--post-data`, `-t/--tries`, `-T/--timeout`, `--connect-timeout`
   - Security: URL allowlist enforced, 10MB response limit, timeouts clamped to [1s, 10min]
+- `http` - HTTPie-style HTTP client (requires http_client feature + allowlist)
+  - Syntax: `http [OPTIONS] [METHOD] URL [ITEMS...]` where items are `key=value` (JSON string), `key:=value` (JSON raw), `Header:value`, `key==value` (query param)
+  - Options: `--json/-j`, `--form/-f`, `-v/--verbose`, `-h/--headers`, `-b/--body`, `-o FILE`
+  - Security: URL allowlist enforced, JSON/form injection prevention, query parameter encoding
+
+**Request Signing**: When the `bot-auth` feature is enabled and configured, all outbound HTTP requests from curl, wget, and http builtins are transparently signed with Ed25519 per RFC 9421. See `specs/017-request-signing.md`.
 
 **Network Configuration**:
 ```rust
