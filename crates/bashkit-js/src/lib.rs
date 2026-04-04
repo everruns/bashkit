@@ -273,7 +273,7 @@ impl Bash {
     /// Execute bash commands synchronously.
     #[napi]
     pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
-        self.state.cancelled.store(false, Ordering::Relaxed);
+        self.state.cancelled.store(false, Ordering::SeqCst);
         block_on_with(&self.state, |s| async move {
             let mut bash = s.inner.lock().await;
             match bash.exec(&commands).await {
@@ -342,7 +342,7 @@ impl Bash {
     /// command boundary.
     #[napi]
     pub fn cancel(&self) {
-        self.state.cancelled.store(true, Ordering::Relaxed);
+        self.state.cancelled.store(true, Ordering::SeqCst);
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
@@ -604,7 +604,7 @@ impl BashTool {
     /// Execute bash commands synchronously.
     #[napi]
     pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
-        self.state.cancelled.store(false, Ordering::Relaxed);
+        self.state.cancelled.store(false, Ordering::SeqCst);
         block_on_with(&self.state, |s| async move {
             let mut bash = s.inner.lock().await;
             match bash.exec(&commands).await {
@@ -670,7 +670,7 @@ impl BashTool {
     /// Cancel the currently running execution.
     #[napi]
     pub fn cancel(&self) {
-        self.state.cancelled.store(true, Ordering::Relaxed);
+        self.state.cancelled.store(true, Ordering::SeqCst);
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
