@@ -114,6 +114,26 @@ impl ExecutionLimits {
         Self::default()
     }
 
+    /// Relaxed limits for CLI / interactive use.
+    ///
+    /// Command/loop counters are effectively unlimited — the user chose to run
+    /// the script, so counting-based limits are unhelpful. Timeout is removed
+    /// (user has Ctrl-C). Stdout/stderr caps are raised to 10 MB.
+    ///
+    /// Limits that guard against crashes are kept: function depth, AST depth,
+    /// parser fuel, parser timeout, input size.
+    pub fn cli() -> Self {
+        Self {
+            max_commands: usize::MAX,
+            max_loop_iterations: usize::MAX,
+            max_total_loop_iterations: usize::MAX,
+            timeout: Duration::from_secs(u64::MAX / 2), // effectively no timeout
+            max_stdout_bytes: 10_485_760,               // 10 MB
+            max_stderr_bytes: 10_485_760,               // 10 MB
+            ..Self::default()
+        }
+    }
+
     /// Set maximum command count
     pub fn max_commands(mut self, count: usize) -> Self {
         self.max_commands = count;
