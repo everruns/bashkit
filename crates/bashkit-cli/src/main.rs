@@ -72,6 +72,22 @@ struct Args {
     #[arg(long)]
     max_commands: Option<usize>,
 
+    /// Maximum iterations for a single loop (default: 10000)
+    #[arg(long)]
+    max_loop_iterations: Option<usize>,
+
+    /// Maximum total loop iterations across all loops (default: 1000000)
+    #[arg(long)]
+    max_total_loop_iterations: Option<usize>,
+
+    /// Execution timeout in seconds (default: 30)
+    #[arg(long)]
+    timeout: Option<u64>,
+
+    /// Maximum total commands across all exec() calls in a session (default: 100000)
+    #[arg(long)]
+    max_session_commands: Option<u64>,
+
     #[command(subcommand)]
     subcommand: Option<SubCmd>,
 }
@@ -118,8 +134,36 @@ fn build_bash(args: &Args) -> bashkit::Bash {
         builder = apply_real_mounts(builder, &args.mount_ro, &args.mount_rw);
     }
 
-    if let Some(max_cmds) = args.max_commands {
-        builder = builder.limits(bashkit::ExecutionLimits::new().max_commands(max_cmds));
+    {
+        let mut limits = bashkit::ExecutionLimits::new();
+        let mut custom = false;
+        if let Some(v) = args.max_commands {
+            limits = limits.max_commands(v);
+            custom = true;
+        }
+        if let Some(v) = args.max_loop_iterations {
+            limits = limits.max_loop_iterations(v);
+            custom = true;
+        }
+        if let Some(v) = args.max_total_loop_iterations {
+            limits = limits.max_total_loop_iterations(v);
+            custom = true;
+        }
+        if let Some(v) = args.timeout {
+            limits = limits.timeout(std::time::Duration::from_secs(v));
+            custom = true;
+        }
+        if custom {
+            builder = builder.limits(limits);
+        }
+    }
+
+    if let Some(v) = args.max_session_commands {
+        builder = builder.session_limits(
+            bashkit::SessionLimits::new()
+                .max_total_commands(v)
+                .max_exec_calls(u64::MAX),
+        );
     }
 
     builder.build()
