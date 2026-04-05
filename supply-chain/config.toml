@@ -415,11 +415,11 @@ version = "0.17.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.fastrand]]
-version = "2.3.0"
+version = "2.4.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.fastrand]]
-version = "2.3.0"
+version = "2.4.0"
 criteria = "safe-to-run"
 
 [[exemptions.fiat-crypto]]

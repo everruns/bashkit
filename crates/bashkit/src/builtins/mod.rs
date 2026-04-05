@@ -107,6 +107,10 @@ mod yaml;
 mod yes;
 mod zip_cmd;
 
+/// Max width/precision for printf-style format specifiers to prevent memory exhaustion.
+/// Shared by printf and AWK builtins.
+pub(crate) const MAX_FORMAT_WIDTH: usize = 10_000;
+
 #[cfg(feature = "git")]
 mod git;
 
