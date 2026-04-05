@@ -2599,13 +2599,111 @@ impl<'a> Parser<'a> {
                             cmd_str.push('\n');
                             self.advance();
                         }
+                        Some(tokens::Token::DoubleLeftBracket) => {
+                            if !cmd_str.is_empty() {
+                                cmd_str.push(' ');
+                            }
+                            cmd_str.push_str("[[");
+                            self.advance();
+                        }
+                        Some(tokens::Token::DoubleRightBracket) => {
+                            cmd_str.push_str(" ]]");
+                            self.advance();
+                        }
+                        Some(tokens::Token::DoubleLeftParen) => {
+                            if !cmd_str.is_empty() {
+                                cmd_str.push(' ');
+                            }
+                            cmd_str.push_str("((");
+                            self.advance();
+                        }
+                        Some(tokens::Token::DoubleRightParen) => {
+                            cmd_str.push_str("))");
+                            self.advance();
+                        }
+                        Some(tokens::Token::DoubleSemicolon) => {
+                            cmd_str.push_str(";;");
+                            self.advance();
+                        }
+                        Some(tokens::Token::SemiAmp) => {
+                            cmd_str.push_str(";&");
+                            self.advance();
+                        }
+                        Some(tokens::Token::DoubleSemiAmp) => {
+                            cmd_str.push_str(";;&");
+                            self.advance();
+                        }
+                        Some(tokens::Token::Assignment) => {
+                            cmd_str.push('=');
+                            self.advance();
+                        }
+                        Some(tokens::Token::RedirectBoth) => {
+                            cmd_str.push_str(" &>");
+                            self.advance();
+                        }
+                        Some(tokens::Token::Clobber) => {
+                            cmd_str.push_str(" >|");
+                            self.advance();
+                        }
+                        Some(tokens::Token::DupInput) => {
+                            cmd_str.push_str(" <&");
+                            self.advance();
+                        }
+                        Some(tokens::Token::HereDoc) => {
+                            cmd_str.push_str(" <<");
+                            self.advance();
+                        }
+                        Some(tokens::Token::HereDocStrip) => {
+                            cmd_str.push_str(" <<-");
+                            self.advance();
+                        }
+                        Some(tokens::Token::RedirectFdAppend(fd)) => {
+                            cmd_str.push_str(&format!(" {}>>", fd));
+                            self.advance();
+                        }
+                        Some(tokens::Token::DupFd(src, dst)) => {
+                            cmd_str.push_str(&format!(" {}>& {}", src, dst));
+                            self.advance();
+                        }
+                        Some(tokens::Token::DupFdIn(src, dst)) => {
+                            cmd_str.push_str(&format!(" {}<& {}", src, dst));
+                            self.advance();
+                        }
+                        Some(tokens::Token::DupFdClose(fd)) => {
+                            cmd_str.push_str(&format!(" {}<&-", fd));
+                            self.advance();
+                        }
+                        Some(tokens::Token::RedirectFdIn(fd)) => {
+                            cmd_str.push_str(&format!(" {}< ", fd));
+                            self.advance();
+                        }
+                        Some(tokens::Token::ProcessSubIn) => {
+                            cmd_str.push_str(" <(");
+                            depth += 1;
+                            self.advance();
+                        }
+                        Some(tokens::Token::ProcessSubOut) => {
+                            cmd_str.push_str(" >(");
+                            depth += 1;
+                            self.advance();
+                        }
+                        Some(tokens::Token::Error(e)) => {
+                            // Propagate lexer errors
+                            let msg = e.clone();
+                            self.advance();
+                            return Err(Error::parse(format!(
+                                "lexer error in process substitution: {}",
+                                msg
+                            )));
+                        }
                         None => {
                             return Err(Error::parse(
                                 "unexpected end of input in process substitution".to_string(),
                             ));
                         }
+                        #[allow(unreachable_patterns)]
                         _ => {
-                            // Skip unknown tokens but don't silently lose them
+                            // Safety net for future Token variants
                             self.advance();
                         }
                     }
