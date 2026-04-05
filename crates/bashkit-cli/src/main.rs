@@ -2,6 +2,11 @@
 // Provide --no-http, --no-git, --no-python to disable individually.
 // Decision: keep one-shot CLI on a current-thread runtime; reserve multi-thread
 // runtime for MCP only so cold-start work stays off the common path.
+// Decision: CLI uses relaxed execution limits (ExecutionLimits::cli()) because
+// the user explicitly chose to run the script. Counting-based limits are
+// effectively unlimited; timeout is removed (user has Ctrl-C). Memory-guarding
+// limits (function depth, AST depth, parser fuel) are kept.
+// MCP mode keeps the sandboxed defaults since requests come from LLM agents.
 
 //! Bashkit CLI - Command line interface for virtual bash execution
 //!
@@ -68,25 +73,21 @@ struct Args {
     #[cfg_attr(feature = "realfs", arg(long, value_name = "PATH"))]
     mount_rw: Vec<String>,
 
-    /// Maximum number of commands to execute (default: 10000)
+    /// Maximum number of commands to execute (unlimited for CLI, 10000 for MCP)
     #[arg(long)]
     max_commands: Option<usize>,
 
-    /// Maximum iterations for a single loop (default: 10000)
+    /// Maximum iterations for a single loop (unlimited for CLI, 10000 for MCP)
     #[arg(long)]
     max_loop_iterations: Option<usize>,
 
-    /// Maximum total loop iterations across all loops (default: 1000000)
+    /// Maximum total loop iterations across all loops (unlimited for CLI, 1000000 for MCP)
     #[arg(long)]
     max_total_loop_iterations: Option<usize>,
 
-    /// Execution timeout in seconds (default: 30)
+    /// Execution timeout in seconds (unlimited for CLI, 30 for MCP)
     #[arg(long)]
     timeout: Option<u64>,
-
-    /// Maximum total commands across all exec() calls in a session (default: 100000)
-    #[arg(long)]
-    max_session_commands: Option<u64>,
 
     #[command(subcommand)]
     subcommand: Option<SubCmd>,
@@ -113,7 +114,7 @@ struct RunOutput {
     exit_code: i32,
 }
 
-fn build_bash(args: &Args) -> bashkit::Bash {
+fn build_bash(args: &Args, mode: CliMode) -> bashkit::Bash {
     let mut builder = bashkit::Bash::builder();
 
     if !args.no_http {
@@ -134,36 +135,28 @@ fn build_bash(args: &Args) -> bashkit::Bash {
         builder = apply_real_mounts(builder, &args.mount_ro, &args.mount_rw);
     }
 
-    {
-        let mut limits = bashkit::ExecutionLimits::new();
-        let mut custom = false;
-        if let Some(v) = args.max_commands {
-            limits = limits.max_commands(v);
-            custom = true;
-        }
-        if let Some(v) = args.max_loop_iterations {
-            limits = limits.max_loop_iterations(v);
-            custom = true;
-        }
-        if let Some(v) = args.max_total_loop_iterations {
-            limits = limits.max_total_loop_iterations(v);
-            custom = true;
-        }
-        if let Some(v) = args.timeout {
-            limits = limits.timeout(std::time::Duration::from_secs(v));
-            custom = true;
-        }
-        if custom {
-            builder = builder.limits(limits);
-        }
+    // CLI/script modes use relaxed limits; MCP keeps sandboxed defaults.
+    let mut limits = if mode == CliMode::Mcp {
+        bashkit::ExecutionLimits::new()
+    } else {
+        bashkit::ExecutionLimits::cli()
+    };
+    if let Some(v) = args.max_commands {
+        limits = limits.max_commands(v);
     }
+    if let Some(v) = args.max_loop_iterations {
+        limits = limits.max_loop_iterations(v);
+    }
+    if let Some(v) = args.max_total_loop_iterations {
+        limits = limits.max_total_loop_iterations(v);
+    }
+    if let Some(v) = args.timeout {
+        limits = limits.timeout(std::time::Duration::from_secs(v));
+    }
+    builder = builder.limits(limits);
 
-    if let Some(v) = args.max_session_commands {
-        builder = builder.session_limits(
-            bashkit::SessionLimits::new()
-                .max_total_commands(v)
-                .max_exec_calls(u64::MAX),
-        );
+    if mode != CliMode::Mcp {
+        builder = builder.session_limits(bashkit::SessionLimits::unlimited());
     }
 
     builder.build()
@@ -228,10 +221,11 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    match cli_mode(&args) {
-        CliMode::Mcp => run_mcp(args),
+    let mode = cli_mode(&args);
+    match mode {
+        CliMode::Mcp => run_mcp(args, mode),
         CliMode::Command | CliMode::Script => {
-            let output = run_oneshot(args)?;
+            let output = run_oneshot(args, mode)?;
             print!("{}", output.stdout);
             if !output.stderr.is_empty() {
                 eprint!("{}", output.stderr);
@@ -246,21 +240,21 @@ fn main() -> Result<()> {
     }
 }
 
-fn run_mcp(args: Args) -> Result<()> {
+fn run_mcp(args: Args, mode: CliMode) -> Result<()> {
     Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("Failed to build MCP runtime")?
-        .block_on(mcp::run(move || build_bash(&args)))
+        .block_on(mcp::run(move || build_bash(&args, mode)))
 }
 
-fn run_oneshot(args: Args) -> Result<RunOutput> {
+fn run_oneshot(args: Args, mode: CliMode) -> Result<RunOutput> {
     Builder::new_current_thread()
         .enable_all()
         .build()
         .context("Failed to build CLI runtime")?
         .block_on(async move {
-            let mut bash = build_bash(&args);
+            let mut bash = build_bash(&args, mode);
 
             if let Some(cmd) = args.command {
                 let result = bash.exec(&cmd).await.context("Failed to execute command")?;
@@ -346,7 +340,7 @@ mod tests {
     #[tokio::test]
     async fn python_enabled_by_default() {
         let args = Args::parse_from(["bashkit", "-c", "python --version"]);
-        let mut bash = build_bash(&args);
+        let mut bash = build_bash(&args, CliMode::Command);
         let result = bash.exec("python --version").await.expect("exec");
         assert_ne!(result.stderr, "python: command not found\n");
     }
@@ -355,7 +349,7 @@ mod tests {
     #[tokio::test]
     async fn python_can_be_disabled() {
         let args = Args::parse_from(["bashkit", "--no-python", "-c", "python --version"]);
-        let mut bash = build_bash(&args);
+        let mut bash = build_bash(&args, CliMode::Command);
         let result = bash.exec("python --version").await.expect("exec");
         assert!(result.stderr.contains("command not found"));
     }
@@ -363,7 +357,7 @@ mod tests {
     #[tokio::test]
     async fn git_enabled_by_default() {
         let args = Args::parse_from(["bashkit", "-c", "git init /repo"]);
-        let mut bash = build_bash(&args);
+        let mut bash = build_bash(&args, CliMode::Command);
         let result = bash.exec("git init /repo").await.expect("exec");
         assert_eq!(result.exit_code, 0);
     }
@@ -371,7 +365,7 @@ mod tests {
     #[tokio::test]
     async fn git_can_be_disabled() {
         let args = Args::parse_from(["bashkit", "--no-git", "-c", "git init /repo"]);
-        let mut bash = build_bash(&args);
+        let mut bash = build_bash(&args, CliMode::Command);
         let result = bash.exec("git init /repo").await.expect("exec");
         assert!(result.stderr.contains("not configured"));
     }
@@ -380,7 +374,7 @@ mod tests {
     async fn http_enabled_by_default() {
         // curl should be recognized (not "command not found") even if network fails
         let args = Args::parse_from(["bashkit", "-c", "curl --help"]);
-        let mut bash = build_bash(&args);
+        let mut bash = build_bash(&args, CliMode::Command);
         let result = bash.exec("curl --help").await.expect("exec");
         assert!(!result.stderr.contains("command not found"));
     }
@@ -388,7 +382,7 @@ mod tests {
     #[tokio::test]
     async fn http_can_be_disabled() {
         let args = Args::parse_from(["bashkit", "--no-http", "-c", "curl https://example.com"]);
-        let mut bash = build_bash(&args);
+        let mut bash = build_bash(&args, CliMode::Command);
         let result = bash.exec("curl https://example.com").await.expect("exec");
         assert!(result.stderr.contains("not configured"));
     }
@@ -403,7 +397,7 @@ mod tests {
             "-c",
             "echo works",
         ]);
-        let mut bash = build_bash(&args);
+        let mut bash = build_bash(&args, CliMode::Command);
         let result = bash.exec("echo works").await.expect("exec");
         assert_eq!(result.stdout, "works\n");
         assert_eq!(result.exit_code, 0);
@@ -412,7 +406,7 @@ mod tests {
     #[test]
     fn run_oneshot_executes_command_on_current_thread_runtime() {
         let args = Args::parse_from(["bashkit", "--no-http", "--no-git", "-c", "echo works"]);
-        let output = run_oneshot(args).expect("run");
+        let output = run_oneshot(args, CliMode::Command).expect("run");
         assert_eq!(output.stdout, "works\n");
         assert_eq!(output.stderr, "");
         assert_eq!(output.exit_code, 0);
@@ -448,7 +442,7 @@ mod tests {
             "-c",
             "cat /mnt/data/test.txt",
         ]);
-        let mut bash = build_bash(&args);
+        let mut bash = build_bash(&args, CliMode::Command);
         let result = bash.exec("cat /mnt/data/test.txt").await.expect("exec");
         assert_eq!(result.stdout, "from host\n");
     }
@@ -466,7 +460,7 @@ mod tests {
             "-c",
             "echo result > /mnt/out/r.txt",
         ]);
-        let mut bash = build_bash(&args);
+        let mut bash = build_bash(&args, CliMode::Command);
         bash.exec("echo result > /mnt/out/r.txt")
             .await
             .expect("exec");
