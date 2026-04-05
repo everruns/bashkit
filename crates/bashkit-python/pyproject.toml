@@ -25,6 +25,12 @@ classifiers = [
     "Topic :: Security",
 ]
 
+[project.urls]
+Homepage = "https://github.com/everruns/bashkit"
+Repository = "https://github.com/everruns/bashkit"
+Issues = "https://github.com/everruns/bashkit/issues"
+Changelog = "https://github.com/everruns/bashkit/releases"
+
 [project.optional-dependencies]
 langchain = ["langchain-core>=0.3", "langchain-anthropic>=0.3"]
 deepagents = ["deepagents>=0.3.11", "langchain-anthropic>=0.3"]
