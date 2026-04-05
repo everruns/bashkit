@@ -15,7 +15,7 @@ stateless, virtual execution model or pose security risks.
 
 | Feature | Rationale | Threat ID |
 |---------|-----------|-----------|
-| `exec` builtin | Cannot replace shell process in sandbox; breaks containment | TM-ESC-005 |
+| `exec` (process replace) | Cannot replace shell process in sandbox; `exec cmd` runs cmd and stops execution instead | TM-ESC-005 |
 | ~~Background execution (`&`)~~ | ~~Stateless model~~ | Implemented: `&` and `wait` now supported |
 | Job control (`bg`, `fg`, `jobs`) | Requires process state; interactive feature | - |
 | Symlink following | Prevents symlink loop attacks and sandbox escape | TM-DOS-011 |
@@ -79,7 +79,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | `break` | Implemented | Exit from loop with optional level count |
 | `continue` | Implemented | Continue loop with optional level count |
 | `eval` | Implemented | Construct and execute command |
-| `exec` | **Excluded** | See [Intentionally Unimplemented](#intentionally-unimplemented-features) |
+| `exec` | Partial | `exec cmd` runs and stops; fd redirects work; no true process replace (see [Intentionally Unimplemented](#intentionally-unimplemented-features)) |
 | `exit` | Implemented | Exit shell with status code |
 | `export` | Implemented | Export variables to environment |
 | `readonly` | Implemented | Mark variables as read-only |
@@ -103,17 +103,18 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 
 ## Spec Test Coverage
 
-**Total spec test cases:** 2278 (2252 pass, 26 skip)
+**Total spec test cases:** 2463 (2435 pass, 28 skip)
 
 | Category | Cases | In CI | Pass | Skip | Notes |
 |----------|-------|-------|------|------|-------|
-| Bash (core) | 1809 | Yes | 1786 | 23 | `bash_spec_tests` in CI |
+| Bash (core) | 1939 | Yes | 1916 | 23 | `bash_spec_tests` in CI |
 | AWK | 126 | Yes | 126 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g, delete, dev-stderr |
 | Grep | 95 | Yes | 95 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect, rg |
-| Sed | 75 | Yes | 75 | 0 | hold space, change, regex ranges, -E |
-| JQ | 116 | Yes | 115 | 1 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
-| Python | 57 | Yes | 55 | 2 | embedded Python (Monty) |
-| **Total** | **2278** | **Yes** | **2252** | **26** | |
+| Sed | 78 | Yes | 78 | 0 | hold space, change, regex ranges, -E |
+| JQ | 121 | Yes | 120 | 1 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
+| Python | 60 | Yes | 58 | 2 | embedded Python (Monty) |
+| TypeScript | 44 | Yes | 42 | 2 | embedded TypeScript (ZapCode) |
+| **Total** | **2463** | **Yes** | **2435** | **28** | |
 
 ### Bash Spec Tests Breakdown
 
@@ -121,85 +122,104 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 |------|-------|-------|
 | alias.test.sh | 15 | alias expansion (1 skipped) |
 | arith-dynamic.test.sh | 14 | dynamic arithmetic contexts |
-| arithmetic.test.sh | 68 | includes logical, bitwise, compound assign, increment/decrement, `let` builtin, `declare -i` arithmetic |
+| arithmetic-base-expansion.test.sh | 4 | arithmetic base `#` expansion with parameter operators |
+| arithmetic.test.sh | 75 | includes logical, bitwise, compound assign, increment/decrement, `let` builtin, `declare -i` arithmetic |
 | array-slicing.test.sh | 8 | array slice operations |
-| arrays.test.sh | 27 | indices, `${arr[@]}` / `${arr[*]}`, negative indexing `${arr[-1]}` |
-| assoc-arrays.test.sh | 19 | associative arrays `declare -A` |
+| array-splat.test.sh | 2 | `"${arr[@]}"` individual element splatting in assignments |
+| arrays.test.sh | 31 | indices, `${arr[@]}` / `${arr[*]}`, negative indexing `${arr[-1]}` |
+| assoc-arrays.test.sh | 22 | associative arrays `declare -A` |
+| awk-printf-width.test.sh | 4 | AWK printf width/precision memory limits |
 | background.test.sh | 2 | background job handling |
+| bash-c-exports.test.sh | 3 | `bash -c` exported variable visibility |
 | bash-command.test.sh | 25 | bash/sh re-invocation |
 | bash-flags.test.sh | 13 | bash `-e`, `-x`, `-u`, `-f`, `-o option` flags |
+| bash-source-var.test.sh | 2 | BASH_SOURCE in `bash /path/script.sh` |
+| bash-stdin-pipe.test.sh | 3 | piped stdin forwarding to bash script/command |
 | bc.test.sh | 15 | `bc` arbitrary-precision calculator, scale, arithmetic, sqrt |
 | brace-expansion.test.sh | 20 | {a,b,c}, {1..5}, for-loop brace expansion |
+| brace_expansion_lookahead.test.sh | 4 | lookahead cap in brace expansion parser |
 | checksum.test.sh | 10 | md5sum, sha256sum, sha1sum |
 | chown-kill.test.sh | 7 | chown, kill builtins |
-| column.test.sh | 5 | column alignment |
-| command.test.sh | 9 | `command -v`, `-V`, function bypass |
-| command-not-found.test.sh | 9 | unknown command handling |
 | cmd-suggestions.test.sh | 4 | command suggestions on typos |
-| command-subst.test.sh | 29 | includes backtick substitution, nested quotes in `$()` |
-| compgen-path.test.sh | 2 | compgen PATH completion |
-| conditional.test.sh | 29 | `[[ ]]` conditionals, `=~` regex, BASH_REMATCH, glob `==`/`!=` |
-| control-flow.test.sh | 58 | if/elif/else, for, while, case `;;`/`;&`/`;;&`, select, trap ERR, `[[ =~ ]]` BASH_REMATCH, compound input redirects |
+| cmdsub_depth_unquoted.test.sh | 3 | subst depth limit in unquoted cmdsub |
+| column.test.sh | 5 | column alignment |
 | comm.test.sh | 6 | comm column comparison |
+| command-not-found.test.sh | 9 | unknown command handling |
+| command-subst.test.sh | 32 | includes backtick substitution, nested quotes in `$()` |
+| command.test.sh | 9 | `command -v`, `-V`, function bypass |
+| compgen-path.test.sh | 2 | compgen PATH completion |
+| conditional-short-circuit.test.sh | 4 | `&&`/`\|\|` short-circuit inside `[[ ]]` with `set -u` |
+| conditional.test.sh | 29 | `[[ ]]` conditionals, `=~` regex, BASH_REMATCH, glob `==`/`!=` |
+| control-flow.test.sh | 60 | if/elif/else, for, while, case `;;`/`;&`/`;;&`, select, trap ERR, `[[ =~ ]]` BASH_REMATCH, compound input redirects |
 | cuttr.test.sh | 39 | cut and tr commands, `-z` zero-terminated |
 | date.test.sh | 37 | format specifiers, `-d` relative/compound/epoch, `-R`, `-I`, `%N` (2 skipped) |
 | declare.test.sh | 23 | `declare`/`typeset`, `-i`, `-r`, `-x`, `-a`, `-p`, `-n` nameref, `-l`/`-u` case conversion |
 | df.test.sh | 3 | disk free reporting |
-| diff.test.sh | 4 | line diffs |
-| du.test.sh | 4 | disk usage reporting |
+| diff.test.sh | 6 | line diffs |
 | dirstack.test.sh | 12 | `pushd`, `popd`, `dirs` directory stack operations |
+| du.test.sh | 4 | disk usage reporting |
 | echo.test.sh | 24 | escape sequences |
 | empty-bodies.test.sh | 8 | empty loop/function bodies |
 | env.test.sh | 3 | environment variable operations |
 | errexit.test.sh | 11 | set -e tests |
 | eval-bugs.test.sh | 4 | regression tests for eval/script bugs |
-| exec-command.test.sh | 5 | exec builtin |
-| exit-status.test.sh | 18 | exit code propagation |
+| exec-command.test.sh | 6 | exec builtin |
+| exec-fd-redirect.test.sh | 4 | exec fd redirects through VFS targets |
+| exec-fd-variable.test.sh | 2 | exec `{var}>&-` fd-variable redirect syntax |
+| exit-status.test.sh | 28 | exit code propagation |
 | expr.test.sh | 13 | `expr` arithmetic, string ops, pattern matching, exit codes |
 | extglob.test.sh | 15 | `@()`, `?()`, `*()`, `+()`, `!()` extended globs |
 | file.test.sh | 8 | file type detection |
 | fileops.test.sh | 28 | `mktemp`, `-d`, `-p`, template |
-| find.test.sh | 19 | file search |
+| find.test.sh | 22 | file search |
 | functions.test.sh | 26 | local dynamic scoping, nested writes, FUNCNAME call stack, `caller` builtin |
 | getopts.test.sh | 9 | POSIX option parsing, combined flags, silent mode |
 | glob-options.test.sh | 13 | dotglob, nocaseglob, failglob, nullglob, noglob, globstar |
+| glob_match_cap.test.sh | 4 | glob match call cap in remove_pattern_glob |
 | globs.test.sh | 9 | for-loop glob expansion, recursive `**` |
 | gzip.test.sh | 2 | gzip/gunzip compression |
 | headtail.test.sh | 14 | |
-| heredoc.test.sh | 13 | heredoc variable expansion, quoted delimiters, file redirects, `<<-` tab strip |
 | heredoc-edge.test.sh | 15 | heredoc edge cases |
+| heredoc.test.sh | 13 | heredoc variable expansion, quoted delimiters, file redirects, `<<-` tab strip |
 | herestring.test.sh | 8 | here-string `<<<` |
 | hextools.test.sh | 4 | od/xxd/hexdump (3 skipped) |
 | history.test.sh | 2 | history builtin |
+| indirect-expansion.test.sh | 4 | indirect expansion with default operator |
 | less.test.sh | 3 | less pager |
 | ln.test.sh | 5 | `ln -s`, `-f`, symlink creation |
-| ls.test.sh | 4 | ls directory listing |
+| ls.test.sh | 8 | ls directory listing |
+| memory_budget_desync.test.sh | 3 | memory budget save/restore in subshell/cmdsub |
 | nameref-assoc.test.sh | 7 | nameref with associative arrays |
 | nameref.test.sh | 23 | nameref variables (1 skipped) |
 | negative-tests.test.sh | 13 | error conditions |
 | nl.test.sh | 14 | line numbering |
 | nounset.test.sh | 7 | `set -u` unbound variable checks, `${var:-default}` nounset-aware |
+| numfmt.test.sh | 13 | numfmt number formatting |
 | parse-errors.test.sh | 18 | syntax error detection (4 skipped) |
+| paste-flags.test.sh | 3 | paste combined short flags |
 | paste.test.sh | 4 | line merging with `-s` serial and `-d` delimiter |
 | path.test.sh | 18 | basename, dirname, `realpath` canonical path resolution |
 | pipes-redirects.test.sh | 26 | includes stderr redirects |
 | printenv.test.sh | 2 | printenv builtin |
 | printf.test.sh | 32 | format specifiers, array expansion, `-v` variable assignment, `%q` shell quoting |
-| procsub.test.sh | 11 | process substitution |
+| procsub.test.sh | 14 | process substitution |
 | quote.test.sh | 42 | quoting edge cases |
-| read-builtin.test.sh | 12 | `read` builtin, IFS splitting, `-r`, `-a` (array), `-n` (nchars), here-string |
+| read-builtin.test.sh | 16 | `read` builtin, IFS splitting, `-r`, `-a` (array), `-n` (nchars), here-string |
+| recursive-cmdsub.test.sh | 3 | recursive function calls inside `$()` command substitution |
+| regex-limit.test.sh | 1 | regex size limits in sed, grep, awk |
+| replace_pattern_limit.test.sh | 3 | global pattern replacement result size cap |
 | script-exec.test.sh | 14 | script execution by path, $PATH search, exit codes |
 | seq.test.sh | 12 | `seq` numeric sequences, `-w`, `-s`, decrement, negative |
 | set-allexport.test.sh | 5 | set -a / allexport |
 | shell-grammar.test.sh | 23 | shell grammar edge cases |
 | sleep.test.sh | 9 | sleep timing |
-| sortuniq.test.sh | 39 | sort `-f`/`-n`/`-r`/`-u`/`-V`/`-t`/`-k`/`-s`/`-c`/`-h`/`-M`/`-m`/`-z`/`-o`, uniq `-c`/`-d`/`-u`/`-i`/`-f` |
+| sortuniq.test.sh | 49 | sort `-f`/`-n`/`-r`/`-u`/`-V`/`-t`/`-k`/`-s`/`-c`/`-h`/`-M`/`-m`/`-z`/`-o`, uniq `-c`/`-d`/`-u`/`-i`/`-f` |
 | source.test.sh | 19 | source/., function loading, PATH search, positional params |
 | stat.test.sh | 7 | stat file information |
 | string-ops.test.sh | 14 | string replacement (prefix/suffix anchored), `${var:?}`, case conversion |
 | strings.test.sh | 6 | strings extraction |
 | subprocess-isolation.test.sh | 8 | subprocess variable isolation |
-| subshell.test.sh | 13 | subshell execution |
+| subshell.test.sh | 14 | subshell execution |
 | tar.test.sh | 8 | tar archive operations |
 | tee.test.sh | 6 | tee output splitting |
 | temp-binding.test.sh | 10 | temporary variable bindings `VAR=val cmd` |
@@ -208,8 +228,10 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | textrev.test.sh | 14 | `tac` reverse line order, `rev` reverse characters, `yes` repeated output |
 | time.test.sh | 11 | Wall-clock only (user/sys always 0) |
 | timeout.test.sh | 16 | |
+| tree.test.sh | 1 | tree directory listing |
 | type.test.sh | 15 | `type`, `which`, `hash` builtins |
 | unicode.test.sh | 17 | unicode handling (3 skipped) |
+| unset-exported-var.test.sh | 3 | unset removes exported vars from env (1 skipped) |
 | var-op-test.test.sh | 26 | variable operations (1 skipped) |
 | variables.test.sh | 97 | includes special vars, prefix env, PIPESTATUS, trap EXIT, `${var@Q}`, `\<newline>` line continuation, PWD/HOME/USER/HOSTNAME/BASH_VERSION/SECONDS, `set -x` xtrace, `shopt` builtin, nullglob, `set -o`/`set +o` display, `trap -p` |
 | wait.test.sh | 2 | wait builtin |
@@ -253,7 +275,7 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-**147 core builtins + 3 feature-gated = 150 total**
+**148 core builtins + 8 feature-gated = 156 total**
 
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,
@@ -273,7 +295,7 @@ Features that may be added in the future (not intentionally excluded):
 `clear`, `fold`, `expand`, `unexpand`, `envsubst`, `join`, `split`,
 `assert`, `dotenv`, `glob`, `log`, `retry`, `semver`, `verify`,
 `compgen`, `csv`, `fc`, `help`, `http`, `iconv`, `json`,
-`parallel`, `patch`, `rg`, `template`, `tomlq`, `yaml`, `zip`, `unzip`,
+`numfmt`, `parallel`, `patch`, `rg`, `template`, `tomlq`, `yaml`, `zip`, `unzip`,
 `alias`, `unalias`,
 `git` (requires `git` feature, see [010-git-support.md](010-git-support.md)),
 `python`, `python3` (requires `python` feature, see [011-python-builtin.md](011-python-builtin.md)),
@@ -309,6 +331,12 @@ None currently tracked.
 - `!$1` logical negation, `-F'\t'` tab delimiter
 - `%.6g` number formatting (OFMT-compatible)
 - Deterministic `for-in` iteration (sorted keys)
+
+**Safety Limits:**
+- Printf width/precision capped to prevent buffer exhaustion
+- Output buffer size limited to prevent unbounded accumulation
+- Getline file cache limited to prevent memory exhaustion
+- Regex patterns size-limited (shared with sed/grep)
 
 ### Sed Limitations
 
@@ -384,6 +412,9 @@ Tests not ported (requires `--features http_client` and URL allowlist):
 **Safety Limits:**
 - Timeout values are clamped to [1, 600] seconds (1 second to 10 minutes)
 - Prevents resource exhaustion from very long timeouts or instant timeouts
+- Multipart field names sanitized to prevent header injection
+- Redirect handling hardened against credential leaks
+- Transparent Ed25519 request signing when bot-auth feature enabled
 
 ## Parser Limitations
 

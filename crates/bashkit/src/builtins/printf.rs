@@ -62,8 +62,7 @@ impl Builtin for Printf {
 }
 
 /// Parsed format specification
-// Max width/precision to prevent memory exhaustion from huge format specifiers
-const MAX_FORMAT_WIDTH: usize = 10000;
+use super::MAX_FORMAT_WIDTH;
 
 struct FormatSpec {
     left_align: bool,

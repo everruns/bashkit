@@ -15,7 +15,7 @@
 //! - **Experimental: Git** - Virtual git operations on the VFS (`git` feature)
 //! - **Experimental: Python** - Embedded Python via [Monty](https://github.com/pydantic/monty) (`python` feature)
 //!
-//! # Built-in Commands (150)
+//! # Built-in Commands (156)
 //!
 //! | Category | Commands |
 //! |----------|----------|
