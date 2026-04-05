@@ -90,11 +90,15 @@
     "zod": ">=3"
   },
   "peerDependenciesMeta": {
-    "@langchain/core": { "optional": true },
-    "zod": { "optional": true }
+    "@langchain/core": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    }
   },
   "devDependencies": {
-    "@langchain/core": "^0.3",
+    "@langchain/core": "^1.1.39",
     "@napi-rs/cli": "^3.0.0",
     "@types/node": "^25.5.0",
     "ava": "^6.2.0",
