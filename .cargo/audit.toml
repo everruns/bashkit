@@ -1,0 +1,10 @@
+# cargo-audit configuration
+# Ignore advisories for transitive dependencies we can't control
+
+[advisories]
+ignore = [
+    # rsa: Marvin timing attack (RUSTSEC-2023-0071)
+    # Transitive via russh-keys -> ssh-key -> rsa
+    # Only used for RSA key parsing in SSH; no direct exposure
+    "RUSTSEC-2023-0071",
+]

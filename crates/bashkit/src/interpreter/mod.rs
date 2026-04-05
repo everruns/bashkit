@@ -202,7 +202,11 @@ fn unavailable_command_hint(name: &str) -> Option<&'static str> {
             Some("Package managers are not available in the sandbox.")
         }
         "sudo" | "su" | "doas" => Some("All commands run without privilege restrictions."),
-        "ssh" | "scp" | "sftp" | "rsync" => Some("Network access is limited to curl/wget."),
+        #[cfg(not(feature = "ssh"))]
+        "ssh" | "scp" | "sftp" => {
+            Some("SSH requires the 'ssh' feature. Enable with: features = [\"ssh\"]")
+        }
+        "rsync" => Some("Network access is limited to curl/wget."),
         "docker" | "podman" | "kubectl" | "systemctl" | "service" => {
             Some("Container and service management is not available in the sandbox.")
         }
@@ -438,6 +442,9 @@ pub struct Interpreter {
     /// Git client for git builtins
     #[cfg(feature = "git")]
     git_client: Option<crate::git::GitClient>,
+    /// SSH client for ssh/scp/sftp builtins
+    #[cfg(feature = "ssh")]
+    ssh_client: Option<crate::ssh::SshClient>,
     /// Stdin inherited from pipeline for compound commands (while read, etc.)
     /// Each read operation consumes one line, advancing through the data.
     pipeline_stdin: Option<String>,
@@ -721,6 +728,14 @@ impl Interpreter {
         #[cfg(feature = "git")]
         builtins.insert("git".to_string(), Box::new(builtins::Git));
 
+        // SSH builtins (requires ssh feature and configuration at runtime)
+        #[cfg(feature = "ssh")]
+        {
+            builtins.insert("ssh".to_string(), Box::new(builtins::Ssh));
+            builtins.insert("scp".to_string(), Box::new(builtins::Scp));
+            builtins.insert("sftp".to_string(), Box::new(builtins::Sftp));
+        }
+
         // Merge custom builtins (override defaults if same name)
         for (name, builtin) in custom_builtins {
             builtins.insert(name, builtin);
@@ -772,6 +787,8 @@ impl Interpreter {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             pipeline_stdin: None,
             output_callback: None,
             output_emit_count: 0,
@@ -1088,6 +1105,14 @@ impl Interpreter {
     #[cfg(feature = "git")]
     pub fn set_git_client(&mut self, client: crate::git::GitClient) {
         self.git_client = Some(client);
+    }
+
+    /// Set the SSH client for ssh/scp/sftp builtins.
+    ///
+    /// This is only available when the `ssh` feature is enabled.
+    #[cfg(feature = "ssh")]
+    pub fn set_ssh_client(&mut self, client: crate::ssh::SshClient) {
+        self.ssh_client = Some(client);
     }
 
     /// Execute a script.
@@ -3873,6 +3898,8 @@ impl Interpreter {
                 http_client: self.http_client.as_ref(),
                 #[cfg(feature = "git")]
                 git_client: self.git_client.as_ref(),
+                #[cfg(feature = "ssh")]
+                ssh_client: self.ssh_client.as_ref(),
                 shell: Some(shell_ref),
             };
 
@@ -3918,6 +3945,8 @@ impl Interpreter {
             http_client: self.http_client.as_ref(),
             #[cfg(feature = "git")]
             git_client: self.git_client.as_ref(),
+            #[cfg(feature = "ssh")]
+            ssh_client: self.ssh_client.as_ref(),
             shell: Some(shell_ref),
         };
 
@@ -5119,6 +5148,8 @@ impl Interpreter {
                         http_client: self.http_client.as_ref(),
                         #[cfg(feature = "git")]
                         git_client: self.git_client.as_ref(),
+                        #[cfg(feature = "ssh")]
+                        ssh_client: self.ssh_client.as_ref(),
                         shell: Some(shell_ref),
                     };
                     let mut result = builtin.execute(ctx).await?;
