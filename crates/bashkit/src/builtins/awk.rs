@@ -2784,7 +2784,7 @@ impl AwkInterpreter {
     }
 
     /// Max width/precision for format specifiers to prevent memory exhaustion
-    const MAX_FORMAT_WIDTH: usize = 10000;
+    const MAX_FORMAT_WIDTH: usize = super::MAX_FORMAT_WIDTH;
 
     fn format_string(
         &self,
