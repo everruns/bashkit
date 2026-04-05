@@ -15,7 +15,7 @@ print(result.stdout)  # Hello, World!
 ## Features
 
 - **Sandboxed execution** — all commands run in-process with a virtual filesystem, no containers needed
-- **150 built-in commands** — echo, cat, grep, sed, awk, jq, curl, find, and more
+- **156 built-in commands** — echo, cat, grep, sed, awk, jq, curl, find, and more
 - **Full bash syntax** — variables, pipelines, redirects, loops, functions, arrays
 - **Resource limits** — protect against infinite loops and runaway scripts
 - **Framework integrations** — LangChain, PydanticAI, and Deep Agents
