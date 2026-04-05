@@ -237,9 +237,19 @@ async fn command_not_found_sandbox_hint() {
     assert_eq!(result.exit_code, 127);
     assert!(result.stderr.contains("privilege"));
 
+    // With ssh feature, ssh is a registered builtin (returns "not configured").
+    // Without ssh feature, ssh is unavailable (returns "command not found").
     let result = bash.exec("ssh user@host").await.unwrap();
-    assert_eq!(result.exit_code, 127);
-    assert!(result.stderr.contains("curl/wget"));
+    #[cfg(feature = "ssh")]
+    {
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("not configured"));
+    }
+    #[cfg(not(feature = "ssh"))]
+    {
+        assert_eq!(result.exit_code, 127);
+        assert!(result.stderr.contains("ssh"));
+    }
 }
 
 /// Completely unknown command has no suggestion

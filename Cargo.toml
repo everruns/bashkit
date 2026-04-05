@@ -91,6 +91,10 @@ schemars = "1"
 tracing = "0.1"
 tower = { version = "0.5", features = ["util"] }
 
+# SSH client (for ssh/scp/sftp builtins)
+russh = "0.52"
+russh-keys = "0.49"
+
 # Serial test execution
 serial_test = "3"
 

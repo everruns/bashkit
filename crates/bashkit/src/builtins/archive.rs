@@ -895,6 +895,8 @@ impl Builtin for Gunzip {
             http_client: ctx.http_client,
             #[cfg(feature = "git")]
             git_client: ctx.git_client,
+            #[cfg(feature = "ssh")]
+            ssh_client: ctx.ssh_client,
             shell: ctx.shell,
         };
 
@@ -950,6 +952,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -970,6 +974,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1005,6 +1011,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1028,6 +1036,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1065,6 +1075,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1090,6 +1102,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1119,6 +1133,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1154,6 +1170,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1173,6 +1191,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1205,6 +1225,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1236,6 +1258,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1254,6 +1278,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1286,6 +1312,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1312,6 +1340,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1341,6 +1371,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1368,6 +1400,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 
@@ -1400,6 +1434,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
         Gzip.execute(ctx).await.unwrap();
@@ -1417,6 +1453,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
 

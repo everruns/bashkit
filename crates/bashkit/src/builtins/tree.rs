@@ -250,6 +250,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
         Tree.execute(ctx).await.expect("tree execute failed")
@@ -386,6 +388,8 @@ mod tests {
             http_client: None,
             #[cfg(feature = "git")]
             git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
             shell: None,
         };
         let result = Tree.execute(ctx).await.expect("tree failed");
