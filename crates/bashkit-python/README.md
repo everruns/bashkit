@@ -261,6 +261,10 @@ Convenience wrapper for AI agents. Inherits all execution methods from `Bash`, p
 
 Bashkit is built on top of [Bashkit core](https://github.com/everruns/bashkit), a bash interpreter written in Rust. The Python package provides a native extension for fast, sandboxed execution without spawning subprocesses or containers.
 
+## Part of Everruns
+
+Bashkit is part of the [Everruns](https://github.com/everruns) ecosystem — tools and runtimes for building reliable AI agents. See the [bashkit monorepo](https://github.com/everruns/bashkit) for the Rust core, Node.js package (`@everruns/bashkit`), and more.
+
 ## License
 
 MIT

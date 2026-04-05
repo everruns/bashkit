@@ -232,6 +232,10 @@ Returns the bashkit version string.
 | Windows | x86_64 |
 | WASM | wasm32-wasip1-threads |
 
+## Part of Everruns
+
+Bashkit is part of the [Everruns](https://github.com/everruns) ecosystem — tools and runtimes for building reliable AI agents. See the [bashkit monorepo](https://github.com/everruns/bashkit) for the Rust core, Python package (`bashkit`), and more.
+
 ## License
 
 MIT
