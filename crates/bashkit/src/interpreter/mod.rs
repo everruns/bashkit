@@ -10742,4 +10742,27 @@ echo "count=$COUNT"
         let result = run_script(r#"paste <(echo -e "a\nb") <(echo -e "1\n2")"#).await;
         assert_eq!(result.stdout, "a\t1\nb\t2\n");
     }
+
+    #[tokio::test]
+    async fn test_process_sub_conditional_bracket() {
+        // [[ ]] inside process substitution must be preserved during token reconstruction
+        let result = run_script(r#"cat <( [[ 1 = 1 ]] && echo MATCH )"#).await;
+        assert_eq!(result.stdout.trim(), "MATCH");
+    }
+
+    #[tokio::test]
+    async fn test_process_sub_while_break_with_condition() {
+        // while+break with conditional inside process substitution
+        let result =
+            run_script(r#"cat <( x=1; while true; do [[ $x -eq 1 ]] && break; done; echo OK )"#)
+                .await;
+        assert_eq!(result.stdout.trim(), "OK");
+    }
+
+    #[tokio::test]
+    async fn test_process_sub_arithmetic() {
+        // (( )) inside process substitution must be preserved
+        let result = run_script(r#"cat <( x=5; (( x > 3 )) && echo YES )"#).await;
+        assert_eq!(result.stdout.trim(), "YES");
+    }
 }
