@@ -37,4 +37,8 @@ export HARNESS_MAX_TURNS=3
 export OPENAI_API_KEY="'"${OPENAI_API_KEY}"'"
 mkdir -p /work/.harness/sessions
 hs "tell me a short joke"
+
+# Other commands that work inside bashkit:
+#   hs help            — show providers, tools, plugin dirs
+#   hs session list    — list past sessions
 '
