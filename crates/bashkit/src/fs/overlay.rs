@@ -1154,6 +1154,20 @@ mod tests {
         assert!(names.contains(&&"upper.txt".to_string()));
     }
 
+    /// Regression: read_dir on a file must return Err, not Ok(vec![])
+    #[tokio::test]
+    async fn test_read_dir_on_file_returns_error() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .write_file(Path::new("/tmp/file.txt"), b"data")
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+        let result = overlay.read_dir(Path::new("/tmp/file.txt")).await;
+        assert!(result.is_err(), "read_dir on a file should return Err");
+    }
+
     // Issue #418: usage should deduct whited-out files
     #[tokio::test]
     async fn test_usage_deducts_whiteouts() {
