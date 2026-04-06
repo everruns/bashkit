@@ -374,7 +374,7 @@ export class Bash {
   ls(path?: string): string[] {
     const target = path ?? ".";
     try {
-      return this.native.readDir(target);
+      return this.native.readDir(target).map((e: { name: string }) => e.name);
     } catch {
       return [];
     }
@@ -561,7 +561,7 @@ export class BashTool {
   ls(path?: string): string[] {
     const target = path ?? ".";
     try {
-      return this.native.readDir(target);
+      return this.native.readDir(target).map((e: { name: string }) => e.name);
     } catch {
       return [];
     }
