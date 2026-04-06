@@ -6160,7 +6160,75 @@ impl Interpreter {
         }
     }
 
-    async fn expand_word(&mut self, word: &Word) -> Result<String> {
+    // THREAT[TM-DOS-089]: Command substitution body extracted into a Box::pin-ed
+    // helper to cap per-level stack usage. Without this, each $(...) nesting level
+    // adds the full expand_word state machine to the call stack, causing overflow
+    // at moderate depths despite the logical depth limit.
+    fn execute_cmd_subst<'a>(
+        &'a mut self,
+        commands: &'a [Command],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move {
+            // Command substitution runs in a subshell: snapshot all
+            // mutable state so mutations don't leak to the parent.
+            let saved_traps = self.traps.clone();
+            let saved_functions = self.functions.clone();
+            let saved_vars = self.variables.clone();
+            let saved_arrays = self.arrays.clone();
+            let saved_assoc = self.assoc_arrays.clone();
+            let saved_aliases = self.aliases.clone();
+            let saved_cwd = self.cwd.clone();
+            let saved_memory_budget = self.memory_budget.clone();
+            let mut stdout = String::new();
+            for cmd in commands {
+                let cmd_result = self.execute_command(cmd).await?;
+                stdout.push_str(&cmd_result.stdout);
+                self.last_exit_code = cmd_result.exit_code;
+                if matches!(cmd_result.control_flow, ControlFlow::Exit(_)) {
+                    break;
+                }
+            }
+            // Fire EXIT trap set inside the command substitution
+            if let Some(trap_cmd) = self.traps.get("EXIT").cloned()
+                && saved_traps.get("EXIT") != Some(&trap_cmd)
+                && let Ok(trap_script) = Parser::with_limits(
+                    &trap_cmd,
+                    self.limits.max_ast_depth,
+                    self.limits.max_parser_operations,
+                )
+                .parse()
+                && let Ok(trap_result) = self.execute_command_sequence(&trap_script.commands).await
+            {
+                stdout.push_str(&trap_result.stdout);
+            }
+            // Restore parent state
+            self.traps = saved_traps;
+            self.functions = saved_functions;
+            self.variables = saved_vars;
+            self.arrays = saved_arrays;
+            self.assoc_arrays = saved_assoc;
+            self.aliases = saved_aliases;
+            self.cwd = saved_cwd;
+            self.memory_budget = saved_memory_budget;
+            self.counters.pop_subst();
+            self.subst_generation += 1;
+            let trimmed = stdout.trim_end_matches('\n');
+            Ok(trimmed.to_string())
+        })
+    }
+
+    // THREAT[TM-DOS-089]: Box::pin the expand_word future to cap per-level
+    // stack usage. Without this, the async state machine of expand_word (which
+    // contains all WordPart match arms) is inlined into the caller's future,
+    // causing stack overflow at moderate command substitution depths.
+    fn expand_word<'a>(
+        &'a mut self,
+        word: &'a Word,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move { self.expand_word_inner(word).await })
+    }
+
+    async fn expand_word_inner(&mut self, word: &Word) -> Result<String> {
         let mut result = String::new();
         let mut is_first_part = true;
 
@@ -6212,58 +6280,16 @@ impl Interpreter {
                     }
                 }
                 WordPart::CommandSubstitution(commands) => {
-                    // THREAT[TM-DOS-044]: Track substitution depth to prevent stack overflow
-                    if self.counters.push_function(&self.limits).is_err() {
+                    // THREAT[TM-DOS-088]: Track substitution depth to prevent OOM.
+                    if self.counters.push_subst(&self.limits).is_err() {
                         return Err(crate::error::Error::Execution(
-                            "maximum nesting depth exceeded in command substitution".to_string(),
+                            "maximum command substitution depth exceeded".to_string(),
                         ));
                     }
-                    // Command substitution runs in a subshell: snapshot all
-                    // mutable state so mutations don't leak to the parent.
-                    let saved_traps = self.traps.clone();
-                    let saved_functions = self.functions.clone();
-                    let saved_vars = self.variables.clone();
-                    let saved_arrays = self.arrays.clone();
-                    let saved_assoc = self.assoc_arrays.clone();
-                    let saved_aliases = self.aliases.clone();
-                    let saved_cwd = self.cwd.clone();
-                    let saved_memory_budget = self.memory_budget.clone();
-                    let mut stdout = String::new();
-                    for cmd in commands {
-                        let cmd_result = self.execute_command(cmd).await?;
-                        stdout.push_str(&cmd_result.stdout);
-                        self.last_exit_code = cmd_result.exit_code;
-                        if matches!(cmd_result.control_flow, ControlFlow::Exit(_)) {
-                            break;
-                        }
-                    }
-                    // Fire EXIT trap set inside the command substitution
-                    if let Some(trap_cmd) = self.traps.get("EXIT").cloned()
-                        && saved_traps.get("EXIT") != Some(&trap_cmd)
-                        && let Ok(trap_script) = Parser::with_limits(
-                            &trap_cmd,
-                            self.limits.max_ast_depth,
-                            self.limits.max_parser_operations,
-                        )
-                        .parse()
-                        && let Ok(trap_result) =
-                            self.execute_command_sequence(&trap_script.commands).await
-                    {
-                        stdout.push_str(&trap_result.stdout);
-                    }
-                    // Restore parent state
-                    self.traps = saved_traps;
-                    self.functions = saved_functions;
-                    self.variables = saved_vars;
-                    self.arrays = saved_arrays;
-                    self.assoc_arrays = saved_assoc;
-                    self.aliases = saved_aliases;
-                    self.cwd = saved_cwd;
-                    self.memory_budget = saved_memory_budget;
-                    self.counters.pop_function();
-                    self.subst_generation += 1;
-                    let trimmed = stdout.trim_end_matches('\n');
-                    result.push_str(trimmed);
+                    // THREAT[TM-DOS-089]: Delegate to Box::pin-ed helper to
+                    // prevent stack growth proportional to nesting depth.
+                    let trimmed = self.execute_cmd_subst(commands).await?;
+                    result.push_str(&trimmed);
                 }
                 WordPart::ArithmeticExpansion(expr) => {
                     let expanded_expr = if expr.contains("$(") {
@@ -6277,8 +6303,14 @@ impl Interpreter {
                 WordPart::Length(name) => {
                     let value = if let Some(bracket_pos) = name.find('[') {
                         let arr_name = &name[..bracket_pos];
-                        let index_end = name.find(']').unwrap_or(name.len());
-                        let index_str = &name[bracket_pos + 1..index_end];
+                        // Search for ']' after '[' to avoid panic when malformed
+                        // input has ']' before '[' (e.g. null-byte-laden fuzz input).
+                        let index_end = name[bracket_pos..]
+                            .find(']')
+                            .map(|i| bracket_pos + i)
+                            .unwrap_or(name.len());
+                        let start = (bracket_pos + 1).min(index_end);
+                        let index_str = &name[start..index_end];
                         let idx: usize =
                             self.evaluate_arithmetic(index_str).try_into().unwrap_or(0);
                         if let Some(arr) = self.arrays.get(arr_name) {
@@ -8436,7 +8468,7 @@ impl Interpreter {
                 );
                 match parser.parse() {
                     Ok(script) => {
-                        if self.counters.push_function(&self.limits).is_err() {
+                        if self.counters.push_subst(&self.limits).is_err() {
                             result.push('0');
                         } else {
                             let saved_vars = self.variables.clone();
@@ -8457,7 +8489,7 @@ impl Interpreter {
                             self.aliases = saved_aliases;
                             self.cwd = saved_cwd;
                             self.memory_budget = saved_memory_budget;
-                            self.counters.pop_function();
+                            self.counters.pop_subst();
                             let trimmed = cmd_result.stdout.trim_end_matches('\n');
                             if trimmed.is_empty() {
                                 result.push('0');

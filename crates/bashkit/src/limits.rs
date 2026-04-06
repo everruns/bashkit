@@ -84,6 +84,14 @@ pub struct ExecutionLimits {
     /// Prevents unbounded error output accumulation.
     pub max_stderr_bytes: usize,
 
+    // THREAT[TM-DOS-088]: Command substitutions clone the entire interpreter
+    // state (variables, arrays, functions, etc.) per nesting level. At depth N,
+    // memory ≈ N × state_size. A separate, tighter limit than max_function_depth
+    // prevents OOM from deeply nested $(...) chains.
+    /// Maximum command substitution nesting depth.
+    /// Default: 32
+    pub max_subst_depth: usize,
+
     /// Whether to capture the final environment state in ExecResult.
     /// Default: false (opt-in to avoid cloning cost when not needed)
     pub capture_final_env: bool,
@@ -103,6 +111,7 @@ impl Default for ExecutionLimits {
             max_parser_operations: 100_000,
             max_stdout_bytes: 1_048_576, // 1MB
             max_stderr_bytes: 1_048_576, // 1MB
+            max_subst_depth: 32,
             capture_final_env: false,
         }
     }
@@ -201,6 +210,12 @@ impl ExecutionLimits {
         self
     }
 
+    /// Set maximum command substitution nesting depth.
+    pub fn max_subst_depth(mut self, depth: usize) -> Self {
+        self.max_subst_depth = depth;
+        self
+    }
+
     /// Enable capturing final environment state in ExecResult
     pub fn capture_final_env(mut self, capture: bool) -> Self {
         self.capture_final_env = capture;
@@ -287,6 +302,9 @@ pub struct ExecutionCounters {
     /// Total loop iterations across all loops (never reset)
     pub total_loop_iterations: usize,
 
+    /// Current command substitution nesting depth.
+    pub subst_depth: usize,
+
     // THREAT[TM-DOS-059]: Session-level cumulative counters.
     // These persist across exec() calls (never reset by reset_for_execution).
     /// Total commands across all exec() calls in this session.
@@ -309,9 +327,10 @@ impl ExecutionCounters {
         self.commands = 0;
         self.loop_iterations = 0;
         self.total_loop_iterations = 0;
-        // function_depth should already be 0 between exec() calls,
+        // function_depth and subst_depth should already be 0 between exec() calls,
         // but reset defensively to avoid stuck state
         self.function_depth = 0;
+        self.subst_depth = 0;
     }
 
     /// Increment command counter, returns error if limit exceeded
@@ -444,6 +463,22 @@ impl ExecutionCounters {
             self.function_depth -= 1;
         }
     }
+
+    /// Push command substitution, returns error if depth exceeded.
+    /// THREAT[TM-DOS-088]: Command substitutions clone interpreter state,
+    /// so their nesting depth must be bounded more tightly than functions.
+    pub fn push_subst(&mut self, limits: &ExecutionLimits) -> Result<(), LimitExceeded> {
+        if self.subst_depth >= limits.max_subst_depth {
+            return Err(LimitExceeded::MaxSubstDepth(limits.max_subst_depth));
+        }
+        self.subst_depth += 1;
+        Ok(())
+    }
+
+    /// Pop command substitution
+    pub fn pop_subst(&mut self) {
+        self.subst_depth = self.subst_depth.saturating_sub(1);
+    }
 }
 
 /// Error returned when a resource limit is exceeded
@@ -460,6 +495,9 @@ pub enum LimitExceeded {
 
     #[error("maximum function depth exceeded ({0})")]
     MaxFunctionDepth(usize),
+
+    #[error("maximum command substitution depth exceeded ({0})")]
+    MaxSubstDepth(usize),
 
     #[error("execution timeout ({0:?})")]
     Timeout(Duration),

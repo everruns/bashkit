@@ -1228,6 +1228,8 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-ISO-024 | `$?` leaks into VFS subprocess | Parent `last_exit_code` visible inside VFS script subprocess, causing false `set -e` failures | Reset `last_exit_code = 0` and `nounset_error = None` in `execute_script_content` subprocess isolation |
 | TM-INT-007 | `/dev/urandom` empty with `head -c` | Weak randomness — `head -c 16 /dev/urandom` returns empty string | Fix virtual device pipe handling in head builtin |
 | TM-DOS-044 | Nested `$()` stack overflow (regression) | Process crash (SIGABRT) at depth ~50 despite #492 fix | Interpreter execution path may need separate depth tracking from lexer fix |
+| TM-DOS-088 | Command substitution OOM via state cloning | OOM at depth N (memory ≈ N × state_size) | Dedicated `max_subst_depth` limit (default 32), separate from `max_function_depth` — **FIXED** via #1088 |
+| TM-DOS-089 | Command substitution stack overflow via inlined futures | SIGABRT at ~20-30 nested $() levels | Box::pin `expand_word` and `execute_cmd_subst` to cap per-level stack — **FIXED** via #1089 |
 
 ### Accepted (Low Priority)
 
@@ -1322,6 +1324,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Brace expansion DoS | TM-DOS-041, TM-DOS-042 | Cap range size and total expansion count | **NEEDED** |
 | Arithmetic overflow in compound assignment | TM-DOS-043 | Use `wrapping_*` ops in `execute_arithmetic_with_side_effects` | **NEEDED** |
 | Lexer stack overflow | TM-DOS-044 | Depth tracking in `read_command_subst_into` | **NEEDED** |
+| Cmd subst OOM via state cloning | TM-DOS-088 | `max_subst_depth` limit in `ExecutionLimits` | **DONE** |
 | OverlayFs symlink limit bypass | TM-DOS-045 | `check_write_limits()` + `validate_path()` in `symlink()` | **NEEDED** |
 | MountableFs path validation gap | TM-DOS-046 | `validate_path()` in all MountableFs methods | **NEEDED** |
 | VFS copy/rename semantic bugs | TM-DOS-047, TM-DOS-048 | Fix limit check in copy(), type check in rename() | **NEEDED** |
