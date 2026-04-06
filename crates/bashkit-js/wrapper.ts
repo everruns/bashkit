@@ -33,6 +33,18 @@ export interface BashOptions {
   maxCommands?: number;
   maxLoopIterations?: number;
   /**
+   * Maximum interpreter memory in bytes (variables, arrays, functions).
+   *
+   * Caps the total byte budget for variable storage and function bodies.
+   * Prevents OOM from untrusted input such as exponential string doubling.
+   *
+   * @example
+   * ```typescript
+   * const bash = new Bash({ maxMemory: 10 * 1024 * 1024 }); // 10 MB
+   * ```
+   */
+  maxMemory?: number;
+  /**
    * Files to mount in the virtual filesystem.
    * Keys are absolute paths, values are content strings or lazy providers.
    *
@@ -122,6 +134,7 @@ function toNativeOptions(
     hostname: options?.hostname,
     maxCommands: options?.maxCommands,
     maxLoopIterations: options?.maxLoopIterations,
+    maxMemory: options?.maxMemory,
     files: resolvedFiles,
     python: options?.python,
     externalFunctions: options?.externalFunctions,

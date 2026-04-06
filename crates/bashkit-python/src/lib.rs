@@ -662,6 +662,7 @@ pub struct PyBash {
     real_mounts: Vec<RealMountConfig>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
+    max_memory: Option<u64>,
 }
 
 #[pymethods]
@@ -672,6 +673,7 @@ impl PyBash {
         hostname=None,
         max_commands=None,
         max_loop_iterations=None,
+        max_memory=None,
         python=false,
         external_functions=None,
         external_handler=None,
@@ -689,6 +691,7 @@ impl PyBash {
         hostname: Option<String>,
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
+        max_memory: Option<u64>,
         python: bool,
         external_functions: Option<Vec<String>>,
         external_handler: Option<Py<PyAny>>,
@@ -716,6 +719,10 @@ impl PyBash {
             limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
         }
         builder = builder.limits(limits);
+
+        if let Some(mm) = max_memory {
+            builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
+        }
 
         let (mounted_text_files, real_mounts) = parse_mount_configs(
             mount_text,
@@ -786,6 +793,7 @@ impl PyBash {
             real_mounts,
             max_commands,
             max_loop_iterations,
+            max_memory,
         })
     }
 
@@ -935,6 +943,7 @@ impl PyBash {
         let hostname = self.hostname.clone();
         let max_commands = self.max_commands;
         let max_loop_iterations = self.max_loop_iterations;
+        let max_memory = self.max_memory;
         let python = self.python;
         let external_functions = self.external_functions.clone();
         let mounted_text_files = self.mounted_text_files.clone();
@@ -961,6 +970,9 @@ impl PyBash {
                     limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
                 }
                 builder = builder.limits(limits);
+                if let Some(mm) = max_memory {
+                    builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
+                }
                 builder = apply_python_config(builder, python, external_functions, handler_clone);
                 builder = apply_fs_config(builder, &mounted_text_files, &real_mounts);
                 *bash = builder.build();
@@ -1067,6 +1079,7 @@ pub struct BashTool {
     real_mounts: Vec<RealMountConfig>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
+    max_memory: Option<u64>,
 }
 
 impl BashTool {
@@ -1101,6 +1114,7 @@ impl BashTool {
         hostname=None,
         max_commands=None,
         max_loop_iterations=None,
+        max_memory=None,
         mount_text=None,
         mount_readonly_text=None,
         mount_real_readonly=None,
@@ -1113,6 +1127,7 @@ impl BashTool {
         hostname: Option<String>,
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
+        max_memory: Option<u64>,
         mount_text: Option<Vec<(String, String)>>,
         mount_readonly_text: Option<Vec<(String, String)>>,
         mount_real_readonly: Option<Vec<String>>,
@@ -1137,6 +1152,10 @@ impl BashTool {
             limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
         }
         builder = builder.limits(limits);
+
+        if let Some(mm) = max_memory {
+            builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
+        }
 
         let (mounted_text_files, real_mounts) = parse_mount_configs(
             mount_text,
@@ -1163,6 +1182,7 @@ impl BashTool {
             real_mounts,
             max_commands,
             max_loop_iterations,
+            max_memory,
         })
     }
 
@@ -1295,6 +1315,7 @@ impl BashTool {
         let real_mounts = self.real_mounts.clone();
         let max_commands = self.max_commands;
         let max_loop_iterations = self.max_loop_iterations;
+        let max_memory = self.max_memory;
         let cancelled = self.cancelled.clone();
 
         py.detach(|| {
@@ -1315,6 +1336,9 @@ impl BashTool {
                     limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
                 }
                 builder = builder.limits(limits);
+                if let Some(mm) = max_memory {
+                    builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
+                }
                 builder = apply_fs_config(builder, &mounted_text_files, &real_mounts);
                 *bash = builder.build();
                 // Swap the cancellation token to the new interpreter's token so

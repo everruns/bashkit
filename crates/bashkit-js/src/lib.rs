@@ -204,6 +204,12 @@ pub struct BashOptions {
     pub max_parser_operations: Option<u32>,
     pub max_stdout_bytes: Option<u32>,
     pub max_stderr_bytes: Option<u32>,
+    /// Maximum interpreter memory in bytes (variables, arrays, functions).
+    ///
+    /// Caps `max_total_variable_bytes` and clamps `max_function_body_bytes`.
+    /// Prevents OOM from untrusted input such as exponential string doubling.
+    /// Default (when omitted): 10 MB.
+    pub max_memory: Option<f64>,
     /// Whether to capture the final environment state in ExecResult.
     pub capture_final_env: Option<bool>,
     /// Files to mount in the virtual filesystem.
@@ -232,6 +238,7 @@ fn default_opts() -> BashOptions {
         max_parser_operations: None,
         max_stdout_bytes: None,
         max_stderr_bytes: None,
+        max_memory: None,
         capture_final_env: None,
         files: None,
         mounts: None,
@@ -261,6 +268,7 @@ struct SharedState {
     max_parser_operations: Option<u32>,
     max_stdout_bytes: Option<u32>,
     max_stderr_bytes: Option<u32>,
+    max_memory: Option<f64>,
     capture_final_env: Option<bool>,
     mounts: Option<Vec<MountConfig>>,
     python: bool,
@@ -1222,6 +1230,10 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
 
     builder = builder.limits(build_limits(state));
 
+    if let Some(max_mem) = state.max_memory {
+        builder = builder.max_memory(max_mem as usize);
+    }
+
     // Mount files into the virtual filesystem
     if let Some(files) = files {
         for (path, content) in files {
@@ -1296,6 +1308,7 @@ fn shared_state_from_opts(
         max_parser_operations: opts.max_parser_operations,
         max_stdout_bytes: opts.max_stdout_bytes,
         max_stderr_bytes: opts.max_stderr_bytes,
+        max_memory: opts.max_memory,
         capture_final_env: opts.capture_final_env,
         mounts: mounts.clone(),
         python: py,
@@ -1328,6 +1341,7 @@ fn shared_state_from_opts(
         max_parser_operations: opts.max_parser_operations,
         max_stdout_bytes: opts.max_stdout_bytes,
         max_stderr_bytes: opts.max_stderr_bytes,
+        max_memory: opts.max_memory,
         capture_final_env: opts.capture_final_env,
         mounts,
         python: py,
