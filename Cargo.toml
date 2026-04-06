@@ -67,7 +67,7 @@ sha2 = "0.11"
 
 # Ed25519 signing (bot-auth request signing)
 ed25519-dalek = { version = "2", features = ["rand_core"] }
-rand = "0.8"
+rand = "0.10"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -92,7 +92,7 @@ tracing = "0.1"
 tower = { version = "0.5", features = ["util"] }
 
 # SSH client (for ssh/scp/sftp builtins)
-russh = "0.52"
+russh = "0.60"
 russh-keys = "0.49"
 
 # Serial test execution
