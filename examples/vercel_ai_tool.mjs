@@ -7,16 +7,15 @@
  * automatically via `generateText` with `maxSteps`.
  *
  * Prerequisites:
- *   npm install ai @ai-sdk/openai zod
+ *   npm install ai @ai-sdk/openai
  *   export OPENAI_API_KEY=sk-...
  *
  * Run:
  *   node examples/vercel_ai_tool.mjs
  */
 
-import { generateText, tool } from "ai";
+import { generateText, tool, jsonSchema } from "ai";
 import { openai } from "@ai-sdk/openai";
-import { z } from "zod";
 import { BashTool } from "@everruns/bashkit";
 
 // ─── Setup ───────────────────────────────────────────────────────────
@@ -26,10 +25,17 @@ const bashTool = new BashTool({ username: "agent", hostname: "sandbox" });
 // Define bashkit as a Vercel AI SDK tool
 const bashkitTool = tool({
   description: bashTool.shortDescription,
-  parameters: z.object({
-    commands: z
-      .string()
-      .describe("Bash commands to execute in a sandboxed virtual environment"),
+  parameters: jsonSchema({
+    type: "object",
+    properties: {
+      commands: {
+        type: "string",
+        description:
+          "Bash commands to execute in a sandboxed virtual environment",
+      },
+    },
+    required: ["commands"],
+    additionalProperties: false,
   }),
   execute: async ({ commands }) => {
     const result = bashTool.executeSync(commands);
