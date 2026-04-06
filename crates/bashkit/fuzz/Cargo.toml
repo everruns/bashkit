@@ -52,3 +52,10 @@ path = "fuzz_targets/glob_fuzz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "jq_fuzz"
+path = "fuzz_targets/jq_fuzz.rs"
+test = false
+doc = false
+bench = false
