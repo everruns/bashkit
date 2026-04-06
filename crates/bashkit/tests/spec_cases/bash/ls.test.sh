@@ -81,7 +81,7 @@ mkdir -p /tmp/lscol
 touch /tmp/lscol/alpha /tmp/lscol/beta /tmp/lscol/delta /tmp/lscol/gamma
 ls -C /tmp/lscol
 ### expect
-alpha  beta   delta  gamma
+alpha  beta  delta  gamma
 ### end
 
 ### ls_columns_with_classify

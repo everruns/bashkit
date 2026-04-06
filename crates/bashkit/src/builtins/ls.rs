@@ -293,15 +293,39 @@ fn classify_suffix(metadata: &crate::fs::Metadata) -> &'static str {
 
 /// Format entries in column-major order, like `ls -C`.
 /// Uses a fixed terminal width (80) since VFS has no real terminal.
+/// Per-column widths match GNU coreutils behavior.
 fn format_columns(entries: &[String], terminal_width: usize) -> String {
     if entries.is_empty() {
         return String::new();
     }
 
+    // Try fitting as many columns as possible, starting from the maximum
     let max_width = entries.iter().map(|e| e.len()).max().unwrap_or(0);
-    let col_width = max_width + 2; // 2 spaces padding between columns
-    let num_cols = (terminal_width / col_width).max(1);
-    let num_rows = entries.len().div_ceil(num_cols);
+    let max_possible_cols = (terminal_width / (max_width.min(1) + 2)).max(1);
+
+    let mut num_cols = 1;
+    let mut col_widths: Vec<usize> = vec![0];
+    let mut num_rows = entries.len();
+
+    // Try increasing column counts to find the best fit
+    for try_cols in 2..=max_possible_cols.min(entries.len()) {
+        let try_rows = entries.len().div_ceil(try_cols);
+        // Calculate per-column widths (max entry width in each column)
+        let mut widths = vec![0usize; try_cols];
+        for (i, entry) in entries.iter().enumerate() {
+            let col = i / try_rows;
+            if col < try_cols {
+                widths[col] = widths[col].max(entry.len());
+            }
+        }
+        // Total width: each column except last gets 2-space padding
+        let total: usize = widths.iter().sum::<usize>() + (try_cols - 1) * 2;
+        if total <= terminal_width {
+            num_cols = try_cols;
+            col_widths = widths;
+            num_rows = try_rows;
+        }
+    }
 
     let mut output = String::new();
     for row in 0..num_rows {
@@ -309,11 +333,12 @@ fn format_columns(entries: &[String], terminal_width: usize) -> String {
             // Column-major order: fill columns top-to-bottom, left-to-right
             let idx = col * num_rows + row;
             if idx < entries.len() {
-                // Last column or last entry in row: no trailing padding
-                if col < num_cols - 1 && idx + num_rows < entries.len() {
-                    output.push_str(&format!("{:<width$}", entries[idx], width = col_width));
-                } else {
+                let is_last = col == num_cols - 1 || idx + num_rows >= entries.len();
+                if is_last {
                     output.push_str(&entries[idx]);
+                } else {
+                    let width = col_widths[col] + 2; // entry width + 2 spaces
+                    output.push_str(&format!("{:<width$}", entries[idx], width = width));
                 }
             }
         }
