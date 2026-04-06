@@ -236,6 +236,18 @@ echo "${arr[1]}"
 y
 ### end
 
+### quoted_expansion_no_word_split_in_array
+# arr=("test ${X} done") should NOT word-split inside quotes
+X="hello world"
+arr=(-a "test ${X} done")
+echo "count: ${#arr[@]}"
+printf "<%s>\n" "${arr[@]}"
+### expect
+count: 2
+<-a>
+<test hello world done>
+### end
+
 ### unquoted_expansion_word_split_in_array
 # arr=($x) should word-split on IFS
 x="alpha beta gamma"
