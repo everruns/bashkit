@@ -248,6 +248,30 @@ count: 2
 <test hello world done>
 ### end
 
+### quoted_single_quote_no_word_split_in_array
+# arr=('multi word') should NOT word-split inside single quotes
+arr=('hello world' 'foo bar')
+echo "count: ${#arr[@]}"
+printf "<%s>\n" "${arr[@]}"
+### expect
+count: 2
+<hello world>
+<foo bar>
+### end
+
+### quoted_mixed_elements_in_array
+# Mix of quoted and unquoted elements preserves quoting
+X="a b"
+arr=(plain "quoted ${X} end" 'literal $X')
+echo "count: ${#arr[@]}"
+printf "<%s>\n" "${arr[@]}"
+### expect
+count: 3
+<plain>
+<quoted a b end>
+<literal $X>
+### end
+
 ### unquoted_expansion_word_split_in_array
 # arr=($x) should word-split on IFS
 x="alpha beta gamma"
