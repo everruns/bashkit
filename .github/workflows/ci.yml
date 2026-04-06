@@ -14,6 +14,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
 
 jobs:
   lint:
@@ -144,13 +145,15 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: cargo run --example agent_tool --features http_client
 
+      - name: Install Doppler CLI
+        if: env.DOPPLER_TOKEN != ''
+        uses: dopplerhq/cli-action@v4
+
       - name: Run harness OpenAI joke example
-        continue-on-error: true
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        if: env.DOPPLER_TOKEN != ''
         run: |
           cargo build -p bashkit-cli --features realfs --quiet
-          bash examples/harness-openai-joke.sh
+          doppler run -- bash examples/harness-openai-joke.sh
 
   fuzz-check:
     name: Fuzz Compile Check
