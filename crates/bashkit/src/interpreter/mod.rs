@@ -4151,8 +4151,9 @@ impl Interpreter {
                 }
                 if let Ok(content) = self.fs.read_file(&candidate).await {
                     let script_text = bytes_to_latin1_string(&content);
+                    let resolved = candidate.to_string_lossy();
                     let result = self
-                        .execute_script_content(name, &script_text, args, stdin, redirects)
+                        .execute_script_content(&resolved, &script_text, args, stdin, redirects)
                         .await?;
                     return Ok(Some(result));
                 }
