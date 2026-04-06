@@ -1100,6 +1100,30 @@ impl BashBuilder {
         self
     }
 
+    /// Cap total interpreter memory to `bytes`.
+    ///
+    /// Convenience wrapper over [`memory_limits`](Self::memory_limits) that
+    /// sets `max_total_variable_bytes` to `bytes` and clamps
+    /// `max_function_body_bytes` to `min(bytes, default)`. Count-based
+    /// sub-limits (variable count, array entries, function count) stay at
+    /// their defaults.
+    ///
+    /// # Example
+    /// ```
+    /// # use bashkit::Bash;
+    /// let bash = Bash::builder()
+    ///     .max_memory(10 * 1024 * 1024)   // 10 MB
+    ///     .build();
+    /// ```
+    pub fn max_memory(self, bytes: usize) -> Self {
+        let defaults = MemoryLimits::default();
+        self.memory_limits(
+            MemoryLimits::new()
+                .max_total_variable_bytes(bytes)
+                .max_function_body_bytes(bytes.min(defaults.max_function_body_bytes)),
+        )
+    }
+
     /// Set the trace mode for structured execution tracing.
     ///
     /// - `TraceMode::Off` (default): No events, zero overhead
@@ -5366,5 +5390,24 @@ echo missing fi"#,
     #[tokio::test]
     async fn test_streaming_equivalence_subshell() {
         assert_streaming_equivalence("x=$(echo hello); echo $x").await;
+    }
+
+    #[tokio::test]
+    async fn test_max_memory_caps_string_growth() {
+        let mut bash = Bash::builder()
+            .max_memory(1024)
+            .limits(
+                ExecutionLimits::new()
+                    .max_commands(10_000)
+                    .max_loop_iterations(10_000),
+            )
+            .build();
+        let result = bash
+            .exec(r#"x=AAAAAAAAAA; i=0; while [ $i -lt 25 ]; do x="$x$x"; i=$((i+1)); done; echo ${#x}"#)
+            .await
+            .unwrap();
+        let len: usize = result.stdout.trim().parse().unwrap();
+        // 25 doublings of 10 bytes = 335 544 320 without limits; must be capped ≤ 1024
+        assert!(len <= 1024, "string length {len} must be ≤ 1024");
     }
 }

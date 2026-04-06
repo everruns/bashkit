@@ -89,6 +89,75 @@ test("WB: fork bomb pattern blocked (TM-DOS-021)", (t) => {
 });
 
 // ============================================================================
+// 1b. WHITE-BOX — Memory Limit Enforcement (TM-DOS-059)
+// ============================================================================
+
+test("WB: maxMemory caps exponential string doubling (TM-DOS-059)", (t) => {
+  // 1 KB limit — string doubling silently stops when budget is exceeded
+  const bash = new Bash({
+    maxMemory: 1024,
+    maxLoopIterations: 10000,
+    maxCommands: 10000,
+  });
+  const r = bash.executeSync(
+    'x=AAAAAAAAAA; i=0; while [ $i -lt 25 ]; do x="$x$x"; i=$((i+1)); done; echo ${#x}',
+  );
+  // String must be capped well below what 25 doublings would produce (335 544 320)
+  const len = parseInt(r.stdout.trim(), 10);
+  t.true(len <= 1024, `string length ${len} must be ≤ 1024`);
+});
+
+test("WB: maxMemory — small scripts still work within budget", (t) => {
+  const bash = new Bash({ maxMemory: 1024 * 1024 }); // 1 MB
+  const r = bash.executeSync('x="hello world"; echo $x');
+  t.is(r.exitCode, 0);
+  t.is(r.stdout.trim(), "hello world");
+});
+
+test("WB: maxMemory — recovery after exceeding limit", (t) => {
+  const bash = new Bash({
+    maxMemory: 1024,
+    maxLoopIterations: 10000,
+    maxCommands: 10000,
+  });
+  // Exceed limit (variable silently stops growing)
+  bash.executeSync(
+    'x=AAAAAAAAAA; i=0; while [ $i -lt 25 ]; do x="$x$x"; i=$((i+1)); done',
+  );
+  // Next exec should still work
+  const r = bash.executeSync("echo recovered");
+  t.is(r.exitCode, 0);
+  t.is(r.stdout.trim(), "recovered");
+});
+
+test("WB: maxMemory via BashTool (TM-DOS-059)", (t) => {
+  const tool = new BashTool({
+    maxMemory: 1024,
+    maxLoopIterations: 10000,
+    maxCommands: 10000,
+  });
+  const r = tool.executeSync(
+    'x=AAAAAAAAAA; i=0; while [ $i -lt 25 ]; do x="$x$x"; i=$((i+1)); done; echo ${#x}',
+  );
+  const len = parseInt(r.stdout.trim(), 10);
+  t.true(len <= 1024, `BashTool: string length ${len} must be ≤ 1024`);
+});
+
+test("WB: default memory limit prevents OOM without maxMemory", (t) => {
+  // Without maxMemory, default 10 MB limit still applies
+  const bash = new Bash({ maxLoopIterations: 10000, maxCommands: 10000 });
+  const r = bash.executeSync(
+    'x=AAAAAAAAAA; i=0; while [ $i -lt 30 ]; do x="$x$x"; i=$((i+1)); done; echo ${#x}',
+  );
+  // 30 doublings of 10 bytes = 10 GB without limits; default 10 MB cap stops it
+  const len = parseInt(r.stdout.trim(), 10);
+  t.true(
+    len <= 10_000_000,
+    `default limit: string length ${len} must be ≤ 10MB`,
+  );
+});
+
+// ============================================================================
 // 2. WHITE-BOX — Output Truncation (TM-DOS-002)
 // ============================================================================
 

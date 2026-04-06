@@ -450,6 +450,7 @@ Default limits (configurable):
 | Commands | 10,000 |
 | Loop iterations | 100,000 |
 | Function depth | 100 |
+| Interpreter memory | 10MB (`max_memory` / `maxMemory`) |
 | Output size | 10MB |
 | Parser timeout | 5 seconds |
 | Parser operations (fuel) | 100,000 |
@@ -473,7 +474,7 @@ NAPI-RS bindings in `crates/bashkit-js/`. TypeScript wrapper in `wrapper.ts`.
 
 **Platform matrix:** macOS (x86_64, aarch64), Linux (x86_64, aarch64), Windows (x86_64), WASM
 
-**Tests:** `crates/bashkit-js/__test__/` — VFS roundtrip, interop, error handling, security (90+ white/black-box tests covering TM-DOS, TM-ESC, TM-INF, TM-INT, TM-ISO, TM-UNI, TM-INJ, TM-NET)
+**Tests:** `crates/bashkit-js/__test__/` — VFS roundtrip, interop, error handling, security (100+ white/black-box tests covering TM-DOS, TM-ESC, TM-INF, TM-INT, TM-ISO, TM-UNI, TM-INJ, TM-NET)
 
 ### Python (`bashkit`)
 
