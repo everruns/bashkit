@@ -20,7 +20,7 @@ bashkit.wasi-browser.js
 wasi-worker.mjs
 wasi-worker-browser.mjs
 
-# tsc output (source is wrapper.ts, langchain.ts)
+# tsc output (source is wrapper.ts, langchain.ts, ai.ts, anthropic.ts, openai.ts)
 wrapper.js
 wrapper.d.ts
 wrapper.d.ts.map
@@ -29,6 +29,18 @@ langchain.js
 langchain.d.ts
 langchain.d.ts.map
 langchain.js.map
+ai.js
+ai.d.ts
+ai.d.ts.map
+ai.js.map
+anthropic.js
+anthropic.d.ts
+anthropic.d.ts.map
+anthropic.js.map
+openai.js
+openai.d.ts
+openai.d.ts.map
+openai.js.map
 
 # Lockfile managed by CI
 Cargo.lock
