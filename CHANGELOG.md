@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-04-06
+
+### Highlights
+
+- **npm publish fix** — Stable releases now correctly tagged as `latest` on npm (was stuck at 0.1.10 since v0.1.11)
+- **OpenAI Responses API migration** — Examples updated from deprecated Chat Completions function calling to the new Responses API
+
+### What's Changed
+
+* fix(ci): pass --ref tag to publish workflow dispatches ([#1124](https://github.com/everruns/bashkit/pull/1124)) by @chaliy
+* fix(examples): migrate OpenAI examples to Responses API ([#1122](https://github.com/everruns/bashkit/pull/1122)) by @chaliy
+* fix(ci): commit Cargo.lock for reproducible builds ([#1123](https://github.com/everruns/bashkit/pull/1123)) by @chaliy
+* fix(ci): update python3-dll-a cargo-vet exemption to 0.2.15 ([#1121](https://github.com/everruns/bashkit/pull/1121)) by @chaliy
+* chore(deps): bump rand 0.8→0.10 and russh 0.52→0.60 by @dependabot[bot]
+* feat(fuzz): add awk_fuzz target for awk builtin ([#1112](https://github.com/everruns/bashkit/pull/1112)) by @chaliy
+* feat(fuzz): add jq_fuzz target for jq builtin ([#1111](https://github.com/everruns/bashkit/pull/1111)) by @chaliy
+* fix(interpreter): prevent byte range panic in ${#arr[idx]} with malformed input ([#1110](https://github.com/everruns/bashkit/pull/1110)) by @chaliy
+* fix(interpreter): Box::pin expand_word to prevent stack overflow in nested $() ([#1109](https://github.com/everruns/bashkit/pull/1109)) by @chaliy
+* fix(interpreter): add max_subst_depth limit to prevent OOM from nested $() ([#1107](https://github.com/everruns/bashkit/pull/1107)) by @chaliy
+
 ## [0.1.15] - 2026-04-06
 
 ### Highlights
