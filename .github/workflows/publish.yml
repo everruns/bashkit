@@ -40,23 +40,30 @@ jobs:
 
       - name: Strip git-only dependencies for publishing
         # monty is a git dep (not yet on crates.io) — remove before publish.
-        # Must strip from both bashkit AND bashkit-cli because cargo resolves
-        # the whole workspace when publishing a single crate.
+        # Must strip from ALL workspace crates because cargo resolves the
+        # whole workspace when publishing a single crate.
         run: |
-          # --- bashkit core ---
+          # --- bashkit core: remove monty dep and python feature ---
           TOML=crates/bashkit/Cargo.toml
           sed -i '/^monty = .*/d' "$TOML"
           sed -i '/^python = \["dep:monty"\]/d' "$TOML"
           sed -i '/^\[\[example\]\]/{N;N;/python_scripts/d}' "$TOML"
-          echo "--- bashkit Cargo.toml after stripping ---"
-          cat "$TOML"
 
-          # --- bashkit-cli (workspace resolution requires this too) ---
+          # --- bashkit-cli: remove python feature ---
           CLI_TOML=crates/bashkit-cli/Cargo.toml
           sed -i '/^python = \["bashkit\/python"\]/d' "$CLI_TOML"
           sed -i 's/default = \["python"\]/default = []/' "$CLI_TOML"
-          echo "--- bashkit-cli Cargo.toml after stripping ---"
-          cat "$CLI_TOML"
+
+          # --- bashkit-js: remove python from features list ---
+          JS_TOML=crates/bashkit-js/Cargo.toml
+          sed -i 's/, "python"//; s/"python", //' "$JS_TOML"
+
+          # --- bashkit-python: remove python from features list ---
+          PY_TOML=crates/bashkit-python/Cargo.toml
+          sed -i 's/, "python"//; s/"python", //' "$PY_TOML"
+
+          echo "=== Verify no python feature references remain ==="
+          grep -rn '"python"' crates/*/Cargo.toml || echo "Clean — no python feature refs"
 
       - name: Publish bashkit to crates.io
         run: cargo publish -p bashkit --allow-dirty
