@@ -804,7 +804,7 @@ Only exact domain matches are allowed (TM-NET-017).
 | TM-ISO-006 | No per-instance variable/memory budget | Unbounded `HashMap` growth in variables, arrays, functions exhausts process memory | — | **OPEN** |
 | TM-ISO-021 | EXIT trap leaks across `exec()` calls | EXIT trap set in one `exec()` fires in subsequent `exec()` calls on same Bash instance | — | **OPEN** |
 | TM-ISO-022 | `$?` leaks across `exec()` calls | Exit code from one `exec()` visible as `$?` in next `exec()` instead of resetting to 0 | — | **OPEN** |
-| TM-ISO-023 | `set -e` leaks across `exec()` calls | Shell options (`set -e`, etc.) persist across `exec()` calls, causing unexpected abort behavior | — | **OPEN** |
+| TM-ISO-023 | `set -e` leaks across `exec()` calls | `set` options (`-e`, `-x`, etc.) persist across `exec()` calls, causing unexpected abort behavior | `reset_transient_state()` clears `SET_OPTION_VARS` | **FIXED** |
 
 **TM-ISO-004**: Fixed. The jq builtin now injects shell variables via a custom jaq context variable
 (`$__bashkit_env__`) and overrides the `env` filter to read from it instead of `std::env`.
@@ -1224,7 +1224,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-INJ-021 | `export` overwrites readonly variables | Integrity bypass — `export X=new` overwrites `readonly X=old` | Check readonly attribute in export assignment path |
 | TM-ISO-021 | EXIT trap leaks across `exec()` calls | Cross-invocation interference — trap from exec N fires in exec N+1 | Reset traps in `reset_for_execution()` |
 | TM-ISO-022 | `$?` leaks across `exec()` calls | State pollution — exit code from previous exec visible to next exec | Reset `last_exit_code` in `reset_for_execution()` |
-| TM-ISO-023 | `set -e` leaks across `exec()` calls | Unexpected abort — shell options from previous exec affect next exec | Reset shell options in `reset_for_execution()` |
+| TM-ISO-023 | `set -e` leaks across `exec()` calls | Unexpected abort — `set` options from previous exec affect next exec | `SET_OPTION_VARS` cleared in `reset_transient_state()` (**FIXED**) |
 | TM-ISO-024 | `$?` leaks into VFS subprocess | Parent `last_exit_code` visible inside VFS script subprocess, causing false `set -e` failures | Reset `last_exit_code = 0` and `nounset_error = None` in `execute_script_content` subprocess isolation |
 | TM-INT-007 | `/dev/urandom` empty with `head -c` | Weak randomness — `head -c 16 /dev/urandom` returns empty string | Fix virtual device pipe handling in head builtin |
 | TM-DOS-044 | Nested `$()` stack overflow (regression) | Process crash (SIGABRT) at depth ~50 despite #492 fix | Interpreter execution path may need separate depth tracking from lexer fix |

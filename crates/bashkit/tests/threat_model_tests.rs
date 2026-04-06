@@ -590,6 +590,24 @@ mod session_isolation {
         assert!(!result.stdout.contains("LEAKED"));
     }
 
+    /// Alias expansion must work across separate exec() calls (issue #1130).
+    /// shopt -s expand_aliases set in one exec() must persist to the next.
+    #[tokio::test]
+    async fn alias_expansion_persists_across_exec_calls() {
+        let mut bash = Bash::new();
+
+        bash.exec("shopt -s expand_aliases").await.unwrap();
+        bash.exec("alias ll='echo alias_worked'").await.unwrap();
+
+        let result = bash.exec("ll").await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "alias should resolve: {}",
+            result.stderr
+        );
+        assert_eq!(result.stdout.trim(), "alias_worked");
+    }
+
     /// TM-ISO-020: Trap handlers in one session must not fire in another
     #[tokio::test]
     async fn threat_isolation_trap_isolation() {

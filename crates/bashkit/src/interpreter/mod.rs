@@ -877,13 +877,33 @@ impl Interpreter {
         &self.limits
     }
 
+    /// `set -o` option variable names (SHOPT_e, SHOPT_x, etc.) that are
+    /// transient and must be reset between exec() calls (TM-ISO-023).
+    /// `shopt` options (SHOPT_expand_aliases, SHOPT_extglob, etc.) are
+    /// persistent session configuration and are NOT reset.
+    const SET_OPTION_VARS: &'static [&'static str] = &[
+        "SHOPT_a",
+        "SHOPT_e",
+        "SHOPT_f",
+        "SHOPT_n",
+        "SHOPT_u",
+        "SHOPT_v",
+        "SHOPT_x",
+        "SHOPT_C",
+        "SHOPT_pipefail",
+    ];
+
     /// THREAT[TM-ISO-005/006/007]: Reset per-exec transient state.
     /// Called by Bash::exec() before each top-level execution to prevent
-    /// traps, exit code, and shell options from leaking across calls.
+    /// traps, exit code, and `set` options from leaking across calls.
+    /// `shopt` options (expand_aliases, extglob, etc.) are intentionally
+    /// preserved — they are persistent session configuration.
     pub fn reset_transient_state(&mut self) {
         self.traps.clear();
         self.last_exit_code = 0;
-        self.variables.retain(|k, _| !k.starts_with("SHOPT_"));
+        for var in Self::SET_OPTION_VARS {
+            self.variables.remove(*var);
+        }
     }
 
     /// Set an environment variable.

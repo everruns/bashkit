@@ -240,9 +240,9 @@ async fn shell_options_survive_snapshot_roundtrip() {
     let mut bash2 = Bash::new();
     bash2.restore_shell_state(&restored);
 
-    // exec() calls reset_transient_state which clears SHOPT_* vars,
-    // so we verify the state was restored correctly by inspecting it
-    // before the next exec() call.
+    // `set` options (SHOPT_e, SHOPT_pipefail) are transient — they are
+    // cleared by reset_transient_state() between exec() calls (TM-ISO-023).
+    // Verify the snapshot restored them correctly before the next exec().
     let state2 = bash2.shell_state();
     assert_eq!(
         state2.variables.get("SHOPT_e").map(|s| s.as_str()),
