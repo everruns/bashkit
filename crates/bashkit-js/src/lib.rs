@@ -171,8 +171,20 @@ pub struct ExecResult {
 }
 
 // ============================================================================
-// BashOptions
+// MountConfig + BashOptions
 // ============================================================================
+
+/// Configuration for a real filesystem mount.
+#[napi(object)]
+#[derive(Clone)]
+pub struct MountConfig {
+    /// Host filesystem path to mount.
+    pub host_path: String,
+    /// VFS path where mount appears (defaults to host_path).
+    pub vfs_path: Option<String>,
+    /// If true, mount is read-only (default: true).
+    pub read_only: Option<bool>,
+}
 
 /// Options for creating a Bash or BashTool instance.
 #[napi(object)]
@@ -181,9 +193,24 @@ pub struct BashOptions {
     pub hostname: Option<String>,
     pub max_commands: Option<u32>,
     pub max_loop_iterations: Option<u32>,
+    pub max_total_loop_iterations: Option<u32>,
+    pub max_function_depth: Option<u32>,
+    /// Execution timeout in milliseconds.
+    pub timeout_ms: Option<u32>,
+    /// Parser timeout in milliseconds.
+    pub parser_timeout_ms: Option<u32>,
+    pub max_input_bytes: Option<u32>,
+    pub max_ast_depth: Option<u32>,
+    pub max_parser_operations: Option<u32>,
+    pub max_stdout_bytes: Option<u32>,
+    pub max_stderr_bytes: Option<u32>,
+    /// Whether to capture the final environment state in ExecResult.
+    pub capture_final_env: Option<bool>,
     /// Files to mount in the virtual filesystem.
     /// Keys are absolute paths, values are file content strings.
     pub files: Option<HashMap<String, String>>,
+    /// Real filesystem mounts. Each entry: { hostPath, vfsPath?, readOnly? }
+    pub mounts: Option<Vec<MountConfig>>,
     /// Enable embedded Python execution (`python`/`python3` builtins).
     pub python: Option<bool>,
     /// Names of external functions callable from embedded Python code.
@@ -196,7 +223,18 @@ fn default_opts() -> BashOptions {
         hostname: None,
         max_commands: None,
         max_loop_iterations: None,
+        max_total_loop_iterations: None,
+        max_function_depth: None,
+        timeout_ms: None,
+        parser_timeout_ms: None,
+        max_input_bytes: None,
+        max_ast_depth: None,
+        max_parser_operations: None,
+        max_stdout_bytes: None,
+        max_stderr_bytes: None,
+        capture_final_env: None,
         files: None,
+        mounts: None,
         python: None,
         external_functions: None,
     }
@@ -214,6 +252,17 @@ struct SharedState {
     hostname: Option<String>,
     max_commands: Option<u32>,
     max_loop_iterations: Option<u32>,
+    max_total_loop_iterations: Option<u32>,
+    max_function_depth: Option<u32>,
+    timeout_ms: Option<u32>,
+    parser_timeout_ms: Option<u32>,
+    max_input_bytes: Option<u32>,
+    max_ast_depth: Option<u32>,
+    max_parser_operations: Option<u32>,
+    max_stdout_bytes: Option<u32>,
+    max_stderr_bytes: Option<u32>,
+    capture_final_env: Option<bool>,
+    mounts: Option<Vec<MountConfig>>,
     python: bool,
     external_functions: Vec<String>,
     external_handler: Option<ExternalHandlerArc>,
@@ -261,39 +310,9 @@ impl Bash {
     #[napi(constructor)]
     pub fn new(options: Option<BashOptions>) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
-        let py = opts.python.unwrap_or(false);
-        let ext_fns = opts.external_functions.clone().unwrap_or_default();
-
-        let bash = build_bash(
-            opts.username.as_deref(),
-            opts.hostname.as_deref(),
-            opts.max_commands,
-            opts.max_loop_iterations,
-            opts.files.as_ref(),
-            py,
-            &ext_fns,
-            None,
-        );
-        let cancelled = bash.cancellation_token();
-
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
-
+        let state = shared_state_from_opts(opts, None)?;
         Ok(Self {
-            state: Arc::new(SharedState {
-                inner: Mutex::new(bash),
-                rt: Mutex::new(rt),
-                cancelled,
-                username: opts.username,
-                hostname: opts.hostname,
-                max_commands: opts.max_commands,
-                max_loop_iterations: opts.max_loop_iterations,
-                python: py,
-                external_functions: ext_fns,
-                external_handler: None,
-            }),
+            state: Arc::new(state),
         })
     }
 
@@ -377,17 +396,7 @@ impl Bash {
     pub fn reset(&self) -> napi::Result<()> {
         block_on_with(&self.state, |s| async move {
             let mut bash = s.inner.lock().await;
-            let new_bash = build_bash(
-                s.username.as_deref(),
-                s.hostname.as_deref(),
-                s.max_commands,
-                s.max_loop_iterations,
-                None,
-                s.python,
-                &s.external_functions,
-                s.external_handler.as_ref(),
-            );
-            *bash = new_bash;
+            *bash = build_bash_from_state(&s, None);
             Ok(())
         })
     }
@@ -431,40 +440,17 @@ impl Bash {
         options: Option<BashOptions>,
     ) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
+        let mut state = shared_state_from_opts(opts, None)?;
 
-        // Build a configured Bash instance with proper limits, then restore snapshot state
-        let mut bash = build_bash(
-            opts.username.as_deref(),
-            opts.hostname.as_deref(),
-            opts.max_commands,
-            opts.max_loop_iterations,
-            opts.files.as_ref(),
-            opts.python.unwrap_or(false),
-            &opts.external_functions.clone().unwrap_or_default(),
-            None,
-        );
         // restore_snapshot preserves the instance's limits while restoring shell state
-        bash.restore_snapshot(&data)
+        state
+            .inner
+            .get_mut()
+            .restore_snapshot(&data)
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-        let cancelled = bash.cancellation_token();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
         Ok(Self {
-            state: Arc::new(SharedState {
-                inner: Mutex::new(bash),
-                rt: tokio::sync::Mutex::new(rt),
-                cancelled,
-                username: opts.username,
-                hostname: opts.hostname,
-                max_commands: opts.max_commands,
-                max_loop_iterations: opts.max_loop_iterations,
-                python: opts.python.unwrap_or(false),
-                external_functions: opts.external_functions.unwrap_or_default(),
-                external_handler: None,
-            }),
+            state: Arc::new(state),
         })
     }
 
@@ -549,6 +535,46 @@ impl Bash {
             Ok(entries.into_iter().map(|e| e.name.clone()).collect())
         })
     }
+
+    // ========================================================================
+    // Mount — real filesystem mounts at runtime
+    // ========================================================================
+
+    /// Mount a host directory into the VFS at runtime.
+    ///
+    /// `readOnly` defaults to true when omitted.
+    #[napi]
+    pub fn mount_real(
+        &self,
+        host_path: String,
+        vfs_path: String,
+        read_only: Option<bool>,
+    ) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let ro = read_only.unwrap_or(true);
+            let mode = if ro {
+                bashkit::RealFsMode::ReadOnly
+            } else {
+                bashkit::RealFsMode::ReadWrite
+            };
+            let real_backend = bashkit::RealFs::new(&host_path, mode)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            let fs: Arc<dyn bashkit::FileSystem> = Arc::new(bashkit::PosixFs::new(real_backend));
+            bash.mount(Path::new(&vfs_path), fs)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Unmount a previously mounted filesystem.
+    #[napi]
+    pub fn unmount(&self, vfs_path: String) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.unmount(Path::new(&vfs_path))
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
 }
 
 // ============================================================================
@@ -592,39 +618,9 @@ impl BashTool {
     #[napi(constructor)]
     pub fn new(options: Option<BashOptions>) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
-        let py = opts.python.unwrap_or(false);
-        let ext_fns = opts.external_functions.clone().unwrap_or_default();
-
-        let bash = build_bash(
-            opts.username.as_deref(),
-            opts.hostname.as_deref(),
-            opts.max_commands,
-            opts.max_loop_iterations,
-            opts.files.as_ref(),
-            py,
-            &ext_fns,
-            None,
-        );
-        let cancelled = bash.cancellation_token();
-
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
-
+        let state = shared_state_from_opts(opts, None)?;
         Ok(Self {
-            state: Arc::new(SharedState {
-                inner: Mutex::new(bash),
-                rt: Mutex::new(rt),
-                cancelled,
-                username: opts.username,
-                hostname: opts.hostname,
-                max_commands: opts.max_commands,
-                max_loop_iterations: opts.max_loop_iterations,
-                python: py,
-                external_functions: ext_fns,
-                external_handler: None,
-            }),
+            state: Arc::new(state),
         })
     }
 
@@ -705,17 +701,7 @@ impl BashTool {
     pub fn reset(&self) -> napi::Result<()> {
         block_on_with(&self.state, |s| async move {
             let mut bash = s.inner.lock().await;
-            let new_bash = build_bash(
-                s.username.as_deref(),
-                s.hostname.as_deref(),
-                s.max_commands,
-                s.max_loop_iterations,
-                None,
-                s.python,
-                &s.external_functions,
-                s.external_handler.as_ref(),
-            );
-            *bash = new_bash;
+            *bash = build_bash_from_state(&s, None);
             Ok(())
         })
     }
@@ -850,6 +836,46 @@ impl BashTool {
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
             Ok(entries.into_iter().map(|e| e.name.clone()).collect())
+        })
+    }
+
+    // ========================================================================
+    // Mount — real filesystem mounts at runtime
+    // ========================================================================
+
+    /// Mount a host directory into the VFS at runtime.
+    ///
+    /// `readOnly` defaults to true when omitted.
+    #[napi]
+    pub fn mount_real(
+        &self,
+        host_path: String,
+        vfs_path: String,
+        read_only: Option<bool>,
+    ) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let ro = read_only.unwrap_or(true);
+            let mode = if ro {
+                bashkit::RealFsMode::ReadOnly
+            } else {
+                bashkit::RealFsMode::ReadWrite
+            };
+            let real_backend = bashkit::RealFs::new(&host_path, mode)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            let fs: Arc<dyn bashkit::FileSystem> = Arc::new(bashkit::PosixFs::new(real_backend));
+            bash.mount(Path::new(&vfs_path), fs)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Unmount a previously mounted filesystem.
+    #[napi]
+    pub fn unmount(&self, vfs_path: String) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.unmount(Path::new(&vfs_path))
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
 }
@@ -1142,34 +1168,59 @@ impl ScriptedTool {
 // Helpers
 // ============================================================================
 
-#[allow(clippy::too_many_arguments)]
-fn build_bash(
-    username: Option<&str>,
-    hostname: Option<&str>,
-    max_commands: Option<u32>,
-    max_loop_iterations: Option<u32>,
-    files: Option<&HashMap<String, String>>,
-    python: bool,
-    external_functions: &[String],
-    external_handler: Option<&ExternalHandlerArc>,
-) -> RustBash {
+/// Build `ExecutionLimits` from the limit fields stored in `SharedState`.
+fn build_limits(state: &SharedState) -> ExecutionLimits {
+    let mut limits = ExecutionLimits::new();
+    if let Some(v) = state.max_commands {
+        limits = limits.max_commands(v as usize);
+    }
+    if let Some(v) = state.max_loop_iterations {
+        limits = limits.max_loop_iterations(v as usize);
+    }
+    if let Some(v) = state.max_total_loop_iterations {
+        limits = limits.max_total_loop_iterations(v as usize);
+    }
+    if let Some(v) = state.max_function_depth {
+        limits = limits.max_function_depth(v as usize);
+    }
+    if let Some(v) = state.timeout_ms {
+        limits = limits.timeout(std::time::Duration::from_millis(v as u64));
+    }
+    if let Some(v) = state.parser_timeout_ms {
+        limits = limits.parser_timeout(std::time::Duration::from_millis(v as u64));
+    }
+    if let Some(v) = state.max_input_bytes {
+        limits = limits.max_input_bytes(v as usize);
+    }
+    if let Some(v) = state.max_ast_depth {
+        limits = limits.max_ast_depth(v as usize);
+    }
+    if let Some(v) = state.max_parser_operations {
+        limits = limits.max_parser_operations(v as usize);
+    }
+    if let Some(v) = state.max_stdout_bytes {
+        limits = limits.max_stdout_bytes(v as usize);
+    }
+    if let Some(v) = state.max_stderr_bytes {
+        limits = limits.max_stderr_bytes(v as usize);
+    }
+    if let Some(v) = state.capture_final_env {
+        limits = limits.capture_final_env(v);
+    }
+    limits
+}
+
+fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, String>>) -> RustBash {
     let mut builder = RustBash::builder();
 
-    if let Some(u) = username {
+    if let Some(ref u) = state.username {
         builder = builder.username(u);
     }
-    if let Some(h) = hostname {
+    if let Some(ref h) = state.hostname {
         builder = builder.hostname(h);
     }
 
-    let mut limits = ExecutionLimits::new();
-    if let Some(mc) = max_commands {
-        limits = limits.max_commands(mc as usize);
-    }
-    if let Some(mli) = max_loop_iterations {
-        limits = limits.max_loop_iterations(mli as usize);
-    }
-    builder = builder.limits(limits);
+    builder = builder.limits(build_limits(state));
 
     // Mount files into the virtual filesystem
     if let Some(files) = files {
@@ -1178,11 +1229,24 @@ fn build_bash(
         }
     }
 
+    // Apply real filesystem mounts
+    if let Some(ref mounts) = state.mounts {
+        for m in mounts {
+            let read_only = m.read_only.unwrap_or(true);
+            builder = match (read_only, &m.vfs_path) {
+                (true, None) => builder.mount_real_readonly(&m.host_path),
+                (true, Some(vfs)) => builder.mount_real_readonly_at(&m.host_path, vfs),
+                (false, None) => builder.mount_real_readwrite(&m.host_path),
+                (false, Some(vfs)) => builder.mount_real_readwrite_at(&m.host_path, vfs),
+            };
+        }
+    }
+
     // Enable Python/Monty
-    if python {
-        if let Some(handler) = external_handler {
+    if state.python {
+        if let Some(ref handler) = state.external_handler {
             let h = handler.clone();
-            let fn_names = external_functions.to_vec();
+            let fn_names = state.external_functions.to_vec();
             let python_handler: PythonExternalFnHandler = Arc::new(move |name, args, kwargs| {
                 let h = h.clone();
                 Box::pin(async move { h(name, args, kwargs).await })
@@ -1198,6 +1262,78 @@ fn build_bash(
     }
 
     builder.build()
+}
+
+/// Build a `SharedState` from `BashOptions`, wiring up all config + interpreter.
+fn shared_state_from_opts(
+    opts: BashOptions,
+    external_handler: Option<ExternalHandlerArc>,
+) -> napi::Result<SharedState> {
+    let py = opts.python.unwrap_or(false);
+    let ext_fns = opts.external_functions.clone().unwrap_or_default();
+    let mounts = opts.mounts.clone();
+
+    // Build a temporary SharedState to pass to build_bash_from_state
+    let tmp = SharedState {
+        inner: Mutex::new(RustBash::new()),
+        rt: Mutex::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?,
+        ),
+        cancelled: Arc::new(AtomicBool::new(false)),
+        username: opts.username.clone(),
+        hostname: opts.hostname.clone(),
+        max_commands: opts.max_commands,
+        max_loop_iterations: opts.max_loop_iterations,
+        max_total_loop_iterations: opts.max_total_loop_iterations,
+        max_function_depth: opts.max_function_depth,
+        timeout_ms: opts.timeout_ms,
+        parser_timeout_ms: opts.parser_timeout_ms,
+        max_input_bytes: opts.max_input_bytes,
+        max_ast_depth: opts.max_ast_depth,
+        max_parser_operations: opts.max_parser_operations,
+        max_stdout_bytes: opts.max_stdout_bytes,
+        max_stderr_bytes: opts.max_stderr_bytes,
+        capture_final_env: opts.capture_final_env,
+        mounts: mounts.clone(),
+        python: py,
+        external_functions: ext_fns.clone(),
+        external_handler: external_handler.clone(),
+    };
+
+    let bash = build_bash_from_state(&tmp, opts.files.as_ref());
+    let cancelled = bash.cancellation_token();
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?;
+
+    Ok(SharedState {
+        inner: Mutex::new(bash),
+        rt: Mutex::new(rt),
+        cancelled,
+        username: opts.username,
+        hostname: opts.hostname,
+        max_commands: opts.max_commands,
+        max_loop_iterations: opts.max_loop_iterations,
+        max_total_loop_iterations: opts.max_total_loop_iterations,
+        max_function_depth: opts.max_function_depth,
+        timeout_ms: opts.timeout_ms,
+        parser_timeout_ms: opts.parser_timeout_ms,
+        max_input_bytes: opts.max_input_bytes,
+        max_ast_depth: opts.max_ast_depth,
+        max_parser_operations: opts.max_parser_operations,
+        max_stdout_bytes: opts.max_stdout_bytes,
+        max_stderr_bytes: opts.max_stderr_bytes,
+        capture_final_env: opts.capture_final_env,
+        mounts,
+        python: py,
+        external_functions: ext_fns,
+        external_handler,
+    })
 }
 
 /// Get the bashkit version string.
