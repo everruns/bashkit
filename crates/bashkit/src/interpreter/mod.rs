@@ -6303,8 +6303,14 @@ impl Interpreter {
                 WordPart::Length(name) => {
                     let value = if let Some(bracket_pos) = name.find('[') {
                         let arr_name = &name[..bracket_pos];
-                        let index_end = name.find(']').unwrap_or(name.len());
-                        let index_str = &name[bracket_pos + 1..index_end];
+                        // Search for ']' after '[' to avoid panic when malformed
+                        // input has ']' before '[' (e.g. null-byte-laden fuzz input).
+                        let index_end = name[bracket_pos..]
+                            .find(']')
+                            .map(|i| bracket_pos + i)
+                            .unwrap_or(name.len());
+                        let start = (bracket_pos + 1).min(index_end);
+                        let index_str = &name[start..index_end];
                         let idx: usize =
                             self.evaluate_arithmetic(index_str).try_into().unwrap_or(0);
                         if let Some(arr) = self.arrays.get(arr_name) {
