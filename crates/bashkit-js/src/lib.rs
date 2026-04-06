@@ -15,9 +15,9 @@
 
 use bashkit::tool::VERSION;
 use bashkit::{
-    Bash as RustBash, BashTool as RustBashTool, ExecutionLimits, ExtFunctionResult, MontyObject,
-    PythonExternalFnHandler, PythonLimits, ScriptedTool as RustScriptedTool, Tool, ToolArgs,
-    ToolDef, ToolRequest,
+    Bash as RustBash, BashTool as RustBashTool, ExecutionLimits, ExtFunctionResult, FileType,
+    Metadata, MontyObject, PythonExternalFnHandler, PythonLimits, ScriptedTool as RustScriptedTool,
+    Tool, ToolArgs, ToolDef, ToolRequest,
 };
 use napi_derive::napi;
 use std::collections::HashMap;
@@ -149,6 +149,235 @@ fn base64_encode(data: &[u8]) -> String {
         }
     }
     result
+}
+
+// ============================================================================
+// FileMetadata + JsDirEntry + JsFileSystem
+// ============================================================================
+
+/// Metadata for a VFS entry, returned by `stat()` and `readDir()`.
+#[napi(object)]
+pub struct FileMetadata {
+    pub file_type: String,
+    pub size: f64,
+    pub mode: u32,
+    pub modified: f64,
+    pub created: f64,
+}
+
+/// Directory entry with name and metadata.
+#[napi(object)]
+pub struct JsDirEntry {
+    pub name: String,
+    pub metadata: FileMetadata,
+}
+
+fn metadata_to_js(meta: &Metadata) -> FileMetadata {
+    let file_type = match meta.file_type {
+        FileType::File => "file",
+        FileType::Directory => "directory",
+        FileType::Symlink => "symlink",
+        FileType::Fifo => "fifo",
+    }
+    .to_string();
+    FileMetadata {
+        file_type,
+        size: meta.size as f64,
+        mode: meta.mode,
+        modified: meta
+            .modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0),
+        created: meta
+            .created
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0),
+    }
+}
+
+/// Direct VFS accessor — bypasses shell command parsing for file operations.
+///
+/// Obtained via `bash.fs()` or `bashTool.fs()`. All methods are synchronous
+/// and block until the underlying async VFS operation completes.
+#[napi]
+pub struct JsFileSystem {
+    state: Arc<SharedState>,
+}
+
+#[napi]
+impl JsFileSystem {
+    /// Read a file as UTF-8 string.
+    #[napi]
+    pub fn read_file(&self, path: String) -> napi::Result<String> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let bytes = bash
+                .fs()
+                .read_file(Path::new(&path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            String::from_utf8(bytes)
+                .map_err(|e| napi::Error::from_reason(format!("Invalid UTF-8: {e}")))
+        })
+    }
+
+    /// Write string content to a file (creates or replaces).
+    #[napi]
+    pub fn write_file(&self, path: String, content: String) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .write_file(Path::new(&path), content.as_bytes())
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Append string content to a file.
+    #[napi]
+    pub fn append_file(&self, path: String, content: String) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .append_file(Path::new(&path), content.as_bytes())
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Create a directory. If `recursive` is true, creates parent directories.
+    #[napi]
+    pub fn mkdir(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .mkdir(Path::new(&path), recursive.unwrap_or(false))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Remove a file or directory. If `recursive` is true, removes contents.
+    #[napi]
+    pub fn remove(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .remove(Path::new(&path), recursive.unwrap_or(false))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Get metadata for a path.
+    #[napi]
+    pub fn stat(&self, path: String) -> napi::Result<FileMetadata> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let meta = bash
+                .fs()
+                .stat(Path::new(&path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            Ok(metadata_to_js(&meta))
+        })
+    }
+
+    /// Check if a path exists.
+    #[napi]
+    pub fn exists(&self, path: String) -> napi::Result<bool> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .exists(Path::new(&path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// List directory entries with metadata.
+    #[napi]
+    pub fn read_dir(&self, path: String) -> napi::Result<Vec<JsDirEntry>> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let entries = bash
+                .fs()
+                .read_dir(Path::new(&path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            Ok(entries
+                .iter()
+                .map(|e| JsDirEntry {
+                    name: e.name.clone(),
+                    metadata: metadata_to_js(&e.metadata),
+                })
+                .collect())
+        })
+    }
+
+    /// Create a symbolic link.
+    #[napi]
+    pub fn symlink(&self, target: String, link: String) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .symlink(Path::new(&target), Path::new(&link))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Read the target of a symbolic link.
+    #[napi]
+    pub fn read_link(&self, path: String) -> napi::Result<String> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let target = bash
+                .fs()
+                .read_link(Path::new(&path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            Ok(target.to_string_lossy().to_string())
+        })
+    }
+
+    /// Change file permissions.
+    #[napi]
+    pub fn chmod(&self, path: String, mode: u32) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .chmod(Path::new(&path), mode)
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Rename/move a file or directory.
+    #[napi]
+    pub fn rename(&self, from_path: String, to_path: String) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .rename(Path::new(&from_path), Path::new(&to_path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Copy a file.
+    #[napi]
+    pub fn copy(&self, from_path: String, to_path: String) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .copy(Path::new(&from_path), Path::new(&to_path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
 }
 
 // ============================================================================
@@ -575,6 +804,14 @@ impl Bash {
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
+
+    /// Get a `JsFileSystem` handle for direct VFS operations.
+    #[napi]
+    pub fn fs(&self) -> JsFileSystem {
+        JsFileSystem {
+            state: self.state.clone(),
+        }
+    }
 }
 
 // ============================================================================
@@ -869,6 +1106,14 @@ impl BashTool {
             bash.unmount(Path::new(&vfs_path))
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
+    }
+
+    /// Get a `JsFileSystem` handle for direct VFS operations.
+    #[napi]
+    pub fn fs(&self) -> JsFileSystem {
+        JsFileSystem {
+            state: self.state.clone(),
+        }
     }
 }
 
