@@ -54,4 +54,70 @@ describe("VFS API", () => {
     bash.reset();
     assert.ok(!bash.exists("/tmp/p.txt"));
   });
+
+  it("stat returns file metadata", () => {
+    const bash = new Bash();
+    bash.writeFile("/tmp/stat.txt", "hello");
+    const meta = bash.stat("/tmp/stat.txt");
+    assert.equal(meta.fileType, "file");
+    assert.equal(meta.size, 5);
+    assert.ok(meta.mode > 0);
+  });
+
+  it("stat returns directory metadata", () => {
+    const bash = new Bash();
+    bash.mkdir("/tmp/statdir");
+    const meta = bash.stat("/tmp/statdir");
+    assert.equal(meta.fileType, "directory");
+  });
+
+  it("readDir returns entries with metadata", () => {
+    const bash = new Bash();
+    bash.mkdir("/tmp/rd");
+    bash.writeFile("/tmp/rd/file.txt", "content");
+    bash.mkdir("/tmp/rd/sub");
+    const entries = bash.readDir("/tmp/rd");
+    assert.ok(Array.isArray(entries));
+    assert.equal(entries.length, 2);
+    const file = entries.find((e) => e.name === "file.txt");
+    const dir = entries.find((e) => e.name === "sub");
+    assert.ok(file);
+    assert.ok(dir);
+    assert.equal(file.metadata.fileType, "file");
+    assert.equal(dir.metadata.fileType, "directory");
+  });
+
+  it("appendFile appends content", () => {
+    const bash = new Bash();
+    bash.writeFile("/tmp/ap.txt", "first");
+    bash.appendFile("/tmp/ap.txt", "-second");
+    assert.equal(bash.readFile("/tmp/ap.txt"), "first-second");
+  });
+
+  it("chmod changes file mode", () => {
+    const bash = new Bash();
+    bash.writeFile("/tmp/ch.txt", "data");
+    bash.chmod("/tmp/ch.txt", 0o755);
+    const meta = bash.stat("/tmp/ch.txt");
+    assert.equal(meta.mode, 0o755);
+  });
+
+  it("symlink and readLink roundtrip", () => {
+    const bash = new Bash();
+    bash.writeFile("/tmp/target.txt", "data");
+    bash.symlink("/tmp/target.txt", "/tmp/link.txt");
+    assert.equal(bash.readLink("/tmp/link.txt"), "/tmp/target.txt");
+    assert.equal(bash.readFile("/tmp/link.txt"), "data");
+  });
+
+  it("fs() accessor provides same operations", () => {
+    const bash = new Bash();
+    const fs = bash.fs();
+    fs.writeFile("/tmp/fsapi.txt", "via-fs");
+    assert.equal(fs.readFile("/tmp/fsapi.txt"), "via-fs");
+    const meta = fs.stat("/tmp/fsapi.txt");
+    assert.equal(meta.fileType, "file");
+    const entries = fs.readDir("/tmp");
+    assert.ok(entries.some((e) => e.name === "fsapi.txt"));
+  });
 });
