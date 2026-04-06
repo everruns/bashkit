@@ -74,13 +74,29 @@ Make the simplifications. Run tests after each change. The goal is less code tha
 
 `AGENTS.md` and `CLAUDE.md` reflect current specs, commands, tooling, and workflows.
 
-### 10. Nightly CI is healthy
+### 10. All CI is healthy (HARD GATE)
 
-Nightly and fuzz workflows green for past week. Fuzz targets compile. Git-sourced deps resolve.
+**This section is a blocker.** The maintenance pass MUST NOT be marked complete
+while any of these checks are red.
 
-Key tools: `gh run list --workflow=nightly.yml --limit 7`, `gh run list --workflow=fuzz.yml --limit 7`
+1. **CI on main is green** — check the latest CI run on the `main` branch. If
+   any job (Audit, Test, Lint, Examples, Fuzz Compile Check) fails, fix it
+   before proceeding. Common failures: `cargo vet` missing certifications,
+   dependency audit advisories, clippy warnings.
+2. **Nightly workflow green** for past 7 days.
+3. **Fuzz workflow green** for past 7 days. If a fuzz target crashes, open a
+   GitHub issue with the crash artifact, reproduction command, and base64 input.
+4. Fuzz targets compile. Git-sourced deps resolve.
 
-If failures persist >2 days, escalate per the policy in `specs/012-maintenance.md`.
+Key tools:
+- `gh run list --workflow=ci.yml --branch=main --limit 5` (CI on main)
+- `gh run list --workflow=nightly.yml --limit 7` (nightly)
+- `gh run list --workflow=fuzz.yml --limit 7` (fuzz)
+- `gh api repos/OWNER/REPO/actions/runs/RUN_ID/jobs` (inspect failed jobs)
+
+If failures persist >2 days, escalate per `specs/012-maintenance.md`.
+If the agent cannot fix a failure, it MUST open a GitHub issue and report the
+pass as blocked — never silently skip.
 
 ## Execution
 

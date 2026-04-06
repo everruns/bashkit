@@ -111,19 +111,27 @@ dependency rot, or security gaps ship in a release.
 - Build/test commands work
 - Pre-PR checklist covers current tooling
 
-### Nightly CI
+### CI Health
 
+- **CI on main is green** — the latest CI run on `main` must pass. Any failure
+  (audit, test, lint, examples) is a blocker that must be fixed before
+  proceeding with the rest of the maintenance pass.
 - Nightly and fuzz workflows green for past week
 - Fuzz targets compile
 - Git-sourced dependencies still resolve
 
-#### Nightly Escalation Policy
+#### Escalation Policy
 
-Failures persisting **>2 consecutive days** are blocking:
+Failures persisting **>2 consecutive days** on any workflow (CI, nightly, fuzz)
+are blocking:
 1. Open GitHub issue with label `ci:nightly`
 2. Link failing run(s)
 3. Assign to most recent contributor in failing area
 4. If upstream dep change: pin to known-good rev, open follow-up issue
+
+**This section is a hard gate.** The maintenance pass MUST NOT be marked
+complete or merged while any of the above checks are red. If the agent cannot
+fix a failure, it must open a GitHub issue and report the pass as blocked.
 
 ## Deferred Items
 
@@ -149,7 +157,8 @@ Sections dependencies, tests, examples, code quality, and nightly CI are fully
 automatable. Security, documentation, specs, simplification, and agent config
 require human or agent review.
 
-Nightly check enforced by `just check-nightly`, called by `just release-check`.
+CI health check enforced by `just check-nightly` (nightly + fuzz) and manual
+inspection of CI on `main` (audit, test, lint). Called by `just release-check`.
 
 ## Invocation
 
