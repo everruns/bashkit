@@ -368,8 +368,43 @@ export class Bash {
     this.native.remove(path, recursive);
   }
 
+  /** Get metadata for a path (fileType, size, mode, timestamps). */
+  stat(path: string): { fileType: string; size: number; mode: number; modified: number; created: number } {
+    return this.native.stat(path);
+  }
+
+  /** Append content to a file. */
+  appendFile(path: string, content: string): void {
+    this.native.appendFile(path, content);
+  }
+
+  /** Change file permissions (octal mode, e.g. 0o755). */
+  chmod(path: string, mode: number): void {
+    this.native.chmod(path, mode);
+  }
+
+  /** Create a symbolic link pointing to target. */
+  symlink(target: string, link: string): void {
+    this.native.symlink(target, link);
+  }
+
+  /** Read the target of a symbolic link. */
+  readLink(path: string): string {
+    return this.native.readLink(path);
+  }
+
+  /** List directory entries with metadata. */
+  readDir(path: string): Array<{ name: string; metadata: { fileType: string; size: number; mode: number; modified: number; created: number } }> {
+    return this.native.readDir(path);
+  }
+
+  /** Get a JsFileSystem handle for direct VFS operations. */
+  fs(): any {
+    return this.native.fs();
+  }
+
   /**
-   * List entries in a directory. Returns empty array if directory does not exist.
+   * List entry names in a directory. Returns empty array if directory does not exist.
    */
   ls(path?: string): string[] {
     const target = path ?? ".";
@@ -555,8 +590,43 @@ export class BashTool {
     this.native.writeFile(path, content);
   }
 
+  /** Get metadata for a path (fileType, size, mode, timestamps). */
+  stat(path: string): { fileType: string; size: number; mode: number; modified: number; created: number } {
+    return this.native.stat(path);
+  }
+
+  /** Append content to a file. */
+  appendFile(path: string, content: string): void {
+    this.native.appendFile(path, content);
+  }
+
+  /** Change file permissions (octal mode, e.g. 0o755). */
+  chmod(path: string, mode: number): void {
+    this.native.chmod(path, mode);
+  }
+
+  /** Create a symbolic link pointing to target. */
+  symlink(target: string, link: string): void {
+    this.native.symlink(target, link);
+  }
+
+  /** Read the target of a symbolic link. */
+  readLink(path: string): string {
+    return this.native.readLink(path);
+  }
+
+  /** List directory entries with metadata. */
+  readDir(path: string): Array<{ name: string; metadata: { fileType: string; size: number; mode: number; modified: number; created: number } }> {
+    return this.native.readDir(path);
+  }
+
+  /** Get a JsFileSystem handle for direct VFS operations. */
+  fs(): any {
+    return this.native.fs();
+  }
+
   /**
-   * List entries in a directory. Returns empty array if directory does not exist.
+   * List entry names in a directory. Returns empty array if directory does not exist.
    */
   ls(path?: string): string[] {
     const target = path ?? ".";
