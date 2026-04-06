@@ -601,15 +601,7 @@ impl BashTool {
             builder = builder.hostname(hostname);
         }
 
-        let mut limits = ExecutionLimits::new();
-        if let Some(mc) = state.max_commands {
-            limits = limits.max_commands(mc as usize);
-        }
-        if let Some(mli) = state.max_loop_iterations {
-            limits = limits.max_loop_iterations(mli as usize);
-        }
-
-        builder.limits(limits).build()
+        builder.limits(build_limits(state)).build()
     }
 }
 
