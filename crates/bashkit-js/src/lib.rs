@@ -695,6 +695,70 @@ impl Bash {
     // VFS — direct filesystem access
     // ========================================================================
 
+    /// Get metadata for a path in the virtual filesystem.
+    #[napi]
+    pub fn stat(&self, path: String) -> napi::Result<FileMetadata> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let meta = bash
+                .fs()
+                .stat(Path::new(&path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            Ok(metadata_to_js(&meta))
+        })
+    }
+
+    /// Append content to a file in the virtual filesystem.
+    #[napi]
+    pub fn append_file(&self, path: String, content: String) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .append_file(Path::new(&path), content.as_bytes())
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Change file permissions in the virtual filesystem.
+    #[napi]
+    pub fn chmod(&self, path: String, mode: u32) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .chmod(Path::new(&path), mode)
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Create a symbolic link in the virtual filesystem.
+    #[napi]
+    pub fn symlink(&self, target: String, link: String) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .symlink(Path::new(&target), Path::new(&link))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Read the target of a symbolic link.
+    #[napi]
+    pub fn read_link(&self, path: String) -> napi::Result<String> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let target = bash
+                .fs()
+                .read_link(Path::new(&path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            Ok(target.display().to_string())
+        })
+    }
+
     /// Read a file from the virtual filesystem. Returns contents as a UTF-8 string.
     #[napi]
     pub fn read_file(&self, path: String) -> napi::Result<String> {
@@ -998,6 +1062,70 @@ impl BashTool {
     // ========================================================================
     // VFS — direct filesystem access (no shell command composition)
     // ========================================================================
+
+    /// Get metadata for a path in the virtual filesystem.
+    #[napi]
+    pub fn stat(&self, path: String) -> napi::Result<FileMetadata> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let meta = bash
+                .fs()
+                .stat(Path::new(&path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            Ok(metadata_to_js(&meta))
+        })
+    }
+
+    /// Append content to a file in the virtual filesystem.
+    #[napi]
+    pub fn append_file(&self, path: String, content: String) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .append_file(Path::new(&path), content.as_bytes())
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Change file permissions in the virtual filesystem.
+    #[napi]
+    pub fn chmod(&self, path: String, mode: u32) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .chmod(Path::new(&path), mode)
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Create a symbolic link in the virtual filesystem.
+    #[napi]
+    pub fn symlink(&self, target: String, link: String) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.fs()
+                .symlink(Path::new(&target), Path::new(&link))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Read the target of a symbolic link.
+    #[napi]
+    pub fn read_link(&self, path: String) -> napi::Result<String> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let target = bash
+                .fs()
+                .read_link(Path::new(&path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            Ok(target.display().to_string())
+        })
+    }
 
     /// Read a file from the virtual filesystem. Returns contents as a UTF-8 string.
     #[napi]
