@@ -424,3 +424,17 @@ jobs:
         working-directory: crates/bashkit-js
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify npm publish
+        run: |
+          sleep 10
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          ACTUAL=$(npm view @everruns/bashkit version 2>/dev/null || echo "not found")
+          if [ "$ACTUAL" = "$PKG_VERSION" ]; then
+            echo "✓ @everruns/bashkit@$ACTUAL published to npm (latest)"
+          else
+            echo "✗ expected $PKG_VERSION on npm latest, got $ACTUAL"
+            echo "::error::npm publish verification failed"
+            exit 1
+          fi
+        working-directory: crates/bashkit-js

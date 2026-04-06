@@ -76,9 +76,9 @@ When asked to create a release, the agent:
 - Extracts release notes from CHANGELOG.md
 - Creates GitHub Release with tag `vX.Y.Z`
 
-**On GitHub Release published** (publish.yml):
-- Publishes to crates.io in dependency order
-- Note: No verification step - CI already ran when PR merged to main
+**On GitHub Release published** (publish.yml, publish-js.yml, publish-python.yml):
+- Publishes to crates.io, npm, and PyPI
+- Each publish workflow includes a verification step that checks the published version matches expectations
 
 ## Pre-Release Checklist
 
@@ -199,7 +199,7 @@ brew install everruns/tap/bashkit
 ### publish.yml
 
 - **Trigger**: GitHub Release published
-- **Actions**: Publishes to crates.io (no verification - CI ran on merge)
+- **Actions**: Publishes to crates.io in dependency order, then verifies published versions
 - **File**: `.github/workflows/publish.yml`
 - **Secret required**: `CARGO_REGISTRY_TOKEN`
 
@@ -293,6 +293,28 @@ Agent: I'll prepare the v0.2.0 release. Let me:
 Done. PR created: https://github.com/everruns/bashkit/pull/XX
 Please review and merge to trigger the release.
 ```
+
+## Post-Release Verification
+
+Each publish workflow includes automated verification. After a release, the agent (or human) should also verify manually:
+
+```bash
+# crates.io
+cargo search bashkit           # Should show latest version
+cargo search bashkit-cli       # Should show latest version
+
+# npm
+npm view @everruns/bashkit version          # Should show latest version
+npm dist-tags ls @everruns/bashkit          # "latest" should point to new version
+
+# PyPI
+pip index versions bashkit     # Should show latest version
+
+# GitHub
+gh release view --repo everruns/bashkit     # Should show latest tag
+```
+
+If any registry is missing the new version, check the corresponding publish workflow run for errors.
 
 ## Hotfix Releases
 
