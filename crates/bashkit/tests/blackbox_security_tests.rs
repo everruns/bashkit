@@ -24,6 +24,7 @@ fn tight_bash() -> Bash {
                 .max_loop_iterations(100)
                 .max_total_loop_iterations(500)
                 .max_function_depth(20)
+                .max_subst_depth(15)
                 .timeout(Duration::from_secs(5)),
         )
         .build()
@@ -38,6 +39,7 @@ fn dos_bash() -> Bash {
                 .max_loop_iterations(10)
                 .max_total_loop_iterations(50)
                 .max_function_depth(5)
+                .max_subst_depth(3)
                 .timeout(Duration::from_secs(3)),
         )
         .build()

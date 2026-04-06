@@ -52,6 +52,10 @@ fuzz_target!(|data: &[u8]| {
                 .limits(
                     bashkit::ExecutionLimits::new()
                         .max_commands(100)
+                        .max_function_depth(10)
+                        .max_subst_depth(5)
+                        .max_stdout_bytes(4096)
+                        .max_stderr_bytes(4096)
                         .timeout(std::time::Duration::from_millis(100)),
                 )
                 .build();

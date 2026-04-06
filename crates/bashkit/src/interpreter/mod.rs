@@ -6212,10 +6212,13 @@ impl Interpreter {
                     }
                 }
                 WordPart::CommandSubstitution(commands) => {
-                    // THREAT[TM-DOS-044]: Track substitution depth to prevent stack overflow
-                    if self.counters.push_function(&self.limits).is_err() {
+                    // THREAT[TM-DOS-088]: Track substitution depth separately from
+                    // function depth. Each level clones the full interpreter state,
+                    // so memory ≈ depth × state_size. A tighter limit than
+                    // max_function_depth prevents OOM.
+                    if self.counters.push_subst(&self.limits).is_err() {
                         return Err(crate::error::Error::Execution(
-                            "maximum nesting depth exceeded in command substitution".to_string(),
+                            "maximum command substitution depth exceeded".to_string(),
                         ));
                     }
                     // Command substitution runs in a subshell: snapshot all
@@ -6260,7 +6263,7 @@ impl Interpreter {
                     self.aliases = saved_aliases;
                     self.cwd = saved_cwd;
                     self.memory_budget = saved_memory_budget;
-                    self.counters.pop_function();
+                    self.counters.pop_subst();
                     self.subst_generation += 1;
                     let trimmed = stdout.trim_end_matches('\n');
                     result.push_str(trimmed);
@@ -8436,7 +8439,7 @@ impl Interpreter {
                 );
                 match parser.parse() {
                     Ok(script) => {
-                        if self.counters.push_function(&self.limits).is_err() {
+                        if self.counters.push_subst(&self.limits).is_err() {
                             result.push('0');
                         } else {
                             let saved_vars = self.variables.clone();
@@ -8457,7 +8460,7 @@ impl Interpreter {
                             self.aliases = saved_aliases;
                             self.cwd = saved_cwd;
                             self.memory_budget = saved_memory_budget;
-                            self.counters.pop_function();
+                            self.counters.pop_subst();
                             let trimmed = cmd_result.stdout.trim_end_matches('\n');
                             if trimmed.is_empty() {
                                 result.push('0');
