@@ -72,13 +72,19 @@ jobs:
           draft: false
           prerelease: false
 
+      # Note: the `release: [published]` event does NOT trigger other
+      # workflows when the release is created with GITHUB_TOKEN (GitHub
+      # prevents recursive workflow triggers). We must dispatch explicitly.
+      # Use --ref to set GITHUB_REF to the tag so publish-js correctly
+      # identifies stable releases.
       - name: Trigger publish workflows
-        run: |
-          gh workflow run publish.yml
-          gh workflow run publish-python.yml
-          gh workflow run publish-js.yml
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          gh workflow run publish.yml --ref "$TAG"
+          gh workflow run publish-python.yml --ref "$TAG"
+          gh workflow run publish-js.yml --ref "$TAG"
 
       - name: Trigger CLI binary builds for release tag
         env:
