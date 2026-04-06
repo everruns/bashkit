@@ -54,7 +54,6 @@ async function runAgent(userMessage) {
 
   const model = new ChatOpenAI({
     model: "gpt-5.4",
-    modelKwargs: { reasoning_effort: "none" },
   });
 
   const agent = createReactAgent({

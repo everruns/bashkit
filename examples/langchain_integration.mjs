@@ -65,7 +65,6 @@ console.log(`Scripted tool result:\n${scriptedResult.trim()}`);
 async function runAgent() {
   const model = new ChatOpenAI({
     model: "gpt-5.4",
-    modelKwargs: { reasoning_effort: "none" },
   });
 
   const agent = createReactAgent({

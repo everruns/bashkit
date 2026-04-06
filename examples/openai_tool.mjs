@@ -2,9 +2,9 @@
 /**
  * Bashkit as an OpenAI function-calling tool.
  *
- * Uses the official `openai` package to wire BashTool as a function
- * the model can call. The model decides when to execute bash commands,
- * and results are fed back for the next response.
+ * Uses the official `openai` package with the Responses API to wire
+ * BashTool as a function the model can call. The model decides when
+ * to execute bash commands, and results are fed back for the next turn.
  *
  * Prerequisites:
  *   npm install openai
@@ -22,27 +22,25 @@ import { BashTool } from "@everruns/bashkit";
 const openai = new OpenAI();
 const bashTool = new BashTool({ username: "agent", hostname: "sandbox" });
 
-// Define the tool for OpenAI function calling
+// Define the tool for OpenAI Responses API
 const tools = [
   {
     type: "function",
-    function: {
-      name: "bash",
-      description: bashTool.shortDescription,
-      parameters: {
-        type: "object",
-        properties: {
-          commands: {
-            type: "string",
-            description:
-              "Bash commands to execute in a sandboxed virtual environment",
-          },
+    name: "bash",
+    description: bashTool.shortDescription,
+    parameters: {
+      type: "object",
+      properties: {
+        commands: {
+          type: "string",
+          description:
+            "Bash commands to execute in a sandboxed virtual environment",
         },
-        required: ["commands"],
-        additionalProperties: false,
       },
-      strict: true,
+      required: ["commands"],
+      additionalProperties: false,
     },
+    strict: true,
   },
 ];
 
@@ -65,50 +63,62 @@ function executeTool(name, args) {
 async function runAgent(userMessage) {
   console.log(`\nUser: ${userMessage}\n`);
 
-  const messages = [
-    {
-      role: "system",
-      content: [
-        "You have access to a sandboxed bash interpreter.",
-        "Use the bash tool to run commands when needed.",
-        bashTool.systemPrompt(),
-      ].join("\n"),
-    },
-    { role: "user", content: userMessage },
-  ];
+  const instructions = [
+    "You have access to a sandboxed bash interpreter.",
+    "Use the bash tool to run commands when needed.",
+    bashTool.systemPrompt(),
+  ].join("\n");
+
+  let input = [{ role: "user", content: userMessage }];
+  let previousResponseId = null;
 
   // Loop until the model produces a final text response
   for (let step = 0; step < 10; step++) {
-    const response = await openai.chat.completions.create({
+    const response = await openai.responses.create({
       model: "gpt-5.4",
-      reasoning_effort: "none",
-      messages,
+      reasoning: { effort: "none" },
+      instructions,
+      input,
       tools,
+      ...(previousResponseId && { previous_response_id: previousResponseId }),
     });
 
-    const choice = response.choices[0];
-    messages.push(choice.message);
+    previousResponseId = response.id;
 
-    // If no tool calls, we have the final answer
-    if (!choice.message.tool_calls || choice.message.tool_calls.length === 0) {
-      console.log(`Assistant: ${choice.message.content}\n`);
-      return choice.message.content;
+    // Collect function calls from output
+    const functionCalls = response.output.filter(
+      (item) => item.type === "function_call"
+    );
+
+    // If no tool calls, find the text output
+    if (functionCalls.length === 0) {
+      const textOutput = response.output.find(
+        (item) => item.type === "message"
+      );
+      const text =
+        textOutput?.content
+          ?.filter((c) => c.type === "output_text")
+          .map((c) => c.text)
+          .join("") ?? "(no response)";
+      console.log(`Assistant: ${text}\n`);
+      return text;
     }
 
-    // Execute each tool call
-    for (const toolCall of choice.message.tool_calls) {
-      const args = JSON.parse(toolCall.function.arguments);
-      console.log(`  [tool] ${toolCall.function.name}: ${args.commands}`);
+    // Execute each tool call and build input for next turn
+    input = [];
+    for (const call of functionCalls) {
+      const args = JSON.parse(call.arguments);
+      console.log(`  [tool] ${call.name}: ${args.commands}`);
 
-      const result = executeTool(toolCall.function.name, args);
+      const result = executeTool(call.name, args);
       const parsed = JSON.parse(result);
       if (parsed.stdout) console.log(`  [out]  ${parsed.stdout.trim()}`);
       if (parsed.stderr) console.log(`  [err]  ${parsed.stderr.trim()}`);
 
-      messages.push({
-        role: "tool",
-        tool_call_id: toolCall.id,
-        content: result,
+      input.push({
+        type: "function_call_output",
+        call_id: call.call_id,
+        output: result,
       });
     }
   }
