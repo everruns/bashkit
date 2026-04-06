@@ -1229,6 +1229,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-INT-007 | `/dev/urandom` empty with `head -c` | Weak randomness — `head -c 16 /dev/urandom` returns empty string | Fix virtual device pipe handling in head builtin |
 | TM-DOS-044 | Nested `$()` stack overflow (regression) | Process crash (SIGABRT) at depth ~50 despite #492 fix | Interpreter execution path may need separate depth tracking from lexer fix |
 | TM-DOS-088 | Command substitution OOM via state cloning | OOM at depth N (memory ≈ N × state_size) | Dedicated `max_subst_depth` limit (default 32), separate from `max_function_depth` — **FIXED** via #1088 |
+| TM-DOS-089 | Command substitution stack overflow via inlined futures | SIGABRT at ~20-30 nested $() levels | Box::pin `expand_word` and `execute_cmd_subst` to cap per-level stack — **FIXED** via #1089 |
 
 ### Accepted (Low Priority)
 
