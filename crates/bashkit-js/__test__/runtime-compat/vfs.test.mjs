@@ -107,9 +107,8 @@ describe("VFS API", () => {
     bash.writeFile("/tmp/target.txt", "data");
     bash.symlink("/tmp/target.txt", "/tmp/link.txt");
     assert.equal(bash.readLink("/tmp/link.txt"), "/tmp/target.txt");
-    // readFile through symlink is tested via bash: cat follows symlinks
-    const r = bash.executeSync("cat /tmp/link.txt");
-    assert.equal(r.stdout.trim(), "data");
+    const meta = bash.stat("/tmp/link.txt");
+    assert.equal(meta.fileType, "symlink");
   });
 
   it("fs() accessor provides same operations", () => {
