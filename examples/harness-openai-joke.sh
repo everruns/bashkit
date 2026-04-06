@@ -2,14 +2,23 @@
 # Run the wedow/harness agent framework via bashkit to generate a joke using OpenAI.
 #
 # Prerequisites:
-#   - bashkit installed: cargo install --path ./crates/bashkit-cli --features realfs
-#   - harness cloned:    git clone https://github.com/wedow/harness /tmp/harness
+#   - cargo build -p bashkit-cli --features realfs
 #   - OPENAI_API_KEY set in environment
 #
 # Usage:
-#   ./examples/harness-openai-joke.sh
-#   OPENAI_API_KEY=sk-... ./examples/harness-openai-joke.sh
+#   bash examples/harness-openai-joke.sh
+#   OPENAI_API_KEY=sk-... bash examples/harness-openai-joke.sh
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+BASHKIT="${BASHKIT:-$PROJECT_ROOT/target/debug/bashkit}"
+
+# Build if binary doesn't exist
+if [[ ! -x "$BASHKIT" ]]; then
+  echo "Building bashkit CLI with realfs support..."
+  cargo build -p bashkit-cli --features realfs --quiet
+fi
 
 HARNESS_DIR="${HARNESS_DIR:-/tmp/harness}"
 WORK_DIR="${WORK_DIR:-/tmp/harness-work}"
@@ -23,7 +32,7 @@ mkdir -p "${WORK_DIR}/.harness/sessions"
 
 : "${OPENAI_API_KEY:?OPENAI_API_KEY must be set}"
 
-exec bashkit \
+exec "$BASHKIT" \
   --mount-ro "${HARNESS_DIR}:/harness" \
   --mount-rw "${WORK_DIR}:/work" \
   --timeout 120 \

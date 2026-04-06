@@ -144,6 +144,14 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: cargo run --example agent_tool --features http_client
 
+      - name: Run harness OpenAI joke example
+        continue-on-error: true
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          cargo build -p bashkit-cli --features realfs --quiet
+          bash examples/harness-openai-joke.sh
+
   fuzz-check:
     name: Fuzz Compile Check
     runs-on: ubuntu-latest
