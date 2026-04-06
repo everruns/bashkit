@@ -619,13 +619,33 @@ impl FileSystem for OverlayFs {
             return Err(IoError::new(ErrorKind::NotFound, "not found").into());
         }
 
+        // Check if the path is a non-directory (file/symlink) — read_dir must fail
+        let is_dir_lower = if let Ok(meta) = self.lower.stat(&path).await {
+            if !meta.file_type.is_dir() {
+                return Err(IoError::other("not a directory").into());
+            }
+            true
+        } else {
+            false
+        };
+        let is_dir_upper = if let Ok(meta) = self.upper.stat(&path).await {
+            if !meta.file_type.is_dir() {
+                return Err(IoError::other("not a directory").into());
+            }
+            true
+        } else {
+            false
+        };
+
+        if !is_dir_lower && !is_dir_upper {
+            return Err(IoError::new(ErrorKind::NotFound, "not found").into());
+        }
+
         let mut entries: std::collections::HashMap<String, DirEntry> =
             std::collections::HashMap::new();
 
         // Get entries from lower (if not whited out)
-        if self.lower.exists(&path).await.unwrap_or(false)
-            && let Ok(lower_entries) = self.lower.read_dir(&path).await
-        {
+        if is_dir_lower && let Ok(lower_entries) = self.lower.read_dir(&path).await {
             for entry in lower_entries {
                 // Skip whited out entries
                 let entry_path = path.join(&entry.name);
@@ -636,9 +656,7 @@ impl FileSystem for OverlayFs {
         }
 
         // Overlay with entries from upper (overriding lower)
-        if self.upper.exists(&path).await.unwrap_or(false)
-            && let Ok(upper_entries) = self.upper.read_dir(&path).await
-        {
+        if is_dir_upper && let Ok(upper_entries) = self.upper.read_dir(&path).await {
             for entry in upper_entries {
                 entries.insert(entry.name.clone(), entry);
             }
@@ -1134,6 +1152,20 @@ mod tests {
 
         assert!(names.contains(&&"lower.txt".to_string()));
         assert!(names.contains(&&"upper.txt".to_string()));
+    }
+
+    /// Regression: read_dir on a file must return Err, not Ok(vec![])
+    #[tokio::test]
+    async fn test_read_dir_on_file_returns_error() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .write_file(Path::new("/tmp/file.txt"), b"data")
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+        let result = overlay.read_dir(Path::new("/tmp/file.txt")).await;
+        assert!(result.is_err(), "read_dir on a file should return Err");
     }
 
     // Issue #418: usage should deduct whited-out files
