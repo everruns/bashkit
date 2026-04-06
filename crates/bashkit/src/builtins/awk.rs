@@ -54,6 +54,9 @@ struct AwkRule {
 enum AwkPattern {
     Regex(Regex),
     Expression(AwkExpr),
+    /// Range pattern: /start/,/end/ — matches from start to end inclusive.
+    /// Each sub-pattern can be a Regex or Expression.
+    Range(Box<AwkPattern>, Box<AwkPattern>),
 }
 
 #[derive(Debug, Clone)]
@@ -670,6 +673,29 @@ impl<'a> AwkParser<'a> {
         Ok(AwkRule { pattern, actions })
     }
 
+    /// Parse a `/regex/` literal into an `AwkPattern::Regex`.
+    /// Assumes the leading `/` is at `self.pos`.
+    fn parse_regex_pattern(&mut self) -> Result<AwkPattern> {
+        self.pos += 1; // skip opening '/'
+        let start = self.pos;
+        while self.pos < self.input.len() {
+            let c = self.current_char().unwrap();
+            if c == '/' {
+                let pattern = &self.input[start..self.pos];
+                self.pos += 1;
+                let regex = build_regex(pattern)
+                    .map_err(|e| Error::Execution(format!("awk: invalid regex: {}", e)))?;
+                return Ok(AwkPattern::Regex(regex));
+            } else if c == '\\' {
+                self.pos += 1; // skip '\\' (ASCII)
+                self.advance(); // skip next char (may be multi-byte)
+            } else {
+                self.advance(); // regex content may be multi-byte
+            }
+        }
+        Err(Error::Execution("awk: unterminated regex".to_string()))
+    }
+
     fn parse_pattern(&mut self) -> Result<Option<AwkPattern>> {
         self.skip_whitespace();
 
@@ -680,35 +706,36 @@ impl<'a> AwkParser<'a> {
         let c = self.current_char().unwrap();
 
         // Check for regex pattern
-        if c == '/' {
-            self.pos += 1;
-            let start = self.pos;
-            while self.pos < self.input.len() {
-                let c = self.current_char().unwrap();
-                if c == '/' {
-                    let pattern = &self.input[start..self.pos];
-                    self.pos += 1;
-                    let regex = build_regex(pattern)
-                        .map_err(|e| Error::Execution(format!("awk: invalid regex: {}", e)))?;
-                    return Ok(Some(AwkPattern::Regex(regex)));
-                } else if c == '\\' {
-                    self.pos += 1; // skip '\\' (ASCII)
-                    self.advance(); // skip next char (may be multi-byte)
-                } else {
-                    self.advance(); // regex content may be multi-byte
-                }
-            }
-            return Err(Error::Execution("awk: unterminated regex".to_string()));
-        }
-
-        // Check for opening brace (no pattern)
-        if c == '{' {
+        let first: Option<AwkPattern> = if c == '/' {
+            Some(self.parse_regex_pattern()?)
+        } else if c == '{' {
+            // Check for opening brace (no pattern)
             return Ok(None);
-        }
+        } else {
+            // Expression pattern
+            let expr = self.parse_expression()?;
+            Some(AwkPattern::Expression(expr))
+        };
 
-        // Expression pattern
-        let expr = self.parse_expression()?;
-        Ok(Some(AwkPattern::Expression(expr)))
+        // Check for range pattern: pattern1 , pattern2
+        if let Some(first_pat) = first {
+            self.skip_whitespace();
+            if self.pos < self.input.len() && self.current_char().unwrap() == ',' {
+                self.pos += 1; // consume ','
+                let second = self.parse_pattern()?;
+                let second_pat = second.ok_or_else(|| {
+                    Error::Execution("awk: expected second pattern in range".to_string())
+                })?;
+                Ok(Some(AwkPattern::Range(
+                    Box::new(first_pat),
+                    Box::new(second_pat),
+                )))
+            } else {
+                Ok(Some(first_pat))
+            }
+        } else {
+            Ok(None)
+        }
     }
 
     fn parse_action_block(&mut self) -> Result<Vec<AwkAction>> {
@@ -2115,6 +2142,10 @@ struct AwkInterpreter {
     fs: Option<Arc<dyn FileSystem>>,
     /// Working directory for resolving relative paths.
     cwd: PathBuf,
+    /// Tracks active state for range patterns (rule index -> is_active).
+    /// When start pattern matches, range becomes active. When end pattern
+    /// matches, that line is included but range becomes inactive.
+    range_active: HashMap<usize, bool>,
 }
 
 impl AwkInterpreter {
@@ -2132,6 +2163,7 @@ impl AwkInterpreter {
             call_depth: 0,
             fs: None,
             cwd: PathBuf::from("/"),
+            range_active: HashMap::new(),
         }
     }
 
@@ -3307,6 +3339,36 @@ impl AwkInterpreter {
                 re.is_match(&line)
             }
             AwkPattern::Expression(expr) => self.eval_expr(expr).as_bool(),
+            // Range patterns are handled specially via matches_pattern_with_index
+            // which tracks state. This arm shouldn't normally be reached for ranges
+            // in the main loop, but handle it defensively.
+            AwkPattern::Range(_, _) => false,
+        }
+    }
+
+    /// Check if a rule's pattern matches, with range state tracking by rule index.
+    fn matches_pattern_with_index(&mut self, pattern: &AwkPattern, rule_idx: usize) -> bool {
+        match pattern {
+            AwkPattern::Range(start, end) => {
+                let active = *self.range_active.get(&rule_idx).unwrap_or(&false);
+                if active {
+                    // Already in range — check if end pattern matches
+                    if self.matches_pattern(end) {
+                        // End pattern matched: include this line, deactivate range
+                        self.range_active.insert(rule_idx, false);
+                    }
+                    true
+                } else {
+                    // Not in range — check if start pattern matches
+                    if self.matches_pattern(start) {
+                        self.range_active.insert(rule_idx, true);
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+            other => self.matches_pattern(other),
         }
     }
 }
@@ -3498,10 +3560,10 @@ impl Builtin for Awk {
                 let line = interp.input_lines[interp.line_index].clone();
                 interp.state.set_line(&line);
 
-                for rule in &program.main_rules {
-                    // Check pattern
+                for (rule_idx, rule) in program.main_rules.iter().enumerate() {
+                    // Check pattern (with range state tracking)
                     let matches = match &rule.pattern {
-                        Some(pattern) => interp.matches_pattern(pattern),
+                        Some(pattern) => interp.matches_pattern_with_index(pattern, rule_idx),
                         None => true,
                     };
 
