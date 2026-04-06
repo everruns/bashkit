@@ -20,11 +20,12 @@ struct LsOptions {
     recursive: bool,
     sort_by_time: bool,
     classify: bool,
+    columns: bool,
 }
 
 /// The ls builtin - list directory contents.
 ///
-/// Usage: ls [-l] [-a] [-h] [-1] [-R] [-t] [-F] [PATH...]
+/// Usage: ls [-l] [-a] [-h] [-1] [-R] [-t] [-F] [-C] [PATH...]
 ///
 /// Options:
 ///   -l   Use long listing format
@@ -34,6 +35,7 @@ struct LsOptions {
 ///   -R   List subdirectories recursively
 ///   -t   Sort by modification time, newest first
 ///   -F   Append indicator (/ for dirs, * for executables, @ for symlinks, | for FIFOs)
+///   -C   List entries in columns (multi-column output)
 pub struct Ls;
 
 #[async_trait]
@@ -47,6 +49,7 @@ impl Builtin for Ls {
             recursive: false,
             sort_by_time: false,
             classify: false,
+            columns: false,
         };
 
         // Parse flags
@@ -64,6 +67,7 @@ impl Builtin for Ls {
                         'R' => opts.recursive = true,
                         't' => opts.sort_by_time = true,
                         'F' => opts.classify = true,
+                        'C' => opts.columns = true,
                         _ => {
                             return Ok(ExecResult::err(
                                 format!("ls: invalid option -- '{}'\n", c),
@@ -118,8 +122,8 @@ impl Builtin for Ls {
         }
 
         // Output file arguments first (preserving path as given by user)
-        for (path_str, metadata) in &file_args {
-            if opts.long {
+        if opts.long {
+            for (path_str, metadata) in &file_args {
                 let mut entry = format_long_entry(path_str, metadata, opts.human);
                 if opts.classify {
                     // Insert suffix before the trailing newline
@@ -129,12 +133,25 @@ impl Builtin for Ls {
                     }
                 }
                 output.push_str(&entry);
+            }
+        } else if !file_args.is_empty() {
+            let names: Vec<String> = file_args
+                .iter()
+                .map(|(path_str, metadata)| {
+                    let mut name = (*path_str).to_string();
+                    if opts.classify {
+                        name.push_str(classify_suffix(metadata));
+                    }
+                    name
+                })
+                .collect();
+            if opts.columns && !opts.one_per_line {
+                output.push_str(&format_columns(&names, 80));
             } else {
-                output.push_str(path_str);
-                if opts.classify {
-                    output.push_str(classify_suffix(metadata));
+                for name in &names {
+                    output.push_str(name);
+                    output.push('\n');
                 }
-                output.push('\n');
             }
         }
 
@@ -219,17 +236,29 @@ async fn list_directory(
             }
         }
     } else {
+        // Collect entry names for potential column formatting
+        let mut names: Vec<String> = Vec::new();
         for entry in &filtered {
-            output.push_str(&entry.name);
+            let mut name = entry.name.clone();
             if opts.classify {
-                output.push_str(classify_suffix(&entry.metadata));
+                name.push_str(classify_suffix(&entry.metadata));
             }
-            output.push('\n');
+            names.push(name);
             if opts.recursive && entry.metadata.file_type.is_dir() {
                 subdirs.push((
                     path.join(&entry.name),
                     format!("{}/{}", display_path, entry.name),
                 ));
+            }
+        }
+
+        // Precedence: -l > -1 > -C > default (one-per-line)
+        if opts.columns && !opts.one_per_line {
+            output.push_str(&format_columns(&names, 80));
+        } else {
+            for name in &names {
+                output.push_str(name);
+                output.push('\n');
             }
         }
     }
@@ -260,6 +289,37 @@ fn classify_suffix(metadata: &crate::fs::Metadata) -> &'static str {
             if metadata.mode & 0o111 != 0 { "*" } else { "" }
         }
     }
+}
+
+/// Format entries in column-major order, like `ls -C`.
+/// Uses a fixed terminal width (80) since VFS has no real terminal.
+fn format_columns(entries: &[String], terminal_width: usize) -> String {
+    if entries.is_empty() {
+        return String::new();
+    }
+
+    let max_width = entries.iter().map(|e| e.len()).max().unwrap_or(0);
+    let col_width = max_width + 2; // 2 spaces padding between columns
+    let num_cols = (terminal_width / col_width).max(1);
+    let num_rows = entries.len().div_ceil(num_cols);
+
+    let mut output = String::new();
+    for row in 0..num_rows {
+        for col in 0..num_cols {
+            // Column-major order: fill columns top-to-bottom, left-to-right
+            let idx = col * num_rows + row;
+            if idx < entries.len() {
+                // Last column or last entry in row: no trailing padding
+                if col < num_cols - 1 && idx + num_rows < entries.len() {
+                    output.push_str(&format!("{:<width$}", entries[idx], width = col_width));
+                } else {
+                    output.push_str(&entries[idx]);
+                }
+            }
+        }
+        output.push('\n');
+    }
+    output
 }
 
 fn format_long_entry(name: &str, metadata: &crate::fs::Metadata, human: bool) -> String {

@@ -75,6 +75,35 @@ ls -F /tmp/lscf/mydir /tmp/lscf/normal.txt
 /tmp/lscf/mydir:
 ### end
 
+### ls_columns_basic
+# ls -C should produce multi-column output
+mkdir -p /tmp/lscol
+touch /tmp/lscol/alpha /tmp/lscol/beta /tmp/lscol/delta /tmp/lscol/gamma
+ls -C /tmp/lscol
+### expect
+alpha  beta   delta  gamma
+### end
+
+### ls_columns_with_classify
+# ls -CF should combine classify and columns
+mkdir -p /tmp/lscf2/subdir
+touch /tmp/lscf2/file.txt
+ls -CF /tmp/lscf2
+### expect
+file.txt  subdir/
+### end
+
+### ls_one_per_line_overrides_columns
+# ls -1 should override -C (one per line)
+mkdir -p /tmp/ls1c
+touch /tmp/ls1c/aaa /tmp/ls1c/bbb /tmp/ls1c/ccc
+ls -C1 /tmp/ls1c
+### expect
+aaa
+bbb
+ccc
+### end
+
 ### ls_classify_long
 ### bash_diff: bashkit ls -l omits 'total' line
 # ls -lF should append indicators in long format
