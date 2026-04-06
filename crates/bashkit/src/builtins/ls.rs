@@ -329,7 +329,7 @@ fn format_columns(entries: &[String], terminal_width: usize) -> String {
 
     let mut output = String::new();
     for row in 0..num_rows {
-        for col in 0..num_cols {
+        for (col, col_w) in col_widths.iter().enumerate() {
             // Column-major order: fill columns top-to-bottom, left-to-right
             let idx = col * num_rows + row;
             if idx < entries.len() {
@@ -337,7 +337,7 @@ fn format_columns(entries: &[String], terminal_width: usize) -> String {
                 if is_last {
                     output.push_str(&entries[idx]);
                 } else {
-                    let width = col_widths[col] + 2; // entry width + 2 spaces
+                    let width = col_w + 2; // entry width + 2 spaces
                     output.push_str(&format!("{:<width$}", entries[idx], width = width));
                 }
             }
