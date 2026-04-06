@@ -342,3 +342,65 @@ async fn realfs_symlink_relative_escape_blocked() {
         r.stdout
     );
 }
+
+// --- Runtime mount/unmount (exercises Bash::mount / Bash::unmount) ---
+
+#[tokio::test]
+async fn runtime_mount_readonly() {
+    use bashkit::{PosixFs, RealFs, RealFsMode};
+    use std::sync::Arc;
+
+    let dir = setup_host_dir();
+    let mut bash = Bash::new();
+
+    let backend = RealFs::new(dir.path(), RealFsMode::ReadOnly).unwrap();
+    let fs: Arc<dyn bashkit::FileSystem> = Arc::new(PosixFs::new(backend));
+    bash.mount("/mnt/host", fs).unwrap();
+
+    let result = bash.exec("cat /mnt/host/hello.txt").await.unwrap();
+    assert_eq!(result.stdout, "hello world\n");
+}
+
+#[tokio::test]
+async fn runtime_unmount() {
+    use bashkit::{PosixFs, RealFs, RealFsMode};
+    use std::sync::Arc;
+
+    let dir = setup_host_dir();
+    let mut bash = Bash::new();
+
+    let backend = RealFs::new(dir.path(), RealFsMode::ReadOnly).unwrap();
+    let fs: Arc<dyn bashkit::FileSystem> = Arc::new(PosixFs::new(backend));
+    bash.mount("/mnt/host", fs).unwrap();
+
+    let result = bash.exec("cat /mnt/host/hello.txt").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+
+    bash.unmount("/mnt/host").unwrap();
+
+    let result = bash.exec("cat /mnt/host/hello.txt 2>&1").await.unwrap();
+    assert_ne!(
+        result.exit_code, 0,
+        "file should not be accessible after unmount"
+    );
+}
+
+#[tokio::test]
+async fn runtime_mount_readwrite() {
+    use bashkit::{PosixFs, RealFs, RealFsMode};
+    use std::sync::Arc;
+
+    let dir = setup_host_dir();
+    let mut bash = Bash::new();
+
+    let backend = RealFs::new(dir.path(), RealFsMode::ReadWrite).unwrap();
+    let fs: Arc<dyn bashkit::FileSystem> = Arc::new(PosixFs::new(backend));
+    bash.mount("/workspace", fs).unwrap();
+
+    bash.exec("echo 'runtime write' > /workspace/runtime.txt")
+        .await
+        .unwrap();
+
+    let content = std::fs::read_to_string(dir.path().join("runtime.txt")).unwrap();
+    assert_eq!(content, "runtime write\n");
+}
