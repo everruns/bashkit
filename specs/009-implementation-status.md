@@ -126,7 +126,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | arithmetic.test.sh | 75 | includes logical, bitwise, compound assign, increment/decrement, `let` builtin, `declare -i` arithmetic |
 | array-slicing.test.sh | 8 | array slice operations |
 | array-splat.test.sh | 2 | `"${arr[@]}"` individual element splatting in assignments |
-| arrays.test.sh | 31 | indices, `${arr[@]}` / `${arr[*]}`, negative indexing `${arr[-1]}` |
+| arrays.test.sh | 34 | indices, `${arr[@]}` / `${arr[*]}`, negative indexing `${arr[-1]}`, quoted expansion |
 | assoc-arrays.test.sh | 22 | associative arrays `declare -A` |
 | awk-printf-width.test.sh | 4 | AWK printf width/precision memory limits |
 | background.test.sh | 2 | background job handling |

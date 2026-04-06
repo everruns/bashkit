@@ -1792,6 +1792,59 @@ impl<'a> Parser<'a> {
     }
 
     /// Strip surrounding quotes from a string value
+    /// Split array element text respecting single and double quotes.
+    /// Returns Vec of (element_text, was_quoted).
+    /// Quoted elements have their outer quotes stripped.
+    fn split_array_elements(s: &str) -> Vec<(String, bool)> {
+        let mut result = Vec::new();
+        let mut current = String::new();
+        let mut chars = s.chars().peekable();
+        let mut in_double_quote = false;
+        let mut in_single_quote = false;
+        let mut is_quoted = false;
+
+        while let Some(c) = chars.next() {
+            match c {
+                '"' if !in_single_quote => {
+                    in_double_quote = !in_double_quote;
+                    is_quoted = true;
+                    // Don't include the quote character in output
+                }
+                '\'' if !in_double_quote => {
+                    in_single_quote = !in_single_quote;
+                    is_quoted = true;
+                    // Don't include the quote character in output
+                }
+                '\\' if in_double_quote => {
+                    // In double quotes, backslash escapes certain chars
+                    if let Some(&next) = chars.peek() {
+                        if matches!(next, '$' | '`' | '"' | '\\' | '\n') {
+                            current.push(chars.next().unwrap());
+                        } else {
+                            current.push(c);
+                        }
+                    } else {
+                        current.push(c);
+                    }
+                }
+                c if c.is_ascii_whitespace() && !in_double_quote && !in_single_quote => {
+                    if !current.is_empty() {
+                        result.push((current.clone(), is_quoted));
+                        current.clear();
+                        is_quoted = false;
+                    }
+                }
+                _ => {
+                    current.push(c);
+                }
+            }
+        }
+        if !current.is_empty() {
+            result.push((current, is_quoted));
+        }
+        result
+    }
+
     fn strip_quotes(s: &str) -> &str {
         if s.len() >= 2
             && ((s.starts_with('"') && s.ends_with('"'))
@@ -1879,6 +1932,10 @@ impl<'a> Parser<'a> {
                             parts: vec![WordPart::Literal(elem_clone)],
                             quoted: true,
                         }
+                    } else if matches!(&self.current_token, Some(tokens::Token::QuotedWord(_))) {
+                        let mut w = self.parse_word(elem_clone);
+                        w.quoted = true;
+                        w
                     } else {
                         self.parse_word(elem_clone)
                     };
@@ -1906,9 +1963,17 @@ impl<'a> Parser<'a> {
         // Array literal in the token itself: arr=(a b c)
         if value_str.starts_with('(') && value_str.ends_with(')') {
             let inner = &value_str[1..value_str.len() - 1];
-            let elements: Vec<Word> = inner
-                .split_whitespace()
-                .map(|s| self.parse_word(s.to_string()))
+            let elements: Vec<Word> = Self::split_array_elements(inner)
+                .into_iter()
+                .map(|(s, quoted)| {
+                    if quoted {
+                        let mut w = self.parse_word(s);
+                        w.quoted = true;
+                        w
+                    } else {
+                        self.parse_word(s)
+                    }
+                })
                 .collect();
             return Some((
                 Assignment {
