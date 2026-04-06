@@ -25,7 +25,7 @@ const bashTool = new BashTool({ username: "agent", hostname: "sandbox" });
 // Define bashkit as a Vercel AI SDK tool
 const bashkitTool = tool({
   description: bashTool.shortDescription,
-  parameters: jsonSchema({
+  inputSchema: jsonSchema({
     type: "object",
     properties: {
       commands: {
