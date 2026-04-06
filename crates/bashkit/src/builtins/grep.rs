@@ -850,7 +850,7 @@ fn try_indexed_search(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::{FileSystem, InMemoryFs};
+    use crate::fs::{FileSystem, InMemoryFs, OverlayFs};
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1061,6 +1061,91 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("/dir/a.txt:hello"));
         assert!(!result.stdout.contains("b.log"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_recursive_single_file() {
+        let grep = Grep;
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(&PathBuf::from("/data"), true).await.unwrap();
+        fs.write_file(&PathBuf::from("/data/test.md"), b"hello world\n")
+            .await
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["-r", "hello", "/data/test.md"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0, "grep -r on a single file should match");
+        assert!(
+            result.stdout.contains("hello world"),
+            "expected 'hello world' in stdout, got: {:?}",
+            result.stdout
+        );
+    }
+
+    /// Regression: grep -r on a single file with OverlayFs returned empty
+    /// because OverlayFs::read_dir returned Ok(vec![]) for files instead of Err.
+    #[tokio::test]
+    async fn test_grep_recursive_single_file_overlay() {
+        let grep = Grep;
+        let base = Arc::new(InMemoryFs::new());
+        let fs: Arc<dyn FileSystem> = Arc::new(OverlayFs::new(base));
+        fs.mkdir(&PathBuf::from("/data"), true).await.unwrap();
+        fs.write_file(&PathBuf::from("/data/test.md"), b"hello world\n")
+            .await
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["-r", "hello", "/data/test.md"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0, "grep -r on single file via OverlayFs");
+        assert!(
+            result.stdout.contains("hello world"),
+            "expected 'hello world' in stdout, got: {:?}",
+            result.stdout
+        );
     }
 
     #[tokio::test]
