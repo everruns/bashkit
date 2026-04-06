@@ -39,20 +39,27 @@ jobs:
           fi
 
       - name: Strip git-only dependencies for publishing
-        # monty is a git dep (not yet on crates.io) — remove before publish
+        # monty is a git dep (not yet on crates.io) — remove before publish.
+        # Must strip from both bashkit AND bashkit-cli because cargo resolves
+        # the whole workspace when publishing a single crate.
         run: |
+          # --- bashkit core ---
           TOML=crates/bashkit/Cargo.toml
-          # Remove monty dependency line
           sed -i '/^monty = .*/d' "$TOML"
-          # Remove python feature that references monty
           sed -i '/^python = \["dep:monty"\]/d' "$TOML"
-          # Remove python_scripts example block (requires python feature)
           sed -i '/^\[\[example\]\]/{N;N;/python_scripts/d}' "$TOML"
-          echo "--- Cargo.toml after stripping ---"
+          echo "--- bashkit Cargo.toml after stripping ---"
           cat "$TOML"
 
+          # --- bashkit-cli (workspace resolution requires this too) ---
+          CLI_TOML=crates/bashkit-cli/Cargo.toml
+          sed -i '/^python = \["bashkit\/python"\]/d' "$CLI_TOML"
+          sed -i 's/default = \["python"\]/default = []/' "$CLI_TOML"
+          echo "--- bashkit-cli Cargo.toml after stripping ---"
+          cat "$CLI_TOML"
+
       - name: Publish bashkit to crates.io
-        run: cargo publish -p bashkit --allow-dirty 2>&1 || echo "::warning::bashkit publish failed (may already exist)"
+        run: cargo publish -p bashkit --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -84,3 +91,37 @@ jobs:
         run: cargo publish -p bashkit-cli --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # ============================================================================
+  # Verify all packages were published successfully
+  # ============================================================================
+  verify-publish:
+    name: Verify published versions
+    runs-on: ubuntu-latest
+    needs: [publish-bashkit, publish-bashkit-cli]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Wait for crates.io propagation
+        run: sleep 60
+
+      - name: Verify crates.io versions
+        run: |
+          EXPECTED=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Expected version: $EXPECTED"
+          PASS=true
+
+          for CRATE in bashkit bashkit-cli; do
+            ACTUAL=$(curl -s "https://crates.io/api/v1/crates/$CRATE" | python3 -c "import sys,json; print(json.load(sys.stdin)['crate']['max_version'])")
+            if [ "$ACTUAL" = "$EXPECTED" ]; then
+              echo "✓ $CRATE@$ACTUAL on crates.io"
+            else
+              echo "✗ $CRATE: expected $EXPECTED, got $ACTUAL"
+              PASS=false
+            fi
+          done
+
+          if [ "$PASS" = "false" ]; then
+            echo "::error::Some crates.io packages were not published correctly"
+            exit 1
+          fi
