@@ -490,10 +490,6 @@ criteria = "safe-to-deploy"
 version = "0.17.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.fastrand]]
-version = "2.4.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.ff]]
 version = "0.13.1"
 criteria = "safe-to-deploy"
