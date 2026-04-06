@@ -147,6 +147,7 @@ jobs:
       - name: Run harness OpenAI joke example
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        if: env.OPENAI_API_KEY != ''
         run: |
           cargo build -p bashkit-cli --features realfs --quiet
           bash examples/harness-openai-joke.sh
