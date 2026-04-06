@@ -395,14 +395,31 @@ jobs:
         run: ls -lh bashkit.*.node bashkit.*.wasm 2>/dev/null || true
         working-directory: crates/bashkit-js
 
+      - name: Determine npm dist-tag
+        id: dist-tag
+        working-directory: crates/bashkit-js
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "version=$PKG_VERSION"
+
+          # Stable if triggered by a release tag, OR if workflow_dispatch
+          # and the version looks like a stable semver (no pre-release suffix).
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          elif [[ "$PKG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=next" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish
         run: |
-          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Publishing stable release"
+          TAG="${{ steps.dist-tag.outputs.tag }}"
+          echo "Publishing with dist-tag: $TAG"
+          if [ "$TAG" = "latest" ]; then
             npm publish --provenance --access public
           else
-            echo "Publishing pre-release with 'next' tag"
-            npm publish --provenance --tag next --access public
+            npm publish --provenance --tag "$TAG" --access public
           fi
         working-directory: crates/bashkit-js
         env:
