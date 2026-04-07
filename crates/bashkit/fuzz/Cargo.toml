@@ -94,3 +94,10 @@ path = "fuzz_targets/sed_fuzz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "yaml_fuzz"
+path = "fuzz_targets/yaml_fuzz.rs"
+test = false
+doc = false
+bench = false
