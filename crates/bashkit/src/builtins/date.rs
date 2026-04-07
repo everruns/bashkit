@@ -6,6 +6,7 @@
 //! caught and return graceful errors.
 
 use std::fmt::Write;
+use std::path::Path;
 
 use async_trait::async_trait;
 use chrono::format::{Item, StrftimeItems};
@@ -17,13 +18,14 @@ use crate::interpreter::ExecResult;
 
 /// The date builtin - display or set date and time.
 ///
-/// Usage: date [+FORMAT] [-u] [-R] [-I[TIMESPEC]]
+/// Usage: date [+FORMAT] [-u] [-R] [-I[TIMESPEC]] [-r FILE]
 ///
 /// Options:
 ///   +FORMAT  Output date according to FORMAT
 ///   -u       Display UTC time instead of local time
 ///   -R       Output RFC 2822 formatted date
 ///   -I[FMT]  Output ISO 8601 formatted date (FMT: date, hours, minutes, seconds)
+///   -r FILE  Display the last modification time of FILE
 ///
 /// FORMAT specifiers:
 ///   %Y  Year with century (e.g., 2024)
@@ -327,6 +329,7 @@ impl Builtin for Date {
         let mut utc = false;
         let mut format_arg: Option<String> = None;
         let mut date_str: Option<String> = None;
+        let mut ref_file: Option<String> = None;
         let mut rfc2822 = false;
         let mut iso8601: Option<String> = None;
 
@@ -342,6 +345,15 @@ impl Builtin for Date {
             } else if p.flag("--date") {
                 if let Some(val) = p.positional() {
                     date_str = Some(val.to_string());
+                }
+            } else if let Some(val) = p.current().and_then(|s| s.strip_prefix("--reference=")) {
+                ref_file = Some(val.to_string());
+                p.advance();
+            } else if let Some(val) = p.flag_value_opt("-r") {
+                ref_file = Some(val.to_string());
+            } else if p.flag("--reference") {
+                if let Some(val) = p.positional() {
+                    ref_file = Some(val.to_string());
                 }
             } else if p.flag_any(&["-R", "--rfc-2822", "--rfc-email"]) {
                 rfc2822 = true;
@@ -364,14 +376,34 @@ impl Builtin for Date {
         // Get the datetime to format
         // THREAT[TM-INF-018]: Use virtual time if configured
         let now = self.now();
-        let epoch_input = date_str.as_deref().is_some_and(uses_epoch_input);
-        let dt_utc = if let Some(ref ds) = date_str {
-            match parse_date_string(ds, now) {
+
+        // Resolve the datetime: -r (file mtime) > -d (date string) > now
+        let epoch_input;
+        let dt_utc;
+        if let Some(ref file) = ref_file {
+            // -r / --reference: stat file to get modification time
+            let path = Path::new(file);
+            match ctx.fs.stat(path).await {
+                Ok(meta) => {
+                    dt_utc = meta.modified.into();
+                    epoch_input = false;
+                }
+                Err(_) => {
+                    return Ok(ExecResult::err(
+                        format!("date: cannot stat '{}': No such file or directory\n", file),
+                        1,
+                    ));
+                }
+            }
+        } else if let Some(ref ds) = date_str {
+            epoch_input = uses_epoch_input(ds);
+            dt_utc = match parse_date_string(ds, now) {
                 Ok(dt) => dt,
                 Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),
-            }
+            };
         } else {
-            now
+            epoch_input = false;
+            dt_utc = now;
         };
 
         // Handle -R (RFC 2822) output
@@ -856,5 +888,110 @@ mod tests {
         // %%N should become %N (literal %) after chrono processes %%
         // We only expand single %N, not %%N
         assert_eq!(expand_nanoseconds("%%N", 123), "%%N");
+    }
+
+    // Helper to run date with a pre-configured filesystem
+    async fn run_date_with_fs(args: &[&str], fs: Arc<InMemoryFs>) -> ExecResult {
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        Date::new().execute(ctx).await.unwrap()
+    }
+
+    // === -r / --reference (file mtime) tests ===
+
+    #[tokio::test]
+    async fn test_date_r_file_mtime() {
+        use crate::fs::FileSystem;
+
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/tmp"), true).await.unwrap();
+        fs.write_file(std::path::Path::new("/tmp/test.txt"), b"hello")
+            .await
+            .unwrap();
+
+        // -r should return the file's mtime, not an error
+        let result = run_date_with_fs(&["-r", "/tmp/test.txt", "+%Y-%m-%d"], fs).await;
+        assert_eq!(result.exit_code, 0);
+        let date = result.stdout.trim();
+        // Should be a valid date (YYYY-MM-DD)
+        assert_eq!(date.len(), 10);
+        assert!(date.contains('-'));
+    }
+
+    #[tokio::test]
+    async fn test_date_r_file_not_found() {
+        let fs = Arc::new(InMemoryFs::new());
+        let result = run_date_with_fs(&["-r", "/nonexistent.txt"], fs).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("cannot stat"));
+        assert!(result.stderr.contains("/nonexistent.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_date_r_with_format() {
+        use crate::fs::FileSystem;
+
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/tmp"), true).await.unwrap();
+        fs.write_file(std::path::Path::new("/tmp/test.txt"), b"content")
+            .await
+            .unwrap();
+
+        let result = run_date_with_fs(&["-r", "/tmp/test.txt", "+%B"], fs).await;
+        assert_eq!(result.exit_code, 0);
+        // Should be a month name, non-empty
+        let month = result.stdout.trim();
+        assert!(!month.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_date_reference_long_flag() {
+        use crate::fs::FileSystem;
+
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/tmp"), true).await.unwrap();
+        fs.write_file(std::path::Path::new("/tmp/test.txt"), b"content")
+            .await
+            .unwrap();
+
+        let result = run_date_with_fs(&["--reference=/tmp/test.txt", "+%Y"], fs).await;
+        assert_eq!(result.exit_code, 0);
+        let year = result.stdout.trim();
+        assert_eq!(year.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_date_r_with_utc() {
+        use crate::fs::FileSystem;
+
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/tmp"), true).await.unwrap();
+        fs.write_file(std::path::Path::new("/tmp/test.txt"), b"content")
+            .await
+            .unwrap();
+
+        let result = run_date_with_fs(&["-u", "-r", "/tmp/test.txt", "+%Z"], fs).await;
+        assert_eq!(result.exit_code, 0);
+        let tz = result.stdout.trim();
+        assert!(tz.contains("UTC") || tz == "+0000" || tz == "+00:00");
     }
 }
