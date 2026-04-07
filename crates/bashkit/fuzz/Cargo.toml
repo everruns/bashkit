@@ -80,3 +80,10 @@ path = "fuzz_targets/base64_fuzz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "envsubst_fuzz"
+path = "fuzz_targets/envsubst_fuzz.rs"
+test = false
+doc = false
+bench = false
