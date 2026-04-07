@@ -2033,11 +2033,12 @@ impl Interpreter {
                     // Unary operators
                     let resolve = |p: &str| -> std::path::PathBuf {
                         let path = std::path::Path::new(p);
-                        if path.is_absolute() {
+                        let joined = if path.is_absolute() {
                             path.to_path_buf()
                         } else {
                             self.cwd.join(path)
-                        }
+                        };
+                        crate::fs::normalize_path(&joined)
                     };
                     match args[0].as_str() {
                         "-z" => args[1].is_empty(),
@@ -6185,14 +6186,15 @@ impl Interpreter {
         Ok(result)
     }
 
-    /// Resolve a path relative to cwd
+    /// Resolve a path relative to cwd, normalizing `.` and `..` components.
     fn resolve_path(&self, path: &str) -> PathBuf {
         let p = Path::new(path);
-        if p.is_absolute() {
+        let joined = if p.is_absolute() {
             p.to_path_buf()
         } else {
             self.cwd.join(p)
-        }
+        };
+        crate::fs::normalize_path(&joined)
     }
 
     /// Expand an array access expression (`${arr[index]}`).
