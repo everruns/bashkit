@@ -5136,9 +5136,10 @@ impl Interpreter {
         match mode {
             'v' => {
                 // command -v: print name/path if it's a known command
-                let output = if self.functions.contains_key(cmd_name.as_str()) {
-                    Some(cmd_name.to_string())
-                } else if self.builtins.contains_key(cmd_name.as_str()) || is_keyword(cmd_name) {
+                let output = if self.functions.contains_key(cmd_name.as_str())
+                    || self.builtins.contains_key(cmd_name.as_str())
+                    || is_keyword(cmd_name)
+                {
                     Some(cmd_name.to_string())
                 } else if let Some(path) = self.resolve_command_path(cmd_name).await {
                     Some(path)

@@ -29,6 +29,7 @@ exit=1
 ### end
 
 ### command_v_searches_path
+### skip: VFS-only test — real bash doesn't have /scripts on disk
 # command -v finds executable scripts on PATH
 mkdir -p /scripts
 echo '#!/bin/bash' > /scripts/myscript
@@ -49,6 +50,7 @@ echo is a shell builtin
 ### end
 
 ### command_V_path_script
+### skip: VFS-only test — real bash doesn't have /scripts on disk
 # command -V shows full path for scripts on PATH
 mkdir -p /scripts
 echo '#!/bin/bash' > /scripts/pathcmd
