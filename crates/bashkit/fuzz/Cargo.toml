@@ -108,3 +108,10 @@ path = "fuzz_targets/template_fuzz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "grep_fuzz"
+path = "fuzz_targets/grep_fuzz.rs"
+test = false
+doc = false
+bench = false
