@@ -17,6 +17,17 @@ use crate::interpreter::ExecResult;
 /// iconv builtin - character encoding conversion.
 pub struct Iconv;
 
+/// Parse an encoding spec like "ascii//translit" into (encoding, translit).
+fn parse_encoding_spec(spec: &str) -> (Option<&'static str>, bool) {
+    let (name, translit) = if let Some(pos) = spec.find("//") {
+        let suffix = &spec[pos + 2..];
+        (&spec[..pos], suffix.eq_ignore_ascii_case("translit"))
+    } else {
+        (spec, false)
+    };
+    (normalize_encoding(name), translit)
+}
+
 /// Normalize encoding name to canonical form.
 fn normalize_encoding(name: &str) -> Option<&'static str> {
     match name.to_ascii_lowercase().replace('-', "").as_str() {
@@ -29,6 +40,54 @@ fn normalize_encoding(name: &str) -> Option<&'static str> {
     }
 }
 
+/// Transliterate non-ASCII characters to their closest ASCII equivalents.
+fn transliterate_to_ascii(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch.is_ascii() {
+            result.push(ch);
+        } else {
+            result.push(match ch {
+                'á' | 'à' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' => 'a',
+                'é' | 'è' | 'ê' | 'ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => 'e',
+                'í' | 'ì' | 'î' | 'ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' => 'i',
+                'ó' | 'ò' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ŏ' | 'ő' => 'o',
+                'ú' | 'ù' | 'û' | 'ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' => 'u',
+                'ý' | 'ÿ' | 'ŷ' => 'y',
+                'ñ' | 'ń' | 'ņ' | 'ň' => 'n',
+                'ç' | 'ć' | 'č' | 'ĉ' | 'ċ' => 'c',
+                'ß' => 's',
+                'æ' => 'a',
+                'œ' => 'o',
+                'ð' => 'd',
+                'þ' => 't',
+                'ł' => 'l',
+                'đ' => 'd',
+                'ğ' => 'g',
+                'ş' | 'š' | 'ś' | 'ŝ' => 's',
+                'ž' | 'ź' | 'ż' => 'z',
+                'ř' => 'r',
+                'ť' | 'ţ' => 't',
+                'Á' | 'À' | 'Â' | 'Ã' | 'Ä' | 'Å' => 'A',
+                'É' | 'È' | 'Ê' | 'Ë' => 'E',
+                'Í' | 'Ì' | 'Î' | 'Ï' => 'I',
+                'Ó' | 'Ò' | 'Ô' | 'Õ' | 'Ö' | 'Ø' => 'O',
+                'Ú' | 'Ù' | 'Û' | 'Ü' => 'U',
+                'Ý' => 'Y',
+                'Ñ' => 'N',
+                'Ç' => 'C',
+                'Š' => 'S',
+                'Ž' => 'Z',
+                'Ř' => 'R',
+                'Ť' => 'T',
+                'Ď' => 'D',
+                _ => '?',
+            });
+        }
+    }
+    result
+}
+
 const SUPPORTED_ENCODINGS: &[&str] = &[
     "ASCII",
     "ISO-8859-1",
@@ -39,22 +98,33 @@ const SUPPORTED_ENCODINGS: &[&str] = &[
 ];
 
 /// Encode bytes from UTF-8 string into target encoding.
-fn encode_to(input: &str, encoding: &str) -> std::result::Result<Vec<u8>, String> {
+/// When `transliterate` is true, non-ASCII characters are replaced with
+/// ASCII equivalents before encoding (supports `//translit` mode).
+fn encode_to(
+    input: &str,
+    encoding: &str,
+    transliterate: bool,
+) -> std::result::Result<Vec<u8>, String> {
+    let text = if transliterate {
+        transliterate_to_ascii(input)
+    } else {
+        input.to_string()
+    };
     match encoding {
-        "utf-8" => Ok(input.as_bytes().to_vec()),
+        "utf-8" => Ok(text.as_bytes().to_vec()),
         "ascii" => {
-            for (i, b) in input.bytes().enumerate() {
+            for (i, b) in text.bytes().enumerate() {
                 if b > 127 {
                     return Err(format!(
                         "iconv: cannot convert character at byte {i} to ASCII\n"
                     ));
                 }
             }
-            Ok(input.as_bytes().to_vec())
+            Ok(text.as_bytes().to_vec())
         }
         "latin1" => {
-            let mut out = Vec::with_capacity(input.len());
-            for ch in input.chars() {
+            let mut out = Vec::with_capacity(text.len());
+            for ch in text.chars() {
                 let cp = ch as u32;
                 if cp > 255 {
                     return Err(format!("iconv: cannot convert U+{cp:04X} to LATIN1\n"));
@@ -67,7 +137,7 @@ fn encode_to(input: &str, encoding: &str) -> std::result::Result<Vec<u8>, String
             let mut out = Vec::new();
             // BOM little-endian
             out.extend_from_slice(&[0xFF, 0xFE]);
-            for ch in input.chars() {
+            for ch in text.chars() {
                 let mut buf = [0u16; 2];
                 let encoded = ch.encode_utf16(&mut buf);
                 for u in encoded {
@@ -78,7 +148,7 @@ fn encode_to(input: &str, encoding: &str) -> std::result::Result<Vec<u8>, String
         }
         "utf-16be" => {
             let mut out = Vec::new();
-            for ch in input.chars() {
+            for ch in text.chars() {
                 let mut buf = [0u16; 2];
                 let encoded = ch.encode_utf16(&mut buf);
                 for u in encoded {
@@ -227,10 +297,10 @@ impl Builtin for Iconv {
             }
         };
 
-        let to = match &to_enc {
-            Some(t) => match normalize_encoding(t) {
-                Some(e) => e,
-                None => {
+        let (to, to_translit) = match &to_enc {
+            Some(t) => match parse_encoding_spec(t) {
+                (Some(e), translit) => (e, translit),
+                (None, _) => {
                     return Ok(ExecResult::err(
                         format!("iconv: unsupported encoding '{}'\n", t),
                         1,
@@ -268,7 +338,7 @@ impl Builtin for Iconv {
         };
 
         // Encode from UTF-8 string to target encoding
-        let output_bytes = match encode_to(&text, to) {
+        let output_bytes = match encode_to(&text, to, to_translit) {
             Ok(b) => b,
             Err(e) => return Ok(ExecResult::err(e, 1)),
         };
@@ -414,5 +484,41 @@ mod tests {
         let r = run(&["-f", "UTF-8", "-t", "UTF-8"], Some("hello world\n"), None).await;
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.stdout, "hello world\n");
+    }
+
+    #[tokio::test]
+    async fn test_translit_to_ascii() {
+        let r = run(
+            &["-f", "UTF-8", "-t", "ascii//translit"],
+            Some("caf\u{00e9}"),
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "cafe");
+    }
+
+    #[tokio::test]
+    async fn test_translit_multiple_diacritics() {
+        let r = run(
+            &["-f", "UTF-8", "-t", "ASCII//TRANSLIT"],
+            Some("na\u{00ef}ve"),
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "naive");
+    }
+
+    #[tokio::test]
+    async fn test_translit_german() {
+        let r = run(
+            &["-f", "utf-8", "-t", "ascii//translit"],
+            Some("H\u{00e9}llo W\u{00f6}rld"),
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "Hello World");
     }
 }
