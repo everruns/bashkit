@@ -123,6 +123,30 @@ echo exit: $?
 exit: 1
 ### end
 
+### redirect_stderr_suppress_ls
+# Suppress stderr from ls with 2>/dev/null (issue #1116)
+ls /nonexistent 2>/dev/null
+echo exit: $?
+### expect
+exit: 2
+### end
+
+### redirect_stderr_suppress_compound
+# Suppress stderr from compound command with 2>/dev/null (issue #1116)
+{ ls /nonexistent; } 2>/dev/null
+echo exit: $?
+### expect
+exit: 2
+### end
+
+### redirect_combined_suppress_ls
+# Suppress both stdout and stderr with &>/dev/null (issue #1116)
+ls /nonexistent &>/dev/null
+echo exit: $?
+### expect
+exit: 2
+### end
+
 ### redirect_stderr_to_file_content
 # Redirect stderr content to file and verify it
 sleep abc 2>/tmp/sleep_err.txt

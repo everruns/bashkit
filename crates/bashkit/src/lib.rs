@@ -5410,4 +5410,33 @@ echo missing fi"#,
         // 25 doublings of 10 bytes = 335 544 320 without limits; must be capped ≤ 1024
         assert!(len <= 1024, "string length {len} must be ≤ 1024");
     }
+
+    /// Issue #1116: 2>/dev/null must suppress stderr in streaming mode
+    #[tokio::test]
+    async fn test_stderr_redirect_devnull_streaming() {
+        let stderr_chunks = Arc::new(Mutex::new(Vec::new()));
+        let stderr_cb = stderr_chunks.clone();
+        let mut bash = Bash::new();
+
+        // Compound command — the main bug: callback fired before redirect applied
+        let result = bash
+            .exec_streaming(
+                "{ ls /nonexistent; } 2>/dev/null; echo exit:$?",
+                Box::new(move |_stdout, stderr| {
+                    if !stderr.is_empty() {
+                        stderr_cb.lock().unwrap().push(stderr.to_string());
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.stderr, "", "final stderr should be empty");
+        let stderr_chunks = stderr_chunks.lock().unwrap();
+        assert!(
+            stderr_chunks.is_empty(),
+            "no stderr should be streamed when 2>/dev/null is used, got: {:?}",
+            *stderr_chunks
+        );
+    }
 }

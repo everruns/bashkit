@@ -1367,7 +1367,29 @@ impl Interpreter {
                     } else {
                         None
                     };
+
+                    // Suspend output callback while output redirects are active
+                    // so that maybe_emit_output inside the compound body does not
+                    // leak output that will be redirected (e.g. `{ cmd; } 2>/dev/null`).
+                    let has_output_redirect = redirects.iter().any(|r| {
+                        !matches!(
+                            r.kind,
+                            RedirectKind::Input | RedirectKind::HereDoc | RedirectKind::HereString
+                        )
+                    });
+                    let saved_callback = if has_output_redirect {
+                        self.output_callback.take()
+                    } else {
+                        None
+                    };
+
                     let result = self.execute_compound(compound).await?;
+
+                    // Restore callback before applying redirections
+                    if let Some(cb) = saved_callback {
+                        self.output_callback = Some(cb);
+                    }
+
                     if let Some(prev) = prev_pipeline_stdin {
                         self.pipeline_stdin = prev;
                     }
@@ -3593,7 +3615,8 @@ impl Interpreter {
             let err_msg = first.trim_start_matches("\x00ERR\x00").to_string();
             self.last_exit_code = 1;
             self.restore_variables(var_saves);
-            return Ok(ExecResult::err(err_msg, 1));
+            let result = ExecResult::err(err_msg, 1);
+            return self.apply_redirections(result, &command.redirects).await;
         }
 
         let xtrace_line = self.build_xtrace_line(&name, &args);
@@ -10852,5 +10875,27 @@ echo "count=$COUNT"
         // (( )) inside process substitution must be preserved
         let result = run_script(r#"cat <( x=5; (( x > 3 )) && echo YES )"#).await;
         assert_eq!(result.stdout.trim(), "YES");
+    }
+
+    #[tokio::test]
+    async fn test_stderr_redirect_devnull_simple_and_compound() {
+        // Issue #1116: 2>/dev/null must suppress stderr from builtins
+        let result = run_script("ls /nonexistent 2>/dev/null; echo exit:$?").await;
+        assert_eq!(result.stderr, "", "simple: stderr should be suppressed");
+        assert_eq!(result.stdout.trim(), "exit:2");
+
+        // Compound command
+        let result = run_script("{ ls /nonexistent; } 2>/dev/null; echo exit:$?").await;
+        assert_eq!(result.stderr, "", "compound: stderr should be suppressed");
+        assert_eq!(result.stdout.trim(), "exit:2");
+
+        // &>/dev/null
+        let result = run_script("ls /nonexistent &>/dev/null; echo exit:$?").await;
+        assert_eq!(result.stderr, "", "&>: stderr should be suppressed");
+        assert_eq!(result.stdout.trim(), "exit:2");
+
+        // failglob + redirect
+        let result = run_script("shopt -s failglob; ls ./*.html 2>/dev/null; echo exit:$?").await;
+        assert_eq!(result.stderr, "", "failglob: stderr should be suppressed");
     }
 }
