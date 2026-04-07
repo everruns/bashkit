@@ -64,6 +64,19 @@ export interface BashOptions {
    */
   files?: Record<string, FileValue>;
   /**
+   * Real filesystem mounts. Each mount maps a host directory into the VFS.
+   *
+   * @example
+   * ```typescript
+   * const bash = new Bash({
+   *   mounts: [
+   *     { path: "/docs", root: "/real/path/to/docs", readOnly: true },
+   *   ],
+   * });
+   * ```
+   */
+  mounts?: Array<{ path: string; root: string; readOnly?: boolean }>;
+  /**
    * Enable embedded Python execution (`python`/`python3` builtins).
    *
    * When true, bash scripts can use `python -c '...'` or `python3 script.py`
@@ -136,6 +149,11 @@ function toNativeOptions(
     maxLoopIterations: options?.maxLoopIterations,
     maxMemory: options?.maxMemory,
     files: resolvedFiles,
+    mounts: options?.mounts?.map((m) => ({
+      hostPath: m.root,
+      vfsPath: m.path,
+      readOnly: m.readOnly,
+    })),
     python: options?.python,
     externalFunctions: options?.externalFunctions,
   };
@@ -403,6 +421,16 @@ export class Bash {
     return this.native.fs();
   }
 
+  /** Mount a host directory into the VFS. readOnly defaults to true. */
+  mountReal(hostPath: string, vfsPath: string, readOnly?: boolean): void {
+    this.native.mountReal(hostPath, vfsPath, readOnly);
+  }
+
+  /** Unmount a previously mounted filesystem. */
+  unmount(vfsPath: string): void {
+    this.native.unmount(vfsPath);
+  }
+
   /**
    * List entry names in a directory. Returns empty array if directory does not exist.
    */
@@ -623,6 +651,16 @@ export class BashTool {
   /** Get a JsFileSystem handle for direct VFS operations. */
   fs(): any {
     return this.native.fs();
+  }
+
+  /** Mount a host directory into the VFS. readOnly defaults to true. */
+  mountReal(hostPath: string, vfsPath: string, readOnly?: boolean): void {
+    this.native.mountReal(hostPath, vfsPath, readOnly);
+  }
+
+  /** Unmount a previously mounted filesystem. */
+  unmount(vfsPath: string): void {
+    this.native.unmount(vfsPath);
   }
 
   /**
