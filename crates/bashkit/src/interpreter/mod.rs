@@ -485,6 +485,13 @@ pub struct Interpreter {
     /// Persistent fd output table set by `exec N>/path` redirections.
     /// Maps fd number to its output target. Used by `>&N` redirections.
     exec_fd_table: HashMap<i32, FdTarget>,
+    /// Temporary buffer for fd3+ output during compound body execution.
+    /// Populated by `1>&N` (N>=3) in apply_redirections, consumed by
+    /// apply_redirections_fd_table for compound redirect routing.
+    pending_fd_output: HashMap<i32, String>,
+    /// Fd3+ targets from compound redirect processing (e.g. `3>&1` maps fd3→Stdout).
+    /// Populated during apply_redirections_fd_table redirect loop, consumed during routing.
+    pending_fd_targets: Vec<(i32, FdTarget)>,
     /// Cancellation token: when set to `true`, execution aborts at the next
     /// command boundary with `Error::Cancelled`.
     cancelled: Arc<AtomicBool>,
@@ -804,6 +811,8 @@ impl Interpreter {
             coproc_buffers: HashMap::new(),
             coproc_next_fd: 63,
             exec_fd_table: HashMap::new(),
+            pending_fd_output: HashMap::new(),
+            pending_fd_targets: Vec::new(),
             cancelled: Arc::new(AtomicBool::new(false)),
             deferred_proc_subs: Vec::new(),
         }
@@ -2887,6 +2896,87 @@ enum FdTarget {
     AppendFile(PathBuf, String),
     /// Discard (/dev/null).
     DevNull,
+}
+
+/// Route fd1/fd2/fd3+ content to their targets. Extracted from the async
+/// `apply_redirections_fd_table` to keep these locals out of the async state machine.
+#[inline(never)]
+fn route_fd_table_content(
+    orig_stdout: &str,
+    orig_stderr: &str,
+    fd1: &FdTarget,
+    fd2: &FdTarget,
+    extra_fd_targets: &[(i32, FdTarget)],
+    pending: &HashMap<i32, String>,
+) -> (
+    String,
+    String,
+    std::collections::HashMap<PathBuf, (String, bool, String)>,
+) {
+    let mut new_stdout = String::new();
+    let mut new_stderr = String::new();
+    let mut file_writes: std::collections::HashMap<PathBuf, (String, bool, String)> =
+        std::collections::HashMap::new();
+
+    let route = |data: &str,
+                 target: &FdTarget,
+                 fw: &mut std::collections::HashMap<PathBuf, (String, bool, String)>,
+                 out: &mut String,
+                 err: &mut String| {
+        if data.is_empty() {
+            return;
+        }
+        match target {
+            FdTarget::Stdout => out.push_str(data),
+            FdTarget::Stderr => err.push_str(data),
+            FdTarget::DevNull => {}
+            FdTarget::WriteFile(p, d) => {
+                fw.entry(p.clone())
+                    .or_insert_with(|| (String::new(), false, d.clone()))
+                    .0
+                    .push_str(data);
+            }
+            FdTarget::AppendFile(p, d) => {
+                fw.entry(p.clone())
+                    .or_insert_with(|| (String::new(), true, d.clone()))
+                    .0
+                    .push_str(data);
+            }
+        }
+    };
+
+    route(
+        orig_stdout,
+        fd1,
+        &mut file_writes,
+        &mut new_stdout,
+        &mut new_stderr,
+    );
+    route(
+        orig_stderr,
+        fd2,
+        &mut file_writes,
+        &mut new_stdout,
+        &mut new_stderr,
+    );
+
+    // Route pending fd3+ output
+    for (fd_num, data) in pending {
+        let target = extra_fd_targets
+            .iter()
+            .find(|(n, _)| n == fd_num)
+            .map(|(_, t)| t)
+            .unwrap_or(&FdTarget::Stdout);
+        route(
+            data,
+            target,
+            &mut file_writes,
+            &mut new_stdout,
+            &mut new_stderr,
+        );
+    }
+
+    (new_stdout, new_stderr, file_writes)
 }
 
 impl Interpreter {
@@ -5928,6 +6018,20 @@ impl Interpreter {
                                 result.stderr.push_str(&result.stdout);
                                 result.stdout = String::new();
                             }
+                            (src, dst) if dst >= 3 => {
+                                // Move content to pending_fd_output for compound
+                                // redirect routing (e.g. `echo msg 1>&3` inside
+                                // `{ ... } 3>&1 >file`).
+                                let data = if src == 2 {
+                                    std::mem::take(&mut result.stderr)
+                                } else {
+                                    std::mem::take(&mut result.stdout)
+                                };
+                                self.pending_fd_output
+                                    .entry(dst)
+                                    .or_default()
+                                    .push_str(&data);
+                            }
                             _ => {}
                         }
                     }
@@ -5953,6 +6057,7 @@ impl Interpreter {
         // Build fd table: fd1 = stdout pipe, fd2 = stderr pipe
         let mut fd1 = FdTarget::Stdout;
         let mut fd2 = FdTarget::Stderr;
+        self.pending_fd_targets.clear();
 
         for redirect in redirects {
             match redirect.kind {
@@ -6018,10 +6123,22 @@ impl Interpreter {
                             _ => fd1 = exec_target,
                         }
                     } else {
-                        match (src_fd, target_fd) {
-                            (2, 1) => fd2 = fd1.clone(),
-                            (1, 2) => fd1 = fd2.clone(),
-                            _ => {}
+                        // Resolve target from current fd table state
+                        let resolved = match target_fd {
+                            1 => Some(fd1.clone()),
+                            2 => Some(fd2.clone()),
+                            _ => None,
+                        };
+                        if let Some(target) = resolved {
+                            match src_fd {
+                                1 => fd1 = target,
+                                2 => fd2 = target,
+                                n if n >= 3 => {
+                                    // Store fd3+ target for routing pending_fd_output later
+                                    self.pending_fd_targets.push((n, target));
+                                }
+                                _ => {}
+                            }
                         }
                     }
                 }
@@ -6033,42 +6150,19 @@ impl Interpreter {
             }
         }
 
-        // Route original stdout/stderr based on final fd table.
-        // Collect file writes to avoid double-borrow issues.
+        // Route stdout/stderr/fd3+ to their targets (non-async to avoid state machine bloat)
         let orig_stdout = std::mem::take(&mut result.stdout);
         let orig_stderr = std::mem::take(&mut result.stderr);
-
-        // Determine what goes where
-        let mut new_stdout = String::new();
-        let mut new_stderr = String::new();
-        // file_path -> (content, is_append, display_path)
-        let mut file_writes: std::collections::HashMap<PathBuf, (String, bool, String)> =
-            std::collections::HashMap::new();
-
-        for (data, fd_target) in [(&orig_stdout, &fd1), (&orig_stderr, &fd2)].iter() {
-            if data.is_empty() {
-                continue;
-            }
-            match fd_target {
-                FdTarget::Stdout => new_stdout.push_str(data),
-                FdTarget::Stderr => new_stderr.push_str(data),
-                FdTarget::DevNull => {}
-                FdTarget::WriteFile(path, display) => {
-                    file_writes
-                        .entry(path.clone())
-                        .or_insert_with(|| (String::new(), false, display.clone()))
-                        .0
-                        .push_str(data);
-                }
-                FdTarget::AppendFile(path, display) => {
-                    file_writes
-                        .entry(path.clone())
-                        .or_insert_with(|| (String::new(), true, display.clone()))
-                        .0
-                        .push_str(data);
-                }
-            }
-        }
+        let (new_stdout, mut new_stderr, file_writes) = route_fd_table_content(
+            &orig_stdout,
+            &orig_stderr,
+            &fd1,
+            &fd2,
+            &self.pending_fd_targets,
+            &self.pending_fd_output,
+        );
+        self.pending_fd_output.clear();
+        self.pending_fd_targets.clear();
 
         // Write files
         for (path, (content, is_append, display_path)) in &file_writes {
@@ -10897,5 +10991,21 @@ echo "count=$COUNT"
         // failglob + redirect
         let result = run_script("shopt -s failglob; ls ./*.html 2>/dev/null; echo exit:$?").await;
         assert_eq!(result.stderr, "", "failglob: stderr should be suppressed");
+    }
+
+    #[tokio::test]
+    async fn test_fd3_redirect_pattern() {
+        // Issue #1115: { echo "progress" 1>&3; echo "file content"; } 3>&1 >file
+        let result = run_script(
+            r#"{ echo "progress" 1>&3; echo "file content"; } 3>&1 > /tmp/test_fd.txt
+cat /tmp/test_fd.txt"#,
+        )
+        .await;
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        assert_eq!(
+            lines,
+            vec!["progress", "file content"],
+            "fd3 → stdout, fd1 → file"
+        );
     }
 }

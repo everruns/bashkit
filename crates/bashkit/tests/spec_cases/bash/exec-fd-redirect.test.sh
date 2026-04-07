@@ -35,3 +35,12 @@ echo "closed ok"
 ### expect
 closed ok
 ### end
+
+### fd3_redirect_pattern
+# { cmd 1>&3; cmd; } 3>&1 >file — fd3 captures original stdout (issue #1115)
+{ echo "progress" 1>&3; echo "file content"; } 3>&1 > /tmp/test_fd.txt
+cat /tmp/test_fd.txt
+### expect
+progress
+file content
+### end
