@@ -4143,6 +4143,34 @@ impl Interpreter {
     /// Search $PATH for an executable script and run it.
     ///
     /// Returns `Ok(None)` if no matching file found (caller emits "command not found").
+    /// Resolve a command name to its full path via PATH search on VFS.
+    /// Returns the resolved path string if found, None otherwise.
+    async fn resolve_command_path(&self, name: &str) -> Option<String> {
+        let path_var = self
+            .variables
+            .get("PATH")
+            .or_else(|| self.env.get("PATH"))
+            .cloned()
+            .unwrap_or_default();
+
+        for dir in path_var.split(':') {
+            if dir.is_empty() {
+                continue;
+            }
+            let candidate = PathBuf::from(dir).join(name);
+            if let Ok(meta) = self.fs.stat(&candidate).await {
+                if meta.file_type.is_dir() {
+                    continue;
+                }
+                if meta.mode & 0o111 == 0 {
+                    continue;
+                }
+                return Some(candidate.to_string_lossy().to_string());
+            }
+        }
+        None
+    }
+
     async fn try_execute_script_via_path_search(
         &mut self,
         name: &str,
@@ -5107,12 +5135,18 @@ impl Interpreter {
 
         match mode {
             'v' => {
-                // command -v: print name if it's a known command
-                let found = self.builtins.contains_key(cmd_name.as_str())
-                    || self.functions.contains_key(cmd_name.as_str())
-                    || is_keyword(cmd_name);
-                let mut result = if found {
-                    ExecResult::ok(format!("{}\n", cmd_name))
+                // command -v: print name/path if it's a known command
+                let output = if self.functions.contains_key(cmd_name.as_str()) {
+                    Some(cmd_name.to_string())
+                } else if self.builtins.contains_key(cmd_name.as_str()) || is_keyword(cmd_name) {
+                    Some(cmd_name.to_string())
+                } else if let Some(path) = self.resolve_command_path(cmd_name).await {
+                    Some(path)
+                } else {
+                    None
+                };
+                let mut result = if let Some(name) = output {
+                    ExecResult::ok(format!("{}\n", name))
                 } else {
                     ExecResult {
                         stdout: String::new(),
@@ -5133,6 +5167,8 @@ impl Interpreter {
                     format!("{} is a shell builtin\n", cmd_name)
                 } else if is_keyword(cmd_name) {
                     format!("{} is a shell keyword\n", cmd_name)
+                } else if let Some(path) = self.resolve_command_path(cmd_name).await {
+                    format!("{} is {}\n", cmd_name, path)
                 } else {
                     return Ok(ExecResult::err(
                         format!("bash: command: {}: not found\n", cmd_name),
