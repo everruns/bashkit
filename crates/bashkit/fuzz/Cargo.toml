@@ -122,3 +122,10 @@ path = "fuzz_targets/csv_fuzz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "archive_fuzz"
+path = "fuzz_targets/archive_fuzz.rs"
+test = false
+doc = false
+bench = false
