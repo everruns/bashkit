@@ -73,3 +73,10 @@ path = "fuzz_targets/printf_fuzz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "base64_fuzz"
+path = "fuzz_targets/base64_fuzz.rs"
+test = false
+doc = false
+bench = false
