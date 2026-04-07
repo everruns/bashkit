@@ -66,3 +66,10 @@ path = "fuzz_targets/awk_fuzz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "printf_fuzz"
+path = "fuzz_targets/printf_fuzz.rs"
+test = false
+doc = false
+bench = false
