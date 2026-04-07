@@ -5439,4 +5439,127 @@ echo missing fi"#,
             *stderr_chunks
         );
     }
+
+    #[tokio::test]
+    async fn test_dot_slash_prefix_ls() {
+        // Issue #1114: ./filename should resolve identically to filename
+        let mut bash = Bash::new();
+        bash.exec("mkdir -p /tmp/blogtest && cd /tmp/blogtest && echo hello > tag_hello.html")
+            .await
+            .unwrap();
+
+        // ls without ./ prefix should work
+        let result = bash
+            .exec("cd /tmp/blogtest && ls tag_hello.html")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "ls tag_hello.html should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("tag_hello.html"));
+
+        // ls with ./ prefix should also work
+        let result = bash
+            .exec("cd /tmp/blogtest && ls ./tag_hello.html")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "ls ./tag_hello.html should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("tag_hello.html"));
+    }
+
+    #[tokio::test]
+    async fn test_dot_slash_prefix_glob() {
+        // Issue #1114: ./*.html should resolve identically to *.html
+        let mut bash = Bash::new();
+        bash.exec("mkdir -p /tmp/globtest && cd /tmp/globtest && echo hello > tag_hello.html")
+            .await
+            .unwrap();
+
+        // glob without ./ prefix
+        let result = bash.exec("cd /tmp/globtest && echo *.html").await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "echo *.html should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("tag_hello.html"));
+
+        // glob with ./ prefix
+        let result = bash
+            .exec("cd /tmp/globtest && echo ./*.html")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "echo ./*.html should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("tag_hello.html"));
+    }
+
+    #[tokio::test]
+    async fn test_dot_slash_prefix_cat() {
+        // Issue #1114: cat ./filename should work
+        let mut bash = Bash::new();
+        bash.exec("mkdir -p /tmp/cattest && cd /tmp/cattest && echo content123 > myfile.txt")
+            .await
+            .unwrap();
+
+        let result = bash
+            .exec("cd /tmp/cattest && cat ./myfile.txt")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "cat ./myfile.txt should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("content123"));
+    }
+
+    #[tokio::test]
+    async fn test_dot_slash_prefix_redirect() {
+        // Issue #1114: redirecting to ./filename should work
+        let mut bash = Bash::new();
+        bash.exec("mkdir -p /tmp/redirtest && cd /tmp/redirtest")
+            .await
+            .unwrap();
+
+        let result = bash
+            .exec("cd /tmp/redirtest && echo hello > ./output.txt && cat ./output.txt")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "redirect to ./output.txt should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn test_dot_slash_prefix_test_builtin() {
+        // Issue #1114: test -f ./filename should work
+        let mut bash = Bash::new();
+        bash.exec("mkdir -p /tmp/testbuiltin && cd /tmp/testbuiltin && echo x > myfile.txt")
+            .await
+            .unwrap();
+
+        let result = bash
+            .exec("cd /tmp/testbuiltin && test -f ./myfile.txt && echo yes")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "test -f ./myfile.txt should succeed: {}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("yes"));
+    }
 }

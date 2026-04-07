@@ -616,7 +616,7 @@ impl Interpreter {
                 if p.as_os_str().is_empty() {
                     (self.cwd.clone(), name)
                 } else {
-                    (self.cwd.join(p), name)
+                    (crate::fs::normalize_path(&self.cwd.join(p)), name)
                 }
             } else {
                 (self.cwd.clone(), name)

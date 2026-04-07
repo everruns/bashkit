@@ -53,6 +53,7 @@ use std::sync::Arc;
 
 use super::backend::FsBackend;
 use super::limits::{FsLimits, FsUsage};
+use super::normalize_path;
 use super::traits::{DirEntry, FileSystem, FileSystemExt, Metadata, fs_errors};
 use crate::error::Result;
 
@@ -100,6 +101,11 @@ impl<B: FsBackend> PosixFs<B> {
         &self.backend
     }
 
+    /// Normalize a path for consistent lookups.
+    fn normalize(path: &Path) -> PathBuf {
+        normalize_path(path)
+    }
+
     /// Check if parent directory exists.
     async fn check_parent_exists(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent()
@@ -116,43 +122,47 @@ impl<B: FsBackend> PosixFs<B> {
 #[async_trait]
 impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        let path = Self::normalize(path);
         // Check if it's a directory
-        if let Ok(meta) = self.backend.stat(path).await
+        if let Ok(meta) = self.backend.stat(&path).await
             && meta.file_type.is_dir()
         {
             return Err(fs_errors::is_a_directory());
         }
-        self.backend.read(path).await
+        self.backend.read(&path).await
     }
 
     async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+        let path = Self::normalize(path);
         // Check parent exists
-        self.check_parent_exists(path).await?;
+        self.check_parent_exists(&path).await?;
 
         // Check if path is a directory
-        if let Ok(meta) = self.backend.stat(path).await
+        if let Ok(meta) = self.backend.stat(&path).await
             && meta.file_type.is_dir()
         {
             return Err(fs_errors::is_a_directory());
         }
 
-        self.backend.write(path, content).await
+        self.backend.write(&path, content).await
     }
 
     async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+        let path = Self::normalize(path);
         // Check if path is a directory
-        if let Ok(meta) = self.backend.stat(path).await
+        if let Ok(meta) = self.backend.stat(&path).await
             && meta.file_type.is_dir()
         {
             return Err(fs_errors::is_a_directory());
         }
 
-        self.backend.append(path, content).await
+        self.backend.append(&path, content).await
     }
 
     async fn mkdir(&self, path: &Path, recursive: bool) -> Result<()> {
+        let path = Self::normalize(path);
         // Check if something already exists at this path
-        if let Ok(meta) = self.backend.stat(path).await {
+        if let Ok(meta) = self.backend.stat(&path).await {
             if meta.file_type.is_dir() {
                 // Directory exists
                 if recursive {
@@ -181,58 +191,70 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
             }
         } else {
             // Non-recursive: parent must exist
-            self.check_parent_exists(path).await?;
+            self.check_parent_exists(&path).await?;
         }
 
-        self.backend.mkdir(path, recursive).await
+        self.backend.mkdir(&path, recursive).await
     }
 
     async fn remove(&self, path: &Path, recursive: bool) -> Result<()> {
-        self.backend.remove(path, recursive).await
+        let path = Self::normalize(path);
+        self.backend.remove(&path, recursive).await
     }
 
     async fn stat(&self, path: &Path) -> Result<Metadata> {
-        self.backend.stat(path).await
+        let path = Self::normalize(path);
+        self.backend.stat(&path).await
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
+        let path = Self::normalize(path);
         // Check if it's actually a directory
-        if let Ok(meta) = self.backend.stat(path).await
+        if let Ok(meta) = self.backend.stat(&path).await
             && !meta.file_type.is_dir()
         {
             return Err(fs_errors::not_a_directory());
         }
-        self.backend.read_dir(path).await
+        self.backend.read_dir(&path).await
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {
-        self.backend.exists(path).await
+        let path = Self::normalize(path);
+        self.backend.exists(&path).await
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
-        self.backend.rename(from, to).await
+        let from = Self::normalize(from);
+        let to = Self::normalize(to);
+        self.backend.rename(&from, &to).await
     }
 
     async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
+        let from = Self::normalize(from);
+        let to = Self::normalize(to);
         // Check source is not a directory
-        if let Ok(meta) = self.backend.stat(from).await
+        if let Ok(meta) = self.backend.stat(&from).await
             && meta.file_type.is_dir()
         {
             return Err(IoError::other("cannot copy directory").into());
         }
-        self.backend.copy(from, to).await
+        self.backend.copy(&from, &to).await
     }
 
     async fn symlink(&self, target: &Path, link: &Path) -> Result<()> {
-        self.backend.symlink(target, link).await
+        let target = Self::normalize(target);
+        let link = Self::normalize(link);
+        self.backend.symlink(&target, &link).await
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
-        self.backend.read_link(path).await
+        let path = Self::normalize(path);
+        self.backend.read_link(&path).await
     }
 
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
-        self.backend.chmod(path, mode).await
+        let path = Self::normalize(path);
+        self.backend.chmod(&path, mode).await
     }
 }
 
@@ -294,5 +316,50 @@ mod tests {
         // mkdir on it should fail
         let result = fs.mkdir(Path::new("/tmp/testfile"), false).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_posix_normalize_dot_slash_prefix() {
+        // Issue #1114: paths with ./ prefix should resolve correctly
+        let fs = InMemoryFs::new();
+
+        // Create /tmp/dir and a file
+        fs.mkdir(Path::new("/tmp/dir"), true).await.unwrap();
+        fs.write_file(Path::new("/tmp/dir/file.txt"), b"content")
+            .await
+            .unwrap();
+
+        // Access via ./ style path (as if cwd.join("./file.txt"))
+        let dot_path = Path::new("/tmp/dir/./file.txt");
+        assert!(
+            fs.exists(dot_path).await.unwrap(),
+            "exists with ./ should work"
+        );
+
+        let content = fs.read_file(dot_path).await.unwrap();
+        assert_eq!(content, b"content");
+
+        // stat with ./ prefix
+        let meta = fs.stat(dot_path).await;
+        assert!(meta.is_ok(), "stat with ./ should work");
+
+        // write via ./ prefix
+        fs.write_file(Path::new("/tmp/dir/./new.txt"), b"new")
+            .await
+            .unwrap();
+        let content = fs.read_file(Path::new("/tmp/dir/new.txt")).await.unwrap();
+        assert_eq!(content, b"new");
+    }
+
+    #[tokio::test]
+    async fn test_posix_normalize_preserves_semantics() {
+        // Verify normalization doesn't break parent-exists checks
+        let fs = InMemoryFs::new();
+
+        // /tmp exists, /tmp/nonexistent does not
+        let result = fs
+            .write_file(Path::new("/tmp/nonexistent/./file.txt"), b"content")
+            .await;
+        assert!(result.is_err(), "should fail when parent doesn't exist");
     }
 }
