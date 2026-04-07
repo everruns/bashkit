@@ -87,3 +87,10 @@ path = "fuzz_targets/envsubst_fuzz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "sed_fuzz"
+path = "fuzz_targets/sed_fuzz.rs"
+test = false
+doc = false
+bench = false
