@@ -5141,10 +5141,8 @@ impl Interpreter {
                     || is_keyword(cmd_name)
                 {
                     Some(cmd_name.to_string())
-                } else if let Some(path) = self.resolve_command_path(cmd_name).await {
-                    Some(path)
                 } else {
-                    None
+                    self.resolve_command_path(cmd_name).await
                 };
                 let mut result = if let Some(name) = output {
                     ExecResult::ok(format!("{}\n", name))
