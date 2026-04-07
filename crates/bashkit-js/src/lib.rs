@@ -823,9 +823,9 @@ impl Bash {
         })
     }
 
-    /// List entries in a directory. Returns entry names.
+    /// List entries in a directory with metadata (name, file type, size, etc.).
     #[napi]
-    pub fn read_dir(&self, path: String) -> napi::Result<Vec<String>> {
+    pub fn read_dir(&self, path: String) -> napi::Result<Vec<JsDirEntry>> {
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let entries = bash
@@ -833,7 +833,13 @@ impl Bash {
                 .read_dir(Path::new(&path))
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-            Ok(entries.into_iter().map(|e| e.name.clone()).collect())
+            Ok(entries
+                .into_iter()
+                .map(|e| JsDirEntry {
+                    name: e.name.clone(),
+                    metadata: metadata_to_js(&e.metadata),
+                })
+                .collect())
         })
     }
 
@@ -1190,9 +1196,9 @@ impl BashTool {
         })
     }
 
-    /// List entries in a directory. Returns entry names.
+    /// List entries in a directory with metadata (name, file type, size, etc.).
     #[napi]
-    pub fn read_dir(&self, path: String) -> napi::Result<Vec<String>> {
+    pub fn read_dir(&self, path: String) -> napi::Result<Vec<JsDirEntry>> {
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let entries = bash
@@ -1200,7 +1206,13 @@ impl BashTool {
                 .read_dir(Path::new(&path))
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-            Ok(entries.into_iter().map(|e| e.name.clone()).collect())
+            Ok(entries
+                .into_iter()
+                .map(|e| JsDirEntry {
+                    name: e.name.clone(),
+                    metadata: metadata_to_js(&e.metadata),
+                })
+                .collect())
         })
     }
 
