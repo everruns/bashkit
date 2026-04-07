@@ -129,3 +129,10 @@ path = "fuzz_targets/archive_fuzz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "tomlq_fuzz"
+path = "fuzz_targets/tomlq_fuzz.rs"
+test = false
+doc = false
+bench = false
