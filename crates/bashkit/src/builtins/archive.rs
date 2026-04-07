@@ -165,7 +165,15 @@ impl Builtin for Tar {
                     2,
                 ));
             }
-            create_tar(&ctx, &archive_name, &files, verbose, gzip).await
+            create_tar(
+                &ctx,
+                &archive_name,
+                &files,
+                verbose,
+                gzip,
+                change_dir.as_deref(),
+            )
+            .await
         } else if extract {
             extract_tar(
                 &ctx,
@@ -192,12 +200,19 @@ async fn create_tar(
     files: &[String],
     verbose: bool,
     gzip: bool,
+    change_dir: Option<&str>,
 ) -> Result<ExecResult> {
     let mut output_data: Vec<u8> = Vec::new();
     let mut verbose_output = String::new();
 
+    let base_dir = if let Some(dir) = change_dir {
+        resolve_path(ctx.cwd, dir)
+    } else {
+        ctx.cwd.clone()
+    };
+
     for file in files {
-        let path = resolve_path(ctx.cwd, file);
+        let path = resolve_path(&base_dir, file);
 
         if !ctx.fs.exists(&path).await.unwrap_or(false) {
             return Ok(ExecResult::err(

@@ -2404,7 +2404,7 @@ mod archive_security {
     /// TM-DOS-008: Tar with many files — FS file count limit blocks extraction
     #[tokio::test]
     async fn threat_tar_bomb_many_files_blocked() {
-        let limits = FsLimits::new().max_file_count(20);
+        let limits = FsLimits::new().max_file_count(30);
         let fs = Arc::new(InMemoryFs::with_limits(limits));
         let mut bash = Bash::builder().fs(fs).build();
 
