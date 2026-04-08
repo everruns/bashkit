@@ -91,19 +91,16 @@ def test_bash_fs_handle_bytes_roundtrip():
     assert fs.exists("/data/blob.bin") is True
 
 
-def test_bash_mount_text_and_readonly_text():
+def test_bash_files_dict():
     bash = Bash(
-        mount_text=[("/config/app.conf", "debug=true\n")],
-        mount_readonly_text=[("/etc/version", "1.2.3\n")],
+        files={"/config/app.conf": "debug=true\n", "/etc/version": "1.2.3\n"},
     )
     assert bash.execute_sync("cat /config/app.conf").stdout == "debug=true\n"
     assert bash.execute_sync("cat /etc/version").stdout == "1.2.3\n"
-    mode = bash.fs().stat("/etc/version")["mode"]
-    assert mode == 0o444
 
 
 def test_bash_realfs_readwrite_at(tmp_path):
-    bash = Bash(mount_real_readwrite_at=[(str(tmp_path), "/workspace")])
+    bash = Bash(mounts=[{"host_path": str(tmp_path), "vfs_path": "/workspace", "writable": True}])
     result = bash.execute_sync("echo 'hello host' > /workspace/hello.txt")
     assert result.exit_code == 0
     assert (tmp_path / "hello.txt").read_text().strip() == "hello host"
@@ -113,7 +110,7 @@ def test_bash_live_mount_preserves_state_and_unmounts(tmp_path):
     bash = Bash()
     bash.execute_sync("export KEEP=1")
 
-    workspace = FileSystem.real(str(tmp_path), readwrite=True)
+    workspace = FileSystem.real(str(tmp_path), writable=True)
     bash.mount("/workspace", workspace)
     bash.execute_sync("echo live > /workspace/live.txt")
 
@@ -172,15 +169,15 @@ def test_bash_unmount_nonexistent_raises():
         bash.unmount("/nonexistent")
 
 
-def test_bash_readonly_text_mount_has_readonly_mode():
-    """Readonly text mount gets mode 0o444."""
-    bash = Bash(mount_readonly_text=[("/etc/version", "1.0\n")])
-    assert bash.fs().stat("/etc/version")["mode"] == 0o444
+def test_bash_files_mount_has_writable_mode():
+    """Files dict mounts get writable mode 0o644."""
+    bash = Bash(files={"/etc/version": "1.0\n"})
+    assert bash.fs().stat("/etc/version")["mode"] == 0o644
 
 
 def test_filesystem_real_nonexistent_host_path_raises():
     with pytest.raises(Exception):
-        FileSystem.real("/nonexistent_path_that_does_not_exist_abc123", readwrite=True)
+        FileSystem.real("/nonexistent_path_that_does_not_exist_abc123", writable=True)
 
 
 def test_filesystem_read_nonexistent_file_raises():
@@ -306,7 +303,7 @@ def test_file_persistence():
 
 
 def test_bashtool_realfs_and_fs_handle(tmp_path):
-    tool = BashTool(mount_real_readwrite_at=[(str(tmp_path), "/workspace")])
+    tool = BashTool(mounts=[{"host_path": str(tmp_path), "vfs_path": "/workspace", "writable": True}])
     tool.execute_sync("echo 'from tool' > /workspace/tool.txt")
     assert (tmp_path / "tool.txt").read_text().strip() == "from tool"
     assert tool.fs().read_file("/workspace/tool.txt") == b"from tool\n"
@@ -316,7 +313,7 @@ def test_bashtool_live_mount_preserves_state(tmp_path):
     tool = BashTool()
     tool.execute_sync("export KEEP=1")
 
-    workspace = FileSystem.real(str(tmp_path), readwrite=True)
+    workspace = FileSystem.real(str(tmp_path), writable=True)
     tool.mount("/workspace", workspace)
     tool.execute_sync("echo tool > /workspace/tool.txt")
 

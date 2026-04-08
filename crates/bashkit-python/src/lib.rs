@@ -122,18 +122,12 @@ fn py_to_json_inner(
     Ok(serde_json::Value::String(s))
 }
 
-#[derive(Clone)]
-struct MountedTextConfig {
-    path: String,
-    content: String,
-    readonly: bool,
-}
-
+/// Real filesystem mount config (internal, parsed from Python dicts).
 #[derive(Clone)]
 struct RealMountConfig {
     host_path: String,
     vfs_mount: Option<String>,
-    readwrite: bool,
+    writable: bool,
 }
 
 fn make_runtime() -> PyResult<Arc<Runtime>> {
@@ -144,86 +138,55 @@ fn make_runtime() -> PyResult<Arc<Runtime>> {
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))
 }
 
-/// Parse the six mount kwargs into internal config structs.
-/// Shared by both `PyBash::new()` and `BashTool::new()`.
-fn parse_mount_configs(
-    mount_text: Option<Vec<(String, String)>>,
-    mount_readonly_text: Option<Vec<(String, String)>>,
-    mount_real_readonly: Option<Vec<String>>,
-    mount_real_readonly_at: Option<Vec<(String, String)>>,
-    mount_real_readwrite: Option<Vec<String>>,
-    mount_real_readwrite_at: Option<Vec<(String, String)>>,
-) -> (Vec<MountedTextConfig>, Vec<RealMountConfig>) {
-    let mounted_text_files = mount_text
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(path, content)| MountedTextConfig {
-            path,
-            content,
-            readonly: false,
-        })
-        .chain(
-            mount_readonly_text
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(path, content)| MountedTextConfig {
-                    path,
-                    content,
-                    readonly: true,
-                }),
-        )
-        .collect::<Vec<_>>();
-    let real_mounts = mount_real_readonly
-        .unwrap_or_default()
-        .into_iter()
-        .map(|host_path| RealMountConfig {
+/// Parse `mounts` kwarg (list of dicts) into internal config.
+/// Each dict: { "host_path": str, "vfs_path"?: str, "writable"?: bool }.
+fn parse_mounts(
+    py: Python<'_>,
+    mounts: Option<&Bound<'_, PyList>>,
+) -> PyResult<Vec<RealMountConfig>> {
+    let Some(list) = mounts else {
+        return Ok(Vec::new());
+    };
+    let mut configs = Vec::with_capacity(list.len());
+    for item in list.iter() {
+        let dict = item
+            .cast::<PyDict>()
+            .map_err(|_| PyValueError::new_err("each mount must be a dict with 'host_path' key"))?;
+        let host_path: String = dict
+            .get_item("host_path")?
+            .ok_or_else(|| PyValueError::new_err("mount dict missing required 'host_path' key"))?
+            .extract()?;
+        let vfs_mount: Option<String> = dict
+            .get_item("vfs_path")?
+            .map(|v| v.extract())
+            .transpose()?;
+        let writable: bool = dict
+            .get_item("writable")?
+            .map(|v| v.extract())
+            .transpose()?
+            .unwrap_or(false);
+        configs.push(RealMountConfig {
             host_path,
-            vfs_mount: None,
-            readwrite: false,
-        })
-        .chain(mount_real_readonly_at.unwrap_or_default().into_iter().map(
-            |(host_path, vfs_mount)| RealMountConfig {
-                host_path,
-                vfs_mount: Some(vfs_mount),
-                readwrite: false,
-            },
-        ))
-        .chain(
-            mount_real_readwrite
-                .unwrap_or_default()
-                .into_iter()
-                .map(|host_path| RealMountConfig {
-                    host_path,
-                    vfs_mount: None,
-                    readwrite: true,
-                }),
-        )
-        .chain(mount_real_readwrite_at.unwrap_or_default().into_iter().map(
-            |(host_path, vfs_mount)| RealMountConfig {
-                host_path,
-                vfs_mount: Some(vfs_mount),
-                readwrite: true,
-            },
-        ))
-        .collect::<Vec<_>>();
-    (mounted_text_files, real_mounts)
+            vfs_mount,
+            writable,
+        });
+    }
+    let _ = py; // used for lifetime
+    Ok(configs)
 }
 
+/// Apply `files` dict and `mounts` list to a builder.
 fn apply_fs_config(
     mut builder: bashkit::BashBuilder,
-    mounted_text_files: &[MountedTextConfig],
+    files: &std::collections::HashMap<String, String>,
     real_mounts: &[RealMountConfig],
 ) -> bashkit::BashBuilder {
-    for mount in mounted_text_files {
-        builder = if mount.readonly {
-            builder.mount_readonly_text(&mount.path, mount.content.clone())
-        } else {
-            builder.mount_text(&mount.path, mount.content.clone())
-        };
+    for (path, content) in files {
+        builder = builder.mount_text(path, content.clone());
     }
 
     for mount in real_mounts {
-        builder = match (mount.readwrite, &mount.vfs_mount) {
+        builder = match (mount.writable, &mount.vfs_mount) {
             (false, None) => builder.mount_real_readonly(&mount.host_path),
             (false, Some(vfs_mount)) => builder.mount_real_readonly_at(&mount.host_path, vfs_mount),
             (true, None) => builder.mount_real_readwrite(&mount.host_path),
@@ -327,10 +290,10 @@ impl PyFileSystem {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (host_path, readwrite=false))]
-    fn real(host_path: String, readwrite: bool) -> PyResult<Self> {
+    #[pyo3(signature = (host_path, writable=false))]
+    fn real(host_path: String, writable: bool) -> PyResult<Self> {
         let rt = make_runtime()?;
-        let mode = if readwrite {
+        let mode = if writable {
             RealFsMode::ReadWrite
         } else {
             RealFsMode::ReadOnly
@@ -658,7 +621,7 @@ pub struct PyBash {
     external_functions: Vec<String>,
     /// Async Python callable invoked when Monty calls an external function.
     external_handler: Option<Py<PyAny>>,
-    mounted_text_files: Vec<MountedTextConfig>,
+    files: std::collections::HashMap<String, String>,
     real_mounts: Vec<RealMountConfig>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
@@ -677,12 +640,8 @@ impl PyBash {
         python=false,
         external_functions=None,
         external_handler=None,
-        mount_text=None,
-        mount_readonly_text=None,
-        mount_real_readonly=None,
-        mount_real_readonly_at=None,
-        mount_real_readwrite=None,
-        mount_real_readwrite_at=None,
+        files=None,
+        mounts=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -695,12 +654,8 @@ impl PyBash {
         python: bool,
         external_functions: Option<Vec<String>>,
         external_handler: Option<Py<PyAny>>,
-        mount_text: Option<Vec<(String, String)>>,
-        mount_readonly_text: Option<Vec<(String, String)>>,
-        mount_real_readonly: Option<Vec<String>>,
-        mount_real_readonly_at: Option<Vec<(String, String)>>,
-        mount_real_readwrite: Option<Vec<String>>,
-        mount_real_readwrite_at: Option<Vec<(String, String)>>,
+        files: Option<std::collections::HashMap<String, String>>,
+        mounts: Option<&Bound<'_, PyList>>,
     ) -> PyResult<Self> {
         let mut builder = Bash::builder();
 
@@ -724,14 +679,8 @@ impl PyBash {
             builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
         }
 
-        let (mounted_text_files, real_mounts) = parse_mount_configs(
-            mount_text,
-            mount_readonly_text,
-            mount_real_readonly,
-            mount_real_readonly_at,
-            mount_real_readwrite,
-            mount_real_readwrite_at,
-        );
+        let files = files.unwrap_or_default();
+        let real_mounts = parse_mounts(py, mounts)?;
 
         let fn_names = external_functions.clone().unwrap_or_default();
         if !fn_names.is_empty() && external_handler.is_none() {
@@ -773,7 +722,7 @@ impl PyBash {
         }
         let handler_for_build = external_handler.as_ref().map(|h| h.clone_ref(py));
         builder = apply_python_config(builder, python, fn_names, handler_for_build);
-        builder = apply_fs_config(builder, &mounted_text_files, &real_mounts);
+        builder = apply_fs_config(builder, &files, &real_mounts);
 
         let bash = builder.build();
         let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
@@ -789,7 +738,7 @@ impl PyBash {
             python,
             external_functions: external_functions.unwrap_or_default(),
             external_handler,
-            mounted_text_files,
+            files,
             real_mounts,
             max_commands,
             max_loop_iterations,
@@ -946,7 +895,7 @@ impl PyBash {
         let max_memory = self.max_memory;
         let python = self.python;
         let external_functions = self.external_functions.clone();
-        let mounted_text_files = self.mounted_text_files.clone();
+        let files = self.files.clone();
         let real_mounts = self.real_mounts.clone();
         // Clone handler ref while still holding the GIL (before py.detach).
         let handler_clone = self.external_handler.as_ref().map(|h| h.clone_ref(py));
@@ -974,7 +923,7 @@ impl PyBash {
                     builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
                 }
                 builder = apply_python_config(builder, python, external_functions, handler_clone);
-                builder = apply_fs_config(builder, &mounted_text_files, &real_mounts);
+                builder = apply_fs_config(builder, &files, &real_mounts);
                 *bash = builder.build();
                 // Swap the cancellation token to the new interpreter's token so
                 // cancel() targets the current (not stale) interpreter.
@@ -1075,7 +1024,7 @@ pub struct BashTool {
     cancelled: Arc<RwLock<Arc<AtomicBool>>>,
     username: Option<String>,
     hostname: Option<String>,
-    mounted_text_files: Vec<MountedTextConfig>,
+    files: std::collections::HashMap<String, String>,
     real_mounts: Vec<RealMountConfig>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
@@ -1108,32 +1057,24 @@ impl BashTool {
 #[pymethods]
 impl BashTool {
     #[new]
-    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         username=None,
         hostname=None,
         max_commands=None,
         max_loop_iterations=None,
         max_memory=None,
-        mount_text=None,
-        mount_readonly_text=None,
-        mount_real_readonly=None,
-        mount_real_readonly_at=None,
-        mount_real_readwrite=None,
-        mount_real_readwrite_at=None,
+        files=None,
+        mounts=None,
     ))]
     fn new(
+        py: Python<'_>,
         username: Option<String>,
         hostname: Option<String>,
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
         max_memory: Option<u64>,
-        mount_text: Option<Vec<(String, String)>>,
-        mount_readonly_text: Option<Vec<(String, String)>>,
-        mount_real_readonly: Option<Vec<String>>,
-        mount_real_readonly_at: Option<Vec<(String, String)>>,
-        mount_real_readwrite: Option<Vec<String>>,
-        mount_real_readwrite_at: Option<Vec<(String, String)>>,
+        files: Option<std::collections::HashMap<String, String>>,
+        mounts: Option<&Bound<'_, PyList>>,
     ) -> PyResult<Self> {
         let mut builder = Bash::builder();
 
@@ -1157,15 +1098,9 @@ impl BashTool {
             builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
         }
 
-        let (mounted_text_files, real_mounts) = parse_mount_configs(
-            mount_text,
-            mount_readonly_text,
-            mount_real_readonly,
-            mount_real_readonly_at,
-            mount_real_readwrite,
-            mount_real_readwrite_at,
-        );
-        builder = apply_fs_config(builder, &mounted_text_files, &real_mounts);
+        let files = files.unwrap_or_default();
+        let real_mounts = parse_mounts(py, mounts)?;
+        builder = apply_fs_config(builder, &files, &real_mounts);
 
         let bash = builder.build();
         let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
@@ -1178,7 +1113,7 @@ impl BashTool {
             cancelled,
             username,
             hostname,
-            mounted_text_files,
+            files,
             real_mounts,
             max_commands,
             max_loop_iterations,
@@ -1311,7 +1246,7 @@ impl BashTool {
         let inner = self.inner.clone();
         let username = self.username.clone();
         let hostname = self.hostname.clone();
-        let mounted_text_files = self.mounted_text_files.clone();
+        let files = self.files.clone();
         let real_mounts = self.real_mounts.clone();
         let max_commands = self.max_commands;
         let max_loop_iterations = self.max_loop_iterations;
@@ -1339,7 +1274,7 @@ impl BashTool {
                 if let Some(mm) = max_memory {
                     builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
                 }
-                builder = apply_fs_config(builder, &mounted_text_files, &real_mounts);
+                builder = apply_fs_config(builder, &files, &real_mounts);
                 *bash = builder.build();
                 // Swap the cancellation token to the new interpreter's token so
                 // cancel() targets the current (not stale) interpreter.

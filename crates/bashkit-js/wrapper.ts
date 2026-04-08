@@ -422,8 +422,8 @@ export class Bash {
   }
 
   /** Mount a host directory into the VFS. Read-only by default; pass writable: true to enable writes. */
-  mountReal(hostPath: string, vfsPath: string, writable?: boolean): void {
-    this.native.mountReal(hostPath, vfsPath, writable);
+  mount(hostPath: string, vfsPath: string, writable?: boolean): void {
+    this.native.mount(hostPath, vfsPath, writable);
   }
 
   /** Unmount a previously mounted filesystem. */
@@ -654,8 +654,8 @@ export class BashTool {
   }
 
   /** Mount a host directory into the VFS. Read-only by default; pass writable: true to enable writes. */
-  mountReal(hostPath: string, vfsPath: string, writable?: boolean): void {
-    this.native.mountReal(hostPath, vfsPath, writable);
+  mount(hostPath: string, vfsPath: string, writable?: boolean): void {
+    this.native.mount(hostPath, vfsPath, writable);
   }
 
   /** Unmount a previously mounted filesystem. */

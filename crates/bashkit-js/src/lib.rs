@@ -851,7 +851,7 @@ impl Bash {
     ///
     /// Read-only by default; pass `writable: true` to enable writes.
     #[napi]
-    pub fn mount_real(
+    pub fn mount(
         &self,
         host_path: String,
         vfs_path: String,
@@ -1223,7 +1223,7 @@ impl BashTool {
     ///
     /// Read-only by default; pass `writable: true` to enable writes.
     #[napi]
-    pub fn mount_real(
+    pub fn mount(
         &self,
         host_path: String,
         vfs_path: String,

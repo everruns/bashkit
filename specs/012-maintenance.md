@@ -98,6 +98,7 @@ dependency rot, or security gaps ship in a release.
   - Core classes: `Bash`, `BashTool`, `ExecResult`, `ScriptedTool`, `BashError`
   - Execution methods: `execute`, `execute_sync`, `executeOrThrow`/`execute_or_throw`
   - Configuration: `username`, `hostname`, `max_commands`, `max_loop_iterations`, `python`, `external_functions`/`external_handler`
+  - Mount API: `files` dict, `mounts` list (read-only default), runtime `mount`/`unmount` (see `specs/003-vfs.md` § Binding API Parity)
   - Tool metadata: `name`, `description`, `help`, `system_prompt`, `input_schema`, `output_schema`, `version`
   - Module functions: `getVersion`/`get_version`
   - Framework integrations: LangChain available in both bindings
