@@ -115,3 +115,10 @@ path = "fuzz_targets/grep_fuzz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "csv_fuzz"
+path = "fuzz_targets/csv_fuzz.rs"
+test = false
+doc = false
+bench = false
