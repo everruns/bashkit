@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-04-08
+
+### Highlights
+
+- **Expanded fuzz testing** — 10 new fuzz targets (tomlq, archive, csv, grep, template, yaml, sed, envsubst, base64, printf) for stronger security coverage
+- **Redirect fixes** — Correct fd3 redirection routing and stderr suppression from builtins
+- **Bug fixes** — VFS path resolution with `./` prefix, `date -r` flag, `tar -C`, `command -v` PATH search, and shopt preservation across `exec()`
+
+### What's Changed
+
+* feat(fuzz): add tomlq_fuzz target ([#1151](https://github.com/everruns/bashkit/pull/1151)) by @chaliy
+* feat(fuzz): add archive_fuzz target ([#1150](https://github.com/everruns/bashkit/pull/1150)) by @chaliy
+* feat(fuzz): add csv_fuzz target ([#1149](https://github.com/everruns/bashkit/pull/1149)) by @chaliy
+* feat(fuzz): add grep_fuzz target for ReDoS prevention ([#1148](https://github.com/everruns/bashkit/pull/1148)) by @chaliy
+* feat(fuzz): add template_fuzz target ([#1147](https://github.com/everruns/bashkit/pull/1147)) by @chaliy
+* feat(fuzz): add yaml_fuzz target ([#1146](https://github.com/everruns/bashkit/pull/1146)) by @chaliy
+* feat(fuzz): add sed_fuzz target ([#1145](https://github.com/everruns/bashkit/pull/1145)) by @chaliy
+* feat(fuzz): add envsubst_fuzz target ([#1144](https://github.com/everruns/bashkit/pull/1144)) by @chaliy
+* feat(fuzz): add base64_fuzz target ([#1143](https://github.com/everruns/bashkit/pull/1143)) by @chaliy
+* fix(vfs): handle ./ prefix in path resolution ([#1142](https://github.com/everruns/bashkit/pull/1142)) by @chaliy
+* fix(date): implement -r flag for file modification time ([#1141](https://github.com/everruns/bashkit/pull/1141)) by @chaliy
+* feat(fuzz): add printf_fuzz target ([#1140](https://github.com/everruns/bashkit/pull/1140)) by @chaliy
+* fix(redirect): fd3 redirection pattern 3>&1 >file now routes correctly ([#1139](https://github.com/everruns/bashkit/pull/1139)) by @chaliy
+* fix(redirect): suppress stderr from builtins with 2>/dev/null ([#1138](https://github.com/everruns/bashkit/pull/1138)) by @chaliy
+* feat(iconv): support //translit transliteration mode ([#1136](https://github.com/everruns/bashkit/pull/1136)) by @chaliy
+* test(redirect): add append redirect spec tests ([#1137](https://github.com/everruns/bashkit/pull/1137)) by @chaliy
+* fix(tar): pass -C directory to create_tar for VFS file resolution ([#1135](https://github.com/everruns/bashkit/pull/1135)) by @chaliy
+* fix(builtins): command -v/-V now searches PATH for external scripts ([#1134](https://github.com/everruns/bashkit/pull/1134)) by @chaliy
+* feat(js): expose mounts option, mountReal, and unmount on wrapper ([#1133](https://github.com/everruns/bashkit/pull/1133)) by @chaliy
+* feat(js): readDir returns entries with metadata (Python parity) ([#1132](https://github.com/everruns/bashkit/pull/1132)) by @chaliy
+* fix(interpreter): preserve shopt options across exec() calls ([#1131](https://github.com/everruns/bashkit/pull/1131)) by @chaliy
+* fix(ci): strip python feature from all workspace crates before publish ([#1127](https://github.com/everruns/bashkit/pull/1127)) by @chaliy
+* fix(ci): fix crates.io publish + add verification ([#1126](https://github.com/everruns/bashkit/pull/1126)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/commits/v0.1.17
+
 ## [0.1.16] - 2026-04-06
 
 ### Highlights
