@@ -99,7 +99,17 @@ def test_bash_files_dict():
     assert bash.execute_sync("cat /etc/version").stdout == "1.2.3\n"
 
 
-def test_bash_realfs_readwrite_at(tmp_path):
+def test_bash_mounts_readonly_by_default(tmp_path):
+    (tmp_path / "data.txt").write_text("original\n")
+    bash = Bash(mounts=[{"host_path": str(tmp_path), "vfs_path": "/data"}])
+    # Can read
+    assert bash.execute_sync("cat /data/data.txt").stdout == "original\n"
+    # Write goes to in-memory overlay, host file unchanged
+    bash.execute_sync("echo modified > /data/data.txt")
+    assert (tmp_path / "data.txt").read_text() == "original\n"
+
+
+def test_bash_mounts_writable(tmp_path):
     bash = Bash(mounts=[{"host_path": str(tmp_path), "vfs_path": "/workspace", "writable": True}])
     result = bash.execute_sync("echo 'hello host' > /workspace/hello.txt")
     assert result.exit_code == 0
