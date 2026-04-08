@@ -101,3 +101,10 @@ path = "fuzz_targets/yaml_fuzz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "template_fuzz"
+path = "fuzz_targets/template_fuzz.rs"
+test = false
+doc = false
+bench = false
