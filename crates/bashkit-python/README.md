@@ -99,27 +99,33 @@ fs.symlink("/data/link", "/data/blob.bin")
 fs.chmod("/data/blob.bin", 0o644)
 ```
 
+### Files and Mounts
+
+```python
+from bashkit import Bash, FileSystem
+
+# Text files (in-memory, writable)
+bash = Bash(files={"/config/app.conf": "debug=true\n"})
+
+# Real filesystem mounts (read-only by default)
+bash = Bash(mounts=[
+    {"host_path": "/path/to/data", "vfs_path": "/data"},
+    {"host_path": "/path/to/workspace", "vfs_path": "/workspace", "writable": True},
+])
+```
+
 ### Live Mounts
 
 ```python
 from bashkit import Bash, FileSystem
 
 bash = Bash()
-workspace = FileSystem.real("/path/to/workspace", readwrite=True)
+workspace = FileSystem.real("/path/to/workspace", writable=True)
 bash.mount("/workspace", workspace)
 
 bash.execute_sync("echo 'hello' > /workspace/demo.txt")
 bash.unmount("/workspace")
 ```
-
-`Bash` and `BashTool` also still support constructor-time mounts:
-
-- `mount_text=[("/path", "content")]`
-- `mount_readonly_text=[("/path", "content")]`
-- `mount_real_readonly=["/host/path"]`
-- `mount_real_readonly_at=[("/host/path", "/vfs/path")]`
-- `mount_real_readwrite=["/host/path"]`
-- `mount_real_readwrite_at=[("/host/path", "/vfs/path")]`
 
 ### BashTool — Convenience Wrapper for AI Agents
 

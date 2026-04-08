@@ -8,7 +8,7 @@ class FileSystem:
 
     def __init__(self) -> None: ...
     @staticmethod
-    def real(host_path: str, readwrite: bool = False) -> FileSystem: ...
+    def real(host_path: str, writable: bool = False) -> FileSystem: ...
     def read_file(self, path: str) -> bytes: ...
     def write_file(self, path: str, content: bytes) -> None: ...
     def append_file(self, path: str, content: bytes) -> None: ...
@@ -61,15 +61,12 @@ class Bash:
         hostname: str | None = None,
         max_commands: int | None = None,
         max_loop_iterations: int | None = None,
+        max_memory: int | None = None,
         python: bool = False,
         external_functions: list[str] | None = None,
         external_handler: ExternalHandler | None = None,
-        mount_text: list[tuple[str, str]] | None = None,
-        mount_readonly_text: list[tuple[str, str]] | None = None,
-        mount_real_readonly: list[str] | None = None,
-        mount_real_readonly_at: list[tuple[str, str]] | None = None,
-        mount_real_readwrite: list[str] | None = None,
-        mount_real_readwrite_at: list[tuple[str, str]] | None = None,
+        files: dict[str, str] | None = None,
+        mounts: list[dict[str, Any]] | None = None,
     ) -> None: ...
     async def execute(self, commands: str) -> ExecResult: ...
     def execute_sync(self, commands: str) -> ExecResult: ...
@@ -122,12 +119,9 @@ class BashTool:
         hostname: str | None = None,
         max_commands: int | None = None,
         max_loop_iterations: int | None = None,
-        mount_text: list[tuple[str, str]] | None = None,
-        mount_readonly_text: list[tuple[str, str]] | None = None,
-        mount_real_readonly: list[str] | None = None,
-        mount_real_readonly_at: list[tuple[str, str]] | None = None,
-        mount_real_readwrite: list[str] | None = None,
-        mount_real_readwrite_at: list[tuple[str, str]] | None = None,
+        max_memory: int | None = None,
+        files: dict[str, str] | None = None,
+        mounts: list[dict[str, Any]] | None = None,
     ) -> None: ...
     async def execute(self, commands: str) -> ExecResult: ...
     def execute_sync(self, commands: str) -> ExecResult: ...

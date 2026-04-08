@@ -122,10 +122,10 @@ describe("VFS API", () => {
     assert.ok(entries.some((e) => e.name === "fsapi.txt"));
   });
 
-  it("mountReal and unmount", () => {
+  it("mount and unmount", () => {
     const bash = new Bash();
-    // Mount /tmp as a real filesystem at /host-tmp
-    bash.mountReal("/tmp", "/host-tmp", true);
+    // Mount /tmp as a real filesystem at /host-tmp (read-only by default)
+    bash.mount("/tmp", "/host-tmp");
     // The mount should be accessible
     const r = bash.executeSync("ls /host-tmp 2>/dev/null; echo status=$?");
     assert.ok(r.stdout.includes("status=0"));
