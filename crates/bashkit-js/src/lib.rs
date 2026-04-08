@@ -411,8 +411,8 @@ pub struct MountConfig {
     pub host_path: String,
     /// VFS path where mount appears (defaults to host_path).
     pub vfs_path: Option<String>,
-    /// If true, mount is read-only (default: true).
-    pub read_only: Option<bool>,
+    /// If true, mount is read-write (default: false → read-only).
+    pub writable: Option<bool>,
 }
 
 /// Options for creating a Bash or BashTool instance.
@@ -444,7 +444,7 @@ pub struct BashOptions {
     /// Files to mount in the virtual filesystem.
     /// Keys are absolute paths, values are file content strings.
     pub files: Option<HashMap<String, String>>,
-    /// Real filesystem mounts. Each entry: { hostPath, vfsPath?, readOnly? }
+    /// Real filesystem mounts. Each entry: { hostPath, vfsPath?, writable? }
     pub mounts: Option<Vec<MountConfig>>,
     /// Enable embedded Python execution (`python`/`python3` builtins).
     pub python: Option<bool>,
@@ -849,21 +849,20 @@ impl Bash {
 
     /// Mount a host directory into the VFS at runtime.
     ///
-    /// `readOnly` defaults to true when omitted.
+    /// Read-only by default; pass `writable: true` to enable writes.
     #[napi]
     pub fn mount_real(
         &self,
         host_path: String,
         vfs_path: String,
-        read_only: Option<bool>,
+        writable: Option<bool>,
     ) -> napi::Result<()> {
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
-            let ro = read_only.unwrap_or(true);
-            let mode = if ro {
-                bashkit::RealFsMode::ReadOnly
-            } else {
+            let mode = if writable.unwrap_or(false) {
                 bashkit::RealFsMode::ReadWrite
+            } else {
+                bashkit::RealFsMode::ReadOnly
             };
             let real_backend = bashkit::RealFs::new(&host_path, mode)
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -1222,21 +1221,20 @@ impl BashTool {
 
     /// Mount a host directory into the VFS at runtime.
     ///
-    /// `readOnly` defaults to true when omitted.
+    /// Read-only by default; pass `writable: true` to enable writes.
     #[napi]
     pub fn mount_real(
         &self,
         host_path: String,
         vfs_path: String,
-        read_only: Option<bool>,
+        writable: Option<bool>,
     ) -> napi::Result<()> {
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
-            let ro = read_only.unwrap_or(true);
-            let mode = if ro {
-                bashkit::RealFsMode::ReadOnly
-            } else {
+            let mode = if writable.unwrap_or(false) {
                 bashkit::RealFsMode::ReadWrite
+            } else {
+                bashkit::RealFsMode::ReadOnly
             };
             let real_backend = bashkit::RealFs::new(&host_path, mode)
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -1621,12 +1619,12 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
     // Apply real filesystem mounts
     if let Some(ref mounts) = state.mounts {
         for m in mounts {
-            let read_only = m.read_only.unwrap_or(true);
-            builder = match (read_only, &m.vfs_path) {
-                (true, None) => builder.mount_real_readonly(&m.host_path),
-                (true, Some(vfs)) => builder.mount_real_readonly_at(&m.host_path, vfs),
-                (false, None) => builder.mount_real_readwrite(&m.host_path),
-                (false, Some(vfs)) => builder.mount_real_readwrite_at(&m.host_path, vfs),
+            let writable = m.writable.unwrap_or(false);
+            builder = match (writable, &m.vfs_path) {
+                (false, None) => builder.mount_real_readonly(&m.host_path),
+                (false, Some(vfs)) => builder.mount_real_readonly_at(&m.host_path, vfs),
+                (true, None) => builder.mount_real_readwrite(&m.host_path),
+                (true, Some(vfs)) => builder.mount_real_readwrite_at(&m.host_path, vfs),
             };
         }
     }

@@ -70,12 +70,12 @@ export interface BashOptions {
    * ```typescript
    * const bash = new Bash({
    *   mounts: [
-   *     { path: "/docs", root: "/real/path/to/docs", readOnly: true },
+   *     { path: "/docs", root: "/real/path/to/docs" },
    *   ],
    * });
    * ```
    */
-  mounts?: Array<{ path: string; root: string; readOnly?: boolean }>;
+  mounts?: Array<{ path: string; root: string; writable?: boolean }>;
   /**
    * Enable embedded Python execution (`python`/`python3` builtins).
    *
@@ -152,7 +152,7 @@ function toNativeOptions(
     mounts: options?.mounts?.map((m) => ({
       hostPath: m.root,
       vfsPath: m.path,
-      readOnly: m.readOnly,
+      writable: m.writable,
     })),
     python: options?.python,
     externalFunctions: options?.externalFunctions,
@@ -421,9 +421,9 @@ export class Bash {
     return this.native.fs();
   }
 
-  /** Mount a host directory into the VFS. readOnly defaults to true. */
-  mountReal(hostPath: string, vfsPath: string, readOnly?: boolean): void {
-    this.native.mountReal(hostPath, vfsPath, readOnly);
+  /** Mount a host directory into the VFS. Read-only by default; pass writable: true to enable writes. */
+  mountReal(hostPath: string, vfsPath: string, writable?: boolean): void {
+    this.native.mountReal(hostPath, vfsPath, writable);
   }
 
   /** Unmount a previously mounted filesystem. */
@@ -653,9 +653,9 @@ export class BashTool {
     return this.native.fs();
   }
 
-  /** Mount a host directory into the VFS. readOnly defaults to true. */
-  mountReal(hostPath: string, vfsPath: string, readOnly?: boolean): void {
-    this.native.mountReal(hostPath, vfsPath, readOnly);
+  /** Mount a host directory into the VFS. Read-only by default; pass writable: true to enable writes. */
+  mountReal(hostPath: string, vfsPath: string, writable?: boolean): void {
+    this.native.mountReal(hostPath, vfsPath, writable);
   }
 
   /** Unmount a previously mounted filesystem. */
