@@ -185,7 +185,7 @@ The CI workflows handle this automatically on GitHub Release.
 | OS | Target | Runner |
 |----|--------|--------|
 | macOS | aarch64-apple-darwin | macos-latest |
-| macOS | x86_64-apple-darwin | macos-13 |
+| macOS | x86_64-apple-darwin | macos-latest |
 | Linux | x86_64-unknown-linux-gnu | ubuntu-latest |
 
 #### Homebrew
