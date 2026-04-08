@@ -179,6 +179,16 @@ def test_bash_unmount_nonexistent_raises():
         bash.unmount("/nonexistent")
 
 
+def test_bash_mounts_missing_host_path_raises():
+    with pytest.raises(Exception, match="host_path"):
+        Bash(mounts=[{"vfs_path": "/data"}])
+
+
+def test_bash_mounts_invalid_entry_raises():
+    with pytest.raises(Exception):
+        Bash(mounts=["not a dict"])
+
+
 def test_bash_files_mount_has_writable_mode():
     """Files dict mounts get writable mode 0o644."""
     bash = Bash(files={"/etc/version": "1.0\n"})

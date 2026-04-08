@@ -140,10 +140,7 @@ fn make_runtime() -> PyResult<Arc<Runtime>> {
 
 /// Parse `mounts` kwarg (list of dicts) into internal config.
 /// Each dict: { "host_path": str, "vfs_path"?: str, "writable"?: bool }.
-fn parse_mounts(
-    py: Python<'_>,
-    mounts: Option<&Bound<'_, PyList>>,
-) -> PyResult<Vec<RealMountConfig>> {
+fn parse_mounts(mounts: Option<&Bound<'_, PyList>>) -> PyResult<Vec<RealMountConfig>> {
     let Some(list) = mounts else {
         return Ok(Vec::new());
     };
@@ -171,7 +168,6 @@ fn parse_mounts(
             writable,
         });
     }
-    let _ = py; // used for lifetime
     Ok(configs)
 }
 
@@ -680,7 +676,7 @@ impl PyBash {
         }
 
         let files = files.unwrap_or_default();
-        let real_mounts = parse_mounts(py, mounts)?;
+        let real_mounts = parse_mounts(mounts)?;
 
         let fn_names = external_functions.clone().unwrap_or_default();
         if !fn_names.is_empty() && external_handler.is_none() {
@@ -1067,7 +1063,7 @@ impl BashTool {
         mounts=None,
     ))]
     fn new(
-        py: Python<'_>,
+        _py: Python<'_>,
         username: Option<String>,
         hostname: Option<String>,
         max_commands: Option<u64>,
@@ -1099,7 +1095,7 @@ impl BashTool {
         }
 
         let files = files.unwrap_or_default();
-        let real_mounts = parse_mounts(py, mounts)?;
+        let real_mounts = parse_mounts(mounts)?;
         builder = apply_fs_config(builder, &files, &real_mounts);
 
         let bash = builder.build();
