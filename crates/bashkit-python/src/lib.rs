@@ -1053,6 +1053,7 @@ impl BashTool {
 #[pymethods]
 impl BashTool {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         username=None,
         hostname=None,
