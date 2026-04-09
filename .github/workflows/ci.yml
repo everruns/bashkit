@@ -135,6 +135,9 @@ jobs:
           cargo build -p bashkit-cli --features realfs
           bash examples/realfs_mount.sh
 
+      - name: Run ticket CLI example
+        run: bash examples/ticket-cli.sh
+
       # External API dependency — don't block CI on Anthropic outages
       - name: Run LLM agent example
         continue-on-error: true

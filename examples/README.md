@@ -10,6 +10,17 @@ cargo build -p bashkit-cli --features realfs
 bash examples/realfs_mount.sh
 ```
 
+## ticket-cli.sh
+
+Run the [wedow/ticket](https://github.com/wedow/ticket) issue tracker inside
+bashkit. Exercises plugin discovery via PATH, awk-heavy scripts, YAML
+frontmatter parsing, dependency trees, and filtered listing — all interpreted.
+
+```bash
+cargo build -p bashkit-cli --features realfs
+bash examples/ticket-cli.sh
+```
+
 ## Python
 
 Python examples use [PEP 723](https://peps.python.org/pep-0723/) inline script metadata.
