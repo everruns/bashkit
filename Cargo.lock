@@ -358,6 +358,7 @@ dependencies = [
  "tracing",
  "url",
  "zapcode-core",
+ "zeroize",
 ]
 
 [[package]]
