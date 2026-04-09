@@ -827,16 +827,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_date_parse_rfc2822_input() {
-        let result =
-            run_date(&["+%B %d, %Y", "--date=Mon, 06 Apr 2026 12:00:00 +0000"]).await;
+        let result = run_date(&["+%B %d, %Y", "--date=Mon, 06 Apr 2026 12:00:00 +0000"]).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "April 06, 2026");
     }
 
     #[tokio::test]
     async fn test_date_parse_rfc2822_epoch_output() {
-        let result =
-            run_date(&["+%s", "--date=Wed, 01 Jan 2020 00:00:00 +0000"]).await;
+        let result = run_date(&["+%s", "--date=Wed, 01 Jan 2020 00:00:00 +0000"]).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "1577836800");
     }
