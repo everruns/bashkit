@@ -23,7 +23,7 @@ use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 /// Monotonic counter for unique process substitution file paths
 static PROC_SUB_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -499,6 +499,11 @@ pub struct Interpreter {
     /// virtual file path, run these commands with the file content as stdin.
     /// Each entry is (virtual_path, commands_to_run).
     deferred_proc_subs: Vec<(String, Vec<Command>)>,
+    /// PRNG state for $RANDOM (LCG seeded per-instance from OS entropy).
+    /// NOT cryptographically secure — matches real bash behavior.
+    /// Uses `AtomicU32` for interior mutability so $RANDOM can advance state
+    /// in `expand_variable(&self, ...)` while remaining `Send + Sync`.
+    random_state: AtomicU32,
 }
 
 impl Interpreter {
@@ -770,6 +775,13 @@ impl Interpreter {
         let mut arrays = HashMap::new();
         arrays.insert("BASH_VERSINFO".to_string(), bash_versinfo);
 
+        // Seed PRNG for $RANDOM from OS entropy via RandomState
+        let random_seed = {
+            use std::collections::hash_map::RandomState;
+            use std::hash::{BuildHasher, Hasher};
+            RandomState::new().build_hasher().finish() as u32
+        };
+
         Self {
             fs,
             env: HashMap::new(),
@@ -815,6 +827,7 @@ impl Interpreter {
             pending_fd_targets: Vec::new(),
             cancelled: Arc::new(AtomicBool::new(false)),
             deferred_proc_subs: Vec::new(),
+            random_state: AtomicU32::new(random_seed),
         }
     }
 
@@ -8434,6 +8447,12 @@ impl Interpreter {
         }
         // Resolve nameref: if `name` is a nameref, assign to the target instead
         let resolved = self.resolve_nameref(&name).to_string();
+        // RANDOM=N reseeds the PRNG (matches bash behavior)
+        if resolved == "RANDOM" {
+            self.random_state
+                .store(value.parse::<u32>().unwrap_or(0), Ordering::Relaxed);
+            return;
+        }
         // THREAT[TM-INJ-019/020/021]: Block assignment to readonly variables
         if self
             .variables
@@ -8771,11 +8790,12 @@ impl Interpreter {
                 return flags;
             }
             "RANDOM" => {
-                // $RANDOM - random number between 0 and 32767
-                use std::collections::hash_map::RandomState;
-                use std::hash::{BuildHasher, Hasher};
-                let random = RandomState::new().build_hasher().finish() as u32;
-                return (random % 32768).to_string();
+                // $RANDOM - LCG matching bash behavior, seeded per-instance.
+                // LCG: state = state * 1103515245 + 12345 (glibc constants)
+                let prev = self.random_state.load(Ordering::Relaxed);
+                let next = prev.wrapping_mul(1103515245).wrapping_add(12345);
+                self.random_state.store(next, Ordering::Relaxed);
+                return ((next >> 16) & 0x7fff).to_string();
             }
             "LINENO" => {
                 // $LINENO - current line number from command span
