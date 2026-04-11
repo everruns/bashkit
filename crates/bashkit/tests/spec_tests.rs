@@ -177,6 +177,7 @@ async fn sed_spec_tests() {
 
 /// Run all jq spec tests
 #[tokio::test]
+#[cfg(feature = "jq")]
 async fn jq_spec_tests() {
     let dir = spec_cases_dir().join("jq");
     let all_tests = load_spec_tests(&dir);

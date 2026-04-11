@@ -1,6 +1,9 @@
 // Scaffold tests for the jq_fuzz target.
 // Validates that the jq builtin handles arbitrary filter expressions and
 // malformed JSON without panicking.
+//
+// Requires the `jq` feature (gated in #1223).
+#![cfg(feature = "jq")]
 
 use bashkit::{Bash, ExecutionLimits};
 
