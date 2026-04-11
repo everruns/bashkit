@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, BuiltinSideEffect, Context};
 use crate::error::Result;
-use crate::interpreter::{ExecResult, is_internal_variable, is_valid_var_name};
+use crate::interpreter::{ExecResult, is_hidden_variable, is_internal_variable, is_valid_var_name};
 
 /// unset builtin - remove variables
 pub struct Unset;
@@ -119,10 +119,10 @@ impl Set {
 impl Builtin for Set {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if ctx.args.is_empty() {
-            // Display all variables, filtering internal markers (TM-INF-017)
+            // Display all variables, filtering internal/hidden markers (TM-INF-017)
             let mut output = String::new();
             for (name, value) in ctx.variables.iter() {
-                if !is_internal_variable(name) {
+                if !is_hidden_variable(name) {
                     output.push_str(&format!("{}={}\n", name, value));
                 }
             }
