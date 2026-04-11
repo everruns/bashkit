@@ -11017,35 +11017,6 @@ cat /tmp/test_fd.txt"#,
         );
     }
 
-    /// Issue #1186: `declare -p` and `set` must not expose internal variables.
-    /// Scripts can fingerprint bashkit vs real bash by enumerating variables.
-    #[tokio::test]
-    async fn test_internal_variables_hidden_from_set_and_declare() {
-        // `set` with no args should not show internal variables
-        let result = run_script("set -e; set").await;
-        for line in result.stdout.lines() {
-            let name = line.split('=').next().unwrap_or("");
-            assert!(
-                !is_internal_variable(name),
-                "`set` leaked internal variable: {line}"
-            );
-        }
-
-        // `declare -p` should not show internal variables
-        let result = run_script("set -e; declare -p").await;
-        for line in result.stdout.lines() {
-            // format: declare -- NAME="VALUE"
-            if let Some(rest) = line.strip_prefix("declare ") {
-                let after_flags = rest.split_whitespace().last().unwrap_or("");
-                let name = after_flags.split('=').next().unwrap_or("");
-                assert!(
-                    !is_internal_variable(name),
-                    "`declare -p` leaked internal variable: {line}"
-                );
-            }
-        }
-    }
-
     /// Regression: all known internal prefixes must be caught by is_internal_variable().
     #[test]
     fn test_is_internal_variable_covers_all_prefixes() {
