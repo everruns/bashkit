@@ -4851,6 +4851,7 @@ done"#,
     }
 
     #[tokio::test]
+    #[cfg(feature = "jq")]
     async fn test_text_file_json() {
         let mut bash = Bash::builder()
             .mount_text("/data/users.json", r#"["alice", "bob", "charlie"]"#)
