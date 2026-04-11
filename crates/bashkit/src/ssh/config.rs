@@ -47,7 +47,7 @@ pub const DEFAULT_PORT: u16 = 22;
 /// - Host allowlist is default-deny (empty blocks everything)
 /// - Keys are read from VFS only, never from host filesystem
 /// - All connections have timeouts to prevent hangs
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SshConfig {
     /// Host allowlist
     pub(crate) allowlist: SshAllowlist,
@@ -65,6 +65,29 @@ pub struct SshConfig {
     pub(crate) max_sessions: usize,
     /// Default port
     pub(crate) default_port: u16,
+}
+
+// THREAT[TM-INF-016]: Redact credentials in Debug output to prevent
+// passwords and private keys from leaking into logs, error messages, or LLM context.
+impl std::fmt::Debug for SshConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshConfig")
+            .field("allowlist", &self.allowlist)
+            .field("default_user", &self.default_user)
+            .field(
+                "default_password",
+                &self.default_password.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "default_private_key",
+                &self.default_private_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("timeout", &self.timeout)
+            .field("max_response_bytes", &self.max_response_bytes)
+            .field("max_sessions", &self.max_sessions)
+            .field("default_port", &self.default_port)
+            .finish()
+    }
 }
 
 impl Default for SshConfig {
@@ -211,6 +234,23 @@ mod tests {
         assert_eq!(config.max_response_bytes, 5_000_000);
         assert_eq!(config.max_sessions, 3);
         assert_eq!(config.default_port, 2222);
+    }
+
+    #[test]
+    fn test_debug_redacts_credentials() {
+        let config = SshConfig::new()
+            .default_password("super_secret_password")
+            .default_private_key("-----BEGIN OPENSSH PRIVATE KEY-----");
+        let debug = format!("{:?}", config);
+        assert!(
+            !debug.contains("super_secret_password"),
+            "password leaked in Debug: {debug}"
+        );
+        assert!(
+            !debug.contains("BEGIN OPENSSH PRIVATE KEY"),
+            "private key leaked in Debug: {debug}"
+        );
+        assert!(debug.contains("[REDACTED]"), "REDACTED missing: {debug}");
     }
 
     #[test]

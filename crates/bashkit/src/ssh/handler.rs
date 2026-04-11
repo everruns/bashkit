@@ -14,7 +14,7 @@ use async_trait::async_trait;
 ///
 /// Fully resolved by the builtin before passing to the handler.
 /// The handler does NOT need to validate the host — that's already done.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SshTarget {
     /// Remote hostname or IP.
     pub host: String,
@@ -26,6 +26,22 @@ pub struct SshTarget {
     pub private_key: Option<String>,
     /// Optional password.
     pub password: Option<String>,
+}
+
+// THREAT[TM-INF-016]: Redact credentials in Debug output.
+impl std::fmt::Debug for SshTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshTarget")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field(
+                "private_key",
+                &self.private_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 /// Output from a remote command execution.
@@ -125,4 +141,31 @@ pub trait SshHandler: Send + Sync {
         target: &SshTarget,
         remote_path: &str,
     ) -> std::result::Result<Vec<u8>, String>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_debug_redacts_credentials() {
+        let target = SshTarget {
+            host: "example.com".to_string(),
+            port: 22,
+            user: "admin".to_string(),
+            private_key: Some("-----BEGIN OPENSSH PRIVATE KEY-----".to_string()),
+            password: Some("super_secret".to_string()),
+        };
+        let debug = format!("{:?}", target);
+        assert!(!debug.contains("super_secret"), "password leaked: {debug}");
+        assert!(
+            !debug.contains("BEGIN OPENSSH PRIVATE KEY"),
+            "key leaked: {debug}"
+        );
+        assert!(debug.contains("[REDACTED]"), "REDACTED missing: {debug}");
+        assert!(
+            debug.contains("example.com"),
+            "host should be visible: {debug}"
+        );
+    }
 }
