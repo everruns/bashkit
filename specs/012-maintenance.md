@@ -29,6 +29,11 @@ dependency rot, or security gaps ship in a release.
 - No known CVEs in dependency tree
 - License and advisory checks pass (`deny.toml`)
 - Supply chain audit passes
+- Dependency tree analysis (`cargo tree --duplicates`, usage grep):
+  - No unused/dead dependencies in workspace or crate Cargo.toml files
+  - Single-builtin deps behind feature flags (not always-on)
+  - No full crates where a sub-crate suffices (e.g. `futures-util` vs `futures`)
+  - Duplicate transitive versions reviewed — fix or document why unfixable
 
 ### Security
 
