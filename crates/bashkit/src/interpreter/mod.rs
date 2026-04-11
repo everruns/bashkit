@@ -289,6 +289,7 @@ fn is_dev_null(path: &Path) -> bool {
 
 /// THREAT[TM-INJ-009,TM-INJ-016]: Check if a variable name is an internal marker.
 /// Used by builtins and interpreter to block user assignment to internal prefixes.
+/// Note: `_TTY_` is intentionally excluded — it is user-configurable (bashkit extension).
 pub(crate) fn is_internal_variable(name: &str) -> bool {
     name.starts_with("SHOPT_")
         || name.starts_with("_NAMEREF_")
@@ -297,9 +298,20 @@ pub(crate) fn is_internal_variable(name: &str) -> bool {
         || name.starts_with("_LOWER_")
         || name.starts_with("_INTEGER_")
         || name.starts_with("_ARRAY_READ_")
+        || name.starts_with("_BG_EXIT_")
+        || name.starts_with("_LAST_BG_")
+        || name.starts_with("_DIRSTACK_")
+        || name.starts_with("_OPTCHAR_")
         || name == "_EVAL_CMD"
         || name == "_SHIFT_COUNT"
         || name == "_SET_POSITIONAL"
+}
+
+/// THREAT[TM-INF-017]: Check if a variable should be hidden from user-visible output.
+/// Superset of `is_internal_variable()` — also includes `_TTY_` which is user-settable
+/// but should not appear in `set`, `declare -p`, or environment exports.
+pub(crate) fn is_hidden_variable(name: &str) -> bool {
+    is_internal_variable(name) || name.starts_with("_TTY_")
 }
 
 /// Check if a string is a valid shell variable name: `[a-zA-Z_][a-zA-Z0-9_]*`.
@@ -5381,12 +5393,12 @@ impl Interpreter {
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         if args.is_empty() {
-            // declare with no args: print all variables, filtering internal markers (TM-INF-017)
+            // declare with no args: print all variables, filtering hidden markers (TM-INF-017)
             let mut output = String::new();
             let mut entries: Vec<_> = self.variables.iter().collect();
             entries.sort_by_key(|(k, _)| (*k).clone());
             for (name, value) in entries {
-                if is_internal_variable(name) {
+                if is_hidden_variable(name) {
                     continue;
                 }
                 output.push_str(&format!("declare -- {}=\"{}\"\n", name, value));
@@ -6691,15 +6703,15 @@ impl Interpreter {
                         .variables
                         .keys()
                         .filter(|k| k.starts_with(prefix.as_str()))
-                        // THREAT[TM-INJ-009]: Hide internal marker variables
-                        .filter(|k| !Self::is_internal_variable(k))
+                        // THREAT[TM-INF-017]: Hide internal/hidden marker variables
+                        .filter(|k| !Self::is_hidden_variable(k))
                         .cloned()
                         .collect();
                     for k in self.env.keys() {
                         if k.starts_with(prefix.as_str())
                             && !names.contains(k)
-                            // THREAT[TM-INJ-009]: Hide internal marker variables
-                            && !Self::is_internal_variable(k)
+                            // THREAT[TM-INF-017]: Hide internal/hidden marker variables
+                            && !Self::is_hidden_variable(k)
                         {
                             names.push(k.clone());
                         }
@@ -8452,6 +8464,11 @@ impl Interpreter {
     /// THREAT[TM-INJ-009]: Check if a variable name is an internal marker.
     fn is_internal_variable(name: &str) -> bool {
         is_internal_variable(name)
+    }
+
+    /// THREAT[TM-INF-017]: Check if a variable should be hidden from output.
+    fn is_hidden_variable(name: &str) -> bool {
+        is_hidden_variable(name)
     }
 
     /// Set a variable, respecting dynamic scoping.
@@ -11138,6 +11155,58 @@ cat /tmp/test_fd.txt"#,
                 leaked.is_empty(),
                 "proc_sub files leaked after failed command: {:?}",
                 leaked.iter().map(|e| &e.name).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Regression: all known internal prefixes must be caught by is_internal_variable().
+    #[test]
+    fn test_is_internal_variable_covers_all_prefixes() {
+        let internal_names = [
+            "_NAMEREF_foo",
+            "_READONLY_bar",
+            "_UPPER_x",
+            "_LOWER_y",
+            "_INTEGER_n",
+            "_ARRAY_READ_a",
+            "_EVAL_CMD",
+            "_SHIFT_COUNT",
+            "_SET_POSITIONAL",
+            "_BG_EXIT_CODE",
+            "_LAST_BG_PID",
+            "_DIRSTACK_SIZE",
+            "_DIRSTACK_0",
+            "_OPTCHAR_IDX",
+            "SHOPT_e",
+            "SHOPT_x",
+            "SHOPT_expand_aliases",
+            "SHOPT_pipefail",
+        ];
+        for name in &internal_names {
+            assert!(
+                is_internal_variable(name),
+                "is_internal_variable() should return true for {name}"
+            );
+        }
+
+        // _TTY_ is user-configurable but hidden from output
+        let hidden_only = ["_TTY_0", "_TTY_1"];
+        for name in &hidden_only {
+            assert!(
+                !is_internal_variable(name),
+                "_TTY_ should NOT be blocked by is_internal_variable(): {name}"
+            );
+            assert!(
+                is_hidden_variable(name),
+                "_TTY_ should be hidden by is_hidden_variable(): {name}"
+            );
+        }
+
+        let user_names = ["HOME", "PATH", "USER", "MY_VAR", "foo", "_"];
+        for name in &user_names {
+            assert!(
+                !is_internal_variable(name),
+                "is_internal_variable() should return false for user variable {name}"
             );
         }
     }
