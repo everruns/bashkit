@@ -11010,4 +11010,23 @@ cat /tmp/test_fd.txt"#,
             "fd3 → stdout, fd1 → file"
         );
     }
+
+    // Regression: date +"$var" must not word-split format when var contains spaces
+    // https://github.com/everruns/bashkit/issues/1203
+    #[tokio::test]
+    async fn test_date_format_var_with_spaces_no_split() {
+        // Use -u -d @0 for deterministic output (1970-01-01 UTC)
+        let result = run_script(r#"fmt="%Y %m %d"; date -u -d @0 +"$fmt""#).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "1970 01 01");
+    }
+
+    // Mixed-quoting: prefix"$var" must stay one word (no IFS split)
+    #[tokio::test]
+    async fn test_mixed_quote_prefix_var_no_split() {
+        // prefix"$var" should produce one argument, not be split at spaces
+        let result = run_script(r#"v="a b c"; echo prefix"$v""#).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "prefixa b c");
+    }
 }

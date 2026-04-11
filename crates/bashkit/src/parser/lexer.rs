@@ -398,6 +398,7 @@ impl<'a> Lexer<'a> {
 
     fn read_word_starting_with(&mut self, prefix: &str) -> Option<Token> {
         let mut word = prefix.to_string();
+        let mut has_quoted_expansion = false;
         // Use the same logic as read_word but with pre-seeded content
         while let Some(ch) = self.peek_char() {
             if ch == '"' || ch == '\'' {
@@ -435,6 +436,19 @@ impl<'a> Lexer<'a> {
                             }
                             continue;
                         }
+                    }
+                    // Track quoted expansions for IFS-split suppression
+                    if c == '$' && quote_char == '"' {
+                        word.push(c);
+                        self.advance();
+                        if self.peek_char().is_some_and(|nc| {
+                            nc.is_ascii_alphanumeric()
+                                || nc == '_'
+                                || matches!(nc, '{' | '(' | '?' | '#' | '@' | '*' | '!' | '$' | '-')
+                        }) {
+                            has_quoted_expansion = true;
+                        }
+                        continue;
                     }
                     word.push(c);
                     self.advance();
@@ -488,11 +502,20 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        Some(Token::Word(word))
+        if has_quoted_expansion {
+            Some(Token::QuotedWord(word))
+        } else {
+            Some(Token::Word(word))
+        }
     }
 
     fn read_word(&mut self) -> Option<Token> {
         let mut word = String::new();
+        // Track whether any double-quoted segment contained a variable/command
+        // expansion.  When true the whole token is promoted to QuotedWord so
+        // the interpreter suppresses IFS field splitting — matching POSIX
+        // behaviour for words like  +"$fmt"  or  prefix"$var"suffix.
+        let mut has_quoted_expansion = false;
 
         while let Some(ch) = self.peek_char() {
             // Handle quoted strings within words (e.g., a="Hello" or VAR="value")
@@ -544,6 +567,15 @@ impl<'a> Lexer<'a> {
                     if c == '$' && quote_char == '"' {
                         word.push(c);
                         self.advance();
+                        // Mark that this word contains a quoted expansion so IFS
+                        // splitting is suppressed (e.g. +"$fmt" stays one field).
+                        if self.peek_char().is_some_and(|nc| {
+                            nc.is_ascii_alphanumeric()
+                                || nc == '_'
+                                || matches!(nc, '{' | '(' | '?' | '#' | '@' | '*' | '!' | '$' | '-')
+                        }) {
+                            has_quoted_expansion = true;
+                        }
                         if self.peek_char() == Some('(') {
                             word.push('(');
                             self.advance();
@@ -920,6 +952,11 @@ impl<'a> Lexer<'a> {
 
         if word.is_empty() {
             None
+        } else if has_quoted_expansion {
+            // A double-quoted segment contained a variable/command expansion.
+            // Promote to QuotedWord so the interpreter suppresses IFS field
+            // splitting, matching POSIX behaviour for  +"$fmt"  etc.
+            Some(Token::QuotedWord(word))
         } else {
             Some(Token::Word(word))
         }
