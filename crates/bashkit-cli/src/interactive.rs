@@ -14,11 +14,22 @@ fn prompt(bash: &bashkit::Bash) -> String {
 
 /// Returns true if the parse error indicates incomplete input that
 /// should trigger a continuation prompt.
+///
+/// Matches parser errors for:
+/// - Unterminated quotes/substitutions ("unterminated single quote")
+/// - Unexpected EOF in constructs ("unexpected end of input in for loop")
+/// - Empty bodies/clauses ("syntax error: empty then clause")
+/// - Missing closing keywords ("expected 'fi'", "expected 'done'", "expected 'esac'")
 fn is_incomplete_input(err_msg: &str) -> bool {
     let lower = err_msg.to_lowercase();
     lower.contains("unterminated")
         || lower.contains("unexpected end of input")
         || lower.contains("unexpected eof")
+        || lower.contains("syntax error: empty")
+        || lower.contains("expected 'fi'")
+        || lower.contains("expected 'done'")
+        || lower.contains("expected 'esac'")
+        || lower.contains("expected '}' to close brace group")
 }
 
 fn error_result(exit_code: i32) -> bashkit::ExecResult {
@@ -130,6 +141,23 @@ mod tests {
         assert!(is_incomplete_input(
             "parse error at line 1, column 15: unexpected end of input in for loop"
         ));
+    }
+
+    #[test]
+    fn incomplete_empty_body() {
+        assert!(is_incomplete_input("syntax error: empty for loop body"));
+        assert!(is_incomplete_input("syntax error: empty then clause"));
+        assert!(is_incomplete_input("syntax error: empty else clause"));
+        assert!(is_incomplete_input("syntax error: empty while loop body"));
+        assert!(is_incomplete_input("syntax error: empty brace group"));
+    }
+
+    #[test]
+    fn incomplete_missing_closing_keyword() {
+        assert!(is_incomplete_input("expected 'fi'"));
+        assert!(is_incomplete_input("expected 'done'"));
+        assert!(is_incomplete_input("expected 'esac'"));
+        assert!(is_incomplete_input("expected '}' to close brace group"));
     }
 
     #[test]
