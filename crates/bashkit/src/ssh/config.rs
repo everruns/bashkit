@@ -23,6 +23,17 @@ pub const DEFAULT_MAX_SESSIONS: usize = 5;
 /// Default SSH port.
 pub const DEFAULT_PORT: u16 = 22;
 
+/// A trusted SSH host key entry, mapping a host pattern to a public key.
+///
+/// Used for host key verification when `strict_host_key_checking` is enabled.
+#[derive(Clone, Debug)]
+pub struct TrustedHostKey {
+    /// Host pattern (exact match or `*` for any host).
+    pub host: String,
+    /// The expected public key in OpenSSH format (e.g. "ssh-ed25519 AAAA...").
+    pub public_key: String,
+}
+
 /// SSH configuration for Bashkit.
 ///
 /// Controls SSH behavior including host allowlist, authentication,
@@ -47,6 +58,7 @@ pub const DEFAULT_PORT: u16 = 22;
 /// - Host allowlist is default-deny (empty blocks everything)
 /// - Keys are read from VFS only, never from host filesystem
 /// - All connections have timeouts to prevent hangs
+/// - Host key verification is strict by default (TM-SSH-006)
 #[derive(Clone)]
 pub struct SshConfig {
     /// Host allowlist
@@ -65,6 +77,11 @@ pub struct SshConfig {
     pub(crate) max_sessions: usize,
     /// Default port
     pub(crate) default_port: u16,
+    /// THREAT[TM-SSH-006]: Whether to verify host keys (default: true).
+    /// When true, connections to hosts without a trusted key are rejected.
+    pub(crate) strict_host_key_checking: bool,
+    /// Trusted host keys for verification.
+    pub(crate) trusted_host_keys: Vec<TrustedHostKey>,
 }
 
 // THREAT[TM-INF-016]: Redact credentials in Debug output to prevent
@@ -86,6 +103,8 @@ impl std::fmt::Debug for SshConfig {
             .field("max_response_bytes", &self.max_response_bytes)
             .field("max_sessions", &self.max_sessions)
             .field("default_port", &self.default_port)
+            .field("strict_host_key_checking", &self.strict_host_key_checking)
+            .field("trusted_host_keys_count", &self.trusted_host_keys.len())
             .finish()
     }
 }
@@ -101,6 +120,8 @@ impl Default for SshConfig {
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             max_sessions: DEFAULT_MAX_SESSIONS,
             default_port: DEFAULT_PORT,
+            strict_host_key_checking: true,
+            trusted_host_keys: Vec::new(),
         }
     }
 }
@@ -199,6 +220,43 @@ impl SshConfig {
         self.default_port = port;
         self
     }
+
+    /// Enable or disable strict host key checking.
+    ///
+    /// When enabled (default), connections are rejected unless the server's
+    /// public key matches a trusted key added via [`trusted_host_key`](Self::trusted_host_key).
+    ///
+    /// When disabled, all host keys are accepted with a warning log.
+    ///
+    /// # Security (TM-SSH-006)
+    ///
+    /// Disabling this makes SSH connections vulnerable to man-in-the-middle attacks.
+    pub fn strict_host_key_checking(mut self, strict: bool) -> Self {
+        self.strict_host_key_checking = strict;
+        self
+    }
+
+    /// Add a trusted host key for host key verification.
+    ///
+    /// The `host` parameter is an exact hostname to match.
+    /// The `public_key` is the SSH public key in OpenSSH format
+    /// (e.g. `"ssh-ed25519 AAAA..."`).
+    ///
+    /// # Security (TM-SSH-006)
+    ///
+    /// When `strict_host_key_checking` is enabled (default), only connections
+    /// to hosts with a matching trusted key will succeed.
+    pub fn trusted_host_key(
+        mut self,
+        host: impl Into<String>,
+        public_key: impl Into<String>,
+    ) -> Self {
+        self.trusted_host_keys.push(TrustedHostKey {
+            host: host.into(),
+            public_key: public_key.into(),
+        });
+        self
+    }
 }
 
 #[cfg(test)]
@@ -214,6 +272,8 @@ mod tests {
         assert_eq!(config.max_response_bytes, 10_000_000);
         assert_eq!(config.max_sessions, 5);
         assert_eq!(config.default_port, 22);
+        assert!(config.strict_host_key_checking);
+        assert!(config.trusted_host_keys.is_empty());
     }
 
     #[test]
@@ -251,6 +311,29 @@ mod tests {
             "private key leaked in Debug: {debug}"
         );
         assert!(debug.contains("[REDACTED]"), "REDACTED missing: {debug}");
+    }
+
+    #[test]
+    fn test_strict_host_key_checking_default_true() {
+        let config = SshConfig::new();
+        assert!(config.strict_host_key_checking);
+    }
+
+    #[test]
+    fn test_strict_host_key_checking_disabled() {
+        let config = SshConfig::new().strict_host_key_checking(false);
+        assert!(!config.strict_host_key_checking);
+    }
+
+    #[test]
+    fn test_trusted_host_key_builder() {
+        let config = SshConfig::new()
+            .trusted_host_key("db.supabase.co", "ssh-ed25519 AAAA...")
+            .trusted_host_key("bastion.example.com", "ssh-rsa BBBB...");
+        assert_eq!(config.trusted_host_keys.len(), 2);
+        assert_eq!(config.trusted_host_keys[0].host, "db.supabase.co");
+        assert_eq!(config.trusted_host_keys[0].public_key, "ssh-ed25519 AAAA...");
+        assert_eq!(config.trusted_host_keys[1].host, "bastion.example.com");
     }
 
     #[test]

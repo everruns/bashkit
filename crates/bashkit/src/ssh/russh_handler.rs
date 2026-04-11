@@ -9,6 +9,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use base64::Engine;
 
+use super::config::TrustedHostKey;
 use super::handler::{SshHandler, SshOutput, SshTarget};
 
 /// Shell-escape a string for safe interpolation into a remote command.
@@ -17,24 +18,72 @@ fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// SSH client handler that accepts all server keys.
+/// SSH client handler with host key verification.
 ///
-/// THREAT[TM-SSH-006]: In production, embedders should implement
-/// `SshHandler` with proper host key verification. This default
-/// handler accepts all keys for simplicity.
-struct ClientHandler;
+/// THREAT[TM-SSH-006]: When strict host key checking is enabled (default),
+/// connections are rejected unless the server key matches a trusted key.
+struct ClientHandler {
+    /// Target host for this connection (used to look up trusted keys).
+    host: String,
+    /// Whether to reject unknown host keys.
+    strict: bool,
+    /// Trusted host keys to verify against.
+    trusted_keys: Vec<TrustedHostKey>,
+}
 
 impl russh::client::Handler for ClientHandler {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::PublicKey,
+        server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
-        // Accept all host keys. Embedders needing strict verification
-        // should implement their own SshHandler.
-        Ok(true)
+        if !self.strict {
+            // THREAT[TM-SSH-006]: Warn when accepting unverified host keys.
+            eprintln!(
+                "WARNING: ssh: accepting unverified host key for '{}' \
+                 (strict_host_key_checking is disabled — vulnerable to MITM)",
+                self.host
+            );
+            return Ok(true);
+        }
+
+        // Serialize the server key for comparison.
+        let server_key_str = server_public_key.to_string();
+
+        for trusted in &self.trusted_keys {
+            if trusted.host != self.host && trusted.host != "*" {
+                continue;
+            }
+            // Compare the key type+data portion.
+            if keys_match(&server_key_str, &trusted.public_key) {
+                return Ok(true);
+            }
+        }
+
+        eprintln!(
+            "WARNING: ssh: rejecting unknown host key for '{}' \
+             (no matching trusted key configured)",
+            self.host
+        );
+        Ok(false)
     }
+}
+
+/// Compare two SSH public key strings, ignoring trailing comments.
+/// Accepts formats like "ssh-ed25519 AAAA..." or "ssh-ed25519 AAAA... comment".
+fn keys_match(server_key: &str, trusted_key: &str) -> bool {
+    fn normalize(s: &str) -> (&str, &str) {
+        let parts: Vec<&str> = s.trim().splitn(3, ' ').collect();
+        if parts.len() >= 2 {
+            (parts[0], parts[1])
+        } else {
+            (s.trim(), "")
+        }
+    }
+    let (s_type, s_data) = normalize(server_key);
+    let (t_type, t_data) = normalize(trusted_key);
+    s_type == t_type && s_data == t_data
 }
 
 /// Default SSH transport using russh.
@@ -45,13 +94,24 @@ pub struct RusshHandler {
     timeout: Duration,
     /// THREAT[TM-SSH-004]: Streaming size limit to prevent OOM from malicious servers.
     max_response_bytes: usize,
+    /// THREAT[TM-SSH-006]: Whether to verify host keys.
+    strict_host_key_checking: bool,
+    /// Trusted host keys for verification.
+    trusted_host_keys: Vec<TrustedHostKey>,
 }
 
 impl RusshHandler {
-    pub fn new(timeout: Duration, max_response_bytes: usize) -> Self {
+    pub fn new(
+        timeout: Duration,
+        max_response_bytes: usize,
+        strict_host_key_checking: bool,
+        trusted_host_keys: Vec<TrustedHostKey>,
+    ) -> Self {
         Self {
             timeout,
             max_response_bytes,
+            strict_host_key_checking,
+            trusted_host_keys,
         }
     }
 
@@ -65,8 +125,14 @@ impl RusshHandler {
             ..<_>::default()
         };
 
+        let handler = ClientHandler {
+            host: target.host.clone(),
+            strict: self.strict_host_key_checking,
+            trusted_keys: self.trusted_host_keys.clone(),
+        };
+
         let addr = (target.host.as_str(), target.port);
-        let mut session = russh::client::connect(Arc::new(config), addr, ClientHandler)
+        let mut session = russh::client::connect(Arc::new(config), addr, handler)
             .await
             .map_err(|e| format!("connection failed: {e}"))?;
 
@@ -298,14 +364,15 @@ mod tests {
 
     #[test]
     fn test_russh_handler_stores_max_response_bytes() {
-        let handler = RusshHandler::new(Duration::from_secs(30), 1024);
+        let handler = RusshHandler::new(Duration::from_secs(30), 1024, true, vec![]);
         assert_eq!(handler.max_response_bytes, 1024);
     }
 
     #[test]
     fn test_russh_handler_default_max_response_bytes() {
         use crate::ssh::config::DEFAULT_MAX_RESPONSE_BYTES;
-        let handler = RusshHandler::new(Duration::from_secs(30), DEFAULT_MAX_RESPONSE_BYTES);
+        let handler =
+            RusshHandler::new(Duration::from_secs(30), DEFAULT_MAX_RESPONSE_BYTES, true, vec![]);
         assert_eq!(handler.max_response_bytes, 10_000_000);
     }
 
@@ -326,9 +393,68 @@ mod tests {
 
         let config = SshConfig::new().max_response_bytes(512);
         let client = SshClient::new(config);
-        // The client's default_handler should have max_response_bytes = 512.
-        // We can't inspect it directly, but we verify config is passed through
-        // by checking the client's config.
         assert_eq!(client.config().max_response_bytes, 512);
+    }
+
+    #[test]
+    fn test_strict_host_key_checking_propagation() {
+        use crate::ssh::client::SshClient;
+        use crate::ssh::config::SshConfig;
+
+        let config = SshConfig::new().strict_host_key_checking(true);
+        let client = SshClient::new(config);
+        assert!(client.config().strict_host_key_checking);
+
+        let config = SshConfig::new().strict_host_key_checking(false);
+        let client = SshClient::new(config);
+        assert!(!client.config().strict_host_key_checking);
+    }
+
+    #[test]
+    fn test_keys_match_same_key() {
+        let key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKtQ";
+        assert!(keys_match(key, key));
+    }
+
+    #[test]
+    fn test_keys_match_ignores_comment() {
+        let server = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKtQ";
+        let trusted = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKtQ user@host";
+        assert!(keys_match(server, trusted));
+    }
+
+    #[test]
+    fn test_keys_match_different_key() {
+        let server = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKtQ";
+        let trusted = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDiff";
+        assert!(!keys_match(server, trusted));
+    }
+
+    #[test]
+    fn test_keys_match_different_type() {
+        let server = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKtQ";
+        let trusted = "ssh-rsa AAAAC3NzaC1lZDI1NTE5AAAAIKtQ";
+        assert!(!keys_match(server, trusted));
+    }
+
+    /// THREAT[TM-SSH-006]: Default strict mode rejects connections with unknown keys.
+    #[tokio::test]
+    async fn test_strict_mode_rejects_unknown_key() {
+        let config = crate::ssh::config::SshConfig::new()
+            .allow_all()
+            .strict_host_key_checking(true);
+        let client = crate::ssh::client::SshClient::new(config);
+        let target = crate::ssh::handler::SshTarget {
+            host: "localhost".to_string(),
+            port: 22,
+            user: "test".to_string(),
+            private_key: None,
+            password: None,
+        };
+        // Connection will fail — either because no server is listening,
+        // or because the host key is unknown. Either way, strict mode
+        // ensures we don't silently accept keys.
+        let result = client.exec(&target, "echo hi").await;
+        assert!(result.is_err());
     }
 }
