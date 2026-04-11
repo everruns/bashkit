@@ -615,6 +615,7 @@ allowlist.allow("https://api.example.com");
 | TM-NET-012 | Chunked encoding bomb | Infinite chunked response | Response size limit (streaming) | **MITIGATED** |
 | TM-NET-013 | Gzip bomb / Zip bomb | 10KB gzip → 10GB decompressed | Auto-decompression disabled | **MITIGATED** |
 | TM-NET-014 | DNS rebind via redirect | Redirect to rebinded IP | Manual redirect requires allowlist check | **MITIGATED** |
+| TM-NET-015 | Host proxy leakage | `HTTP_PROXY`/`HTTPS_PROXY` env vars route sandboxed traffic through host proxy | `.no_proxy()` on reqwest builder | **MITIGATED** |
 | TM-NET-018 | JSON body injection | `http POST url name='x","admin":true'` via unescaped string formatting | Use `serde_json` for JSON construction | **MITIGATED** |
 | TM-NET-019 | Query param injection | `http GET url q=='foo&admin=true'` injects extra params | URL-encode via `url::form_urlencoded` | **MITIGATED** |
 | TM-NET-020 | Form body injection | `http --form POST url user='x&role=admin'` injects extra fields | URL-encode via `url::form_urlencoded` | **MITIGATED** |
@@ -640,6 +641,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 .no_gzip()
 .no_brotli()
 .no_deflate()
+
+// Ignore host proxy env vars (TM-NET-015)
+.no_proxy()
 
 // Response size checked during streaming (TM-NET-008, TM-NET-012)
 async fn read_body_with_limit(&self, response: Response) -> Result<Vec<u8>> {
@@ -1290,6 +1294,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | HTTP connect timeout | TM-NET-009 | `network/client.rs` | Yes |
 | HTTP read timeout | TM-NET-010 | `network/client.rs` | Yes |
 | No auto-redirect | TM-NET-011, TM-NET-014 | `network/client.rs` | Yes |
+| No host proxy | TM-NET-015 | `network/client.rs` | Yes |
 | Log value redaction | TM-LOG-001 to TM-LOG-004 | `logging.rs` | Yes |
 | Log injection prevention | TM-LOG-005, TM-LOG-006 | `logging.rs` | Yes |
 | Log value truncation | TM-LOG-007, TM-LOG-008 | `logging.rs` | Yes |

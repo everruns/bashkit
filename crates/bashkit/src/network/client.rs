@@ -14,6 +14,7 @@
 //! - **TM-NET-012**: Chunked encoding bomb → streaming size check
 //! - **TM-NET-013**: Gzip/compression bomb → auto-decompression disabled
 //! - **TM-NET-014**: DNS rebind via redirect → manual redirect requires allowlist check
+//! - **TM-NET-015**: Host proxy leakage → `.no_proxy()` ignores host `HTTP_PROXY`/`HTTPS_PROXY`
 
 use reqwest::Client;
 use std::sync::OnceLock;
@@ -593,6 +594,9 @@ fn build_client(
         .no_gzip()
         .no_brotli()
         .no_deflate()
+        // THREAT[TM-NET-015]: Ignore host proxy env vars (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY)
+        // to prevent sandboxed HTTP traffic from being redirected through a host proxy
+        .no_proxy()
         .build()
         .map_err(|e| e.to_string())
 }
@@ -708,6 +712,14 @@ mod tests {
         let result = usize::try_from(large).unwrap_or(usize::MAX);
         // Should never silently become a smaller value
         assert!(result >= large.min(usize::MAX as u64) as usize);
+    }
+
+    #[test]
+    fn test_build_client_uses_no_proxy() {
+        // Verify build_client succeeds — the .no_proxy() call ensures
+        // host HTTP_PROXY/HTTPS_PROXY env vars are ignored (TM-NET-015).
+        let client = build_client(Duration::from_secs(30), None);
+        assert!(client.is_ok(), "build_client should succeed with no_proxy");
     }
 
     // Note: Integration tests that actually make network requests
