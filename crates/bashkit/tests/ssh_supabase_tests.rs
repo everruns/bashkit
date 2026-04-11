@@ -15,11 +15,7 @@ mod ssh_supabase {
     /// Connects to supabase.sh via SSH. Verifies the connection succeeds.
     /// supabase.sh is a TUI service — it may not send output without an
     /// interactive terminal, so we only assert the connection didn't error.
-    ///
-    /// Ignored by default: requires network access to supabase.sh.
-    /// CI runs this explicitly via `cargo test --features ssh -p bashkit --test ssh_supabase_tests`.
     #[tokio::test]
-    #[ignore]
     async fn ssh_supabase_connects() {
         let mut bash = bash_with_supabase();
         let result = bash.exec("ssh supabase.sh").await.unwrap();
