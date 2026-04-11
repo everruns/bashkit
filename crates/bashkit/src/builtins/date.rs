@@ -148,6 +148,16 @@ fn parse_base_date(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTime<
         return local_naive_to_utc(dt, s);
     }
 
+    // Try RFC 2822: "Mon, 06 Apr 2026 12:00:00 +0000"
+    if let Ok(dt) = DateTime::parse_from_rfc2822(s) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+
+    // Try RFC 3339 / ISO 8601 with timezone: "2024-01-15T12:00:00+00:00"
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+
     Err(format!("date: invalid date '{}'", s))
 }
 
@@ -811,6 +821,29 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         let date = result.stdout.trim();
         assert_eq!(date.len(), 10);
+    }
+
+    // === --date with RFC 2822 input ===
+
+    #[tokio::test]
+    async fn test_date_parse_rfc2822_input() {
+        let result = run_date(&["+%B %d, %Y", "--date=Mon, 06 Apr 2026 12:00:00 +0000"]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "April 06, 2026");
+    }
+
+    #[tokio::test]
+    async fn test_date_parse_rfc2822_epoch_output() {
+        let result = run_date(&["+%s", "--date=Wed, 01 Jan 2020 00:00:00 +0000"]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "1577836800");
+    }
+
+    #[tokio::test]
+    async fn test_date_parse_rfc3339_input() {
+        let result = run_date(&["+%Y", "--date=2024-06-15T12:00:00+00:00"]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "2024");
     }
 
     // === -R (RFC 2822) tests ===

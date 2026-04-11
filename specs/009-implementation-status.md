@@ -152,7 +152,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | conditional.test.sh | 29 | `[[ ]]` conditionals, `=~` regex, BASH_REMATCH, glob `==`/`!=` |
 | control-flow.test.sh | 60 | if/elif/else, for, while, case `;;`/`;&`/`;;&`, select, trap ERR, `[[ =~ ]]` BASH_REMATCH, compound input redirects |
 | cuttr.test.sh | 39 | cut and tr commands, `-z` zero-terminated |
-| date.test.sh | 37 | format specifiers, `-d` relative/compound/epoch, `-R`, `-I`, `%N` (2 skipped) |
+| date.test.sh | 39 | format specifiers, `-d` relative/compound/epoch/RFC2822, `-R`, `-I`, `%N` (2 skipped) |
 | declare.test.sh | 23 | `declare`/`typeset`, `-i`, `-r`, `-x`, `-a`, `-p`, `-n` nameref, `-l`/`-u` case conversion |
 | df.test.sh | 3 | disk free reporting |
 | diff.test.sh | 6 | line diffs |

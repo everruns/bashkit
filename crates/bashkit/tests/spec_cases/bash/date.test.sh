@@ -250,3 +250,17 @@ date -d 'yesterday + 12 hours' +%Y-%m-%d | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}
 ### expect
 valid
 ### end
+
+### date_rfc2822_input
+# Parse an RFC 2822 date string via --date
+date +"%B %d, %Y" --date="Mon, 06 Apr 2026 12:00:00 +0000"
+### expect
+April 06, 2026
+### end
+
+### date_rfc2822_input_epoch
+# Parse an RFC 2822 date string and output as epoch
+date +%s --date="Wed, 01 Jan 2020 00:00:00 +0000"
+### expect
+1577836800
+### end
