@@ -4215,6 +4215,55 @@ fn
     }
 
     #[tokio::test]
+    async fn test_random_different_instances() {
+        // Two separate Bash instances should produce different PRNG sequences
+        // (with very high probability, since each is seeded from OS entropy)
+        let mut bash1 = Bash::new();
+        let mut bash2 = Bash::new();
+        let r1 = bash1.exec("echo $RANDOM").await.unwrap();
+        let r2 = bash2.exec("echo $RANDOM").await.unwrap();
+        let v1: u32 = r1.stdout.trim().parse().expect("should be a number");
+        let v2: u32 = r2.stdout.trim().parse().expect("should be a number");
+        assert!(v1 < 32768);
+        assert!(v2 < 32768);
+        // Extremely unlikely to collide with independent OS-entropy seeds
+        assert_ne!(v1, v2, "separate instances should produce different values");
+    }
+
+    #[tokio::test]
+    async fn test_random_reseed() {
+        // RANDOM=N should reseed the PRNG, producing a deterministic sequence
+        let mut bash1 = Bash::new();
+        let mut bash2 = Bash::new();
+        bash1.exec("RANDOM=42").await.unwrap();
+        bash2.exec("RANDOM=42").await.unwrap();
+        let r1 = bash1.exec("echo $RANDOM").await.unwrap();
+        let r2 = bash2.exec("echo $RANDOM").await.unwrap();
+        assert_eq!(
+            r1.stdout, r2.stdout,
+            "same seed should produce same first value"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_random_sequential_varies() {
+        // Sequential $RANDOM calls within a single instance should differ
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $RANDOM $RANDOM $RANDOM").await.unwrap();
+        let values: Vec<u32> = result
+            .stdout
+            .split_whitespace()
+            .map(|s| s.parse().expect("should be a number"))
+            .collect();
+        assert_eq!(values.len(), 3);
+        // At least two of three should differ (LCG never produces same value twice in a row)
+        assert!(
+            values[0] != values[1] || values[1] != values[2],
+            "sequential RANDOM calls should produce different values"
+        );
+    }
+
+    #[tokio::test]
     async fn test_special_var_lineno() {
         // $LINENO - current line number
         let mut bash = Bash::new();
