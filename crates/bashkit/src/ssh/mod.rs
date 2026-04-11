@@ -41,7 +41,7 @@ mod handler;
 mod russh_handler;
 
 pub use allowlist::SshAllowlist;
-pub use config::SshConfig;
+pub use config::{SshConfig, TrustedHostKey};
 
 #[cfg(feature = "ssh")]
 pub use client::SshClient;
