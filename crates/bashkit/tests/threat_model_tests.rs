@@ -1907,16 +1907,17 @@ mod nesting_depth_security {
         }
     }
 
-    /// max_ast_depth=0 should reject even simple compound commands
+    /// max_ast_depth=1 should reject compound commands that nest beyond depth 1
     #[tokio::test]
-    async fn misconfig_zero_ast_depth_rejects_compounds() {
-        let limits = ExecutionLimits::new().max_ast_depth(0);
+    async fn misconfig_tiny_ast_depth_rejects_compounds() {
+        // 0 is treated as "use default" per #1181, so use 1 for minimal limit
+        let limits = ExecutionLimits::new().max_ast_depth(1);
         let mut bash = Bash::builder().limits(limits).build();
 
-        let result = bash.exec("if true; then echo x; fi").await;
+        let result = bash.exec("if true; then if true; then echo x; fi; fi").await;
         assert!(
             result.is_err(),
-            "max_ast_depth=0 should reject any compound command"
+            "max_ast_depth=1 should reject deeply nested compound commands"
         );
     }
 
