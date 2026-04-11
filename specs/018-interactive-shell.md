@@ -2,13 +2,31 @@
 
 ## Status
 Phase 1: Implemented
+Phase 2: Implemented
+Phase 3: Implemented
 
 ## Decision
 
 Bashkit provides an interactive REPL mode via `bashkit` (no arguments).
 Uses `rustyline` for line editing — lightweight, MIT-licensed, no heavy
-transitive deps (no SQLite, no crossterm, no serde). Fits bashkit's
-isolation-first design.
+transitive deps (no SQLite, no crossterm). Fits bashkit's isolation-first
+design.
+
+### Feature Flag
+
+Interactive mode is behind the `interactive` feature flag (default on
+for the CLI binary, compiled out in library mode):
+
+```toml
+[features]
+default = ["python", "interactive"]
+interactive = ["dep:rustyline", "dep:terminal_size", "dep:signal-hook"]
+```
+
+Build without interactive:
+```bash
+cargo build -p bashkit-cli --no-default-features
+```
 
 ### Invocation
 
@@ -19,82 +37,120 @@ bashkit --mount-rw /path/to/work   # REPL with real filesystem access
 
 ### Features
 
-| Feature | Status |
-|---------|--------|
-| Read-eval-print loop | Implemented |
-| Prompt with cwd | Implemented |
-| Readline editing (emacs/vi keys) | Implemented (rustyline) |
-| Command history (in-memory) | Implemented |
-| Ctrl-C interrupts current line | Implemented |
-| Ctrl-D exits shell | Implemented |
-| Multiline input (continuation) | Implemented |
-| `exit [N]` builtin | Implemented (pre-existing) |
-| Streaming output | Implemented |
-| TTY detection (`[ -t 0 ]`) | Implemented |
+| Feature | Status | Phase |
+|---------|--------|-------|
+| Read-eval-print loop | Implemented | 1 |
+| Multiline input (continuation) | Implemented | 1 |
+| Ctrl-C clears current line | Implemented | 1 |
+| Ctrl-D exits shell | Implemented | 1 |
+| `exit [N]` builtin | Implemented (pre-existing) | 1 |
+| Streaming output | Implemented | 1 |
+| TTY detection (`[ -t 0 ]`) | Implemented | 1 |
+| Readline editing (emacs/vi keys) | Implemented (rustyline) | 1 |
+| PS1/PS2 custom prompt | Implemented | 2 |
+| Tab completion (builtins, paths, vars) | Implemented | 2 |
+| History hints (fish-style) | Implemented | 2 |
+| Syntax highlighting (hint coloring) | Implemented | 2 |
+| Ctrl-C interrupts running commands | Implemented (signal-hook) | 2 |
+| Terminal width detection | Implemented (terminal_size) | 2 |
+| `~/.bashkitrc` startup file | Implemented | 2 |
+| COLUMNS/LINES/SHLVL env vars | Implemented | 2 |
+| Feature-gated (`interactive` flag) | Implemented | 3 |
+| Command history (in-memory) | Implemented | 1 |
+| Persistent history file | Implemented (~/.bashkit_history) | 2 |
 
 ### Design
 
-#### Prompt
+#### Custom Prompt (PS1/PS2)
 
-Default prompt: `bashkit:<cwd>$ ` (e.g. `bashkit:/home/user$ `).
-Continuation prompt for multiline: `> `.
+Supports bash-compatible PS1 escapes:
 
-No PS1/PS2 customization in Phase 1 — keep it simple.
+| Escape | Meaning |
+|--------|---------|
+| `\u` | Username ($USER) |
+| `\h` | Short hostname (up to first `.`) |
+| `\H` | Full hostname |
+| `\w` | Working directory (~ for $HOME) |
+| `\W` | Basename of working directory |
+| `\$` | `$` for normal user, `#` for root (EUID=0) |
+| `\n` | Newline |
+| `\r` | Carriage return |
+| `\a` | Bell |
+| `\e` | Escape (0x1b) |
+| `\[` | Start non-printing sequence |
+| `\]` | End non-printing sequence |
+| `\\` | Literal backslash |
+
+Default PS1: `\u@bashkit:\w\$ ` (e.g. `user@bashkit:~$ `)
+
+PS2 defaults to `> ` for continuation lines. Both can be set via
+`export PS1='...'` or `PS2='...'`.
+
+#### Tab Completion
+
+Completes based on context:
+
+- **Command position** (start of line, after `;`/`|`/`&&`/`||`):
+  builtins (100+), aliases
+- **Argument position**: VFS paths (files and directories)
+- **`$` prefix**: environment and shell variables
+- Directories show trailing `/`
+
+Uses rustyline `Completer` trait with `CompletionType::List` (shows
+all matches on tab).
+
+#### History Hints
+
+Fish-style inline suggestions from history. Shows the most recent
+matching history entry as dimmed text to the right of the cursor.
+Accept with right arrow.
+
+#### Ctrl-C During Execution
+
+Uses `signal-hook` to register a SIGINT handler that sets bashkit's
+`cancellation_token()`. A background tokio task polls the signal flag
+every 50ms and propagates to the cancel token. After cancellation,
+the token is reset for the next command.
 
 #### Multiline Detection
 
-When a command fails to parse with "unterminated" or "unexpected end of
-input" errors, the REPL shows a continuation prompt (`> `) and appends
-the next line. This handles:
+When a command fails to parse with known incomplete-input errors,
+the REPL shows PS2 and appends the next line. Detected patterns:
 
-- Unterminated quotes (`echo "hello`)
-- Open control structures (`if true; then`)
-- Unterminated command substitution (`$(echo`)
-- Backslash continuation (`echo \`)
+- `"unterminated"` — open quotes, command substitution
+- `"unexpected end of input"` — incomplete constructs
+- `"syntax error: empty"` — empty body/clause
+- `"expected 'fi'"` / `"expected 'done'"` / `"expected 'esac'"` — missing closers
+- `"expected '}' to close brace group"` — open functions
 
-#### Execution Limits
+#### Startup File
 
-Interactive mode uses `ExecutionLimits::cli()` (same as `-c` and script
-modes) with `SessionLimits::unlimited()`. No per-command timeout — user
-has Ctrl-C.
+Sources `~/.bashkitrc` from the VFS on startup (if it exists).
+Use `--mount-rw` to make a real host directory available, then
+create `.bashkitrc` with aliases, PS1, etc.
 
-#### TTY Configuration
+#### Environment Variables
 
-All three FDs (stdin/stdout/stderr) report as terminals via `tty(fd, true)`.
-This ensures `[ -t 0 ]`, `[ -t 1 ]`, `[ -t 2 ]` return true, matching
-real shell behavior.
+Interactive mode sets:
+- `COLUMNS` — terminal width (from `terminal_size` crate)
+- `LINES` — terminal height
+- `SHLVL` — incremented from parent (or 1)
 
-#### Output
+#### Terminal Width Detection
 
-Uses `exec_streaming()` with a callback that prints stdout/stderr
-directly to the real terminal. This gives immediate output for loops
-and long-running commands rather than buffering until completion.
-
-#### Signal Handling
-
-- **Ctrl-C**: rustyline returns `Err(Interrupted)` — clears current
-  input, prints a new prompt. Does NOT kill the shell.
-- **Ctrl-D**: rustyline returns `Err(Eof)` — exits the shell with
-  the last command's exit code.
-- Running commands: use `cancellation_token()` for future Ctrl-C
-  during execution (Phase 2).
-
-#### History
-
-In-memory only via rustyline's `DefaultEditor`. No history file
-persistence in Phase 1. Commands are added to rustyline history
-and to bashkit's internal `HistoryEntry` tracking.
+Uses `terminal_size` crate instead of hardcoded 80 columns.
+Width is detected at startup and set via `$COLUMNS`.
 
 ### Dependencies
 
 ```toml
-# In bashkit-cli/Cargo.toml
-rustyline = "18"
+# In bashkit-cli/Cargo.toml (all optional, gated by "interactive" feature)
+rustyline = { version = "18", optional = true }
+terminal_size = { version = "0.4", optional = true }
+signal-hook = { version = "0.4", optional = true }
 ```
 
-Rustyline's transitive deps: `libc`, `nix`, `unicode-segmentation`,
-`unicode-width`, `utf8parse`, `memchr`, `log`. All MIT-licensed,
-all in `deny.toml` allowlist.
+All MIT-licensed, all in `deny.toml` allowlist.
 
 ### Security
 
@@ -105,34 +161,38 @@ Interactive mode reuses the existing sandbox. No new attack surface:
 - No real process spawning
 - Panic hook still sanitizes error output
 
-### Not Implemented (Future)
+### Not Implemented (By Design)
 
 | Feature | Rationale |
 |---------|-----------|
-| PS1/PS2 prompt variables | Phase 2 — requires parameter expansion in prompt |
-| Tab completion (paths, builtins) | Phase 2 — rustyline `Completer` trait |
-| Syntax highlighting | Phase 2 — rustyline `Highlighter` trait |
-| Persistent history file | Phase 2 — `~/.bashkit_history` |
-| Job control (`bg`/`fg`/`jobs`) | By design — no real processes |
-| `~/.bashkitrc` startup file | Phase 2 |
-| Ctrl-C during command execution | Phase 2 — wire cancellation_token to signal handler |
-| Terminal width detection | Phase 2 — `terminal_size` crate |
+| Job control (`bg`/`fg`/`jobs`) | No real processes — by design |
+| History expansion (`!!`, `!N`) | Complexity vs value tradeoff |
+| `exec` builtin | Excluded for security |
 
 ### Testing
 
-| Test | Purpose |
-|------|---------|
-| Unit tests in `main.rs` | `CliMode::Interactive` detection |
-| Integration (manual) | Launch `bashkit`, type commands, verify output |
+| Test | Count | Purpose |
+|------|-------|---------|
+| `is_incomplete_input` | 5 | Parse error pattern detection |
+| `expand_ps1` | 8 | PS1 escape expansion |
+| Prompt integration | 1 | Default prompt format |
+| Exec/state | 5 | Streaming, persistence, TTY, rc file |
+| Error result | 1 | Error code propagation |
 
-Automated integration testing of interactive mode requires PTY
-simulation (e.g. `expect` or `rexpect`). Deferred to Phase 2.
+Tests compile only when `interactive` feature is enabled. Run:
+```bash
+cargo test -p bashkit-cli             # with interactive (default)
+cargo test -p bashkit-cli --no-default-features  # without
+```
 
 ### Verification
 
 ```bash
-# Build with interactive support
+# Build with interactive support (default)
 cargo build -p bashkit-cli
+
+# Build without interactive (library-only deps)
+cargo build -p bashkit-cli --no-default-features
 
 # Smoke test
 echo 'echo hello' | bashkit

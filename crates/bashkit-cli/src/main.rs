@@ -19,6 +19,7 @@
 //!   bashkit mcp                    # Run as MCP server
 //!   bashkit                        # Interactive REPL
 
+#[cfg(feature = "interactive")]
 mod interactive;
 mod mcp;
 
@@ -163,6 +164,7 @@ fn build_bash(args: &Args, mode: CliMode) -> bashkit::Bash {
         builder = builder.session_limits(bashkit::SessionLimits::unlimited());
     }
 
+    #[cfg(feature = "interactive")]
     if mode == CliMode::Interactive {
         builder = builder.tty(0, true).tty(1, true).tty(2, true);
     }
@@ -241,12 +243,22 @@ fn main() -> Result<()> {
             std::process::exit(output.exit_code);
         }
         CliMode::Interactive => {
-            let exit_code = run_interactive(args, mode)?;
-            std::process::exit(exit_code);
+            #[cfg(feature = "interactive")]
+            {
+                let exit_code = run_interactive(args, mode)?;
+                std::process::exit(exit_code);
+            }
+            #[cfg(not(feature = "interactive"))]
+            {
+                eprintln!("bashkit: interactive mode requires the 'interactive' feature");
+                eprintln!("Rebuild with: cargo build -p bashkit-cli --features interactive");
+                std::process::exit(1);
+            }
         }
     }
 }
 
+#[cfg(feature = "interactive")]
 fn run_interactive(args: Args, mode: CliMode) -> Result<i32> {
     Builder::new_current_thread()
         .enable_all()

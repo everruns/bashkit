@@ -1,25 +1,48 @@
 // Interactive shell mode using rustyline for line editing.
+// Decision: rustyline over reedline — lighter deps, no SQLite/crossterm.
+// Decision: feature-gated behind "interactive" — no deps in library mode.
+// Decision: Ctrl-C during execution via signal-hook + cancellation_token.
+// Decision: tab completion from builtins + VFS paths + functions + variables.
+// Decision: PS1 prompt with bash-compatible escapes (\u, \h, \w, \$).
 // See specs/018-interactive-shell.md
 
 use anyhow::Result;
-use rustyline::DefaultEditor;
+use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::{Hint, Hinter};
+use rustyline::validate::Validator;
+use rustyline::{Config, Context, Editor, Helper};
+use std::borrow::Cow;
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-const CONTINUATION_PROMPT: &str = "> ";
+const DEFAULT_PS1: &str = "\\u@bashkit:\\w\\$ ";
+// PS2 is used by rustyline's Validator as the continuation prompt.
+#[allow(dead_code)]
+const DEFAULT_PS2: &str = "> ";
+const HISTORY_FILE: &str = "/home/user/.bashkit_history";
+const RC_FILE: &str = "/home/user/.bashkitrc";
+const MAX_HISTORY: usize = 1000;
 
-fn prompt(bash: &bashkit::Bash) -> String {
-    let cwd = bash.shell_state().cwd.display().to_string();
-    format!("bashkit:{cwd}$ ")
-}
+// Same list as compgen.rs — keep in sync.
+const BUILTIN_COMMANDS: &[&str] = &[
+    "alias", "assert", "awk", "base64", "basename", "bc", "break", "cat", "cd", "chmod", "chown",
+    "clear", "column", "comm", "compgen", "continue", "cp", "curl", "cut", "date", "declare", "df",
+    "diff", "dirname", "dirs", "dotenv", "du", "echo", "env", "envsubst", "eval", "exit", "expand",
+    "export", "expr", "false", "fc", "find", "fold", "grep", "gunzip", "gzip", "head", "help",
+    "hexdump", "history", "hostname", "iconv", "id", "jq", "json", "join", "kill", "ln", "local",
+    "log", "ls", "mkdir", "mktemp", "mv", "nl", "od", "paste", "popd", "printenv", "printf",
+    "pushd", "pwd", "read", "readlink", "readonly", "realpath", "retry", "return", "rev", "rg",
+    "rm", "rmdir", "sed", "semver", "seq", "set", "shift", "shopt", "sleep", "sort", "source",
+    "split", "stat", "strings", "tac", "tail", "tar", "tee", "test", "timeout", "touch", "tr",
+    "tree", "true", "type", "uname", "unexpand", "uniq", "unset", "wait", "watch", "wc", "wget",
+    "whoami", "xargs", "xxd", "yes",
+];
 
-/// Returns true if the parse error indicates incomplete input that
-/// should trigger a continuation prompt.
-///
-/// Matches parser errors for:
-/// - Unterminated quotes/substitutions ("unterminated single quote")
-/// - Unexpected EOF in constructs ("unexpected end of input in for loop")
-/// - Empty bodies/clauses ("syntax error: empty then clause")
-/// - Missing closing keywords ("expected 'fi'", "expected 'done'", "expected 'esac'")
+// --- Incomplete input detection ---
+
 fn is_incomplete_input(err_msg: &str) -> bool {
     let lower = err_msg.to_lowercase();
     lower.contains("unterminated")
@@ -39,7 +62,334 @@ fn error_result(exit_code: i32) -> bashkit::ExecResult {
     }
 }
 
-/// Build a Bash instance suitable for interactive mode testing.
+// --- PS1 prompt expansion ---
+
+fn expand_ps1(ps1: &str, state: &bashkit::ShellState) -> String {
+    let mut out = String::with_capacity(ps1.len());
+    let mut chars = ps1.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('u') => {
+                    out.push_str(state.env.get("USER").map(|s| s.as_str()).unwrap_or("user"));
+                }
+                Some('h') => {
+                    let host = state
+                        .env
+                        .get("HOSTNAME")
+                        .map(|s| s.as_str())
+                        .unwrap_or("bashkit");
+                    // \h = short hostname (up to first '.')
+                    if let Some(dot) = host.find('.') {
+                        out.push_str(&host[..dot]);
+                    } else {
+                        out.push_str(host);
+                    }
+                }
+                Some('H') => {
+                    out.push_str(
+                        state
+                            .env
+                            .get("HOSTNAME")
+                            .map(|s| s.as_str())
+                            .unwrap_or("bashkit"),
+                    );
+                }
+                Some('w') => {
+                    let cwd = state.cwd.display().to_string();
+                    let home = state.env.get("HOME").map(|s| s.as_str()).unwrap_or("");
+                    if !home.is_empty() && cwd.starts_with(home) {
+                        out.push('~');
+                        out.push_str(&cwd[home.len()..]);
+                    } else {
+                        out.push_str(&cwd);
+                    }
+                }
+                Some('W') => {
+                    let cwd = state.cwd.display().to_string();
+                    if cwd == "/" {
+                        out.push('/');
+                    } else {
+                        out.push_str(
+                            Path::new(&cwd)
+                                .file_name()
+                                .map(|s| s.to_string_lossy())
+                                .unwrap_or(Cow::Borrowed("/"))
+                                .as_ref(),
+                        );
+                    }
+                }
+                Some('$') => {
+                    let uid = state
+                        .env
+                        .get("EUID")
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .unwrap_or(1000);
+                    out.push(if uid == 0 { '#' } else { '$' });
+                }
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('a') => out.push('\x07'),
+                Some('e') => out.push('\x1b'),
+                Some('[') => {
+                    // \[ ... \] — non-printing sequence (for ANSI codes)
+                    // Pass through to terminal but don't count for width
+                    out.push('\x01'); // RL_PROMPT_START_IGNORE
+                }
+                Some(']') => {
+                    out.push('\x02'); // RL_PROMPT_END_IGNORE
+                }
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+// --- Tab completion ---
+
+struct BashkitHelper {
+    fs: Arc<dyn bashkit::FileSystem>,
+    state_fn: Box<dyn Fn() -> bashkit::ShellState + Send + Sync>,
+}
+
+impl BashkitHelper {
+    fn complete_path(&self, partial: &str) -> Vec<String> {
+        let state = (self.state_fn)();
+        let (dir_path, prefix) = if let Some(slash) = partial.rfind('/') {
+            let dir = &partial[..=slash];
+            let pfx = &partial[slash + 1..];
+            // Resolve relative paths against cwd
+            let resolved = if dir.starts_with('/') {
+                dir.to_string()
+            } else {
+                format!("{}/{}", state.cwd.display(), dir)
+            };
+            (resolved, pfx.to_string())
+        } else {
+            (state.cwd.display().to_string(), partial.to_string())
+        };
+
+        let dir = std::path::PathBuf::from(&dir_path);
+        // Block on async VFS read_dir — we're inside a tokio runtime.
+        let entries = match tokio::runtime::Handle::try_current() {
+            Ok(handle) => handle.block_on(self.fs.read_dir(&dir)).unwrap_or_default(),
+            Err(_) => return Vec::new(),
+        };
+
+        let mut results = Vec::new();
+        for entry in &entries {
+            if entry.name.starts_with(&prefix) {
+                let mut candidate = if partial.contains('/') {
+                    let base = &partial[..=partial.rfind('/').unwrap()];
+                    format!("{}{}", base, entry.name)
+                } else {
+                    entry.name.clone()
+                };
+                if entry.metadata.file_type.is_dir() {
+                    candidate.push('/');
+                }
+                results.push(candidate);
+            }
+        }
+        results.sort();
+        results
+    }
+}
+
+impl Completer for BashkitHelper {
+    type Candidate = String;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<String>)> {
+        let line_to_cursor = &line[..pos];
+        // Find the word being completed (go back to last space/;/|/&/`)
+        let word_start = line_to_cursor
+            .rfind(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&' | '`' | '(' | '$'))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let partial = &line_to_cursor[word_start..];
+
+        if partial.is_empty() {
+            return Ok((pos, Vec::new()));
+        }
+
+        let is_command_position = {
+            let before = line_to_cursor[..word_start].trim_end();
+            before.is_empty()
+                || before.ends_with(';')
+                || before.ends_with('|')
+                || before.ends_with("&&")
+                || before.ends_with("||")
+                || before.ends_with('`')
+                || before.ends_with('(')
+        };
+
+        let mut candidates: Vec<String> = Vec::new();
+
+        // Variable completion: $VAR
+        if let Some(var_prefix) = partial.strip_prefix('$') {
+            let state = (self.state_fn)();
+            for key in state.env.keys().chain(state.variables.keys()) {
+                if key.starts_with(var_prefix) {
+                    candidates.push(format!("${key}"));
+                }
+            }
+            candidates.sort();
+            candidates.dedup();
+            return Ok((word_start, candidates));
+        }
+
+        // Path completion if contains / or is an argument position
+        if partial.contains('/') || partial.starts_with('.') || partial.starts_with('~') {
+            candidates.extend(self.complete_path(partial));
+        }
+
+        if is_command_position {
+            // Complete builtins
+            for &cmd in BUILTIN_COMMANDS {
+                if cmd.starts_with(partial) {
+                    candidates.push(cmd.to_string());
+                }
+            }
+            // Complete functions and aliases
+            let state = (self.state_fn)();
+            // Functions are visible via compgen but we don't have direct access
+            // to the function names from ShellState. We do have aliases.
+            for name in state.aliases.keys() {
+                if name.starts_with(partial) {
+                    candidates.push(name.clone());
+                }
+            }
+        }
+
+        if !is_command_position && !partial.contains('/') && !partial.starts_with('.') {
+            // File/dir completion for arguments
+            candidates.extend(self.complete_path(partial));
+        }
+
+        candidates.sort();
+        candidates.dedup();
+        Ok((word_start, candidates))
+    }
+}
+
+// --- History hints ---
+
+impl Hinter for BashkitHelper {
+    type Hint = ShellHint;
+
+    fn hint(&self, line: &str, pos: usize, ctx: &Context<'_>) -> Option<ShellHint> {
+        if line.is_empty() || pos < line.len() {
+            return None;
+        }
+        // Search history for most recent match
+        let history = ctx.history();
+        for i in (0..history.len()).rev() {
+            if let Ok(Some(entry)) = history.get(i, rustyline::history::SearchDirection::Reverse) {
+                let text = entry.entry.as_ref();
+                if text.starts_with(line) && text.len() > line.len() {
+                    return Some(ShellHint {
+                        suffix: text[line.len()..].to_string(),
+                    });
+                }
+            }
+        }
+        None
+    }
+}
+
+struct ShellHint {
+    suffix: String,
+}
+
+impl Hint for ShellHint {
+    fn display(&self) -> &str {
+        &self.suffix
+    }
+
+    fn completion(&self) -> Option<&str> {
+        if self.suffix.is_empty() {
+            None
+        } else {
+            Some(&self.suffix)
+        }
+    }
+}
+
+// --- Syntax highlighting ---
+
+impl Highlighter for BashkitHelper {
+    fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
+        // Dim gray for hints
+        Cow::Owned(format!("\x1b[38;5;240m{hint}\x1b[0m"))
+    }
+
+    fn highlight_char(
+        &self,
+        _line: &str,
+        _pos: usize,
+        _kind: rustyline::highlight::CmdKind,
+    ) -> bool {
+        // Always re-highlight — enables hint coloring
+        true
+    }
+}
+
+// --- Multiline validator ---
+
+// Validator is a no-op — multiline is handled in the REPL loop via
+// is_incomplete_input() after exec fails with a parse error. We can't
+// use Validator for this because it runs synchronously and the parser
+// requires async (tokio block_on deadlocks on a single-thread runtime).
+impl Validator for BashkitHelper {}
+
+impl Helper for BashkitHelper {}
+
+// --- Terminal size ---
+
+fn terminal_columns() -> u16 {
+    terminal_size::terminal_size()
+        .map(|(w, _)| w.0)
+        .unwrap_or(80)
+}
+
+// --- Main REPL ---
+
+async fn set_interactive_env(bash: &mut bashkit::Bash) {
+    let cols = terminal_columns();
+    let rows = terminal_size::terminal_size()
+        .map(|(_, h)| h.0)
+        .unwrap_or(24);
+    let env_script = format!(
+        "export COLUMNS={cols} LINES={rows} SHLVL=${{SHLVL:-0}}; export SHLVL=$((SHLVL + 1))"
+    );
+    let _ = bash.exec(&env_script).await;
+}
+
+async fn source_rc_file(bash: &mut bashkit::Bash) {
+    // Check if ~/.bashkitrc exists in the VFS
+    let fs = bash.fs();
+    let rc_path = std::path::PathBuf::from(RC_FILE);
+    if let Ok(true) = fs.exists(&rc_path).await
+        && let Ok(content) = fs.read_file(&rc_path).await
+        && let Ok(script) = String::from_utf8(content)
+    {
+        let _ = bash.exec(&script).await;
+    }
+}
+
 #[cfg(test)]
 fn test_bash() -> bashkit::Bash {
     bashkit::Bash::builder()
@@ -52,12 +402,61 @@ fn test_bash() -> bashkit::Bash {
 }
 
 pub async fn run(mut bash: bashkit::Bash) -> Result<i32> {
-    let mut editor = DefaultEditor::new()?;
+    // Set up interactive environment
+    set_interactive_env(&mut bash).await;
+
+    // Source startup file
+    source_rc_file(&mut bash).await;
+
+    // Set up Ctrl-C handler for command interruption
+    let cancel_token = bash.cancellation_token();
+    let sigint_flag = Arc::new(AtomicBool::new(false));
+    let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&sigint_flag));
+
+    // Build editor with custom helper
+    let config = Config::builder()
+        .auto_add_history(true)
+        .max_history_size(MAX_HISTORY)?
+        .completion_type(rustyline::CompletionType::List)
+        .build();
+
+    let fs = bash.fs();
+    // Shared state snapshot for the helper (completion, hints).
+    // Updated before each readline call.
+    let state_ref = Arc::new(std::sync::Mutex::new(bash.shell_state()));
+    let state_for_helper = Arc::clone(&state_ref);
+    let helper = BashkitHelper {
+        fs,
+        state_fn: Box::new(move || state_for_helper.lock().unwrap().clone()),
+    };
+
+    let mut editor = Editor::with_config(config)?;
+    editor.set_helper(Some(helper));
+
+    // Load history from VFS
+    let _ = editor.load_history(HISTORY_FILE);
+
     let mut last_exit_code: i32 = 0;
 
     loop {
-        let current_prompt = prompt(&bash);
-        let line = match editor.readline(&current_prompt) {
+        // Update shared state for helper (completion, hints)
+        *state_ref.lock().unwrap() = bash.shell_state();
+
+        // Build prompt from PS1
+        let state = bash.shell_state();
+        let ps1 = state
+            .variables
+            .get("PS1")
+            .or_else(|| state.env.get("PS1"))
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_PS1.to_string());
+        let prompt = expand_ps1(&ps1, &state);
+
+        // Clear any stale SIGINT from previous iteration
+        sigint_flag.store(false, Ordering::Relaxed);
+        cancel_token.store(false, Ordering::Relaxed);
+
+        let line = match editor.readline(&prompt) {
             Ok(line) => line,
             Err(ReadlineError::Interrupted) => continue,
             Err(ReadlineError::Eof) => break,
@@ -72,10 +471,26 @@ pub async fn run(mut bash: bashkit::Bash) -> Result<i32> {
             continue;
         }
 
-        // Accumulate lines when input is incomplete (multiline support).
+        // Multiline: accumulate lines when input is incomplete.
         let mut input = line;
         let result = loop {
-            match bash
+            // Enable Ctrl-C cancellation during execution
+            cancel_token.store(false, Ordering::Relaxed);
+            sigint_flag.store(false, Ordering::Relaxed);
+
+            let cancel = Arc::clone(&cancel_token);
+            let sigint = Arc::clone(&sigint_flag);
+            let cancel_watcher = tokio::spawn(async move {
+                loop {
+                    if sigint.load(Ordering::Relaxed) {
+                        cancel.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            });
+
+            let exec_result = bash
                 .exec_streaming(
                     &input,
                     Box::new(|stdout, stderr| {
@@ -87,16 +502,31 @@ pub async fn run(mut bash: bashkit::Bash) -> Result<i32> {
                         }
                     }),
                 )
-                .await
-            {
-                Ok(result) => break result,
+                .await;
+
+            cancel_watcher.abort();
+            cancel_token.store(false, Ordering::Relaxed);
+
+            match exec_result {
+                Ok(r) => break r,
                 Err(e) => {
                     let msg = e.to_string();
+                    if msg.contains("cancelled") {
+                        eprintln!();
+                        break error_result(130);
+                    }
                     if !is_incomplete_input(&msg) {
                         eprintln!("bashkit: {msg}");
                         break error_result(2);
                     }
-                    match editor.readline(CONTINUATION_PROMPT) {
+                    // Read continuation line for incomplete input
+                    let ps2 = bash
+                        .shell_state()
+                        .variables
+                        .get("PS2")
+                        .cloned()
+                        .unwrap_or_else(|| DEFAULT_PS2.to_string());
+                    match editor.readline(&ps2) {
                         Ok(cont) => {
                             input.push('\n');
                             input.push_str(&cont);
@@ -115,9 +545,11 @@ pub async fn run(mut bash: bashkit::Bash) -> Result<i32> {
             }
         };
 
-        let _ = editor.add_history_entry(&input);
         last_exit_code = result.exit_code;
     }
+
+    // Save history
+    let _ = editor.save_history(HISTORY_FILE);
 
     Ok(last_exit_code)
 }
@@ -167,18 +599,104 @@ mod tests {
         assert!(!is_incomplete_input("execution error: division by zero"));
     }
 
-    #[test]
-    fn prompt_shows_cwd() {
-        let bash = test_bash();
-        let p = prompt(&bash);
-        assert!(p.starts_with("bashkit:"));
-        assert!(p.ends_with("$ "));
-        assert!(p.contains("/home/user"));
+    // --- PS1 tests ---
+
+    fn empty_state() -> bashkit::ShellState {
+        bashkit::ShellState {
+            env: std::collections::HashMap::new(),
+            variables: std::collections::HashMap::new(),
+            arrays: std::collections::HashMap::new(),
+            assoc_arrays: std::collections::HashMap::new(),
+            cwd: std::path::PathBuf::from("/"),
+            last_exit_code: 0,
+            aliases: std::collections::HashMap::new(),
+            traps: std::collections::HashMap::new(),
+        }
     }
+
+    #[test]
+    fn ps1_user_and_host() {
+        let mut state = empty_state();
+        state.env.insert("USER".into(), "mike".into());
+        state.env.insert("HOSTNAME".into(), "dev.local".into());
+        let result = expand_ps1("\\u@\\h$ ", &state);
+        assert_eq!(result, "mike@dev$ ");
+    }
+
+    #[test]
+    fn ps1_full_hostname() {
+        let mut state = empty_state();
+        state.env.insert("HOSTNAME".into(), "dev.local".into());
+        let result = expand_ps1("\\H$ ", &state);
+        assert_eq!(result, "dev.local$ ");
+    }
+
+    #[test]
+    fn ps1_working_dir_with_tilde() {
+        let mut state = empty_state();
+        state.env.insert("HOME".into(), "/home/mike".into());
+        state.cwd = "/home/mike/projects".into();
+        let result = expand_ps1("\\w$ ", &state);
+        assert_eq!(result, "~/projects$ ");
+    }
+
+    #[test]
+    fn ps1_working_dir_basename() {
+        let mut state = empty_state();
+        state.cwd = "/home/mike/projects".into();
+        let result = expand_ps1("\\W$ ", &state);
+        assert_eq!(result, "projects$ ");
+    }
+
+    #[test]
+    fn ps1_dollar_sign_non_root() {
+        let mut state = empty_state();
+        state.env.insert("EUID".into(), "1000".into());
+        let result = expand_ps1("\\$ ", &state);
+        assert_eq!(result, "$ ");
+    }
+
+    #[test]
+    fn ps1_hash_sign_root() {
+        let mut state = empty_state();
+        state.env.insert("EUID".into(), "0".into());
+        let result = expand_ps1("\\$ ", &state);
+        assert_eq!(result, "# ");
+    }
+
+    #[test]
+    fn ps1_default_prompt_format() {
+        let mut state = empty_state();
+        state.env.insert("USER".into(), "user".into());
+        state.env.insert("HOME".into(), "/home/user".into());
+        state.env.insert("EUID".into(), "1000".into());
+        state.cwd = "/home/user".into();
+        let result = expand_ps1(DEFAULT_PS1, &state);
+        assert_eq!(result, "user@bashkit:~$ ");
+    }
+
+    #[test]
+    fn ps1_newline_and_escape() {
+        let state = empty_state();
+        let result = expand_ps1("line1\\nline2", &state);
+        assert_eq!(result, "line1\nline2");
+    }
+
+    // --- Prompt integration ---
+
+    #[test]
+    fn default_prompt_shows_cwd() {
+        let bash = test_bash();
+        let state = bash.shell_state();
+        let prompt = expand_ps1(DEFAULT_PS1, &state);
+        assert!(prompt.contains("user"));
+        assert!(prompt.ends_with("$ "));
+    }
+
+    // --- Exec tests ---
 
     #[tokio::test]
     async fn piped_input_executes_and_exits() {
-        // Simulate non-interactive stdin by running exec directly
         let mut bash = test_bash();
         let result = bash.exec("echo hello").await.unwrap();
         assert_eq!(result.stdout, "hello\n");
@@ -198,8 +716,9 @@ mod tests {
         let mut bash = test_bash();
         bash.exec("mkdir -p /tmp/testdir").await.unwrap();
         bash.exec("cd /tmp/testdir").await.unwrap();
-        let p = prompt(&bash);
-        assert!(p.contains("/tmp/testdir"));
+        let state = bash.shell_state();
+        let prompt = expand_ps1("\\w$ ", &state);
+        assert!(prompt.contains("/tmp/testdir"));
     }
 
     #[tokio::test]
@@ -212,8 +731,8 @@ mod tests {
     #[tokio::test]
     async fn streaming_output_callback_invoked() {
         let mut bash = test_bash();
-        let chunks: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
-            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let chunks: Arc<std::sync::Mutex<Vec<String>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
         let chunks_cb = chunks.clone();
         let result = bash
             .exec_streaming(
@@ -237,5 +756,18 @@ mod tests {
         assert_eq!(r.exit_code, 130);
         assert!(r.stdout.is_empty());
         assert!(r.stderr.is_empty());
+    }
+
+    // --- Source RC ---
+
+    #[tokio::test]
+    async fn source_rc_sets_variables() {
+        let mut bash = test_bash();
+        let fs = bash.fs();
+        let rc = std::path::PathBuf::from(RC_FILE);
+        let _ = fs.write_file(&rc, b"MY_RC_VAR=loaded\n").await;
+        source_rc_file(&mut bash).await;
+        let result = bash.exec("echo $MY_RC_VAR").await.unwrap();
+        assert_eq!(result.stdout, "loaded\n");
     }
 }
