@@ -38,6 +38,15 @@ import type { BashOptions, ExecResult } from "./wrapper.js";
 export interface BashToolOptions extends Omit<BashOptions, "files"> {
   /** Pre-populate VFS files. Keys are absolute paths, values are file contents. */
   files?: Record<string, string>;
+  /**
+   * Execution timeout in milliseconds.
+   *
+   * When set, this is passed to the underlying BashTool as `timeoutMs`.
+   * Commands exceeding this duration are aborted with exit code 124.
+   * Framework-level timeouts can be propagated here to ensure bashkit
+   * stops execution when the framework cancels a tool call.
+   */
+  timeoutMs?: number;
 }
 
 /** Anthropic tool definition (matches the `tools` array in messages.create). */
@@ -67,14 +76,33 @@ export interface ToolResult {
   is_error?: boolean;
 }
 
+/** Options for handler invocation. */
+export interface HandlerOptions {
+  /** AbortSignal to cancel execution when the framework aborts the tool call. */
+  signal?: AbortSignal;
+}
+
 /** Return value of `bashTool()`. */
 export interface BashToolAdapter {
   /** System prompt describing bash capabilities and constraints. */
   system: string;
   /** Tool definitions for Anthropic's messages.create() API. */
   tools: AnthropicTool[];
-  /** Handler that executes a tool_use block and returns a tool_result. */
-  handler: (toolUse: ToolUseBlock) => Promise<ToolResult>;
+  /**
+   * Handler that executes a tool_use block and returns a tool_result.
+   *
+   * Pass an AbortSignal via the options parameter to cancel execution
+   * when the framework aborts the tool call:
+   *
+   * ```typescript
+   * const controller = new AbortController();
+   * const result = await bash.handler(block, { signal: controller.signal });
+   * ```
+   */
+  handler: (
+    toolUse: ToolUseBlock,
+    options?: HandlerOptions,
+  ) => Promise<ToolResult>;
   /** The underlying BashTool instance for direct access. */
   bash: BashTool;
 }
@@ -147,7 +175,10 @@ export function bashTool(options?: BashToolOptions): BashToolAdapter {
     },
   ];
 
-  const handler = async (toolUse: ToolUseBlock): Promise<ToolResult> => {
+  const handler = async (
+    toolUse: ToolUseBlock,
+    handlerOptions?: HandlerOptions,
+  ): Promise<ToolResult> => {
     const commands = (toolUse.input as { commands?: string }).commands;
     if (!commands) {
       return {
@@ -156,6 +187,24 @@ export function bashTool(options?: BashToolOptions): BashToolAdapter {
         content: "Error: missing 'commands' parameter",
         is_error: true,
       };
+    }
+
+    // Wire up AbortSignal to cancel bashkit execution when the
+    // framework (or caller) aborts the tool call.
+    const signal = handlerOptions?.signal;
+    if (signal?.aborted) {
+      return {
+        type: "tool_result",
+        tool_use_id: toolUse.id,
+        content: "Execution cancelled",
+        is_error: true,
+      };
+    }
+
+    let onAbort: (() => void) | undefined;
+    if (signal) {
+      onAbort = () => bash.cancel();
+      signal.addEventListener("abort", onAbort, { once: true });
     }
 
     try {
@@ -173,6 +222,10 @@ export function bashTool(options?: BashToolOptions): BashToolAdapter {
         content: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
         is_error: true,
       };
+    } finally {
+      if (signal && onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
     }
   };
 

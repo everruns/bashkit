@@ -28,6 +28,7 @@ def create_bash_tool(
     hostname: str | None = None,
     max_commands: int | None = None,
     max_loop_iterations: int | None = None,
+    timeout_seconds: float | None = None,
 ) -> Tool:
     """Create a PydanticAI Tool wrapping Bashkit.
 
@@ -36,6 +37,8 @@ def create_bash_tool(
         hostname: Custom hostname for sandbox
         max_commands: Max commands to execute
         max_loop_iterations: Max loop iterations
+        timeout_seconds: Execution timeout in seconds. When set, commands
+            that exceed this duration are aborted with exit code 124.
 
     Returns:
         Tool for use with ``Agent(tools=[...])``
@@ -45,7 +48,7 @@ def create_bash_tool(
 
     Example:
         >>> from bashkit.pydantic_ai import create_bash_tool
-        >>> tool = create_bash_tool()
+        >>> tool = create_bash_tool(timeout_seconds=30)
         >>> from pydantic_ai import Agent
         >>> agent = Agent('anthropic:claude-sonnet-4-20250514', tools=[tool])
     """
@@ -59,6 +62,7 @@ def create_bash_tool(
         hostname=hostname,
         max_commands=max_commands,
         max_loop_iterations=max_loop_iterations,
+        timeout_seconds=timeout_seconds,
     )
 
     async def bash(commands: str) -> str:

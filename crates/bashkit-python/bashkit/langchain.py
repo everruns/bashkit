@@ -72,6 +72,7 @@ if LANGCHAIN_AVAILABLE:
             hostname: str | None = None,
             max_commands: int | None = None,
             max_loop_iterations: int | None = None,
+            timeout_seconds: float | None = None,
             **kwargs,
         ):
             bash_tool = NativeBashTool(
@@ -79,6 +80,7 @@ if LANGCHAIN_AVAILABLE:
                 hostname=hostname,
                 max_commands=max_commands,
                 max_loop_iterations=max_loop_iterations,
+                timeout_seconds=timeout_seconds,
             )
             kwargs["name"] = bash_tool.name
             kwargs["description"] = bash_tool.description()
@@ -179,6 +181,7 @@ def create_bash_tool(
     hostname: str | None = None,
     max_commands: int | None = None,
     max_loop_iterations: int | None = None,
+    timeout_seconds: float | None = None,
 ) -> BashkitTool:
     """Create a LangChain-compatible Bashkit tool.
 
@@ -187,6 +190,8 @@ def create_bash_tool(
         hostname: Custom hostname for sandbox
         max_commands: Max commands to execute
         max_loop_iterations: Max loop iterations
+        timeout_seconds: Execution timeout in seconds. When set, commands
+            that exceed this duration are aborted with exit code 124.
 
     Returns:
         BashkitTool instance for use with LangChain agents
@@ -196,7 +201,7 @@ def create_bash_tool(
 
     Example:
         >>> from bashkit.langchain import create_bash_tool
-        >>> tool = create_bash_tool()
+        >>> tool = create_bash_tool(timeout_seconds=30)
         >>> result = tool.invoke({"commands": "ls -la"})
     """
     if not LANGCHAIN_AVAILABLE:
@@ -209,6 +214,7 @@ def create_bash_tool(
         hostname=hostname,
         max_commands=max_commands,
         max_loop_iterations=max_loop_iterations,
+        timeout_seconds=timeout_seconds,
     )
 
 

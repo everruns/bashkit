@@ -62,6 +62,7 @@ class Bash:
         max_commands: int | None = None,
         max_loop_iterations: int | None = None,
         max_memory: int | None = None,
+        timeout_seconds: float | None = None,
         python: bool = False,
         external_functions: list[str] | None = None,
         external_handler: ExternalHandler | None = None,
@@ -120,6 +121,7 @@ class BashTool:
         max_commands: int | None = None,
         max_loop_iterations: int | None = None,
         max_memory: int | None = None,
+        timeout_seconds: float | None = None,
         files: dict[str, str] | None = None,
         mounts: list[dict[str, Any]] | None = None,
     ) -> None: ...
