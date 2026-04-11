@@ -12,7 +12,11 @@ async fn main() -> anyhow::Result<()> {
     println!("=== Bashkit: ssh supabase.sh ===\n");
 
     let mut bash = Bash::builder()
-        .ssh(SshConfig::new().allow("supabase.sh"))
+        .ssh(
+            SshConfig::new()
+                .allow("supabase.sh")
+                .strict_host_key_checking(false),
+        )
         .build();
 
     println!("$ ssh supabase.sh\n");

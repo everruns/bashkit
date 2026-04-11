@@ -971,6 +971,25 @@ git's ref name rules (no `..`, no control chars, no trailing `.lock`).
 
 ---
 
+### 8.5 SSH Security
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-SSH-001 | Unauthorized host access | Connect to arbitrary hosts | Host allowlist (default-deny) | **MITIGATED** |
+| TM-SSH-002 | Credential leakage | Read host `~/.ssh/` keys | Keys from VFS only | **MITIGATED** |
+| TM-SSH-003 | Session exhaustion | Open many concurrent sessions | Max concurrent sessions limit | **MITIGATED** |
+| TM-SSH-004 | OOM via large response | Server sends huge output | Streaming size limit | **MITIGATED** |
+| TM-SSH-005 | Connection hang | Server never responds | Configurable timeout | **MITIGATED** |
+| TM-SSH-006 | MITM via unverified host key | Attacker intercepts SSH connection | Strict host key checking (default: on) | **MITIGATED** |
+| TM-SSH-007 | Non-standard port access | Connect to services on unexpected ports | Port allowlist | **MITIGATED** |
+| TM-SSH-008 | Remote command injection | Inject via remote path in SCP | Shell-escape remote paths | **MITIGATED** |
+
+**TM-SSH-006**: The `RusshHandler` verifies server host keys against trusted keys configured via
+`SshConfig::trusted_host_key()`. When `strict_host_key_checking` is enabled (default), connections
+to hosts without a matching trusted key are rejected. When disabled, a warning is emitted to stderr.
+
+---
+
 ### 9. Logging Security
 
 Bashkit provides optional structured logging via the `logging` feature. This section documents

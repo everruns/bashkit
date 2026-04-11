@@ -8,7 +8,11 @@ mod ssh_supabase {
 
     fn bash_with_supabase() -> Bash {
         Bash::builder()
-            .ssh(SshConfig::new().allow("supabase.sh"))
+            .ssh(
+                SshConfig::new()
+                    .allow("supabase.sh")
+                    .strict_host_key_checking(false),
+            )
             .build()
     }
 

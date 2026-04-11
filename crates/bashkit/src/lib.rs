@@ -437,7 +437,7 @@ pub use limits::{
 };
 pub use network::NetworkAllowlist;
 pub use snapshot::Snapshot;
-pub use ssh::{SshAllowlist, SshConfig};
+pub use ssh::{SshAllowlist, SshConfig, TrustedHostKey};
 pub use tool::BashToolBuilder as ToolBuilder;
 pub use tool::{
     BashTool, BashToolBuilder, Tool, ToolError, ToolExecution, ToolImage, ToolOutput,
