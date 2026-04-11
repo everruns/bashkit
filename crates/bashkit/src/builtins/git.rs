@@ -196,7 +196,7 @@ async fn git_config(
             }
         }
         None => {
-            // Get config
+            // Get config — value already sanitized by config_get (TM-GIT-015)
             match git_client.config_get(&ctx.fs, ctx.cwd, key).await {
                 Ok(Some(value)) => Ok(ExecResult::ok(format!("{}\n", value))),
                 Ok(None) => Ok(ExecResult::ok(String::new())),
