@@ -442,7 +442,11 @@ mod redaction_tests {
         // Test for TM-LOG-002: Content shown only with explicit unsafe flag
         use bashkit::logging::format_script_for_log;
 
+        // Requires BASHKIT_UNSAFE_LOGGING=1 for unsafe_log_scripts to take effect
+        unsafe { std::env::set_var("BASHKIT_UNSAFE_LOGGING", "1") };
         let config = LogConfig::new().unsafe_log_scripts();
+        unsafe { std::env::remove_var("BASHKIT_UNSAFE_LOGGING") };
+
         let script = "echo hello";
 
         let formatted = format_script_for_log(script, &config);
@@ -628,7 +632,10 @@ mod disabled_redaction_tests {
     #[test]
     fn test_disabled_redaction_shows_secrets() {
         // Test that unsafe_disable_redaction actually disables redaction
+        // Requires BASHKIT_UNSAFE_LOGGING=1 for the method to take effect
+        unsafe { std::env::set_var("BASHKIT_UNSAFE_LOGGING", "1") };
         let config = LogConfig::new().unsafe_disable_redaction();
+        unsafe { std::env::remove_var("BASHKIT_UNSAFE_LOGGING") };
 
         // Env var redaction disabled
         assert!(
