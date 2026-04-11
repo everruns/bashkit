@@ -7,7 +7,7 @@
 
 use super::{RegisteredTool, ScriptedExecutionTrace, ScriptedTool, ToolArgs, ToolDef};
 use crate::ExecutionLimits;
-use crate::tool::{Tool, ToolRequest, ToolResponse, ToolStatus, VERSION};
+use crate::tool::{Tool, ToolError, ToolRequest, ToolResponse, ToolStatus, VERSION};
 use async_trait::async_trait;
 use schemars::schema_for;
 use std::sync::Arc;
@@ -66,6 +66,30 @@ pub struct DiscoverTool {
     inner: ScriptedTool,
 }
 
+const DISCOVER_ALLOWED_COMMANDS: &[&str] = &["discover", "help"];
+
+impl DiscoverTool {
+    /// Reject commands that aren't `discover` or `help`.
+    fn validate_commands(commands: &str) -> Result<(), String> {
+        let first_word = commands.split_whitespace().next().unwrap_or("");
+        if DISCOVER_ALLOWED_COMMANDS.contains(&first_word) {
+            Ok(())
+        } else {
+            Err("discover tool only supports: discover, help".to_string())
+        }
+    }
+
+    fn reject_response(msg: &str) -> ToolResponse {
+        ToolResponse {
+            stdout: String::new(),
+            stderr: msg.to_string(),
+            exit_code: 1,
+            error: Some(msg.to_string()),
+            ..Default::default()
+        }
+    }
+}
+
 #[async_trait]
 impl Tool for DiscoverTool {
     fn name(&self) -> &str {
@@ -120,10 +144,22 @@ impl Tool for DiscoverTool {
         &self,
         args: serde_json::Value,
     ) -> Result<crate::tool::ToolExecution, crate::tool::ToolError> {
+        // Extract commands string from args to validate before delegating
+        let commands = args
+            .as_object()
+            .and_then(|obj| obj.get("commands"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if let Err(msg) = Self::validate_commands(commands) {
+            return Err(ToolError::UserFacing(msg));
+        }
         self.inner.execution(args)
     }
 
     async fn execute(&self, req: ToolRequest) -> ToolResponse {
+        if let Err(msg) = Self::validate_commands(&req.commands) {
+            return Self::reject_response(&msg);
+        }
         self.inner.execute(req).await
     }
 
@@ -132,6 +168,9 @@ impl Tool for DiscoverTool {
         req: ToolRequest,
         status_callback: Box<dyn FnMut(ToolStatus) + Send>,
     ) -> ToolResponse {
+        if let Err(msg) = Self::validate_commands(&req.commands) {
+            return Self::reject_response(&msg);
+        }
         self.inner.execute_with_status(req, status_callback).await
     }
 }
@@ -670,5 +709,90 @@ mod tests {
         let tools = toolset.tools();
         let input = tools[1].input_schema();
         assert!(input["properties"]["commands"].is_object());
+    }
+
+    // -- DiscoverTool command restriction --
+
+    #[tokio::test]
+    async fn test_discover_tool_allows_discover() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let resp = tools[1]
+            .execute(ToolRequest {
+                commands: "discover --categories".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("users"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_tool_allows_help() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let resp = tools[1]
+            .execute(ToolRequest {
+                commands: "help get_user".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("get_user"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_tool_rejects_other_commands() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let resp = tools[1]
+            .execute(ToolRequest {
+                commands: "get_user --id 42".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_ne!(resp.exit_code, 0);
+        assert!(
+            resp.error
+                .as_deref()
+                .unwrap_or("")
+                .contains("discover tool only supports"),
+            "error: {:?}",
+            resp.error
+        );
+    }
+
+    #[tokio::test]
+    async fn test_discover_tool_rejects_arbitrary_bash() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let resp = tools[1]
+            .execute(ToolRequest {
+                commands: "echo pwned".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_ne!(resp.exit_code, 0);
+        assert!(
+            resp.error
+                .as_deref()
+                .unwrap_or("")
+                .contains("discover tool only supports")
+        );
+    }
+
+    #[test]
+    fn test_discover_tool_execution_rejects_other_commands() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let args = serde_json::json!({ "commands": "get_user --id 42" });
+        let result = tools[1].execution(args);
+        match result {
+            Err(e) => assert!(
+                e.to_string().contains("discover tool only supports"),
+                "unexpected error: {e}"
+            ),
+            Ok(_) => panic!("expected error for disallowed command"),
+        }
     }
 }
