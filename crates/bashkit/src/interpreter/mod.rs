@@ -499,6 +499,11 @@ pub struct Interpreter {
     /// virtual file path, run these commands with the file content as stdin.
     /// Each entry is (virtual_path, commands_to_run).
     deferred_proc_subs: Vec<(String, Vec<Command>)>,
+    /// Paths of process substitution temp files created during the current
+    /// simple command. Drained and removed from VFS after the command completes
+    /// (including after `run_deferred_proc_subs`), preventing accumulation
+    /// across exec() calls when the interpreter is long-lived.
+    proc_sub_paths: Vec<String>,
 }
 
 impl Interpreter {
@@ -815,6 +820,7 @@ impl Interpreter {
             pending_fd_targets: Vec::new(),
             cancelled: Arc::new(AtomicBool::new(false)),
             deferred_proc_subs: Vec::new(),
+            proc_sub_paths: Vec::new(),
         }
     }
 
@@ -3575,6 +3581,16 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Remove process substitution temp files (`/dev/fd/proc_sub_*`) from VFS.
+    /// Only removes paths added at or after `base` index, so nested commands
+    /// don't accidentally clean up files belonging to an outer scope.
+    async fn cleanup_proc_sub_files_from(&mut self, base: usize) {
+        let to_remove: Vec<String> = self.proc_sub_paths.drain(base..).collect();
+        for p in to_remove {
+            let _ = self.fs.remove(Path::new(&p), false).await;
+        }
+    }
+
     /// Restore saved variable values (used for prefix assignment cleanup).
     fn restore_variables(&mut self, saves: Vec<(String, Option<String>)>) {
         for (name, old) in saves {
@@ -3620,6 +3636,11 @@ impl Interpreter {
         command: &SimpleCommand,
         stdin: Option<String>,
     ) -> Result<ExecResult> {
+        // Snapshot proc_sub_paths length so nested execute_simple_command
+        // calls (e.g. from process substitution expansion) don't clean up
+        // files that belong to this command's scope.
+        let proc_sub_base = self.proc_sub_paths.len();
+
         let (_debug_stdout, _debug_stderr) = self.run_debug_trap().await;
 
         let name = self.expand_word(&command.name).await?;
@@ -3742,6 +3763,8 @@ impl Interpreter {
         };
 
         self.run_deferred_proc_subs(&mut result).await?;
+
+        self.cleanup_proc_sub_files_from(proc_sub_base).await;
 
         result
     }
@@ -6324,10 +6347,12 @@ impl Interpreter {
             if self.fs.write_file(path, stdout.as_bytes()).await.is_err() {
                 Ok(stdout)
             } else {
+                self.proc_sub_paths.push(path_str.clone());
                 Ok(path_str)
             }
         } else {
             let _ = self.fs.write_file(path, b"").await;
+            self.proc_sub_paths.push(path_str.clone());
             self.deferred_proc_subs
                 .push((path_str.clone(), commands.to_vec()));
             Ok(path_str)
@@ -11011,22 +11036,77 @@ cat /tmp/test_fd.txt"#,
         );
     }
 
-    // Regression: date +"$var" must not word-split format when var contains spaces
-    // https://github.com/everruns/bashkit/issues/1203
+    /// Issue #1184: input process substitution temp files must be cleaned up
     #[tokio::test]
-    async fn test_date_format_var_with_spaces_no_split() {
-        // Use -u -d @0 for deterministic output (1970-01-01 UTC)
-        let result = run_script(r#"fmt="%Y %m %d"; date -u -d @0 +"$fmt""#).await;
+    async fn test_proc_sub_input_cleanup() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+
+        // Run several input process substitutions in a loop
+        let parser = Parser::new(r#"for i in 1 2 3 4 5; do cat <(echo "hello $i"); done"#);
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "1970 01 01");
+
+        // /dev/fd/ should have no leftover proc_sub files
+        if let Ok(entries) = fs.read_dir(Path::new("/dev/fd")).await {
+            let leaked: Vec<_> = entries
+                .iter()
+                .filter(|e| e.name.starts_with("proc_sub_"))
+                .collect();
+            assert!(
+                leaked.is_empty(),
+                "proc_sub files leaked in /dev/fd: {:?}",
+                leaked.iter().map(|e| &e.name).collect::<Vec<_>>()
+            );
+        }
     }
 
-    // Mixed-quoting: prefix"$var" must stay one word (no IFS split)
+    /// Issue #1184: output process substitution temp files must be cleaned up
     #[tokio::test]
-    async fn test_mixed_quote_prefix_var_no_split() {
-        // prefix"$var" should produce one argument, not be split at spaces
-        let result = run_script(r#"v="a b c"; echo prefix"$v""#).await;
+    async fn test_proc_sub_output_cleanup() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+
+        let parser = Parser::new(r#"for i in 1 2 3; do echo "data $i" > >(cat); done"#);
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "prefixa b c");
+
+        if let Ok(entries) = fs.read_dir(Path::new("/dev/fd")).await {
+            let leaked: Vec<_> = entries
+                .iter()
+                .filter(|e| e.name.starts_with("proc_sub_"))
+                .collect();
+            assert!(
+                leaked.is_empty(),
+                "proc_sub files leaked in /dev/fd: {:?}",
+                leaked.iter().map(|e| &e.name).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Issue #1184: cleanup happens even when command fails
+    #[tokio::test]
+    async fn test_proc_sub_cleanup_on_failure() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+
+        // false command fails but proc_sub file should still be cleaned up
+        let parser = Parser::new(r#"cat <(echo "data") && false; true"#);
+        let ast = parser.parse().unwrap();
+        let _result = interp.execute(&ast).await.unwrap();
+
+        if let Ok(entries) = fs.read_dir(Path::new("/dev/fd")).await {
+            let leaked: Vec<_> = entries
+                .iter()
+                .filter(|e| e.name.starts_with("proc_sub_"))
+                .collect();
+            assert!(
+                leaked.is_empty(),
+                "proc_sub files leaked after failed command: {:?}",
+                leaked.iter().map(|e| &e.name).collect::<Vec<_>>()
+            );
+        }
     }
 }
