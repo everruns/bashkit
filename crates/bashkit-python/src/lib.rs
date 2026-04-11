@@ -797,6 +797,14 @@ impl PyBash {
     /// sync context. Use `execute()` (async) instead.
     ///
     /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
+    ///
+    /// # Thread safety
+    ///
+    /// This method acquires an async mutex with a 30-second timeout to prevent
+    /// deadlocks when multiple threads call `execute_sync()` concurrently on the
+    /// same `Bash` instance. If the lock cannot be acquired within the timeout,
+    /// a `RuntimeError` is raised. For concurrent workloads, use separate `Bash`
+    /// instances per thread or use the async `execute()` method.
     fn execute_sync(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
         if self.external_handler.is_some() {
             return Err(PyRuntimeError::new_err(
@@ -807,7 +815,21 @@ impl PyBash {
 
         py.detach(|| {
             self.rt.block_on(async move {
-                let mut bash = inner.lock().await;
+                // THREAT[TM-DOS-FFI]: Use timeout on mutex acquisition to prevent
+                // deadlocks when multiple Python threads call execute_sync concurrently.
+                let mut bash =
+                    match tokio::time::timeout(std::time::Duration::from_secs(30), inner.lock())
+                        .await
+                    {
+                        Ok(guard) => guard,
+                        Err(_) => {
+                            return Err(PyRuntimeError::new_err(
+                                "execute_sync: timed out waiting for lock (30s). \
+                             Another thread may be holding the interpreter. \
+                             Use separate Bash instances for concurrent access.",
+                            ));
+                        }
+                    };
                 match bash.exec(&commands).await {
                     Ok(result) => Ok(ExecResult {
                         stdout: result.stdout,
@@ -1177,12 +1199,30 @@ impl BashTool {
     }
 
     /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
+    ///
+    /// # Thread safety
+    ///
+    /// Acquires async mutex with 30-second timeout. For concurrent workloads,
+    /// use separate `BashTool` instances per thread or the async `execute()`.
     fn execute_sync(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
         let inner = self.inner.clone();
 
         py.detach(|| {
             self.rt.block_on(async move {
-                let mut bash = inner.lock().await;
+                // THREAT[TM-DOS-FFI]: Timeout on mutex to prevent deadlock.
+                let mut bash =
+                    match tokio::time::timeout(std::time::Duration::from_secs(30), inner.lock())
+                        .await
+                    {
+                        Ok(guard) => guard,
+                        Err(_) => {
+                            return Err(PyRuntimeError::new_err(
+                                "execute_sync: timed out waiting for lock (30s). \
+                             Another thread may be holding the interpreter. \
+                             Use separate BashTool instances for concurrent access.",
+                            ));
+                        }
+                    };
                 match bash.exec(&commands).await {
                     Ok(result) => Ok(ExecResult {
                         stdout: result.stdout,
