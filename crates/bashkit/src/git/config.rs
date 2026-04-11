@@ -181,9 +181,19 @@ impl GitConfig {
         }
 
         // Check if URL starts with any allowed pattern
+        // THREAT[TM-GIT-014]: Boundary check prevents prefix confusion
+        // (e.g., allowing /myorg must NOT match /myorg-evil)
         for pattern in &self.remote_allowlist {
             if url.starts_with(pattern) {
-                return Ok(());
+                // Exact match or pattern already ends with separator
+                if url.len() == pattern.len() || pattern.ends_with('/') {
+                    return Ok(());
+                }
+                // Ensure match ends at a path boundary, not mid-component
+                let next = url.as_bytes()[pattern.len()];
+                if matches!(next, b'/' | b'?' | b'#' | b'.') {
+                    return Ok(());
+                }
             }
         }
 
@@ -304,6 +314,57 @@ mod tests {
             config
                 .is_url_allowed("https://gitlab.com/any/repo.git")
                 .is_ok()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "git")]
+    fn test_url_boundary_prevents_prefix_confusion() {
+        let config = GitConfig::new().allow_remote("https://github.com/myorg");
+
+        // Should match with path separator
+        assert!(
+            config
+                .is_url_allowed("https://github.com/myorg/repo.git")
+                .is_ok()
+        );
+        // Should NOT match org with similar prefix
+        assert!(
+            config
+                .is_url_allowed("https://github.com/myorg-evil/malicious.git")
+                .is_err()
+        );
+        assert!(
+            config
+                .is_url_allowed("https://github.com/myorg-phishing/repo.git")
+                .is_err()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "git")]
+    fn test_url_boundary_exact_match() {
+        let config = GitConfig::new().allow_remote("https://github.com/myorg/repo.git");
+        assert!(
+            config
+                .is_url_allowed("https://github.com/myorg/repo.git")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "git")]
+    fn test_url_boundary_with_trailing_slash() {
+        let config = GitConfig::new().allow_remote("https://github.com/myorg/");
+        assert!(
+            config
+                .is_url_allowed("https://github.com/myorg/repo.git")
+                .is_ok()
+        );
+        assert!(
+            config
+                .is_url_allowed("https://github.com/myorg-evil/repo.git")
+                .is_err()
         );
     }
 }
