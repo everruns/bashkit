@@ -41,7 +41,7 @@
 //!
 //! ```
 //! use bashkit::{BashTool, Tool};
-//! use futures::StreamExt;
+//! use futures_util::StreamExt;
 //!
 //! # tokio_test::block_on(async {
 //! let tool = BashTool::default();
@@ -64,7 +64,7 @@ use crate::builtins::Builtin;
 use crate::error::Error;
 use crate::{Bash, ExecResult, ExecutionLimits, OutputCallback};
 use async_trait::async_trait;
-use futures::Stream;
+use futures_core::Stream;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -1382,7 +1382,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execution_stream_emits_output_chunks() {
-        use futures::StreamExt;
+        use futures_util::StreamExt;
 
         let tool = BashTool::default();
         let execution = tool
