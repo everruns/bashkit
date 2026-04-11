@@ -44,6 +44,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | 014-scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |
 | 016-zapcode-runtime | Embedded TypeScript via ZapCode, VFS bridging, resource limits |
 | 017-request-signing | Transparent Ed25519 request signing (bot-auth) per RFC 9421 |
+| 018-interactive-shell | Interactive REPL mode with rustyline line editing |
 
 ### Documentation
 

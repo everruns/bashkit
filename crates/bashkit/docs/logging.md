@@ -130,10 +130,12 @@ Control characters are filtered, and newlines are escaped.
 
 ### Unsafe Options
 
-For debugging in **non-production** environments only:
+For debugging in **non-production** environments only. These methods require the
+`BASHKIT_UNSAFE_LOGGING=1` environment variable to take effect; without it they
+are no-ops that emit a warning:
 
-```rust
-# use bashkit::LogConfig;
+```rust,ignore
+// First: export BASHKIT_UNSAFE_LOGGING=1 in your shell
 // WARNING: May expose sensitive data
 let config = LogConfig::new()
     .unsafe_disable_redaction()  // Disable ALL redaction
