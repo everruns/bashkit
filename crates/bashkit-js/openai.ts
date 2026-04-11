@@ -46,6 +46,21 @@ export interface BashToolOptions extends Omit<BashOptions, "files"> {
    * stops execution when the framework cancels a tool call.
    */
   timeoutMs?: number;
+  /**
+   * Maximum output length in characters (default: 100000).
+   *
+   * Output exceeding this limit is truncated with a `[truncated]` marker.
+   * Prevents context window flooding when scripts produce large output.
+   */
+  maxOutputLength?: number;
+  /**
+   * Wrap tool output in XML boundary markers (default: false).
+   *
+   * When enabled, output is wrapped in `<tool_output>...</tool_output>` tags
+   * to help LLMs distinguish tool output data from instructions, reducing
+   * prompt injection risk via tool output.
+   */
+  sanitizeOutput?: boolean;
 }
 
 /** OpenAI function tool definition (matches the `tools` array in chat.completions.create). */
@@ -110,7 +125,13 @@ export interface BashToolAdapter {
   bash: BashTool;
 }
 
-function formatOutput(result: ExecResult): string {
+const DEFAULT_MAX_OUTPUT_LENGTH = 100_000;
+
+function formatOutput(
+  result: ExecResult,
+  maxOutputLength: number = DEFAULT_MAX_OUTPUT_LENGTH,
+  sanitize: boolean = false,
+): string {
   let output = result.stdout;
   if (result.stderr) {
     output += (output ? "\n" : "") + `STDERR: ${result.stderr}`;
@@ -118,7 +139,14 @@ function formatOutput(result: ExecResult): string {
   if (result.exitCode !== 0) {
     output += (output ? "\n" : "") + `[Exit code: ${result.exitCode}]`;
   }
-  return output || "(no output)";
+  output = output || "(no output)";
+  if (output.length > maxOutputLength) {
+    output = output.slice(0, maxOutputLength) + "\n[truncated]";
+  }
+  if (sanitize) {
+    output = `<tool_output>\n${output}\n</tool_output>`;
+  }
+  return output;
 }
 
 /**
@@ -148,7 +176,8 @@ function formatOutput(result: ExecResult): string {
  * ```
  */
 export function bashTool(options?: BashToolOptions): BashToolAdapter {
-  const { files, ...bashOptions } = options ?? {};
+  const { files, maxOutputLength, sanitizeOutput, ...bashOptions } =
+    options ?? {};
 
   const bash = new BashTool(bashOptions);
 
@@ -227,7 +256,7 @@ export function bashTool(options?: BashToolOptions): BashToolAdapter {
       return {
         role: "tool",
         tool_call_id: toolCall.id,
-        content: formatOutput(result),
+        content: formatOutput(result, maxOutputLength, sanitizeOutput),
       };
     } catch (err) {
       return {

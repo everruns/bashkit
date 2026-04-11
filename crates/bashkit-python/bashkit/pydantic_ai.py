@@ -29,6 +29,7 @@ def create_bash_tool(
     max_commands: int | None = None,
     max_loop_iterations: int | None = None,
     timeout_seconds: float | None = None,
+    max_output_length: int = 100_000,
 ) -> Tool:
     """Create a PydanticAI Tool wrapping Bashkit.
 
@@ -84,7 +85,10 @@ def create_bash_tool(
         if result.exit_code != 0:
             output += f"\n[Exit code: {result.exit_code}]"
 
-        return output if output else "[No output]"
+        output = output if output else "[No output]"
+        if len(output) > max_output_length:
+            output = output[:max_output_length] + "\n[truncated]"
+        return output
 
     return Tool(bash, takes_ctx=False, name="bash")
 
