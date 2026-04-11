@@ -290,7 +290,8 @@ fn is_dev_null(path: &Path) -> bool {
 /// THREAT[TM-INJ-009,TM-INJ-016]: Check if a variable name is an internal marker.
 /// Used by builtins and interpreter to block user assignment to internal prefixes.
 pub(crate) fn is_internal_variable(name: &str) -> bool {
-    name.starts_with("_NAMEREF_")
+    name.starts_with("SHOPT_")
+        || name.starts_with("_NAMEREF_")
         || name.starts_with("_READONLY_")
         || name.starts_with("_UPPER_")
         || name.starts_with("_LOWER_")
