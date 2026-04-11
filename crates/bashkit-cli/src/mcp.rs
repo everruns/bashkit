@@ -124,8 +124,17 @@ struct ContentItem {
 /// Accepts a factory function that produces configured `Bash` instances,
 /// ensuring CLI execution limits (max_commands, etc.) are applied to every
 /// MCP `tools/call` invocation.
+///
+/// DESIGN: Session-level counters (session_commands, session_exec_calls) are
+/// tracked cumulatively here because each tools/call creates a fresh Bash
+/// instance. Without this, an LLM agent could make unlimited sequential calls
+/// without session limits ever triggering. See issue #1193.
 pub struct McpServer {
     bash_factory: Box<dyn Fn() -> bashkit::Bash + Send>,
+    /// Cumulative session command count across all MCP tool calls.
+    cumulative_commands: u64,
+    /// Cumulative session exec call count across all MCP tool calls.
+    cumulative_exec_calls: u64,
     #[cfg(feature = "scripted_tool")]
     scripted_tools: Vec<bashkit::ScriptedTool>,
 }
@@ -137,6 +146,8 @@ impl McpServer {
     pub fn new(bash_factory: impl Fn() -> bashkit::Bash + Send + 'static) -> Self {
         Self {
             bash_factory: Box::new(bash_factory),
+            cumulative_commands: 0,
+            cumulative_exec_calls: 0,
             #[cfg(feature = "scripted_tool")]
             scripted_tools: Vec::new(),
         }
@@ -280,9 +291,15 @@ impl McpServer {
         };
 
         let mut bash = (self.bash_factory)();
+        // Restore cumulative session counters so limits persist across MCP calls
+        bash.restore_session_counters(self.cumulative_commands, self.cumulative_exec_calls);
         let result = match bash.exec(&args.script).await {
             Ok(r) => r,
             Err(e) => {
+                // Update cumulative counters even on error (commands were still counted)
+                let (cmds, execs) = bash.session_counters();
+                self.cumulative_commands = cmds;
+                self.cumulative_exec_calls = execs;
                 let tool_result = ToolResult {
                     content: vec![ContentItem {
                         content_type: "text".to_string(),
@@ -296,6 +313,10 @@ impl McpServer {
                 );
             }
         };
+        // Update cumulative counters after successful execution
+        let (cmds, execs) = bash.session_counters();
+        self.cumulative_commands = cmds;
+        self.cumulative_exec_calls = execs;
 
         let mut output = result.stdout;
         if !result.stderr.is_empty() {
@@ -480,6 +501,101 @@ mod tests {
         assert!(
             text.contains("limit") || text.contains("exceeded") || result["isError"] == true,
             "expected execution limit error, got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_session_limits_accumulate_across_mcp_calls() {
+        // Session limit: max 3 total commands across all calls, max 2 exec calls.
+        let mut server = McpServer::new(|| {
+            bashkit::Bash::builder()
+                .session_limits(
+                    bashkit::SessionLimits::new()
+                        .max_total_commands(3)
+                        .max_exec_calls(2),
+                )
+                .build()
+        });
+
+        // First call: 2 commands. Should succeed.
+        let req1 = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(1),
+            method: "tools/call".to_string(),
+            params: serde_json::json!({
+                "name": "bash",
+                "arguments": { "script": "echo a; echo b" }
+            }),
+        };
+        let resp1 = server.handle_request(req1).await;
+        let result1 = resp1.result.expect("should have result");
+        let text1 = result1["content"][0]["text"].as_str().expect("text");
+        assert!(
+            text1.contains('a') && text1.contains('b'),
+            "first call should succeed, got: {text1}"
+        );
+
+        // Second call: 2 more commands -> cumulative 4 > limit of 3. Should fail.
+        let req2 = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(2),
+            method: "tools/call".to_string(),
+            params: serde_json::json!({
+                "name": "bash",
+                "arguments": { "script": "echo c; echo d" }
+            }),
+        };
+        let resp2 = server.handle_request(req2).await;
+        let result2 = resp2.result.expect("should have result");
+        let text2 = result2["content"][0]["text"].as_str().expect("text");
+        assert!(
+            text2.contains("session") || text2.contains("limit") || result2["isError"] == true,
+            "second call should hit session limit, got: {text2}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_session_exec_calls_accumulate_across_mcp_calls() {
+        // Session limit: max 2 exec calls.
+        let mut server = McpServer::new(|| {
+            bashkit::Bash::builder()
+                .session_limits(bashkit::SessionLimits::new().max_exec_calls(2))
+                .build()
+        });
+
+        // First two calls should succeed.
+        for i in 1..=2 {
+            let req = JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: serde_json::json!(i),
+                method: "tools/call".to_string(),
+                params: serde_json::json!({
+                    "name": "bash",
+                    "arguments": { "script": "echo ok" }
+                }),
+            };
+            let resp = server.handle_request(req).await;
+            let result = resp.result.expect("should have result");
+            let text = result["content"][0]["text"].as_str().expect("text");
+            assert!(text.contains("ok"), "call {i} should succeed, got: {text}");
+        }
+
+        // Third call should hit session exec call limit.
+        let req3 = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(3),
+            method: "tools/call".to_string(),
+            params: serde_json::json!({
+                "name": "bash",
+                "arguments": { "script": "echo should_fail" }
+            }),
+        };
+        let resp3 = server.handle_request(req3).await;
+        let result3 = resp3.result.expect("should have result");
+        let text3 = result3["content"][0]["text"].as_str().expect("text");
+        assert!(
+            text3.contains("session") || text3.contains("limit") || result3["isError"] == true,
+            "third call should hit session exec call limit, got: {text3}"
         );
     }
 
