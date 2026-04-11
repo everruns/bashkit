@@ -20,6 +20,13 @@ pub struct Split;
 #[async_trait]
 impl Builtin for Split {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: split [OPTION]... [FILE [PREFIX]]\nSplit a file into pieces.\n\n  -l N\t\tput N lines per output file (default 1000)\n  -b N\t\tput N bytes per output file\n  -n N\t\tsplit into N files\n  -d, --numeric-suffixes\tuse numeric suffixes instead of alphabetic\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("split (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut lines_per_file: Option<usize> = None;
         let mut bytes_per_file: Option<usize> = None;
         let mut num_chunks: Option<usize> = None;

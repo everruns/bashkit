@@ -41,6 +41,14 @@ pub struct Ls;
 #[async_trait]
 impl Builtin for Ls {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: ls [OPTION]... [FILE]...\nList directory contents.\n\n  -l\t\tuse a long listing format\n  -a\t\tdo not ignore entries starting with .\n  -h\t\thuman-readable sizes (with -l)\n  -1\t\tlist one file per line\n  -R\t\tlist subdirectories recursively\n  -t\t\tsort by modification time, newest first\n  -F, --classify\tappend indicator (/ for dirs, * for executables, @ for symlinks, | for FIFOs)\n  -C\t\tlist entries in columns\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            Some("ls (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         let mut opts = LsOptions {
             long: false,
             all: false,
@@ -701,6 +709,14 @@ fn build_find_exec_commands(
 #[async_trait]
 impl Builtin for Find {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: find [PATH...] [EXPRESSION]\nSearch for files in a directory hierarchy.\n\n  -name PATTERN\tmatch filename against PATTERN (supports * and ?)\n  -path PATTERN\tmatch full path against PATTERN\n  -type TYPE\tmatch file type: f (file), d (directory), l (link)\n  -maxdepth N\tdescend at most N levels\n  -mindepth N\tdo not apply tests at levels less than N\n  -print\t\tprint matching paths (default)\n  -printf FMT\tprint using format string (%f %p %P %s %m %M %y %d %T@)\n  -exec CMD {} \\;\texecute CMD for each match ({} = path)\n  -exec CMD {} +\texecute CMD once with all matches\n  -not, !\t\tnegate the next predicate\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            Some("find (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         let (search_paths, opts) = match parse_find_args(ctx.args) {
             Ok(v) => v,
             Err(e) => return Ok(e),
@@ -1020,6 +1036,14 @@ pub struct Rmdir;
 #[async_trait]
 impl Builtin for Rmdir {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: rmdir [OPTION]... DIRECTORY...\nRemove empty directories.\n\n  -p\t\tremove DIRECTORY and its ancestors\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            Some("rmdir (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         if ctx.args.is_empty() {
             return Ok(ExecResult::err("rmdir: missing operand\n".to_string(), 1));
         }

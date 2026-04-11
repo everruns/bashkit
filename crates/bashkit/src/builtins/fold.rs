@@ -19,6 +19,13 @@ pub struct Fold;
 #[async_trait]
 impl Builtin for Fold {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: fold [OPTION]... [FILE]...\nWrap each input line to fit in specified width.\n\n  -b\t\tcount bytes rather than columns\n  -s\t\tbreak at spaces\n  -w WIDTH\tuse WIDTH columns instead of 80\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("fold (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut width: usize = 80;
         let mut break_at_spaces = false;
         let mut files: Vec<&str> = Vec::new();

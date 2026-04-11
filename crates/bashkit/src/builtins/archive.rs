@@ -80,6 +80,13 @@ pub struct Tar;
 #[async_trait]
 impl Builtin for Tar {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: tar [OPTION]... [FILE]...\nCreate, extract, or list tar archives.\n\n  -c\tcreate archive\n  -x\textract archive\n  -t\tlist archive contents\n  -v\tverbose output\n  -f ARCHIVE\tarchive file name\n  -z\tfilter through gzip\n  -C DIR\tchange to directory DIR\n  -O\textract files to stdout\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("tar (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut create = false;
         let mut extract = false;
         let mut list = false;
@@ -752,6 +759,13 @@ pub struct Gzip;
 #[async_trait]
 impl Builtin for Gzip {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: gzip [OPTION]... [FILE]...\nCompress files.\n\n  -d\tdecompress\n  -k\tkeep original file\n  -f\tforce overwrite\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("gzip (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut decompress = false;
         let mut keep = false;
         let mut force = false;
@@ -912,6 +926,13 @@ pub struct Gunzip;
 #[async_trait]
 impl Builtin for Gunzip {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: gunzip [OPTION]... [FILE]...\nDecompress files.\n\n  -k\tkeep original file\n  -f\tforce overwrite\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("gunzip (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         // gunzip is equivalent to gzip -d
         let mut modified_args: Vec<String> = vec!["-d".to_string()];
         modified_args.extend(ctx.args.iter().cloned());

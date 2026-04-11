@@ -12,6 +12,13 @@ pub struct Printf;
 #[async_trait]
 impl Builtin for Printf {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: printf FORMAT [ARGUMENT]...\n  or:  printf OPTION\nPrint ARGUMENT(s) according to FORMAT.\n\n  FORMAT controls the output, supports:\n    %s\tstring\n    %d, %i\tsigned integer\n    %u\tunsigned integer\n    %o\toctal\n    %x, %X\thexadecimal\n    %f, %e, %g\tfloating point\n    %c\tcharacter\n    %b\tstring with backslash escapes\n    %q\tshell-quoted string\n    \\n, \\t, \\\\, \\xHH, \\uHHHH, \\UHHHHHHHH\tescape sequences\n  -v VAR\tassign to shell variable VAR instead of printing\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("printf (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         if ctx.args.is_empty() {
             return Ok(ExecResult::ok(String::new()));
         }

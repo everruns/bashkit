@@ -97,6 +97,13 @@ impl WcFlags {
 #[async_trait]
 impl Builtin for Wc {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: wc [OPTION]... [FILE]...\nPrint newline, word, and byte counts for each FILE.\n\n  -l, --lines\t\t\tprint the newline counts\n  -w, --words\t\t\tprint the word counts\n  -c, --bytes\t\t\tprint the byte counts\n  -m, --chars\t\t\tprint the character counts\n  -L, --max-line-length\t\tprint the maximum line length\n  --help\t\t\tdisplay this help and exit\n  --version\t\t\toutput version information and exit\n",
+            Some("wc (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let flags = WcFlags::parse(ctx.args);
 
         let files: Vec<_> = ctx

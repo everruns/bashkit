@@ -13,6 +13,13 @@ pub struct Cat;
 #[async_trait]
 impl Builtin for Cat {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: cat [OPTION]... [FILE]...\nConcatenate FILE(s) to standard output.\n\n  -n\t\tnumber all output lines\n  -v\t\tuse ^ and M- notation\n  -e\t\tequivalent to -v (simplified)\n  -t\t\tequivalent to -v (simplified)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("cat (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut output = String::new();
         let mut show_nonprinting = false;
         let mut number_lines = false;

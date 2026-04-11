@@ -24,6 +24,13 @@ pub struct Bc;
 #[async_trait]
 impl Builtin for Bc {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: bc [OPTION]... [FILE]...\nArbitrary-precision calculator.\n\n  -l\tuse the predefined math library (scale=20, s, c, a, l, e, sqrt)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("bc (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut math_lib = false;
         let mut expr_args: Vec<&str> = Vec::new();
 

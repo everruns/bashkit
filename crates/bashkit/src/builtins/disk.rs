@@ -21,6 +21,28 @@ pub struct Du;
 #[async_trait]
 impl Builtin for Du {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        // NOTE: -h means "human readable" for du, so we cannot use check_help_version
+        // (which intercepts -h as help). Only check --help and --version explicitly.
+        for arg in ctx.args {
+            match arg.as_str() {
+                "--help" => {
+                    return Ok(ExecResult::ok(
+                        "Usage: du [-s] [-h] [FILE...]\n\
+                         Estimate file space usage.\n\n\
+                         \x20 -s\tdisplay only a total for each argument\n\
+                         \x20 -h\tprint sizes in human readable format\n\
+                         \x20 --help\tdisplay this help and exit\n\
+                         \x20 --version\toutput version information and exit\n"
+                            .to_string(),
+                    ));
+                }
+                "--version" => {
+                    return Ok(ExecResult::ok("du (bashkit) 0.1\n".to_string()));
+                }
+                s if !s.starts_with('-') => break,
+                _ => {}
+            }
+        }
         let mut summary_only = false;
         let mut human_readable = false;
         let mut paths: Vec<String> = Vec::new();
@@ -173,6 +195,27 @@ pub struct Df;
 #[async_trait]
 impl Builtin for Df {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        // NOTE: -h means "human readable" for df, so we cannot use check_help_version
+        // (which intercepts -h as help). Only check --help and --version explicitly.
+        for arg in ctx.args {
+            match arg.as_str() {
+                "--help" => {
+                    return Ok(ExecResult::ok(
+                        "Usage: df [-h]\n\
+                         Report file system disk space usage.\n\n\
+                         \x20 -h\tprint sizes in human readable format\n\
+                         \x20 --help\tdisplay this help and exit\n\
+                         \x20 --version\toutput version information and exit\n"
+                            .to_string(),
+                    ));
+                }
+                "--version" => {
+                    return Ok(ExecResult::ok("df (bashkit) 0.1\n".to_string()));
+                }
+                s if !s.starts_with('-') => break,
+                _ => {}
+            }
+        }
         let mut human_readable = false;
 
         for arg in ctx.args {

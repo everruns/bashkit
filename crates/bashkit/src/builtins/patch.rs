@@ -289,6 +289,13 @@ fn apply_hunks(
 #[async_trait]
 impl Builtin for Patch {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: patch [OPTION]... [FILE]\nApply a unified diff patch to FILE(s).\n\n  -pNUM\tstrip NUM leading path components\n  --dry-run\tprint results without modifying files\n  -R, --reverse\treverse the patch\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("patch (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let opts = parse_patch_args(ctx.args);
 
         let input = match ctx.stdin {

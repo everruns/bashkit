@@ -253,6 +253,37 @@ pub(crate) async fn read_text_file(
     Ok(String::from_utf8_lossy(&content).into_owned())
 }
 
+/// Check args for `--help` and optionally `--version`.
+///
+/// Returns `Some(ExecResult)` when the flag is found, `None` otherwise.
+/// Call at the top of `execute()` to add standard help/version support.
+///
+/// Only matches long flags (`--help`, `--version`) because short flags
+/// `-h` and `-V` have different meanings in many tools (e.g. `sort -V`
+/// for version sort, `ls -h` for human-readable, `grep -h` to suppress
+/// filenames).  Tools that want `-h`/`-V` as aliases should handle them
+/// in their own `execute()` method.
+pub(crate) fn check_help_version(
+    args: &[String],
+    help_text: &str,
+    version: Option<&str>,
+) -> Option<ExecResult> {
+    for arg in args {
+        match arg.as_str() {
+            "--help" => return Some(ExecResult::ok(help_text.to_string())),
+            "--version" => {
+                if let Some(ver) = version {
+                    return Some(ExecResult::ok(format!("{ver}\n")));
+                }
+            }
+            // Stop checking after first non-flag argument
+            s if !s.starts_with('-') => break,
+            _ => {}
+        }
+    }
+    None
+}
+
 // Re-export ShellRef for internal builtins
 pub(crate) use crate::interpreter::ShellRef;
 

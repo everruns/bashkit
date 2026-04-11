@@ -12,6 +12,13 @@ pub struct Echo;
 #[async_trait]
 impl Builtin for Echo {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: echo [SHORT-OPTION]... [STRING]...\n  or:  echo LONG-OPTION\nEcho the STRING(s) to standard output.\n\n  -n\tdo not output the trailing newline\n  -e\tenable interpretation of backslash escapes\n  -E\tdisable interpretation of backslash escapes (default)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("echo (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut output = String::new();
         let mut add_newline = true;
         let mut interpret_escapes = false;

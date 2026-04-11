@@ -59,13 +59,12 @@ impl Default for Hostname {
 #[async_trait]
 impl Builtin for Hostname {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        // Check for -h or --help
-        if ctx.args.first().map(|s| s.as_str()) == Some("-h")
-            || ctx.args.first().map(|s| s.as_str()) == Some("--help")
-        {
-            return Ok(ExecResult::ok(
-                "hostname: display virtual hostname\nUsage: hostname\n",
-            ));
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: hostname\nDisplay the virtual hostname.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("hostname (bashkit) 0.1"),
+        ) {
+            return Ok(r);
         }
 
         // Ignore any attempts to set hostname
@@ -115,6 +114,14 @@ impl Default for Uname {
 #[async_trait]
 impl Builtin for Uname {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: uname [OPTION]...\nPrint virtual system information.\n\n  -a, --all\t\t\tprint all information\n  -s, --kernel-name\t\tprint the kernel name\n  -n, --nodename\t\tprint the network node hostname\n  -r, --kernel-release\t\tprint the kernel release\n  -v, --kernel-version\t\tprint the kernel version\n  -m, --machine\t\t\tprint the machine hardware name\n  -o, --operating-system\tprint the operating system\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("uname (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         let mut show_all = false;
         let mut show_kernel = false;
         let mut show_nodename = false;
@@ -132,20 +139,6 @@ impl Builtin for Uname {
                 "-v" | "--kernel-version" => show_version = true,
                 "-m" | "--machine" => show_machine = true,
                 "-o" | "--operating-system" => show_os = true,
-                "-h" | "--help" => {
-                    return Ok(ExecResult::ok(
-                        "uname: print virtual system information\n\
-                         Usage: uname [OPTION]...\n\
-                         Options:\n\
-                         \t-a  print all information\n\
-                         \t-s  print kernel name\n\
-                         \t-n  print network node hostname\n\
-                         \t-r  print kernel release\n\
-                         \t-v  print kernel version\n\
-                         \t-m  print machine hardware name\n\
-                         \t-o  print operating system\n",
-                    ));
-                }
                 _ => {}
             }
         }
@@ -216,7 +209,14 @@ impl Default for Whoami {
 
 #[async_trait]
 impl Builtin for Whoami {
-    async fn execute(&self, _ctx: Context<'_>) -> Result<ExecResult> {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: whoami\nPrint the user name associated with the current effective user ID.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("whoami (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         Ok(ExecResult::ok(format!("{}\n", self.username)))
     }
 }
@@ -251,6 +251,14 @@ impl Default for Id {
 #[async_trait]
 impl Builtin for Id {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: id [OPTION]...\nPrint virtual user and group information.\n\n  -u, --user\tprint only the effective user ID\n  -g, --group\tprint only the effective group ID\n  -n, --name\tprint a name instead of a number (with -u or -g)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("id (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         // Check for specific flags
         for arg in ctx.args {
             match arg.as_str() {
@@ -263,16 +271,6 @@ impl Builtin for Id {
                 "-n" | "--name" => {
                     // -n is usually combined with -u or -g
                     continue;
-                }
-                "-h" | "--help" => {
-                    return Ok(ExecResult::ok(
-                        "id: print virtual user and group IDs\n\
-                         Usage: id [OPTION]\n\
-                         Options:\n\
-                         \t-u  print only the effective user ID\n\
-                         \t-g  print only the effective group ID\n\
-                         \t-n  print a name instead of a number (with -u or -g)\n",
-                    ));
                 }
                 _ => {}
             }

@@ -474,6 +474,13 @@ fn apply_printf_format(
 #[async_trait]
 impl Builtin for Numfmt {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: numfmt [OPTION]... [NUMBER]...\nReformat NUMBER(s), or the numbers from standard input.\n\n  --from=UNIT\tauto-scale input numbers to UNITs (none, si, iec, iec-i, auto)\n  --to=UNIT\tauto-scale output numbers to UNITs (none, si, iec, iec-i)\n  --suffix=SUFFIX\tadd SUFFIX to output numbers\n  --padding=N\tpad the output to N characters\n  --round=METHOD\tuse METHOD for rounding (up, down, from-zero, towards-zero, nearest)\n  --format=FORMAT\tuse printf-style FORMAT\n  --field=N\treplace the number in input field N (default 1)\n  -d, --delimiter=X\tuse X instead of whitespace for field delimiter\n  --help\t\t\tdisplay this help and exit\n  --version\t\toutput version information and exit\n",
+            Some("numfmt (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let (opts, operands) = match parse_options(ctx.args) {
             Ok(v) => v,
             Err(e) => return Ok(ExecResult::err(e, 1)),

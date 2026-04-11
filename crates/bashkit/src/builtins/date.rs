@@ -344,6 +344,13 @@ fn format_iso8601(dt: &DateTime<Utc>, utc: bool, precision: &str) -> String {
 #[async_trait]
 impl Builtin for Date {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: date [+FORMAT] [-u] [-R] [-I[TIMESPEC]] [-d STRING] [-r FILE]\nDisplay the current time in the given FORMAT, or set the system date.\n\n  +FORMAT\toutput date according to FORMAT\n  -d, --date=STRING\tdisplay time described by STRING\n  -r, --reference=FILE\tdisplay the last modification time of FILE\n  -u, --utc\tprint Coordinated Universal Time (UTC)\n  -R, --rfc-email\toutput RFC 2822 formatted date\n  -I[FMT], --iso-8601[=FMT]\toutput ISO 8601 date/time (FMT: date, hours, minutes, seconds)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("date (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut utc = false;
         let mut format_arg: Option<String> = None;
         let mut date_str: Option<String> = None;

@@ -371,6 +371,13 @@ fn bre_to_ere(pattern: &str) -> String {
 #[async_trait]
 impl Builtin for Grep {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: grep [OPTION]... PATTERN [FILE]...\nSearch for PATTERN in each FILE.\n\n  -i\t\t\tignore case distinctions\n  -v\t\t\tselect non-matching lines\n  -n\t\t\tprint line number with output lines\n  -c\t\t\tprint only a count of matching lines\n  -l\t\t\tprint only names of files with matches\n  -L\t\t\tprint only names of files without matches\n  -o\t\t\tshow only the matching part of lines\n  -q\t\t\tsuppress all normal output\n  -w\t\t\tmatch whole words only\n  -x\t\t\tmatch whole lines only\n  -m NUM\t\tstop after NUM matches\n  -E\t\t\textended regular expressions\n  -F\t\t\tfixed string matching\n  -P\t\t\tPerl-compatible regular expressions\n  -e PATTERN\t\tuse PATTERN for matching\n  -f FILE\t\tread patterns from FILE\n  -A NUM\t\tprint NUM lines of trailing context\n  -B NUM\t\tprint NUM lines of leading context\n  -C NUM\t\tprint NUM lines of output context\n  -H\t\t\talways print filename headers\n  -h\t\t\tsuppress filename headers\n  -b\t\t\tprint byte offset of matches\n  -a\t\t\ttreat binary files as text\n  -z\t\t\tuse NUL as line separator\n  -r\t\t\trecursive search\n  -s\t\t\tsuppress error messages\n  -Z\t\t\tprint NUL after filenames\n  --include=GLOB\tsearch only files matching GLOB\n  --exclude=GLOB\tskip files matching GLOB\n  --exclude-dir=GLOB\tskip directories matching GLOB\n  --color=WHEN\t\tcolor output (no-op)\n  --line-buffered\tline-buffered output (no-op)\n  --help\t\tdisplay this help and exit\n  --version\t\toutput version information and exit\n",
+            Some("grep (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut opts = GrepOptions::parse(ctx.args)?;
 
         // Load patterns from file if -f was specified

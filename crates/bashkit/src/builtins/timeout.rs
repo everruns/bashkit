@@ -145,6 +145,13 @@ fn parse_timeout_args(
 #[async_trait]
 impl Builtin for Timeout {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: timeout [OPTION] DURATION COMMAND [ARG]...\nStart COMMAND, and kill it if still running after DURATION.\n\nDURATION may be: Ns (seconds), Nm (minutes), Nh (hours), Nd (days).\nDefault unit is seconds. Maximum timeout is 300 seconds.\n\n  -k DURATION\tsend KILL signal after DURATION if command still running\n  -s SIGNAL\tspecify the signal to send (ignored, always uses timeout)\n  --preserve-status\texit with the command's status even on timeout\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("timeout (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         // Validate arguments and return error for invalid input.
         // Actual command execution is handled by execution_plan().
         match parse_timeout_args(ctx.args) {

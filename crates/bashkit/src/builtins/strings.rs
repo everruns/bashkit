@@ -134,6 +134,13 @@ fn extract_strings(data: &[u8], opts: &StringsOptions) -> String {
 #[async_trait]
 impl Builtin for Strings {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: strings [OPTION]... [FILE]...\nPrint the sequences of printable characters in files.\n\n  -a\t\tscan the whole file (default)\n  -n MIN\tprint sequences of at least MIN characters (default 4)\n  -t FORMAT\tprint the offset using FORMAT (d=decimal, o=octal, x=hex)\n  --help\t\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("strings (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let (opts, files) = match parse_strings_args(ctx.args) {
             Ok(v) => v,
             Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),

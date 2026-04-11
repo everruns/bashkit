@@ -314,6 +314,13 @@ fn month_ordinal(s: &str) -> u32 {
 #[async_trait]
 impl Builtin for Sort {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: sort [OPTION]... [FILE]...\nWrite sorted concatenation of all FILE(s) to standard output.\n\n  -f\t\tfold lower case to upper case characters\n  -n\t\tcompare according to string numerical value\n  -r\t\treverse the result of comparisons\n  -u\t\toutput only unique lines\n  -V\t\tnatural sort of version numbers\n  -t DELIM\tuse DELIM as field separator\n  -k KEYDEF\tsort via a key definition\n  -s\t\tstable sort\n  -c\t\tcheck for sorted input\n  -h\t\thuman numeric sort (1K, 2M, 3G)\n  -M\t\tmonth sort\n  -m\t\tmerge already sorted files\n  -o FILE\twrite output to FILE\n  -z\t\tline delimiter is NUL, not newline\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("sort (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut reverse = false;
         let mut numeric = false;
         let mut unique = false;
@@ -616,6 +623,13 @@ fn uniq_key(line: &str, skip_fields: usize, case_insensitive: bool) -> String {
 #[async_trait]
 impl Builtin for Uniq {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: uniq [OPTION]... [INPUT [OUTPUT]]\nFilter adjacent matching lines from INPUT, writing to OUTPUT.\n\n  -c\t\tprefix lines by the number of occurrences\n  -d\t\tonly print duplicate lines\n  -u\t\tonly print unique lines\n  -i\t\tignore differences in case when comparing\n  -f NUM\tavoid comparing the first NUM fields\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("uniq (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut count = false;
         let mut only_duplicates = false;
         let mut only_unique = false;

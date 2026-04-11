@@ -21,6 +21,13 @@ pub struct Sha256sum;
 #[async_trait]
 impl Builtin for Md5sum {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: md5sum [FILE]...\nPrint MD5 checksums.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("md5sum (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         checksum_execute::<Md5>(&ctx, "md5sum").await
     }
 }
@@ -28,6 +35,13 @@ impl Builtin for Md5sum {
 #[async_trait]
 impl Builtin for Sha1sum {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: sha1sum [FILE]...\nPrint SHA1 checksums.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("sha1sum (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         checksum_execute::<Sha1>(&ctx, "sha1sum").await
     }
 }
@@ -35,6 +49,13 @@ impl Builtin for Sha1sum {
 #[async_trait]
 impl Builtin for Sha256sum {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: sha256sum [FILE]...\nPrint SHA256 checksums.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("sha256sum (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         checksum_execute::<Sha256>(&ctx, "sha256sum").await
     }
 }

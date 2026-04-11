@@ -141,6 +141,13 @@ fn format_columns(text: &str) -> String {
 #[async_trait]
 impl Builtin for Column {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: column [OPTION]... [FILE]...\nColumnate lists.\n\n  -t\t\tcreate a table\n  -s SEP\tspecify input delimiter for -t mode\n  -o SEP\tspecify output delimiter for -t mode\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("column (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let (opts, files) = parse_column_args(ctx.args);
 
         // Collect all input
