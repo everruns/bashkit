@@ -68,6 +68,7 @@ sha2 = "0.11"
 # Ed25519 signing (bot-auth request signing)
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.10"
+zeroize = "1"
 
 # CLI
 clap = { version = "4", features = ["derive"] }

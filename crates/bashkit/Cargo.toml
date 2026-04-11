@@ -65,6 +65,7 @@ base64 = { workspace = true }
 # Ed25519 signing for bot-auth request signing (optional)
 ed25519-dalek = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
+zeroize = { workspace = true, optional = true }
 
 # Checksums (for md5sum, sha1sum, sha256sum builtins)
 md-5 = { workspace = true }
@@ -84,7 +85,7 @@ zapcode-core = { version = "1.5", optional = true }
 default = []
 http_client = ["reqwest"]
 # Enable Ed25519 request signing per RFC 9421 / web-bot-auth profile
-bot-auth = ["http_client", "dep:ed25519-dalek", "dep:rand"]
+bot-auth = ["http_client", "dep:ed25519-dalek", "dep:rand", "dep:zeroize"]
 # Enable fail points for security/fault injection testing
 # Usage: FAILPOINTS="fail_point_name=action" cargo test --features failpoints
 failpoints = ["fail/failpoints"]

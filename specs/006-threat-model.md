@@ -32,6 +32,7 @@ All threats use a stable ID format: `TM-<CATEGORY>-<NUMBER>`
 | TM-INT | Internal Errors | Panic recovery, error message safety, unexpected failures |
 | TM-GIT | Git Security | Repository access, identity leak, remote operations |
 | TM-LOG | Logging Security | Sensitive data in logs, log injection, log volume attacks |
+| TM-CRY | Cryptographic Material Security | Private key handling, zeroization, key lifetime minimization |
 | TM-PY | Python Security | Embedded Python sandbox escape, VFS isolation, resource limits |
 | TM-TS | TypeScript Security | Embedded TypeScript sandbox escape, VFS isolation, resource limits |
 | TM-UNI | Unicode Security | Byte-boundary panics, invisible chars, homoglyphs, normalization |
@@ -660,7 +661,15 @@ async fn read_body_with_limit(&self, response: Response) -> Result<Vec<u8>> {
 | Content-Length check | Pre-download validation | Fail fast on huge files |
 | User-Agent fixed | "bashkit/0.1.0" | Identify requests, prevent spoofing |
 
-#### 5.5 curl/wget Security Model
+#### 5.5 Cryptographic Material Security
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-CRY-001 | Bot-auth private key recovery from process memory | Core dump, heap inspection, `/proc/<pid>/mem` after key use | `BotAuthConfig` zeroizes Ed25519 seed in `Drop`; debug output redacts key material | **MITIGATED** |
+
+**Current Risk**: LOW - Key material remains process-resident while configured, but is now explicitly zeroized on drop.
+
+#### 5.6 curl/wget Security Model
 
 **Request Flow**:
 ```
@@ -724,7 +733,7 @@ Script: curl https://api.example.com/data
 - 47: Max redirects exceeded
 - 63: Response too large
 
-#### 5.6 Domain Egress Allowlist Design Rationale
+#### 5.7 Domain Egress Allowlist Design Rationale
 
 Bashkit's network allowlist uses **literal host matching** — the virtual equivalent of
 SNI (Server Name Indication) filtering on TLS client-hello headers. This is the same
