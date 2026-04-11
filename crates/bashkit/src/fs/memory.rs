@@ -1291,6 +1291,15 @@ impl FileSystem for InMemoryFs {
                         return Err(IoError::new(ErrorKind::AlreadyExists, "file exists").into());
                     }
                     None => {
+                        // THREAT[TM-DOS-012]: Check dir count limit before creating
+                        let dir_count = entries
+                            .values()
+                            .filter(|e| matches!(e, FsEntry::Directory { .. }))
+                            .count() as u64;
+                        self.limits
+                            .check_dir_count(dir_count)
+                            .map_err(|e| IoError::other(e.to_string()))?;
+
                         // Create the directory
                         entries.insert(
                             current.clone(),
@@ -1319,6 +1328,15 @@ impl FileSystem for InMemoryFs {
             if entries.contains_key(&path) {
                 return Err(IoError::new(ErrorKind::AlreadyExists, "directory exists").into());
             }
+
+            // THREAT[TM-DOS-012]: Check dir count limit before creating
+            let dir_count = entries
+                .values()
+                .filter(|e| matches!(e, FsEntry::Directory { .. }))
+                .count() as u64;
+            self.limits
+                .check_dir_count(dir_count)
+                .map_err(|e| IoError::other(e.to_string()))?;
 
             entries.insert(
                 path,
@@ -1514,6 +1532,26 @@ impl FileSystem for InMemoryFs {
         let link = Self::normalize_path(link);
         let mut entries = self.entries.write().unwrap();
 
+        // THREAT[TM-DOS-045]: Symlinks count toward file count - enforce limit
+        let is_new = !entries.contains_key(&link);
+        if is_new {
+            let file_count = entries
+                .values()
+                .filter(|e| {
+                    matches!(
+                        e,
+                        FsEntry::File { .. }
+                            | FsEntry::LazyFile { .. }
+                            | FsEntry::Fifo { .. }
+                            | FsEntry::Symlink { .. }
+                    )
+                })
+                .count() as u64;
+            self.limits
+                .check_file_count(file_count)
+                .map_err(|e| IoError::other(e.to_string()))?;
+        }
+
         entries.insert(
             link,
             FsEntry::Symlink {
@@ -1587,6 +1625,23 @@ impl FileSystemExt for InMemoryFs {
         if entries.contains_key(&path) {
             return Err(IoError::new(ErrorKind::AlreadyExists, "file exists").into());
         }
+
+        // THREAT[TM-DOS-012]: Enforce file count limit before creating FIFO
+        let file_count = entries
+            .values()
+            .filter(|e| {
+                matches!(
+                    e,
+                    FsEntry::File { .. }
+                        | FsEntry::LazyFile { .. }
+                        | FsEntry::Fifo { .. }
+                        | FsEntry::Symlink { .. }
+                )
+            })
+            .count() as u64;
+        self.limits
+            .check_file_count(file_count)
+            .map_err(|e| IoError::other(e.to_string()))?;
 
         entries.insert(
             path,
@@ -2297,5 +2352,83 @@ mod tests {
             .iter()
             .any(|e| e.path == Path::new("/tmp/lazy.txt"));
         assert!(has_file);
+    }
+
+    #[tokio::test]
+    async fn test_mkdir_respects_dir_count_limit() {
+        // InMemoryFs starts with 6 dirs: /, /tmp, /home, /home/user, /dev, /dev/fd
+        let limits = FsLimits::new().max_dir_count(8); // 6 existing + 2 new
+        let fs = InMemoryFs::with_limits(limits);
+
+        // Should succeed - under limit
+        fs.mkdir(Path::new("/tmp/dir1"), false).await.unwrap();
+        fs.mkdir(Path::new("/tmp/dir2"), false).await.unwrap();
+
+        // Should fail - at limit (8 dirs)
+        let result = fs.mkdir(Path::new("/tmp/dir3"), false).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("too many directories") || err.contains("limit"));
+    }
+
+    #[tokio::test]
+    async fn test_mkdir_recursive_respects_dir_count_limit() {
+        // 6 default dirs; allow 1 more
+        let limits = FsLimits::new().max_dir_count(7);
+        let fs = InMemoryFs::with_limits(limits);
+
+        // Creating /tmp/a succeeds (7th dir)
+        fs.mkdir(Path::new("/tmp/a"), true).await.unwrap();
+
+        // Creating /tmp/b requires an 8th dir - should fail
+        let result = fs.mkdir(Path::new("/tmp/b"), true).await;
+        assert!(result.is_err());
+
+        // Recursive deep path: second new dir should fail
+        let limits2 = FsLimits::new().max_dir_count(7);
+        let fs2 = InMemoryFs::with_limits(limits2);
+        let result = fs2.mkdir(Path::new("/tmp/a/b"), true).await;
+        // /tmp/a is the 7th dir (ok), /tmp/a/b would be the 8th (fail)
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_symlink_respects_file_count_limit() {
+        // InMemoryFs starts with 3 files: /dev/null, /dev/urandom, /dev/random
+        let limits = FsLimits::new().max_file_count(5); // 3 existing + 2 new
+        let fs = InMemoryFs::with_limits(limits);
+
+        // Should succeed - under limit
+        fs.symlink(Path::new("/tmp/target1"), Path::new("/tmp/link1"))
+            .await
+            .unwrap();
+        fs.symlink(Path::new("/tmp/target2"), Path::new("/tmp/link2"))
+            .await
+            .unwrap();
+
+        // Should fail - at limit (5 files)
+        let result = fs
+            .symlink(Path::new("/tmp/target3"), Path::new("/tmp/link3"))
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("too many files") || err.contains("limit"));
+    }
+
+    #[tokio::test]
+    async fn test_mkfifo_respects_file_count_limit() {
+        // InMemoryFs starts with 3 files: /dev/null, /dev/urandom, /dev/random
+        let limits = FsLimits::new().max_file_count(5); // 3 existing + 2 new
+        let fs = InMemoryFs::with_limits(limits);
+
+        // Should succeed - under limit
+        fs.mkfifo(Path::new("/tmp/fifo1"), 0o644).await.unwrap();
+        fs.mkfifo(Path::new("/tmp/fifo2"), 0o644).await.unwrap();
+
+        // Should fail - at limit (5 files)
+        let result = fs.mkfifo(Path::new("/tmp/fifo3"), 0o644).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("too many files") || err.contains("limit"));
     }
 }
