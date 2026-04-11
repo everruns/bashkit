@@ -7,6 +7,25 @@
 //!
 //! Limits apply to the combined filesystem view (upper + lower).
 //! See [`FsLimits`](crate::FsLimits) for configuration.
+//!
+//! # Trust Model (THREAT\[TM-DOS-035\])
+//!
+//! The upper layer is always [`InMemoryFs`] — enforced by the Rust type system
+//! (the `upper` field is `InMemoryFs`, not `Arc<dyn FileSystem>`). This means:
+//!
+//! - **Writes never reach the host filesystem.** All mutations go to in-memory
+//!   storage regardless of what the lower layer is.
+//! - **Limit enforcement is centralized.** `OverlayFs` checks `FsLimits` before
+//!   every write; the upper `InMemoryFs` uses `FsLimits::unlimited()` so that
+//!   the overlay layer is the single enforcement point.
+//! - **Lower-layer usage is advisory.** `compute_usage()` combines upper + lower
+//!   usage. When the lower layer is `RealFs`, its `usage()` returns zeros
+//!   (walking the host tree is expensive and not useful for limit accounting).
+//!   Limits therefore apply only to upper-layer writes — which is correct because
+//!   the lower layer is read-only and its content is not controlled by scripts.
+//! - **RealFs as lower layer is safe.** Even though `RealFs` returns
+//!   `FsLimits::unlimited()`, `OverlayFs` applies its own limits. Scripts cannot
+//!   write through to the host filesystem.
 
 // RwLock.read()/write().unwrap() only panics on lock poisoning (prior panic
 // while holding lock). This is intentional - corrupted state should not propagate.
@@ -140,9 +159,14 @@ use crate::error::Result;
 /// # }
 /// ```
 pub struct OverlayFs {
-    /// Lower (read-only base) filesystem
+    /// Lower (read-only base) filesystem.
+    /// May be InMemoryFs, RealFs (via PosixFs), or any FileSystem impl.
+    /// OverlayFs never writes to this layer.
     lower: Arc<dyn FileSystem>,
-    /// Upper (writable) filesystem - always InMemoryFs
+    /// Upper (writable) filesystem — typed as InMemoryFs (not dyn FileSystem)
+    /// to guarantee writes never escape to the host filesystem.
+    /// Uses FsLimits::unlimited() because limit enforcement happens at the
+    /// OverlayFs level via check_write_limits() / check_dir_limits().
     upper: InMemoryFs,
     /// Paths that have been deleted (whiteouts)
     whiteouts: RwLock<HashSet<PathBuf>>,
@@ -1362,6 +1386,202 @@ mod tests {
             after.file_count,
             before.file_count - 2,
             "should deduct all child file counts"
+        );
+    }
+
+    // --- Issue #1183: OverlayFs limit enforcement with backend layers ---
+
+    /// THREAT[TM-DOS-035]: Upper layer is InMemoryFs by type — compile-time guarantee
+    /// that writes never reach host filesystem. This test validates the runtime
+    /// behaviour: even with unlimited lower, overlay limits are the enforcement point.
+    #[tokio::test]
+    async fn test_upper_is_inmemoryfs_limits_enforced() {
+        let lower = Arc::new(InMemoryFs::with_limits(FsLimits::unlimited()));
+
+        // Query baseline to account for default dirs/files in InMemoryFs
+        let probe = OverlayFs::new(lower.clone());
+        let base = probe.usage();
+
+        let limits = FsLimits::new()
+            .max_total_bytes(base.total_bytes + 200)
+            .max_file_count(base.file_count + 5)
+            .max_dir_count(base.dir_count + 5);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        // Write within limits
+        overlay
+            .write_file(Path::new("/tmp/a.txt"), &[b'a'; 100])
+            .await
+            .unwrap();
+
+        // Exceeds total bytes (100 existing + 500 new > 200 headroom)
+        let result = overlay
+            .write_file(Path::new("/tmp/b.txt"), &[b'b'; 500])
+            .await;
+        assert!(result.is_err(), "should reject write exceeding total bytes");
+        assert!(
+            result.unwrap_err().to_string().contains("filesystem full"),
+            "expected filesystem full error"
+        );
+    }
+
+    /// Issue #1183: Directory count limits enforced at overlay level.
+    #[tokio::test]
+    async fn test_dir_count_limit_enforced() {
+        let lower = Arc::new(InMemoryFs::new());
+        let base = OverlayFs::new(lower.clone());
+        let base_dirs = base.usage().dir_count;
+
+        // Allow only base + 1 more directory
+        let limits = FsLimits::new().max_dir_count(base_dirs + 1);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        // First mkdir should succeed
+        overlay.mkdir(Path::new("/newdir"), false).await.unwrap();
+
+        // Second mkdir should fail
+        let result = overlay.mkdir(Path::new("/another"), false).await;
+        assert!(
+            result.is_err(),
+            "should reject mkdir exceeding dir count limit"
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("too many directories"),
+            "expected 'too many directories' error"
+        );
+    }
+
+    /// Issue #1183: Usage stays synchronized through write → delete → re-write cycles.
+    #[tokio::test]
+    async fn test_usage_sync_write_delete_rewrite() {
+        let lower = Arc::new(InMemoryFs::new());
+        let limits = FsLimits::new().max_total_bytes(200).max_file_count(10);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        let initial = overlay.usage();
+
+        // Write 100 bytes
+        overlay
+            .write_file(Path::new("/tmp/data.txt"), &[b'X'; 100])
+            .await
+            .unwrap();
+        let after_write = overlay.usage();
+        assert_eq!(after_write.total_bytes, initial.total_bytes + 100);
+        assert_eq!(after_write.file_count, initial.file_count + 1);
+
+        // Delete the file
+        overlay
+            .remove(Path::new("/tmp/data.txt"), false)
+            .await
+            .unwrap();
+        let after_delete = overlay.usage();
+        assert_eq!(
+            after_delete.total_bytes, initial.total_bytes,
+            "bytes should return to initial after delete"
+        );
+        assert_eq!(
+            after_delete.file_count, initial.file_count,
+            "file count should return to initial after delete"
+        );
+
+        // Re-write with different size — should fit within limits again
+        overlay
+            .write_file(Path::new("/tmp/data.txt"), &[b'Y'; 150])
+            .await
+            .unwrap();
+        let after_rewrite = overlay.usage();
+        assert_eq!(after_rewrite.total_bytes, initial.total_bytes + 150);
+        assert_eq!(after_rewrite.file_count, initial.file_count + 1);
+    }
+
+    /// Issue #1183: With lower layer returning zero usage (like RealFs),
+    /// overlay limits still enforce correctly on upper-layer writes.
+    #[tokio::test]
+    async fn test_limits_enforced_with_zero_usage_lower() {
+        // InMemoryFs::with_limits(unlimited) returns zero usage for files
+        // (only default dirs like /tmp exist), similar to RealFs behaviour.
+        let lower = Arc::new(InMemoryFs::with_limits(FsLimits::unlimited()));
+
+        // Query baseline to set limits relative to it
+        let probe = OverlayFs::new(lower.clone());
+        let base = probe.usage();
+
+        let limits = FsLimits::new()
+            .max_total_bytes(base.total_bytes + 100)
+            .max_file_count(base.file_count + 10)
+            .max_file_size(50);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        // Single file within limits
+        overlay
+            .write_file(Path::new("/tmp/ok.txt"), &[b'a'; 40])
+            .await
+            .unwrap();
+
+        // Exceeds per-file limit (50 bytes)
+        let result = overlay
+            .write_file(Path::new("/tmp/toobig.txt"), &[b'b'; 60])
+            .await;
+        assert!(
+            result.is_err(),
+            "should reject file exceeding max_file_size"
+        );
+        assert!(
+            result.unwrap_err().to_string().contains("file too large"),
+            "expected 'file too large' error"
+        );
+
+        // Within per-file but would exceed total (40 existing + 49 + base > base + 100)
+        // Only if 40+49 = 89 < 100, this should succeed. Let's test the boundary:
+        // write 50 more bytes → 40 + 50 = 90 < 100 headroom, should succeed
+        overlay
+            .write_file(Path::new("/tmp/second.txt"), &[b'c'; 49])
+            .await
+            .unwrap();
+
+        // Now at 40 + 49 = 89 of 100 headroom. 20 more → 109 > 100 → should fail
+        let result = overlay
+            .write_file(Path::new("/tmp/overflow.txt"), &[b'd'; 20])
+            .await;
+        assert!(
+            result.is_err(),
+            "should reject write that would exceed total bytes limit"
+        );
+        assert!(
+            result.unwrap_err().to_string().contains("filesystem full"),
+            "expected 'filesystem full' error"
+        );
+    }
+
+    /// Issue #1183: Overwriting a file in upper does not leak usage accounting.
+    #[tokio::test]
+    async fn test_overwrite_upper_usage_stays_correct() {
+        let lower = Arc::new(InMemoryFs::new());
+        let overlay = OverlayFs::new(lower);
+
+        // Write initial file
+        overlay
+            .write_file(Path::new("/tmp/file.txt"), &[b'A'; 50])
+            .await
+            .unwrap();
+        let after_first = overlay.usage();
+
+        // Overwrite with larger content
+        overlay
+            .write_file(Path::new("/tmp/file.txt"), &[b'B'; 80])
+            .await
+            .unwrap();
+        let after_second = overlay.usage();
+
+        // File count unchanged, bytes should reflect new size
+        assert_eq!(after_second.file_count, after_first.file_count);
+        assert_eq!(
+            after_second.total_bytes,
+            after_first.total_bytes + 30,
+            "overwrite should reflect size difference (80 - 50 = +30)"
         );
     }
 }
