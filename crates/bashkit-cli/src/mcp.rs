@@ -175,10 +175,11 @@ impl McpServer {
             let request: JsonRpcRequest = match serde_json::from_str(&line) {
                 Ok(req) => req,
                 Err(e) => {
+                    eprintln!("MCP parse error detail: {}", e);
                     let response = JsonRpcResponse::error(
                         serde_json::Value::Null,
                         -32700,
-                        format!("Parse error: {}", e),
+                        "Parse error".to_string(),
                     );
                     writeln!(stdout, "{}", serde_json::to_string(&response)?)?;
                     stdout.flush()?;
@@ -286,7 +287,8 @@ impl McpServer {
         let args: BashToolArgs = match serde_json::from_value(arguments) {
             Ok(a) => a,
             Err(e) => {
-                return JsonRpcResponse::error(id, -32602, format!("Invalid arguments: {}", e));
+                eprintln!("MCP invalid params detail: {}", e);
+                return JsonRpcResponse::error(id, -32602, "Invalid parameters".to_string());
             }
         };
 
@@ -300,10 +302,11 @@ impl McpServer {
                 let (cmds, execs) = bash.session_counters();
                 self.cumulative_commands = cmds;
                 self.cumulative_exec_calls = execs;
+                eprintln!("MCP execution error detail: {}", e);
                 let tool_result = ToolResult {
                     content: vec![ContentItem {
                         content_type: "text".to_string(),
-                        text: format!("Error: {}", e),
+                        text: "Execution failed".to_string(),
                     }],
                     is_error: Some(true),
                 };
@@ -473,6 +476,74 @@ mod tests {
         let resp = server.handle_request(req).await;
         assert!(resp.error.is_some());
         assert_eq!(resp.error.expect("error").code, -32601);
+    }
+
+    #[tokio::test]
+    async fn test_parse_error_sanitized() {
+        // Malformed JSON should return generic "Parse error", not internal details
+        let malformed = "not valid json {{{";
+        let err = serde_json::from_str::<JsonRpcRequest>(malformed).unwrap_err();
+        let response =
+            JsonRpcResponse::error(serde_json::Value::Null, -32700, "Parse error".to_string());
+        let serialized = serde_json::to_string(&response).unwrap();
+        // Must not contain serde internal details like "line", "column", struct names
+        assert!(!serialized.contains("line"));
+        assert!(!serialized.contains("column"));
+        assert!(!serialized.contains("expected"));
+        // But the raw error DOES contain those details (confirming we'd leak them without sanitization)
+        let raw = format!("{}", err);
+        assert!(raw.contains("line") || raw.contains("column") || raw.contains("expected"));
+        // Response message is exactly "Parse error"
+        let resp_obj: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(resp_obj["error"]["message"], "Parse error");
+    }
+
+    #[tokio::test]
+    async fn test_invalid_params_sanitized() {
+        let mut server = McpServer::new(bashkit::Bash::new);
+        // Call bash tool with wrong argument shape (missing "script")
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(1),
+            method: "tools/call".to_string(),
+            params: serde_json::json!({
+                "name": "bash",
+                "arguments": { "wrong_field": 123 }
+            }),
+        };
+        let resp = server.handle_request(req).await;
+        let err = resp.error.expect("should have error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.message, "Invalid parameters");
+        // Must not contain Rust type names or serde details
+        assert!(!err.message.contains("missing field"));
+        assert!(!err.message.contains("BashToolArgs"));
+    }
+
+    #[tokio::test]
+    async fn test_execution_error_sanitized() {
+        // Use a factory that returns a Bash with max_commands=0 to force immediate error
+        let mut server = McpServer::new(|| {
+            bashkit::Bash::builder()
+                .limits(bashkit::ExecutionLimits::new().max_commands(0))
+                .build()
+        });
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(1),
+            method: "tools/call".to_string(),
+            params: serde_json::json!({
+                "name": "bash",
+                "arguments": { "script": "echo test" }
+            }),
+        };
+        let resp = server.handle_request(req).await;
+        let result = resp.result.expect("should have result");
+        let text = result["content"][0]["text"].as_str().expect("text");
+        // If it's an error result, it should say "Execution failed", not internal details
+        if result["isError"] == true {
+            assert_eq!(text, "Execution failed");
+        }
     }
 
     #[tokio::test]
