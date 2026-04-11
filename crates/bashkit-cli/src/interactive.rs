@@ -19,8 +19,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const DEFAULT_PS1: &str = "\\u@bashkit:\\w\\$ ";
-// PS2 is used by rustyline's Validator as the continuation prompt.
-#[allow(dead_code)]
 const DEFAULT_PS2: &str = "> ";
 const RC_FILE: &str = "/home/user/.bashkitrc";
 const MAX_HISTORY: usize = 1000;
