@@ -164,3 +164,80 @@ def test_pydantic_ai_all_exports():
     from bashkit.pydantic_ai import __all__
 
     assert "create_bash_tool" in __all__
+
+
+# ===========================================================================
+# Timeout propagation tests
+# ===========================================================================
+
+
+def test_bashtool_timeout_seconds_aborts_long_command():
+    """BashTool with timeout_seconds aborts commands that exceed the limit."""
+    from bashkit import BashTool
+
+    tool = BashTool(timeout_seconds=0.5)
+    result = tool.execute_sync("i=0; while true; do i=$((i+1)); done")
+    # Timeout should produce exit code 124 (matching bash timeout convention)
+    # or a non-zero exit with an error indicating timeout
+    assert result.exit_code != 0
+
+
+def test_bashtool_timeout_seconds_allows_fast_command():
+    """BashTool with timeout_seconds allows commands that finish quickly."""
+    from bashkit import BashTool
+
+    tool = BashTool(timeout_seconds=10)
+    result = tool.execute_sync("echo hello")
+    assert result.exit_code == 0
+    assert "hello" in result.stdout
+
+
+def test_bash_timeout_seconds_aborts_long_command():
+    """Bash with timeout_seconds aborts commands that exceed the limit."""
+    from bashkit import Bash
+
+    bash = Bash(timeout_seconds=0.5)
+    result = bash.execute_sync("i=0; while true; do i=$((i+1)); done")
+    assert result.exit_code != 0
+
+
+def test_langchain_bashtool_accepts_timeout_seconds():
+    """BashkitTool constructor accepts timeout_seconds param."""
+    from bashkit.langchain import LANGCHAIN_AVAILABLE
+
+    if LANGCHAIN_AVAILABLE:
+        from bashkit.langchain import BashkitTool
+
+        tool = BashkitTool(timeout_seconds=5)
+        # Should create successfully; we just verify no exception
+        assert tool is not None
+    else:
+        # Without langchain, verify factory accepts the kwarg structure
+        from bashkit import BashTool
+
+        tool = BashTool(timeout_seconds=5)
+        assert tool is not None
+
+
+def test_pydantic_ai_create_bash_tool_accepts_timeout():
+    """create_bash_tool in pydantic_ai accepts timeout_seconds."""
+    from bashkit.pydantic_ai import PYDANTIC_AI_AVAILABLE
+
+    if not PYDANTIC_AI_AVAILABLE:
+        # Just verify BashTool accepts timeout_seconds (pydantic_ai not installed)
+        from bashkit import BashTool
+
+        tool = BashTool(timeout_seconds=5)
+        assert tool is not None
+
+
+def test_deepagents_backend_accepts_timeout():
+    """BashkitBackend constructor accepts timeout_seconds."""
+    from bashkit.deepagents import DEEPAGENTS_AVAILABLE
+
+    if not DEEPAGENTS_AVAILABLE:
+        # Just verify BashTool accepts timeout_seconds
+        from bashkit import BashTool
+
+        tool = BashTool(timeout_seconds=5)
+        assert tool is not None

@@ -622,6 +622,7 @@ pub struct PyBash {
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
     max_memory: Option<u64>,
+    timeout_seconds: Option<f64>,
 }
 
 #[pymethods]
@@ -633,6 +634,7 @@ impl PyBash {
         max_commands=None,
         max_loop_iterations=None,
         max_memory=None,
+        timeout_seconds=None,
         python=false,
         external_functions=None,
         external_handler=None,
@@ -647,6 +649,7 @@ impl PyBash {
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
         max_memory: Option<u64>,
+        timeout_seconds: Option<f64>,
         python: bool,
         external_functions: Option<Vec<String>>,
         external_handler: Option<Py<PyAny>>,
@@ -668,6 +671,9 @@ impl PyBash {
         }
         if let Some(mli) = max_loop_iterations {
             limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
+        }
+        if let Some(ts) = timeout_seconds {
+            limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
         }
         builder = builder.limits(limits);
 
@@ -739,6 +745,7 @@ impl PyBash {
             max_commands,
             max_loop_iterations,
             max_memory,
+            timeout_seconds,
         })
     }
 
@@ -889,6 +896,7 @@ impl PyBash {
         let max_commands = self.max_commands;
         let max_loop_iterations = self.max_loop_iterations;
         let max_memory = self.max_memory;
+        let timeout_seconds = self.timeout_seconds;
         let python = self.python;
         let external_functions = self.external_functions.clone();
         let files = self.files.clone();
@@ -913,6 +921,9 @@ impl PyBash {
                 }
                 if let Some(mli) = max_loop_iterations {
                     limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
+                }
+                if let Some(ts) = timeout_seconds {
+                    limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
                 }
                 builder = builder.limits(limits);
                 if let Some(mm) = max_memory {
@@ -1025,6 +1036,7 @@ pub struct BashTool {
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
     max_memory: Option<u64>,
+    timeout_seconds: Option<f64>,
 }
 
 impl BashTool {
@@ -1045,6 +1057,9 @@ impl BashTool {
         if let Some(mli) = self.max_loop_iterations {
             limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
         }
+        if let Some(ts) = self.timeout_seconds {
+            limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
+        }
 
         builder.limits(limits).build()
     }
@@ -1060,6 +1075,7 @@ impl BashTool {
         max_commands=None,
         max_loop_iterations=None,
         max_memory=None,
+        timeout_seconds=None,
         files=None,
         mounts=None,
     ))]
@@ -1070,6 +1086,7 @@ impl BashTool {
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
         max_memory: Option<u64>,
+        timeout_seconds: Option<f64>,
         files: Option<std::collections::HashMap<String, String>>,
         mounts: Option<&Bound<'_, PyList>>,
     ) -> PyResult<Self> {
@@ -1088,6 +1105,9 @@ impl BashTool {
         }
         if let Some(mli) = max_loop_iterations {
             limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
+        }
+        if let Some(ts) = timeout_seconds {
+            limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
         }
         builder = builder.limits(limits);
 
@@ -1115,6 +1135,7 @@ impl BashTool {
             max_commands,
             max_loop_iterations,
             max_memory,
+            timeout_seconds,
         })
     }
 
@@ -1248,6 +1269,7 @@ impl BashTool {
         let max_commands = self.max_commands;
         let max_loop_iterations = self.max_loop_iterations;
         let max_memory = self.max_memory;
+        let timeout_seconds = self.timeout_seconds;
         let cancelled = self.cancelled.clone();
 
         py.detach(|| {
@@ -1266,6 +1288,9 @@ impl BashTool {
                 }
                 if let Some(mli) = max_loop_iterations {
                     limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
+                }
+                if let Some(ts) = timeout_seconds {
+                    limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
                 }
                 builder = builder.limits(limits);
                 if let Some(mm) = max_memory {

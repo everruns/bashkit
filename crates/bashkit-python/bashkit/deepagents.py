@@ -104,6 +104,7 @@ if DEEPAGENTS_AVAILABLE:
             hostname: str | None = None,
             max_commands: int | None = None,
             max_loop_iterations: int | None = None,
+            timeout_seconds: float | None = None,
         ):
             """Initialize middleware.
 
@@ -113,6 +114,7 @@ if DEEPAGENTS_AVAILABLE:
                 hostname: Hostname for new BashTool (ignored if bash_tool provided)
                 max_commands: Max commands (ignored if bash_tool provided)
                 max_loop_iterations: Max iterations (ignored if bash_tool provided)
+                timeout_seconds: Execution timeout in seconds (ignored if bash_tool provided)
             """
             if bash_tool is not None:
                 self._bash = bash_tool
@@ -123,6 +125,7 @@ if DEEPAGENTS_AVAILABLE:
                     hostname=hostname,
                     max_commands=max_commands,
                     max_loop_iterations=max_loop_iterations,
+                    timeout_seconds=timeout_seconds,
                 )
                 self._owns_bash = True
 
@@ -168,12 +171,14 @@ if DEEPAGENTS_AVAILABLE:
             hostname: str | None = None,
             max_commands: int | None = None,
             max_loop_iterations: int | None = None,
+            timeout_seconds: float | None = None,
         ):
             self._bash = NativeBashTool(
                 username=username,
                 hostname=hostname,
                 max_commands=max_commands,
                 max_loop_iterations=max_loop_iterations,
+                timeout_seconds=timeout_seconds,
             )
             self._id = f"bashkit-{uuid.uuid4().hex[:8]}"
 

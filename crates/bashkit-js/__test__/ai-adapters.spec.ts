@@ -108,3 +108,82 @@ test("openai: files created via handler are readable via bash.readFile", async (
   });
   t.is(adapter.bash.readFile("/y.txt"), "created");
 });
+
+// ============================================================================
+// Issue #1185: Framework timeout propagation
+// ============================================================================
+
+// --- Timeout via timeoutMs option -------------------------------------------
+
+test("anthropic: timeoutMs option propagates to interpreter", async (t) => {
+  const adapter = anthropicBashTool({ timeoutMs: 500 });
+  const result = await adapter.handler({
+    type: "tool_use",
+    id: "t-timeout",
+    name: "bash",
+    input: { commands: "i=0; while true; do i=$((i+1)); done" },
+  });
+  // Timed-out execution should produce a non-success result
+  t.true(
+    result.is_error === true ||
+      result.content.includes("124") ||
+      result.content.includes("timeout"),
+  );
+});
+
+test("openai: timeoutMs option propagates to interpreter", async (t) => {
+  const adapter = openAiBashTool({ timeoutMs: 500 });
+  const result = await adapter.handler({
+    id: "c-timeout",
+    type: "function",
+    function: {
+      name: "bash",
+      arguments: JSON.stringify({
+        commands: "i=0; while true; do i=$((i+1)); done",
+      }),
+    },
+  });
+  // Timed-out execution should produce an error or exit 124
+  t.true(
+    result.content.includes("124") ||
+      result.content.includes("timeout") ||
+      result.content.includes("Exit code"),
+  );
+});
+
+// --- AbortSignal cancellation -----------------------------------------------
+
+test("anthropic: handler respects pre-aborted signal", async (t) => {
+  const adapter = anthropicBashTool();
+  const controller = new AbortController();
+  controller.abort();
+  const result = await adapter.handler(
+    {
+      type: "tool_use",
+      id: "t-abort",
+      name: "bash",
+      input: { commands: "echo should-not-run" },
+    },
+    { signal: controller.signal },
+  );
+  t.is(result.content, "Execution cancelled");
+  t.true(result.is_error);
+});
+
+test("openai: handler respects pre-aborted signal", async (t) => {
+  const adapter = openAiBashTool();
+  const controller = new AbortController();
+  controller.abort();
+  const result = await adapter.handler(
+    {
+      id: "c-abort",
+      type: "function",
+      function: {
+        name: "bash",
+        arguments: JSON.stringify({ commands: "echo should-not-run" }),
+      },
+    },
+    { signal: controller.signal },
+  );
+  t.is(result.content, "Execution cancelled");
+});
