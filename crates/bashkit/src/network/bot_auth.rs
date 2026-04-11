@@ -23,23 +23,50 @@ use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use rand::Rng;
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
+use zeroize::Zeroize;
 
 /// Configuration for Web Bot Authentication.
 ///
 /// Holds an Ed25519 signing key and optional metadata for the
 /// `Signature-Agent` discovery header.
-#[derive(Debug, Clone)]
 pub struct BotAuthConfig {
-    signing_key: SigningKey,
+    // THREAT[TM-CRY-001]: Store raw seed and explicitly zeroize in Drop.
+    seed: [u8; 32],
     agent_fqdn: Option<String>,
     validity_secs: u64,
+}
+
+impl std::fmt::Debug for BotAuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BotAuthConfig")
+            .field("seed", &"[REDACTED]")
+            .field("agent_fqdn", &self.agent_fqdn)
+            .field("validity_secs", &self.validity_secs)
+            .finish()
+    }
+}
+
+impl Clone for BotAuthConfig {
+    fn clone(&self) -> Self {
+        Self {
+            seed: self.seed,
+            agent_fqdn: self.agent_fqdn.clone(),
+            validity_secs: self.validity_secs,
+        }
+    }
+}
+
+impl Drop for BotAuthConfig {
+    fn drop(&mut self) {
+        self.seed.zeroize();
+    }
 }
 
 impl BotAuthConfig {
     /// Create from a 32-byte Ed25519 secret key seed.
     pub fn from_seed(seed: [u8; 32]) -> Self {
         Self {
-            signing_key: SigningKey::from_bytes(&seed),
+            seed,
             agent_fqdn: None,
             validity_secs: 300,
         }
@@ -70,7 +97,8 @@ impl BotAuthConfig {
 
     /// Compute the JWK Thumbprint (RFC 7638) keyid for the public key.
     pub fn keyid(&self) -> String {
-        jwk_thumbprint_ed25519(&self.signing_key.verifying_key())
+        let signing_key = SigningKey::from_bytes(&self.seed);
+        jwk_thumbprint_ed25519(&signing_key.verifying_key())
     }
 
     /// Sign a request targeting the given authority and return headers to attach.
@@ -106,7 +134,8 @@ impl BotAuthConfig {
         sig_base.push_str(&format!("\"@signature-params\": {sig_params}"));
 
         // Sign
-        let signature = self.signing_key.sign(sig_base.as_bytes());
+        let signing_key = SigningKey::from_bytes(&self.seed);
+        let signature = signing_key.sign(sig_base.as_bytes());
         let sig_b64 = URL_SAFE_NO_PAD.encode(signature.to_bytes());
 
         Ok(BotAuthHeaders {
@@ -159,7 +188,8 @@ pub struct BotAuthPublicKey {
 /// endpoint so target servers can verify signatures.
 pub fn derive_bot_auth_public_key(seed: &str) -> Result<BotAuthPublicKey, BotAuthError> {
     let config = BotAuthConfig::from_base64_seed(seed)?;
-    let verifying_key = config.signing_key.verifying_key();
+    let signing_key = SigningKey::from_bytes(&config.seed);
+    let verifying_key = signing_key.verifying_key();
     let x = URL_SAFE_NO_PAD.encode(verifying_key.as_bytes());
     let key_id = jwk_thumbprint_ed25519(&verifying_key);
     let jwk = serde_json::json!({
@@ -323,5 +353,25 @@ mod tests {
         let pubkey = derive_bot_auth_public_key(&encoded).unwrap();
         let config = BotAuthConfig::from_seed(seed);
         assert_eq!(pubkey.key_id, config.keyid());
+    }
+
+    #[test]
+    fn seed_zeroized_on_drop() {
+        let mut slot = std::mem::MaybeUninit::new(BotAuthConfig::from_seed([0xAB; 32]));
+        let cfg_ptr = slot.as_mut_ptr();
+        let seed_ptr = unsafe { std::ptr::addr_of_mut!((*cfg_ptr).seed) };
+
+        unsafe { std::ptr::drop_in_place(cfg_ptr) };
+        let seed_after_drop = unsafe { std::ptr::read(seed_ptr) };
+        assert_eq!(seed_after_drop, [0u8; 32]);
+    }
+
+    #[test]
+    fn debug_redacts_key_material() {
+        let seed = [0xABu8; 32];
+        let config = BotAuthConfig::from_seed(seed);
+        let debug = format!("{config:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("171"));
     }
 }

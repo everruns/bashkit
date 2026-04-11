@@ -61,7 +61,7 @@ let bash = Bash::builder()
 
 ```rust
 pub struct BotAuthConfig {
-    signing_key: SigningKey,      // Ed25519
+    seed: [u8; 32],               // Ed25519 seed
     agent_fqdn: Option<String>,  // Signature-Agent header
     validity_secs: u64,          // default: 300
 }
@@ -121,7 +121,8 @@ if let Ok(seed) = std::env::var("BOT_AUTH_SIGNING_KEY_SEED") {
 
 Feature `bot-auth` adds:
 - `ed25519-dalek` 2.x (Ed25519 signing)
-- `rand` 0.8 (nonce generation)
+- `rand` 0.10 (nonce generation)
+- `zeroize` 1.x (key material zeroization on drop)
 - `sha2` (already a required dep for checksum builtins)
 
 ## Files
@@ -136,6 +137,7 @@ Feature `bot-auth` adds:
 ## Security
 
 - Signing key never leaves `BotAuthConfig` — only the public key is derivable
+- `Drop` explicitly calls `zeroize()` on seed bytes before deallocation (TM-CRY-001)
 - JWK Thumbprint uses SHA-256 with canonical JSON member ordering (RFC 7638)
 - Nonce prevents replay attacks
 - Expiry window limits signature validity
