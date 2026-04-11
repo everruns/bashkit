@@ -764,26 +764,575 @@ mod tests {
         assert!(r.stderr.is_empty());
     }
 
-    // --- Tab completion inside runtime ---
+    // --- Tab completion: helpers ---
+
+    /// Build a BashkitHelper wired to the given Bash instance's VFS and state.
+    fn make_helper(bash: &bashkit::Bash) -> BashkitHelper {
+        let fs = bash.fs();
+        let state = bash.shell_state();
+        BashkitHelper {
+            fs: Arc::clone(&fs),
+            state_fn: Box::new(move || state.clone()),
+        }
+    }
+
+    // =========================================================================
+    // complete_path — unit tests
+    // =========================================================================
 
     #[tokio::test(flavor = "current_thread")]
-    async fn tab_completion_does_not_panic_inside_runtime() {
+    async fn complete_path_basic_file_match() {
         // Regression: complete_path() called handle.block_on() which panics
         // with "Cannot start a runtime from within a runtime" on single-thread.
         let bash = test_bash();
         let fs = bash.fs();
-        // Create a file so completion has something to match
         let _ = fs
             .write_file(&std::path::PathBuf::from("/home/user/aat.txt"), b"test")
             .await;
-        let state = bash.shell_state();
-        let helper = BashkitHelper {
-            fs: Arc::clone(&fs),
-            state_fn: Box::new(move || state.clone()),
-        };
-        // This would panic before the fix with nested runtime error
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("aa");
+        assert!(results.iter().any(|r| r == "aat.txt"), "got: {results:?}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn complete_path_directory_gets_trailing_slash() {
+        let bash = test_bash();
+        let fs = bash.fs();
+        let _ = fs
+            .mkdir(&std::path::PathBuf::from("/home/user/mydir"), true)
+            .await;
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("my");
+        assert!(
+            results.iter().any(|r| r == "mydir/"),
+            "dirs get trailing slash: {results:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn complete_path_no_match_returns_empty() {
+        let bash = test_bash();
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("zzz_nonexistent_prefix");
+        assert!(results.is_empty(), "no match should be empty: {results:?}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn complete_path_nonexistent_directory_returns_empty() {
+        let bash = test_bash();
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("/no/such/dir/fi");
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn complete_path_nested_path() {
+        let bash = test_bash();
+        let fs = bash.fs();
+        let _ = fs
+            .mkdir(&std::path::PathBuf::from("/home/user/sub"), true)
+            .await;
+        let _ = fs
+            .write_file(
+                &std::path::PathBuf::from("/home/user/sub/file.rs"),
+                b"fn main(){}",
+            )
+            .await;
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("sub/fi");
+        assert!(
+            results.iter().any(|r| r == "sub/file.rs"),
+            "nested: {results:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn complete_path_absolute_path() {
+        let bash = test_bash();
+        let fs = bash.fs();
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/tmp/absolute_test.txt"), b"x")
+            .await;
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("/tmp/abs");
+        assert!(
+            results.iter().any(|r| r == "/tmp/absolute_test.txt"),
+            "absolute: {results:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn complete_path_dot_prefixed_hidden_files() {
+        let bash = test_bash();
+        let fs = bash.fs();
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/.hidden"), b"")
+            .await;
+        let helper = make_helper(&bash);
+        let results = helper.complete_path(".hid");
+        assert!(
+            results.iter().any(|r| r == ".hidden"),
+            "hidden files: {results:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn complete_path_multiple_matches_sorted() {
+        let bash = test_bash();
+        let fs = bash.fs();
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/foo_b.txt"), b"")
+            .await;
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/foo_a.txt"), b"")
+            .await;
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/foo_c.txt"), b"")
+            .await;
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("foo_");
+        assert_eq!(results.len(), 3);
+        assert_eq!(
+            results,
+            vec!["foo_a.txt", "foo_b.txt", "foo_c.txt"],
+            "sorted"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn complete_path_mixed_files_and_dirs() {
+        let bash = test_bash();
+        let fs = bash.fs();
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/mix_file"), b"")
+            .await;
+        let _ = fs
+            .mkdir(&std::path::PathBuf::from("/home/user/mix_dir"), true)
+            .await;
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("mix_");
+        assert!(results.contains(&"mix_dir/".to_string()));
+        assert!(results.contains(&"mix_file".to_string()));
+    }
+
+    // =========================================================================
+    // Completer::complete — word parsing and position detection
+    // =========================================================================
+
+    // NOTE: rustyline::Context is not publicly constructable, so we test the
+    // Completer logic through complete_path + state_fn helpers. For full
+    // Completer::complete coverage we use integration tests below.
+
+    // =========================================================================
+    // Runtime safety — the core of the fix
+    // =========================================================================
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completion_safe_on_current_thread_runtime() {
+        // The exact scenario that caused the original abort.
+        let bash = test_bash();
+        let fs = bash.fs();
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/aat.txt"), b"test")
+            .await;
+        let helper = make_helper(&bash);
         let results = helper.complete_path("aa");
         assert!(results.iter().any(|r| r.contains("aat.txt")));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn completion_safe_on_multi_thread_runtime() {
+        // Verify no panic on multi-threaded runtime either.
+        let bash = test_bash();
+        let fs = bash.fs();
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/mt.txt"), b"data")
+            .await;
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("mt");
+        assert!(results.iter().any(|r| r == "mt.txt"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completion_concurrent_from_multiple_threads() {
+        // Simulate rapid concurrent completions — must not panic or deadlock.
+        let bash = test_bash();
+        let fs = bash.fs();
+        for i in 0..20 {
+            let _ = fs
+                .write_file(
+                    &std::path::PathBuf::from(format!("/home/user/cc_{i:02}.txt")),
+                    b"",
+                )
+                .await;
+        }
+        let helper = Arc::new(make_helper(&bash));
+
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let h = Arc::clone(&helper);
+                std::thread::spawn(move || {
+                    // Each thread enters a runtime context to match the real
+                    // interactive scenario (rustyline calls Completer from the
+                    // runtime thread).
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    let _guard = rt.enter();
+                    h.complete_path("cc_")
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            let results = handle.join().expect("thread panicked during completion");
+            assert_eq!(results.len(), 20, "each thread sees all 20 files");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completion_stress_rapid_successive() {
+        // Hammer completion 50 times in a row — must never panic.
+        let bash = test_bash();
+        let fs = bash.fs();
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/stress.txt"), b"")
+            .await;
+        let helper = make_helper(&bash);
+        for _ in 0..50 {
+            let results = helper.complete_path("str");
+            assert!(results.iter().any(|r| r == "stress.txt"));
+        }
+    }
+
+    // =========================================================================
+    // Security tests — tab completion must respect sandbox boundaries
+    // =========================================================================
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completion_path_traversal_stays_in_vfs() {
+        // THREAT[TM-ESC]: Tab-completing ../../ must not leak real host paths.
+        let bash = test_bash();
+        let fs = bash.fs();
+        // Create a file at the VFS root to prove we resolve within VFS
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/canary.txt"), b"")
+            .await;
+        let helper = make_helper(&bash);
+
+        // Attempt traversal — should resolve within VFS, not escape to host
+        let results = helper.complete_path("../../can");
+        // Whether it finds it or not, it must not panic and must not
+        // return real host paths like /etc/passwd.
+        for r in &results {
+            assert!(!r.contains("passwd"), "must not leak host files: {r}");
+            assert!(!r.contains("shadow"), "must not leak host files: {r}");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completion_does_not_leak_host_filesystem() {
+        // THREAT[TM-ESC]: Completing /etc/ must not show real host entries.
+        let bash = test_bash();
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("/etc/pass");
+        // VFS has no /etc/passwd by default — must be empty
+        assert!(
+            !results.iter().any(|r| r.contains("passwd")),
+            "must not expose host /etc/passwd: {results:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completion_does_not_leak_host_proc() {
+        // THREAT[TM-INF]: /proc should not expose host process info.
+        let bash = test_bash();
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("/proc/");
+        // VFS doesn't have /proc — should be empty
+        assert!(results.is_empty(), "must not expose /proc: {results:?}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completion_special_chars_in_filename() {
+        // THREAT[TM-INJ]: Filenames with shell metacharacters must not cause
+        // injection when completed. Verify they're returned as-is.
+        let bash = test_bash();
+        let fs = bash.fs();
+        let _ = fs
+            .write_file(
+                &std::path::PathBuf::from("/home/user/file with spaces.txt"),
+                b"",
+            )
+            .await;
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/file;rm -rf.txt"), b"")
+            .await;
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/file$(cmd).txt"), b"")
+            .await;
+        let helper = make_helper(&bash);
+
+        let results = helper.complete_path("file");
+        // All three files should be returned as literal strings
+        assert!(
+            results.iter().any(|r| r.contains("spaces")),
+            "spaces: {results:?}"
+        );
+        assert!(
+            results.iter().any(|r| r.contains(";rm")),
+            "semicolon: {results:?}"
+        );
+        assert!(
+            results.iter().any(|r| r.contains("$(cmd)")),
+            "subshell: {results:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completion_unicode_filenames() {
+        // THREAT[TM-UNI]: Unicode filenames must not cause panics or garbled output.
+        let bash = test_bash();
+        let fs = bash.fs();
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/日本語.txt"), b"")
+            .await;
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/émojis🎉.txt"), b"")
+            .await;
+        let helper = make_helper(&bash);
+
+        let results = helper.complete_path("日");
+        assert!(
+            results.iter().any(|r| r == "日本語.txt"),
+            "CJK: {results:?}"
+        );
+
+        let results2 = helper.complete_path("émo");
+        assert!(
+            results2.iter().any(|r| r.contains("émojis")),
+            "emoji: {results2:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completion_deeply_nested_path_no_stackoverflow() {
+        // THREAT[TM-DOS]: Deeply nested completion should not stack-overflow.
+        let bash = test_bash();
+        let fs = bash.fs();
+        let mut deep = String::from("/home/user");
+        for i in 0..50 {
+            deep.push_str(&format!("/d{i}"));
+            let _ = fs.mkdir(&std::path::PathBuf::from(&deep), true).await;
+        }
+        let _ = fs
+            .write_file(&std::path::PathBuf::from(format!("{deep}/target.txt")), b"")
+            .await;
+        let helper = make_helper(&bash);
+
+        // Complete the deepest level
+        let partial = format!("{}/tar", &deep["/home/user/".len()..]);
+        let results = helper.complete_path(&partial);
+        assert!(
+            results.iter().any(|r| r.contains("target.txt")),
+            "deep: {results:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completion_very_long_filename() {
+        // THREAT[TM-DOS]: Extremely long filenames should not cause issues.
+        let bash = test_bash();
+        let fs = bash.fs();
+        let long_name = "a".repeat(200);
+        let _ = fs
+            .write_file(
+                &std::path::PathBuf::from(format!("/home/user/{long_name}.txt")),
+                b"",
+            )
+            .await;
+        let helper = make_helper(&bash);
+        let results = helper.complete_path(&long_name[..10]);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].ends_with(".txt"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completion_large_directory_no_crash() {
+        // THREAT[TM-DOS]: Directory with many entries should complete without crash.
+        let bash = test_bash();
+        let fs = bash.fs();
+        for i in 0..200 {
+            let _ = fs
+                .write_file(
+                    &std::path::PathBuf::from(format!("/home/user/bulk_{i:04}.txt")),
+                    b"",
+                )
+                .await;
+        }
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("bulk_");
+        assert_eq!(results.len(), 200, "should find all 200 entries");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completion_symlink_in_vfs() {
+        // Symlinks should complete and show the link, not follow through to host.
+        let bash = test_bash();
+        let fs = bash.fs();
+        let _ = fs
+            .write_file(
+                &std::path::PathBuf::from("/home/user/real_file.txt"),
+                b"data",
+            )
+            .await;
+        let _ = fs
+            .symlink(
+                &std::path::PathBuf::from("/home/user/real_file.txt"),
+                &std::path::PathBuf::from("/home/user/link_file.txt"),
+            )
+            .await;
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("link_");
+        // Should show the symlink as a completion candidate (or be empty if
+        // symlinks aren't listed — either is safe, just no crash).
+        for r in &results {
+            assert!(!r.contains(".."), "no traversal via symlink: {r}");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completion_empty_partial_lists_cwd_entries() {
+        // Completing an empty string should not panic.
+        let bash = test_bash();
+        let fs = bash.fs();
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/visible.txt"), b"")
+            .await;
+        let helper = make_helper(&bash);
+        // empty prefix — matches everything in cwd
+        let results = helper.complete_path("");
+        assert!(
+            results.iter().any(|r| r == "visible.txt"),
+            "empty: {results:?}"
+        );
+    }
+
+    // =========================================================================
+    // Integration tests — full bash state + completion interaction
+    // =========================================================================
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn integration_cd_changes_completion_scope() {
+        // After cd, completion should reflect the new directory.
+        let mut bash = test_bash();
+        let fs = bash.fs();
+        let _ = fs
+            .mkdir(&std::path::PathBuf::from("/home/user/proj"), true)
+            .await;
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/proj/main.rs"), b"")
+            .await;
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/proj/lib.rs"), b"")
+            .await;
+
+        bash.exec("cd /home/user/proj").await.unwrap();
+
+        // Rebuild helper with updated state after cd
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("ma");
+        assert!(
+            results.iter().any(|r| r == "main.rs"),
+            "after cd: {results:?}"
+        );
+
+        // Old cwd files should not appear
+        let results2 = helper.complete_path("proj");
+        assert!(
+            results2.is_empty(),
+            "should not see parent entries: {results2:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn integration_mkdir_then_complete() {
+        // Files created via bash exec should be completable.
+        let mut bash = test_bash();
+        bash.exec("mkdir -p /home/user/dynamic_dir").await.unwrap();
+        bash.exec("echo hello > /home/user/dynamic_dir/dyn.txt")
+            .await
+            .unwrap();
+
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("dynamic_dir/dy");
+        assert!(
+            results.iter().any(|r| r.contains("dyn.txt")),
+            "dynamic: {results:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn integration_variable_completion_via_helper() {
+        // Variable completion (tested through complete_path won't cover this,
+        // but we can verify via state_fn).
+        let mut bash = test_bash();
+        bash.exec("MY_CUSTOM_VAR=hello").await.unwrap();
+        bash.exec("export EXPORTED_VAR=world").await.unwrap();
+        let state = bash.shell_state();
+
+        // Verify state contains our variables (used by $VAR completion in complete())
+        assert!(
+            state.variables.contains_key("MY_CUSTOM_VAR")
+                || state.env.contains_key("MY_CUSTOM_VAR"),
+            "custom var in state"
+        );
+        assert!(
+            state.env.contains_key("EXPORTED_VAR"),
+            "exported var in state"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn integration_alias_visible_in_state() {
+        // Aliases should be available in shell state for completion.
+        let mut bash = test_bash();
+        bash.exec("alias ll='ls -la'").await.unwrap();
+        let state = bash.shell_state();
+        assert!(
+            state.aliases.contains_key("ll"),
+            "alias in state: {:?}",
+            state.aliases.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn integration_rm_file_then_complete() {
+        // After removing a file, it should no longer appear in completions.
+        let mut bash = test_bash();
+        bash.exec("touch /home/user/ephemeral.txt").await.unwrap();
+
+        let helper = make_helper(&bash);
+        let before = helper.complete_path("ephem");
+        assert!(!before.is_empty(), "file exists before rm");
+
+        bash.exec("rm /home/user/ephemeral.txt").await.unwrap();
+        let helper2 = make_helper(&bash);
+        let after = helper2.complete_path("ephem");
+        assert!(after.is_empty(), "file gone after rm: {after:?}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn integration_completion_after_script_creates_many_files() {
+        // Script that creates files — completion should see them all.
+        let mut bash = test_bash();
+        bash.exec("for i in $(seq 1 10); do touch /home/user/batch_$i.log; done")
+            .await
+            .unwrap();
+        let helper = make_helper(&bash);
+        let results = helper.complete_path("batch_");
+        assert_eq!(results.len(), 10, "all 10 batch files: {results:?}");
     }
 
     // --- Source RC ---
