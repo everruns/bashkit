@@ -320,6 +320,13 @@ fn format_unified(file1: &str, file2: &str, diff: &[DiffLine<'_>]) -> String {
 #[async_trait]
 impl Builtin for Diff {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: diff [OPTION]... FILE1 FILE2\nCompare files line by line.\n\n  -u\t\toutput in unified format\n  -q, --brief\treport only when files differ\n  --help\t\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("diff (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let (opts, files) = parse_diff_args(ctx.args);
 
         if files.len() < 2 {

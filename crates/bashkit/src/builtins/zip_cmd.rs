@@ -224,6 +224,13 @@ async fn collect_files_recursive(
 #[async_trait]
 impl Builtin for Zip {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: zip [OPTION]... ARCHIVE FILE...\nCreate zip archives.\n\n  -r\trecurse into directories\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("zip (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let opts = match parse_zip_args(ctx.args) {
             Ok(o) => o,
             Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),
@@ -282,6 +289,13 @@ impl Builtin for Zip {
 #[async_trait]
 impl Builtin for Unzip {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: unzip [OPTION]... ARCHIVE\nExtract files from a zip archive.\n\n  -l\tlist contents\n  -d DIR\textract to directory\n  -o\toverwrite existing files\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("unzip (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let opts = match parse_unzip_args(ctx.args) {
             Ok(o) => o,
             Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),

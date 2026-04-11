@@ -136,6 +136,13 @@ fn build_xargs_commands(opts: &XargsOptions, input: &str) -> Vec<SubCommand> {
 #[async_trait]
 impl Builtin for Xargs {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: xargs [OPTION]... [COMMAND [ARGS]...]\nBuild and execute command lines from standard input.\n\n  -I REPLACE\treplace REPLACE with input (implies -n 1)\n  -n MAX-ARGS\tuse at most MAX-ARGS arguments per command\n  -d DELIM\tuse DELIM as delimiter instead of whitespace\n  -0\tuse NUL as delimiter\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("xargs (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         // Validate arguments and return error for invalid input.
         // When no executor is available, output what commands would be run.
         let opts = match parse_xargs_args(ctx.args) {
@@ -197,6 +204,13 @@ pub struct Tee;
 #[async_trait]
 impl Builtin for Tee {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: tee [OPTION]... [FILE]...\nRead from standard input and write to standard output and files.\n\n  -a, --append\tappend to files instead of overwriting\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("tee (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut append = false;
         let mut files: Vec<String> = Vec::new();
 
@@ -247,6 +261,13 @@ pub struct Watch;
 #[async_trait]
 impl Builtin for Watch {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: watch [OPTION]... COMMAND\nExecute a program periodically, showing output.\n\n  -n SECONDS\tupdate interval (default: 2)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("watch (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut _interval: f64 = 2.0;
         let mut command_start: Option<usize> = None;
 

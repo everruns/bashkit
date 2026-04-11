@@ -769,6 +769,13 @@ fn count_commands(cmds: &[(Option<Address>, bool, SedCommand)]) -> usize {
 #[async_trait]
 impl Builtin for Sed {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: sed [OPTION]... {script} [FILE]...\nStream editor for filtering and transforming text.\n\n  -n\t\tsuppress automatic printing of pattern space\n  -i\t\tedit files in place\n  -E, -r\tuse extended regular expressions\n  -e script\tadd the script to the commands to be executed\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("sed (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let opts = SedOptions::parse(ctx.args)?;
 
         // Determine input

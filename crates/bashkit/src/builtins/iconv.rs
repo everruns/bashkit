@@ -226,6 +226,13 @@ fn decode_from(input: &[u8], encoding: &str) -> std::result::Result<String, Stri
 #[async_trait]
 impl Builtin for Iconv {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: iconv [OPTION]... [FILE]\nConvert text from one character encoding to another.\n\n  -f ENCODING\tconvert characters from ENCODING\n  -t ENCODING\tconvert characters to ENCODING (supports //TRANSLIT)\n  -l, --list\tlist known coded character sets\n  --help\t\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("iconv (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut from_enc: Option<String> = None;
         let mut to_enc: Option<String> = None;
         let mut file_arg: Option<String> = None;

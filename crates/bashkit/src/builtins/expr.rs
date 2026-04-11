@@ -21,6 +21,13 @@ pub struct Expr;
 #[async_trait]
 impl Builtin for Expr {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: expr EXPRESSION\n       expr OPTION\n\nPrint the value of EXPRESSION to standard output.\n\n  ARG1 + ARG2\tarithmetic sum\n  ARG1 - ARG2\tarithmetic difference\n  ARG1 * ARG2\tarithmetic product\n  ARG1 / ARG2\tarithmetic quotient\n  ARG1 % ARG2\tarithmetic remainder\n  ARG1 = ARG2\tcomparison equal\n  ARG1 != ARG2\tcomparison not equal\n  ARG1 < ARG2\tcomparison less than\n  ARG1 > ARG2\tcomparison greater than\n  ARG1 <= ARG2\tcomparison less or equal\n  ARG1 >= ARG2\tcomparison greater or equal\n  ARG1 | ARG2\tlogical or\n  ARG1 & ARG2\tlogical and\n  length STRING\tlength of STRING\n  substr STRING POS LEN\tsubstring of STRING\n  index STRING CHARS\tindex of first CHAR in STRING\n  match STRING REGEX\tanchored pattern match\n  STRING : REGEX\tanchored pattern match\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("expr (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         if ctx.args.is_empty() {
             return Ok(ExecResult::err("expr: missing operand\n".to_string(), 2));
         }

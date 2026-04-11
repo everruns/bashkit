@@ -182,6 +182,13 @@ fn build_command(template: &[String], args: &[String]) -> String {
 #[async_trait]
 impl Builtin for Parallel {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: parallel [OPTIONS] COMMAND ::: ARGS...\nRun commands in parallel.\n\n  -j NUM\tnumber of parallel jobs\n  --dry-run\tshow commands that would be run\n  --keep-order, -k\tkeep output in input order\n  --bar\tshow progress bar\n  -v\tverbose mode\n  :::\tdelimits the argument list\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("parallel (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         if ctx.args.is_empty() {
             return Ok(ExecResult::err(
                 "parallel: usage: parallel [OPTIONS] COMMAND ::: ARGS...\n".to_string(),

@@ -20,6 +20,13 @@ pub struct Base64;
 #[async_trait]
 impl Builtin for Base64 {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: base64 [OPTION]... [FILE]\nBase64 encode or decode FILE, or standard input.\n\n  -d, --decode\tdecode data\n  -w COLS, --wrap=COLS\twrap encoded lines after COLS characters (default 76)\n  -i, --ignore-garbage\twhen decoding, ignore non-alphabet characters\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("base64 (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut decode = false;
         let mut wrap = 76usize;
         let mut file: Option<String> = None;

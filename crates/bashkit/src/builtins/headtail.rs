@@ -22,6 +22,13 @@ pub struct Head;
 #[async_trait]
 impl Builtin for Head {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: head [OPTION]... [FILE]...\nPrint the first 10 lines of each FILE to standard output.\n\n  -n NUM\toutput the first NUM lines\n  -c NUM\toutput the first NUM bytes\n  -NUM\t\tshorthand for -n NUM\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("head (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let (count, byte_mode, files) = parse_head_args(ctx.args, DEFAULT_LINES)?;
 
         let mut output = String::new();
@@ -88,6 +95,13 @@ pub struct Tail;
 #[async_trait]
 impl Builtin for Tail {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: tail [OPTION]... [FILE]...\nPrint the last 10 lines of each FILE to standard output.\n\n  -n NUM\toutput the last NUM lines\n  -n +NUM\toutput starting with line NUM\n  -NUM\t\tshorthand for -n NUM\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("tail (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let (num_lines, from_start, files) = parse_tail_args(ctx.args, DEFAULT_LINES)?;
 
         let mut output = String::new();

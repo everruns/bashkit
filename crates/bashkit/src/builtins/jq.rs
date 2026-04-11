@@ -263,10 +263,31 @@ fn format_with_tabs(value: &serde_json::Value) -> String {
 #[async_trait]
 impl Builtin for Jq {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        // Check for --version flag first
+        // jq uses -h for help and -V for version (unlike GNU coreutils)
+        let help_text = "Usage: jq [OPTIONS...] FILTER [FILE...]\n\n\
+             \tjq is a command-line JSON processor.\n\n\
+             Options:\n\
+             \t-c, --compact-output\tcompact instead of pretty-printed output\n\
+             \t-r, --raw-output\toutput strings without escapes and quotes\n\
+             \t-R, --raw-input\t\tread each line as string instead of JSON\n\
+             \t-s, --slurp\t\tread entire input into a single array\n\
+             \t-n, --null-input\tuse null as the single input value\n\
+             \t-e, --exit-status\tset exit status code based on output\n\
+             \t-S, --sort-keys\t\tsort object keys in output\n\
+             \t-j, --join-output\tlike -r without trailing newline\n\
+             \t--tab\t\t\tuse tabs for indentation\n\
+             \t--indent N\t\tuse N spaces for indentation (default: 2)\n\
+             \t--arg name value\tset variable $name to string value\n\
+             \t--argjson name value\tset variable $name to JSON value\n\
+             \t--args\t\t\tremaining args are string arguments\n\
+             \t--jsonargs\t\tremaining args are JSON arguments\n\
+             \t-V, --version\t\toutput version information and exit\n\
+             \t-h, --help\t\toutput this help and exit\n";
         for arg in ctx.args {
-            if arg == "-V" || arg == "--version" {
-                return Ok(ExecResult::ok("jq-1.8\n".to_string()));
+            match arg.as_str() {
+                "-h" | "--help" => return Ok(ExecResult::ok(help_text.to_string())),
+                "-V" | "--version" => return Ok(ExecResult::ok("jq-1.8\n".to_string())),
+                _ => {}
             }
         }
 
@@ -1568,5 +1589,18 @@ mod tests {
                 .trim(),
             "42"
         );
+    }
+
+    #[tokio::test]
+    async fn test_jq_help() {
+        let result = run_jq_with_args(&["--help"], "").await.unwrap();
+        assert!(result.contains("Usage:"), "should contain usage info");
+        assert!(result.contains("jq"), "should mention jq");
+    }
+
+    #[tokio::test]
+    async fn test_jq_help_short() {
+        let result = run_jq_with_args(&["-h"], "").await.unwrap();
+        assert!(result.contains("Usage:"), "-h should also show help");
     }
 }

@@ -24,6 +24,13 @@ struct JoinOptions {
 #[async_trait]
 impl Builtin for Join {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: join [OPTION]... FILE1 FILE2\nJoin lines of two sorted files on a common field.\n\n  -1 FIELD\tjoin on this FIELD of file 1\n  -2 FIELD\tjoin on this FIELD of file 2\n  -a FILENUM\talso print unpairable lines from file FILENUM\n  -e STRING\treplace missing input fields with STRING\n  -t CHAR\tuse CHAR as input and output field separator\n  --help\t\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("join (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut opts = JoinOptions {
             field1: 1,
             field2: 1,

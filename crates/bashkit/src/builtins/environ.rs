@@ -19,6 +19,13 @@ pub struct Env;
 #[async_trait]
 impl Builtin for Env {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: env [-i] [NAME=VALUE]... [COMMAND [ARG]...]\nRun a command in a modified environment, or print the environment.\n\n  -i, --ignore-environment\tstart with an empty environment\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("env (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut ignore_env = false;
         let mut env_vars: Vec<(String, String)> = Vec::new();
         let mut command_start = 0;
@@ -83,6 +90,13 @@ pub struct Printenv;
 #[async_trait]
 impl Builtin for Printenv {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: printenv [VARIABLE...]\nPrint the values of the specified environment variable(s).\nIf no VARIABLE is specified, print all.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("printenv (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         if ctx.args.is_empty() {
             // Print all environment variables
             let mut output = String::new();

@@ -18,6 +18,14 @@ pub struct Mkdir;
 #[async_trait]
 impl Builtin for Mkdir {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: mkdir [OPTION]... DIRECTORY...\nCreate the DIRECTORY(ies), if they do not already exist.\n\n  -p\t\tno error if existing, make parent directories as needed\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            Some("mkdir (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         if ctx.args.is_empty() {
             return Ok(ExecResult::err("mkdir: missing operand\n".to_string(), 1));
         }
@@ -78,6 +86,14 @@ pub struct Rm;
 #[async_trait]
 impl Builtin for Rm {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: rm [OPTION]... [FILE]...\nRemove (unlink) the FILE(s).\n\n  -f\t\tignore nonexistent files and arguments, never prompt\n  -r, -R\tremove directories and their contents recursively\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            Some("rm (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         if ctx.args.is_empty() {
             return Ok(ExecResult::err("rm: missing operand\n".to_string(), 1));
         }
@@ -151,6 +167,14 @@ pub struct Cp;
 #[async_trait]
 impl Builtin for Cp {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: cp [OPTION]... SOURCE... DEST\nCopy SOURCE to DEST, or multiple SOURCE(s) to DIRECTORY.\n\n  -r, -R\tcopy directories recursively\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            Some("cp (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         if ctx.args.len() < 2 {
             return Ok(ExecResult::err("cp: missing file operand\n".to_string(), 1));
         }
@@ -219,6 +243,14 @@ pub struct Mv;
 #[async_trait]
 impl Builtin for Mv {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: mv [OPTION]... SOURCE... DEST\nRename SOURCE to DEST, or move SOURCE(s) to DIRECTORY.\n\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            Some("mv (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         if ctx.args.len() < 2 {
             return Ok(ExecResult::err("mv: missing file operand\n".to_string(), 1));
         }
@@ -286,6 +318,14 @@ pub struct Touch;
 #[async_trait]
 impl Builtin for Touch {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: touch [OPTION]... FILE...\nUpdate the access and modification times of each FILE to the current time.\nA FILE argument that does not exist is created empty.\n\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            Some("touch (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         if ctx.args.is_empty() {
             return Ok(ExecResult::err(
                 "touch: missing file operand\n".to_string(),
@@ -427,6 +467,14 @@ fn apply_symbolic_mode(mode_str: &str, current_mode: u32) -> Option<u32> {
 #[async_trait]
 impl Builtin for Chmod {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: chmod [OPTION]... MODE[,MODE]... FILE...\nChange the mode of each FILE to MODE.\nMODE can be octal (e.g., 755) or symbolic (e.g., u+x, a+r, go-w).\n\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            Some("chmod (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         if ctx.args.len() < 2 {
             return Ok(ExecResult::err("chmod: missing operand\n".to_string(), 1));
         }
@@ -498,6 +546,14 @@ pub struct Ln;
 #[async_trait]
 impl Builtin for Ln {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: ln [OPTION]... TARGET LINK_NAME\nCreate a link to TARGET with the name LINK_NAME.\n\n  -s\t\tmake symbolic links instead of hard links\n  -f\t\tremove existing destination files\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            Some("ln (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         let mut force = false;
         let mut files: Vec<&str> = Vec::new();
 
@@ -570,6 +626,14 @@ pub struct Chown;
 #[async_trait]
 impl Builtin for Chown {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: chown [OPTION]... OWNER[:GROUP] FILE...\nChange file owner and group.\n\n  -R, --recursive\toperate on files and directories recursively\n      --help\t\tdisplay this help and exit\n      --version\t\toutput version information and exit\n",
+            Some("chown (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         let mut recursive = false;
         let mut positional: Vec<&str> = Vec::new();
 
@@ -616,6 +680,14 @@ pub struct Kill;
 #[async_trait]
 impl Builtin for Kill {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: kill [-s SIGNAL | -SIGNAL] PID...\nSend a signal to a process.\n\n  -s SIGNAL\tspecify the signal to send\n  -l, -L\tlist signal names\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            Some("kill (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         let mut pids: Vec<&str> = Vec::new();
 
         for arg in ctx.args {
@@ -658,6 +730,14 @@ pub struct Mktemp;
 #[async_trait]
 impl Builtin for Mktemp {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: mktemp [-d] [-p DIR] [-t] [TEMPLATE]\nCreate a temporary file or directory, safely, and print its name.\n\n  -d\t\tcreate a directory, not a file\n  -p DIR\tuse DIR as a prefix (default: /tmp)\n  -t\t\tinterpret TEMPLATE relative to a temporary directory\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            Some("mktemp (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         let mut create_dir = false;
         let mut prefix_dir = "/tmp".to_string();
         let mut template: Option<String> = None;

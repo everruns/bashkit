@@ -56,6 +56,13 @@ pub struct Curl;
 #[async_trait]
 impl Builtin for Curl {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: curl [OPTIONS] URL\nTransfer data from or to a server.\n\n  -s, --silent\tsilent mode\n  -o FILE\twrite output to FILE\n  -X METHOD\trequest method (GET, POST, PUT, DELETE, HEAD)\n  -d, --data DATA\tsend data in request body\n  -H, --header HEADER\tadd header (\"Name: Value\")\n  -I, --head\tfetch headers only\n  -f, --fail\tfail silently on HTTP errors\n  -L, --location\tfollow redirects\n  -w, --write-out FORMAT\twrite output format after transfer\n  --compressed\trequest and decompress compressed response\n  -u, --user USER:PASS\tbasic authentication\n  -A, --user-agent STRING\tcustom user agent\n  -e, --referer URL\treferer URL\n  -m, --max-time SECONDS\tmaximum time for operation\n  --connect-timeout SECONDS\tconnection timeout\n  -F, --form FIELD\tmultipart form data\n  -v, --verbose\tverbose output\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("curl 8.7.1 (bashkit)"),
+        ) {
+            return Ok(r);
+        }
         // Parse arguments
         let mut silent = false;
         let mut verbose = false;
@@ -820,6 +827,13 @@ pub struct Wget;
 #[async_trait]
 impl Builtin for Wget {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: wget [OPTIONS] URL\nDownload files from the web.\n\n  -q, --quiet\tquiet mode\n  -O FILE\twrite output to FILE (use '-' for stdout)\n  --spider\tdon't download, just check if URL exists\n  --header \"H: V\"\tadd custom header\n  -U, --user-agent STRING\tcustom user agent\n  --post-data DATA\tPOST data with request\n  -t, --tries NUM\tnumber of retries\n  -T, --timeout SECONDS\ttimeout for all operations\n  --connect-timeout SECONDS\tconnection timeout\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("GNU Wget 1.21 (bashkit)"),
+        ) {
+            return Ok(r);
+        }
         // Parse arguments
         let mut quiet = false;
         let mut output_file: Option<String> = None;

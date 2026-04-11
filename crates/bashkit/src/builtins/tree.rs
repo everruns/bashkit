@@ -35,6 +35,14 @@ struct TreeCounts {
 #[async_trait]
 impl Builtin for Tree {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: tree [OPTION]... [DIRECTORY]...\nList contents of directories in a tree-like format.\n\n  -a\t\tshow hidden files\n  -d\t\tlist directories only\n  -L level\tdescend only level directories deep\n  -I pattern\texclude files matching pattern\n  --noreport\tsuppress the file/directory count at the end\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            Some("tree (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         let mut opts = TreeOptions {
             show_hidden: false,
             dirs_only: false,

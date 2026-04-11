@@ -51,6 +51,13 @@ pub struct Tac;
 #[async_trait]
 impl Builtin for Tac {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: tac [FILE]...\nConcatenate and print files in reverse.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("tac (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let raw = match read_input(&ctx).await {
             Ok(r) => r,
             Err(e) => return Ok(e),
@@ -87,6 +94,13 @@ pub struct Rev;
 #[async_trait]
 impl Builtin for Rev {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: rev [FILE]...\nReverse characters of each line.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("rev (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let raw = match read_input(&ctx).await {
             Ok(r) => r,
             Err(e) => return Ok(e),

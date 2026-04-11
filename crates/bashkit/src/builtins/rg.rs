@@ -149,6 +149,13 @@ impl RgOptions {
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i\tcase insensitive\n  -n\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  -c\tcount matches\n  -l\tfiles with matches\n  -v\tinvert match\n  -w\tword boundary\n  -F\tfixed strings (literal)\n  -m NUM\tmax count per file\n  --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("rg (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let opts = RgOptions::parse(ctx.args)?;
         let regex = opts.build_regex()?;
 

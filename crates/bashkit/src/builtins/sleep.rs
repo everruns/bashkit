@@ -21,6 +21,13 @@ pub struct Sleep;
 #[async_trait]
 impl Builtin for Sleep {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: sleep SECONDS\nPause for SECONDS seconds.\nSECONDS may be a floating-point number. Maximum duration is 60 seconds.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("sleep (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let seconds = match ctx.args.first() {
             Some(arg) => match arg.parse::<f64>() {
                 Ok(s) if s < 0.0 => {

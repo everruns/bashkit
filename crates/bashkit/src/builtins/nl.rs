@@ -136,6 +136,13 @@ fn number_lines(text: &str, opts: &NlOptions, line_num: &mut usize) -> String {
 #[async_trait]
 impl Builtin for Nl {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: nl [OPTION]... [FILE]...\nNumber lines of files.\n\n  -b TYPE\tuse TYPE for numbering body lines (a=all, t=non-empty, n=none)\n  -i NUMBER\tline number increment\n  -n FORMAT\tinsert line numbers according to FORMAT (ln, rn, rz)\n  -s STRING\tadd STRING after line number\n  -v NUMBER\tfirst line number\n  -w NUMBER\tuse NUMBER columns for line numbers\n  --help\t\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("nl (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let (opts, files) = match parse_nl_args(ctx.args) {
             Ok(v) => v,
             Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),

@@ -16,6 +16,13 @@ pub struct Expand;
 #[async_trait]
 impl Builtin for Expand {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: expand [OPTION]... [FILE]...\nConvert tabs to spaces.\n\n  -t N\tuse N characters as tab size (default 8)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("expand (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut tab_stops: Vec<usize> = vec![8];
         let mut files: Vec<&str> = Vec::new();
 
@@ -97,6 +104,13 @@ pub struct Unexpand;
 #[async_trait]
 impl Builtin for Unexpand {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: unexpand [OPTION]... [FILE]...\nConvert spaces to tabs.\n\n  -a, --all\tconvert all blanks, instead of just initial blanks\n  -t N\t\tuse N characters as tab size (default 8)\n  --help\t\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("unexpand (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut tab_stops: Vec<usize> = vec![8];
         let mut all = false;
         let mut files: Vec<&str> = Vec::new();

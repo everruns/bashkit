@@ -19,6 +19,13 @@ pub struct Basename;
 #[async_trait]
 impl Builtin for Basename {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: basename NAME [SUFFIX]\nPrint NAME with leading directory components removed.\nIf SUFFIX is specified, also remove a trailing SUFFIX.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("basename (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         if ctx.args.is_empty() {
             return Ok(ExecResult::err(
                 "basename: missing operand\n".to_string(),
@@ -79,6 +86,13 @@ pub struct Dirname;
 #[async_trait]
 impl Builtin for Dirname {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: dirname NAME...\nOutput each NAME with its last non-slash component and trailing slashes removed.\nIf NAME contains no slashes, output '.' (current directory).\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("dirname (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         if ctx.args.is_empty() {
             return Ok(ExecResult::err("dirname: missing operand\n".to_string(), 1));
         }
@@ -129,6 +143,13 @@ pub struct Realpath;
 #[async_trait]
 impl Builtin for Realpath {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: realpath [PATH...]\nPrint the resolved absolute pathname.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("realpath (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         if ctx.args.is_empty() {
             return Ok(ExecResult::err(
                 "realpath: missing operand\n".to_string(),
@@ -165,6 +186,13 @@ pub struct Readlink;
 impl Builtin for Readlink {
     #[allow(clippy::collapsible_if)]
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: readlink [-f|-m|-e] FILE...\nPrint resolved symbolic links or canonical file names.\n\n  -f\tcanonicalize by following every symlink; all but last component must exist\n  -m\tcanonicalize without requiring components to exist\n  -e\tcanonicalize; all components must exist\n  -n\tdo not output the trailing newline\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("readlink (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         if ctx.args.is_empty() {
             return Ok(ExecResult::err(
                 "readlink: missing operand\n".to_string(),

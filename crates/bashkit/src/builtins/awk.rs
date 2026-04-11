@@ -3343,6 +3343,13 @@ impl Awk {
 #[async_trait]
 impl Builtin for Awk {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: awk [OPTION]... 'program' [FILE]...\nPattern scanning and processing language.\n\n  -F SEP\t\tuse SEP as field separator\n  -v var=val\tassign variable before execution\n  -f progfile\tread program from file\n  --csv, -k\tCSV mode (set field separator to comma)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("awk (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut program_str = String::new();
         let mut files: Vec<String> = Vec::new();
         let mut field_sep = " ".to_string();

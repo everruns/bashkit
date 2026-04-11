@@ -115,6 +115,13 @@ fn parse_delim_spec(spec: &str) -> Vec<char> {
 #[async_trait]
 impl Builtin for Paste {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: paste [OPTION]... [FILE]...\nMerge lines of files.\n\n  -d LIST\tuse LIST as delimiters\n  -s\t\tpaste one file at a time\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("paste (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let (opts, files) = parse_paste_args(ctx.args);
 
         // Collect input sources

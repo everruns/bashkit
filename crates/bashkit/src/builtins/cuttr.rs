@@ -31,6 +31,13 @@ enum CutMode {
 #[async_trait]
 impl Builtin for Cut {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: cut OPTION... [FILE]...\nPrint selected parts of lines from each FILE to standard output.\n\n  -d DELIM\t\tuse DELIM instead of TAB for field delimiter\n  -f FIELDS\t\tselect only these fields\n  -b BYTES\t\tselect only these bytes\n  -c CHARS\t\tselect only these characters\n  -s\t\t\tonly print lines containing delimiter\n  -z\t\t\tline delimiter is NUL, not newline\n  --complement\t\tcomplement the selection\n  --output-delimiter=STRING\tuse STRING as output delimiter\n  --help\t\tdisplay this help and exit\n  --version\t\toutput version information and exit\n",
+            Some("cut (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut delimiter = '\t';
         let mut spec = String::new();
         let mut mode = CutMode::Fields;
@@ -276,6 +283,13 @@ pub struct Tr;
 #[async_trait]
 impl Builtin for Tr {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: tr [OPTION]... SET1 [SET2]\nTranslate, squeeze, and/or delete characters from standard input.\n\n  -d\t\tdelete characters in SET1\n  -s\t\tsqueeze repeated output characters\n  -c, -C\tcomplement SET1\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("tr (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut delete = false;
         let mut squeeze = false;
         let mut complement = false;

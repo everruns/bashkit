@@ -18,6 +18,13 @@ pub struct Less;
 #[async_trait]
 impl Builtin for Less {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: less [FILE]...\nView file contents (pager).\n\nIn bashkit, less behaves like cat (no interactive paging).\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("less (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         // less without args reads from stdin
         if ctx.args.is_empty() {
             if let Some(stdin) = ctx.stdin {
@@ -78,6 +85,13 @@ pub struct File;
 #[async_trait]
 impl Builtin for File {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: file FILE...\nDetermine file type.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("file (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         if ctx.args.is_empty() {
             return Ok(ExecResult::err(
                 "file: missing file operand\n".to_string(),
@@ -236,6 +250,13 @@ pub struct Stat;
 #[async_trait]
 impl Builtin for Stat {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: stat [OPTION]... FILE...\nDisplay file status.\n\n  -c FORMAT, --format FORMAT\tuse specified format\n    %n\tfile name\n    %s\tsize in bytes\n    %a\toctal permissions\n    %A\thuman-readable permissions\n    %F\tfile type\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("stat (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut format: Option<String> = None;
         let mut files: Vec<&String> = Vec::new();
 

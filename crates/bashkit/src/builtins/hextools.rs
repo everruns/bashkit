@@ -191,6 +191,13 @@ fn od_dump(data: &[u8], opts: &OdOptions) -> String {
 #[async_trait]
 impl Builtin for Od {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: od [OPTION]... [FILE]...\nDump files in octal and other formats.\n\n  -A RADIX\taddress radix: d (decimal), o (octal), x (hex), n (none)\n  -t TYPE\toutput type: o (octal), x (hex), d (decimal), c (char)\n  -N COUNT\tdump at most COUNT bytes\n  -j SKIP\tskip SKIP bytes from beginning\n  -x\tshorthand for -t x\n  -c\tshorthand for -t c\n  -d\tshorthand for -t d\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("od (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let (opts, files) = match parse_od_args(ctx.args) {
             Ok(v) => v,
             Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),
@@ -374,6 +381,13 @@ fn xxd_reverse(data: &[u8], plain: bool) -> Vec<u8> {
 #[async_trait]
 impl Builtin for Xxd {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: xxd [OPTIONS] [FILE]\nMake a hexdump or do the reverse.\n\n  -l LEN\tstop after LEN bytes\n  -s OFFSET\tstart at OFFSET bytes\n  -c COLS\tbytes per line (default: 16)\n  -g GROUP\tbytes per group (default: 2)\n  -p\tplain hex dump (no offsets, no ASCII)\n  -r\treverse: convert hexdump back to binary\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("xxd (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let (opts, files) = match parse_xxd_args(ctx.args) {
             Ok(v) => v,
             Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),
@@ -519,6 +533,13 @@ fn hexdump_dump(data: &[u8], opts: &HexdumpOptions) -> String {
 #[async_trait]
 impl Builtin for Hexdump {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: hexdump [OPTION]... [FILE]...\nDisplay file contents in hexadecimal.\n\n  -C\tcanonical hex+ASCII display\n  -n LENGTH\tinterpret only LENGTH bytes\n  -s OFFSET\tskip OFFSET bytes from beginning\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("hexdump (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let (opts, files) = match parse_hexdump_args(ctx.args) {
             Ok(v) => v,
             Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),

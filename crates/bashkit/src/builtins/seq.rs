@@ -20,6 +20,13 @@ pub struct Seq;
 #[async_trait]
 impl Builtin for Seq {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: seq [OPTION]... LAST\n  or:  seq [OPTION]... FIRST LAST\n  or:  seq [OPTION]... FIRST INCREMENT LAST\nPrint numbers from FIRST to LAST, in steps of INCREMENT.\n\n  -s STRING\tuse STRING to separate numbers (default: newline)\n  -w\tequalize width by padding with leading zeroes\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("seq (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let mut separator = "\n".to_string();
         let mut equal_width = false;
         let mut nums: Vec<String> = Vec::new();

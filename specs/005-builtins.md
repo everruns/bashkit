@@ -8,6 +8,15 @@ Implemented
 Bashkit provides a comprehensive set of built-in commands for script execution
 in a virtual environment. All builtins operate on the virtual filesystem.
 
+### Standard Flags
+
+All external-style builtins (non-shell-intrinsic commands) support `--help` and
+`--version` flags. The `check_help_version()` helper in `builtins/mod.rs`
+handles `--help` and `--version` (long flags only — short flags `-h`/`-V` are
+not handled by the helper since they have different meanings in many tools like
+`sort -V`, `ls -h`, `grep -h`). Tools where `-h`/`-V` genuinely mean
+help/version (e.g. `jq`) handle them directly in their `execute()` method.
+
 ### Builtin Categories
 
 #### Core Shell Builtins
@@ -86,7 +95,7 @@ execution → $PATH search → "command not found".
 - `grep` - Pattern matching (`-i`, `-v`, `-c`, `-n`, `-o`, `-l`, `-w`, `-E`, `-F`, `-P`, `-q`, `-m`, `-x`, `-A`, `-B`, `-C`, `-e`, `-f`, `-H`, `-h`, `-b`, `-a`, `-z`, `-r`)
 - `sed` - Stream editing (s/pat/repl/, d, p, a, i; `-E`, `-e`, `-i`, `-n`; nth occurrence, `!` negation)
 - `awk` - Text processing (print, -F, variables, `--csv`/`-k`, `\u` Unicode escapes)
-- `jq` - JSON processing (file arguments, `-s`, `-r`, `-c`, `-n`, `-S`, `-e`, `--tab`, `-j`, `--arg`, `--argjson`, `-V`/`--version`, combined short flags)
+- `jq` - JSON processing (file arguments, `-s`, `-r`, `-c`, `-n`, `-S`, `-e`, `--tab`, `-j`, `--arg`, `--argjson`, `-h`/`--help`, `-V`/`--version`, combined short flags)
 - `sort` - Sort lines (`-r`, `-n`, `-u`)
 - `uniq` - Filter duplicates (`-c`, `-d`, `-u`)
 - `cut` - Extract fields (`-d`, `-f`)

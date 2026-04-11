@@ -20,6 +20,13 @@ const MAX_LINES: usize = 10_000;
 #[async_trait]
 impl Builtin for Yes {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: yes [STRING]\nRepeatedly output a line with STRING, or 'y'.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("yes (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
         let text = if ctx.args.is_empty() {
             "y".to_string()
         } else {

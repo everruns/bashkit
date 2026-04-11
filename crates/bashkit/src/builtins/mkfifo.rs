@@ -28,6 +28,14 @@ fn parse_mode(s: &str) -> Option<u32> {
 #[async_trait]
 impl Builtin for Mkfifo {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: mkfifo [OPTION]... NAME...\nCreate named pipes (FIFOs) with the given NAMEs.\n\n  -m MODE\tset file permission bits to MODE (default: 0666)\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            Some("mkfifo (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+
         if ctx.args.is_empty() {
             return Ok(ExecResult::err("mkfifo: missing operand\n".to_string(), 1));
         }
