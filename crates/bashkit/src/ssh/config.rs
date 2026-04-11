@@ -332,7 +332,10 @@ mod tests {
             .trusted_host_key("bastion.example.com", "ssh-rsa BBBB...");
         assert_eq!(config.trusted_host_keys.len(), 2);
         assert_eq!(config.trusted_host_keys[0].host, "db.supabase.co");
-        assert_eq!(config.trusted_host_keys[0].public_key, "ssh-ed25519 AAAA...");
+        assert_eq!(
+            config.trusted_host_keys[0].public_key,
+            "ssh-ed25519 AAAA..."
+        );
         assert_eq!(config.trusted_host_keys[1].host, "bastion.example.com");
     }
 

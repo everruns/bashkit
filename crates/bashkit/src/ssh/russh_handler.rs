@@ -371,8 +371,12 @@ mod tests {
     #[test]
     fn test_russh_handler_default_max_response_bytes() {
         use crate::ssh::config::DEFAULT_MAX_RESPONSE_BYTES;
-        let handler =
-            RusshHandler::new(Duration::from_secs(30), DEFAULT_MAX_RESPONSE_BYTES, true, vec![]);
+        let handler = RusshHandler::new(
+            Duration::from_secs(30),
+            DEFAULT_MAX_RESPONSE_BYTES,
+            true,
+            vec![],
+        );
         assert_eq!(handler.max_response_bytes, 10_000_000);
     }
 
