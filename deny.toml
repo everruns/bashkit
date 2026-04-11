@@ -15,6 +15,7 @@ allow = [
     "Unicode-3.0",            # Unicode License v3 (icu_* crates)
     "CDLA-Permissive-2.0",    # Community Data License Agreement (webpki-root-certs)
     "Unicode-DFS-2016",       # Unicode Data Files and Software License (unicode_names2 via monty/ruff, --all-features only)
+    "BSL-1.0",                # Boost Software License (error-code via clipboard-win via rustyline, Windows-only)
 ]
 
 # Review unclear/dual licenses
