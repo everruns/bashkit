@@ -57,7 +57,6 @@ bashkit --mount-rw /path/to/work   # REPL with real filesystem access
 | COLUMNS/LINES/SHLVL env vars | Implemented | 2 |
 | Feature-gated (`interactive` flag) | Implemented | 3 |
 | Command history (in-memory) | Implemented | 1 |
-| Persistent history file | Implemented (~/.bashkit_history) | 2 |
 
 ### Design
 
@@ -167,6 +166,7 @@ Interactive mode reuses the existing sandbox. No new attack surface:
 |---------|-----------|
 | Job control (`bg`/`fg`/`jobs`) | No real processes — by design |
 | History expansion (`!!`, `!N`) | Complexity vs value tradeoff |
+| Persistent history file | Leaks info across sessions, breaks isolation |
 | `exec` builtin | Excluded for security |
 
 ### Testing

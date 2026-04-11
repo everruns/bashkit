@@ -22,7 +22,6 @@ const DEFAULT_PS1: &str = "\\u@bashkit:\\w\\$ ";
 // PS2 is used by rustyline's Validator as the continuation prompt.
 #[allow(dead_code)]
 const DEFAULT_PS2: &str = "> ";
-const HISTORY_FILE: &str = "/home/user/.bashkit_history";
 const RC_FILE: &str = "/home/user/.bashkitrc";
 const MAX_HISTORY: usize = 1000;
 
@@ -433,9 +432,6 @@ pub async fn run(mut bash: bashkit::Bash) -> Result<i32> {
     let mut editor = Editor::with_config(config)?;
     editor.set_helper(Some(helper));
 
-    // Load history from VFS
-    let _ = editor.load_history(HISTORY_FILE);
-
     let mut last_exit_code: i32 = 0;
 
     loop {
@@ -547,9 +543,6 @@ pub async fn run(mut bash: bashkit::Bash) -> Result<i32> {
 
         last_exit_code = result.exit_code;
     }
-
-    // Save history
-    let _ = editor.save_history(HISTORY_FILE);
 
     Ok(last_exit_code)
 }
