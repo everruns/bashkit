@@ -1914,7 +1914,9 @@ mod nesting_depth_security {
         let limits = ExecutionLimits::new().max_ast_depth(1);
         let mut bash = Bash::builder().limits(limits).build();
 
-        let result = bash.exec("if true; then if true; then echo x; fi; fi").await;
+        let result = bash
+            .exec("if true; then if true; then echo x; fi; fi")
+            .await;
         assert!(
             result.is_err(),
             "max_ast_depth=1 should reject deeply nested compound commands"
