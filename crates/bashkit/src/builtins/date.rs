@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use chrono::format::{Item, StrftimeItems};
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -407,8 +407,9 @@ impl Builtin for Date {
         let dt_utc;
         if let Some(ref file) = ref_file {
             // -r / --reference: stat file to get modification time
-            let path = Path::new(file);
-            match ctx.fs.stat(path).await {
+            // Resolve relative paths against CWD (fix for issue #1225)
+            let path = resolve_path(ctx.cwd, file);
+            match ctx.fs.stat(&path).await {
                 Ok(meta) => {
                     dt_utc = meta.modified.into();
                     epoch_input = false;
