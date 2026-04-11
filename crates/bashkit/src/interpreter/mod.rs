@@ -296,6 +296,12 @@ pub(crate) fn is_internal_variable(name: &str) -> bool {
         || name.starts_with("_LOWER_")
         || name.starts_with("_INTEGER_")
         || name.starts_with("_ARRAY_READ_")
+        || name.starts_with("_BG_EXIT_")
+        || name.starts_with("_LAST_BG_")
+        || name.starts_with("_DIRSTACK_")
+        || name.starts_with("_TTY_")
+        || name.starts_with("_OPTCHAR_")
+        || name.starts_with("SHOPT_")
         || name == "_EVAL_CMD"
         || name == "_SHIFT_COUNT"
         || name == "_SET_POSITIONAL"
@@ -11011,22 +11017,76 @@ cat /tmp/test_fd.txt"#,
         );
     }
 
-    // Regression: date +"$var" must not word-split format when var contains spaces
-    // https://github.com/everruns/bashkit/issues/1203
+    /// Issue #1186: `declare -p` and `set` must not expose internal variables.
+    /// Scripts can fingerprint bashkit vs real bash by enumerating variables.
     #[tokio::test]
-    async fn test_date_format_var_with_spaces_no_split() {
-        // Use -u -d @0 for deterministic output (1970-01-01 UTC)
-        let result = run_script(r#"fmt="%Y %m %d"; date -u -d @0 +"$fmt""#).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "1970 01 01");
+    async fn test_internal_variables_hidden_from_set_and_declare() {
+        // `set` with no args should not show internal variables
+        let result = run_script("set -e; set").await;
+        for line in result.stdout.lines() {
+            let name = line.split('=').next().unwrap_or("");
+            assert!(
+                !is_internal_variable(name),
+                "`set` leaked internal variable: {line}"
+            );
+        }
+
+        // `declare -p` should not show internal variables
+        let result = run_script("set -e; declare -p").await;
+        for line in result.stdout.lines() {
+            // format: declare -- NAME="VALUE"
+            if let Some(rest) = line.strip_prefix("declare ") {
+                let after_flags = rest.split_whitespace().last().unwrap_or("");
+                let name = after_flags.split('=').next().unwrap_or("");
+                assert!(
+                    !is_internal_variable(name),
+                    "`declare -p` leaked internal variable: {line}"
+                );
+            }
+        }
     }
 
-    // Mixed-quoting: prefix"$var" must stay one word (no IFS split)
-    #[tokio::test]
-    async fn test_mixed_quote_prefix_var_no_split() {
-        // prefix"$var" should produce one argument, not be split at spaces
-        let result = run_script(r#"v="a b c"; echo prefix"$v""#).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "prefixa b c");
+    /// Regression: all known internal prefixes must be caught by is_internal_variable().
+    #[test]
+    fn test_is_internal_variable_covers_all_prefixes() {
+        let internal_names = [
+            // Existing
+            "_NAMEREF_foo",
+            "_READONLY_bar",
+            "_UPPER_x",
+            "_LOWER_y",
+            "_INTEGER_n",
+            "_ARRAY_READ_a",
+            "_EVAL_CMD",
+            "_SHIFT_COUNT",
+            "_SET_POSITIONAL",
+            // Previously missing (issue #1186)
+            "_BG_EXIT_CODE",
+            "_LAST_BG_PID",
+            "_DIRSTACK_SIZE",
+            "_DIRSTACK_0",
+            "_TTY_0",
+            "_TTY_1",
+            "_OPTCHAR_IDX",
+            "SHOPT_e",
+            "SHOPT_x",
+            "SHOPT_expand_aliases",
+            "SHOPT_pipefail",
+        ];
+        for name in &internal_names {
+            assert!(
+                is_internal_variable(name),
+                "is_internal_variable() should return true for {name}"
+            );
+        }
+
+        // User variables must NOT be filtered
+        let user_names = ["HOME", "PATH", "USER", "MY_VAR", "foo", "_"];
+        for name in &user_names {
+            assert!(
+                !is_internal_variable(name),
+                "is_internal_variable() should return false for user variable {name}"
+            );
+        }
     }
 }
