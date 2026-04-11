@@ -7,6 +7,9 @@
 // effectively unlimited; timeout is removed (user has Ctrl-C). Memory-guarding
 // limits (function depth, AST depth, parser fuel) are kept.
 // MCP mode keeps the sandboxed defaults since requests come from LLM agents.
+// Decision: interactive mode uses rustyline for line editing — lightweight, MIT,
+// no heavy deps (no SQLite, no crossterm). Multiline via parse error detection.
+// See specs/018-interactive-shell.md
 
 //! Bashkit CLI - Command line interface for virtual bash execution
 //!
@@ -14,8 +17,10 @@
 //!   bashkit -c 'echo hello'        # Execute a command string
 //!   bashkit script.sh              # Execute a script file
 //!   bashkit mcp                    # Run as MCP server
-//!   bashkit                        # Interactive REPL (not yet implemented)
+//!   bashkit                        # Interactive REPL
 
+#[cfg(feature = "interactive")]
+mod interactive;
 mod mcp;
 
 use anyhow::{Context, Result};
@@ -159,6 +164,11 @@ fn build_bash(args: &Args, mode: CliMode) -> bashkit::Bash {
         builder = builder.session_limits(bashkit::SessionLimits::unlimited());
     }
 
+    #[cfg(feature = "interactive")]
+    if mode == CliMode::Interactive {
+        builder = builder.tty(0, true).tty(1, true).tty(2, true);
+    }
+
     builder.build()
 }
 
@@ -233,11 +243,28 @@ fn main() -> Result<()> {
             std::process::exit(output.exit_code);
         }
         CliMode::Interactive => {
-            eprintln!("bashkit: interactive mode not yet implemented");
-            eprintln!("Usage: bashkit -c 'command' or bashkit script.sh or bashkit mcp");
-            std::process::exit(1);
+            #[cfg(feature = "interactive")]
+            {
+                let exit_code = run_interactive(args, mode)?;
+                std::process::exit(exit_code);
+            }
+            #[cfg(not(feature = "interactive"))]
+            {
+                eprintln!("bashkit: interactive mode requires the 'interactive' feature");
+                eprintln!("Rebuild with: cargo build -p bashkit-cli --features interactive");
+                std::process::exit(1);
+            }
         }
     }
+}
+
+#[cfg(feature = "interactive")]
+fn run_interactive(args: Args, mode: CliMode) -> Result<i32> {
+    Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("Failed to build interactive runtime")?
+        .block_on(interactive::run(build_bash(&args, mode)))
 }
 
 fn run_mcp(args: Args, mode: CliMode) -> Result<()> {

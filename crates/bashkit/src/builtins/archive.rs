@@ -594,8 +594,25 @@ async fn extract_tar(
                 }
                 offset = content_end;
             }
+            b'1' => {
+                // Hard link — not supported in VFS
+                verbose_output.push_str(&format!(
+                    "tar: {name}: hard link skipped (not supported in VFS)\n"
+                ));
+                let content_blocks = size.div_ceil(TAR_BLOCK_SIZE);
+                offset += content_blocks * TAR_BLOCK_SIZE;
+            }
+            b'2' => {
+                // Symbolic link — not supported in VFS
+                verbose_output.push_str(&format!(
+                    "tar: {name}: symbolic link skipped (not supported in VFS)\n"
+                ));
+                let content_blocks = size.div_ceil(TAR_BLOCK_SIZE);
+                offset += content_blocks * TAR_BLOCK_SIZE;
+            }
             _ => {
-                // Skip unknown types
+                // Other unsupported types (char/block device, FIFO, contiguous, etc.)
+                verbose_output.push_str(&format!("tar: {name}: unsupported entry type skipped\n"));
                 let content_blocks = size.div_ceil(TAR_BLOCK_SIZE);
                 offset += content_blocks * TAR_BLOCK_SIZE;
             }
@@ -1705,5 +1722,109 @@ mod tests {
 
         let content = fs.read_file(&cwd.join("subdir/file.txt")).await.unwrap();
         assert_eq!(content, b"safe content");
+    }
+
+    /// Build a tar archive with a single entry of the given type flag.
+    fn build_tar_with_typed_entry(name: &str, type_flag: u8) -> Vec<u8> {
+        let mut output = Vec::new();
+        let mut header = [0u8; 512];
+
+        let name_bytes = name.as_bytes();
+        let name_len = name_bytes.len().min(100);
+        header[..name_len].copy_from_slice(&name_bytes[..name_len]);
+
+        header[100..108].copy_from_slice(b"0000644\0"); // mode
+        header[108..116].copy_from_slice(b"0001000\0"); // uid
+        header[116..124].copy_from_slice(b"0001000\0"); // gid
+        header[124..136].copy_from_slice(b"00000000000\0"); // size = 0
+        header[136..148].copy_from_slice(b"00000000000\0"); // mtime
+        header[148..156].copy_from_slice(b"        "); // checksum placeholder
+        header[156] = type_flag;
+        header[257..263].copy_from_slice(b"ustar ");
+        header[263..265].copy_from_slice(b" \0");
+
+        let checksum: u32 = header.iter().map(|&b| b as u32).sum();
+        let cksum_str = format!("{:06o}\0 ", checksum);
+        header[148..156].copy_from_slice(cksum_str.as_bytes());
+
+        output.extend_from_slice(&header);
+        output.extend_from_slice(&[0u8; 1024]); // end-of-archive
+        output
+    }
+
+    #[tokio::test]
+    async fn test_tar_extract_symlink_warning() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let tar = build_tar_with_typed_entry("evil-link", b'2');
+        fs.write_file(&cwd.join("symlink.tar"), &tar).await.unwrap();
+
+        let args = vec!["-xf".to_string(), "symlink.tar".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+
+        let result = Tar.execute(ctx).await.unwrap();
+
+        // Extraction succeeds but warns on stderr
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result
+                .stderr
+                .contains("symbolic link skipped (not supported in VFS)"),
+            "expected symlink warning, got: {}",
+            result.stderr,
+        );
+
+        // Symlink must NOT be created as a file
+        assert!(!fs.exists(&cwd.join("evil-link")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_tar_extract_hardlink_warning() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let tar = build_tar_with_typed_entry("hard-link", b'1');
+        fs.write_file(&cwd.join("hardlink.tar"), &tar)
+            .await
+            .unwrap();
+
+        let args = vec!["-xf".to_string(), "hardlink.tar".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+
+        let result = Tar.execute(ctx).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result
+                .stderr
+                .contains("hard link skipped (not supported in VFS)"),
+            "expected hard link warning, got: {}",
+            result.stderr,
+        );
+        assert!(!fs.exists(&cwd.join("hard-link")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_tar_extract_unsupported_type_warning() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        // b'3' = character device
+        let tar = build_tar_with_typed_entry("chardev", b'3');
+        fs.write_file(&cwd.join("chardev.tar"), &tar).await.unwrap();
+
+        let args = vec!["-xf".to_string(), "chardev.tar".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+
+        let result = Tar.execute(ctx).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result.stderr.contains("unsupported entry type skipped"),
+            "expected unsupported type warning, got: {}",
+            result.stderr,
+        );
+        assert!(!fs.exists(&cwd.join("chardev")).await.unwrap());
     }
 }

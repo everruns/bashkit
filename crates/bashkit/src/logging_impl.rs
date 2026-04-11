@@ -125,8 +125,16 @@ impl LogConfig {
     /// # Warning
     ///
     /// This may expose secrets in logs. Only use in trusted debugging environments.
+    /// Requires `BASHKIT_UNSAFE_LOGGING=1` environment variable; otherwise this is a no-op.
     pub fn unsafe_disable_redaction(mut self) -> Self {
-        self.redact_sensitive = false;
+        if std::env::var("BASHKIT_UNSAFE_LOGGING").as_deref() == Ok("1") {
+            eprintln!("WARNING: Log redaction disabled — secrets may appear in logs");
+            self.redact_sensitive = false;
+        } else {
+            eprintln!(
+                "WARNING: unsafe_disable_redaction() ignored — set BASHKIT_UNSAFE_LOGGING=1 to enable"
+            );
+        }
         self
     }
 
@@ -141,8 +149,16 @@ impl LogConfig {
     /// # Warning
     ///
     /// Scripts may contain embedded secrets, credentials, or sensitive data.
+    /// Requires `BASHKIT_UNSAFE_LOGGING=1` environment variable; otherwise this is a no-op.
     pub fn unsafe_log_scripts(mut self) -> Self {
-        self.log_script_content = true;
+        if std::env::var("BASHKIT_UNSAFE_LOGGING").as_deref() == Ok("1") {
+            eprintln!("WARNING: Script content logging enabled — secrets may appear in logs");
+            self.log_script_content = true;
+        } else {
+            eprintln!(
+                "WARNING: unsafe_log_scripts() ignored — set BASHKIT_UNSAFE_LOGGING=1 to enable"
+            );
+        }
         self
     }
 
@@ -411,9 +427,11 @@ mod tests {
         assert!(formatted.contains("2 lines"));
         assert!(!formatted.contains("echo"));
 
-        // With unsafe flag: log content
-        let config = config.unsafe_log_scripts();
+        // With unsafe flag: log content (requires env var)
+        unsafe { std::env::set_var("BASHKIT_UNSAFE_LOGGING", "1") };
+        let config = LogConfig::new().unsafe_log_scripts();
         let formatted = format_script_for_log(script, &config);
+        unsafe { std::env::remove_var("BASHKIT_UNSAFE_LOGGING") };
         assert!(formatted.contains("echo"));
     }
 
@@ -428,13 +446,35 @@ mod tests {
 
     #[test]
     fn test_disabled_redaction() {
+        unsafe { std::env::set_var("BASHKIT_UNSAFE_LOGGING", "1") };
         let config = LogConfig::new().unsafe_disable_redaction();
+        unsafe { std::env::remove_var("BASHKIT_UNSAFE_LOGGING") };
 
         // Should not redact when disabled
         assert!(!config.should_redact_env("PASSWORD"));
         assert_eq!(
             config.redact_url("https://user:pass@example.com").as_ref(),
             "https://user:pass@example.com"
+        );
+    }
+
+    #[test]
+    fn test_unsafe_methods_noop_without_env() {
+        // Ensure env var is NOT set
+        unsafe { std::env::remove_var("BASHKIT_UNSAFE_LOGGING") };
+
+        // unsafe_disable_redaction should be a no-op
+        let config = LogConfig::new().unsafe_disable_redaction();
+        assert!(
+            config.redact_sensitive,
+            "redact_sensitive should remain true without BASHKIT_UNSAFE_LOGGING=1"
+        );
+
+        // unsafe_log_scripts should be a no-op
+        let config = LogConfig::new().unsafe_log_scripts();
+        assert!(
+            !config.log_script_content,
+            "log_script_content should remain false without BASHKIT_UNSAFE_LOGGING=1"
         );
     }
 }

@@ -258,6 +258,53 @@ mod internal_variable_leak {
             result.stdout.trim()
         );
     }
+
+    /// TM-INF-017: `set` must not expose SHOPT_ internal variables.
+    #[tokio::test]
+    async fn security_audit_set_hides_shopt_vars() {
+        let mut bash = Bash::builder().build();
+
+        // Enable some shell options so SHOPT_ vars exist internally
+        let result = bash
+            .exec(
+                r#"
+                set -e
+                set -o pipefail
+                set | grep -E "^SHOPT_"
+            "#,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            result.stdout.trim().is_empty(),
+            "`set` must filter SHOPT_ internal variables from output. Got:\n{}",
+            result.stdout.trim()
+        );
+    }
+
+    /// TM-INF-017: `declare -p` must not expose SHOPT_ internal variables.
+    #[tokio::test]
+    async fn security_audit_declare_p_hides_shopt_vars() {
+        let mut bash = Bash::builder().build();
+
+        let result = bash
+            .exec(
+                r#"
+                set -e
+                set -o pipefail
+                declare -p | grep -E "SHOPT_"
+            "#,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            result.stdout.trim().is_empty(),
+            "`declare -p` must filter SHOPT_ internal variables. Got:\n{}",
+            result.stdout.trim()
+        );
+    }
 }
 
 // =============================================================================
