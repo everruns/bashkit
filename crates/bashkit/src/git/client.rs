@@ -181,12 +181,13 @@ impl GitClient {
                 continue;
             }
 
-            // Check for key = value in the right section
+            // Check for key = value in the right section.
+            // Sanitize returned value to strip control characters (TM-GIT-015).
             if in_section
                 && let Some((k, v)) = line.split_once('=')
                 && k.trim().to_lowercase() == name
             {
-                return Ok(Some(v.trim().to_string()));
+                return Ok(Some(super::sanitize_git_output(v.trim())));
             }
         }
 
@@ -640,12 +641,18 @@ impl GitClient {
     }
 
     /// Format git log output.
+    ///
+    /// Author names and commit messages are sanitized to strip control
+    /// characters (TM-GIT-015).
     pub fn format_log(&self, entries: &[GitLogEntry]) -> String {
         let mut output = String::new();
 
         for entry in entries {
             output.push_str(&format!("commit {}\n", entry.hash));
-            output.push_str(&format!("Author: {}\n", entry.author));
+            output.push_str(&format!(
+                "Author: {}\n",
+                super::sanitize_git_output(&entry.author)
+            ));
 
             // Format timestamp
             if let Some(dt) = chrono::DateTime::from_timestamp(entry.timestamp, 0) {
@@ -656,7 +663,8 @@ impl GitClient {
             }
 
             output.push('\n');
-            for line in entry.message.lines() {
+            let sanitized_msg = super::sanitize_git_output(&entry.message);
+            for line in sanitized_msg.lines() {
                 output.push_str(&format!("    {}\n", line));
             }
             output.push('\n');
@@ -666,16 +674,25 @@ impl GitClient {
     }
 
     /// Format git status output.
+    ///
+    /// Branch names and file paths are sanitized to strip control
+    /// characters (TM-GIT-015).
     pub fn format_status(&self, status: &GitStatus) -> String {
         let mut output = String::new();
 
-        output.push_str(&format!("On branch {}\n", status.branch));
+        output.push_str(&format!(
+            "On branch {}\n",
+            super::sanitize_git_output(&status.branch)
+        ));
 
         if !status.staged.is_empty() {
             output.push_str("\nChanges to be committed:\n");
             output.push_str("  (use \"git restore --staged <file>...\" to unstage)\n");
             for file in &status.staged {
-                output.push_str(&format!("\tnew file:   {}\n", file));
+                output.push_str(&format!(
+                    "\tnew file:   {}\n",
+                    super::sanitize_git_output(file)
+                ));
             }
         }
 
@@ -683,7 +700,10 @@ impl GitClient {
             output.push_str("\nChanges not staged for commit:\n");
             output.push_str("  (use \"git add <file>...\" to update what will be committed)\n");
             for file in &status.modified {
-                output.push_str(&format!("\tmodified:   {}\n", file));
+                output.push_str(&format!(
+                    "\tmodified:   {}\n",
+                    super::sanitize_git_output(file)
+                ));
             }
         }
 
@@ -691,7 +711,7 @@ impl GitClient {
             output.push_str("\nUntracked files:\n");
             output.push_str("  (use \"git add <file>...\" to include in what will be committed)\n");
             for file in &status.untracked {
-                output.push_str(&format!("\t{}\n", file));
+                output.push_str(&format!("\t{}\n", super::sanitize_git_output(file)));
             }
         }
 
@@ -1247,13 +1267,16 @@ impl GitClient {
     }
 
     /// Format branch list output.
+    ///
+    /// Branch names are sanitized to strip control characters (TM-GIT-015).
     pub fn format_branch_list(&self, branches: &[Branch]) -> String {
         let mut output = String::new();
         for branch in branches {
+            let name = super::sanitize_git_output(&branch.name);
             if branch.current {
-                output.push_str(&format!("* {}\n", branch.name));
+                output.push_str(&format!("* {}\n", name));
             } else {
-                output.push_str(&format!("  {}\n", branch.name));
+                output.push_str(&format!("  {}\n", name));
             }
         }
         output
@@ -1292,7 +1315,10 @@ impl GitClient {
             let file_path = repo_path.join(path);
             if fs.exists(&file_path).await? {
                 let content = fs.read_file(&file_path).await?;
-                return Ok(String::from_utf8_lossy(&content).to_string());
+                // Sanitize file content from VFS (TM-GIT-015)
+                return Ok(super::sanitize_git_output(&String::from_utf8_lossy(
+                    &content,
+                )));
             }
             return Err(Error::Internal(format!(
                 "fatal: path '{}' does not exist",
@@ -1401,9 +1427,13 @@ impl GitClient {
                         let head_content = fs.read_file(&git_dir.join("HEAD")).await?;
                         let head = String::from_utf8_lossy(&head_content);
                         if let Some(branch) = head.trim().strip_prefix("ref: refs/heads/") {
-                            output.push_str(&format!("{}\n", branch));
+                            // Sanitize branch name from HEAD ref (TM-GIT-015)
+                            output.push_str(&format!("{}\n", super::sanitize_git_output(branch)));
                         } else {
-                            output.push_str(&format!("{}\n", head.trim()));
+                            output.push_str(&format!(
+                                "{}\n",
+                                super::sanitize_git_output(head.trim())
+                            ));
                         }
                     }
                 }
@@ -1415,15 +1445,18 @@ impl GitClient {
                         let ref_path = git_dir.join(format!("refs/heads/{}", branch));
                         if fs.exists(&ref_path).await? {
                             let hash = fs.read_file(&ref_path).await?;
-                            output
-                                .push_str(&format!("{}\n", String::from_utf8_lossy(&hash).trim()));
+                            // Sanitize hash read from ref file (TM-GIT-015)
+                            output.push_str(&format!(
+                                "{}\n",
+                                super::sanitize_git_output(String::from_utf8_lossy(&hash).trim())
+                            ));
                         } else {
                             return Err(Error::Internal(
                                 "fatal: ambiguous argument 'HEAD': unknown revision".to_string(),
                             ));
                         }
                     } else {
-                        output.push_str(&format!("{}\n", head.trim()));
+                        output.push_str(&format!("{}\n", super::sanitize_git_output(head.trim())));
                     }
                 }
                 arg => {
@@ -1431,7 +1464,11 @@ impl GitClient {
                     let ref_path = git_dir.join(format!("refs/heads/{}", arg));
                     if fs.exists(&ref_path).await? {
                         let hash = fs.read_file(&ref_path).await?;
-                        output.push_str(&format!("{}\n", String::from_utf8_lossy(&hash).trim()));
+                        // Sanitize hash read from ref file (TM-GIT-015)
+                        output.push_str(&format!(
+                            "{}\n",
+                            super::sanitize_git_output(String::from_utf8_lossy(&hash).trim())
+                        ));
                     } else {
                         return Err(Error::Internal(format!(
                             "fatal: ambiguous argument '{}': unknown revision",
@@ -1576,7 +1613,13 @@ impl GitClient {
             let content = String::from_utf8_lossy(&content);
             for (i, line) in content.lines().enumerate() {
                 if line.contains(pattern) {
-                    output.push_str(&format!("{}:{}:{}\n", file, i + 1, line));
+                    // Sanitize file path and line content (TM-GIT-015)
+                    output.push_str(&format!(
+                        "{}:{}:{}\n",
+                        super::sanitize_git_output(file),
+                        i + 1,
+                        super::sanitize_git_output(line)
+                    ));
                 }
             }
         }
