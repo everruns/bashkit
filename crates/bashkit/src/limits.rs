@@ -143,28 +143,40 @@ impl ExecutionLimits {
         }
     }
 
-    /// Set maximum command count
+    /// Set maximum command count.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_commands(mut self, count: usize) -> Self {
-        self.max_commands = count;
+        if count > 0 {
+            self.max_commands = count;
+        }
         self
     }
 
-    /// Set maximum loop iterations (per-loop)
+    /// Set maximum loop iterations (per-loop).
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_loop_iterations(mut self, count: usize) -> Self {
-        self.max_loop_iterations = count;
+        if count > 0 {
+            self.max_loop_iterations = count;
+        }
         self
     }
 
     /// Set maximum total loop iterations (across all nested/sequential loops).
     /// Prevents TM-DOS-018 nested loop multiplication.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_total_loop_iterations(mut self, count: usize) -> Self {
-        self.max_total_loop_iterations = count;
+        if count > 0 {
+            self.max_total_loop_iterations = count;
+        }
         self
     }
 
-    /// Set maximum function depth
+    /// Set maximum function depth.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_function_depth(mut self, depth: usize) -> Self {
-        self.max_function_depth = depth;
+        if depth > 0 {
+            self.max_function_depth = depth;
+        }
         self
     }
 
@@ -180,39 +192,57 @@ impl ExecutionLimits {
         self
     }
 
-    /// Set maximum input script size in bytes
+    /// Set maximum input script size in bytes.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_input_bytes(mut self, bytes: usize) -> Self {
-        self.max_input_bytes = bytes;
+        if bytes > 0 {
+            self.max_input_bytes = bytes;
+        }
         self
     }
 
-    /// Set maximum AST nesting depth
+    /// Set maximum AST nesting depth.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_ast_depth(mut self, depth: usize) -> Self {
-        self.max_ast_depth = depth;
+        if depth > 0 {
+            self.max_ast_depth = depth;
+        }
         self
     }
 
-    /// Set maximum parser operations
+    /// Set maximum parser operations.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_parser_operations(mut self, ops: usize) -> Self {
-        self.max_parser_operations = ops;
+        if ops > 0 {
+            self.max_parser_operations = ops;
+        }
         self
     }
 
-    /// Set maximum stdout capture size in bytes
+    /// Set maximum stdout capture size in bytes.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_stdout_bytes(mut self, bytes: usize) -> Self {
-        self.max_stdout_bytes = bytes;
+        if bytes > 0 {
+            self.max_stdout_bytes = bytes;
+        }
         self
     }
 
-    /// Set maximum stderr capture size in bytes
+    /// Set maximum stderr capture size in bytes.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_stderr_bytes(mut self, bytes: usize) -> Self {
-        self.max_stderr_bytes = bytes;
+        if bytes > 0 {
+            self.max_stderr_bytes = bytes;
+        }
         self
     }
 
     /// Set maximum command substitution nesting depth.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_subst_depth(mut self, depth: usize) -> Self {
-        self.max_subst_depth = depth;
+        if depth > 0 {
+            self.max_subst_depth = depth;
+        }
         self
     }
 
@@ -265,14 +295,20 @@ impl SessionLimits {
     }
 
     /// Set maximum total commands across all exec() calls.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_total_commands(mut self, count: u64) -> Self {
-        self.max_total_commands = count;
+        if count > 0 {
+            self.max_total_commands = count;
+        }
         self
     }
 
     /// Set maximum number of exec() invocations.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_exec_calls(mut self, count: u64) -> Self {
-        self.max_exec_calls = count;
+        if count > 0 {
+            self.max_exec_calls = count;
+        }
         self
     }
 
@@ -576,32 +612,47 @@ impl MemoryLimits {
     }
 
     /// Set maximum variable count.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_variable_count(mut self, count: usize) -> Self {
-        self.max_variable_count = count;
+        if count > 0 {
+            self.max_variable_count = count;
+        }
         self
     }
 
     /// Set maximum total variable bytes.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_total_variable_bytes(mut self, bytes: usize) -> Self {
-        self.max_total_variable_bytes = bytes;
+        if bytes > 0 {
+            self.max_total_variable_bytes = bytes;
+        }
         self
     }
 
     /// Set maximum array entries.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_array_entries(mut self, count: usize) -> Self {
-        self.max_array_entries = count;
+        if count > 0 {
+            self.max_array_entries = count;
+        }
         self
     }
 
     /// Set maximum function count.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_function_count(mut self, count: usize) -> Self {
-        self.max_function_count = count;
+        if count > 0 {
+            self.max_function_count = count;
+        }
         self
     }
 
     /// Set maximum function body bytes.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
     pub fn max_function_body_bytes(mut self, bytes: usize) -> Self {
-        self.max_function_body_bytes = bytes;
+        if bytes > 0 {
+            self.max_function_body_bytes = bytes;
+        }
         self
     }
 
@@ -932,5 +983,95 @@ mod tests {
 
         // Should be able to tick commands again
         assert!(counters.tick_command(&limits).is_ok());
+    }
+
+    #[test]
+    fn test_zero_limit_uses_default() {
+        let defaults = ExecutionLimits::default();
+        let limits = ExecutionLimits::default()
+            .max_commands(0)
+            .max_loop_iterations(0)
+            .max_total_loop_iterations(0)
+            .max_function_depth(0)
+            .max_input_bytes(0)
+            .max_ast_depth(0)
+            .max_parser_operations(0)
+            .max_stdout_bytes(0)
+            .max_stderr_bytes(0)
+            .max_subst_depth(0);
+
+        assert_eq!(limits.max_commands, defaults.max_commands);
+        assert_eq!(limits.max_loop_iterations, defaults.max_loop_iterations);
+        assert_eq!(
+            limits.max_total_loop_iterations,
+            defaults.max_total_loop_iterations
+        );
+        assert_eq!(limits.max_function_depth, defaults.max_function_depth);
+        assert_eq!(limits.max_input_bytes, defaults.max_input_bytes);
+        assert_eq!(limits.max_ast_depth, defaults.max_ast_depth);
+        assert_eq!(limits.max_parser_operations, defaults.max_parser_operations);
+        assert_eq!(limits.max_stdout_bytes, defaults.max_stdout_bytes);
+        assert_eq!(limits.max_stderr_bytes, defaults.max_stderr_bytes);
+        assert_eq!(limits.max_subst_depth, defaults.max_subst_depth);
+    }
+
+    #[test]
+    fn test_nonzero_limit_works() {
+        let limits = ExecutionLimits::default()
+            .max_commands(5)
+            .max_loop_iterations(7)
+            .max_total_loop_iterations(42)
+            .max_function_depth(3)
+            .max_input_bytes(1024)
+            .max_ast_depth(10)
+            .max_parser_operations(500)
+            .max_stdout_bytes(2048)
+            .max_stderr_bytes(4096)
+            .max_subst_depth(8);
+
+        assert_eq!(limits.max_commands, 5);
+        assert_eq!(limits.max_loop_iterations, 7);
+        assert_eq!(limits.max_total_loop_iterations, 42);
+        assert_eq!(limits.max_function_depth, 3);
+        assert_eq!(limits.max_input_bytes, 1024);
+        assert_eq!(limits.max_ast_depth, 10);
+        assert_eq!(limits.max_parser_operations, 500);
+        assert_eq!(limits.max_stdout_bytes, 2048);
+        assert_eq!(limits.max_stderr_bytes, 4096);
+        assert_eq!(limits.max_subst_depth, 8);
+    }
+
+    #[test]
+    fn test_session_limits_zero_uses_default() {
+        let defaults = SessionLimits::default();
+        let limits = SessionLimits::default()
+            .max_total_commands(0)
+            .max_exec_calls(0);
+
+        assert_eq!(limits.max_total_commands, defaults.max_total_commands);
+        assert_eq!(limits.max_exec_calls, defaults.max_exec_calls);
+    }
+
+    #[test]
+    fn test_memory_limits_zero_uses_default() {
+        let defaults = MemoryLimits::default();
+        let limits = MemoryLimits::default()
+            .max_variable_count(0)
+            .max_total_variable_bytes(0)
+            .max_array_entries(0)
+            .max_function_count(0)
+            .max_function_body_bytes(0);
+
+        assert_eq!(limits.max_variable_count, defaults.max_variable_count);
+        assert_eq!(
+            limits.max_total_variable_bytes,
+            defaults.max_total_variable_bytes
+        );
+        assert_eq!(limits.max_array_entries, defaults.max_array_entries);
+        assert_eq!(limits.max_function_count, defaults.max_function_count);
+        assert_eq!(
+            limits.max_function_body_bytes,
+            defaults.max_function_body_bytes
+        );
     }
 }
