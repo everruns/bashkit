@@ -149,8 +149,16 @@ fn parse_base_date(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTime<
     }
 
     // Try RFC 2822: "Mon, 06 Apr 2026 12:00:00 +0000"
+    // GNU date ignores incorrect day-of-week, so if strict parsing fails we
+    // strip the DOW prefix and retry — chrono validates DOW strictly.
     if let Ok(dt) = DateTime::parse_from_rfc2822(s) {
         return Ok(dt.with_timezone(&Utc));
+    }
+    if let Some((_, rest)) = s.split_once(", ") {
+        // Parse the date/time/tz portion directly, bypassing DOW validation.
+        if let Ok(dt) = DateTime::parse_from_str(rest.trim(), "%d %b %Y %H:%M:%S %z") {
+            return Ok(dt.with_timezone(&Utc));
+        }
     }
 
     // Try RFC 3339 / ISO 8601 with timezone: "2024-01-15T12:00:00+00:00"
@@ -837,6 +845,14 @@ mod tests {
         let result = run_date(&["+%s", "--date=Wed, 01 Jan 2020 00:00:00 +0000"]).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "1577836800");
+    }
+
+    #[tokio::test]
+    async fn test_date_parse_rfc2822_mismatched_dow() {
+        // April 11, 2026 is Saturday, not Thursday — GNU date ignores wrong DOW
+        let result = run_date(&["+%Y-%m-%d", "--date=Thu, 11 Apr 2026 12:00:00 +0000"]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "2026-04-11");
     }
 
     #[tokio::test]
