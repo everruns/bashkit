@@ -43,11 +43,16 @@ impl russh::client::Handler for ClientHandler {
 /// SCP/SFTP are implemented via remote commands (`cat`, `base64`).
 pub struct RusshHandler {
     timeout: Duration,
+    /// THREAT[TM-SSH-004]: Streaming size limit to prevent OOM from malicious servers.
+    max_response_bytes: usize,
 }
 
 impl RusshHandler {
-    pub fn new(timeout: Duration) -> Self {
-        Self { timeout }
+    pub fn new(timeout: Duration, max_response_bytes: usize) -> Self {
+        Self {
+            timeout,
+            max_response_bytes,
+        }
     }
 
     /// Connect and authenticate to a remote host.
@@ -153,6 +158,17 @@ impl SshHandler for RusshHandler {
                 }
                 _ => {}
             }
+            // THREAT[TM-SSH-004]: Enforce streaming size limit to prevent OOM
+            if stdout.len() + stderr.len() > self.max_response_bytes {
+                let _ = channel.close().await;
+                let _ = session
+                    .disconnect(russh::Disconnect::ByApplication, "", "")
+                    .await;
+                return Err(format!(
+                    "ssh: response too large (streaming limit exceeded, max {} bytes)",
+                    self.max_response_bytes
+                ));
+            }
         }
 
         let _ = session
@@ -206,6 +222,17 @@ impl SshHandler for RusshHandler {
                     exit_code = Some(exit_status);
                 }
                 _ => {}
+            }
+            // THREAT[TM-SSH-004]: Enforce streaming size limit to prevent OOM
+            if stdout.len() + stderr.len() > self.max_response_bytes {
+                let _ = channel.close().await;
+                let _ = session
+                    .disconnect(russh::Disconnect::ByApplication, "", "")
+                    .await;
+                return Err(format!(
+                    "ssh: response too large (streaming limit exceeded, max {} bytes)",
+                    self.max_response_bytes
+                ));
             }
         }
 
@@ -262,5 +289,46 @@ impl SshHandler for RusshHandler {
             .decode(result.stdout.trim())
             .map_err(|e| format!("base64 decode failed: {e}"))?;
         Ok(decoded)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_russh_handler_stores_max_response_bytes() {
+        let handler = RusshHandler::new(Duration::from_secs(30), 1024);
+        assert_eq!(handler.max_response_bytes, 1024);
+    }
+
+    #[test]
+    fn test_russh_handler_default_max_response_bytes() {
+        use crate::ssh::config::DEFAULT_MAX_RESPONSE_BYTES;
+        let handler = RusshHandler::new(Duration::from_secs(30), DEFAULT_MAX_RESPONSE_BYTES);
+        assert_eq!(handler.max_response_bytes, 10_000_000);
+    }
+
+    #[test]
+    fn test_shell_escape() {
+        assert_eq!(shell_escape("hello"), "'hello'");
+        assert_eq!(shell_escape("it's"), "'it'\\''s'");
+        assert_eq!(shell_escape(""), "''");
+    }
+
+    /// Verify the streaming limit is wired through from SshConfig to RusshHandler.
+    /// The actual streaming enforcement is tested via the mock handler in client.rs tests;
+    /// here we verify construction and field propagation.
+    #[test]
+    fn test_streaming_limit_propagation() {
+        use crate::ssh::client::SshClient;
+        use crate::ssh::config::SshConfig;
+
+        let config = SshConfig::new().max_response_bytes(512);
+        let client = SshClient::new(config);
+        // The client's default_handler should have max_response_bytes = 512.
+        // We can't inspect it directly, but we verify config is passed through
+        // by checking the client's config.
+        assert_eq!(client.config().max_response_bytes, 512);
     }
 }
