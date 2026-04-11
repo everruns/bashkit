@@ -14,6 +14,7 @@ use rustyline::hint::{Hint, Hinter};
 use rustyline::validate::Validator;
 use rustyline::{Config, Context, Editor, Helper};
 use std::borrow::Cow;
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -505,9 +506,11 @@ pub async fn run(mut bash: bashkit::Bash) -> Result<i32> {
                     Box::new(|stdout, stderr| {
                         if !stdout.is_empty() {
                             print!("{stdout}");
+                            let _ = std::io::stdout().flush();
                         }
                         if !stderr.is_empty() {
                             eprint!("{stderr}");
+                            let _ = std::io::stderr().flush();
                         }
                     }),
                 )
@@ -732,6 +735,36 @@ mod tests {
         let mut bash = test_bash();
         let result = bash.exec("[ -t 0 ] && echo yes || echo no").await.unwrap();
         assert_eq!(result.stdout, "yes\n");
+    }
+
+    #[tokio::test]
+    async fn clear_command_streams_ansi_escape_codes() {
+        let mut bash = test_bash();
+        let chunks: Arc<std::sync::Mutex<Vec<String>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let chunks_cb = chunks.clone();
+        let result = bash
+            .exec_streaming(
+                "clear",
+                Box::new(move |stdout, _stderr| {
+                    if !stdout.is_empty() {
+                        chunks_cb.lock().unwrap().push(stdout.to_string());
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        let collected = chunks.lock().unwrap();
+        let output: String = collected.iter().cloned().collect();
+        assert!(
+            output.contains("\x1b[2J"),
+            "clear should emit ESC[2J: {output:?}"
+        );
+        assert!(
+            output.contains("\x1b[H"),
+            "clear should emit ESC[H: {output:?}"
+        );
     }
 
     #[tokio::test]
