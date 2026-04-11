@@ -39,7 +39,7 @@ impl SshClient {
     /// Uses the default `russh`-based transport. Override with
     /// [`set_handler`](Self::set_handler) for custom transports.
     pub fn new(config: SshConfig) -> Self {
-        let default_handler = RusshHandler::new(config.timeout);
+        let default_handler = RusshHandler::new(config.timeout, config.max_response_bytes);
         Self {
             config,
             handler: None,
