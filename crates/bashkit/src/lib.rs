@@ -694,6 +694,10 @@ impl Bash {
             };
         #[cfg(target_family = "wasm")]
         let result = self.interpreter.execute(&ast).await;
+        // Issue #1184: clean up process substitution temp files after execution.
+        // Done here (outside Interpreter::execute) to avoid increasing the
+        // recursive async state machine size which causes stack overflow.
+        self.interpreter.cleanup_proc_sub_files().await;
         let duration_ms = exec_start.elapsed().as_millis() as u64;
 
         // Record history entry for each line of the script
@@ -4851,6 +4855,7 @@ done"#,
     }
 
     #[tokio::test]
+    #[cfg(feature = "jq")]
     async fn test_text_file_json() {
         let mut bash = Bash::builder()
             .mount_text("/data/users.json", r#"["alice", "bob", "charlie"]"#)

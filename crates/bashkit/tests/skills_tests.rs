@@ -320,6 +320,7 @@ async fn exec_azure_generate_url() {
 /// azure query_capacity.sh — tests: set -euo pipefail, ${1:?}, ${2:-},
 /// if/elif, variable expansion, printf, brace expansion {1..60}, for loop
 #[tokio::test]
+#[cfg(feature = "jq")]
 async fn exec_azure_query_capacity() {
     let script = read_fixture("azure_query_capacity.sh");
     let mut bash = bash_with_stubs();
@@ -598,6 +599,7 @@ async fn exec_jwt_test_setup() {
 /// set -euo pipefail, inline python3 -c with heredoc-like embedding,
 /// jq with --arg, sort -u, for loop over command substitution
 #[tokio::test]
+#[cfg(feature = "jq")]
 async fn exec_azure_discover_rank() {
     let script = read_fixture("azure_discover_rank.sh");
     let mut bash = bash_with_stubs();

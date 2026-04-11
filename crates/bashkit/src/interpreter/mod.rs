@@ -1181,6 +1181,20 @@ impl Interpreter {
         self.execute_script_body(script, true).await
     }
 
+    /// Clean up process substitution temp files (`/dev/fd/proc_sub_*`).
+    /// Called from Bash::exec() after execute() returns, outside the
+    /// recursive async call chain to avoid increasing stack frame size.
+    pub(crate) async fn cleanup_proc_sub_files(&self) {
+        if let Ok(entries) = self.fs.read_dir(Path::new("/dev/fd")).await {
+            for entry in entries {
+                if entry.name.starts_with("proc_sub_") {
+                    let p = format!("/dev/fd/{}", entry.name);
+                    let _ = self.fs.remove(Path::new(&p), false).await;
+                }
+            }
+        }
+    }
+
     /// Inner script execution — runs commands without resetting counters.
     /// Used by `execute_source` to preserve function/source depth tracking.
     /// `run_exit_trap`: only the top-level `execute` runs the EXIT trap.
@@ -11052,5 +11066,79 @@ cat /tmp/test_fd.txt"#,
         let result = run_script(r#"v="a b c"; echo prefix"$v""#).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "prefixa b c");
+    }
+
+    /// Issue #1184: input process substitution temp files must be cleaned up
+    #[tokio::test]
+    async fn test_proc_sub_input_cleanup() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+
+        let parser = Parser::new(r#"for i in 1 2 3 4 5; do cat <(echo "hello $i"); done"#);
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        interp.cleanup_proc_sub_files().await;
+
+        if let Ok(entries) = fs.read_dir(Path::new("/dev/fd")).await {
+            let leaked: Vec<_> = entries
+                .iter()
+                .filter(|e| e.name.starts_with("proc_sub_"))
+                .collect();
+            assert!(
+                leaked.is_empty(),
+                "proc_sub files leaked in /dev/fd: {:?}",
+                leaked.iter().map(|e| &e.name).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Issue #1184: output process substitution temp files must be cleaned up
+    #[tokio::test]
+    async fn test_proc_sub_output_cleanup() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+
+        let parser = Parser::new(r#"for i in 1 2 3; do echo "data $i" > >(cat); done"#);
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        interp.cleanup_proc_sub_files().await;
+
+        if let Ok(entries) = fs.read_dir(Path::new("/dev/fd")).await {
+            let leaked: Vec<_> = entries
+                .iter()
+                .filter(|e| e.name.starts_with("proc_sub_"))
+                .collect();
+            assert!(
+                leaked.is_empty(),
+                "proc_sub files leaked in /dev/fd: {:?}",
+                leaked.iter().map(|e| &e.name).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Issue #1184: cleanup happens even when command fails
+    #[tokio::test]
+    async fn test_proc_sub_cleanup_on_failure() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+
+        let parser = Parser::new(r#"cat <(echo "data") && false; true"#);
+        let ast = parser.parse().unwrap();
+        let _result = interp.execute(&ast).await.unwrap();
+        interp.cleanup_proc_sub_files().await;
+
+        if let Ok(entries) = fs.read_dir(Path::new("/dev/fd")).await {
+            let leaked: Vec<_> = entries
+                .iter()
+                .filter(|e| e.name.starts_with("proc_sub_"))
+                .collect();
+            assert!(
+                leaked.is_empty(),
+                "proc_sub files leaked after failed command: {:?}",
+                leaked.iter().map(|e| &e.name).collect::<Vec<_>>()
+            );
+        }
     }
 }
