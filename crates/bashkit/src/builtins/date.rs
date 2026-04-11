@@ -6,7 +6,6 @@
 //! caught and return graceful errors.
 
 use std::fmt::Write;
-use std::path::Path;
 
 use async_trait::async_trait;
 use chrono::format::{Item, StrftimeItems};
