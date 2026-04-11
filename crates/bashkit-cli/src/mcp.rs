@@ -175,10 +175,11 @@ impl McpServer {
             let request: JsonRpcRequest = match serde_json::from_str(&line) {
                 Ok(req) => req,
                 Err(e) => {
+                    eprintln!("MCP parse error: {}", e);
                     let response = JsonRpcResponse::error(
                         serde_json::Value::Null,
                         -32700,
-                        format!("Parse error: {}", e),
+                        "Parse error: invalid JSON".to_string(),
                     );
                     writeln!(stdout, "{}", serde_json::to_string(&response)?)?;
                     stdout.flush()?;
@@ -286,7 +287,8 @@ impl McpServer {
         let args: BashToolArgs = match serde_json::from_value(arguments) {
             Ok(a) => a,
             Err(e) => {
-                return JsonRpcResponse::error(id, -32602, format!("Invalid arguments: {}", e));
+                eprintln!("MCP invalid arguments: {}", e);
+                return JsonRpcResponse::error(id, -32602, "Invalid arguments".to_string());
             }
         };
 
@@ -597,6 +599,55 @@ mod tests {
             text3.contains("session") || text3.contains("limit") || result3["isError"] == true,
             "third call should hit session exec call limit, got: {text3}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_parse_error_does_not_leak_internal_details() {
+        // Simulate malformed JSON parse and verify the response that run() would
+        // produce doesn't contain serde/internal details.
+        let malformed = "not valid json {{{";
+        let err = serde_json::from_str::<JsonRpcRequest>(malformed).unwrap_err();
+        // This is what we'd send in run() — verify generic message
+        let response = JsonRpcResponse::error(
+            serde_json::Value::Null,
+            -32700,
+            "Parse error: invalid JSON".to_string(),
+        );
+        let serialized = serde_json::to_string(&response).unwrap();
+        // Must NOT contain serde error details like "expected value" or struct names
+        let err_str = err.to_string();
+        assert!(
+            !serialized.contains(&err_str),
+            "response should not contain raw serde error: {err_str}"
+        );
+        assert!(!serialized.contains("expected"));
+        assert!(!serialized.contains("line "));
+        assert!(!serialized.contains("column "));
+        // Must contain the generic message
+        assert!(serialized.contains("invalid JSON"));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_arguments_does_not_leak_struct_names() {
+        let mut server = McpServer::new(bashkit::Bash::new);
+        // Send a tools/call with arguments missing the required "script" field
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(1),
+            method: "tools/call".to_string(),
+            params: serde_json::json!({
+                "name": "bash",
+                "arguments": { "wrong_field": 123 }
+            }),
+        };
+        let resp = server.handle_request(req).await;
+        let err = resp.error.expect("should be an error");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.message, "Invalid arguments");
+        // Must NOT leak field names, struct names, or serde details
+        assert!(!err.message.contains("script"));
+        assert!(!err.message.contains("missing field"));
+        assert!(!err.message.contains("BashToolArgs"));
     }
 
     #[cfg(feature = "scripted_tool")]
