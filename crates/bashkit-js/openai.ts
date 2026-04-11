@@ -37,6 +37,15 @@ import type { BashOptions, ExecResult } from "./wrapper.js";
 export interface BashToolOptions extends Omit<BashOptions, "files"> {
   /** Pre-populate VFS files. Keys are absolute paths, values are file contents. */
   files?: Record<string, string>;
+  /**
+   * Execution timeout in milliseconds.
+   *
+   * When set, this is passed to the underlying BashTool as `timeoutMs`.
+   * Commands exceeding this duration are aborted with exit code 124.
+   * Framework-level timeouts can be propagated here to ensure bashkit
+   * stops execution when the framework cancels a tool call.
+   */
+  timeoutMs?: number;
 }
 
 /** OpenAI function tool definition (matches the `tools` array in chat.completions.create). */
@@ -70,14 +79,33 @@ export interface ToolResult {
   content: string;
 }
 
+/** Options for handler invocation. */
+export interface HandlerOptions {
+  /** AbortSignal to cancel execution when the framework aborts the tool call. */
+  signal?: AbortSignal;
+}
+
 /** Return value of `bashTool()`. */
 export interface BashToolAdapter {
   /** System prompt describing bash capabilities and constraints. */
   system: string;
   /** Tool definitions for OpenAI's chat.completions.create() API. */
   tools: OpenAITool[];
-  /** Handler that executes a tool_call and returns a tool message. */
-  handler: (toolCall: OpenAIToolCall) => Promise<ToolResult>;
+  /**
+   * Handler that executes a tool_call and returns a tool message.
+   *
+   * Pass an AbortSignal via the options parameter to cancel execution
+   * when the framework aborts the tool call:
+   *
+   * ```typescript
+   * const controller = new AbortController();
+   * const result = await bash.handler(call, { signal: controller.signal });
+   * ```
+   */
+  handler: (
+    toolCall: OpenAIToolCall,
+    options?: HandlerOptions,
+  ) => Promise<ToolResult>;
   /** The underlying BashTool instance for direct access. */
   bash: BashTool;
 }
@@ -153,7 +181,10 @@ export function bashTool(options?: BashToolOptions): BashToolAdapter {
     },
   ];
 
-  const handler = async (toolCall: OpenAIToolCall): Promise<ToolResult> => {
+  const handler = async (
+    toolCall: OpenAIToolCall,
+    handlerOptions?: HandlerOptions,
+  ): Promise<ToolResult> => {
     let commands: string;
     try {
       const args = JSON.parse(toolCall.function.arguments);
@@ -174,6 +205,23 @@ export function bashTool(options?: BashToolOptions): BashToolAdapter {
       };
     }
 
+    // Wire up AbortSignal to cancel bashkit execution when the
+    // framework (or caller) aborts the tool call.
+    const signal = handlerOptions?.signal;
+    if (signal?.aborted) {
+      return {
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: "Execution cancelled",
+      };
+    }
+
+    let onAbort: (() => void) | undefined;
+    if (signal) {
+      onAbort = () => bash.cancel();
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+
     try {
       const result = await bash.execute(commands);
       return {
@@ -187,6 +235,10 @@ export function bashTool(options?: BashToolOptions): BashToolAdapter {
         tool_call_id: toolCall.id,
         content: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
       };
+    } finally {
+      if (signal && onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
     }
   };
 

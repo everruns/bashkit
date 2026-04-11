@@ -45,6 +45,18 @@ export interface BashOptions {
    */
   maxMemory?: number;
   /**
+   * Execution timeout in milliseconds.
+   *
+   * When set, commands that exceed this duration are aborted with
+   * exit code 124 (matching the bash `timeout` convention).
+   *
+   * @example
+   * ```typescript
+   * const bash = new Bash({ timeoutMs: 30000 }); // 30 seconds
+   * ```
+   */
+  timeoutMs?: number;
+  /**
    * Files to mount in the virtual filesystem.
    * Keys are absolute paths, values are content strings or lazy providers.
    *
@@ -148,6 +160,7 @@ function toNativeOptions(
     maxCommands: options?.maxCommands,
     maxLoopIterations: options?.maxLoopIterations,
     maxMemory: options?.maxMemory,
+    timeoutMs: options?.timeoutMs,
     files: resolvedFiles,
     mounts: options?.mounts?.map((m) => ({
       hostPath: m.root,
