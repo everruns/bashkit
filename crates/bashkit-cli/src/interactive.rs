@@ -175,9 +175,24 @@ impl BashkitHelper {
         };
 
         let dir = std::path::PathBuf::from(&dir_path);
-        // Block on async VFS read_dir — we're inside a tokio runtime.
+        // We're inside a single-thread tokio runtime (rustyline calls Completer
+        // synchronously).  handle.block_on() would panic with "Cannot start a
+        // runtime from within a runtime", so spawn a helper thread with its own
+        // runtime to drive the async VFS call.
         let entries = match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.fs.read_dir(&dir)).unwrap_or_default(),
+            Ok(_) => {
+                let fs = Arc::clone(&self.fs);
+                std::thread::spawn(move || {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .ok()
+                        .and_then(|rt| rt.block_on(fs.read_dir(&dir)).ok())
+                        .unwrap_or_default()
+                })
+                .join()
+                .unwrap_or_default()
+            }
             Err(_) => return Vec::new(),
         };
 
@@ -747,6 +762,28 @@ mod tests {
         assert_eq!(r.exit_code, 130);
         assert!(r.stdout.is_empty());
         assert!(r.stderr.is_empty());
+    }
+
+    // --- Tab completion inside runtime ---
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tab_completion_does_not_panic_inside_runtime() {
+        // Regression: complete_path() called handle.block_on() which panics
+        // with "Cannot start a runtime from within a runtime" on single-thread.
+        let bash = test_bash();
+        let fs = bash.fs();
+        // Create a file so completion has something to match
+        let _ = fs
+            .write_file(&std::path::PathBuf::from("/home/user/aat.txt"), b"test")
+            .await;
+        let state = bash.shell_state();
+        let helper = BashkitHelper {
+            fs: Arc::clone(&fs),
+            state_fn: Box::new(move || state.clone()),
+        };
+        // This would panic before the fix with nested runtime error
+        let results = helper.complete_path("aa");
+        assert!(results.iter().any(|r| r.contains("aat.txt")));
     }
 
     // --- Source RC ---
