@@ -22,9 +22,6 @@ serde_json.workspace = true
 clap.workspace = true
 anyhow.workspace = true
 
-# Timing
-instant = "0.1"
-
 # Statistics
 statrs = "0.18"
 

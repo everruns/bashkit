@@ -371,7 +371,7 @@ impl HttpClient {
     ///
     /// This streams the response to avoid allocating memory for oversized responses.
     async fn read_body_with_limit(&self, response: reqwest::Response) -> Result<Vec<u8>> {
-        use futures::StreamExt;
+        use futures_util::StreamExt;
 
         let mut body = Vec::new();
         let mut stream = response.bytes_stream();

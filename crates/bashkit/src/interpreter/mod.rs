@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 /// Monotonic counter for unique process substitution file paths
 static PROC_SUB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-use futures::FutureExt;
+use futures_util::FutureExt;
 
 use crate::builtins::{self, Builtin};
 #[cfg(feature = "failpoints")]
@@ -567,7 +567,6 @@ impl Interpreter {
             "times" => Times,
             "eval" => Eval,
             // Text processing
-            "jq" => Jq,
             "grep" => Grep,
             "sed" => Sed,
             "awk" => Awk,
@@ -694,6 +693,10 @@ impl Interpreter {
             "tomlq" => Tomlq,
             "yaml" => Yaml,
         );
+
+        // jq builtin (requires jq feature)
+        #[cfg(feature = "jq")]
+        builtins.insert("jq".to_string(), Box::new(builtins::Jq));
 
         // Custom-construction builtins that need parameters
 

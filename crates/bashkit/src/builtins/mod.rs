@@ -64,6 +64,7 @@ mod iconv;
 mod inspect;
 mod introspect;
 mod join;
+#[cfg(feature = "jq")]
 mod jq;
 mod json;
 mod log;
@@ -164,6 +165,7 @@ pub use iconv::Iconv;
 pub use inspect::{File, Less, Stat};
 pub use introspect::{Hash, Type, Which};
 pub use join::Join;
+#[cfg(feature = "jq")]
 pub use jq::Jq;
 pub use json::Json;
 pub use log::Log;

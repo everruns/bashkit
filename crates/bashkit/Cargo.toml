@@ -17,7 +17,8 @@ readme = "../../README.md"
 # Async runtime
 tokio = { workspace = true }
 async-trait = { workspace = true }
-futures = { workspace = true }
+futures-core = { workspace = true }
+futures-util = { workspace = true }
 tower = { workspace = true }
 
 # Error handling
@@ -31,9 +32,6 @@ schemars = { workspace = true }
 
 # Regex
 regex = { workspace = true }
-
-# Glob matching
-globset = { workspace = true }
 
 # Date/Time
 chrono = { workspace = true }
@@ -51,10 +49,10 @@ fail = { workspace = true, optional = true }
 # URL parsing
 url = "2"
 
-# JSON processing (jq)
-jaq-core = { workspace = true }
-jaq-std = { workspace = true }
-jaq-json = { workspace = true }
+# JSON processing (jq) - optional, enabled with jq feature
+jaq-core = { workspace = true, optional = true }
+jaq-std = { workspace = true, optional = true }
+jaq-json = { workspace = true, optional = true }
 
 # Compression (for gzip/gunzip)
 flate2 = { workspace = true }
@@ -83,6 +81,9 @@ zapcode-core = { version = "1.5", optional = true }
 
 [features]
 default = []
+# Enable jq builtin via embedded jaq interpreter
+# Usage: cargo build --features jq
+jq = ["dep:jaq-core", "dep:jaq-std", "dep:jaq-json"]
 http_client = ["reqwest"]
 # Enable Ed25519 request signing per RFC 9421 / web-bot-auth profile
 bot-auth = ["http_client", "dep:ed25519-dalek", "dep:rand", "dep:zeroize"]
