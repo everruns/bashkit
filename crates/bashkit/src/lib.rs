@@ -948,6 +948,23 @@ impl Bash {
     pub fn restore_shell_state(&mut self, state: &ShellState) {
         self.interpreter.restore_shell_state(state);
     }
+
+    /// Get the current session-level counters (cumulative across exec() calls).
+    ///
+    /// Returns `(session_commands, session_exec_calls)`.
+    pub fn session_counters(&self) -> (u64, u64) {
+        let c = self.interpreter.counters();
+        (c.session_commands, c.session_exec_calls)
+    }
+
+    /// Restore session-level counters to resume a session across Bash instances.
+    ///
+    /// This is used by the MCP server to persist cumulative session counters
+    /// across fresh Bash instances created per tool call.
+    pub fn restore_session_counters(&mut self, session_commands: u64, session_exec_calls: u64) {
+        self.interpreter
+            .restore_session_counters(session_commands, session_exec_calls);
+    }
 }
 
 /// Builder for customized Bash configuration.
