@@ -677,4 +677,41 @@ mod tests {
         assert_eq!(err.exit_code, 1);
         assert!(err.stderr.contains("cat: /tmp/missing.txt:"));
     }
+
+    #[test]
+    fn check_help_version_returns_help() {
+        let args = vec!["--help".to_string()];
+        let r = check_help_version(&args, "usage text\n", Some("v1.0"));
+        assert!(r.is_some());
+        assert_eq!(r.unwrap().stdout, "usage text\n");
+    }
+
+    #[test]
+    fn check_help_version_returns_version() {
+        let args = vec!["--version".to_string()];
+        let r = check_help_version(&args, "usage\n", Some("tool 1.0"));
+        assert!(r.is_some());
+        assert_eq!(r.unwrap().stdout, "tool 1.0\n");
+    }
+
+    #[test]
+    fn check_help_version_no_version_configured() {
+        let args = vec!["--version".to_string()];
+        let r = check_help_version(&args, "usage\n", None);
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn check_help_version_stops_at_non_flag() {
+        let args = vec!["file.txt".to_string(), "--help".to_string()];
+        let r = check_help_version(&args, "usage\n", None);
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn check_help_version_no_match() {
+        let args = vec!["-c".to_string(), "filter".to_string()];
+        let r = check_help_version(&args, "usage\n", Some("v1"));
+        assert!(r.is_none());
+    }
 }
