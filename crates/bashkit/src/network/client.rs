@@ -20,7 +20,7 @@ use reqwest::Client;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use super::allowlist::{NetworkAllowlist, UrlMatch};
+use super::allowlist::{NetworkAllowlist, UrlMatch, is_private_ip};
 use crate::error::{Error, Result};
 
 /// Default maximum response body size (10 MB)
@@ -260,6 +260,42 @@ impl HttpClient {
         self.request_with_headers(method, url, body, &[]).await
     }
 
+    /// THREAT[TM-NET-002/004]: Pre-resolve DNS and block private IPs.
+    async fn check_private_ip(&self, url: &str) -> Result<()> {
+        let parsed = match url::Url::parse(url) {
+            Ok(p) => p,
+            Err(_) => return Ok(()),
+        };
+        let Some(host) = parsed.host_str() else {
+            return Ok(());
+        };
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            if is_private_ip(&ip) {
+                return Err(Error::Network(format!(
+                    "access denied: {} is a private IP (SSRF protection)",
+                    host
+                )));
+            }
+        } else {
+            let port = parsed
+                .port()
+                .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
+            let addr = format!("{}:{}", host, port);
+            if let Ok(addrs) = tokio::net::lookup_host(&addr).await {
+                for a in addrs {
+                    if is_private_ip(&a.ip()) {
+                        return Err(Error::Network(format!(
+                            "access denied: {} resolves to private IP {} (SSRF protection)",
+                            host,
+                            a.ip()
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Make an HTTP request with custom headers.
     ///
     /// # Security
@@ -283,6 +319,12 @@ impl HttpClient {
             UrlMatch::Invalid { reason } => {
                 return Err(Error::Network(format!("invalid URL: {}", reason)));
             }
+        }
+
+        // THREAT[TM-NET-002/004]: Pre-resolve DNS and block private IPs
+        // to prevent SSRF via DNS rebinding.
+        if self.allowlist.is_blocking_private_ips() {
+            self.check_private_ip(url).await?;
         }
 
         // Compute bot-auth signing headers (transparent, non-blocking)
