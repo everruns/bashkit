@@ -232,7 +232,13 @@ const SECRET_HEADERS: &[&str] = &[
     "proxy-authorization",
     "set-cookie",
     "x-csrf-token",
+    "x-vault-token",
+    "x-jenkins-crumb",
 ];
+
+/// CLI flags whose *next* argument is a secret value.
+// THREAT[TM-LOG-002]: Extend redaction to common CLI secret-passing flags.
+const SECRET_FLAGS: &[&str] = &["--token", "--api-key", "--password", "--secret", "-p"];
 
 /// Redact secret patterns from trace event details.
 fn redact_details(details: TraceEventDetails) -> TraceEventDetails {
@@ -266,6 +272,22 @@ fn redact_argv(argv: &[String]) -> Vec<String> {
             result.push(arg.clone());
             redact_next = true;
             continue;
+        }
+
+        // THREAT[TM-LOG-002]: --token, --api-key, --password, --secret, -p (next arg is secret)
+        if SECRET_FLAGS.iter().any(|f| lower == *f) {
+            result.push(arg.clone());
+            redact_next = true;
+            continue;
+        }
+
+        // --token=VALUE, --api-key=VALUE, etc. (= concatenated form)
+        if let Some(eq_pos) = arg.find('=') {
+            let flag_part = &lower[..eq_pos];
+            if SECRET_FLAGS.contains(&flag_part) {
+                result.push(format!("{}=[REDACTED]", &arg[..eq_pos]));
+                continue;
+            }
         }
 
         // --header=Authorization: Bearer xxx (= concatenated form)
@@ -519,5 +541,70 @@ mod tests {
         ];
         let redacted = redact_argv(&argv);
         assert_eq!(redacted[2], "[REDACTED]");
+    }
+
+    // THREAT[TM-LOG-002]: Tests for extended secret flag redaction
+
+    #[test]
+    fn test_redact_token_flag() {
+        let argv = vec![
+            "cli".into(),
+            "--token".into(),
+            "sk-secret-123".into(),
+            "https://api.example.com".into(),
+        ];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted[1], "--token");
+        assert_eq!(redacted[2], "[REDACTED]");
+        assert_eq!(redacted[3], "https://api.example.com");
+    }
+
+    #[test]
+    fn test_redact_api_key_flag() {
+        let argv = vec!["cli".into(), "--api-key".into(), "key-abc".into()];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted[2], "[REDACTED]");
+    }
+
+    #[test]
+    fn test_redact_password_flag() {
+        let argv = vec!["mysql".into(), "--password".into(), "s3cret".into()];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted[2], "[REDACTED]");
+    }
+
+    #[test]
+    fn test_redact_short_p_flag() {
+        let argv = vec!["mysql".into(), "-p".into(), "s3cret".into()];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted[2], "[REDACTED]");
+    }
+
+    #[test]
+    fn test_redact_secret_flag() {
+        let argv = vec!["vault".into(), "--secret".into(), "top-secret".into()];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted[2], "[REDACTED]");
+    }
+
+    #[test]
+    fn test_redact_token_equals_form() {
+        let argv = vec!["cli".into(), "--token=sk-secret-123".into()];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted[1], "--token=[REDACTED]");
+    }
+
+    #[test]
+    fn test_redact_api_key_equals_form() {
+        let argv = vec!["cli".into(), "--api-key=key-abc".into()];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted[1], "--api-key=[REDACTED]");
+    }
+
+    #[test]
+    fn test_redact_vault_token_header() {
+        let argv = vec!["curl".into(), "X-Vault-Token: s.abcdef".into()];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted[1], "X-Vault-Token: [REDACTED]");
     }
 }
