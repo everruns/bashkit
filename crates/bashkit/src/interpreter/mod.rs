@@ -3578,7 +3578,18 @@ impl Interpreter {
             self.limits.max_parser_operations,
         );
         let result = match parser.parse() {
-            Ok(s) => self.execute(&s).await,
+            Ok(s) => {
+                // THREAT[TM-DOS-031]: Validate budget on expanded alias AST
+                // to prevent bypassing static budget checks via alias expansion.
+                if let Err(e) = crate::parser::validate_budget(&s, &self.limits) {
+                    Ok(ExecResult::err(
+                        format!("bash: alias expansion: budget validation failed: {e}\n"),
+                        1,
+                    ))
+                } else {
+                    self.execute(&s).await
+                }
+            }
             Err(e) => Ok(ExecResult::err(
                 format!("bash: alias expansion: parse error: {}\n", e),
                 1,
