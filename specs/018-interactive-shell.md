@@ -43,7 +43,7 @@ bashkit --mount-rw /path/to/work   # REPL with real filesystem access
 | Multiline input (continuation) | Implemented | 1 |
 | Ctrl-C clears current line | Implemented | 1 |
 | Ctrl-D exits shell | Implemented | 1 |
-| `exit [N]` builtin | Implemented (pre-existing) | 1 |
+| `exit [N]` builtin | Implemented (on_exit hook) | 1 |
 | Streaming output | Implemented | 1 |
 | TTY detection (`[ -t 0 ]`) | Implemented | 1 |
 | Readline editing (emacs/vi keys) | Implemented (rustyline) | 1 |
@@ -110,6 +110,15 @@ Uses `signal-hook` to register a SIGINT handler that sets bashkit's
 `cancellation_token()`. A background tokio task polls the signal flag
 every 50ms and propagates to the cancel token. After cancellation,
 the token is reset for the next command.
+
+#### Exit Handling
+
+The `exit` builtin fires an `on_exit` hook registered via
+`BashBuilder::on_exit()`. The interactive REPL registers a hook at
+build time that sets an atomic flag. After each `exec()` call, the
+REPL checks the flag and breaks the loop if set. This works through
+the normal execution pipeline — `echo bye; exit 1`, conditionals,
+and scripts all terminate the session correctly.
 
 #### Multiline Detection
 

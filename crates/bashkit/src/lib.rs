@@ -401,6 +401,8 @@ mod builtins;
 mod error;
 mod fs;
 mod git;
+/// Interceptor hooks for the execution pipeline.
+pub mod hooks;
 mod interpreter;
 mod limits;
 #[cfg(feature = "logging")]
@@ -795,6 +797,15 @@ impl Bash {
         self.interpreter.cancellation_token()
     }
 
+    /// Return the hooks registry (read-only after build).
+    ///
+    /// Hooks are registered via [`BashBuilder::on_exit`] and frozen
+    /// at build time.  Currently supports `on_exit`; more hooks will
+    /// be added (see issue #1235).
+    pub fn hooks(&self) -> &hooks::Hooks {
+        self.interpreter.hooks()
+    }
+
     /// Get a clone of the underlying filesystem.
     ///
     /// Provides direct access to the virtual filesystem for:
@@ -1076,6 +1087,8 @@ pub struct BashBuilder {
     real_mounts: Vec<MountedRealDir>,
     /// Optional VFS path for persistent history
     history_file: Option<PathBuf>,
+    /// Interceptor hooks
+    hooks_on_exit: Vec<hooks::Interceptor<hooks::ExitEvent>>,
 }
 
 impl BashBuilder {
@@ -1653,6 +1666,33 @@ impl BashBuilder {
         self
     }
 
+    /// Register an `on_exit` interceptor hook.
+    ///
+    /// Fired when the `exit` builtin runs.  The hook can inspect or
+    /// modify the [`ExitEvent`](hooks::ExitEvent), or cancel the exit.
+    /// Multiple hooks run in registration order.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::hooks::{HookAction, ExitEvent};
+    /// use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    ///
+    /// let exited = Arc::new(AtomicBool::new(false));
+    /// let flag = exited.clone();
+    ///
+    /// let bash = bashkit::Bash::builder()
+    ///     .on_exit(Box::new(move |event: ExitEvent| {
+    ///         flag.store(true, Ordering::Relaxed);
+    ///         HookAction::Continue(event)
+    ///     }))
+    ///     .build();
+    /// ```
+    pub fn on_exit(mut self, hook: hooks::Interceptor<hooks::ExitEvent>) -> Self {
+        self.hooks_on_exit.push(hook);
+        self
+    }
+
     /// Mount a text file in the virtual filesystem.
     ///
     /// This creates a regular file (mode `0o644`) with the specified content at
@@ -1955,7 +1995,7 @@ impl BashBuilder {
         let mountable = Arc::new(MountableFs::new(base_fs));
         let fs: Arc<dyn FileSystem> = Arc::clone(&mountable) as Arc<dyn FileSystem>;
 
-        Self::build_with_fs(
+        let mut result = Self::build_with_fs(
             fs,
             mountable,
             self.env,
@@ -1984,7 +2024,16 @@ impl BashBuilder {
             self.ssh_config,
             #[cfg(feature = "ssh")]
             self.ssh_handler,
-        )
+        );
+
+        // Set hooks after build — avoids adding another arg to build_with_fs.
+        if !self.hooks_on_exit.is_empty() {
+            result.interpreter.set_hooks(hooks::Hooks {
+                on_exit: self.hooks_on_exit,
+            });
+        }
+
+        result
     }
 
     /// Apply real filesystem mounts to the base filesystem.
