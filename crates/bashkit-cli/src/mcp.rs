@@ -135,6 +135,11 @@ pub struct McpServer {
     cumulative_commands: u64,
     /// Cumulative session exec call count across all MCP tool calls.
     cumulative_exec_calls: u64,
+    /// Rate limiter: max tool-call requests per minute (0 = unlimited).
+    // THREAT[TM-DOS-036]: Prevent resource exhaustion from rapid MCP requests.
+    max_requests_per_minute: u32,
+    /// Timestamps of recent tool-call requests for rate limiting.
+    request_timestamps: Vec<std::time::Instant>,
     #[cfg(feature = "scripted_tool")]
     scripted_tools: Vec<bashkit::ScriptedTool>,
 }
@@ -148,9 +153,18 @@ impl McpServer {
             bash_factory: Box::new(bash_factory),
             cumulative_commands: 0,
             cumulative_exec_calls: 0,
+            max_requests_per_minute: 0,
+            request_timestamps: Vec::new(),
             #[cfg(feature = "scripted_tool")]
             scripted_tools: Vec::new(),
         }
+    }
+
+    /// Set the maximum number of tool-call requests per minute.
+    /// 0 means unlimited.
+    pub fn max_requests_per_minute(mut self, limit: u32) -> Self {
+        self.max_requests_per_minute = limit;
+        self
     }
 
     /// Register a ScriptedTool. It will appear in `tools/list` and route
@@ -196,6 +210,13 @@ impl McpServer {
     }
 
     async fn handle_request(&mut self, request: JsonRpcRequest) -> JsonRpcResponse {
+        // THREAT[TM-DOS-036]: Rate-limit tools/call to prevent resource exhaustion.
+        if request.method == "tools/call"
+            && let Some(err) = self.check_rate_limit()
+        {
+            return JsonRpcResponse::error(request.id, -32000, err);
+        }
+
         match request.method.as_str() {
             "initialize" => Self::handle_initialize(request.id),
             "initialized" => JsonRpcResponse::success(request.id, serde_json::Value::Null),
@@ -204,6 +225,26 @@ impl McpServer {
             "shutdown" => JsonRpcResponse::success(request.id, serde_json::Value::Null),
             _ => JsonRpcResponse::error(request.id, -32601, "Method not found".to_string()),
         }
+    }
+
+    /// Check rate limit. Returns an error message if exceeded, None if OK.
+    fn check_rate_limit(&mut self) -> Option<String> {
+        if self.max_requests_per_minute == 0 {
+            return None;
+        }
+        let now = std::time::Instant::now();
+        let window = std::time::Duration::from_secs(60);
+        // Remove timestamps older than 1 minute
+        self.request_timestamps
+            .retain(|t| now.duration_since(*t) < window);
+        if self.request_timestamps.len() >= self.max_requests_per_minute as usize {
+            return Some(format!(
+                "Rate limit exceeded: max {} requests per minute",
+                self.max_requests_per_minute
+            ));
+        }
+        self.request_timestamps.push(now);
+        None
     }
 
     fn handle_initialize(id: serde_json::Value) -> JsonRpcResponse {
@@ -390,8 +431,18 @@ impl McpServer {
 }
 
 /// Run the MCP server with a factory that produces configured `Bash` instances.
+#[allow(dead_code)] // Public API; used by external callers / tests
 pub async fn run(bash_factory: impl Fn() -> bashkit::Bash + Send + 'static) -> Result<()> {
     let mut server = McpServer::new(bash_factory);
+    server.run().await
+}
+
+/// Run the MCP server with rate limiting.
+pub async fn run_with_rate_limit(
+    bash_factory: impl Fn() -> bashkit::Bash + Send + 'static,
+    max_requests_per_minute: u32,
+) -> Result<()> {
+    let mut server = McpServer::new(bash_factory).max_requests_per_minute(max_requests_per_minute);
     server.run().await
 }
 
@@ -773,5 +824,94 @@ mod tests {
             let text = call_result["content"][0]["text"].as_str().expect("text");
             assert!(text.contains("hello MCP"));
         }
+    }
+
+    // THREAT[TM-DOS-036]: Rate limiting tests
+
+    #[tokio::test]
+    async fn test_rate_limit_blocks_excess_requests() {
+        let mut server = McpServer::new(bashkit::Bash::new).max_requests_per_minute(2);
+
+        // First two requests should succeed
+        for i in 1..=2 {
+            let req = JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: serde_json::json!(i),
+                method: "tools/call".to_string(),
+                params: serde_json::json!({
+                    "name": "bash",
+                    "arguments": { "script": "echo ok" }
+                }),
+            };
+            let resp = server.handle_request(req).await;
+            assert!(resp.error.is_none(), "request {i} should succeed");
+        }
+
+        // Third request should be rate-limited
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(3),
+            method: "tools/call".to_string(),
+            params: serde_json::json!({
+                "name": "bash",
+                "arguments": { "script": "echo should_fail" }
+            }),
+        };
+        let resp = server.handle_request(req).await;
+        let err = resp.error.expect("should be rate limited");
+        assert_eq!(err.code, -32000);
+        assert!(err.message.contains("Rate limit exceeded"));
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_zero_means_unlimited() {
+        let mut server = McpServer::new(bashkit::Bash::new).max_requests_per_minute(0);
+
+        for i in 1..=10 {
+            let req = JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: serde_json::json!(i),
+                method: "tools/call".to_string(),
+                params: serde_json::json!({
+                    "name": "bash",
+                    "arguments": { "script": "echo ok" }
+                }),
+            };
+            let resp = server.handle_request(req).await;
+            assert!(
+                resp.error.is_none(),
+                "request {i} should succeed with no limit"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_does_not_block_non_tool_calls() {
+        let mut server = McpServer::new(bashkit::Bash::new).max_requests_per_minute(1);
+
+        // Use the one allowed tool call
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(1),
+            method: "tools/call".to_string(),
+            params: serde_json::json!({
+                "name": "bash",
+                "arguments": { "script": "echo ok" }
+            }),
+        };
+        server.handle_request(req).await;
+
+        // tools/list should still work even though tool call limit is reached
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: serde_json::json!(2),
+            method: "tools/list".to_string(),
+            params: serde_json::json!({}),
+        };
+        let resp = server.handle_request(req).await;
+        assert!(
+            resp.error.is_none(),
+            "tools/list should not be rate-limited"
+        );
     }
 }

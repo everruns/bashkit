@@ -101,7 +101,11 @@ struct Args {
 #[derive(Subcommand, Debug)]
 enum SubCmd {
     /// Run as MCP (Model Context Protocol) server
-    Mcp,
+    Mcp {
+        /// Maximum tool call requests per minute (0 = unlimited)
+        #[arg(long, default_value_t = 0)]
+        max_requests_per_minute: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,7 +191,7 @@ fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
 }
 
 fn cli_mode(args: &Args) -> CliMode {
-    if matches!(args.subcommand, Some(SubCmd::Mcp)) {
+    if matches!(args.subcommand, Some(SubCmd::Mcp { .. })) {
         CliMode::Mcp
     } else if args.command.is_some() {
         CliMode::Command
@@ -296,11 +300,20 @@ fn run_interactive(args: Args, mode: CliMode) -> Result<i32> {
 }
 
 fn run_mcp(args: Args, mode: CliMode) -> Result<()> {
+    let max_rpm = match &args.subcommand {
+        Some(SubCmd::Mcp {
+            max_requests_per_minute,
+        }) => *max_requests_per_minute,
+        _ => 0,
+    };
     Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("Failed to build MCP runtime")?
-        .block_on(mcp::run(move || build_bash(&args, mode)))
+        .block_on(mcp::run_with_rate_limit(
+            move || build_bash(&args, mode),
+            max_rpm,
+        ))
 }
 
 fn run_oneshot(args: Args, mode: CliMode) -> Result<RunOutput> {
