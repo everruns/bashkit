@@ -795,7 +795,12 @@ mod tests {
             })
             .await;
         assert_ne!(resp.exit_code, 0);
-        assert!(resp.stderr.contains("service unavailable"));
+        // Error is sanitized by default (TM-INF-017) — raw message not exposed
+        assert!(
+            resp.stderr.contains("callback failed"),
+            "expected sanitized error, got: {}",
+            resp.stderr
+        );
     }
 
     #[tokio::test]
