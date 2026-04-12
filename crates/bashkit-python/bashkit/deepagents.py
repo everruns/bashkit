@@ -61,7 +61,7 @@ def _build_write_cmd(file_path: str, content: str) -> str:
     return f"cat > {shlex.quote(file_path)} << '{delimiter}'\n{content}\n{delimiter}"
 
 
-def _make_bash_tool(bash_instance: NativeBashTool):
+def _make_bash_tool(bash_instance: NativeBashTool, max_output_length: int = 100_000):
     """Create a bash tool function from a BashTool instance."""
     # Use name and description from bashkit lib
     tool_name = bash_instance.name
@@ -77,7 +77,10 @@ def _make_bash_tool(bash_instance: NativeBashTool):
             output += f"\n{result.stderr}"
         if result.exit_code != 0:
             output += f"\n[Exit code: {result.exit_code}]"
-        return output.strip() if output else "[No output]"
+        output = output.strip() if output else "[No output]"
+        if len(output) > max_output_length:
+            output = output[:max_output_length] + "\n[truncated]"
+        return output
 
     return bashkit
 

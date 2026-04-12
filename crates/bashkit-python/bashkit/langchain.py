@@ -66,6 +66,8 @@ if LANGCHAIN_AVAILABLE:
 
         _bash_tool: NativeBashTool = PrivateAttr()
 
+        _max_output_length: int = PrivateAttr(default=100_000)
+
         def __init__(
             self,
             username: str | None = None,
@@ -73,6 +75,7 @@ if LANGCHAIN_AVAILABLE:
             max_commands: int | None = None,
             max_loop_iterations: int | None = None,
             timeout_seconds: float | None = None,
+            max_output_length: int = 100_000,
             **kwargs,
         ):
             bash_tool = NativeBashTool(
@@ -86,6 +89,17 @@ if LANGCHAIN_AVAILABLE:
             kwargs["description"] = bash_tool.description()
             super().__init__(**kwargs)
             object.__setattr__(self, "_bash_tool", bash_tool)
+            object.__setattr__(self, "_max_output_length", max_output_length)
+
+        def _format_output(self, result) -> str:
+            output = result.stdout
+            if result.stderr:
+                output += f"\nSTDERR: {result.stderr}"
+            if result.exit_code != 0:
+                output += f"\n[Exit code: {result.exit_code}]"
+            if len(output) > self._max_output_length:
+                output = output[: self._max_output_length] + "\n[truncated]"
+            return output
 
         def _run(self, commands: str) -> str:
             """Execute bash commands synchronously."""
@@ -94,13 +108,7 @@ if LANGCHAIN_AVAILABLE:
             if result.error:
                 raise ToolException(f"Execution error: {result.error}")
 
-            output = result.stdout
-            if result.stderr:
-                output += f"\nSTDERR: {result.stderr}"
-            if result.exit_code != 0:
-                output += f"\n[Exit code: {result.exit_code}]"
-
-            return output
+            return self._format_output(result)
 
         async def _arun(self, commands: str) -> str:
             """Execute bash commands asynchronously."""
@@ -109,13 +117,7 @@ if LANGCHAIN_AVAILABLE:
             if result.error:
                 raise ToolException(f"Execution error: {result.error}")
 
-            output = result.stdout
-            if result.stderr:
-                output += f"\nSTDERR: {result.stderr}"
-            if result.exit_code != 0:
-                output += f"\n[Exit code: {result.exit_code}]"
-
-            return output
+            return self._format_output(result)
 
     class ScriptedToolLangChain(BaseTool):
         """LangChain tool wrapper for Bashkit ScriptedTool.
