@@ -4,6 +4,8 @@
 // Decision: Ctrl-C during execution via signal-hook + cancellation_token.
 // Decision: tab completion from builtins + VFS paths + functions + variables.
 // Decision: PS1 prompt with bash-compatible escapes (\u, \h, \w, \$).
+// Decision: exit via ExitSignal event fired by the interpreter — REPL polls
+//   the signal after each exec() call.
 // See specs/018-interactive-shell.md
 
 use anyhow::Result;
@@ -414,7 +416,22 @@ fn test_bash() -> bashkit::Bash {
         .build()
 }
 
-pub async fn run(mut bash: bashkit::Bash) -> Result<i32> {
+/// Shared exit state passed from the builder's `on_exit` hook to the REPL.
+pub struct ExitState {
+    pub requested: AtomicBool,
+    pub code: std::sync::atomic::AtomicI32,
+}
+
+impl ExitState {
+    pub fn new() -> Self {
+        Self {
+            requested: AtomicBool::new(false),
+            code: std::sync::atomic::AtomicI32::new(0),
+        }
+    }
+}
+
+pub async fn run(mut bash: bashkit::Bash, exit_state: Arc<ExitState>) -> Result<i32> {
     // Set up interactive environment
     set_interactive_env(&mut bash).await;
 
@@ -558,6 +575,12 @@ pub async fn run(mut bash: bashkit::Bash) -> Result<i32> {
         };
 
         last_exit_code = result.exit_code;
+
+        // The on_exit hook (registered via builder) fires when `exit` runs.
+        if exit_state.requested.load(Ordering::Acquire) {
+            last_exit_code = exit_state.code.load(std::sync::atomic::Ordering::Relaxed);
+            break;
+        }
     }
 
     Ok(last_exit_code)
@@ -795,6 +818,62 @@ mod tests {
         assert_eq!(r.exit_code, 130);
         assert!(r.stdout.is_empty());
         assert!(r.stderr.is_empty());
+    }
+
+    /// Build a Bash with an on_exit hook that stores the exit code.
+    fn test_bash_with_exit_hook() -> (bashkit::Bash, Arc<std::sync::atomic::AtomicI32>) {
+        use std::sync::atomic::{AtomicI32, Ordering};
+        let code = Arc::new(AtomicI32::new(-1));
+        let c = Arc::clone(&code);
+        let bash = bashkit::Bash::builder()
+            .tty(0, true)
+            .tty(1, true)
+            .tty(2, true)
+            .limits(bashkit::ExecutionLimits::cli())
+            .session_limits(bashkit::SessionLimits::unlimited())
+            .on_exit(Box::new(move |event| {
+                c.store(event.code, Ordering::Relaxed);
+                bashkit::hooks::HookAction::Continue(event)
+            }))
+            .build();
+        (bash, code)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn on_exit_hook_fires() {
+        let (mut bash, code) = test_bash_with_exit_hook();
+        bash.exec("exit").await.unwrap();
+        assert_eq!(code.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn on_exit_hook_carries_code() {
+        let (mut bash, code) = test_bash_with_exit_hook();
+        bash.exec("exit 42").await.unwrap();
+        assert_eq!(code.load(std::sync::atomic::Ordering::Relaxed), 42);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn on_exit_hook_fires_in_command_list() {
+        let (mut bash, code) = test_bash_with_exit_hook();
+        bash.exec("echo bye; exit 1").await.unwrap();
+        assert_eq!(code.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn on_exit_hook_not_fired_for_normal_commands() {
+        let (mut bash, code) = test_bash_with_exit_hook();
+        bash.exec("echo hello").await.unwrap();
+        // Hook should not have been called — code stays at initial -1.
+        assert_eq!(code.load(std::sync::atomic::Ordering::Relaxed), -1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn on_exit_hook_code_truncated_to_byte() {
+        let (mut bash, code) = test_bash_with_exit_hook();
+        bash.exec("exit 256").await.unwrap();
+        // exit truncates to 0-255 via & 0xFF
+        assert_eq!(code.load(std::sync::atomic::Ordering::Relaxed), 0);
     }
 
     // --- Tab completion: helpers ---
