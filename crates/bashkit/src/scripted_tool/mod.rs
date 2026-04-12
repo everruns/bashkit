@@ -308,6 +308,8 @@ pub struct ScriptedToolBuilder {
     limits: Option<ExecutionLimits>,
     env_vars: Vec<(String, String)>,
     compact_prompt: bool,
+    /// THREAT[TM-INF-017]: Sanitize callback errors to prevent internal state leakage.
+    sanitize_errors: bool,
 }
 
 impl ScriptedToolBuilder {
@@ -320,6 +322,7 @@ impl ScriptedToolBuilder {
             limits: None,
             env_vars: Vec::new(),
             compact_prompt: false,
+            sanitize_errors: true,
         }
     }
 
@@ -360,6 +363,23 @@ impl ScriptedToolBuilder {
     /// Add an environment variable visible inside scripts.
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env_vars.push((key.into(), value.into()));
+        self
+    }
+
+    /// Sanitize callback error messages in tool output (default: `true`).
+    ///
+    /// When enabled, callback errors are replaced with a generic
+    /// `"callback failed (error code 1)"` message in stderr. The full error
+    /// is logged to the interpreter's debug output for operator visibility.
+    ///
+    /// Disable this only for development/debugging.
+    ///
+    /// # Security (TM-INF-017)
+    ///
+    /// Prevents internal state (connection strings, file paths, stack traces)
+    /// from leaking through tool output to LLM agents.
+    pub fn sanitize_errors(mut self, sanitize: bool) -> Self {
+        self.sanitize_errors = sanitize;
         self
     }
 
@@ -404,6 +424,7 @@ impl ScriptedToolBuilder {
             limits: self.limits.clone(),
             env_vars: self.env_vars.clone(),
             compact_prompt: self.compact_prompt,
+            sanitize_errors: self.sanitize_errors,
             last_execution_trace: Arc::new(Mutex::new(None)),
         }
     }
@@ -475,6 +496,8 @@ pub struct ScriptedTool {
     pub(crate) limits: Option<ExecutionLimits>,
     pub(crate) env_vars: Vec<(String, String)>,
     pub(crate) compact_prompt: bool,
+    /// THREAT[TM-INF-017]: When true, callback errors are sanitized before output.
+    pub(crate) sanitize_errors: bool,
     pub(crate) last_execution_trace: Arc<Mutex<Option<ScriptedExecutionTrace>>>,
 }
 
@@ -772,7 +795,12 @@ mod tests {
             })
             .await;
         assert_ne!(resp.exit_code, 0);
-        assert!(resp.stderr.contains("service unavailable"));
+        // Error is sanitized by default (TM-INF-017) — raw message not exposed
+        assert!(
+            resp.stderr.contains("callback failed"),
+            "expected sanitized error, got: {}",
+            resp.stderr
+        );
     }
 
     #[tokio::test]

@@ -149,6 +149,8 @@ struct ToolBuiltinAdapter {
     callback: ToolCallback,
     schema: serde_json::Value,
     log: InvocationLog,
+    /// THREAT[TM-INF-017]: When true, sanitize callback error messages.
+    sanitize_errors: bool,
 }
 
 #[async_trait]
@@ -163,7 +165,19 @@ impl Builtin for ToolBuiltinAdapter {
 
                 match (self.callback)(&tool_args) {
                     Ok(stdout) => ExecResult::ok(stdout),
-                    Err(msg) => ExecResult::err(msg, 1),
+                    Err(msg) => {
+                        if self.sanitize_errors {
+                            // THREAT[TM-INF-017]: Replace detailed errors with generic message.
+                            // Full error available in debug output for operators.
+                            eprintln!("DEBUG: {}: callback error (sanitized): {}", self.name, msg);
+                            ExecResult::err(
+                                format!("{}: callback failed (error code 1)", self.name),
+                                1,
+                            )
+                        } else {
+                            ExecResult::err(msg, 1)
+                        }
+                    }
                 }
             }
             Err(msg) => ExecResult::err(msg, 2),
@@ -439,6 +453,7 @@ impl ScriptedTool {
                 callback: Arc::clone(&tool.callback),
                 schema: tool.def.input_schema.clone(),
                 log: Arc::clone(&log),
+                sanitize_errors: self.sanitize_errors,
             });
             builder = builder.builtin(name, builtin);
         }
@@ -1134,5 +1149,91 @@ mod tests {
             .with_category("payments");
         assert_eq!(def.tags, vec!["admin", "billing"]);
         assert_eq!(def.category.as_deref(), Some("payments"));
+    }
+
+    /// THREAT[TM-INF-017]: Callback errors with internal details are sanitized.
+    #[tokio::test]
+    async fn test_sanitize_errors_hides_internal_details() {
+        let tool = ScriptedTool::builder("api")
+            .tool(
+                ToolDef::new("query", "Query database"),
+                |_args: &ToolArgs| {
+                    Err("connection failed: postgres://admin:secret@internal-db:5432/prod".into())
+                },
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "query".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_ne!(resp.exit_code, 0);
+        // The sanitized error should NOT contain the connection string
+        assert!(
+            !resp.stderr.contains("postgres://"),
+            "internal details leaked: {}",
+            resp.stderr
+        );
+        assert!(
+            !resp.stderr.contains("secret"),
+            "credentials leaked: {}",
+            resp.stderr
+        );
+        assert!(
+            resp.stderr.contains("callback failed"),
+            "should contain generic message: {}",
+            resp.stderr
+        );
+    }
+
+    /// When sanitize_errors is disabled, full error is visible.
+    #[tokio::test]
+    async fn test_sanitize_errors_disabled_shows_details() {
+        let tool = ScriptedTool::builder("api")
+            .sanitize_errors(false)
+            .tool(
+                ToolDef::new("query", "Query database"),
+                |_args: &ToolArgs| {
+                    Err("connection failed: postgres://admin:secret@internal-db:5432/prod".into())
+                },
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "query".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_ne!(resp.exit_code, 0);
+        assert!(
+            resp.stderr.contains("postgres://"),
+            "should show full error when sanitization off: {}",
+            resp.stderr
+        );
+    }
+
+    /// Default sanitize_errors is true.
+    #[tokio::test]
+    async fn test_sanitize_errors_default_true() {
+        let tool = ScriptedTool::builder("api")
+            .tool(ToolDef::new("fail", "Always fails"), |_args: &ToolArgs| {
+                Err("secret_internal_path: /etc/shadow".into())
+            })
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "fail".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert!(
+            !resp.stderr.contains("/etc/shadow"),
+            "internal path leaked: {}",
+            resp.stderr
+        );
     }
 }
