@@ -149,6 +149,7 @@ struct ToolBuiltinAdapter {
     callback: ToolCallback,
     schema: serde_json::Value,
     log: InvocationLog,
+    sanitize_errors: bool,
 }
 
 #[async_trait]
@@ -163,7 +164,22 @@ impl Builtin for ToolBuiltinAdapter {
 
                 match (self.callback)(&tool_args) {
                     Ok(stdout) => ExecResult::ok(stdout),
-                    Err(msg) => ExecResult::err(msg, 1),
+                    Err(msg) => {
+                        // THREAT[TM-INF-030]: Sanitize callback errors to prevent
+                        // leaking internal details (connection strings, file paths,
+                        // stack traces) in tool output visible to LLM agents.
+                        if self.sanitize_errors {
+                            #[cfg(feature = "tracing")]
+                            tracing::debug!(
+                                tool = %self.name,
+                                error = %msg,
+                                "tool callback error (sanitized)"
+                            );
+                            ExecResult::err(format!("{}: callback failed\n", self.name), 1)
+                        } else {
+                            ExecResult::err(msg, 1)
+                        }
+                    }
                 }
             }
             Err(msg) => ExecResult::err(msg, 2),
@@ -439,6 +455,7 @@ impl ScriptedTool {
                 callback: Arc::clone(&tool.callback),
                 schema: tool.def.input_schema.clone(),
                 log: Arc::clone(&log),
+                sanitize_errors: self.sanitize_errors,
             });
             builder = builder.builtin(name, builtin);
         }
@@ -1134,5 +1151,55 @@ mod tests {
             .with_category("payments");
         assert_eq!(def.tags, vec!["admin", "billing"]);
         assert_eq!(def.category.as_deref(), Some("payments"));
+    }
+
+    // THREAT[TM-INF-030]: Callback error sanitization tests
+
+    #[tokio::test]
+    async fn test_callback_error_sanitized_by_default() {
+        let tool = ScriptedTool::builder("api")
+            .tool(
+                ToolDef::new("fail", "Always fails"),
+                |_args: &super::ToolArgs| {
+                    Err("connection failed: postgres://admin:secret@internal-db:5432/prod".into())
+                },
+            )
+            .build();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "fail".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_ne!(resp.exit_code, 0);
+        // Internal details must NOT appear in output
+        assert!(
+            !resp.stderr.contains("postgres://"),
+            "internal details leaked: {}",
+            resp.stderr
+        );
+        assert!(resp.stderr.contains("callback failed"));
+    }
+
+    #[tokio::test]
+    async fn test_callback_error_unsanitized_when_disabled() {
+        let tool = ScriptedTool::builder("api")
+            .sanitize_errors(false)
+            .tool(
+                ToolDef::new("fail", "Always fails"),
+                |_args: &super::ToolArgs| {
+                    Err("connection failed: postgres://admin:secret@internal-db:5432/prod".into())
+                },
+            )
+            .build();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "fail".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_ne!(resp.exit_code, 0);
+        // With sanitization disabled, full error should appear
+        assert!(resp.stderr.contains("postgres://"));
     }
 }
