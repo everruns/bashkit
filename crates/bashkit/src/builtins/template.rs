@@ -226,10 +226,15 @@ fn render_template_inner(
                 i += end_pos + end_tag.len();
 
                 if let Some(serde_json::Value::Array(items)) = json_data.get(block_var) {
+                    // THREAT[TM-TINJ-001]: Escape template markers in data values
+                    // to prevent injection. Data containing `{{VAR}}` must not be
+                    // re-evaluated as template directives.
+                    const SENTINEL: &str = "\x00BK_LBRACE\x00";
                     for item in items {
-                        // Replace {{.}} with current item value
                         let item_str = json_value_to_string(item);
-                        let rendered_body = block_body.replace("{{.}}", &item_str);
+                        // Escape {{ in data values so they survive render_template_inner
+                        let safe_item = item_str.replace("{{", SENTINEL);
+                        let rendered_body = block_body.replace("{{.}}", &safe_item);
                         let rendered = render_template_inner(
                             &rendered_body,
                             json_data,
@@ -239,7 +244,8 @@ fn render_template_inner(
                             strict,
                             depth + 1,
                         )?;
-                        output.push_str(&rendered);
+                        // Restore escaped braces after rendering
+                        output.push_str(&rendered.replace(SENTINEL, "{{"));
                     }
                 } else if strict {
                     return Err(format!(
@@ -611,5 +617,72 @@ mod tests {
         .await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("template:"));
+    }
+
+    // THREAT[TM-TINJ-001]: Template injection via #each data values
+
+    #[tokio::test]
+    async fn test_each_data_injection_blocked() {
+        // Data containing {{SECRET_KEY}} must produce the literal string,
+        // NOT the variable's value.
+        let fs = Arc::new(InMemoryFs::new());
+        let fs_dyn = fs.clone() as Arc<dyn crate::fs::FileSystem>;
+        fs_dyn
+            .write_file(
+                std::path::Path::new("/data.json"),
+                br#"{"items": ["normal", "{{SECRET_KEY}}", "also_normal"]}"#,
+            )
+            .await
+            .unwrap();
+        let mut vars = HashMap::new();
+        vars.insert("SECRET_KEY".to_string(), "s3cr3t_value_123".to_string());
+        let result = run_template(
+            &["-d", "data.json"],
+            Some("{{#each items}}[{{.}}]{{/each}}"),
+            vars,
+            HashMap::new(),
+            fs,
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        // The secret value must NOT appear in output
+        assert!(
+            !result.stdout.contains("s3cr3t_value_123"),
+            "secret leaked: {}",
+            result.stdout
+        );
+        // The literal {{SECRET_KEY}} should be preserved
+        assert!(result.stdout.contains("{{SECRET_KEY}}"));
+    }
+
+    #[tokio::test]
+    async fn test_each_nested_directive_in_data_not_evaluated() {
+        // Data containing {{#if ...}} must NOT be evaluated as a directive.
+        let fs = Arc::new(InMemoryFs::new());
+        let fs_dyn = fs.clone() as Arc<dyn crate::fs::FileSystem>;
+        fs_dyn
+            .write_file(
+                std::path::Path::new("/data.json"),
+                br#"{"items": ["{{#if true}}injected{{/if}}"]}"#,
+            )
+            .await
+            .unwrap();
+        let result = run_template(
+            &["-d", "data.json"],
+            Some("{{#each items}}[{{.}}]{{/each}}"),
+            HashMap::new(),
+            HashMap::new(),
+            fs,
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        // The directive must appear literally, not evaluated.
+        // If evaluated, output would be just "[injected]"; instead it should
+        // contain the raw directive text.
+        assert!(
+            result.stdout.contains("{{#if true}}"),
+            "directive was stripped/evaluated: {}",
+            result.stdout
+        );
     }
 }
