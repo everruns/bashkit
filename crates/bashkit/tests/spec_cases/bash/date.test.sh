@@ -264,3 +264,23 @@ date +%s --date="Wed, 01 Jan 2020 00:00:00 +0000"
 ### expect
 1577836800
 ### end
+
+### date_ref_relative_path
+# date -r should work with relative paths after cd (issue #1225)
+mkdir -p /tmp/datetest
+echo "test" > /tmp/datetest/myfile.txt
+cd /tmp/datetest
+date -r myfile.txt +%Y | grep -qE '^[0-9]{4}$' && echo "valid"
+### expect
+valid
+### end
+
+### date_ref_dot_relative_path
+# date -r should work with ./relative paths (issue #1225)
+mkdir -p /tmp/datetest2
+echo "test" > /tmp/datetest2/file.txt
+cd /tmp/datetest2
+date -r ./file.txt +%Y | grep -qE '^[0-9]{4}$' && echo "valid"
+### expect
+valid
+### end
