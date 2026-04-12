@@ -120,6 +120,10 @@ struct RunOutput {
 }
 
 fn build_bash(args: &Args, mode: CliMode) -> bashkit::Bash {
+    configure_bash(args, mode).build()
+}
+
+fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
     let mut builder = bashkit::Bash::builder();
 
     if !args.no_http {
@@ -169,7 +173,7 @@ fn build_bash(args: &Args, mode: CliMode) -> bashkit::Bash {
         builder = builder.tty(0, true).tty(1, true).tty(2, true);
     }
 
-    builder.build()
+    builder
 }
 
 fn cli_mode(args: &Args) -> CliMode {
@@ -260,11 +264,25 @@ fn main() -> Result<()> {
 
 #[cfg(feature = "interactive")]
 fn run_interactive(args: Args, mode: CliMode) -> Result<i32> {
+    use std::sync::Arc;
+
+    let exit_state = Arc::new(interactive::ExitState::new());
+    let es = Arc::clone(&exit_state);
+    let bash = configure_bash(&args, mode)
+        .on_exit(Box::new(move |event| {
+            es.code
+                .store(event.code, std::sync::atomic::Ordering::Relaxed);
+            es.requested
+                .store(true, std::sync::atomic::Ordering::Release);
+            bashkit::hooks::HookAction::Continue(event)
+        }))
+        .build();
+
     Builder::new_current_thread()
         .enable_all()
         .build()
         .context("Failed to build interactive runtime")?
-        .block_on(interactive::run(build_bash(&args, mode)))
+        .block_on(interactive::run(bash, exit_state))
 }
 
 fn run_mcp(args: Args, mode: CliMode) -> Result<()> {

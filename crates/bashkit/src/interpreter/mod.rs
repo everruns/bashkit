@@ -508,6 +508,8 @@ pub struct Interpreter {
     /// Cancellation token: when set to `true`, execution aborts at the next
     /// command boundary with `Error::Cancelled`.
     cancelled: Arc<AtomicBool>,
+    /// Interceptor hooks registry (shared with Bash callers).
+    hooks: crate::hooks::Hooks,
     /// Deferred output process substitutions: after a command writes to the
     /// virtual file path, run these commands with the file content as stdin.
     /// Each entry is (virtual_path, commands_to_run).
@@ -842,6 +844,7 @@ impl Interpreter {
             pending_fd_output: HashMap::new(),
             pending_fd_targets: Vec::new(),
             cancelled: Arc::new(AtomicBool::new(false)),
+            hooks: crate::hooks::Hooks::default(),
             deferred_proc_subs: Vec::new(),
             random_state: AtomicU32::new(random_seed),
         }
@@ -851,6 +854,16 @@ impl Interpreter {
     /// to abort execution at the next command boundary.
     pub fn cancellation_token(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.cancelled)
+    }
+
+    /// Return a reference to the hooks registry.
+    pub fn hooks(&self) -> &crate::hooks::Hooks {
+        &self.hooks
+    }
+
+    /// Replace the hooks registry (called from BashBuilder::build).
+    pub(crate) fn set_hooks(&mut self, hooks: crate::hooks::Hooks) {
+        self.hooks = hooks;
     }
 
     /// Check if cancellation has been requested.
@@ -1264,6 +1277,9 @@ impl Interpreter {
 
             // Stop on control flow (e.g. nounset error uses Return to abort)
             if result.control_flow != ControlFlow::None {
+                if let ControlFlow::Exit(code) = result.control_flow {
+                    self.hooks.fire_on_exit(crate::hooks::ExitEvent { code });
+                }
                 break;
             }
 
