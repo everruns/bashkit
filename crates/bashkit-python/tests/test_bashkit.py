@@ -605,7 +605,8 @@ def test_scripted_tool_callback_error():
     )
     r = tool.execute_sync("fail_cmd")
     assert r.exit_code != 0
-    assert "service down" in r.stderr
+    # Error is sanitized by default (TM-INF-017)
+    assert "callback failed" in r.stderr
 
 
 def test_scripted_tool_error_fallback():
@@ -863,7 +864,8 @@ def test_scripted_tool_callback_runtime_error():
     )
     r = tool.execute_sync("fail")
     assert r.exit_code != 0
-    assert "runtime fail" in r.stderr
+    # Error is sanitized by default (TM-INF-017)
+    assert "callback failed" in r.stderr
 
 
 def test_scripted_tool_callback_type_error():
