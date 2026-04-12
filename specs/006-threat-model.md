@@ -360,6 +360,7 @@ symlinks via `stat()` and use `read_link()` + `symlink()` to preserve them. Same
 | TM-ESC-007 | Background proc | `malicious &` | Background not implemented | **MITIGATED** |
 | TM-ESC-008 | eval injection | `eval "$user_input"` | eval runs in sandbox (builtins only) | **MITIGATED** |
 | TM-ESC-015 | bash/sh escape | `bash -c "malicious"` | Sandboxed re-invocation (no external bash) | **MITIGATED** |
+| TM-ESC-030 | mount-rw in MCP mode | `bashkit mcp --mount-rw /` | CLI emits loud warning; docs recommend `--mount-ro` | **MITIGATED** |
 
 **Current Risk**: LOW - No external process execution capability
 

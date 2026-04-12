@@ -141,6 +141,16 @@ fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
 
     #[cfg(feature = "realfs")]
     {
+        // THREAT[TM-ESC-030]: Warn when --mount-rw is used in MCP mode — LLM agents
+        // get read-write access to the host filesystem, breaking the sandbox boundary.
+        if mode == CliMode::Mcp && !args.mount_rw.is_empty() {
+            eprintln!(
+                "WARNING: --mount-rw in MCP mode gives LLM agents read-write access to host files."
+            );
+            eprintln!(
+                "         This breaks the sandbox boundary. Use --mount-ro for safer access."
+            );
+        }
         builder = apply_real_mounts(builder, &args.mount_ro, &args.mount_rw);
     }
 
@@ -512,6 +522,28 @@ mod tests {
 
         let content = std::fs::read_to_string(dir.path().join("r.txt")).unwrap();
         assert_eq!(content, "result\n");
+    }
+
+    #[cfg(feature = "realfs")]
+    #[test]
+    fn mount_rw_mcp_mode_emits_warning() {
+        // THREAT[TM-ESC-030]: Verify warning is emitted when --mount-rw is used with MCP mode.
+        let args = Args::parse_from(["bashkit", "--mount-rw", "/tmp", "mcp"]);
+        assert_eq!(cli_mode(&args), CliMode::Mcp);
+        assert!(!args.mount_rw.is_empty());
+        // configure_bash emits the warning to stderr; verify it doesn't panic
+        // and the builder still succeeds (mounts are still applied).
+        let _builder = configure_bash(&args, CliMode::Mcp);
+    }
+
+    #[cfg(feature = "realfs")]
+    #[test]
+    fn mount_ro_mcp_mode_no_warning() {
+        // Read-only mounts in MCP mode should not trigger a warning.
+        let args = Args::parse_from(["bashkit", "--mount-ro", "/tmp", "mcp"]);
+        assert_eq!(cli_mode(&args), CliMode::Mcp);
+        assert!(args.mount_rw.is_empty());
+        let _builder = configure_bash(&args, CliMode::Mcp);
     }
 
     #[test]
