@@ -788,7 +788,7 @@ mod tests {
             })
             .await;
         assert_ne!(resp.exit_code, 0);
-        assert!(resp.stderr.contains("service unavailable"));
+        assert!(resp.stderr.contains("callback failed"));
     }
 
     #[tokio::test]
