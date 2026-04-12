@@ -510,6 +510,9 @@ pub struct Interpreter {
     cancelled: Arc<AtomicBool>,
     /// Interceptor hooks registry (shared with Bash callers).
     hooks: crate::hooks::Hooks,
+    /// True while executing a trap handler. Suppresses recursive DEBUG trap
+    /// invocation to prevent amplification attacks (TM-DOS-035).
+    in_trap: bool,
     /// Deferred output process substitutions: after a command writes to the
     /// virtual file path, run these commands with the file content as stdin.
     /// Each entry is (virtual_path, commands_to_run).
@@ -845,6 +848,7 @@ impl Interpreter {
             pending_fd_targets: Vec::new(),
             cancelled: Arc::new(AtomicBool::new(false)),
             hooks: crate::hooks::Hooks::default(),
+            in_trap: false,
             deferred_proc_subs: Vec::new(),
             random_state: AtomicU32::new(random_seed),
         }
@@ -9002,6 +9006,11 @@ impl Interpreter {
     /// Run the DEBUG trap handler (fires before each simple command).
     /// Returns (stdout, stderr) from the trap handler.
     async fn run_debug_trap(&mut self) -> (String, String) {
+        // THREAT[TM-DOS-035]: Suppress DEBUG trap inside trap handlers to prevent
+        // recursive amplification (each trapped command firing more DEBUG traps).
+        if self.in_trap {
+            return (String::new(), String::new());
+        }
         if let Some(trap_cmd) = self.traps.get("DEBUG").cloned() {
             // THREAT[TM-DOS-030]: Propagate interpreter parser limits
             if let Ok(trap_script) = Parser::with_limits(
@@ -9011,9 +9020,11 @@ impl Interpreter {
             )
             .parse()
             {
+                self.in_trap = true;
                 let emit_before = self.output_emit_count;
-                if let Ok(trap_result) = self.execute_command_sequence(&trap_script.commands).await
-                {
+                let result = self.execute_command_sequence(&trap_script.commands).await;
+                self.in_trap = false;
+                if let Ok(trap_result) = result {
                     self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
                     return (trap_result.stdout, trap_result.stderr);
                 }
@@ -9032,9 +9043,11 @@ impl Interpreter {
             )
             .parse()
             {
+                self.in_trap = true;
                 let emit_before = self.output_emit_count;
-                if let Ok(trap_result) = self.execute_command_sequence(&trap_script.commands).await
-                {
+                let result = self.execute_command_sequence(&trap_script.commands).await;
+                self.in_trap = false;
+                if let Ok(trap_result) = result {
                     self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
                     stdout.push_str(&trap_result.stdout);
                     stderr.push_str(&trap_result.stderr);
@@ -10967,6 +10980,19 @@ echo "count=$COUNT"
         // DEBUG fires before: echo x (1), trap - DEBUG (2)
         // After removal: echo y, echo $count don't trigger
         assert_eq!(result.stdout, "x\ny\n2\n");
+    }
+
+    #[tokio::test]
+    async fn test_debug_trap_no_recursive_amplification() {
+        // THREAT[TM-DOS-035]: Commands inside the DEBUG trap handler must NOT
+        // trigger further DEBUG trap invocations (prevents N*M amplification).
+        let result = run_script(
+            r#"trap_count=0; trap '((trap_count++))' DEBUG; echo a; echo b; echo c; trap - DEBUG; echo $trap_count"#,
+        )
+        .await;
+        // DEBUG fires before: echo a (1), echo b (2), echo c (3), trap - DEBUG (4)
+        // The ((trap_count++)) inside the trap must NOT fire another DEBUG trap.
+        assert_eq!(result.stdout, "a\nb\nc\n4\n");
     }
 
     #[tokio::test]
