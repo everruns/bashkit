@@ -308,6 +308,9 @@ pub struct ScriptedToolBuilder {
     limits: Option<ExecutionLimits>,
     env_vars: Vec<(String, String)>,
     compact_prompt: bool,
+    /// When true, callback errors are replaced with a generic message to prevent
+    /// leaking internal details (file paths, connection strings, stack traces).
+    sanitize_errors: bool,
 }
 
 impl ScriptedToolBuilder {
@@ -320,6 +323,7 @@ impl ScriptedToolBuilder {
             limits: None,
             env_vars: Vec::new(),
             compact_prompt: false,
+            sanitize_errors: true,
         }
     }
 
@@ -360,6 +364,16 @@ impl ScriptedToolBuilder {
     /// Add an environment variable visible inside scripts.
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env_vars.push((key.into(), value.into()));
+        self
+    }
+
+    /// Control whether callback error messages are sanitized before appearing in
+    /// tool output. When `true` (the default), internal error details are replaced
+    /// with a generic "callback failed" message to prevent leaking file paths,
+    /// connection strings, or stack traces to LLM agents.
+    // THREAT[TM-INF-030]: Prevent information disclosure through callback errors.
+    pub fn sanitize_errors(mut self, sanitize: bool) -> Self {
+        self.sanitize_errors = sanitize;
         self
     }
 
@@ -404,6 +418,7 @@ impl ScriptedToolBuilder {
             limits: self.limits.clone(),
             env_vars: self.env_vars.clone(),
             compact_prompt: self.compact_prompt,
+            sanitize_errors: self.sanitize_errors,
             last_execution_trace: Arc::new(Mutex::new(None)),
         }
     }
@@ -475,6 +490,7 @@ pub struct ScriptedTool {
     pub(crate) limits: Option<ExecutionLimits>,
     pub(crate) env_vars: Vec<(String, String)>,
     pub(crate) compact_prompt: bool,
+    pub(crate) sanitize_errors: bool,
     pub(crate) last_execution_trace: Arc<Mutex<Option<ScriptedExecutionTrace>>>,
 }
 
@@ -772,7 +788,7 @@ mod tests {
             })
             .await;
         assert_ne!(resp.exit_code, 0);
-        assert!(resp.stderr.contains("service unavailable"));
+        assert!(resp.stderr.contains("callback failed"));
     }
 
     #[tokio::test]
