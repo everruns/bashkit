@@ -69,6 +69,7 @@ zeroize = { workspace = true, optional = true }
 md-5 = { workspace = true }
 sha1 = { workspace = true }
 sha2 = { workspace = true }
+hmac = "0.13"
 
 # Logging/tracing (optional)
 tracing = { workspace = true, optional = true }

@@ -58,9 +58,21 @@ use crate::interpreter::ShellState;
 /// Schema version for snapshot format compatibility.
 const SNAPSHOT_VERSION: u32 = 1;
 
-/// HMAC-like keyed hash prefix used to detect snapshot tampering.
-/// The key is combined with the JSON payload to produce a SHA-256 digest
-/// that is prepended to the serialized bytes.
+/// Domain-separation tag for the snapshot integrity digest.
+///
+/// # Security note (TM-SNAP-001)
+///
+/// This tag is a **public constant**, not a secret key. The digest
+/// (`SHA-256(INTEGRITY_TAG || payload)`) detects **accidental corruption**
+/// (bit flips, truncation) but does **NOT** prevent intentional forgery.
+/// Anyone with access to the source code can compute a valid digest for
+/// arbitrary payloads.
+///
+/// **Do NOT rely on `from_bytes` as a security boundary** when snapshots are
+/// received from untrusted sources (network, shared storage, user upload).
+/// For tamper-proof snapshots, wrap the bytes with your own HMAC or
+/// authenticated encryption using a secret key, or use [`Snapshot::to_bytes_keyed`]
+/// / [`Snapshot::from_bytes_keyed`] which accept a caller-provided key.
 const INTEGRITY_TAG: &[u8; 8] = b"BKSNAP01";
 /// Length of the SHA-256 digest prepended to snapshot bytes.
 const DIGEST_LEN: usize = 32;
@@ -124,6 +136,47 @@ impl Snapshot {
         Ok(snap)
     }
 
+    /// Serialize with a caller-provided secret key for tamper-proof integrity.
+    ///
+    /// Uses `HMAC-SHA256(key, payload)` instead of the public tag.
+    /// Use this when snapshots cross trust boundaries (network, shared storage).
+    pub fn to_bytes_keyed(&self, key: &[u8]) -> crate::Result<Vec<u8>> {
+        let json = serde_json::to_vec(self).map_err(|e| crate::Error::Internal(e.to_string()))?;
+        let digest = Self::compute_hmac(key, &json);
+        let mut out = Vec::with_capacity(DIGEST_LEN + json.len());
+        out.extend_from_slice(&digest);
+        out.extend_from_slice(&json);
+        Ok(out)
+    }
+
+    /// Deserialize and verify a snapshot using a caller-provided secret key.
+    ///
+    /// Rejects snapshots where the HMAC does not match, preventing forgery.
+    pub fn from_bytes_keyed(data: &[u8], key: &[u8]) -> crate::Result<Self> {
+        if data.len() < DIGEST_LEN {
+            return Err(crate::Error::Internal(
+                "snapshot too short: missing integrity digest".to_string(),
+            ));
+        }
+        let (stored_digest, json) = data.split_at(DIGEST_LEN);
+        let expected = Self::compute_hmac(key, json);
+        if stored_digest != expected.as_slice() {
+            return Err(crate::Error::Internal(
+                "snapshot integrity check failed: HMAC mismatch (wrong key or tampered data)"
+                    .to_string(),
+            ));
+        }
+        let snap: Self =
+            serde_json::from_slice(json).map_err(|e| crate::Error::Internal(e.to_string()))?;
+        if snap.version != SNAPSHOT_VERSION {
+            return Err(crate::Error::Internal(format!(
+                "unsupported snapshot version {} (expected {})",
+                snap.version, SNAPSHOT_VERSION
+            )));
+        }
+        Ok(snap)
+    }
+
     /// Compute SHA-256 digest over `INTEGRITY_TAG || payload`.
     fn compute_digest(payload: &[u8]) -> [u8; DIGEST_LEN] {
         let mut hasher = Sha256::new();
@@ -132,6 +185,18 @@ impl Snapshot {
         let result = hasher.finalize();
         let mut out = [0u8; DIGEST_LEN];
         out.copy_from_slice(&result);
+        out
+    }
+
+    /// Compute HMAC-SHA256 using a caller-provided secret key.
+    fn compute_hmac(key: &[u8], payload: &[u8]) -> [u8; DIGEST_LEN] {
+        use hmac::{Hmac, KeyInit, Mac};
+        type HmacSha256 = Hmac<Sha256>;
+        let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+        mac.update(payload);
+        let result = mac.finalize();
+        let mut out = [0u8; DIGEST_LEN];
+        out.copy_from_slice(&result.into_bytes());
         out
     }
 }
@@ -237,5 +302,40 @@ impl crate::Bash {
         }
         self.interpreter
             .restore_session_counters(snap.session_commands, snap.session_exec_calls);
+    }
+
+    /// Capture snapshot and serialize with HMAC-SHA256 using a secret key.
+    ///
+    /// Use this instead of [`snapshot()`](Self::snapshot) when snapshots cross
+    /// trust boundaries (network, shared storage, untrusted input).
+    pub fn snapshot_to_bytes_keyed(&self, key: &[u8]) -> crate::Result<Vec<u8>> {
+        let shell = self.interpreter.shell_state();
+        let vfs = self.fs.vfs_snapshot();
+        let counters = self.interpreter.counters();
+        let snap = Snapshot {
+            version: SNAPSHOT_VERSION,
+            shell,
+            vfs,
+            session_commands: counters.session_commands,
+            session_exec_calls: counters.session_exec_calls,
+        };
+        snap.to_bytes_keyed(key)
+    }
+
+    /// Create a new Bash instance from a keyed (HMAC-protected) snapshot.
+    ///
+    /// Rejects snapshots where the HMAC doesn't match the provided key.
+    pub fn from_snapshot_keyed(data: &[u8], key: &[u8]) -> crate::Result<Self> {
+        let snap = Snapshot::from_bytes_keyed(data, key)?;
+        let mut bash = Self::new();
+        bash.restore_snapshot_inner(&snap);
+        Ok(bash)
+    }
+
+    /// Restore state from a keyed snapshot into this Bash instance.
+    pub fn restore_snapshot_keyed(&mut self, data: &[u8], key: &[u8]) -> crate::Result<()> {
+        let snap = Snapshot::from_bytes_keyed(data, key)?;
+        self.restore_snapshot_inner(&snap);
+        Ok(())
     }
 }
