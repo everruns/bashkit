@@ -331,6 +331,7 @@ dependencies = [
  "flate2",
  "futures-core",
  "futures-util",
+ "hmac 0.13.0",
  "insta",
  "jaq-core",
  "jaq-json",

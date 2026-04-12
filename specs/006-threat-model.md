@@ -1082,6 +1082,20 @@ let config = LogConfig::new()
     .redact_env("INTERNAL_TOKEN");
 ```
 
+### 9.5 Snapshot Security
+
+| ID | Threat | Attack | Mitigation | Status |
+|----|--------|--------|------------|--------|
+| TM-SNAP-001 | Snapshot forgery via public tag | Attacker computes valid SHA-256 digest using public `BKSNAP01` tag | Document limitation; add keyed HMAC API (`to_bytes_keyed`/`from_bytes_keyed`) | **MITIGATED** |
+
+**`from_bytes`** uses `SHA-256(BKSNAP01 || payload)` where the tag is a public constant.
+This detects accidental corruption but **does NOT prevent intentional forgery**. Any caller
+with source code access can forge valid snapshots.
+
+**`from_bytes_keyed`** uses `HMAC-SHA256(secret_key, payload)` with a caller-provided key.
+Use this when snapshots cross trust boundaries (network transfer, shared storage, untrusted
+input). The keyed API was added in response to issue #1167.
+
 ### 10. Builtin-Specific Threat Coverage
 
 This section documents the security assessment of builtins that do not have individual

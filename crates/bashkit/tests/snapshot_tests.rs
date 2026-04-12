@@ -460,3 +460,52 @@ async fn restore_snapshot_preserves_limits() {
     // Should hit the command limit and return an error
     assert!(r.is_err(), "Should hit max_commands limit after restore");
 }
+
+// ==================== Keyed snapshot integrity (Issue #1167) ====================
+
+#[tokio::test]
+async fn keyed_snapshot_roundtrip() {
+    let key = b"my-secret-key-for-hmac";
+    let mut bash = Bash::new();
+    bash.exec("MY_VAR=hello").await.unwrap();
+    let bytes = bash.snapshot_to_bytes_keyed(key).unwrap();
+
+    let mut restored = Bash::new();
+    restored.restore_snapshot_keyed(&bytes, key).unwrap();
+    let r = restored.exec("echo $MY_VAR").await.unwrap();
+    assert_eq!(r.stdout.trim(), "hello");
+}
+
+#[tokio::test]
+async fn keyed_snapshot_wrong_key_rejected() {
+    let key = b"correct-key";
+    let wrong_key = b"wrong-key";
+    let mut bash = Bash::new();
+    bash.exec("x=42").await.unwrap();
+    let bytes = bash.snapshot_to_bytes_keyed(key).unwrap();
+
+    let result = Bash::from_snapshot_keyed(&bytes, wrong_key);
+    assert!(result.is_err());
+    let err = result.err().unwrap().to_string();
+    assert!(
+        err.contains("HMAC mismatch"),
+        "Expected HMAC error: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn keyed_snapshot_tampered_rejected() {
+    let key = b"secret";
+    let mut bash = Bash::new();
+    bash.exec("x=42").await.unwrap();
+    let mut bytes = bash.snapshot_to_bytes_keyed(key).unwrap();
+
+    // Tamper with payload
+    if bytes.len() > 40 {
+        bytes[40] ^= 0xFF;
+    }
+
+    let result = Bash::from_snapshot_keyed(&bytes, key);
+    assert!(result.is_err());
+}
