@@ -583,6 +583,22 @@ impl Bash {
             tracing::info!(target: "bashkit::session", script = %script_info, "Starting script execution");
         }
 
+        // Fire before_exec hooks — may modify or cancel the script
+        let script = if !self.interpreter.hooks().before_exec.is_empty() {
+            let input = hooks::ExecInput {
+                script: script.to_string(),
+            };
+            match self.interpreter.hooks().fire_before_exec(input) {
+                Some(modified) => std::borrow::Cow::Owned(modified.script),
+                None => {
+                    return Ok(ExecResult::err("cancelled by before_exec hook", 1));
+                }
+            }
+        } else {
+            std::borrow::Cow::Borrowed(script)
+        };
+        let script = script.as_ref();
+
         // Check input size before parsing (V1 mitigation)
         let input_len = script.len();
         if input_len > self.max_input_bytes {
@@ -740,6 +756,29 @@ impl Bash {
                     "Script execution failed"
                 );
             }
+        }
+
+        // Fire after_exec hooks
+        if let Ok(ref exec_result) = result
+            && !self.interpreter.hooks().after_exec.is_empty()
+        {
+            let output = hooks::ExecOutput {
+                script: script.to_string(),
+                stdout: exec_result.stdout.clone(),
+                stderr: exec_result.stderr.clone(),
+                exit_code: exec_result.exit_code,
+            };
+            self.interpreter.hooks().fire_after_exec(output);
+        }
+
+        // Fire on_error hooks for execution errors
+        if let Err(ref e) = result
+            && !self.interpreter.hooks().on_error.is_empty()
+        {
+            let error_event = hooks::ErrorEvent {
+                message: e.to_string(),
+            };
+            self.interpreter.hooks().fire_on_error(error_event);
         }
 
         result
@@ -1089,6 +1128,11 @@ pub struct BashBuilder {
     history_file: Option<PathBuf>,
     /// Interceptor hooks
     hooks_on_exit: Vec<hooks::Interceptor<hooks::ExitEvent>>,
+    hooks_before_exec: Vec<hooks::Interceptor<hooks::ExecInput>>,
+    hooks_after_exec: Vec<hooks::Interceptor<hooks::ExecOutput>>,
+    hooks_before_tool: Vec<hooks::Interceptor<hooks::ToolEvent>>,
+    hooks_after_tool: Vec<hooks::Interceptor<hooks::ToolResult>>,
+    hooks_on_error: Vec<hooks::Interceptor<hooks::ErrorEvent>>,
 }
 
 impl BashBuilder {
@@ -1693,6 +1737,49 @@ impl BashBuilder {
         self
     }
 
+    /// Register a `before_exec` interceptor hook.
+    ///
+    /// Fires before a script is executed. Can modify the script text
+    /// or cancel execution entirely.
+    pub fn before_exec(mut self, hook: hooks::Interceptor<hooks::ExecInput>) -> Self {
+        self.hooks_before_exec.push(hook);
+        self
+    }
+
+    /// Register an `after_exec` interceptor hook.
+    ///
+    /// Fires after script execution completes. Can modify or inspect
+    /// the output (stdout, stderr, exit code).
+    pub fn after_exec(mut self, hook: hooks::Interceptor<hooks::ExecOutput>) -> Self {
+        self.hooks_after_exec.push(hook);
+        self
+    }
+
+    /// Register a `before_tool` interceptor hook.
+    ///
+    /// Fires before a builtin command is executed. Can modify args or
+    /// cancel the tool invocation.
+    pub fn before_tool(mut self, hook: hooks::Interceptor<hooks::ToolEvent>) -> Self {
+        self.hooks_before_tool.push(hook);
+        self
+    }
+
+    /// Register an `after_tool` interceptor hook.
+    ///
+    /// Fires after a builtin command completes.
+    pub fn after_tool(mut self, hook: hooks::Interceptor<hooks::ToolResult>) -> Self {
+        self.hooks_after_tool.push(hook);
+        self
+    }
+
+    /// Register an `on_error` interceptor hook.
+    ///
+    /// Fires when the interpreter encounters an error.
+    pub fn on_error(mut self, hook: hooks::Interceptor<hooks::ErrorEvent>) -> Self {
+        self.hooks_on_error.push(hook);
+        self
+    }
+
     /// Mount a text file in the virtual filesystem.
     ///
     /// This creates a regular file (mode `0o644`) with the specified content at
@@ -2027,10 +2114,16 @@ impl BashBuilder {
         );
 
         // Set hooks after build — avoids adding another arg to build_with_fs.
-        if !self.hooks_on_exit.is_empty() {
-            result.interpreter.set_hooks(hooks::Hooks {
-                on_exit: self.hooks_on_exit,
-            });
+        let hooks = hooks::Hooks {
+            on_exit: self.hooks_on_exit,
+            before_exec: self.hooks_before_exec,
+            after_exec: self.hooks_after_exec,
+            before_tool: self.hooks_before_tool,
+            after_tool: self.hooks_after_tool,
+            on_error: self.hooks_on_error,
+        };
+        if hooks.has_hooks() {
+            result.interpreter.set_hooks(hooks);
         }
 
         result
@@ -5692,5 +5785,77 @@ echo missing fi"#,
             result.stderr
         );
         assert!(result.stdout.contains("yes"));
+    }
+
+    // === Hooks system tests ===
+
+    #[tokio::test]
+    async fn test_before_exec_hook_modifies_script() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let called = Arc::new(AtomicBool::new(false));
+        let called_clone = called.clone();
+
+        let mut bash = Bash::builder()
+            .before_exec(Box::new(move |mut input| {
+                called_clone.store(true, Ordering::Relaxed);
+                // Rewrite the script
+                input.script = "echo intercepted".to_string();
+                hooks::HookAction::Continue(input)
+            }))
+            .build();
+
+        let result = bash.exec("echo original").await.unwrap();
+        assert!(called.load(Ordering::Relaxed));
+        assert_eq!(result.stdout.trim(), "intercepted");
+    }
+
+    #[tokio::test]
+    async fn test_before_exec_hook_cancels() {
+        let mut bash = Bash::builder()
+            .before_exec(Box::new(|_input| {
+                hooks::HookAction::Cancel("blocked".to_string())
+            }))
+            .build();
+
+        let result = bash.exec("echo should-not-run").await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stdout.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_after_exec_hook_observes_output() {
+        use std::sync::{Arc, Mutex};
+
+        let captured = Arc::new(Mutex::new(String::new()));
+        let captured_clone = captured.clone();
+
+        let mut bash = Bash::builder()
+            .after_exec(Box::new(move |output| {
+                *captured_clone.lock().unwrap() = output.stdout.clone();
+                hooks::HookAction::Continue(output)
+            }))
+            .build();
+
+        bash.exec("echo hello-hooks").await.unwrap();
+        assert_eq!(captured.lock().unwrap().trim(), "hello-hooks");
+    }
+
+    #[tokio::test]
+    async fn test_multiple_hooks_chain() {
+        let mut bash = Bash::builder()
+            .before_exec(Box::new(|mut input| {
+                input.script = input.script.replace("world", "hooks");
+                hooks::HookAction::Continue(input)
+            }))
+            .before_exec(Box::new(|mut input| {
+                input.script = input.script.replace("hello", "greetings");
+                hooks::HookAction::Continue(input)
+            }))
+            .build();
+
+        let result = bash.exec("echo hello world").await.unwrap();
+        assert_eq!(result.stdout.trim(), "greetings hooks");
     }
 }
