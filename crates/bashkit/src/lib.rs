@@ -3117,6 +3117,17 @@ fn
     }
 
     #[tokio::test]
+    async fn test_param_remove_prefix_mixed_pattern() {
+        let mut bash = Bash::new();
+        // ${var#./"$other"} - pattern mixing literal and quoted variable
+        let result = bash
+            .exec(r#"i="./tag_hello.tmp.html"; prefix_tags="tag_"; echo ${i#./"$prefix_tags"}"#)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "hello.tmp.html\n");
+    }
+
+    #[tokio::test]
     async fn test_param_remove_suffix() {
         let mut bash = Bash::new();
         // ${var%pattern} - remove shortest suffix

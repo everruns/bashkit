@@ -1428,7 +1428,14 @@ impl<'a> Lexer<'a> {
                                 content.push('$');
                                 self.advance();
                             }
-                            '"' | '\\' | '`' => {
+                            '"' => {
+                                // Use NUL sentinel so strip_operand_quotes()
+                                // can distinguish literal " from quoting "
+                                content.push('\x00');
+                                content.push('"');
+                                self.advance();
+                            }
+                            '\\' | '`' => {
                                 content.push(esc);
                                 self.advance();
                             }

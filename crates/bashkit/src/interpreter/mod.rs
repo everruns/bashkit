@@ -7086,9 +7086,13 @@ impl Interpreter {
         if operand.is_empty() {
             return String::new();
         }
+        // Strip double/single quotes from operand before parsing.
+        // In patterns like ${var#./"$other"}, the quotes suppress globbing
+        // but should not appear as literal characters in the expanded result.
+        let stripped = Self::strip_operand_quotes(operand);
         // THREAT[TM-DOS-050]: Propagate caller-configured limits to word parsing
         let word = Parser::parse_word_string_with_limits(
-            operand,
+            &stripped,
             self.limits.max_ast_depth,
             self.limits.max_parser_operations,
         );
@@ -7126,6 +7130,36 @@ impl Interpreter {
                 }
                 // TODO: handle CommandSubstitution etc. in sync operand expansion
                 _ => {}
+            }
+        }
+        result
+    }
+
+    /// Strip unescaped double-quote pairs from operand strings.
+    /// In patterns like `${var#./"$other"}`, the `"` around `$other` suppress
+    /// globbing but should not appear as literal characters in the pattern.
+    /// Escaped quotes (`\"`) and NUL-sentinel-marked chars (`\x00"`) are kept.
+    fn strip_operand_quotes(operand: &str) -> String {
+        let mut result = String::with_capacity(operand.len());
+        let chars: Vec<char> = operand.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '\x00' && i + 1 < chars.len() {
+                // NUL sentinel: next char is literal (from lexer escape processing)
+                result.push(chars[i]);
+                result.push(chars[i + 1]);
+                i += 2;
+            } else if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '"' {
+                // Escaped double quote \" → literal " (keep both for parse_word)
+                result.push(chars[i]);
+                result.push(chars[i + 1]);
+                i += 2;
+            } else if chars[i] == '"' {
+                // Unescaped double quote: skip it (strip the quote character)
+                i += 1;
+            } else {
+                result.push(chars[i]);
+                i += 1;
             }
         }
         result
