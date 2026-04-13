@@ -7,6 +7,7 @@ virtual filesystem.
 
 **See also:**
 - [API Documentation](https://docs.rs/bashkit) - Full API reference
+- [Hooks](./hooks.md) - Interceptor hooks for the execution pipeline
 - [Compatibility Reference](./compatibility.md) - Supported bash features
 - [Threat Model](./threat-model.md) - Security considerations
 
