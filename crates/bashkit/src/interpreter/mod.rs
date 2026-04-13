@@ -6604,52 +6604,17 @@ impl Interpreter {
                         self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
                     }
 
-                    // For $@, $*, arr[@], arr[*] with per-element operators,
-                    // apply the operator to each element individually.
-                    let needs_per_element = matches!(
+                    // Delegate to sync helper to avoid bloating the async state
+                    // machine with Vec<String> locals (causes stack overflow at
+                    // depth 32 in debug builds — see stack_overflow_regression_tests).
+                    let expanded = self.apply_param_op_maybe_per_element(
+                        &value,
+                        name,
                         operator,
-                        ParameterOp::RemovePrefixShort
-                            | ParameterOp::RemovePrefixLong
-                            | ParameterOp::RemoveSuffixShort
-                            | ParameterOp::RemoveSuffixLong
-                            | ParameterOp::ReplaceFirst { .. }
-                            | ParameterOp::ReplaceAll { .. }
-                            | ParameterOp::UpperFirst
-                            | ParameterOp::UpperAll
-                            | ParameterOp::LowerFirst
-                            | ParameterOp::LowerAll
+                        operand,
+                        *colon_variant,
+                        is_set,
                     );
-                    let elements = if needs_per_element {
-                        self.resolve_param_expansion_elements(name)
-                    } else {
-                        None
-                    };
-
-                    let expanded = if let Some(elems) = elements {
-                        let results: Vec<String> = elems
-                            .iter()
-                            .map(|elem| {
-                                self.apply_parameter_op(
-                                    elem,
-                                    name,
-                                    operator,
-                                    operand,
-                                    *colon_variant,
-                                    is_set,
-                                )
-                            })
-                            .collect();
-                        results.join(" ")
-                    } else {
-                        self.apply_parameter_op(
-                            &value,
-                            name,
-                            operator,
-                            operand,
-                            *colon_variant,
-                            is_set,
-                        )
-                    };
                     result.push_str(&expanded);
                 }
                 WordPart::ArrayAccess { name, index } => {
@@ -7231,6 +7196,44 @@ impl Interpreter {
             }
         }
         result
+    }
+
+    /// Apply a parameter operator, handling per-element expansion for $@/$*/arr[@].
+    ///
+    /// Extracted from the async `expand_word_inner` path to keep `Vec<String>`
+    /// locals off the async state machine (prevents stack overflow at depth 32).
+    fn apply_param_op_maybe_per_element(
+        &mut self,
+        value: &str,
+        name: &str,
+        operator: &ParameterOp,
+        operand: &str,
+        colon_variant: bool,
+        is_set: bool,
+    ) -> String {
+        let needs_per_element = matches!(
+            operator,
+            ParameterOp::RemovePrefixShort
+                | ParameterOp::RemovePrefixLong
+                | ParameterOp::RemoveSuffixShort
+                | ParameterOp::RemoveSuffixLong
+                | ParameterOp::ReplaceFirst { .. }
+                | ParameterOp::ReplaceAll { .. }
+                | ParameterOp::UpperFirst
+                | ParameterOp::UpperAll
+                | ParameterOp::LowerFirst
+                | ParameterOp::LowerAll
+        );
+        if needs_per_element && let Some(elems) = self.resolve_param_expansion_elements(name) {
+            let results: Vec<String> = elems
+                .iter()
+                .map(|elem| {
+                    self.apply_parameter_op(elem, name, operator, operand, colon_variant, is_set)
+                })
+                .collect();
+            return results.join(" ");
+        }
+        self.apply_parameter_op(value, name, operator, operand, colon_variant, is_set)
     }
 
     /// Apply parameter expansion operator.
