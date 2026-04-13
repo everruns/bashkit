@@ -2,6 +2,12 @@
 
 Thanks for your interest in contributing to Bashkit!
 
+## How to Contribute
+
+The easiest and most valuable way to contribute is to [create an issue](https://github.com/everruns/bashkit/issues). Bug reports, feature requests, compatibility gaps, and questions all help us prioritize and improve bashkit. A well-described issue is often more impactful than a pull request.
+
+If you'd like to contribute code, read on.
+
 ## Setup
 
 ```bash

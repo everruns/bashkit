@@ -440,6 +440,10 @@ Bashkit is an independent implementation that draws design inspiration from seve
 
 No code was copied from any of these projects. See [NOTICE](NOTICE) for full details.
 
+## Contributing
+
+The best way to contribute is to [open an issue](https://github.com/everruns/bashkit/issues) — bug reports, feature requests, and questions all help improve bashkit. If you'd like to contribute code, see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and workflow details.
+
 ## Ecosystem
 
 Bashkit is part of the [Everruns](https://everruns.com) ecosystem.
