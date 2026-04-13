@@ -43,15 +43,18 @@ bashkit-js (0.65ms) vs just-bash-inproc (4.46ms) — bashkit is **6.9x faster** 
 bashkit-cli (8.19ms) vs bash (8.20ms) — **roughly equivalent**; both dominated by process spawn overhead.
 bashkit-cli (8.19ms) vs just-bash (367.5ms) — bashkit is **44.9x faster**; just-bash pays ~360ms Node.js boot per invocation.
 
-### Highlights
+### Latest bashkit vs bash (runsc, 16 CPUs, 2026-04-13)
 
-| Benchmark | bashkit | bash | just-bash-inproc | Description |
-|-----------|---------|------|-----------------|-------------|
-| startup_echo | 0.06ms | 1.47ms | 1.54ms | Minimal overhead |
-| large_fibonacci_12 | 5.96ms | 284ms | 97ms | Recursive computation |
-| large_loop_1000 | 4.93ms | 3.72ms | 56ms | Sustained iteration |
-| large_function_calls_500 | 4.26ms | 224ms | 48ms | Function call overhead |
-| complex_pipeline_text | 0.19ms | 2.86ms | 1.63ms | grep + sed pipeline |
+96 cases, 10 iterations, **107.2x faster** overall. 0 errors, 100% output match.
+
+| Benchmark | bashkit | bash | Speedup | Description |
+|-----------|---------|------|---------|-------------|
+| startup_echo | 0.07ms | 8.4ms | 120x | Minimal overhead |
+| large_fibonacci_12 | 10.6ms | 1,416ms | 133x | Recursive computation |
+| large_loop_1000 | 4.3ms | 11.1ms | 2.6x | Sustained iteration |
+| large_function_calls_500 | 5.0ms | 1,232ms | 246x | Function call overhead |
+| complex_pipeline_text | 0.33ms | 24.0ms | 73x | grep + sed pipeline |
+| tool_jq_filter | 0.64ms | 28.5ms | 44x | jq JSON processing |
 
 ## Benchmark Categories
 
