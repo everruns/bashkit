@@ -61,6 +61,7 @@ Scan for `#[ignore]` tests that may now pass. Un-ignore any that are green. Sing
 ## Rules
 
 - **One issue = one PR.** Non-negotiable. Never bundle multiple issues.
+- **Never close a half-done issue.** If the PR only implements a subset of the issue's tasks, do NOT use `Closes #N` or `Fixes #N` in the PR body. Instead use `Partial #N` or `Part of #N` and list what remains. Only use closing keywords when every task/checkbox in the issue is complete.
 - If an issue is unclear or not reproducible, comment asking for clarification and skip to next.
 - If a fix would be >500 lines, split into sub-issues and link them.
 - Never skip the failing-test-first step for bugs.
