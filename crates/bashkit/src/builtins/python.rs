@@ -772,45 +772,42 @@ fn handle_date_today() -> ExtFunctionResult {
 /// If tz is None, returns a naive datetime (no timezone info).
 /// If tz is a TimeZone, returns an aware datetime at that offset.
 fn handle_datetime_now(args: &[MontyObject]) -> ExtFunctionResult {
-    let now = chrono::Utc::now();
-    let (offset_seconds, tz_name) = match args.first() {
-        Some(MontyObject::TimeZone(tz)) => {
-            let offset = tz.offset_seconds;
-            let name = tz.name.clone();
-            (Some(offset), name)
-        }
-        _ => {
-            // No timezone → naive local datetime
-            let local = chrono::Local::now();
-            return ExtFunctionResult::Return(MontyObject::DateTime(MontyDateTime {
-                year: local.year(),
-                month: local.month() as u8,
-                day: local.day() as u8,
-                hour: local.hour() as u8,
-                minute: local.minute() as u8,
-                second: local.second() as u8,
-                microsecond: local.nanosecond() / 1000,
-                offset_seconds: None,
-                timezone_name: None,
-            }));
-        }
+    let tz = match args.first() {
+        Some(MontyObject::TimeZone(tz)) => Some(tz),
+        _ => None,
     };
 
-    // Aware datetime: apply the requested offset
-    let offset = chrono::FixedOffset::east_opt(offset_seconds.unwrap_or(0))
-        .unwrap_or(chrono::FixedOffset::east_opt(0).expect("UTC offset is always valid"));
-    let at_offset = now.with_timezone(&offset);
-    ExtFunctionResult::Return(MontyObject::DateTime(MontyDateTime {
-        year: at_offset.year(),
-        month: at_offset.month() as u8,
-        day: at_offset.day() as u8,
-        hour: at_offset.hour() as u8,
-        minute: at_offset.minute() as u8,
-        second: at_offset.second() as u8,
-        microsecond: at_offset.nanosecond() / 1000,
-        offset_seconds,
-        timezone_name: tz_name,
-    }))
+    if let Some(tz) = tz {
+        // Aware datetime at the requested offset
+        let offset = chrono::FixedOffset::east_opt(tz.offset_seconds)
+            .unwrap_or(chrono::FixedOffset::east_opt(0).expect("UTC offset is always valid"));
+        let dt = chrono::Utc::now().with_timezone(&offset);
+        ExtFunctionResult::Return(MontyObject::DateTime(MontyDateTime {
+            year: dt.year(),
+            month: dt.month() as u8,
+            day: dt.day() as u8,
+            hour: dt.hour() as u8,
+            minute: dt.minute() as u8,
+            second: dt.second() as u8,
+            microsecond: dt.nanosecond() / 1000,
+            offset_seconds: Some(tz.offset_seconds),
+            timezone_name: tz.name.clone(),
+        }))
+    } else {
+        // No timezone → naive local datetime
+        let dt = chrono::Local::now();
+        ExtFunctionResult::Return(MontyObject::DateTime(MontyDateTime {
+            year: dt.year(),
+            month: dt.month() as u8,
+            day: dt.day() as u8,
+            hour: dt.hour() as u8,
+            minute: dt.minute() as u8,
+            second: dt.second() as u8,
+            microsecond: dt.nanosecond() / 1000,
+            offset_seconds: None,
+            timezone_name: None,
+        }))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1547,6 +1544,37 @@ mod tests {
             &[
                 "-c",
                 "from datetime import datetime, timezone\ndt = datetime.now(timezone.utc)\nprint(dt.year > 2000)",
+            ],
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "True");
+    }
+
+    #[tokio::test]
+    async fn test_datetime_attributes() {
+        // Verify datetime components are populated correctly
+        let r = run(
+            &[
+                "-c",
+                "from datetime import datetime\ndt = datetime.now()\nassert 1 <= dt.month <= 12\nassert 1 <= dt.day <= 31\nassert 0 <= dt.hour <= 23\nprint('ok')",
+            ],
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "ok");
+    }
+
+    // --- json tests (Monty 0.0.9+) ---
+
+    #[tokio::test]
+    async fn test_json_dumps_loads() {
+        let r = run(
+            &[
+                "-c",
+                "import json\nd = {'a': 1, 'b': [2, 3]}\ns = json.dumps(d)\nprint(json.loads(s) == d)",
             ],
             None,
         )
