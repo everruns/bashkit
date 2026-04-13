@@ -2222,6 +2222,7 @@ impl BashBuilder {
     #[cfg(feature = "realfs")]
     const SENSITIVE_MOUNT_PATHS: &[&str] = &["/etc/shadow", "/etc/sudoers", "/proc", "/sys"];
 
+    #[cfg(feature = "realfs")]
     fn apply_real_mounts(
         real_mounts: &[MountedRealDir],
         mount_allowlist: Option<&[PathBuf]>,
