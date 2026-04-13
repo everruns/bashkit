@@ -1128,6 +1128,10 @@ pub struct BashBuilder {
     /// Real host directories to mount in the VFS
     #[cfg(feature = "realfs")]
     real_mounts: Vec<MountedRealDir>,
+    /// Optional allowlist of host paths that may be mounted.
+    /// When set, only paths starting with an allowed prefix are accepted.
+    #[cfg(feature = "realfs")]
+    mount_path_allowlist: Option<Vec<PathBuf>>,
     /// Optional VFS path for persistent history
     history_file: Option<PathBuf>,
     /// Interceptor hooks
@@ -2064,6 +2068,30 @@ impl BashBuilder {
         self
     }
 
+    /// Set an allowlist of host paths that may be mounted.
+    ///
+    /// When set, only host paths starting with an allowed prefix are accepted
+    /// by `mount_real_*` methods. Paths outside the allowlist are rejected with
+    /// a warning at build time.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let bash = Bash::builder()
+    ///     .allowed_mount_paths(["/home/user/projects", "/tmp"])
+    ///     .mount_real_readonly("/home/user/projects/data")  // OK
+    ///     .mount_real_readonly("/etc/passwd")                // rejected
+    ///     .build();
+    /// ```
+    #[cfg(feature = "realfs")]
+    pub fn allowed_mount_paths(
+        mut self,
+        paths: impl IntoIterator<Item = impl Into<PathBuf>>,
+    ) -> Self {
+        self.mount_path_allowlist = Some(paths.into_iter().map(|p| p.into()).collect());
+        self
+    }
+
     /// Build the Bash instance.
     ///
     /// If mounted files are specified, they are added via an [`OverlayFs`] layer
@@ -2103,7 +2131,11 @@ impl BashBuilder {
 
         // Layer 1: Apply real filesystem mounts (if any)
         #[cfg(feature = "realfs")]
-        let base_fs = Self::apply_real_mounts(&self.real_mounts, base_fs);
+        let base_fs = Self::apply_real_mounts(
+            &self.real_mounts,
+            self.mount_path_allowlist.as_deref(),
+            base_fs,
+        );
 
         // Layer 2: If there are mounted text/lazy files, wrap in an OverlayFs
         let has_mounts = !self.mounted_files.is_empty() || !self.mounted_lazy_files.is_empty();
@@ -2186,13 +2218,14 @@ impl BashBuilder {
         result
     }
 
-    /// Apply real filesystem mounts to the base filesystem.
-    ///
-    /// - Mounts without a VFS path are overlaid at root (host files visible at /)
-    /// - Mounts with a VFS path use MountableFs to mount at that path
+    /// Sensitive host paths that are blocked from mounting by default.
+    #[cfg(feature = "realfs")]
+    const SENSITIVE_MOUNT_PATHS: &[&str] = &["/etc/shadow", "/etc/sudoers", "/proc", "/sys"];
+
     #[cfg(feature = "realfs")]
     fn apply_real_mounts(
         real_mounts: &[MountedRealDir],
+        mount_allowlist: Option<&[PathBuf]>,
         base_fs: Arc<dyn FileSystem>,
     ) -> Arc<dyn FileSystem> {
         if real_mounts.is_empty() {
@@ -2203,6 +2236,40 @@ impl BashBuilder {
         let mut mount_points: Vec<(PathBuf, Arc<dyn FileSystem>)> = Vec::new();
 
         for m in real_mounts {
+            // Warn on writable mounts
+            if m.mode == fs::RealFsMode::ReadWrite {
+                eprintln!(
+                    "bashkit: warning: writable mount at {} — scripts can modify host files",
+                    m.host_path.display()
+                );
+            }
+
+            // Block sensitive paths
+            let host_str = m.host_path.to_string_lossy();
+            if Self::SENSITIVE_MOUNT_PATHS
+                .iter()
+                .any(|s| host_str.starts_with(s))
+            {
+                eprintln!(
+                    "bashkit: warning: refusing to mount sensitive path {}",
+                    m.host_path.display()
+                );
+                continue;
+            }
+
+            // Check allowlist if configured
+            if let Some(allowlist) = mount_allowlist
+                && !allowlist
+                    .iter()
+                    .any(|allowed| m.host_path.starts_with(allowed))
+            {
+                eprintln!(
+                    "bashkit: warning: mount path {} not in allowlist, skipping",
+                    m.host_path.display()
+                );
+                continue;
+            }
+
             let real_backend = match fs::RealFs::new(&m.host_path, m.mode) {
                 Ok(b) => b,
                 Err(e) => {
