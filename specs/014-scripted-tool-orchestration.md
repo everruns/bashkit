@@ -74,6 +74,41 @@ pub type ToolCallback =
 - `args.stdin`: pipeline input from prior command.
 - Returns stdout string on success, error message on failure.
 
+### AsyncToolCallback
+
+```rust
+pub type AsyncToolCallback = Arc<
+    dyn Fn(ToolArgs) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>>
+        + Send + Sync,
+>;
+```
+
+Async variant of `ToolCallback`. Takes owned `ToolArgs` (the future may outlive the
+borrow). Register via `builder.async_tool(def, callback)`. Both sync and async
+callbacks can be mixed in a single `ScriptedTool`.
+
+Internally represented as `CallbackKind::Async` and `.await`-ed inside
+`ToolBuiltinAdapter::execute()`, which is already `async fn`.
+
+### ContextVar propagation (Python)
+
+Python callbacks (both sync and async) automatically see `contextvars.ContextVar`
+values that were set by the caller at `execute()` / `execute_sync()` time:
+
+1. `build_rust_tool()` (called at execute time) snapshots the caller's context
+   via `contextvars.copy_context()`.
+2. Sync callbacks are invoked via `ctx.run(fn, params, stdin)`.
+3. Async callbacks are invoked via
+   `ctx.run(lambda: loop.run_until_complete(fn(params, stdin)))` so that the
+   `asyncio.Task` inherits the captured context.
+
+This enables framework patterns like LangGraph's `get_stream_writer()` and
+FastAPI's request-scoped state.
+
+**Caveat:** `execute_sync()` must not be called from an async endpoint that runs
+on the same thread as a Python event loop. Use `await execute()` from async
+contexts instead.
+
 ### Flag parsing
 
 Bash command args are parsed into a JSON object:
@@ -90,7 +125,8 @@ Unknown flags (not in schema) are kept as strings.
 
 ### ScriptedToolBuilder
 
-Two arguments per tool: definition + callback.
+Two arguments per tool: definition + callback. Use `.tool()` for sync and
+`.async_tool()` for async callbacks.
 
 ```rust
 ScriptedTool::builder("api_name")
@@ -102,6 +138,13 @@ ScriptedTool::builder("api_name")
         |args| {
             let id = args.param_i64("id").ok_or("missing --id")?;
             Ok(format!("{{\"id\":{id}}}\n"))
+        },
+    )
+    .async_tool(
+        ToolDef::new("fetch_url", "Fetch a URL"),
+        |args| async move {
+            let url = args.param_str("url").unwrap_or("?");
+            Ok(format!("{{\"url\":\"{url}\",\"status\":200}}\n"))
         },
     )
     .env("API_KEY", "...")

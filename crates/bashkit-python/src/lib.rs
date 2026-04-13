@@ -1445,6 +1445,8 @@ struct PyToolEntry {
     description: String,
     schema: serde_json::Value,
     callback: Py<PyAny>,
+    /// True when callback is `async def` (coroutine function).
+    is_async: bool,
 }
 
 /// Compose Python callbacks as bash builtins for multi-tool orchestration.
@@ -1485,7 +1487,10 @@ pub struct ScriptedTool {
 
 impl ScriptedTool {
     /// Build a Rust ScriptedTool from stored Python config.
-    /// Each Python callback is wrapped via `Python::attach`.
+    ///
+    /// Called at execute() time so that `contextvars.copy_context()` captures the
+    /// caller's ContextVar state. Each Python callback is invoked via `ctx.run()`
+    /// to restore those vars.
     fn build_rust_tool(&self) -> RustScriptedTool {
         let mut builder = RustScriptedTool::builder(&self.name);
 
@@ -1493,28 +1498,103 @@ impl ScriptedTool {
             builder = builder.short_description(desc);
         }
 
+        // Snapshot the caller's contextvars at execute()-call time.
+        let py_ctx: Py<PyAny> = Python::attach(|py| {
+            let contextvars = py.import("contextvars").expect("contextvars stdlib");
+            contextvars
+                .call_method0("copy_context")
+                .expect("copy_context")
+                .unbind()
+        });
+
+        // Resources for async callbacks: a shared event loop and a helper
+        // function that drives coroutines inside the captured ContextVar
+        // snapshot. Created once per execute() call and shared across all
+        // async callback invocations to avoid FD exhaustion.
+        let has_async = self.tools.iter().any(|e| e.is_async);
+        let async_loop: Option<Py<PyAny>> = if has_async {
+            Some(Python::attach(|py| {
+                let asyncio = py.import("asyncio").expect("asyncio stdlib");
+                asyncio
+                    .call_method0("new_event_loop")
+                    .expect("new_event_loop")
+                    .unbind()
+            }))
+        } else {
+            None
+        };
+        // Helper: ctx.run(lambda: loop.run_until_complete(fn(p, s)))
+        // Wrapping run_until_complete inside ctx.run() ensures the Task
+        // created by run_until_complete inherits the captured context,
+        // making ContextVars visible throughout the coroutine body.
+        let async_runner: Option<Py<PyAny>> = if has_async {
+            Some(Python::attach(|py| {
+                pyo3::types::PyModule::from_code(
+                    py,
+                    c"def _run(ctx, loop, fn, params, stdin):\n    return ctx.run(lambda: loop.run_until_complete(fn(params, stdin)))",
+                    c"<bashkit_async>",
+                    c"_bashkit_async",
+                )
+                .expect("async helper module")
+                .getattr("_run")
+                .expect("_run function")
+                .unbind()
+            }))
+        } else {
+            None
+        };
+
         for entry in &self.tools {
             let py_cb = Python::attach(|py| entry.callback.clone_ref(py));
             let tool_name = entry.name.clone();
+            let def =
+                ToolDef::new(&entry.name, &entry.description).with_schema(entry.schema.clone());
+            let ctx = Python::attach(|py| py_ctx.clone_ref(py));
 
-            let callback = move |args: &ToolArgs| -> Result<String, String> {
-                Python::attach(|py| {
-                    let params = json_to_py(py, &args.params).map_err(|e: PyErr| e.to_string())?;
-                    let stdin_arg = args.stdin.as_deref().map(|s| s.to_string());
-
-                    let result = py_cb
-                        .call1(py, (params, stdin_arg))
-                        .map_err(|e| format!("{}: {}", tool_name, e))?;
-                    result
-                        .extract::<String>(py)
-                        .map_err(|e| format!("{}: callback must return str, got {}", tool_name, e))
-                })
-            };
-
-            builder = builder.tool(
-                ToolDef::new(&entry.name, &entry.description).with_schema(entry.schema.clone()),
-                callback,
-            );
+            if entry.is_async {
+                // Async callback: the runner helper calls
+                //   ctx.run(lambda: loop.run_until_complete(fn(params, stdin)))
+                // which ensures the Task inherits the captured ContextVars.
+                // The GIL serialises access so the shared loop is safe.
+                let ev_loop = async_loop
+                    .as_ref()
+                    .map(|l| Python::attach(|py| l.clone_ref(py)))
+                    .expect("async_loop must exist when is_async is true");
+                let runner = async_runner
+                    .as_ref()
+                    .map(|r| Python::attach(|py| r.clone_ref(py)))
+                    .expect("async_runner must exist when is_async is true");
+                let callback = move |args: &ToolArgs| -> Result<String, String> {
+                    Python::attach(|py| {
+                        let params =
+                            json_to_py(py, &args.params).map_err(|e: PyErr| e.to_string())?;
+                        let stdin_arg = args.stdin.as_deref().map(|s| s.to_string());
+                        let result = runner
+                            .call1(py, (&ctx, &ev_loop, &py_cb, params, stdin_arg))
+                            .map_err(|e| format!("{}: {}", tool_name, e))?;
+                        result.extract::<String>(py).map_err(|e| {
+                            format!("{}: callback must return str, got {}", tool_name, e)
+                        })
+                    })
+                };
+                builder = builder.tool(def, callback);
+            } else {
+                // Sync callback: ctx.run(fn, params, stdin) with ContextVars.
+                let callback = move |args: &ToolArgs| -> Result<String, String> {
+                    Python::attach(|py| {
+                        let params =
+                            json_to_py(py, &args.params).map_err(|e: PyErr| e.to_string())?;
+                        let stdin_arg = args.stdin.as_deref().map(|s| s.to_string());
+                        let result = ctx
+                            .call_method1(py, "run", (&py_cb, params, stdin_arg))
+                            .map_err(|e| format!("{}: {}", tool_name, e))?;
+                        result.extract::<String>(py).map_err(|e| {
+                            format!("{}: callback must return str, got {}", tool_name, e)
+                        })
+                    })
+                };
+                builder = builder.tool(def, callback);
+            }
         }
 
         for (k, v) in &self.env_vars {
@@ -1568,15 +1648,18 @@ impl ScriptedTool {
 
     /// Register a tool command.
     ///
-    /// The callback signature is: `callback(params: dict, stdin: str | None) -> str`
+    /// The callback can be synchronous or ``async def``:
     ///
-    /// `params` contains `--key value` flags parsed from the bash command line,
-    /// with types coerced per the schema (integers, booleans, etc.).
+    /// - sync:  ``callback(params: dict, stdin: str | None) -> str``
+    /// - async: ``async def callback(params: dict, stdin: str | None) -> str``
+    ///
+    /// ``contextvars.ContextVar`` values active at ``execute()`` / ``execute_sync()``
+    /// call time are automatically propagated into callbacks.
     ///
     /// Args:
     ///     name: Command name (becomes a bash builtin)
     ///     description: Human-readable description
-    ///     callback: Python callable `(params, stdin) -> str`
+    ///     callback: Python callable ``(params, stdin) -> str``
     ///     schema: Optional JSON Schema dict for input parameters
     #[pyo3(signature = (name, description, callback, schema=None))]
     fn add_tool(
@@ -1591,11 +1674,23 @@ impl ScriptedTool {
             Some(ref s) => py_to_json(py, s)?,
             None => serde_json::Value::Object(Default::default()),
         };
+        // Detect async callbacks using the same pattern as external_handler
+        let inspect = py.import("inspect")?;
+        let is_coro_fn = inspect.getattr("iscoroutinefunction")?;
+        let bound = callback.bind(py);
+        let is_async = is_coro_fn.call1((bound,))?.extract::<bool>()?
+            || bound
+                .getattr("__call__")
+                .ok()
+                .and_then(|c| is_coro_fn.call1((c,)).ok())
+                .and_then(|r| r.extract::<bool>().ok())
+                .unwrap_or(false);
         self.tools.push(PyToolEntry {
             name,
             description,
             schema: schema_val,
             callback,
+            is_async,
         });
         Ok(())
     }

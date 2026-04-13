@@ -135,6 +135,8 @@ pub use toolset::{DiscoverTool, DiscoveryMode, ScriptingToolSet, ScriptingToolSe
 use crate::{ExecutionLimits, Tool, ToolService};
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 // ============================================================================
@@ -233,11 +235,29 @@ impl ToolArgs {
 // ToolCallback — execution callback type
 // ============================================================================
 
-/// Execution callback for a registered tool.
+/// Execution callback for a registered tool (synchronous).
 ///
 /// Receives parsed [`ToolArgs`] with typed parameters and optional stdin.
 /// Return `Ok(stdout)` on success or `Err(message)` on failure.
 pub type ToolCallback = Arc<dyn Fn(&ToolArgs) -> Result<String, String> + Send + Sync>;
+
+/// Async execution callback for a registered tool.
+///
+/// Same contract as [`ToolCallback`] but returns a `Future`, allowing
+/// non-blocking I/O inside the callback. Takes owned [`ToolArgs`] because
+/// the future may outlive the borrow.
+pub type AsyncToolCallback = Arc<
+    dyn Fn(ToolArgs) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> + Send + Sync,
+>;
+
+/// Sync or async callback for a registered tool.
+#[derive(Clone)]
+pub enum CallbackKind {
+    /// Synchronous callback — blocks until complete.
+    Sync(ToolCallback),
+    /// Asynchronous callback — `.await`ed inside the interpreter.
+    Async(AsyncToolCallback),
+}
 
 // ============================================================================
 // Execution trace — inner scripted command/builtin usage
@@ -274,7 +294,7 @@ pub struct ScriptedExecutionTrace {
 #[derive(Clone)]
 pub(crate) struct RegisteredTool {
     pub(crate) def: ToolDef,
-    pub(crate) callback: ToolCallback,
+    pub(crate) callback: CallbackKind,
 }
 
 // ============================================================================
@@ -339,7 +359,7 @@ impl ScriptedToolBuilder {
         self
     }
 
-    /// Register a tool with its definition and execution callback.
+    /// Register a tool with its definition and synchronous execution callback.
     ///
     /// The callback receives [`ToolArgs`] with `--key value` flags parsed into
     /// a JSON object, type-coerced per the schema.
@@ -350,7 +370,25 @@ impl ScriptedToolBuilder {
     ) -> Self {
         self.tools.push(RegisteredTool {
             def,
-            callback: Arc::new(callback),
+            callback: CallbackKind::Sync(Arc::new(callback)),
+        });
+        self
+    }
+
+    /// Register a tool with its definition and **async** execution callback.
+    ///
+    /// Same as [`tool()`](Self::tool) but the callback returns a `Future`,
+    /// allowing non-blocking I/O. Takes owned [`ToolArgs`] because the future
+    /// may outlive the borrow.
+    pub fn async_tool<F, Fut>(mut self, def: ToolDef, callback: F) -> Self
+    where
+        F: Fn(ToolArgs) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<String, String>> + Send + 'static,
+    {
+        let cb: AsyncToolCallback = Arc::new(move |args| Box::pin(callback(args)));
+        self.tools.push(RegisteredTool {
+            def,
+            callback: CallbackKind::Async(cb),
         });
         self
     }
@@ -1136,5 +1174,94 @@ mod tests {
         assert_eq!(trace.invocations[1].kind, ScriptedCommandKind::Help);
         assert_eq!(trace.invocations[2].name, "get_user");
         assert_eq!(trace.invocations[2].kind, ScriptedCommandKind::Tool);
+    }
+
+    // -- Async callback tests --
+
+    #[tokio::test]
+    async fn test_async_tool_basic() {
+        let tool = ScriptedTool::builder("async_api")
+            .async_tool(
+                ToolDef::new("greet", "Greet async").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "name": {"type": "string"} }
+                })),
+                |args: ToolArgs| async move {
+                    let name = args.param_str("name").unwrap_or("world").to_string();
+                    Ok(format!("hello {name}\n"))
+                },
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "greet --name Async".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout.trim(), "hello Async");
+    }
+
+    #[tokio::test]
+    async fn test_mixed_sync_async_tools() {
+        let tool = ScriptedTool::builder("mixed")
+            .tool(ToolDef::new("sync_ping", "Sync"), |_args: &ToolArgs| {
+                Ok("sync-pong\n".to_string())
+            })
+            .async_tool(
+                ToolDef::new("async_ping", "Async"),
+                |_args: ToolArgs| async move { Ok("async-pong\n".to_string()) },
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "sync_ping; async_ping".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("sync-pong"));
+        assert!(resp.stdout.contains("async-pong"));
+    }
+
+    #[tokio::test]
+    async fn test_async_tool_error_propagates() {
+        let tool = ScriptedTool::builder("err_api")
+            .sanitize_errors(false)
+            .async_tool(
+                ToolDef::new("fail", "Always fails"),
+                |_args: ToolArgs| async move { Err("async boom".to_string()) },
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "fail".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_ne!(resp.exit_code, 0);
+        assert!(resp.stderr.contains("async boom"));
+    }
+
+    #[tokio::test]
+    async fn test_async_tool_stdin_pipe() {
+        let tool = ScriptedTool::builder("pipe_api")
+            .async_tool(
+                ToolDef::new("upper", "Uppercase stdin"),
+                |args: ToolArgs| async move { Ok(args.stdin.unwrap_or_default().to_uppercase()) },
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "echo hello | upper".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("HELLO"));
     }
 }

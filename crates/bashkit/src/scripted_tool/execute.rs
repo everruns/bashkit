@@ -1,8 +1,8 @@
 //! ScriptedTool execution: Tool impl, builtin adapter, flag parser, documentation helpers.
 
 use super::{
-    ScriptedCommandInvocation, ScriptedCommandKind, ScriptedExecutionTrace, ScriptedTool, ToolArgs,
-    ToolCallback,
+    CallbackKind, ScriptedCommandInvocation, ScriptedCommandKind, ScriptedExecutionTrace,
+    ScriptedTool, ToolArgs,
 };
 use crate::Bash;
 use crate::builtins::{Builtin, Context};
@@ -142,11 +142,11 @@ fn usage_from_schema(schema: &serde_json::Value) -> Option<String> {
 // ToolBuiltinAdapter — wraps ToolCallback as a Builtin
 // ============================================================================
 
-/// Adapts a [`ToolCallback`] into a [`Builtin`] so the interpreter can execute it.
+/// Adapts a [`CallbackKind`] into a [`Builtin`] so the interpreter can execute it.
 /// Parses `--key value` flags from `ctx.args` using the schema for type coercion.
 struct ToolBuiltinAdapter {
     name: String,
-    callback: ToolCallback,
+    callback: CallbackKind,
     schema: serde_json::Value,
     log: InvocationLog,
     sanitize_errors: bool,
@@ -162,7 +162,12 @@ impl Builtin for ToolBuiltinAdapter {
                     stdin: ctx.stdin.map(String::from),
                 };
 
-                match (self.callback)(&tool_args) {
+                let cb_result = match &self.callback {
+                    CallbackKind::Sync(cb) => (cb)(&tool_args),
+                    CallbackKind::Async(cb) => (cb)(tool_args).await,
+                };
+
+                match cb_result {
                     Ok(stdout) => ExecResult::ok(stdout),
                     Err(msg) => {
                         // THREAT[TM-INF-030]: Sanitize callback errors to prevent
@@ -452,7 +457,7 @@ impl ScriptedTool {
             let name = tool.def.name.clone();
             let builtin: Box<dyn Builtin> = Box::new(ToolBuiltinAdapter {
                 name: name.clone(),
-                callback: Arc::clone(&tool.callback),
+                callback: tool.callback.clone(),
                 schema: tool.def.input_schema.clone(),
                 log: Arc::clone(&log),
                 sanitize_errors: self.sanitize_errors,
