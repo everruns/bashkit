@@ -843,7 +843,7 @@ impl Bash {
     /// `on_error`) and frozen at build time.
     ///
     /// HTTP hooks (`before_http`, `after_http`) live on the
-    /// [`HttpClient`](crate::network::HttpClient) and are set via
+    /// [`HttpClient`] and are set via
     /// the builder as well.
     pub fn hooks(&self) -> &hooks::Hooks {
         self.interpreter.hooks()
