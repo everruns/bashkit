@@ -1,138 +1,207 @@
-#!/usr/bin/env python3
-"""LangGraph-style async tool with ContextVar propagation.
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "bashkit",
+#     "langchain-core>=0.3",
+#     "langgraph>=0.2",
+# ]
+# ///
+"""LangGraph agent using ScriptedTool with async callbacks and ContextVar propagation.
 
-Demonstrates:
-- Async ``def`` callbacks registered with ``ScriptedTool.add_tool()``
-- ``contextvars.ContextVar`` state propagating from caller into callbacks
-- Multi-tool bash pipelines with async I/O
-- The "stream writer" pattern used by LangGraph's ``get_stream_writer()``
+Builds a real LangGraph ``StateGraph`` where the tool node invokes a
+``ScriptedTool`` with async Python callbacks.  The example demonstrates:
 
-Usage:
-    python examples/langgraph_async_tool.py
+- Registering ``async def`` callbacks with ``ScriptedTool.add_tool()``
+- ``contextvars.ContextVar`` propagating from the LangGraph task into callbacks
+- Multi-tool bash pipelines composed by LangGraph's tool-calling loop
+
+Run:
+    uv run crates/bashkit-python/examples/langgraph_async_tool.py
 """
+
+from __future__ import annotations
 
 import asyncio
 import contextvars
+import json
+import operator
+from typing import Annotated, Any, TypedDict
+
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.tools import tool
+from langgraph.graph import END, StateGraph
 
 from bashkit import ScriptedTool
 
 # ---------------------------------------------------------------------------
-# Simulate LangGraph's stream-writer pattern: a ContextVar that carries a
-# callback for streaming intermediate results back to the caller.
+# ContextVar — simulates LangGraph's get_stream_writer() pattern.
+# In a real LangGraph app this would be provided by the framework; here we
+# set it manually to prove propagation works end-to-end.
 # ---------------------------------------------------------------------------
 
-stream_writer: contextvars.ContextVar[list] = contextvars.ContextVar("stream_writer")
-
+stream_events: contextvars.ContextVar[list[dict]] = contextvars.ContextVar("stream_events")
 
 # ---------------------------------------------------------------------------
-# Async tool callbacks — these would typically call external APIs
+# Async tool callbacks — each becomes a bash builtin inside ScriptedTool
 # ---------------------------------------------------------------------------
 
 
-async def search_web(params, stdin=None):
-    """Simulate an async web search."""
+async def search_web(params: dict, stdin: str | None = None) -> str:
+    """Search the web for a query (simulated async I/O)."""
     query = params.get("query", "")
-    # Write intermediate progress via the stream writer
-    writer = stream_writer.get()
-    writer.append({"step": "search", "query": query, "status": "started"})
-    # Simulate async I/O (network call, database query, etc.)
-    await asyncio.sleep(0)
+    # Prove ContextVar is accessible inside the callback
+    writer = stream_events.get()
+    writer.append({"tool": "search", "query": query})
+    await asyncio.sleep(0)  # simulate network
     results = [
-        {"title": f"Result 1 for: {query}", "url": "https://example.com/1"},
-        {"title": f"Result 2 for: {query}", "url": "https://example.com/2"},
+        {"title": "Async Python best practices", "url": "https://example.com/1"},
+        {"title": "ContextVar deep dive", "url": "https://example.com/2"},
     ]
-    writer.append({"step": "search", "query": query, "status": "done", "count": len(results)})
-    import json
-
     return json.dumps(results) + "\n"
 
 
-async def summarize(params, stdin=None):
-    """Summarize text from stdin."""
-    writer = stream_writer.get()
-    writer.append({"step": "summarize", "input_length": len(stdin or "")})
+async def fetch_page(params: dict, stdin: str | None = None) -> str:
+    """Fetch a URL and return its content (simulated)."""
+    url = params.get("url", "")
+    writer = stream_events.get()
+    writer.append({"tool": "fetch", "url": url})
     await asyncio.sleep(0)
-    # In reality, this would call an LLM API
-    return f"Summary: processed {len(stdin or '')} chars of input\n"
+    return json.dumps({"url": url, "body": f"Content of {url}", "length": 1234}) + "\n"
 
 
-def format_output(params, stdin=None):
-    """Sync callback — formatting doesn't need async."""
-    fmt = params.get("format", "text")
-    if fmt == "json":
-        import json
-
-        return json.dumps({"formatted": (stdin or "").strip()}) + "\n"
-    return f"[formatted] {(stdin or '').strip()}\n"
+def summarize(params: dict, stdin: str | None = None) -> str:
+    """Sync callback — summarise text from stdin."""
+    text = (stdin or "").strip()
+    writer = stream_events.get()
+    writer.append({"tool": "summarize", "chars": len(text)})
+    return f"Summary ({len(text)} chars): {text[:80]}...\n"
 
 
 # ---------------------------------------------------------------------------
-# Build the tool
+# Build the ScriptedTool
 # ---------------------------------------------------------------------------
 
 
-def build_tool() -> ScriptedTool:
-    tool = ScriptedTool("research_agent", short_description="Research assistant with async tools")
-    tool.add_tool(
+def build_scripted_tool() -> ScriptedTool:
+    st = ScriptedTool("research", short_description="Web research toolkit")
+    st.add_tool(
         "search",
-        "Search the web for a query",
+        "Search the web",
         callback=search_web,
         schema={"type": "object", "properties": {"query": {"type": "string"}}},
     )
-    tool.add_tool(
-        "summarize",
-        "Summarize text from stdin",
-        callback=summarize,
+    st.add_tool(
+        "fetch",
+        "Fetch a URL",
+        callback=fetch_page,
+        schema={"type": "object", "properties": {"url": {"type": "string"}}},
     )
-    tool.add_tool(
-        "format",
-        "Format output",
-        callback=format_output,
-        schema={"type": "object", "properties": {"format": {"type": "string"}}},
-    )
-    return tool
+    st.add_tool("summarize", "Summarize stdin text", callback=summarize)
+    return st
 
 
 # ---------------------------------------------------------------------------
-# Run
+# LangGraph state + nodes
 # ---------------------------------------------------------------------------
 
 
-def main():
-    # Set up the stream writer (simulating LangGraph's get_stream_writer())
-    events: list = []
-    stream_writer.set(events)
+class AgentState(TypedDict):
+    messages: Annotated[list[BaseMessage], operator.add]
 
-    tool = build_tool()
 
-    # Single async tool call
-    print("=== Single async tool call ===")
-    r = tool.execute_sync('search --query "Python async patterns"')
-    print(f"exit_code: {r.exit_code}")
-    print(f"stdout: {r.stdout.strip()}")
-    print(f"stream events: {len(events)}")
-    print()
+# Wrap ScriptedTool as a LangChain tool so LangGraph can call it
+scripted = build_scripted_tool()
 
-    # Reset events for next demo
-    events.clear()
 
-    # Multi-tool pipeline: search → summarize → format
-    print("=== Multi-tool pipeline (async + sync) ===")
-    script = """
-        search --query "ContextVar propagation" | summarize | format --format json
-    """
-    r = tool.execute_sync(script)
-    print(f"exit_code: {r.exit_code}")
-    print(f"stdout: {r.stdout.strip()}")
-    print(f"stream events: {events}")
-    print()
+@tool
+def research_tool(commands: str) -> str:
+    """Run a bash script that orchestrates search, fetch, and summarize tools."""
+    r = scripted.execute_sync(commands)
+    if r.exit_code != 0:
+        return f"Error (exit {r.exit_code}): {r.stderr}"
+    return r.stdout
 
-    # Verify all stream events were captured
-    assert len(events) == 3, f"Expected 3 events, got {len(events)}: {events}"
-    assert events[0]["step"] == "search"
-    assert events[1]["step"] == "search"
-    assert events[2]["step"] == "summarize"
-    print("All assertions passed!")
+
+def tool_node(state: AgentState) -> dict[str, Any]:
+    """Execute tool calls from the last AI message."""
+    last = state["messages"][-1]
+    results = []
+    for tc in last.tool_calls:
+        output = research_tool.invoke(tc["args"])
+        results.append(ToolMessage(content=str(output), tool_call_id=tc["id"]))
+    return {"messages": results}
+
+
+def fake_llm_node(state: AgentState) -> dict[str, Any]:
+    """Simulated LLM that emits a single tool call, then stops."""
+    if any(isinstance(m, ToolMessage) for m in state["messages"]):
+        return {"messages": [AIMessage(content="Done! See above results.")]}
+
+    # First turn: emit a tool call with a bash pipeline
+    return {
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "name": "research_tool",
+                        "args": {"commands": 'search --query "async Python" | summarize'},
+                    }
+                ],
+            )
+        ]
+    }
+
+
+def should_continue(state: AgentState) -> str:
+    last = state["messages"][-1]
+    if hasattr(last, "tool_calls") and last.tool_calls:
+        return "tools"
+    return END
+
+
+# ---------------------------------------------------------------------------
+# Build and run the graph
+# ---------------------------------------------------------------------------
+
+
+def build_graph() -> StateGraph:
+    g = StateGraph(AgentState)
+    g.add_node("llm", fake_llm_node)
+    g.add_node("tools", tool_node)
+    g.set_entry_point("llm")
+    g.add_conditional_edges("llm", should_continue, {"tools": "tools", END: END})
+    g.add_edge("tools", "llm")
+    return g.compile()
+
+
+def main() -> None:
+    events: list[dict] = []
+    stream_events.set(events)
+
+    graph = build_graph()
+    result = graph.invoke(
+        {"messages": [HumanMessage(content="Research async Python patterns")]},
+    )
+
+    print("=== Final messages ===")
+    for msg in result["messages"]:
+        role = msg.__class__.__name__
+        text = msg.content[:120] if msg.content else "(tool call)"
+        print(f"  {role}: {text}")
+
+    print("\n=== Stream events (from ContextVar) ===")
+    for ev in events:
+        print(f"  {ev}")
+
+    # Assertions
+    assert len(events) >= 2, f"Expected >=2 stream events, got {len(events)}"
+    assert events[0]["tool"] == "search"
+    assert events[-1]["tool"] == "summarize"
+    assert any(isinstance(m, ToolMessage) for m in result["messages"])
+    print("\nAll assertions passed!")
 
 
 if __name__ == "__main__":

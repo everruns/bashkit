@@ -86,7 +86,7 @@ jobs:
       - name: Install wheel and test dependencies
         run: |
           pip install bashkit --no-index --find-links crates/bashkit-python/dist --force-reinstall
-          pip install pytest pytest-asyncio langchain-core fastapi httpx
+          pip install pytest pytest-asyncio langchain-core langgraph fastapi httpx
 
       - name: Run tests
         working-directory: crates/bashkit-python
@@ -120,7 +120,7 @@ jobs:
       - name: Install local wheel
         run: |
           pip install bashkit --no-index --find-links crates/bashkit-python/dist --force-reinstall
-          pip install langchain-core fastapi httpx
+          pip install langchain-core langgraph fastapi httpx uvicorn
 
       - name: Run examples
         run: |
