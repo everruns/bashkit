@@ -27,14 +27,13 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | 002-parser | Bash syntax parser design |
 | 003-vfs | Virtual filesystem abstraction |
 | 004-testing | Testing strategy and patterns |
-| 005-builtins | Builtin command implementations |
+| 005-builtins | Builtin command design (trait, ShellRef, ExecutionPlan) |
 | 005-security-testing | Fail-point injection for security testing |
 | 006-threat-model | Security threats and mitigations |
 | 007-parallel-execution | Threading model, Arc usage |
 | 008-documentation | Rustdoc guides, embedded markdown |
-| 008-posix-compliance | POSIX design rationale, security exclusions |
-| 008-release-process | Version tagging, crates.io + PyPI publishing |
-| 009-implementation-status | Feature status, test coverage, limitations |
+| 008-release-process | Version tagging, crates.io + PyPI + npm publishing |
+| 009-implementation-status | Feature status, test coverage, limitations, POSIX compliance |
 | 009-tool-contract | Public LLM Tool trait contract |
 | 010-git-support | Sandboxed git operations on VFS |
 | 011-python-builtin | Embedded Python via Monty, security, resource limits |
@@ -42,6 +41,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | 012-maintenance | Pre-release maintenance requirements |
 | 013-python-package | Python package, PyPI wheels, platform matrix |
 | 014-scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |
+| 015-ssh-support | Sandboxed SSH/SCP/SFTP operations |
 | 016-zapcode-runtime | Embedded TypeScript via ZapCode, VFS bridging, resource limits |
 | 017-request-signing | Transparent Ed25519 request signing (bot-auth) per RFC 9421 |
 | 018-interactive-shell | Interactive REPL mode with rustyline line editing |

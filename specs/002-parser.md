@@ -13,93 +13,8 @@ Bashkit uses a recursive descent parser with a context-aware lexer.
 Input → Lexer → Tokens → Parser → AST
 ```
 
-### Token Types
-
-```rust
-pub enum Token {
-    // Literals
-    Word(String),           // Unquoted or quoted words
-    Number(i64),            // Integer literals
-
-    // Operators
-    Pipe,                   // |
-    And,                    // &&
-    Or,                     // ||
-    Semicolon,              // ;
-    Newline,                // \n
-    Background,             // &
-
-    // Redirections
-    RedirectOut,            // >
-    RedirectAppend,         // >>
-    RedirectIn,             // <
-    HereDoc,                // <<
-    HereString,             // <<<
-    ProcessSubIn,           // <(
-    ProcessSubOut,          // >(
-
-    // File descriptor redirections
-    RedirectBoth,           // &>
-    DupOutput,              // >&
-    RedirectFd(i32),        // 2>
-    RedirectFdAppend(i32),  // 2>>
-    DupFd(i32, i32),        // 2>&1
-
-    // Grouping
-    LeftParen,              // (
-    RightParen,             // )
-    LeftBrace,              // {
-    RightBrace,             // }
-    DoubleLeftBracket,      // [[
-    DoubleRightBracket,     // ]]
-
-    // Keywords (detected after lexing)
-    // if, then, else, elif, fi
-    // for, while, until, do, done
-    // case, esac, in
-    // function
-}
-```
-
-### AST Structure
-
-```rust
-pub struct Script {
-    pub commands: Vec<Command>,
-}
-
-pub enum Command {
-    Simple(SimpleCommand),      // ls -la
-    Pipeline(Pipeline),         // cmd1 | cmd2 | cmd3
-    List(CommandList),          // cmd1 && cmd2 || cmd3
-    Compound(CompoundCommand),  // if, for, while, case, { }, ( )
-    Function(FunctionDef),      // function foo() { }
-}
-
-pub struct SimpleCommand {
-    pub name: Word,
-    pub args: Vec<Word>,
-    pub redirects: Vec<Redirect>,
-    pub assignments: Vec<Assignment>,  // VAR=value cmd
-}
-
-pub struct Word {
-    pub parts: Vec<WordPart>,
-}
-
-pub enum WordPart {
-    Literal(String),
-    Variable(String),           // $VAR
-    CommandSub(Script),         // $(cmd) or `cmd`
-    ArithmeticSub(String),      // $((expr))
-    DoubleQuoted(Vec<WordPart>), // "text $var"
-    Length(String),             // ${#var}
-    ArrayAccess { name, index },// ${arr[i]} or ${arr[@]}
-    ArrayLength(String),        // ${#arr[@]}
-    ArrayIndices(String),       // ${!arr[@]}
-    ParameterExpansion { ... }, // ${var:-default}, ${var#pattern}, etc.
-}
-```
+Token types, AST structures, and parser grammar are defined in
+`crates/bashkit/src/parser/`. They evolve as features are added.
 
 ### Parser Rules (Simplified)
 
@@ -113,12 +28,9 @@ redirect      → ('>' | '>>' | '<' | '<<' | '<<<') word
                | NUMBER ('>' | '<') word
 ```
 
-Note: The `&` operator marks the preceding command for background execution.
-Currently, background commands run synchronously but are parsed correctly.
-
 ### Context-Aware Lexing
 
-The lexer must handle bash's context-sensitivity:
+The lexer handles bash's context-sensitivity:
 - `$var` in double quotes: expand variable
 - `$var` in single quotes: literal text
 - Word splitting after expansion
@@ -128,51 +40,26 @@ The lexer must handle bash's context-sensitivity:
 
 ### Arithmetic Expressions
 
-Arithmetic expansion `$((expr))` supports:
-- Basic operators: `+`, `-`, `*`, `/`, `%`
-- Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
-- Logical: `&&`, `||` (with short-circuit evaluation)
-- Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
-- Ternary: `cond ? true : false`
-- Variable references with or without `$` prefix
+`$((expr))` supports: `+`, `-`, `*`, `/`, `%`, comparisons, logical `&&`/`||`
+(short-circuit), bitwise operators, ternary `?:`, variable references.
 
 ### Error Recovery
 
-Parser produces errors with:
-- Line and column numbers
-- Expected vs. found token
-- Context (what was being parsed)
+Parser produces errors with line/column numbers, expected vs. found token,
+and context (what was being parsed).
 
 ## Alternatives Considered
 
 ### PEG parser (pest, pom)
-Rejected because:
-- Bash grammar is context-sensitive
-- PEG can't handle here-docs well
-- Manual parser gives better error messages
+Rejected: Bash grammar is context-sensitive, PEG can't handle here-docs well,
+manual parser gives better error messages.
 
 ### Tree-sitter
-Rejected because:
-- Designed for incremental parsing (overkill)
-- Would add large dependency
-- Harder to customize for our needs
+Rejected: Designed for incremental parsing (overkill), large dependency,
+harder to customize.
 
 ## Verification
 
-```rust
-#[test]
-fn test_parse_pipeline() {
-    let parser = Parser::new("echo hello | cat");
-    let script = parser.parse().unwrap();
-    assert!(matches!(script.commands[0], Command::Pipeline(_)));
-}
-
-#[test]
-fn test_parse_redirect() {
-    let parser = Parser::new("echo hello > /tmp/out");
-    let script = parser.parse().unwrap();
-    if let Command::Simple(cmd) = &script.commands[0] {
-        assert_eq!(cmd.redirects.len(), 1);
-    }
-}
+```bash
+cargo test --lib -- parser
 ```

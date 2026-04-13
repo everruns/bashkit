@@ -9,103 +9,22 @@ Implemented
 
 Bashkit uses a Cargo workspace with multiple crates:
 
-```
-bashkit/
-├── crates/
-│   ├── bashkit/           # Core library
-│   └── bashkit-cli/       # CLI binary (future)
-├── specs/                 # Design specifications
-├── tests/                 # Integration tests (future)
-└── Cargo.toml            # Workspace root
-```
+| Crate | Purpose |
+|-------|---------|
+| `crates/bashkit/` | Core library (parser, interpreter, VFS, builtins, tool contract) |
+| `crates/bashkit-cli/` | CLI binary |
+| `crates/bashkit-python/` | Python bindings (PyO3) |
+| `crates/bashkit-js/` | JavaScript bindings (NAPI-RS) |
+| `crates/bashkit-eval/` | LLM evaluation harness |
 
-### Core Library Structure (`crates/bashkit/`)
-
-```
-src/
-├── lib.rs                # Public API: Bash struct
-├── error.rs              # Error types
-├── limits.rs             # Execution limits
-├── tool.rs               # LLM tool contract (Tool, ToolBuilder)
-├── parser/               # Lexer + Parser + AST
-│   ├── mod.rs           # Parser implementation
-│   ├── lexer.rs         # Tokenization
-│   ├── tokens.rs        # Token types
-│   └── ast.rs           # AST node types
-├── interpreter/          # Execution engine
-│   ├── mod.rs           # Interpreter implementation
-│   ├── glob.rs          # Glob pattern matching and expansion
-│   ├── state.rs         # ExecResult and state types
-│   └── jobs.rs          # Job table for background execution
-├── fs/                   # Virtual filesystem
-│   ├── mod.rs           # Module exports
-│   ├── traits.rs        # FileSystem trait
-│   └── memory.rs        # InMemoryFs implementation
-├── network/              # Network access (optional)
-│   ├── mod.rs           # Module exports
-│   ├── allowlist.rs     # URL allowlist
-│   └── client.rs        # HTTP client
-└── builtins/            # Built-in commands
-    ├── mod.rs           # Builtin trait + Context
-    ├── echo.rs          # echo, printf
-    ├── flow.rs          # true, false, exit, break, continue, return
-    ├── navigation.rs    # cd, pwd
-    ├── fileops.rs       # mkdir, rm, cp, mv, touch, chmod
-    ├── headtail.rs      # head, tail
-    ├── sortuniq.rs      # sort, uniq
-    ├── cuttr.rs         # cut, tr
-    ├── wc.rs            # wc
-    ├── date.rs          # date
-    ├── sleep.rs         # sleep
-    ├── wait.rs          # wait
-    ├── curl.rs          # curl, wget
-    └── ...              # grep, sed, awk, jq, etc.
-```
+The core library modules: `parser/`, `interpreter/`, `fs/`, `builtins/`,
+`network/`, `git/`, `ssh/`, `scripted_tool/`. See the source for current
+structure — it evolves as features are added.
 
 ### Public API
 
-```rust
-// Main entry point
-pub struct Bash {
-    fs: Arc<dyn FileSystem>,
-    interpreter: Interpreter,
-}
-
-impl Bash {
-    pub fn new() -> Self;
-    pub fn builder() -> BashBuilder;
-    pub async fn exec(&mut self, script: &str) -> Result<ExecResult>;
-}
-
-pub struct ExecResult {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-}
-
-// LLM Tool Contract
-pub trait Tool: Send + Sync {
-    fn name(&self) -> &str;
-    fn short_description(&self) -> &str;
-    fn description(&self) -> String;          // Dynamic, includes custom builtins
-    fn help(&self) -> String;              // Full docs for LLMs
-    fn system_prompt(&self) -> String;        // Token-efficient for sysprompt
-    fn input_schema(&self) -> serde_json::Value;
-    fn output_schema(&self) -> serde_json::Value;
-    fn version(&self) -> &str;
-    async fn execute(&mut self, req: ToolRequest) -> ToolResponse;
-    async fn execute_with_status(...) -> ToolResponse;
-}
-
-pub struct BashTool { /* virtual bash implementing Tool */ }
-pub struct BashToolBuilder { /* builder pattern */ }
-pub struct ToolRequest { commands: String }   // Like bash -c
-pub struct ToolResponse { stdout, stderr, exit_code, error }
-
-impl BashTool {
-    pub fn builder() -> BashToolBuilder;
-}
-```
+Main entry point is `Bash` (library) and `BashTool` (LLM tool contract).
+See `crates/bashkit/src/lib.rs` for the full public API surface.
 
 ### Design Principles
 
@@ -119,24 +38,18 @@ impl BashTool {
 ### Single crate vs workspace
 Rejected single crate because:
 - CLI binary would bloat the library
-- Python package needs separate crate
+- Python/JS packages need separate crates
 - Cleaner separation of concerns
 
 ### Sync vs async filesystem
 Rejected sync because:
-- just-bash is fully async
-- Future network operations need async
+- Bashkit is fully async
+- Network operations need async
 - tokio is already a dependency
 
 ## Verification
 
 ```bash
-# Build succeeds
 cargo build
-
-# Tests pass including e2e
 cargo test
-
-# Basic usage works
-cargo test --lib -- tests::test_echo_hello
 ```
