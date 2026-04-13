@@ -11,6 +11,8 @@ Benchmark tool for comparing bashkit against bash and just-bash across multiple 
 | `bashkit-js` | persistent child | Node.js + @everruns/bashkit, warm interpreter |
 | `bashkit-py` | persistent child | Python + bashkit package, warm interpreter |
 | `bash` | subprocess | /bin/bash, new process per run |
+| `gbash` | subprocess | gbash binary (Go), new process per run |
+| `gbash-server` | persistent child | gbash JSON-RPC server, warm interpreter |
 | `just-bash` | subprocess | just-bash CLI, new process per run |
 | `just-bash-inproc` | persistent child | Node.js + just-bash library, warm interpreter |
 
@@ -117,6 +119,8 @@ cargo run -p bashkit-bench --release -- --list
 | `bashkit-js` | `cd crates/bashkit-js && npm install && npm run build` |
 | `bashkit-py` | `maturin build --release && pip install target/wheels/bashkit-*.whl` |
 | `bash` | Pre-installed on most systems |
+| `gbash` | `go install github.com/ewhauser/gbash/cmd/gbash@latest` |
+| `gbash-server` | Same as gbash (uses JSON-RPC server mode) |
 | `just-bash` | `npm install -g just-bash` |
 | `just-bash-inproc` | Same as just-bash (uses library API) |
 
