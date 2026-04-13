@@ -441,6 +441,22 @@ Tests not ported (requires `--features http_client` and URL allowlist):
 - No raw sockets
 - No DNS resolution (host must be in allowlist)
 
+## Hooks / Interceptors
+
+All hooks are interceptors: receive owned data, return `HookAction::Continue(data)` or `HookAction::Cancel(reason)`.
+Registered via `BashBuilder`, frozen at build time (no mutex). Zero cost when no hooks registered.
+
+| Hook | Data Type | Wired | Use Case |
+|------|-----------|-------|----------|
+| `on_exit` | `ExitEvent` | Yes | Detect session termination |
+| `before_exec` | `ExecInput` | Yes | Rewrite/block scripts |
+| `after_exec` | `ExecOutput` | Yes | Observe output, logging |
+| `before_tool` | `ToolEvent` | Yes | Modify args, block builtins |
+| `after_tool` | `ToolResult` | Yes | Observe builtin results |
+| `on_error` | `ErrorEvent` | Yes | Observe/suppress errors |
+| `before_http` | `HttpRequestEvent` | Yes | Rewrite URLs, add headers, deny |
+| `after_http` | `HttpResponseEvent` | Yes | Observe responses |
+
 ## Resource Limits
 
 Default limits (configurable):
