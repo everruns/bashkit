@@ -69,6 +69,28 @@ pub struct ToolResult {
     pub exit_code: i32,
 }
 
+/// Payload for `before_http` hooks.
+#[derive(Debug, Clone)]
+pub struct HttpRequestEvent {
+    /// HTTP method (GET, POST, PUT, DELETE, HEAD, PATCH).
+    pub method: String,
+    /// Request URL.
+    pub url: String,
+    /// Request headers (name-value pairs).
+    pub headers: Vec<(String, String)>,
+}
+
+/// Payload for `after_http` hooks.
+#[derive(Debug, Clone)]
+pub struct HttpResponseEvent {
+    /// Request URL (for correlation).
+    pub url: String,
+    /// HTTP status code.
+    pub status: u16,
+    /// Response headers (name-value pairs).
+    pub headers: Vec<(String, String)>,
+}
+
 /// Payload for `on_error` hooks.
 #[derive(Debug, Clone)]
 pub struct ErrorEvent {
@@ -110,13 +132,11 @@ impl Hooks {
 
     /// Fire `before_tool` hooks. Returns the (possibly modified) event,
     /// or `None` if a hook cancelled the tool invocation.
-    #[allow(dead_code)] // TODO: wire into builtin execution pipeline
     pub(crate) fn fire_before_tool(&self, event: ToolEvent) -> Option<ToolEvent> {
         fire_hooks(&self.before_tool, event)
     }
 
     /// Fire `after_tool` hooks.
-    #[allow(dead_code)] // TODO: wire into builtin execution pipeline
     pub(crate) fn fire_after_tool(&self, event: ToolResult) -> Option<ToolResult> {
         fire_hooks(&self.after_tool, event)
     }

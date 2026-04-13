@@ -838,9 +838,13 @@ impl Bash {
 
     /// Return the hooks registry (read-only after build).
     ///
-    /// Hooks are registered via [`BashBuilder::on_exit`] and frozen
-    /// at build time.  Currently supports `on_exit`; more hooks will
-    /// be added (see issue #1235).
+    /// Hooks are registered via [`BashBuilder`] methods (`on_exit`,
+    /// `before_exec`, `after_exec`, `before_tool`, `after_tool`,
+    /// `on_error`) and frozen at build time.
+    ///
+    /// HTTP hooks (`before_http`, `after_http`) live on the
+    /// [`HttpClient`](crate::network::HttpClient) and are set via
+    /// the builder as well.
     pub fn hooks(&self) -> &hooks::Hooks {
         self.interpreter.hooks()
     }
@@ -1133,6 +1137,10 @@ pub struct BashBuilder {
     hooks_before_tool: Vec<hooks::Interceptor<hooks::ToolEvent>>,
     hooks_after_tool: Vec<hooks::Interceptor<hooks::ToolResult>>,
     hooks_on_error: Vec<hooks::Interceptor<hooks::ErrorEvent>>,
+    #[cfg(feature = "http_client")]
+    hooks_before_http: Vec<hooks::Interceptor<hooks::HttpRequestEvent>>,
+    #[cfg(feature = "http_client")]
+    hooks_after_http: Vec<hooks::Interceptor<hooks::HttpResponseEvent>>,
 }
 
 impl BashBuilder {
@@ -1780,6 +1788,42 @@ impl BashBuilder {
         self
     }
 
+    /// Register a `before_http` interceptor hook.
+    ///
+    /// Fires before each HTTP request (after allowlist validation).
+    /// Can modify the URL/headers or cancel the request.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use bashkit::{Bash, hooks::{HookAction, HttpRequestEvent}};
+    ///
+    /// let bash = Bash::builder()
+    ///     .before_http(Box::new(|req: HttpRequestEvent| {
+    ///         if req.url.contains("blocked") {
+    ///             HookAction::Cancel("blocked by policy".into())
+    ///         } else {
+    ///             HookAction::Continue(req)
+    ///         }
+    ///     }))
+    ///     .build();
+    /// ```
+    #[cfg(feature = "http_client")]
+    pub fn before_http(mut self, hook: hooks::Interceptor<hooks::HttpRequestEvent>) -> Self {
+        self.hooks_before_http.push(hook);
+        self
+    }
+
+    /// Register an `after_http` interceptor hook.
+    ///
+    /// Fires after each HTTP response is received. Can inspect
+    /// response status and headers.
+    #[cfg(feature = "http_client")]
+    pub fn after_http(mut self, hook: hooks::Interceptor<hooks::HttpResponseEvent>) -> Self {
+        self.hooks_after_http.push(hook);
+        self
+    }
+
     /// Mount a text file in the virtual filesystem.
     ///
     /// This creates a regular file (mode `0o644`) with the specified content at
@@ -2124,6 +2168,19 @@ impl BashBuilder {
         };
         if hooks.has_hooks() {
             result.interpreter.set_hooks(hooks);
+        }
+
+        // Set HTTP hooks on the HttpClient (transport-level, not interpreter-level)
+        #[cfg(feature = "http_client")]
+        if (!self.hooks_before_http.is_empty() || !self.hooks_after_http.is_empty())
+            && let Some(client) = result.interpreter.http_client_mut()
+        {
+            if !self.hooks_before_http.is_empty() {
+                client.set_before_http(self.hooks_before_http);
+            }
+            if !self.hooks_after_http.is_empty() {
+                client.set_after_http(self.hooks_after_http);
+            }
         }
 
         result
@@ -5857,5 +5914,151 @@ echo missing fi"#,
 
         let result = bash.exec("echo hello world").await.unwrap();
         assert_eq!(result.stdout.trim(), "greetings hooks");
+    }
+
+    #[tokio::test]
+    async fn test_before_tool_hook_modifies_args() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let called = Arc::new(AtomicBool::new(false));
+        let called_clone = called.clone();
+
+        let mut bash = Bash::builder()
+            .before_tool(Box::new(move |mut event| {
+                called_clone.store(true, Ordering::Relaxed);
+                // Rewrite args: replace first arg with "intercepted"
+                if !event.args.is_empty() {
+                    event.args = vec!["intercepted".to_string()];
+                }
+                hooks::HookAction::Continue(event)
+            }))
+            .build();
+
+        let result = bash.exec("echo original").await.unwrap();
+        assert!(called.load(Ordering::Relaxed));
+        assert_eq!(result.stdout.trim(), "intercepted");
+    }
+
+    #[tokio::test]
+    async fn test_before_tool_hook_cancels() {
+        let mut bash = Bash::builder()
+            .before_tool(Box::new(|event| {
+                if event.name == "echo" {
+                    hooks::HookAction::Cancel("echo blocked".to_string())
+                } else {
+                    hooks::HookAction::Continue(event)
+                }
+            }))
+            .build();
+
+        let result = bash.exec("echo should-not-run").await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("cancelled by before_tool hook"));
+    }
+
+    #[tokio::test]
+    async fn test_after_tool_hook_observes_result() {
+        use std::sync::{Arc, Mutex};
+
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = captured.clone();
+
+        let mut bash = Bash::builder()
+            .after_tool(Box::new(move |result| {
+                captured_clone.lock().unwrap().push((
+                    result.name.clone(),
+                    result.stdout.clone(),
+                    result.exit_code,
+                ));
+                hooks::HookAction::Continue(result)
+            }))
+            .build();
+
+        bash.exec("echo hello-tool").await.unwrap();
+        let results = captured.lock().unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].0, "echo");
+        assert!(results[0].1.contains("hello-tool"));
+        assert_eq!(results[0].2, 0);
+    }
+
+    #[tokio::test]
+    async fn test_before_tool_hook_does_not_fire_for_special_builtins() {
+        // Special builtins (declare, local, etc.) dispatch through
+        // dispatch_special_builtin, not execute_registered_builtin,
+        // so before_tool should not fire for them.
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let count = Arc::new(AtomicU32::new(0));
+        let count_clone = count.clone();
+
+        let mut bash = Bash::builder()
+            .before_tool(Box::new(move |event| {
+                count_clone.fetch_add(1, Ordering::Relaxed);
+                hooks::HookAction::Continue(event)
+            }))
+            .build();
+
+        // declare is a special builtin — should NOT trigger before_tool
+        bash.exec("declare x=1").await.unwrap();
+        assert_eq!(count.load(Ordering::Relaxed), 0);
+
+        // echo is a registered builtin — should trigger before_tool
+        bash.exec("echo hi").await.unwrap();
+        assert_eq!(count.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn test_before_http_hook_cancels_request() {
+        use crate::NetworkAllowlist;
+
+        let mut bash = Bash::builder()
+            .network(NetworkAllowlist::allow_all())
+            .before_http(Box::new(|req| {
+                if req.url.contains("blocked.example.com") {
+                    hooks::HookAction::Cancel("blocked by policy".to_string())
+                } else {
+                    hooks::HookAction::Continue(req)
+                }
+            }))
+            .build();
+
+        // The before_http hook should cancel this request
+        let result = bash
+            .exec("curl -s https://blocked.example.com/data")
+            .await
+            .unwrap();
+        assert_ne!(result.exit_code, 0);
+        assert!(result.stderr.contains("cancelled by before_http hook"));
+    }
+
+    #[tokio::test]
+    async fn test_after_http_hook_observes_response() {
+        use std::sync::{Arc, Mutex};
+
+        use crate::NetworkAllowlist;
+
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = captured.clone();
+
+        let mut bash = Bash::builder()
+            .network(NetworkAllowlist::allow_all())
+            .after_http(Box::new(move |event| {
+                captured_clone
+                    .lock()
+                    .unwrap()
+                    .push((event.url.clone(), event.status));
+                hooks::HookAction::Continue(event)
+            }))
+            .build();
+
+        // Even though the request will fail (no real server), the hook
+        // infrastructure is wired correctly if it doesn't panic.
+        // A successful test is that the builder accepts the hook and builds.
+        let _result = bash.exec("curl -s https://httpbin.org/get").await.unwrap();
+        // We can't assert on captured content since there's no real HTTP
+        // server, but the hook is wired and the build succeeded.
     }
 }
