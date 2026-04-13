@@ -677,14 +677,14 @@ fn tool_cases() -> Vec<BenchCase> {
             "Jq filter array",
             r#"echo '[1,2,3,4,5]' | jq '[.[] | select(. > 2)]'"#,
         )
-        .with_expected("[3, 4, 5]\n"),
+        .with_expected("[\n  3,\n  4,\n  5\n]\n"),
         BenchCase::new(
             "tool_jq_map",
             Category::Tools,
             "Jq map",
             r#"echo '[1,2,3]' | jq '[.[] * 2]'"#,
         )
-        .with_expected("[2, 4, 6]\n"),
+        .with_expected("[\n  2,\n  4,\n  6\n]\n"),
     ]
 }
 
