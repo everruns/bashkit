@@ -15,7 +15,7 @@ name = "bashkit-bench"
 path = "src/main.rs"
 
 [dependencies]
-bashkit = { path = "../bashkit" }
+bashkit = { path = "../bashkit", features = ["jq"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "process"] }
 serde.workspace = true
 serde_json.workspace = true
