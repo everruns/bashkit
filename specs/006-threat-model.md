@@ -1259,6 +1259,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-049 | `collect_dirs_recursive` has no depth limit | Deep recursion on VFS trees (mitigated by `max_path_depth`) | Add explicit depth parameter at `interpreter/mod.rs:8352` |
 | TM-DOS-050 | `parse_word_string` uses default parser limits | Caller-configured tighter limits ignored for parameter expansion | Propagate limits through `parse_word_string()` at `parser/mod.rs:109` |
 | TM-PY-028 | BashTool.reset() in Python drops security config | Resource limits silently removed after reset | Preserve limits like `PyBash.reset()` does (see `bashkit-python/src/lib.rs:470`) |
+| TM-PY-029 | ContextVar capture may include sensitive state | `copy_context()` snapshots all caller ContextVars, not just intended ones | Accepted: same semantics as `asyncio.Task` context inheritance; caller controls what is set |
 
 ### Open (From 2026-03 Blackbox Security Testing)
 
