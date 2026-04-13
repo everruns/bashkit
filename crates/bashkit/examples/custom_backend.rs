@@ -296,6 +296,21 @@ impl FsBackend for SimpleStorage {
             Err(IoError::new(ErrorKind::NotFound, "not found").into())
         }
     }
+
+    async fn set_times(
+        &self,
+        path: &Path,
+        _modified: Option<std::time::SystemTime>,
+        _created: Option<std::time::SystemTime>,
+    ) -> Result<()> {
+        let path = Self::normalize(path);
+        let entries = self.entries.read().unwrap();
+        if entries.contains_key(&path) {
+            Ok(())
+        } else {
+            Err(IoError::new(ErrorKind::NotFound, "not found").into())
+        }
+    }
 }
 
 #[tokio::main]

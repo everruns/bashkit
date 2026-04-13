@@ -242,6 +242,15 @@ impl FileSystem for TrackingFs {
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
         self.inner.chmod(path, mode).await
     }
+
+    async fn set_times(
+        &self,
+        path: &Path,
+        modified: Option<std::time::SystemTime>,
+        created: Option<std::time::SystemTime>,
+    ) -> Result<()> {
+        self.inner.set_times(path, modified, created).await
+    }
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
@@ -478,6 +487,15 @@ impl FileSystem for MaliciousDevFs {
     }
 
     async fn chmod(&self, _path: &Path, _mode: u32) -> Result<()> {
+        Ok(())
+    }
+
+    async fn set_times(
+        &self,
+        _path: &Path,
+        _modified: Option<std::time::SystemTime>,
+        _created: Option<std::time::SystemTime>,
+    ) -> Result<()> {
         Ok(())
     }
 }

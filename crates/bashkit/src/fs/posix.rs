@@ -257,6 +257,16 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
         let path = Self::normalize(path);
         self.backend.chmod(&path, mode).await
     }
+
+    async fn set_times(
+        &self,
+        path: &Path,
+        modified: Option<std::time::SystemTime>,
+        created: Option<std::time::SystemTime>,
+    ) -> Result<()> {
+        let path = Self::normalize(path);
+        self.backend.set_times(&path, modified, created).await
+    }
 }
 
 #[async_trait]

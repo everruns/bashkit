@@ -403,6 +403,24 @@ impl FileSystem for SessionFileSystemAdapter {
             )))
         }
     }
+
+    async fn set_times(
+        &self,
+        path: &Path,
+        _modified: Option<std::time::SystemTime>,
+        _created: Option<std::time::SystemTime>,
+    ) -> Result<()> {
+        let path = self.normalize_path(path);
+        let files = self.store.files.read().unwrap();
+        if files.contains_key(&path) {
+            Ok(())
+        } else {
+            Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("path not found: {}", path.display()),
+            )))
+        }
+    }
 }
 
 #[tokio::main]

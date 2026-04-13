@@ -70,6 +70,9 @@
 //!     async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
 //!         self.inner.chmod(path, mode).await
 //!     }
+//!     async fn set_times(&self, path: &Path, modified: Option<std::time::SystemTime>, created: Option<std::time::SystemTime>) -> Result<()> {
+//!         self.inner.set_times(path, modified, created).await
+//!     }
 //!     fn as_search_capable(&self) -> Option<&dyn SearchCapable> {
 //!         Some(self)
 //!     }
@@ -254,6 +257,14 @@ mod tests {
         }
         async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
             self.inner.chmod(path, mode).await
+        }
+        async fn set_times(
+            &self,
+            path: &Path,
+            modified: Option<std::time::SystemTime>,
+            created: Option<std::time::SystemTime>,
+        ) -> Result<()> {
+            self.inner.set_times(path, modified, created).await
         }
         fn as_search_capable(&self) -> Option<&dyn SearchCapable> {
             Some(self)
@@ -537,6 +548,14 @@ mod tests {
             }
             async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
                 self.inner.chmod(path, mode).await
+            }
+            async fn set_times(
+                &self,
+                path: &Path,
+                modified: Option<std::time::SystemTime>,
+                created: Option<std::time::SystemTime>,
+            ) -> Result<()> {
+                self.inner.set_times(path, modified, created).await
             }
             fn as_search_capable(&self) -> Option<&dyn SearchCapable> {
                 Some(self)

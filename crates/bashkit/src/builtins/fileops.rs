@@ -312,15 +312,123 @@ impl Builtin for Mv {
 
 /// The touch builtin - change file timestamps or create empty files.
 ///
-/// Usage: touch FILE...
+/// Usage: touch [-t TIMESTAMP] FILE...
 pub struct Touch;
+
+/// Parse POSIX touch -t timestamp: `[[CC]YY]MMDDhhmm[.ss]`
+fn parse_touch_timestamp(s: &str) -> std::result::Result<std::time::SystemTime, String> {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    let (datetime_part, seconds) = if let Some(dot_pos) = s.rfind('.') {
+        let secs: u32 = s[dot_pos + 1..]
+            .parse()
+            .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+        if secs > 59 {
+            return Err(format!("touch: invalid date format '{s}'"));
+        }
+        (&s[..dot_pos], secs)
+    } else {
+        (s, 0)
+    };
+
+    let (year, month, day, hour, minute) = match datetime_part.len() {
+        // MMDDhhmm — current century assumed
+        8 => {
+            let mm: u32 = datetime_part[0..2]
+                .parse()
+                .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+            let dd: u32 = datetime_part[2..4]
+                .parse()
+                .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+            let hh: u32 = datetime_part[4..6]
+                .parse()
+                .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+            let min: u32 = datetime_part[6..8]
+                .parse()
+                .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+            // Default to 2000s century
+            let now_secs = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let approx_year = 1970 + now_secs / 31_557_600; // rough
+            let century = (approx_year / 100) * 100;
+            (century as i32, mm, dd, hh, min)
+        }
+        // YYMMDDhhmm
+        10 => {
+            let yy: i32 = datetime_part[0..2]
+                .parse()
+                .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+            let mm: u32 = datetime_part[2..4]
+                .parse()
+                .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+            let dd: u32 = datetime_part[4..6]
+                .parse()
+                .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+            let hh: u32 = datetime_part[6..8]
+                .parse()
+                .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+            let min: u32 = datetime_part[8..10]
+                .parse()
+                .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+            let year = if yy >= 69 { 1900 + yy } else { 2000 + yy };
+            (year, mm, dd, hh, min)
+        }
+        // CCYYMMDDhhmm
+        12 => {
+            let yyyy: i32 = datetime_part[0..4]
+                .parse()
+                .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+            let mm: u32 = datetime_part[4..6]
+                .parse()
+                .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+            let dd: u32 = datetime_part[6..8]
+                .parse()
+                .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+            let hh: u32 = datetime_part[8..10]
+                .parse()
+                .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+            let min: u32 = datetime_part[10..12]
+                .parse()
+                .map_err(|_| format!("touch: invalid date format '{s}'"))?;
+            (yyyy, mm, dd, hh, min)
+        }
+        _ => return Err(format!("touch: invalid date format '{s}'")),
+    };
+
+    // Validate ranges
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 {
+        return Err(format!("touch: invalid date format '{s}'"));
+    }
+
+    // Convert to Unix timestamp using a simple calculation
+    // Days from year 0 to the target year (approximate, accounting for leap years)
+    let y = if month <= 2 { year - 1 } else { year };
+    let m = if month <= 2 {
+        month as i32 + 9
+    } else {
+        month as i32 - 3
+    };
+    // Days from March 1, year 0 to the target date
+    let days =
+        (365 * y + y / 4 - y / 100 + y / 400 + (m * 306 + 5) / 10 + (day as i32 - 1)) - 719468; // offset to Unix epoch (1970-01-01)
+
+    let total_secs = days as i64 * 86400 + hour as i64 * 3600 + minute as i64 * 60 + seconds as i64;
+
+    if total_secs < 0 {
+        return Err(format!("touch: invalid date format '{s}'"));
+    }
+
+    Ok(UNIX_EPOCH + Duration::from_secs(total_secs as u64))
+}
 
 #[async_trait]
 impl Builtin for Touch {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: touch [OPTION]... FILE...\nUpdate the access and modification times of each FILE to the current time.\nA FILE argument that does not exist is created empty.\n\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            "Usage: touch [OPTION]... FILE...\nUpdate the access and modification times of each FILE to the current time.\nA FILE argument that does not exist is created empty.\n\n  -t STAMP  use [[CC]YY]MMDDhhmm[.ss] instead of current time\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
             Some("touch (bashkit) 0.1"),
         ) {
             return Ok(r);
@@ -333,20 +441,66 @@ impl Builtin for Touch {
             ));
         }
 
-        for file in ctx.args.iter().filter(|a| !a.starts_with('-')) {
+        // Parse arguments
+        let mut parser = super::arg_parser::ArgParser::new(ctx.args);
+        let mut timestamp: Option<std::time::SystemTime> = None;
+        let mut files = Vec::new();
+        let mut no_create = false;
+
+        while !parser.is_done() {
+            if let Ok(Some(val)) = parser.flag_value("-t", "touch") {
+                match parse_touch_timestamp(val) {
+                    Ok(t) => timestamp = Some(t),
+                    Err(e) => return Ok(ExecResult::err(format!("{e}\n"), 1)),
+                }
+            } else if parser.flag("-c") || parser.flag("--no-create") {
+                no_create = true;
+            } else {
+                if let Some(arg) = parser.current() {
+                    files.push(arg.to_string());
+                }
+                parser.advance();
+            }
+        }
+
+        if files.is_empty() {
+            return Ok(ExecResult::err(
+                "touch: missing file operand\n".to_string(),
+                1,
+            ));
+        }
+
+        let time = timestamp.unwrap_or_else(std::time::SystemTime::now);
+
+        for file in &files {
             let path = resolve_path(ctx.cwd, file);
 
-            // Check if file exists
-            if !ctx.fs.exists(&path).await.unwrap_or(false) {
-                // Create empty file
-                if let Err(e) = ctx.fs.write_file(&path, &[]).await {
+            if ctx.fs.exists(&path).await.unwrap_or(false) {
+                // Update timestamps on existing file
+                if let Err(e) = ctx.fs.set_times(&path, Some(time), None).await {
                     return Ok(ExecResult::err(
-                        format!("touch: cannot touch '{}': {}\n", file, e),
+                        format!("touch: cannot touch '{file}': {e}\n"),
                         1,
                     ));
                 }
+            } else if !no_create {
+                // Create empty file
+                if let Err(e) = ctx.fs.write_file(&path, &[]).await {
+                    return Ok(ExecResult::err(
+                        format!("touch: cannot touch '{file}': {e}\n"),
+                        1,
+                    ));
+                }
+                // Set timestamp if specified
+                if timestamp.is_some() {
+                    if let Err(e) = ctx.fs.set_times(&path, Some(time), None).await {
+                        return Ok(ExecResult::err(
+                            format!("touch: cannot touch '{file}': {e}\n"),
+                            1,
+                        ));
+                    }
+                }
             }
-            // For existing files, we would update mtime but VFS doesn't track it in a modifiable way
         }
 
         Ok(ExecResult::ok(String::new()))
@@ -912,6 +1066,178 @@ mod tests {
         let result = Touch.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(fs.exists(&cwd.join("newfile.txt")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_touch_t_sets_mtime() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        // Create a file first
+        fs.write_file(&cwd.join("test.txt"), b"hello")
+            .await
+            .unwrap();
+
+        // touch -t 202604061200.00 test.txt
+        let args = vec![
+            "-t".to_string(),
+            "202604061200.00".to_string(),
+            "test.txt".to_string(),
+        ];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Touch.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+
+        let stat = fs.stat(&cwd.join("test.txt")).await.unwrap();
+        // 2026-04-06 12:00:00 UTC = 1775476800
+        let expected = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1775476800);
+        assert_eq!(stat.modified, expected);
+    }
+
+    #[tokio::test]
+    async fn test_touch_t_creates_file_with_timestamp() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec![
+            "-t".to_string(),
+            "202501011200.00".to_string(),
+            "newfile.txt".to_string(),
+        ];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Touch.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(fs.exists(&cwd.join("newfile.txt")).await.unwrap());
+
+        let stat = fs.stat(&cwd.join("newfile.txt")).await.unwrap();
+        // 2025-01-01 12:00:00 UTC = 1735732800
+        let expected = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1735732800);
+        assert_eq!(stat.modified, expected);
+    }
+
+    #[tokio::test]
+    async fn test_touch_t_invalid_format() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec![
+            "-t".to_string(),
+            "invalid".to_string(),
+            "test.txt".to_string(),
+        ];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Touch.execute(ctx).await.unwrap();
+        assert_ne!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_touch_updates_mtime_on_existing() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        // Create file
+        fs.write_file(&cwd.join("exist.txt"), b"data")
+            .await
+            .unwrap();
+        let before = fs.stat(&cwd.join("exist.txt")).await.unwrap().modified;
+
+        // Touch without -t updates to "now" (which will differ from creation time
+        // if enough time passes, but at minimum it should succeed)
+        let args = vec!["exist.txt".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Touch.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let after = fs.stat(&cwd.join("exist.txt")).await.unwrap().modified;
+        // mtime should be >= before (updated to now)
+        assert!(after >= before);
+    }
+
+    #[tokio::test]
+    async fn test_touch_c_no_create() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec!["-c".to_string(), "nonexistent.txt".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Touch.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        // File should NOT have been created
+        assert!(!fs.exists(&cwd.join("nonexistent.txt")).await.unwrap());
     }
 
     #[tokio::test]

@@ -478,6 +478,22 @@ impl FsBackend for RealFs {
         Ok(())
     }
 
+    async fn set_times(
+        &self,
+        path: &Path,
+        modified: Option<std::time::SystemTime>,
+        _created: Option<std::time::SystemTime>,
+    ) -> Result<()> {
+        self.check_writable()?;
+        let real = self.resolve(path)?;
+        // filetime crate could set times on real fs; for now just validate path exists
+        if !real.exists() {
+            return Err(std::io::Error::from(std::io::ErrorKind::NotFound).into());
+        }
+        let _ = modified;
+        Ok(())
+    }
+
     fn usage(&self) -> FsUsage {
         // Could walk the real directory, but that's expensive. Return zeros.
         FsUsage::default()

@@ -853,6 +853,54 @@ impl FileSystem for OverlayFs {
 
         Err(IoError::new(ErrorKind::NotFound, "not found").into())
     }
+
+    async fn set_times(
+        &self,
+        path: &Path,
+        modified: Option<std::time::SystemTime>,
+        created: Option<std::time::SystemTime>,
+    ) -> Result<()> {
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
+        let path = Self::normalize_path(path);
+
+        if self.is_whiteout(&path) {
+            return Err(IoError::new(ErrorKind::NotFound, "not found").into());
+        }
+
+        // If exists in upper, set_times there
+        if self.upper.exists(&path).await.unwrap_or(false) {
+            return self.upper.set_times(&path, modified, created).await;
+        }
+
+        // If exists in lower, copy-on-write then set_times
+        if self.lower.exists(&path).await.unwrap_or(false) {
+            let stat = self.lower.stat(&path).await?;
+
+            if stat.file_type == FileType::File {
+                let content = self.lower.read_file(&path).await?;
+                self.check_write_limits(content.len())?;
+
+                if let Some(parent) = path.parent()
+                    && !self.upper.exists(parent).await.unwrap_or(false)
+                {
+                    self.upper.mkdir(parent, true).await?;
+                }
+
+                self.upper.write_file(&path, &content).await?;
+                self.hide_lower_file(stat.size);
+            } else if stat.file_type == FileType::Directory {
+                self.check_dir_limits()?;
+                self.upper.mkdir(&path, true).await?;
+                self.hide_lower_dir();
+            }
+
+            return self.upper.set_times(&path, modified, created).await;
+        }
+
+        Err(IoError::new(ErrorKind::NotFound, "not found").into())
+    }
 }
 
 #[async_trait]

@@ -193,6 +193,14 @@ pub trait FsBackend: Send + Sync {
     /// Change file permissions.
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()>;
 
+    /// Set file timestamps.
+    async fn set_times(
+        &self,
+        path: &Path,
+        modified: Option<std::time::SystemTime>,
+        created: Option<std::time::SystemTime>,
+    ) -> Result<()>;
+
     /// Get storage usage statistics.
     fn usage(&self) -> FsUsage {
         FsUsage::default()
@@ -251,6 +259,14 @@ mod tests {
             Ok(PathBuf::new())
         }
         async fn chmod(&self, _path: &Path, _mode: u32) -> Result<()> {
+            Ok(())
+        }
+        async fn set_times(
+            &self,
+            _path: &Path,
+            _modified: Option<std::time::SystemTime>,
+            _created: Option<std::time::SystemTime>,
+        ) -> Result<()> {
             Ok(())
         }
     }

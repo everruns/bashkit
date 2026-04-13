@@ -353,6 +353,7 @@
 //! #   async fn symlink(&self, _target: &Path, _link: &Path) -> Result<()> { Ok(()) }
 //! #   async fn read_link(&self, _path: &Path) -> Result<PathBuf> { Ok(PathBuf::new()) }
 //! #   async fn chmod(&self, _path: &Path, _mode: u32) -> Result<()> { Ok(()) }
+//! #   async fn set_times(&self, _path: &Path, _modified: Option<std::time::SystemTime>, _created: Option<std::time::SystemTime>) -> Result<()> { Ok(()) }
 //! }
 //! ```
 //!

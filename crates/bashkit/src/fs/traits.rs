@@ -367,6 +367,20 @@ pub trait FileSystem: FileSystemExt {
     /// Returns an error if the path does not exist.
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()>;
 
+    /// Set file timestamps.
+    ///
+    /// Updates the modification time (and optionally creation time) for a file or directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the path does not exist.
+    async fn set_times(
+        &self,
+        path: &Path,
+        modified: Option<std::time::SystemTime>,
+        created: Option<std::time::SystemTime>,
+    ) -> Result<()>;
+
     /// Returns a reference to this filesystem as a [`SearchCapable`](super::SearchCapable)
     /// implementation, if supported.
     ///
@@ -746,6 +760,14 @@ mod tests {
                 unimplemented!()
             }
             async fn chmod(&self, _: &Path, _: u32) -> crate::error::Result<()> {
+                unimplemented!()
+            }
+            async fn set_times(
+                &self,
+                _: &Path,
+                _: Option<std::time::SystemTime>,
+                _: Option<std::time::SystemTime>,
+            ) -> crate::error::Result<()> {
                 unimplemented!()
             }
         }

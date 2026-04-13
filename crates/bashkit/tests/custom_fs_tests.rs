@@ -251,6 +251,23 @@ impl FileSystem for MinimalFs {
             )))
         }
     }
+
+    async fn set_times(
+        &self,
+        path: &Path,
+        _modified: Option<std::time::SystemTime>,
+        _created: Option<std::time::SystemTime>,
+    ) -> Result<()> {
+        let path = Self::normalize_path(path);
+        let files = self.files.read().unwrap();
+        if files.contains_key(&path) {
+            Ok(())
+        } else {
+            Err(Error::Io(std::io::Error::from(
+                std::io::ErrorKind::NotFound,
+            )))
+        }
+    }
 }
 
 #[tokio::test]

@@ -481,6 +481,17 @@ impl FileSystem for MountableFs {
         let (fs, resolved) = self.resolve(path);
         fs.chmod(&resolved, mode).await
     }
+
+    async fn set_times(
+        &self,
+        path: &Path,
+        modified: Option<std::time::SystemTime>,
+        created: Option<std::time::SystemTime>,
+    ) -> Result<()> {
+        self.validate_path(path)?;
+        let (fs, resolved) = self.resolve(path);
+        fs.set_times(&resolved, modified, created).await
+    }
 }
 
 #[async_trait]
