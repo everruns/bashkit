@@ -242,9 +242,10 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
     }
 
     async fn symlink(&self, target: &Path, link: &Path) -> Result<()> {
-        let target = Self::normalize(target);
+        // Don't normalize target: symlink targets are stored as-is on disk.
+        // Normalizing a relative target to absolute would break containment checks.
         let link = Self::normalize(link);
-        self.backend.symlink(&target, &link).await
+        self.backend.symlink(target, &link).await
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
