@@ -79,6 +79,10 @@ pub struct HttpClient {
     /// Optional bot-auth config for transparent request signing
     #[cfg(feature = "bot-auth")]
     bot_auth: Option<super::bot_auth::BotAuthConfig>,
+    /// Interceptor hooks fired before each HTTP request
+    before_http: Vec<crate::hooks::Interceptor<crate::hooks::HttpRequestEvent>>,
+    /// Interceptor hooks fired after each HTTP response
+    after_http: Vec<crate::hooks::Interceptor<crate::hooks::HttpResponseEvent>>,
 }
 
 /// HTTP request method
@@ -101,6 +105,17 @@ impl Method {
             Method::Delete => reqwest::Method::DELETE,
             Method::Head => reqwest::Method::HEAD,
             Method::Patch => reqwest::Method::PATCH,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Method::Get => "GET",
+            Method::Post => "POST",
+            Method::Put => "PUT",
+            Method::Delete => "DELETE",
+            Method::Head => "HEAD",
+            Method::Patch => "PATCH",
         }
     }
 }
@@ -168,6 +183,8 @@ impl HttpClient {
             handler: None,
             #[cfg(feature = "bot-auth")]
             bot_auth: None,
+            before_http: Vec::new(),
+            after_http: Vec::new(),
         }
     }
 
@@ -217,6 +234,61 @@ impl HttpClient {
             Err(_e) => {
                 // Non-blocking: signing failure must not prevent the request
                 Vec::new()
+            }
+        }
+    }
+
+    /// Set `before_http` interceptor hooks.
+    ///
+    /// Hooks fire before each HTTP request (after allowlist check).
+    /// They can inspect, modify, or cancel the request.
+    pub fn set_before_http(
+        &mut self,
+        hooks: Vec<crate::hooks::Interceptor<crate::hooks::HttpRequestEvent>>,
+    ) {
+        self.before_http = hooks;
+    }
+
+    /// Set `after_http` interceptor hooks.
+    ///
+    /// Hooks fire after each HTTP response is received.
+    /// They can inspect or modify the response metadata.
+    pub fn set_after_http(
+        &mut self,
+        hooks: Vec<crate::hooks::Interceptor<crate::hooks::HttpResponseEvent>>,
+    ) {
+        self.after_http = hooks;
+    }
+
+    /// Fire `before_http` hooks. Returns the (possibly modified) event,
+    /// or `None` if a hook cancelled the request.
+    fn fire_before_http(
+        &self,
+        event: crate::hooks::HttpRequestEvent,
+    ) -> Option<crate::hooks::HttpRequestEvent> {
+        if self.before_http.is_empty() {
+            return Some(event);
+        }
+        let mut current = event;
+        for hook in &self.before_http {
+            match hook(current) {
+                crate::hooks::HookAction::Continue(e) => current = e,
+                crate::hooks::HookAction::Cancel(_) => return None,
+            }
+        }
+        Some(current)
+    }
+
+    /// Fire `after_http` hooks (observational).
+    fn fire_after_http(&self, event: crate::hooks::HttpResponseEvent) {
+        if self.after_http.is_empty() {
+            return;
+        }
+        let mut current = event;
+        for hook in &self.after_http {
+            match hook(current) {
+                crate::hooks::HookAction::Continue(e) => current = e,
+                crate::hooks::HookAction::Cancel(_) => return,
             }
         }
     }
@@ -327,6 +399,32 @@ impl HttpClient {
             self.check_private_ip(url).await?;
         }
 
+        // Fire before_http hooks — may modify URL/headers or cancel the request.
+        // Hooks fire AFTER the allowlist check so the security boundary stays in bashkit.
+        let (url, headers) = if !self.before_http.is_empty() {
+            let event = crate::hooks::HttpRequestEvent {
+                method: method.as_str().to_string(),
+                url: url.to_string(),
+                headers: headers.to_vec(),
+            };
+            match self.fire_before_http(event) {
+                Some(modified) => (
+                    std::borrow::Cow::Owned(modified.url),
+                    std::borrow::Cow::Owned(modified.headers),
+                ),
+                None => {
+                    return Err(Error::Network("cancelled by before_http hook".to_string()));
+                }
+            }
+        } else {
+            (
+                std::borrow::Cow::Borrowed(url),
+                std::borrow::Cow::Borrowed(headers),
+            )
+        };
+        let url: &str = &url;
+        let headers: &[(String, String)] = &headers;
+
         // Compute bot-auth signing headers (transparent, non-blocking)
         #[cfg(feature = "bot-auth")]
         let signing_headers = self.bot_auth_headers(url);
@@ -335,26 +433,28 @@ impl HttpClient {
 
         // Delegate to custom handler if set
         if let Some(handler) = &self.handler {
-            let method_str = match method {
-                Method::Get => "GET",
-                Method::Post => "POST",
-                Method::Put => "PUT",
-                Method::Delete => "DELETE",
-                Method::Head => "HEAD",
-                Method::Patch => "PATCH",
-            };
-            if signing_headers.is_empty() {
-                return handler
+            let method_str = method.as_str();
+            let result = if signing_headers.is_empty() {
+                handler
                     .request(method_str, url, body, headers)
                     .await
-                    .map_err(Error::Network);
+                    .map_err(Error::Network)
+            } else {
+                let mut all_headers: Vec<(String, String)> = headers.to_vec();
+                all_headers.extend(signing_headers);
+                handler
+                    .request(method_str, url, body, &all_headers)
+                    .await
+                    .map_err(Error::Network)
+            };
+            if let Ok(ref resp) = result {
+                self.fire_after_http(crate::hooks::HttpResponseEvent {
+                    url: url.to_string(),
+                    status: resp.status,
+                    headers: resp.headers.clone(),
+                });
             }
-            let mut all_headers: Vec<(String, String)> = headers.to_vec();
-            all_headers.extend(signing_headers);
-            return handler
-                .request(method_str, url, body, &all_headers)
-                .await
-                .map_err(Error::Network);
+            return result;
         }
 
         // Build request
@@ -387,6 +487,13 @@ impl HttpClient {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
             .collect();
+
+        // Fire after_http hooks
+        self.fire_after_http(crate::hooks::HttpResponseEvent {
+            url: url.to_string(),
+            status,
+            headers: resp_headers.clone(),
+        });
 
         // Check Content-Length header to fail fast on large responses
         if let Some(content_length) = response.content_length()
@@ -514,6 +621,31 @@ impl HttpClient {
             }
         }
 
+        // Fire before_http hooks — may modify URL/headers or cancel the request
+        let (url, headers) = if !self.before_http.is_empty() {
+            let event = crate::hooks::HttpRequestEvent {
+                method: method.as_str().to_string(),
+                url: url.to_string(),
+                headers: headers.to_vec(),
+            };
+            match self.fire_before_http(event) {
+                Some(modified) => (
+                    std::borrow::Cow::Owned(modified.url),
+                    std::borrow::Cow::Owned(modified.headers),
+                ),
+                None => {
+                    return Err(Error::Network("cancelled by before_http hook".to_string()));
+                }
+            }
+        } else {
+            (
+                std::borrow::Cow::Borrowed(url),
+                std::borrow::Cow::Borrowed(headers),
+            )
+        };
+        let url: &str = &url;
+        let headers: &[(String, String)] = &headers;
+
         // Compute bot-auth signing headers (transparent, non-blocking)
         #[cfg(feature = "bot-auth")]
         let signing_headers = self.bot_auth_headers(url);
@@ -522,26 +654,28 @@ impl HttpClient {
 
         // Delegate to custom handler if set (timeouts are the handler's responsibility)
         if let Some(handler) = &self.handler {
-            let method_str = match method {
-                Method::Get => "GET",
-                Method::Post => "POST",
-                Method::Put => "PUT",
-                Method::Delete => "DELETE",
-                Method::Head => "HEAD",
-                Method::Patch => "PATCH",
-            };
-            if signing_headers.is_empty() {
-                return handler
+            let method_str = method.as_str();
+            let result = if signing_headers.is_empty() {
+                handler
                     .request(method_str, url, body, headers)
                     .await
-                    .map_err(Error::Network);
+                    .map_err(Error::Network)
+            } else {
+                let mut all_headers: Vec<(String, String)> = headers.to_vec();
+                all_headers.extend(signing_headers);
+                handler
+                    .request(method_str, url, body, &all_headers)
+                    .await
+                    .map_err(Error::Network)
+            };
+            if let Ok(ref resp) = result {
+                self.fire_after_http(crate::hooks::HttpResponseEvent {
+                    url: url.to_string(),
+                    status: resp.status,
+                    headers: resp.headers.clone(),
+                });
             }
-            let mut all_headers: Vec<(String, String)> = headers.to_vec();
-            all_headers.extend(signing_headers);
-            return handler
-                .request(method_str, url, body, &all_headers)
-                .await
-                .map_err(Error::Network);
+            return result;
         }
 
         // Use the custom timeout client if any timeout is specified, otherwise use default client
@@ -597,6 +731,13 @@ impl HttpClient {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
             .collect();
+
+        // Fire after_http hooks
+        self.fire_after_http(crate::hooks::HttpResponseEvent {
+            url: url.to_string(),
+            status,
+            headers: resp_headers.clone(),
+        });
 
         // Check Content-Length header to fail fast on large responses
         if let Some(content_length) = response.content_length()

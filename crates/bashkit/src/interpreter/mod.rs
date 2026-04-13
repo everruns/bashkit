@@ -1174,6 +1174,12 @@ impl Interpreter {
         self.http_client = Some(client);
     }
 
+    /// Get a mutable reference to the HTTP client (for setting hooks after build).
+    #[cfg(feature = "http_client")]
+    pub(crate) fn http_client_mut(&mut self) -> Option<&mut crate::network::HttpClient> {
+        self.http_client.as_mut()
+    }
+
     /// Set the git client for git builtins.
     ///
     /// This is only available when the `git` feature is enabled.
@@ -4082,6 +4088,27 @@ impl Interpreter {
         stdin: Option<&str>,
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
+        // Fire before_tool hooks — may modify args or cancel the invocation
+        let args = if !self.hooks.before_tool.is_empty() {
+            let event = crate::hooks::ToolEvent {
+                name: name.to_string(),
+                args: args.to_vec(),
+            };
+            match self.hooks.fire_before_tool(event) {
+                Some(modified) => std::borrow::Cow::Owned(modified.args),
+                None => {
+                    let result = ExecResult::err(
+                        format!("bash: {name}: cancelled by before_tool hook\n"),
+                        1,
+                    );
+                    return self.apply_redirections(result, redirects).await;
+                }
+            }
+        } else {
+            std::borrow::Cow::Borrowed(args)
+        };
+        let args: &[String] = &args;
+
         let builtin = self.builtins.get(name).unwrap();
 
         // Check for execution plan first
@@ -4118,6 +4145,7 @@ impl Interpreter {
             match plan_result {
                 Ok(Ok(Some(plan))) => {
                     let result = self.execute_builtin_plan(plan, redirects).await?;
+                    self.fire_after_tool(name, &result);
                     return Ok(result);
                 }
                 Ok(Ok(None)) => { /* fall through to normal execute() */ }
@@ -4127,7 +4155,9 @@ impl Interpreter {
                         format!("bash: {}: builtin failed unexpectedly\n", name),
                         1,
                     );
-                    return self.apply_redirections(result, redirects).await;
+                    let result = self.apply_redirections(result, redirects).await?;
+                    self.fire_after_tool(name, &result);
+                    return Ok(result);
                 }
             }
         }
@@ -4186,7 +4216,21 @@ impl Interpreter {
             }
         }
 
-        self.apply_redirections(result, redirects).await
+        let result = self.apply_redirections(result, redirects).await?;
+        self.fire_after_tool(name, &result);
+        Ok(result)
+    }
+
+    /// Fire `after_tool` hooks if any are registered (observational).
+    fn fire_after_tool(&self, name: &str, result: &ExecResult) {
+        if !self.hooks.after_tool.is_empty() {
+            let event = crate::hooks::ToolResult {
+                name: name.to_string(),
+                stdout: result.stdout.clone(),
+                exit_code: result.exit_code,
+            };
+            self.hooks.fire_after_tool(event);
+        }
     }
 
     /// Dispatch an interpreter-level (special) builtin by name.

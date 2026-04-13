@@ -149,3 +149,4 @@ After successful merge:
 - Phases 2-4 (tests, artifacts, simplification, security review, smoke testing) are the quality core — do NOT skip them.
 - The `$ARGUMENTS` context helps scope which tests, specs, and smoke tests are relevant.
 - For "fix and ship" requests: implement the fix first, then run `/ship` to validate and merge.
+- **Never close a half-done issue.** If the PR only covers a subset of the issue's tasks/checkboxes, use `Part of #N` instead of `Closes #N` or `Fixes #N`. Only use closing keywords when every task in the issue is complete. Premature closure hides remaining work.
