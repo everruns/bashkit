@@ -329,6 +329,20 @@ printf 'abcd\n' | sed 's/\(ab\)\(cd\)/\2\1/'
 cdab
 ### end
 
+### sed_search_backref_1
+# Backreference in search pattern (match repeated group)
+printf '<a href="tag_hello">hello</a>\n' | sed 's|<a href="tag_\([^"]*\)">\1</a>|\1|g'
+### expect
+hello
+### end
+
+### sed_search_backref_2
+# Simple search-side backreference (repeated char)
+printf 'aabbc\n' | sed 's/\(.\)\1/X/g'
+### expect
+XXc
+### end
+
 ### sed_empty_replacement
 # Empty replacement (delete match)
 printf 'hello\n' | sed 's/l//g'

@@ -43,6 +43,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 
 # Regex
 regex = "1"
+fancy-regex = "0.17"
 
 # Date/Time
 chrono = "0.4"

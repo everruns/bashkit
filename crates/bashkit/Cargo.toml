@@ -32,6 +32,7 @@ schemars = { workspace = true }
 
 # Regex
 regex = { workspace = true }
+fancy-regex = { workspace = true }
 
 # Date/Time
 chrono = { workspace = true }

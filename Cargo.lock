@@ -328,6 +328,7 @@ dependencies = [
  "criterion",
  "ed25519-dalek 2.2.0",
  "fail",
+ "fancy-regex",
  "flate2",
  "futures-core",
  "futures-util",
