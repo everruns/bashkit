@@ -15,7 +15,35 @@
 //! - **TM-INF-010**: Data exfiltration → default-deny blocks unauthorized destinations
 
 use std::collections::HashSet;
+use std::net::IpAddr;
 use url::Url;
+
+/// Check if an IP address is in a private/reserved range.
+///
+/// Blocks: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+/// 169.254.0.0/16, 0.0.0.0, ::1, fd00::/8, fe80::/10, ::
+///
+/// # Security (TM-NET-002, TM-NET-004)
+///
+/// Used to prevent SSRF attacks where an allowed hostname resolves
+/// to an internal/cloud metadata IP address.
+pub fn is_private_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()                    // 127.0.0.0/8
+                || v4.is_private()              // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+                || v4.is_link_local()           // 169.254.0.0/16
+                || v4.is_unspecified()          // 0.0.0.0
+                || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64 // 100.64.0.0/10 (CGNAT)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()                    // ::1
+                || v6.is_unspecified()          // ::
+                || (v6.segments()[0] & 0xfe00) == 0xfc00 // fd00::/8 (unique local)
+                || (v6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10 (link-local)
+        }
+    }
+}
 
 /// Redact credentials from a URL for safe inclusion in error messages.
 /// Replaces `user:pass@` in the authority with `***@`.
@@ -59,7 +87,7 @@ fn redact_url(url: &str) -> String {
 /// - **Host**: Must match exactly (no wildcards)
 /// - **Port**: Must match (defaults apply: 443 for https, 80 for http)
 /// - **Path**: Pattern path is treated as a prefix
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct NetworkAllowlist {
     /// URL patterns that are allowed
     /// Format: "scheme://host[:port][/path]"
@@ -68,6 +96,20 @@ pub struct NetworkAllowlist {
 
     /// If true, allow all URLs (dangerous - use only for testing)
     allow_all: bool,
+
+    /// THREAT[TM-NET-002/004]: Block requests to private/reserved IP ranges.
+    /// Default: true. Prevents SSRF via DNS rebinding.
+    block_private_ips: bool,
+}
+
+impl Default for NetworkAllowlist {
+    fn default() -> Self {
+        Self {
+            patterns: HashSet::new(),
+            allow_all: false,
+            block_private_ips: true,
+        }
+    }
 }
 
 /// Result of matching a URL against the allowlist
@@ -97,7 +139,28 @@ impl NetworkAllowlist {
         Self {
             patterns: HashSet::new(),
             allow_all: true,
+            block_private_ips: true,
         }
+    }
+
+    /// Block requests to private/reserved IP ranges (default: true).
+    ///
+    /// When enabled, requests to hostnames that resolve to private IPs
+    /// (127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+    /// 169.254.0.0/16, ::1, fd00::/8, fe80::/10) are blocked.
+    ///
+    /// # Security (TM-NET-002, TM-NET-004)
+    ///
+    /// Prevents SSRF via DNS rebinding where an allowed hostname
+    /// resolves to an internal IP address.
+    pub fn block_private_ips(mut self, block: bool) -> Self {
+        self.block_private_ips = block;
+        self
+    }
+
+    /// Returns whether private IP blocking is enabled.
+    pub fn is_blocking_private_ips(&self) -> bool {
+        self.block_private_ips
     }
 
     /// Add a URL pattern to the allowlist.
@@ -147,6 +210,21 @@ impl NetworkAllowlist {
                 };
             }
         };
+
+        // THREAT[TM-NET-002]: Block requests to private IPs in the hostname.
+        // If the hostname is a literal IP address, check it immediately.
+        if self.block_private_ips
+            && let Some(host) = parsed.host_str()
+            && let Ok(ip) = host.parse::<IpAddr>()
+            && is_private_ip(&ip)
+        {
+            return UrlMatch::Blocked {
+                reason: format!(
+                    "request to private/reserved IP {} blocked (SSRF protection)",
+                    ip
+                ),
+            };
+        }
 
         // Check against each pattern
         for pattern in &self.patterns {
@@ -432,5 +510,59 @@ mod tests {
             allowlist.check("https://example.com/apix"),
             UrlMatch::Blocked { .. }
         ));
+    }
+
+    // === Private IP tests (TM-NET-002/004) ===
+
+    #[test]
+    fn test_is_private_ip_loopback() {
+        assert!(is_private_ip(&"127.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"127.0.0.2".parse().unwrap()));
+        assert!(is_private_ip(&"::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_rfc1918() {
+        assert!(is_private_ip(&"10.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"10.255.255.255".parse().unwrap()));
+        assert!(is_private_ip(&"172.16.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"172.31.255.255".parse().unwrap()));
+        assert!(is_private_ip(&"192.168.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"192.168.255.255".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_link_local() {
+        assert!(is_private_ip(&"169.254.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"169.254.169.254".parse().unwrap())); // AWS metadata
+    }
+
+    #[test]
+    fn test_is_private_ip_public() {
+        assert!(!is_private_ip(&"8.8.8.8".parse().unwrap()));
+        assert!(!is_private_ip(&"1.1.1.1".parse().unwrap()));
+        assert!(!is_private_ip(&"203.0.113.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_v6() {
+        assert!(is_private_ip(&"::1".parse().unwrap()));
+        assert!(is_private_ip(&"fd00::1".parse().unwrap()));
+        assert!(is_private_ip(&"fe80::1".parse().unwrap()));
+        assert!(!is_private_ip(
+            &"2001:db8::1".parse::<std::net::IpAddr>().unwrap()
+        ));
+    }
+
+    #[test]
+    fn test_block_private_ips_default_true() {
+        let al = NetworkAllowlist::new();
+        assert!(al.is_blocking_private_ips());
+    }
+
+    #[test]
+    fn test_block_private_ips_disabled() {
+        let al = NetworkAllowlist::new().block_private_ips(false);
+        assert!(!al.is_blocking_private_ips());
     }
 }
