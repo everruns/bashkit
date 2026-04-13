@@ -13,6 +13,10 @@ categories.workspace = true
 description = "Command line interface for Bashkit virtual bash interpreter"
 readme = "../../README.md"
 
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/bashkit-{ target }{ archive-suffix }"
+pkg-fmt = "tgz"
+
 [[bin]]
 name = "bashkit"
 path = "src/main.rs"
