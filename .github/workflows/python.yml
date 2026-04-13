@@ -86,7 +86,7 @@ jobs:
       - name: Install wheel and test dependencies
         run: |
           pip install bashkit --no-index --find-links crates/bashkit-python/dist --force-reinstall
-          pip install pytest pytest-asyncio
+          pip install pytest pytest-asyncio langchain-core fastapi httpx
 
       - name: Run tests
         working-directory: crates/bashkit-python
@@ -118,12 +118,16 @@ jobs:
           working-directory: crates/bashkit-python
 
       - name: Install local wheel
-        run: pip install bashkit --no-index --find-links crates/bashkit-python/dist --force-reinstall
+        run: |
+          pip install bashkit --no-index --find-links crates/bashkit-python/dist --force-reinstall
+          pip install langchain-core fastapi httpx
 
       - name: Run examples
         run: |
           python crates/bashkit-python/examples/bash_basics.py
           python crates/bashkit-python/examples/k8s_orchestrator.py
+          python crates/bashkit-python/examples/langgraph_async_tool.py
+          python crates/bashkit-python/examples/fastapi_async_tool.py
 
   # Verify wheel builds and passes twine check
   build-wheel:

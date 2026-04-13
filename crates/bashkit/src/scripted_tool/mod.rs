@@ -135,6 +135,8 @@ pub use toolset::{DiscoverTool, DiscoveryMode, ScriptingToolSet, ScriptingToolSe
 use crate::{ExecutionLimits, Tool, ToolService};
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 // ============================================================================
@@ -233,11 +235,31 @@ impl ToolArgs {
 // ToolCallback — execution callback type
 // ============================================================================
 
-/// Execution callback for a registered tool.
+/// Execution callback for a registered tool (synchronous).
 ///
 /// Receives parsed [`ToolArgs`] with typed parameters and optional stdin.
 /// Return `Ok(stdout)` on success or `Err(message)` on failure.
 pub type ToolCallback = Arc<dyn Fn(&ToolArgs) -> Result<String, String> + Send + Sync>;
+
+/// Async execution callback for a registered tool.
+///
+/// Same contract as [`ToolCallback`] but returns a `Future`, allowing
+/// non-blocking I/O inside the callback. Takes owned [`ToolArgs`] because
+/// the future may outlive the borrow.
+pub type AsyncToolCallback = Arc<
+    dyn Fn(ToolArgs) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Sync or async callback for a registered tool.
+#[derive(Clone)]
+pub enum CallbackKind {
+    /// Synchronous callback — blocks until complete.
+    Sync(ToolCallback),
+    /// Asynchronous callback — `.await`ed inside the interpreter.
+    Async(AsyncToolCallback),
+}
 
 // ============================================================================
 // Execution trace — inner scripted command/builtin usage
@@ -274,7 +296,7 @@ pub struct ScriptedExecutionTrace {
 #[derive(Clone)]
 pub(crate) struct RegisteredTool {
     pub(crate) def: ToolDef,
-    pub(crate) callback: ToolCallback,
+    pub(crate) callback: CallbackKind,
 }
 
 // ============================================================================
@@ -339,7 +361,7 @@ impl ScriptedToolBuilder {
         self
     }
 
-    /// Register a tool with its definition and execution callback.
+    /// Register a tool with its definition and synchronous execution callback.
     ///
     /// The callback receives [`ToolArgs`] with `--key value` flags parsed into
     /// a JSON object, type-coerced per the schema.
@@ -350,7 +372,25 @@ impl ScriptedToolBuilder {
     ) -> Self {
         self.tools.push(RegisteredTool {
             def,
-            callback: Arc::new(callback),
+            callback: CallbackKind::Sync(Arc::new(callback)),
+        });
+        self
+    }
+
+    /// Register a tool with its definition and **async** execution callback.
+    ///
+    /// Same as [`tool()`](Self::tool) but the callback returns a `Future`,
+    /// allowing non-blocking I/O. Takes owned [`ToolArgs`] because the future
+    /// may outlive the borrow.
+    pub fn async_tool<F, Fut>(mut self, def: ToolDef, callback: F) -> Self
+    where
+        F: Fn(ToolArgs) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<String, String>> + Send + 'static,
+    {
+        let cb: AsyncToolCallback = Arc::new(move |args| Box::pin(callback(args)));
+        self.tools.push(RegisteredTool {
+            def,
+            callback: CallbackKind::Async(cb),
         });
         self
     }

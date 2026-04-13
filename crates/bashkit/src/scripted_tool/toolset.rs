@@ -5,7 +5,7 @@
 // - WithDiscovery: returns two tools — ScriptedTool (compact prompt) +
 //   DiscoverTool (discover/help only).
 
-use super::{RegisteredTool, ScriptedExecutionTrace, ScriptedTool, ToolArgs, ToolDef};
+use super::{CallbackKind, RegisteredTool, ScriptedExecutionTrace, ScriptedTool, ToolArgs, ToolDef};
 use crate::ExecutionLimits;
 use crate::tool::{Tool, ToolError, ToolRequest, ToolResponse, ToolStatus, VERSION};
 use async_trait::async_trait;
@@ -227,7 +227,7 @@ impl ScriptingToolSetBuilder {
         self
     }
 
-    /// Register a tool with its definition and execution callback.
+    /// Register a tool with its definition and synchronous execution callback.
     pub fn tool(
         mut self,
         def: ToolDef,
@@ -235,7 +235,21 @@ impl ScriptingToolSetBuilder {
     ) -> Self {
         self.tools.push(RegisteredTool {
             def,
-            callback: Arc::new(callback),
+            callback: CallbackKind::Sync(Arc::new(callback)),
+        });
+        self
+    }
+
+    /// Register a tool with its definition and **async** execution callback.
+    pub fn async_tool<F, Fut>(mut self, def: ToolDef, callback: F) -> Self
+    where
+        F: Fn(ToolArgs) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<String, String>> + Send + 'static,
+    {
+        let cb: super::AsyncToolCallback = Arc::new(move |args| Box::pin(callback(args)));
+        self.tools.push(RegisteredTool {
+            def,
+            callback: CallbackKind::Async(cb),
         });
         self
     }
@@ -282,8 +296,19 @@ impl ScriptingToolSetBuilder {
         // Move tools into inner ScriptedTool
         // We need to reconstruct because ScriptedToolBuilder expects closures
         for reg in &self.tools {
-            let cb = Arc::clone(&reg.callback);
-            builder = builder.tool(reg.def.clone(), move |args: &ToolArgs| (cb)(args));
+            match &reg.callback {
+                CallbackKind::Sync(cb) => {
+                    let cb = Arc::clone(cb);
+                    builder = builder.tool(reg.def.clone(), move |args: &ToolArgs| (cb)(args));
+                }
+                CallbackKind::Async(cb) => {
+                    let cb = Arc::clone(cb);
+                    builder = builder.async_tool(reg.def.clone(), move |args: ToolArgs| {
+                        let cb = Arc::clone(&cb);
+                        async move { (cb)(args).await }
+                    });
+                }
+            }
         }
 
         ScriptingToolSet {
