@@ -5,7 +5,9 @@
 // - WithDiscovery: returns two tools — ScriptedTool (compact prompt) +
 //   DiscoverTool (discover/help only).
 
-use super::{CallbackKind, RegisteredTool, ScriptedExecutionTrace, ScriptedTool, ToolArgs, ToolDef};
+use super::{
+    CallbackKind, RegisteredTool, ScriptedExecutionTrace, ScriptedTool, ToolArgs, ToolDef,
+};
 use crate::ExecutionLimits;
 use crate::tool::{Tool, ToolError, ToolRequest, ToolResponse, ToolStatus, VERSION};
 use async_trait::async_trait;

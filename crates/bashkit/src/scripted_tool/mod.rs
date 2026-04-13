@@ -247,9 +247,7 @@ pub type ToolCallback = Arc<dyn Fn(&ToolArgs) -> Result<String, String> + Send +
 /// non-blocking I/O inside the callback. Takes owned [`ToolArgs`] because
 /// the future may outlive the borrow.
 pub type AsyncToolCallback = Arc<
-    dyn Fn(ToolArgs) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>>
-        + Send
-        + Sync,
+    dyn Fn(ToolArgs) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> + Send + Sync,
 >;
 
 /// Sync or async callback for a registered tool.
@@ -1253,9 +1251,7 @@ mod tests {
         let tool = ScriptedTool::builder("pipe_api")
             .async_tool(
                 ToolDef::new("upper", "Uppercase stdin"),
-                |args: ToolArgs| async move {
-                    Ok(args.stdin.unwrap_or_default().to_uppercase())
-                },
+                |args: ToolArgs| async move { Ok(args.stdin.unwrap_or_default().to_uppercase()) },
             )
             .build();
 
