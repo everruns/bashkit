@@ -211,6 +211,21 @@ impl NetworkAllowlist {
             }
         };
 
+        // THREAT[TM-NET-002]: Block requests to private IPs in the hostname.
+        // If the hostname is a literal IP address, check it immediately.
+        if self.block_private_ips
+            && let Some(host) = parsed.host_str()
+            && let Ok(ip) = host.parse::<IpAddr>()
+            && is_private_ip(&ip)
+        {
+            return UrlMatch::Blocked {
+                reason: format!(
+                    "request to private/reserved IP {} blocked (SSRF protection)",
+                    ip
+                ),
+            };
+        }
+
         // Check against each pattern
         for pattern in &self.patterns {
             if self.matches_pattern(&parsed, pattern) {

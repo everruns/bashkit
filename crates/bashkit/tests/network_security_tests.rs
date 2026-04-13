@@ -118,6 +118,64 @@ mod allowlist {
 }
 
 // =============================================================================
+// 1b. PRIVATE IP BLOCKING (SSRF PROTECTION)
+// =============================================================================
+
+mod private_ip_blocking {
+    use bashkit::NetworkAllowlist;
+
+    #[test]
+    fn threat_private_ip_loopback_blocked() {
+        let allowlist = NetworkAllowlist::new().allow("http://127.0.0.1:8080");
+        assert!(
+            !allowlist.is_allowed("http://127.0.0.1:8080/"),
+            "Requests to 127.0.0.1 should be blocked by default"
+        );
+    }
+
+    #[test]
+    fn threat_private_ip_link_local_blocked() {
+        let allowlist = NetworkAllowlist::new().allow("http://169.254.169.254");
+        assert!(
+            !allowlist.is_allowed("http://169.254.169.254/latest/meta-data/"),
+            "Requests to 169.254.169.254 (cloud metadata) should be blocked"
+        );
+    }
+
+    #[test]
+    fn threat_private_ip_rfc1918_blocked() {
+        let allowlist = NetworkAllowlist::new().allow("http://10.0.0.1");
+        assert!(!allowlist.is_allowed("http://10.0.0.1/"));
+
+        let allowlist = NetworkAllowlist::new().allow("http://172.16.0.1");
+        assert!(!allowlist.is_allowed("http://172.16.0.1/"));
+
+        let allowlist = NetworkAllowlist::new().allow("http://192.168.1.1");
+        assert!(!allowlist.is_allowed("http://192.168.1.1/"));
+    }
+
+    #[test]
+    fn private_ip_blocking_can_be_disabled() {
+        let allowlist = NetworkAllowlist::new()
+            .block_private_ips(false)
+            .allow("http://127.0.0.1:8080");
+        assert!(
+            allowlist.is_allowed("http://127.0.0.1:8080/"),
+            "Private IP should be allowed when blocking is disabled"
+        );
+    }
+
+    #[test]
+    fn public_ip_is_allowed() {
+        let allowlist = NetworkAllowlist::new().allow("http://8.8.8.8");
+        assert!(
+            allowlist.is_allowed("http://8.8.8.8/"),
+            "Public IPs should be allowed when in allowlist"
+        );
+    }
+}
+
+// =============================================================================
 // 2. NETWORK NOT CONFIGURED TESTS
 // =============================================================================
 
