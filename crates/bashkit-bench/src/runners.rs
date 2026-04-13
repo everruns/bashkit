@@ -8,6 +8,7 @@
 // - bashkit-js: in-process via Node.js + @everruns/bashkit (persistent child)
 // - bashkit-py: in-process via Python + bashkit package (persistent child)
 // - bash: out-of-process via /bin/bash (subprocess per run)
+// - gbash: out-of-process via gbash binary (subprocess per run)
 // - just-bash: out-of-process via just-bash CLI (subprocess per run)
 // - just-bash-inproc: in-process via Node.js + just-bash library (persistent child)
 
@@ -25,6 +26,8 @@ pub enum Runner {
     BashkitJs(PersistentChild),
     BashkitPy(PersistentChild),
     NativeBash(String),
+    Gbash(String),
+    GbashServer(PersistentChild),
     JustBash(String),
     JustBashInproc(PersistentChild),
 }
@@ -37,6 +40,8 @@ impl Runner {
             Runner::BashkitJs(_) => "bashkit-js",
             Runner::BashkitPy(_) => "bashkit-py",
             Runner::NativeBash(_) => "bash",
+            Runner::Gbash(_) => "gbash",
+            Runner::GbashServer(_) => "gbash-server",
             Runner::JustBash(_) => "just-bash",
             Runner::JustBashInproc(_) => "just-bash-inproc",
         }
@@ -49,6 +54,8 @@ impl Runner {
             Runner::BashkitJs(child) => child.run(script).await,
             Runner::BashkitPy(child) => child.run(script).await,
             Runner::NativeBash(path) => run_subprocess(path, &["-c"], script).await,
+            Runner::Gbash(path) => run_subprocess(path, &["-c"], script).await,
+            Runner::GbashServer(child) => child.run(script).await,
             Runner::JustBash(path) => run_just_bash_subprocess(path, script).await,
             Runner::JustBashInproc(child) => child.run(script).await,
         }
@@ -174,6 +181,70 @@ async fn which_bash() -> Result<String> {
     }
 
     anyhow::bail!("bash not found")
+}
+
+// === Gbash (out-of-process) ===
+
+pub struct GbashRunner;
+
+impl GbashRunner {
+    pub async fn create() -> Result<Runner> {
+        let path = which_gbash().await?;
+        Ok(Runner::Gbash(path))
+    }
+}
+
+async fn which_gbash() -> Result<String> {
+    // Try common Go binary locations
+    if let Ok(home) = std::env::var("HOME") {
+        let gobin = format!("{}/go/bin/gbash", home);
+        if Path::new(&gobin).exists() {
+            return Ok(gobin);
+        }
+    }
+
+    if let Ok(gopath) = std::env::var("GOPATH") {
+        let gobin = format!("{}/bin/gbash", gopath);
+        if Path::new(&gobin).exists() {
+            return Ok(gobin);
+        }
+    }
+
+    for path in &["/usr/local/bin/gbash", "/usr/bin/gbash"] {
+        if Path::new(path).exists() {
+            return Ok(path.to_string());
+        }
+    }
+
+    let output = Command::new("which").arg("gbash").output().await?;
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Ok(path);
+        }
+    }
+
+    anyhow::bail!(
+        "gbash not found (install via: go install github.com/ewhauser/gbash/cmd/gbash@latest)"
+    )
+}
+
+// === Gbash server (persistent child via JSON-RPC) ===
+
+pub struct GbashServerRunner;
+
+impl GbashServerRunner {
+    pub async fn create() -> Result<Runner> {
+        let script_path = scripts_dir().join("gbash-server-runner.py");
+        if !script_path.exists() {
+            anyhow::bail!(
+                "gbash-server runner script not found at {}",
+                script_path.display()
+            );
+        }
+        let child = PersistentChild::spawn("python3", &[script_path.to_str().unwrap()]).await?;
+        Ok(Runner::GbashServer(child))
+    }
 }
 
 // === Just-bash (out-of-process) ===
