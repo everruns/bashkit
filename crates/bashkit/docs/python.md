@@ -187,7 +187,7 @@ Monty has no network primitives and no OsCall variants for network operations.
 **No classes.** Class definitions are not yet supported by Monty (planned upstream).
 
 **No third-party imports.** Only builtin modules (`sys`, `typing`, `os`, `pathlib`,
-`math`, `re`) are available. No `pip install`, no `import numpy`.
+`math`, `re`, `json`, `datetime`) are available. No `pip install`, no `import numpy`.
 
 **No `str.format()`.** Use f-strings instead: `f"value={x}"` not `"value={}".format(x)`.
 
@@ -201,6 +201,6 @@ All Python execution runs in a virtual environment:
 - **Resource limited** — allocation, time, memory, and recursion caps
 - **Path traversal safe** — `../..` is resolved by VFS path normalization
 
-See threat IDs TM-PY-001 through TM-PY-026 in the [threat model](./threat-model.md).
+See threat IDs TM-PY-001 through TM-PY-029 in the [threat model](./threat-model.md).
 
 [spec]: https://github.com/everruns/bashkit/blob/main/specs/011-python-builtin.md

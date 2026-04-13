@@ -1623,6 +1623,14 @@ DoS protections are silently removed. Fix: store original config and reapply.
 on nested Python dicts/lists with no depth counter. Deeply nested structures cause stack overflow.
 Fix: add depth counter, fail beyond 64 levels.
 
+| TM-PY-029 | Host clock information disclosure | `datetime.date.today()` / `datetime.datetime.now()` expose host system time and timezone | Intentional — required for correct datetime semantics | **ACCEPTED** |
+
+**TM-PY-029**: `crates/bashkit/src/builtins/python.rs` — `handle_date_today()` and
+`handle_datetime_now()` read the host system clock via `chrono::Local::now()` /
+`chrono::Utc::now()`. This exposes the host's current time and timezone offset to
+sandboxed Python code. Accepted as intentional: datetime operations require real time,
+and this information has low sensitivity. No filesystem or network access is granted.
+
 ### VFS Bridge Security Properties
 
 1. **No real filesystem access**: All Path operations go through BashKit's VFS.

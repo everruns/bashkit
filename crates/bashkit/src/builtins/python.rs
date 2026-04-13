@@ -15,10 +15,11 @@
 //! Supports: `python -c "code"`, `python script.py`, stdin piping.
 
 use async_trait::async_trait;
+use chrono::{Datelike, Timelike};
 use monty::{
-    ExcType, ExtFunctionResult, LimitedTracker, MontyException, MontyObject, MontyRun,
-    NameLookupResult, OsFunction, PrintWriter, ResourceLimits, RunProgress, dir_stat, file_stat,
-    symlink_stat,
+    ExcType, ExtFunctionResult, LimitedTracker, MontyDate, MontyDateTime, MontyException,
+    MontyObject, MontyRun, NameLookupResult, OsFunction, PrintWriter, ResourceLimits, RunProgress,
+    dir_stat, file_stat, symlink_stat,
 };
 use std::collections::HashMap;
 use std::future::Future;
@@ -496,10 +497,12 @@ async fn handle_os_call(
     cwd: &Path,
     env: &HashMap<String, String>,
 ) -> ExtFunctionResult {
-    // Environment access doesn't need a path
+    // Non-filesystem operations: env access, date/time
     match function {
         OsFunction::Getenv => return handle_getenv(args, env),
         OsFunction::GetEnviron => return handle_get_environ(env),
+        OsFunction::DateToday => return handle_date_today(),
+        OsFunction::DateTimeNow => return handle_datetime_now(args),
         _ => {}
     }
 
@@ -752,6 +755,59 @@ fn handle_get_environ(env: &HashMap<String, String>) -> ExtFunctionResult {
         })
         .collect();
     ExtFunctionResult::Return(MontyObject::dict(pairs))
+}
+
+/// Handle datetime.date.today() → current date from host system.
+fn handle_date_today() -> ExtFunctionResult {
+    let now = chrono::Local::now();
+    ExtFunctionResult::Return(MontyObject::Date(MontyDate {
+        year: now.year(),
+        month: now.month() as u8,
+        day: now.day() as u8,
+    }))
+}
+
+/// Handle datetime.datetime.now(tz=None) → current datetime from host system.
+///
+/// If tz is None, returns a naive datetime (no timezone info).
+/// If tz is a TimeZone, returns an aware datetime at that offset.
+fn handle_datetime_now(args: &[MontyObject]) -> ExtFunctionResult {
+    let tz = match args.first() {
+        Some(MontyObject::TimeZone(tz)) => Some(tz),
+        _ => None,
+    };
+
+    if let Some(tz) = tz {
+        // Aware datetime at the requested offset
+        let offset = chrono::FixedOffset::east_opt(tz.offset_seconds)
+            .unwrap_or(chrono::FixedOffset::east_opt(0).expect("UTC offset is always valid"));
+        let dt = chrono::Utc::now().with_timezone(&offset);
+        ExtFunctionResult::Return(MontyObject::DateTime(MontyDateTime {
+            year: dt.year(),
+            month: dt.month() as u8,
+            day: dt.day() as u8,
+            hour: dt.hour() as u8,
+            minute: dt.minute() as u8,
+            second: dt.second() as u8,
+            microsecond: dt.nanosecond() / 1000,
+            offset_seconds: Some(tz.offset_seconds),
+            timezone_name: tz.name.clone(),
+        }))
+    } else {
+        // No timezone → naive local datetime
+        let dt = chrono::Local::now();
+        ExtFunctionResult::Return(MontyObject::DateTime(MontyDateTime {
+            year: dt.year(),
+            month: dt.month() as u8,
+            day: dt.day() as u8,
+            hour: dt.hour() as u8,
+            minute: dt.minute() as u8,
+            second: dt.second() as u8,
+            microsecond: dt.nanosecond() / 1000,
+            offset_seconds: None,
+            timezone_name: None,
+        }))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1450,5 +1506,80 @@ mod tests {
         .await;
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.stdout.trim(), "1 2");
+    }
+
+    // --- datetime tests (Monty 0.0.11+) ---
+
+    #[tokio::test]
+    async fn test_date_today() {
+        let r = run(
+            &[
+                "-c",
+                "from datetime import date\nd = date.today()\nprint(d.year > 2000)",
+            ],
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "True");
+    }
+
+    #[tokio::test]
+    async fn test_datetime_now_naive() {
+        let r = run(
+            &[
+                "-c",
+                "from datetime import datetime\ndt = datetime.now()\nprint(dt.year > 2000)",
+            ],
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "True");
+    }
+
+    #[tokio::test]
+    async fn test_datetime_now_utc() {
+        let r = run(
+            &[
+                "-c",
+                "from datetime import datetime, timezone\ndt = datetime.now(timezone.utc)\nprint(dt.year > 2000)",
+            ],
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "True");
+    }
+
+    #[tokio::test]
+    async fn test_datetime_attributes() {
+        // Verify datetime components are populated correctly
+        let r = run(
+            &[
+                "-c",
+                "from datetime import datetime\ndt = datetime.now()\nassert 1 <= dt.month <= 12\nassert 1 <= dt.day <= 31\nassert 0 <= dt.hour <= 23\nprint('ok')",
+            ],
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "ok");
+    }
+
+    // --- json tests (Monty 0.0.9+) ---
+
+    #[tokio::test]
+    async fn test_json_dumps_loads() {
+        let r = run(
+            &[
+                "-c",
+                "import json\nd = {'a': 1, 'b': [2, 3]}\ns = json.dumps(d)\nprint(json.loads(s) == d)",
+            ],
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "True");
     }
 }

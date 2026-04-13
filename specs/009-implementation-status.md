@@ -112,7 +112,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
 | Grep | 95 | Yes | 95 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect, rg |
 | Sed | 78 | Yes | 78 | 0 | hold space, change, regex ranges, -E |
 | JQ | 121 | Yes | 120 | 1 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
-| Python | 60 | Yes | 58 | 2 | embedded Python (Monty) |
+| Python | 60 | Yes | 58 | 2 | embedded Python (Monty 0.0.11); datetime, json, pathlib, os |
 | TypeScript | 44 | Yes | 42 | 2 | embedded TypeScript (ZapCode) |
 | **Total** | **2463** | **Yes** | **2435** | **28** | |
 
