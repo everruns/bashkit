@@ -365,6 +365,46 @@ async fn realfs_symlink_within_mount_allowed() {
     );
 }
 
+// --- Mount path validation ---
+
+#[tokio::test]
+async fn mount_allowlist_blocks_unlisted_path() {
+    let dir = setup_host_dir();
+    std::fs::write(dir.path().join("data.txt"), "secret").unwrap();
+
+    // Mount with allowlist that does NOT include the dir
+    let mut bash = Bash::builder()
+        .allowed_mount_paths(["/nonexistent/allowed"])
+        .mount_real_readonly_at(dir.path(), "/mnt/data")
+        .build();
+
+    // The mount should have been skipped — file should not be accessible
+    let r = bash
+        .exec("cat /mnt/data/data.txt 2>&1; echo $?")
+        .await
+        .unwrap();
+    assert!(
+        r.stdout.trim().ends_with('1') || r.stdout.contains("No such file"),
+        "Mount outside allowlist should be blocked, got: {}",
+        r.stdout
+    );
+}
+
+#[tokio::test]
+async fn mount_sensitive_path_blocked() {
+    // Attempting to mount /proc should be silently blocked
+    let mut bash = Bash::builder()
+        .mount_real_readonly_at("/proc", "/mnt/proc")
+        .build();
+
+    let r = bash.exec("ls /mnt/proc 2>&1; echo $?").await.unwrap();
+    assert!(
+        r.stdout.trim().ends_with('1') || r.stdout.contains("No such file"),
+        "Sensitive path /proc should be blocked, got: {}",
+        r.stdout
+    );
+}
+
 // --- Runtime mount/unmount (exercises Bash::mount / Bash::unmount) ---
 
 #[tokio::test]

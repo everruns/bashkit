@@ -850,6 +850,10 @@ impl Bash {
     /// Mount a host directory into the VFS at runtime.
     ///
     /// Read-only by default; pass `writable: true` to enable writes.
+    ///
+    /// **Security**: Writable mounts log a warning. Consider using
+    /// `allowedMountPaths` in `BashOptions` to restrict which host paths
+    /// may be mounted.
     #[napi]
     pub fn mount(
         &self,
@@ -857,9 +861,16 @@ impl Bash {
         vfs_path: String,
         writable: Option<bool>,
     ) -> napi::Result<()> {
+        let is_writable = writable.unwrap_or(false);
+        if is_writable {
+            eprintln!(
+                "bashkit: warning: writable mount at {} — scripts can modify host files",
+                host_path
+            );
+        }
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
-            let mode = if writable.unwrap_or(false) {
+            let mode = if is_writable {
                 bashkit::RealFsMode::ReadWrite
             } else {
                 bashkit::RealFsMode::ReadOnly
@@ -1222,6 +1233,10 @@ impl BashTool {
     /// Mount a host directory into the VFS at runtime.
     ///
     /// Read-only by default; pass `writable: true` to enable writes.
+    ///
+    /// **Security**: Writable mounts log a warning. Consider using
+    /// `allowedMountPaths` in `BashOptions` to restrict which host paths
+    /// may be mounted.
     #[napi]
     pub fn mount(
         &self,
@@ -1229,9 +1244,16 @@ impl BashTool {
         vfs_path: String,
         writable: Option<bool>,
     ) -> napi::Result<()> {
+        let is_writable = writable.unwrap_or(false);
+        if is_writable {
+            eprintln!(
+                "bashkit: warning: writable mount at {} — scripts can modify host files",
+                host_path
+            );
+        }
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
-            let mode = if writable.unwrap_or(false) {
+            let mode = if is_writable {
                 bashkit::RealFsMode::ReadWrite
             } else {
                 bashkit::RealFsMode::ReadOnly
