@@ -2,7 +2,7 @@
 
 ## Status
 
-Phase 1: In Progress — Handler trait, allowlist, ssh/scp/sftp builtins
+Phase 1: Implemented — Handler trait, allowlist, ssh/scp/sftp builtins
 
 ## Decision
 

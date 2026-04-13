@@ -13,69 +13,9 @@ Bashkit uses a multi-layer testing strategy:
 4. **Comparison tests** - Direct comparison with real bash
 5. **Differential fuzzing** - Property-based testing against real bash
 
-## CI Test Summary
-
-Tests run automatically on every PR via `cargo test --features http_client`:
-
-| Test Suite | Test Functions | Notes |
-|------------|---------------|-------|
-| Unit tests (bashkit lib) | 286 | Core interpreter tests |
-| limits.rs | 5 | Resource limit tests |
-| spec_tests.rs | 10 (1 ignored) | Spec compatibility tests |
-| threat_model_tests | 39 | Security tests |
-| security_failpoint_tests | 14 | Fault injection tests |
-| Doc tests | 2 | Documentation examples |
-| **Total** | **356** | Plus 4 examples executed |
+For current test counts and pass rates, see `specs/009-implementation-status.md`.
 
 ## Spec Test Framework
-
-### Location
-```
-crates/bashkit/tests/
-├── spec_runner.rs      # Test parser and runner
-├── spec_tests.rs       # Integration test entry point
-├── debug_spec.rs       # Debugging utilities
-├── threat_model_tests.rs    # Security threat model tests
-├── security_failpoint_tests.rs  # Fault injection tests
-├── proptest_differential.rs # Grammar-based differential fuzzing
-└── spec_cases/
-    ├── bash/           # Core bash compatibility (20 files, 471 cases)
-    │   ├── arithmetic.test.sh
-    │   ├── arrays.test.sh
-    │   ├── background.test.sh
-    │   ├── command-subst.test.sh
-    │   ├── control-flow.test.sh
-    │   ├── cuttr.test.sh
-    │   ├── date.test.sh
-    │   ├── echo.test.sh
-    │   ├── fileops.test.sh
-    │   ├── functions.test.sh
-    │   ├── globs.test.sh
-    │   ├── headtail.test.sh
-    │   ├── herestring.test.sh
-    │   ├── path.test.sh
-    │   ├── pipes-redirects.test.sh
-    │   ├── procsub.test.sh
-    │   ├── sleep.test.sh
-    │   ├── sortuniq.test.sh
-    │   ├── variables.test.sh
-    │   └── wc.test.sh
-    ├── awk/            # AWK builtin tests (89 cases)
-    ├── grep/           # Grep builtin tests (70 cases)
-    ├── sed/            # Sed builtin tests (65 cases)
-    └── jq/             # JQ builtin tests (95 cases)
-```
-
-### Spec Test Counts
-
-| Category | Test Cases | In CI | Pass | Skip |
-|----------|------------|-------|------|------|
-| Bash | 471 | Yes | 367 | 104 |
-| AWK | 89 | Yes | 48 | 41 |
-| Grep | 70 | Yes | 65 | 5 |
-| Sed | 65 | Yes | 50 | 15 |
-| JQ | 95 | Yes | 80 | 15 |
-| **Total** | **790** | **790** | 601 | 189 |
 
 ### Test File Format
 
@@ -119,21 +59,11 @@ cargo test --test spec_tests
 # Single category
 cargo test --test spec_tests -- bash_spec_tests
 
-# With output
-cargo test --test spec_tests -- --nocapture
-
 # Check spec tests match real bash
 just check-bash-compat
 
-# Check spec tests match real bash (verbose - shows each test)
-just check-bash-compat-verbose
-
 # Generate comprehensive compatibility report
 just compat-report
-
-# Or directly with cargo:
-cargo test --test spec_tests -- bash_comparison_tests --nocapture
-cargo test --test spec_tests -- compatibility_report --ignored --nocapture
 ```
 
 ## Coverage
@@ -141,44 +71,8 @@ cargo test --test spec_tests -- compatibility_report --ignored --nocapture
 Coverage is tracked with cargo-tarpaulin and uploaded to Codecov.
 
 ```bash
-# Generate local coverage report
 cargo tarpaulin --features http_client --out html --output-dir coverage
-
-# View coverage report
-open coverage/tarpaulin-report.html
 ```
-
-The coverage workflow runs on every PR and push to main. Reports are uploaded
-to Codecov and available as CI artifacts.
-
-### Current Status
-- All spec tests: 76% pass rate (601/790 running in CI, 189 skipped)
-- Text processing tools: 73% pass rate (234/319 running, 85 skipped)
-- Core bash specs: 78% pass rate (367/471 running, 104 skipped)
-
-## Known Testing Gaps
-
-Completed:
-
-- [x] Enable bash_spec_tests in CI — 330/435 tests running
-- [x] Add bash_comparison_tests to CI — 309 tests compared against real bash
-- [x] Fix control-flow.test.sh — 31 tests now running
-- [x] Add coverage tooling — cargo-tarpaulin + Codecov via `.github/workflows/coverage.yml`
-
-Outstanding:
-
-- [ ] **Fix skipped spec tests** (189 total):
-  - Bash: 104 skipped (various implementation gaps)
-  - AWK: 41 skipped (operators, control flow, functions)
-  - Grep: 5 skipped (include/exclude, binary detection)
-  - Sed: 15 skipped (features)
-  - JQ: 15 skipped (functions, flags)
-- [ ] **Fix bash_diff tests** (21 total):
-  - wc: 14 tests (output formatting differs)
-  - background: 2 tests (non-deterministic order)
-  - globs: 2 tests (VFS vs real filesystem glob expansion)
-  - timeout: 1 test (timeout 0 behavior)
-  - brace-expansion: 1 test (empty item handling)
 
 ## Adding New Tests
 
@@ -191,8 +85,6 @@ Outstanding:
 
 ### Checking Expected Outputs
 
-The `scripts/update-spec-expected.sh` script helps verify expected outputs:
-
 ```bash
 # Check all tests match real bash
 ./scripts/update-spec-expected.sh
@@ -201,137 +93,29 @@ The `scripts/update-spec-expected.sh` script helps verify expected outputs:
 ./scripts/update-spec-expected.sh --verbose
 ```
 
-If a test fails, either:
-1. Fix the expected output to match real bash, or
-2. Add `### bash_diff: reason` if the difference is intentional
-
 ## Comparison Testing
 
-The `bash_comparison_tests` test runs in CI and compares Bashkit output against real bash:
-
-```rust
-pub fn run_real_bash(script: &str) -> (String, i32) {
-    Command::new("bash")
-        .arg("-c")
-        .arg(script)
-        .output()
-}
-```
-
-Tests marked with `### bash_diff` are excluded from comparison (known intentional differences).
+The `bash_comparison_tests` test runs in CI and compares Bashkit output against
+real bash. Tests marked with `### bash_diff` are excluded from comparison.
 Tests marked with `### skip` are excluded from both spec tests and comparison.
-
-The test fails if any non-excluded test produces different output than real bash.
-
-A verbose version `bash_comparison_tests_verbose` is available (ignored by default) for debugging.
-
-## Compatibility Report
-
-The `compatibility_report` test generates a comprehensive summary of Bashkit's
-compatibility with real bash. Run with:
-
-```bash
-just compat-report
-```
-
-Example output:
-```
-╔══════════════════════════════════════════════════════════════════╗
-║                 Bashkit Compatibility Report                     ║
-╚══════════════════════════════════════════════════════════════════╝
-
-┌─────────────┬───────┬────────┬─────────┬───────────┬─────────────────┐
-│  Category   │ Total │ Passed │ Skipped │ BashDiff  │   Bash Compat   │
-├─────────────┼───────┼────────┼─────────┼───────────┼─────────────────┤
-│    bash     │  404  │ 294/294│   110   │    21     │ 273/273 (100.0%)│
-│     awk     │  89   │  48/48 │   41    │     0     │  48/48  (100.0%)│
-│    grep     │  55   │  34/34 │   21    │     0     │  33/34  ( 97.1%)│
-│     sed     │  65   │  40/40 │   25    │     0     │  40/40  (100.0%)│
-│     jq      │  95   │  58/58 │   37    │     0     │  58/58  (100.0%)│
-└─────────────┴───────┴────────┴─────────┴───────────┴─────────────────┘
-
-Summary:
-  Bash compatibility: 452/453 (99.8%)
-```
-
-The report shows:
-- **Passed**: Tests passing against expected output
-- **Skipped**: Tests for unimplemented features
-- **BashDiff**: Tests with known intentional differences from bash
-- **Bash Compat**: Tests producing identical output to real bash
 
 ## Differential Fuzzing
 
 Grammar-based property testing using proptest generates random valid bash scripts
-and compares Bashkit output against real bash. This helps find edge cases that
-aren't covered by hand-written spec tests.
-
-### Running Differential Fuzzing
+and compares Bashkit output against real bash.
 
 ```bash
-# Run with default 50 cases per test
-cargo test --test proptest_differential
-
-# Run with more cases for deeper testing
-PROPTEST_CASES=1000 cargo test --test proptest_differential
-
-# Run with output to see generated scripts
-cargo test --test proptest_differential -- --nocapture
-
-# Using just commands
-just fuzz-diff
-just fuzz-diff-deep
+just fuzz-diff         # default 50 cases
+just fuzz-diff-deep    # 1000 cases
 ```
 
-### Script Generators
-
-The fuzzer generates scripts in these categories:
-- **Echo commands** - Various quoting styles, flags (-n), multiple args
-- **Arithmetic** - Addition, subtraction, multiplication, division, modulo
-- **Control flow** - if/else, for loops, while loops, case statements
-- **Pipelines** - echo | cat, multi-stage pipes
-- **Logical operators** - &&, ||, combined chains
-- **Command substitution** - $() and backticks
-- **Functions** - Definition and invocation
-
-### Known Limitations
-
-Some features are intentionally excluded from fuzzing:
-- `pwd` - Path differs between Bashkit VFS and real filesystem
-- `wc` - Output formatting differs (column alignment)
-- Filesystem operations - Bashkit uses virtual filesystem
+Known exclusions: `pwd` (path differs), `wc` (formatting), filesystem ops (VFS).
 
 ## JavaScript Runtime Compatibility Tests
 
-### Motivation
-
-The NAPI-RS JS bindings must work across Node.js, Bun, and Deno. The primary
-test suite uses ava (a Node-specific test runner), so it can only validate Node.
-To prove the bindings work under other runtimes, we maintain a separate
-**runtime-compat** test suite using only `node:test` and `node:assert` — APIs
-supported natively by all three runtimes.
-
-### Architecture
-
-```
-crates/bashkit-js/__test__/
-├── *.spec.ts                  # ava tests (Node only, TypeScript)
-└── runtime-compat/
-    ├── _setup.mjs             # Shared: loads native NAPI binding
-    ├── basics.test.mjs        # Constructors, execution, variables, reset, isolation
-    ├── builtins.test.mjs      # grep, sed, awk, sort, uniq, tr, cut, jq, etc.
-    ├── control-flow.test.mjs  # if/elif, for, while, case, functions, subshells
-    ├── error-handling.test.mjs # Exit codes, BashError, recovery, parse errors
-    ├── filesystem.test.mjs    # File I/O, pipes, redirection, heredocs
-    ├── vfs.test.mjs           # VFS API (writeFile, readFile, mkdir, exists, remove)
-    ├── tool-metadata.test.mjs # BashTool name, version, schemas, systemPrompt
-    ├── security.test.mjs      # Resource limits, sandbox escape, path traversal
-    └── scripts.test.mjs       # Real-world patterns: JSON pipelines, large output
-```
-
-### CI Matrix
-
-All runtimes build with npm (napi-rs requires Node tooling). Test execution:
+The NAPI-RS JS bindings must work across Node.js, Bun, and Deno. A separate
+**runtime-compat** test suite using only `node:test` and `node:assert` validates
+cross-runtime compatibility.
 
 | Runtime | Versions | ava tests | runtime-compat | Examples |
 |---------|----------|-----------|----------------|----------|
@@ -339,35 +123,12 @@ All runtimes build with npm (napi-rs requires Node tooling). Test execution:
 | Bun     | latest, canary | No | Yes | Yes |
 | Deno    | 2.x, canary | No | Yes | Yes |
 
-- **Node** runs both ava (full functional suite) and runtime-compat (via `node --test`)
-- **Bun/Deno** run runtime-compat files directly with their native runtimes
-- All runtimes run the example `.mjs` files
-
 ### Maintenance Rules
 
-1. **When adding a new ava test**: consider if it covers a new API surface or
-   behavior that should also be validated across runtimes. If so, add a
-   corresponding test to the appropriate `runtime-compat/*.test.mjs` file.
-2. **runtime-compat tests use only** `node:test`, `node:assert`, and
-   `node:module` — no npm dependencies. This ensures they run under all runtimes.
-3. **Files are plain `.mjs`** (not TypeScript) to avoid transpilation steps.
-4. **Shared setup** lives in `_setup.mjs` — it loads the native binding via
-   `createRequire` which works in Node, Bun, and Deno.
-5. **Keep files focused** — one file per concern area, mirroring the ava test
-   structure. Each file should be independently runnable.
-
-### Running Locally
-
-```bash
-# Node (native test runner)
-node --test crates/bashkit-js/__test__/runtime-compat/*.test.mjs
-
-# Bun
-for f in crates/bashkit-js/__test__/runtime-compat/*.test.mjs; do bun "$f"; done
-
-# Deno
-for f in crates/bashkit-js/__test__/runtime-compat/*.test.mjs; do deno run -A "$f"; done
-```
+1. New ava tests covering new API surface → add runtime-compat counterpart
+2. runtime-compat tests use only `node:test`, `node:assert`, `node:module`
+3. Files are plain `.mjs` (no TypeScript)
+4. Keep files focused — one file per concern area
 
 ## Alternatives Considered
 
@@ -383,12 +144,6 @@ Future consideration: Would help find parser crashes via mutation.
 # Run what CI runs
 cargo test --features http_client
 cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
-
-# Run ALL spec tests including ignored bash tests (manual)
-cargo test --test spec_tests -- --include-ignored --nocapture
-
-# Check pass rates for each category
-cargo test --test spec_tests -- --nocapture 2>&1 | grep "Total:"
 
 # Run differential fuzzing
 cargo test --test proptest_differential -- --nocapture

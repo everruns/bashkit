@@ -50,7 +50,7 @@ the sandbox. Key exclusions:
 - **`trap`** — conflicts with the stateless execution model
 - **Real process spawning** — all subprocess commands stay within the virtual interpreter (`TM-ESC-015`)
 
-These decisions are documented in [`specs/008-posix-compliance.md`](../specs/008-posix-compliance.md).
+These decisions are documented in [`specs/009-implementation-status.md`](../specs/009-implementation-status.md).
 
 ## Security testing
 

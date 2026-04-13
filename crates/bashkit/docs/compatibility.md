@@ -12,7 +12,7 @@
 ## POSIX Shell Compliance
 
 Bashkit provides substantial compliance with IEEE Std 1003.1-2024 (POSIX.1-2024)
-Shell Command Language. See [specs/008-posix-compliance.md](../specs/008-posix-compliance.md)
+Shell Command Language. See [specs/009-implementation-status.md](../specs/009-implementation-status.md)
 for detailed compliance status.
 
 | POSIX Category | Status |

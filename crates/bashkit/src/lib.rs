@@ -2555,6 +2555,23 @@ pub mod live_mounts_guide {}
 #[doc = include_str!("../docs/logging.md")]
 pub mod logging_guide {}
 
+/// Interceptor hooks guide for Bashkit.
+///
+/// This guide covers the hook system for observing, modifying, and cancelling
+/// operations at key points in the execution pipeline.
+///
+/// **Topics covered:**
+/// - Execution hooks (`before_exec`, `after_exec`)
+/// - Tool hooks (`before_tool`, `after_tool`)
+/// - Lifecycle hooks (`on_exit`, `on_error`)
+/// - HTTP hooks (`before_http`, `after_http`)
+/// - Chaining multiple hooks
+/// - Event payloads and thread safety
+///
+/// **Related:** [`BashBuilder`], [`hooks`], [`custom_builtins_guide`]
+#[doc = include_str!("../docs/hooks.md")]
+pub mod hooks_guide {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
