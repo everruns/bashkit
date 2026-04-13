@@ -6603,14 +6603,53 @@ impl Interpreter {
                     if self.is_nounset() && !suppress_nounset && !is_set {
                         self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
                     }
-                    let expanded = self.apply_parameter_op(
-                        &value,
-                        name,
+
+                    // For $@, $*, arr[@], arr[*] with per-element operators,
+                    // apply the operator to each element individually.
+                    let needs_per_element = matches!(
                         operator,
-                        operand,
-                        *colon_variant,
-                        is_set,
+                        ParameterOp::RemovePrefixShort
+                            | ParameterOp::RemovePrefixLong
+                            | ParameterOp::RemoveSuffixShort
+                            | ParameterOp::RemoveSuffixLong
+                            | ParameterOp::ReplaceFirst { .. }
+                            | ParameterOp::ReplaceAll { .. }
+                            | ParameterOp::UpperFirst
+                            | ParameterOp::UpperAll
+                            | ParameterOp::LowerFirst
+                            | ParameterOp::LowerAll
                     );
+                    let elements = if needs_per_element {
+                        self.resolve_param_expansion_elements(name)
+                    } else {
+                        None
+                    };
+
+                    let expanded = if let Some(elems) = elements {
+                        let results: Vec<String> = elems
+                            .iter()
+                            .map(|elem| {
+                                self.apply_parameter_op(
+                                    elem,
+                                    name,
+                                    operator,
+                                    operand,
+                                    *colon_variant,
+                                    is_set,
+                                )
+                            })
+                            .collect();
+                        results.join(" ")
+                    } else {
+                        self.apply_parameter_op(
+                            &value,
+                            name,
+                            operator,
+                            operand,
+                            *colon_variant,
+                            is_set,
+                        )
+                    };
                     result.push_str(&expanded);
                 }
                 WordPart::ArrayAccess { name, index } => {
@@ -6989,6 +7028,35 @@ impl Interpreter {
         (is_set, value)
     }
 
+    /// Return individual elements for multi-element parameter names ($@, $*, arr[@], arr[*]).
+    /// Returns None for scalar variables.
+    fn resolve_param_expansion_elements(&self, name: &str) -> Option<Vec<String>> {
+        if name == "@" || name == "*" {
+            if let Some(frame) = self.call_stack.last() {
+                return Some(frame.positional.clone());
+            }
+            return Some(Vec::new());
+        }
+        if let Some(arr_name) = name
+            .strip_suffix("[@]")
+            .or_else(|| name.strip_suffix("[*]"))
+        {
+            let resolved = self.resolve_nameref(arr_name);
+            if let Some(arr) = self.assoc_arrays.get(resolved) {
+                let mut keys: Vec<_> = arr.keys().collect();
+                keys.sort();
+                return Some(keys.iter().filter_map(|k| arr.get(*k).cloned()).collect());
+            }
+            if let Some(arr) = self.arrays.get(resolved) {
+                let mut indices: Vec<_> = arr.keys().collect();
+                indices.sort();
+                return Some(indices.iter().filter_map(|i| arr.get(i).cloned()).collect());
+            }
+            return Some(Vec::new());
+        }
+        None
+    }
+
     /// Split a string on IFS characters according to POSIX rules.
     ///
     /// - IFS whitespace (space, tab, newline) collapses; leading/trailing stripped.
@@ -7253,14 +7321,16 @@ impl Interpreter {
                 replacement,
             } => {
                 // ${var/pattern/replacement} - replace first occurrence
-                self.replace_pattern(value, pattern, replacement, false)
+                let expanded_rep = self.expand_operand(replacement);
+                self.replace_pattern(value, pattern, &expanded_rep, false)
             }
             ParameterOp::ReplaceAll {
                 pattern,
                 replacement,
             } => {
                 // ${var//pattern/replacement} - replace all occurrences
-                self.replace_pattern(value, pattern, replacement, true)
+                let expanded_rep = self.expand_operand(replacement);
+                self.replace_pattern(value, pattern, &expanded_rep, true)
             }
             ParameterOp::UpperFirst => {
                 // ${var^} - uppercase first character
@@ -7308,7 +7378,8 @@ impl Interpreter {
         // Handle # prefix anchor (match at start only)
         if let Some(rest) = pattern.strip_prefix('#') {
             if rest.is_empty() {
-                return value.to_string();
+                // ${var/#/rep} with empty pattern: prepend replacement
+                return format!("{}{}", replacement, value);
             }
             if let Some(stripped) = value.strip_prefix(rest) {
                 return format!("{}{}", replacement, stripped);
@@ -7327,7 +7398,8 @@ impl Interpreter {
         // Handle % suffix anchor (match at end only)
         if let Some(rest) = pattern.strip_prefix('%') {
             if rest.is_empty() {
-                return value.to_string();
+                // ${var/%/rep} with empty pattern: append replacement
+                return format!("{}{}", value, replacement);
             }
             if let Some(stripped) = value.strip_suffix(rest) {
                 return format!("{}{}", stripped, replacement);

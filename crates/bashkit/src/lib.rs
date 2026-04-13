@@ -3229,6 +3229,50 @@ fn
     }
 
     #[tokio::test]
+    async fn test_positional_param_prefix_replace() {
+        let mut bash = Bash::new();
+        // ${@/#/prefix} should prepend prefix to each positional parameter
+        let result = bash
+            .exec(r#"f() { set -- "${@/#/tag_}"; echo "$@"; }; f hello world"#)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "tag_hello tag_world\n");
+    }
+
+    #[tokio::test]
+    async fn test_positional_param_suffix_replace() {
+        let mut bash = Bash::new();
+        // ${@/%/suffix} should append suffix to each positional parameter
+        let result = bash
+            .exec(r#"f() { set -- "${@/%/.html}"; echo "$@"; }; f hello world"#)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "hello.html world.html\n");
+    }
+
+    #[tokio::test]
+    async fn test_positional_param_prefix_var_replace() {
+        let mut bash = Bash::new();
+        // ${@/#/$var} should prepend var value to each positional parameter
+        let result = bash
+            .exec(r#"f() { p="tag_"; set -- "${@/#/$p}"; echo "$@"; }; f hello world"#)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "tag_hello tag_world\n");
+    }
+
+    #[tokio::test]
+    async fn test_positional_param_prefix_strip() {
+        let mut bash = Bash::new();
+        // ${@#prefix} should strip prefix from each positional parameter
+        let result = bash
+            .exec(r#"f() { set -- "${@#tag_}"; echo "$@"; }; f tag_hello tag_world"#)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "hello world\n");
+    }
+
+    #[tokio::test]
     async fn test_array_basic() {
         let mut bash = Bash::new();
         // Basic array declaration and access
