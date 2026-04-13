@@ -343,6 +343,28 @@ async fn realfs_symlink_relative_escape_blocked() {
     );
 }
 
+#[tokio::test]
+async fn realfs_symlink_within_mount_allowed() {
+    let dir = setup_host_dir();
+    std::fs::write(dir.path().join("original.txt"), "content").unwrap();
+
+    let mut bash = Bash::builder()
+        .mount_real_readwrite_at(dir.path(), "/mnt/workspace")
+        .build();
+
+    // Relative symlink within mount should succeed (exit code 0)
+    let r = bash
+        .exec("ln -s original.txt /mnt/workspace/link.txt 2>&1; echo $?")
+        .await
+        .unwrap();
+    assert!(
+        r.stdout.trim().ends_with('0'),
+        "Symlink within mount should succeed, got stdout: {} stderr: {}",
+        r.stdout,
+        r.stderr
+    );
+}
+
 // --- Runtime mount/unmount (exercises Bash::mount / Bash::unmount) ---
 
 #[tokio::test]

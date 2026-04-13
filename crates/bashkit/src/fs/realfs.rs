@@ -414,16 +414,46 @@ impl FsBackend for RealFs {
         Ok(())
     }
 
-    /// THREAT[TM-ESC-003]: Symlink creation is blocked in RealFs to prevent
-    /// sandbox escape. Even though bashkit itself doesn't follow symlinks
-    /// (TM-ESC-002), any external process sharing the directory tree would
-    /// follow them, enabling reads/writes to arbitrary host paths.
-    async fn symlink(&self, _target: &Path, _link: &Path) -> Result<()> {
-        Err(IoError::new(
-            ErrorKind::PermissionDenied,
-            "symlink creation is not allowed in RealFs (sandbox security)",
-        )
-        .into())
+    /// THREAT[TM-ESC-003]: Symlink creation in RealFs is allowed only in
+    /// ReadWrite mode. The OS resolves symlink targets on the host filesystem,
+    /// so we must validate that the effective target stays within the mount
+    /// root on disk. Absolute targets are rejected. Relative targets are
+    /// normalized against the link's host-side parent directory.
+    async fn symlink(&self, target: &Path, link: &Path) -> Result<()> {
+        self.check_writable()?;
+        let real_link = self.resolve(link)?;
+
+        // Absolute targets always escape the mount root on disk
+        if target.is_absolute() {
+            return Err(IoError::new(
+                ErrorKind::PermissionDenied,
+                "symlink with absolute target not allowed in RealFs (sandbox security)",
+            )
+            .into());
+        }
+
+        // Relative targets: resolve against the link's host-side parent
+        // to verify the effective path stays within root
+        let link_parent = real_link.parent().unwrap_or(&self.root);
+        let effective = normalize_host_path(&link_parent.join(target));
+        if !effective.starts_with(&self.root) {
+            return Err(IoError::new(
+                ErrorKind::PermissionDenied,
+                "symlink target escapes realfs root (sandbox security)",
+            )
+            .into());
+        }
+
+        #[cfg(unix)]
+        {
+            tokio::fs::symlink(target, &real_link).await?;
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = target;
+            tokio::fs::write(&real_link, "").await?;
+        }
+        Ok(())
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
