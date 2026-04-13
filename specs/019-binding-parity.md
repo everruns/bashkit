@@ -343,44 +343,332 @@ covering LLM tool patterns and AI SDK integrations.
 
 ---
 
-## 7  Priority Recommendations
+## 7  Implementation Roadmap
 
-### 7.1  High Priority (Feature Gaps)
+### Design principle
 
-| # | Gap | Binding | Effort | Impact |
-|---|-----|---------|--------|--------|
-| 1 | **Add snapshot/restore to Python** | Python | Medium | Enables stateful workflows, parity with Node |
-| 2 | **Add direct VFS convenience methods to Python Bash** | Python | Low | Ergonomics parity — `bash.read_file()` vs `bash.fs().read_file()` |
-| 3 | **Add glob() to Python Bash** | Python | Low | Useful utility, Node has it |
+Both bindings should be **idiomatic mirrors**: same capabilities, same test
+structure, same security coverage — adapted to each language's conventions.
+Python uses `snake_case`, `async def`, `pytest`. Node uses `camelCase`,
+`Promise`, AVA/node:test. The *shape* should match; the *style* should be native.
 
-### 7.2  Medium Priority (Test/Security Gaps)
+### Intentionally ecosystem-specific (no parity needed)
 
-| # | Gap | Binding | Effort | Impact |
-|---|-----|---------|--------|--------|
-| 4 | **Add TM-* threat model refs to Python test names** | Python | Low | Traceability |
-| 5 | **Add /proc, /dev/tcp, /dev/udp escape tests to Node** | Node | Low | Security coverage |
-| 6 | **Add heredoc delimiter collision tests to Node** | Node | Low | Security coverage |
-| 7 | **Add large file / resource exhaustion tests to Node** | Node | Low | Edge case coverage |
-| 8 | **Add XML boundary sanitization tests to Python** | Python | Low | If feature exists |
+- **Python-only:** PydanticAI, Deep Agents, GIL tests, Monty/BigInt, `to_dict()`
+- **Node-only:** Bun/Deno runtime-compat, WASM browser, AbortSignal, Vercel AI/Anthropic/OpenAI adapters
+- **`FileSystem.new()`/`.real()`** — Python-only constructors (idiomatic)
 
-### 7.3  Low Priority (Docs/DX)
+---
 
-| # | Gap | Binding | Effort | Impact |
-|---|-----|---------|--------|--------|
-| 9 | **Add data_pipeline and llm_tool examples to Python** | Python | Low | Developer experience |
-| 10 | **Add error handling section to Python README** | Python | Low | Documentation completeness |
-| 11 | **Add platform support section to Python README** | Python | Low | Documentation completeness |
-| 12 | **Add cancellation docs to Python README** | Python | Low | Feature discoverability |
-| 13 | **Add lint/typecheck CI job for Node** | Node | Low | CI rigor |
+### Phase 1 — API Parity (Python catching up to Node)
 
-### 7.4  Not Applicable / Ecosystem-Specific
+**PR 1a: Snapshot/Restore for Python** (Medium effort)
 
-These are intentionally different and don't need parity:
+Add to `PyBash` and `PyBashTool` in `crates/bashkit-python/src/lib.rs`:
+- `snapshot() -> bytes` — serialize interpreter state
+- `restore_snapshot(data: bytes) -> None` — restore from snapshot
+- `Bash.from_snapshot(data: bytes, **kwargs) -> Bash` — static factory
 
-- **Python-only:** PydanticAI, Deep Agents, GIL tests, Monty/BigInt tests
-- **Node-only:** Bun/Deno runtime compat, WASM browser build, AbortSignal (JS-specific API), Vercel AI/Anthropic/OpenAI adapters
-- **`to_dict()` (Python-only):** Pythonic serialization pattern, not needed in JS
-- **`FileSystem.new()` / `.real()` (Python-only):** Different construction pattern
+Add to `_bashkit.pyi` type stubs. Add tests in `test_basic.py` (see Phase 2
+for file rename).
+
+**PR 1b: Direct VFS convenience methods on Bash/BashTool** (Low effort)
+
+Add delegate methods on `PyBash` and `PyBashTool` that forward to the internal
+`FileSystem`:
+
+```python
+# On Bash class directly:
+bash.read_file(path: str) -> str
+bash.write_file(path: str, content: str) -> None
+bash.append_file(path: str, content: str) -> None
+bash.mkdir(path: str, recursive: bool = False) -> None
+bash.exists(path: str) -> bool
+bash.remove(path: str, recursive: bool = False) -> None
+bash.stat(path: str) -> dict
+bash.chmod(path: str, mode: int) -> None
+bash.symlink(target: str, link: str) -> None
+bash.read_link(path: str) -> str
+bash.read_dir(path: str) -> list[dict]
+bash.ls(path: str = ".") -> list[str]
+bash.glob(pattern: str) -> list[str]
+```
+
+Note: These return `str` (not `bytes` like `FileSystem.read_file`), matching
+Node's behavior. The `fs()` accessor remains for advanced use.
+
+Update `_bashkit.pyi`, tests, README.
+
+**PR 1c: Lazy file providers for Python** (Low effort)
+
+Allow `files` dict values to be `Callable[[], str]` in addition to `str`:
+
+```python
+bash = Bash(files={
+    "/data/config.json": lambda: load_config(),  # called on first read
+})
+```
+
+Node supports sync callables and async callables. Python should support sync
+callables only (async would require `await` in constructor, which breaks the
+sync `Bash()` constructor). Document that `Bash.create()` is not needed in
+Python since Python callables can be sync wrappers around async code via
+`asyncio.run()`.
+
+---
+
+### Phase 2 — Test Structure Alignment
+
+**PR 2a: Restructure Python tests to mirror Node** (Medium effort)
+
+Current Python structure (coarse):
+```
+tests/
+  test_bashkit.py          # 129 tests — everything mixed
+  test_integration.py      # 42 tests
+  test_security.py         # 28 tests
+  test_security_advanced.py # 102 tests
+  test_python_security.py  # 88 tests
+  test_shell_injection.py  # 9 tests
+  test_frameworks.py       # 27 tests
+```
+
+Target Python structure (mirrors Node):
+```
+tests/
+  test_basic.py              # ← Node: basic.spec.ts
+  test_builtins.py           # ← Node: builtins.spec.ts
+  test_control_flow.py       # ← Node: control-flow.spec.ts
+  test_error_handling.py     # ← Node: error-handling.spec.ts
+  test_strings_and_quoting.py # ← Node: strings-and-quoting.spec.ts
+  test_scripts.py            # ← Node: scripts.spec.ts
+  test_vfs.py                # ← Node: vfs.spec.ts
+  test_tool_metadata.py      # ← Node: tool-metadata.spec.ts
+  test_security.py           # ← Node: security.spec.ts (merge basic + advanced)
+  test_ai_adapters.py        # ← Node: ai-adapters.spec.ts (rename frameworks)
+  test_python_security.py    # Python-only (keep)
+  test_shell_injection.py    # Python-only (keep)
+  test_integration.py        # Keep — cross-cutting workflow tests
+```
+
+Migration plan:
+1. Create new files with correct test names
+2. Move tests from `test_bashkit.py` into category-appropriate files
+3. Rename `test_frameworks.py` → `test_ai_adapters.py`
+4. Merge `test_security.py` + `test_security_advanced.py` → single `test_security.py`
+5. Keep `test_python_security.py` and `test_shell_injection.py` (Python-specific)
+6. Delete empty `test_bashkit.py`
+
+**PR 2b: Add missing test categories to Python** (Medium effort)
+
+Tests that exist in Node but not in Python:
+
+| Node test | Python equivalent needed |
+|-----------|------------------------|
+| `builtins.spec.ts` — `cat`, `head`, `tail`, `wc`, `grep`, `sed`, `awk`, `sort`, `uniq`, `tr`, `cut`, `printf`, `base64`, `seq`, `jq`, `md5sum`, `sha256sum` | `test_builtins.py` — dedicated tests for each builtin |
+| `strings-and-quoting.spec.ts` — heredoc, string replacement, case conversion, arrays | `test_strings_and_quoting.py` — explicit coverage |
+| `scripts.spec.ts` — `count lines`, `find and replace`, `extract unique`, `JSON pipeline`, `config generator`, `loop with accumulator`, `data transformation`, `error handling with \|\|`, `conditional file creation` | `test_scripts.py` — real-world script patterns |
+
+**PR 2c: Add missing test categories to Node** (Low effort)
+
+Tests that exist in Python but not in Node:
+
+| Python test | Node equivalent needed |
+|-------------|----------------------|
+| `test_integration.py` — multi-step workflows, CRUD, concurrent instances, interleaved sync/async | `integration.spec.ts` — cross-cutting tests |
+| GIL / threading tests | N/A (not applicable to Node) |
+| `test_shell_injection.py` — static analysis of adapter code | Could add static analysis of `langchain.ts` etc. |
+
+---
+
+### Phase 3 — Security Test Alignment
+
+**PR 3a: Add TM-* threat model references to Python** (Low effort)
+
+Rename Python security tests to include threat-model IDs:
+
+```python
+# Before:
+def test_fork_bomb_prevented(): ...
+def test_max_loop_iterations_enforced(): ...
+
+# After:
+def test_tm_dos_021_fork_bomb_prevented(): ...
+def test_tm_dos_016_loop_iteration_limit_enforced(): ...
+```
+
+Full mapping (apply to all applicable tests):
+- `TM-DOS-002`: command limit
+- `TM-DOS-005`: large file write
+- `TM-DOS-006`: VFS file count
+- `TM-DOS-012`: deep directory nesting
+- `TM-DOS-013`: long filename/path
+- `TM-DOS-016`: loop iteration limit
+- `TM-DOS-017`: while true capping
+- `TM-DOS-018`: nested loop multiplication
+- `TM-DOS-020`: recursive function depth
+- `TM-DOS-021`: fork bomb
+- `TM-DOS-029`: arithmetic overflow/div-by-zero
+- `TM-DOS-059`: memory limit
+- `TM-ESC-001`: exec escape
+- `TM-ESC-002`: process substitution
+- `TM-ESC-003`: /proc access
+- `TM-ESC-005`: signal trap
+- `TM-INF-001`: /etc/passwd
+- `TM-INF-002`: env var leak
+- `TM-INJ-005`: path traversal
+- `TM-ISO-001`: variable isolation
+- `TM-ISO-002`: filesystem isolation
+- `TM-ISO-003`: function isolation
+- `TM-INT-001`: host path leak
+- `TM-INT-002`: memory address / stack trace leak
+- `TM-NET-001`: /dev/tcp escape
+- `TM-UNI-002`: zero-width chars
+- `TM-UNI-003`: homoglyph
+- `TM-UNI-004`: RTL override
+
+**PR 3b: Add missing security tests to Node** (Low effort)
+
+Node security.spec.ts currently has 99 tests. Add:
+- `/dev/udp` network escape attempt
+- Heredoc delimiter collision
+- Large file handling (1GB boundary)
+- Time-based side-channel (execution timing consistency)
+- Callback with stdin injection (exists in Python `test_security_advanced.py`)
+- JSON array nesting bomb
+
+**PR 3c: Add missing security tests to Python** (Low effort)
+
+Python is missing some tests Node has:
+- `TM-DOS-005`: large file write limited
+- `TM-DOS-006`: VFS file count limit
+- `TM-DOS-012`: deep directory nesting limited
+- `TM-DOS-013`: long filename/path rejected
+- Default memory limit without explicit `max_memory`
+- `TM-INF-002`: env vars don't leak host info
+- Direct VFS API injection tests (after PR 1b adds convenience methods)
+- `TM-ESC-005`: signal trap commands
+- `TM-DOS-029`: arithmetic overflow, div-by-zero, mod-by-zero
+- Username/hostname injection tests
+- Mounted files with crafted paths / null bytes
+- CRLF line endings in scripts
+
+---
+
+### Phase 4 — Documentation Alignment
+
+**PR 4a: Align README structure** (Low effort)
+
+Both READMEs should follow this canonical structure:
+
+```
+1. Feature overview (badge + bullet list)
+2. Installation
+3. Quick Start
+   3a. Sync execution
+   3b. Async execution
+4. Configuration (constructor options table)
+5. Virtual Filesystem
+   5a. Direct methods (read_file, write_file, ...)
+   5b. FileSystem accessor (fs())
+   5c. Pre-initialized files
+   5d. Real filesystem mounts
+6. Error Handling (BashError)
+7. Cancellation
+8. BashTool (LLM integration)
+9. ScriptedTool (multi-tool orchestration)
+10. Snapshot/Restore (after PR 1a)
+11. Framework Integrations
+    - [ecosystem-specific entries]
+12. API Reference (condensed table)
+13. Platform Support
+14. How It Works (optional)
+```
+
+**Python README gaps to fill:** Error Handling section, Cancellation section,
+Platform Support section, Snapshot/Restore (after PR 1a).
+
+**Node README gaps to fill:** Live mounts section, How It Works section.
+
+**PR 4b: Add missing examples to Python** (Low effort)
+
+Add Python equivalents of Node examples:
+
+| Example | Node file | Python file to create |
+|---------|-----------|----------------------|
+| Data pipeline | `data_pipeline.ts` | `data_pipeline.py` |
+| LLM tool usage | `llm_tool.ts` | `llm_tool.py` |
+
+Add Node equivalent of Python example:
+
+| Example | Python file | Node file to create |
+|---------|-------------|---------------------|
+| K8s orchestrator | `k8s_orchestrator.py` | `k8s_orchestrator.ts` |
+
+**PR 4c: Align inline documentation** (Low effort)
+
+- Add `@example` blocks to Python type stubs (`_bashkit.pyi`) for all public methods
+- Ensure JSDoc `@example` blocks exist for all Node public methods
+
+---
+
+### Phase 5 — CI Alignment
+
+**PR 5a: Add TypeScript type-check job to Node CI** (Low effort)
+
+Add to `js.yml`:
+```yaml
+lint:
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+    - run: npm ci
+    - run: npx tsc --noEmit
+```
+
+---
+
+## 8  Phase Sequencing & Dependencies
+
+```
+Phase 1 (API)        Phase 2 (Tests)       Phase 3 (Security)
+─────────────        ────────────────       ──────────────────
+PR 1a ──────────────→ PR 2a (restructure)─→ PR 3a (TM refs)
+PR 1b ──────────┐     PR 2b (add Python) ─→ PR 3c (add Python)
+PR 1c           │     PR 2c (add Node)   ─→ PR 3b (add Node)
+                │
+                └──→ Tests for new VFS methods go in PR 2a's test_vfs.py
+
+Phase 4 (Docs)        Phase 5 (CI)
+──────────────        ────────────
+PR 4a (READMEs) ──→ independent
+PR 4b (examples)──→ independent
+PR 4c (inline)  ──→ independent
+                      PR 5a (tsc) ──→ independent
+```
+
+Phases 4 and 5 can proceed in parallel with any other phase.
+Phases 1→2→3 have sequential dependencies.
+
+**Estimated total:** 12 PRs, each small and independently shippable.
+
+---
+
+## 9  Success Criteria
+
+When all phases are complete:
+
+1. **API surface:** `diff <(python_methods) <(node_methods)` shows only
+   ecosystem-specific items (AbortSignal, to_dict, etc.)
+2. **Test files:** Python and Node have 1:1 matching test file names (with
+   language-appropriate suffixes)
+3. **Security tests:** Both have TM-* references; union of all security tests
+   present in both (minus ecosystem-specific)
+4. **READMEs:** Same section headings in same order
+5. **Examples:** Each binding has at least 4 runnable examples covering basics,
+   data pipelines, LLM tools, and orchestration
+6. **CI:** Both have lint, typecheck, test matrix, example smoke tests
 
 ---
 
