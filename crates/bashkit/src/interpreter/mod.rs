@@ -6647,7 +6647,11 @@ impl Interpreter {
                     if self.is_nounset() && !suppress_nounset && !is_set {
                         self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
                     }
-                    let expanded = self.apply_parameter_op(
+
+                    // Delegate to sync helper to avoid bloating the async state
+                    // machine with Vec<String> locals (causes stack overflow at
+                    // depth 32 in debug builds — see stack_overflow_regression_tests).
+                    let expanded = self.apply_param_op_maybe_per_element(
                         &value,
                         name,
                         operator,
@@ -7033,6 +7037,35 @@ impl Interpreter {
         (is_set, value)
     }
 
+    /// Return individual elements for multi-element parameter names ($@, $*, arr[@], arr[*]).
+    /// Returns None for scalar variables.
+    fn resolve_param_expansion_elements(&self, name: &str) -> Option<Vec<String>> {
+        if name == "@" || name == "*" {
+            if let Some(frame) = self.call_stack.last() {
+                return Some(frame.positional.clone());
+            }
+            return Some(Vec::new());
+        }
+        if let Some(arr_name) = name
+            .strip_suffix("[@]")
+            .or_else(|| name.strip_suffix("[*]"))
+        {
+            let resolved = self.resolve_nameref(arr_name);
+            if let Some(arr) = self.assoc_arrays.get(resolved) {
+                let mut keys: Vec<_> = arr.keys().collect();
+                keys.sort();
+                return Some(keys.iter().filter_map(|k| arr.get(*k).cloned()).collect());
+            }
+            if let Some(arr) = self.arrays.get(resolved) {
+                let mut indices: Vec<_> = arr.keys().collect();
+                indices.sort();
+                return Some(indices.iter().filter_map(|i| arr.get(i).cloned()).collect());
+            }
+            return Some(Vec::new());
+        }
+        None
+    }
+
     /// Split a string on IFS characters according to POSIX rules.
     ///
     /// - IFS whitespace (space, tab, newline) collapses; leading/trailing stripped.
@@ -7209,6 +7242,44 @@ impl Interpreter {
         result
     }
 
+    /// Apply a parameter operator, handling per-element expansion for $@/$*/arr[@].
+    ///
+    /// Extracted from the async `expand_word_inner` path to keep `Vec<String>`
+    /// locals off the async state machine (prevents stack overflow at depth 32).
+    fn apply_param_op_maybe_per_element(
+        &mut self,
+        value: &str,
+        name: &str,
+        operator: &ParameterOp,
+        operand: &str,
+        colon_variant: bool,
+        is_set: bool,
+    ) -> String {
+        let needs_per_element = matches!(
+            operator,
+            ParameterOp::RemovePrefixShort
+                | ParameterOp::RemovePrefixLong
+                | ParameterOp::RemoveSuffixShort
+                | ParameterOp::RemoveSuffixLong
+                | ParameterOp::ReplaceFirst { .. }
+                | ParameterOp::ReplaceAll { .. }
+                | ParameterOp::UpperFirst
+                | ParameterOp::UpperAll
+                | ParameterOp::LowerFirst
+                | ParameterOp::LowerAll
+        );
+        if needs_per_element && let Some(elems) = self.resolve_param_expansion_elements(name) {
+            let results: Vec<String> = elems
+                .iter()
+                .map(|elem| {
+                    self.apply_parameter_op(elem, name, operator, operand, colon_variant, is_set)
+                })
+                .collect();
+            return results.join(" ");
+        }
+        self.apply_parameter_op(value, name, operator, operand, colon_variant, is_set)
+    }
+
     /// Apply parameter expansion operator.
     /// `colon_variant`: true = check unset-or-empty, false = check unset-only.
     /// `is_set`: whether the variable is defined (distinct from being empty).
@@ -7297,14 +7368,16 @@ impl Interpreter {
                 replacement,
             } => {
                 // ${var/pattern/replacement} - replace first occurrence
-                self.replace_pattern(value, pattern, replacement, false)
+                let expanded_rep = self.expand_operand(replacement);
+                self.replace_pattern(value, pattern, &expanded_rep, false)
             }
             ParameterOp::ReplaceAll {
                 pattern,
                 replacement,
             } => {
                 // ${var//pattern/replacement} - replace all occurrences
-                self.replace_pattern(value, pattern, replacement, true)
+                let expanded_rep = self.expand_operand(replacement);
+                self.replace_pattern(value, pattern, &expanded_rep, true)
             }
             ParameterOp::UpperFirst => {
                 // ${var^} - uppercase first character
@@ -7352,7 +7425,8 @@ impl Interpreter {
         // Handle # prefix anchor (match at start only)
         if let Some(rest) = pattern.strip_prefix('#') {
             if rest.is_empty() {
-                return value.to_string();
+                // ${var/#/rep} with empty pattern: prepend replacement
+                return format!("{}{}", replacement, value);
             }
             if let Some(stripped) = value.strip_prefix(rest) {
                 return format!("{}{}", replacement, stripped);
@@ -7371,7 +7445,8 @@ impl Interpreter {
         // Handle % suffix anchor (match at end only)
         if let Some(rest) = pattern.strip_prefix('%') {
             if rest.is_empty() {
-                return value.to_string();
+                // ${var/%/rep} with empty pattern: append replacement
+                return format!("{}{}", value, replacement);
             }
             if let Some(stripped) = value.strip_suffix(rest) {
                 return format!("{}{}", stripped, replacement);
