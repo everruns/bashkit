@@ -122,7 +122,10 @@ Monty implements a subset of Python 3.12:
 - Exception handling: try/except/finally/raise
 - Property descriptors (`@property`) (since Monty 0.0.4)
 - Built-in functions: print, len, range, enumerate, zip, map, filter, sorted, reversed, sum, min, max, abs, round, int, float, str, bool, list, dict, tuple, set, type, isinstance, hasattr, getattr, id, repr, ord, chr, hex, oct, bin, all, any, input
-- Standard modules: sys, typing, math (~50 functions), re (regex), pathlib, os (getenv/environ)
+- Standard modules: sys, typing, math (~50 functions), re (regex), pathlib, os (getenv/environ), json, datetime
+- `datetime.date.today()`, `datetime.datetime.now()` with optional timezone (since Monty 0.0.11)
+- JSON: `json.dumps()`, `json.loads()` (since Monty 0.0.9)
+- Multi-module imports: `import a, b, c` (since Monty 0.0.10)
 - `TYPE_CHECKING` guard support (since Monty 0.0.4)
 
 **Not supported (Monty limitations):**
@@ -170,6 +173,8 @@ python3 -c "import os; print(os.getenv('HOME'))"
 - `Path.rename()` — move/rename
 - `Path.resolve()`, `Path.absolute()` — path resolution
 - `os.getenv()`, `os.environ` — environment variable access
+- `datetime.date.today()` — current date from host system
+- `datetime.datetime.now(tz=None)` — current datetime (naive or timezone-aware)
 
 **Architecture:**
 ```
@@ -179,6 +184,12 @@ Python code → Monty VM → OsCall(ReadText, path) → BashKit VFS → resume
 Monty pauses execution at filesystem operations, yields an `OsCall` event
 with the operation type and arguments, BashKit bridges it to the VFS, and
 resumes execution with the result (or a Python exception).
+
+> **Note:** Monty 0.0.10+ includes native filesystem mounting (`MountTable`,
+> `MountDir`, `MountMode`) that can handle file operations directly against
+> host directories. BashKit uses the OsCall bridge instead because our VFS is
+> in-memory and may not be backed by host directories. The native mount system
+> is suited for real-filesystem use cases where Monty is used standalone.
 
 ### Direct Integration
 

@@ -76,7 +76,7 @@ hmac = "0.13"
 tracing = { workspace = true, optional = true }
 
 # Embedded Python interpreter (optional)
-monty = { git = "https://github.com/pydantic/monty", rev = "e59c8fa", optional = true }
+monty = { git = "https://github.com/pydantic/monty", rev = "2e9df4b", optional = true }
 
 # Embedded TypeScript interpreter (optional)
 zapcode-core = { version = "1.5", optional = true }
