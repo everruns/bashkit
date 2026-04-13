@@ -53,8 +53,7 @@ See [006-threat-model.md](006-threat-model.md) threat TM-ESC-015 for security an
 
 ## POSIX Compliance
 
-Bashkit implements IEEE 1003.1-2024 Shell Command Language. See
-[008-posix-compliance.md](008-posix-compliance.md) for design rationale.
+Bashkit implements IEEE 1003.1-2024 Shell Command Language.
 
 ### Compliance Level
 
