@@ -27,6 +27,51 @@ use super::{Builtin, Context, read_text_file};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
 
+/// Regex wrapper that falls back to fancy-regex for patterns with backreferences.
+/// The standard `regex` crate doesn't support backreferences in search patterns
+/// (e.g. `\(.\)\1`). When such patterns are detected, we use `fancy_regex` instead.
+#[derive(Debug)]
+enum SedRegex {
+    Standard(Regex),
+    Fancy(fancy_regex::Regex),
+}
+
+impl SedRegex {
+    /// Build a regex, falling back to fancy-regex if backreferences are present.
+    fn new(pattern: &str, case_insensitive: bool) -> std::result::Result<Self, String> {
+        match build_regex_opts(pattern, case_insensitive) {
+            Ok(re) => Ok(SedRegex::Standard(re)),
+            Err(e) => {
+                let err_msg = e.to_string();
+                if err_msg.contains("backreference") {
+                    fancy_regex::RegexBuilder::new(pattern)
+                        .case_insensitive(case_insensitive)
+                        .build()
+                        .map(SedRegex::Fancy)
+                        .map_err(|e| e.to_string())
+                } else {
+                    Err(err_msg)
+                }
+            }
+        }
+    }
+
+    fn replace<'t>(&self, text: &'t str, rep: &str) -> std::borrow::Cow<'t, str> {
+        match self {
+            SedRegex::Standard(re) => re.replace(text, rep),
+            SedRegex::Fancy(re) => re.replace(text, rep),
+        }
+    }
+
+    fn replace_all<'t>(&self, text: &'t str, rep: &str) -> std::borrow::Cow<'t, str> {
+        match self {
+            SedRegex::Standard(re) => re.replace_all(text, rep),
+            SedRegex::Fancy(re) => re.replace_all(text, rep),
+        }
+    }
+
+}
+
 /// Convert a BRE (Basic Regular Expression) pattern to ERE for the regex crate.
 /// In BRE: ( ) { } are literal; \( \) \{ \} \+ \? \| are metacharacters.
 fn bre_to_ere(pattern: &str) -> String {
@@ -66,7 +111,7 @@ pub struct Sed;
 #[derive(Debug)]
 enum SedCommand {
     Substitute {
-        pattern: Regex,
+        pattern: SedRegex,
         replacement: String,
         global: bool,
         nth: Option<usize>, // Replace nth occurrence (1-indexed)
@@ -496,9 +541,10 @@ fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, 
                 // BRE mode: proper char-by-char conversion
                 bre_to_ere(pattern)
             };
-            // Build regex with optional case-insensitive flag
+            // Build regex with optional case-insensitive flag.
+            // Falls back to fancy-regex for patterns with backreferences.
             let case_insensitive = flags.contains('i');
-            let regex = build_regex_opts(&pattern, case_insensitive)
+            let regex = SedRegex::new(&pattern, case_insensitive)
                 .map_err(|e| Error::Execution(format!("sed: invalid pattern: {}", e)))?;
 
             // Convert sed replacement syntax to regex replacement syntax
@@ -632,30 +678,43 @@ fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, 
 
 /// Replace the nth occurrence of a pattern in a string
 fn replace_nth<'a>(
-    pattern: &Regex,
+    pattern: &SedRegex,
     text: &'a str,
     replacement: &str,
     n: usize,
 ) -> std::borrow::Cow<'a, str> {
-    let mut count = 0;
-
-    for mat in pattern.find_iter(text) {
-        count += 1;
-        if count == n {
-            // Found the nth match - do the replacement
-            let mut result = String::new();
-            result.push_str(&text[..mat.start()]);
-            // Apply replacement with capture groups
-            let replaced = pattern.replace(mat.as_str(), replacement);
-            result.push_str(&replaced);
-            // Add the rest of the string
-            result.push_str(&text[mat.end()..]);
-            return std::borrow::Cow::Owned(result);
+    match pattern {
+        SedRegex::Standard(re) => {
+            let mut count = 0;
+            for mat in re.find_iter(text) {
+                count += 1;
+                if count == n {
+                    let mut result = String::new();
+                    result.push_str(&text[..mat.start()]);
+                    let replaced = re.replace(mat.as_str(), replacement);
+                    result.push_str(&replaced);
+                    result.push_str(&text[mat.end()..]);
+                    return std::borrow::Cow::Owned(result);
+                }
+            }
+            std::borrow::Cow::Borrowed(text)
+        }
+        SedRegex::Fancy(re) => {
+            let mut count = 0;
+            for mat in re.find_iter(text).filter_map(|m| m.ok()) {
+                count += 1;
+                if count == n {
+                    let mut result = String::new();
+                    result.push_str(&text[..mat.start()]);
+                    let replaced = re.replace(mat.as_str(), replacement);
+                    result.push_str(&replaced);
+                    result.push_str(&text[mat.end()..]);
+                    return std::borrow::Cow::Owned(result);
+                }
+            }
+            std::borrow::Cow::Borrowed(text)
         }
     }
-
-    // nth occurrence not found, return original
-    std::borrow::Cow::Borrowed(text)
 }
 
 /// Mutable state passed through command execution
@@ -1065,6 +1124,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "world hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_search_backref() {
+        // Backreference in search pattern: match repeated character
+        let result = run_sed(&["s/\\(.\\)\\1/X/g"], Some("aabbc")).await.unwrap();
+        assert_eq!(result.stdout, "XXc\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_search_backref_html() {
+        // Backreference in search pattern: match tag content matching href
+        let result = run_sed(
+            &[r#"s|<a href="tag_\([^"]*\)">\1</a>|\1|g"#],
+            Some(r#"<a href="tag_hello">hello</a>"#),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "hello\n");
     }
 
     #[tokio::test]
