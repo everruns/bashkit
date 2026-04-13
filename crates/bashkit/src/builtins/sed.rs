@@ -69,7 +69,6 @@ impl SedRegex {
             SedRegex::Fancy(re) => re.replace_all(text, rep),
         }
     }
-
 }
 
 /// Convert a BRE (Basic Regular Expression) pattern to ERE for the regex crate.
