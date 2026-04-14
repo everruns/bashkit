@@ -424,6 +424,58 @@ class Bash:
         """
         ...
 
+    def read_file(self, path: str) -> str:
+        """Read a VFS file as UTF-8 text."""
+        ...
+
+    def write_file(self, path: str, content: str) -> None:
+        """Write UTF-8 text into the VFS."""
+        ...
+
+    def append_file(self, path: str, content: str) -> None:
+        """Append UTF-8 text to a VFS file."""
+        ...
+
+    def mkdir(self, path: str, recursive: bool = False) -> None:
+        """Create a directory in the VFS."""
+        ...
+
+    def exists(self, path: str) -> bool:
+        """Return whether a VFS path exists."""
+        ...
+
+    def remove(self, path: str, recursive: bool = False) -> None:
+        """Remove a VFS file or directory."""
+        ...
+
+    def stat(self, path: str) -> dict[str, Any]:
+        """Return metadata for a VFS path."""
+        ...
+
+    def chmod(self, path: str, mode: int) -> None:
+        """Change VFS permissions for a path."""
+        ...
+
+    def symlink(self, target: str, link: str) -> None:
+        """Create a symlink in the VFS."""
+        ...
+
+    def read_link(self, path: str) -> str:
+        """Return the symlink target for a VFS path."""
+        ...
+
+    def read_dir(self, path: str) -> list[dict[str, Any]]:
+        """Return directory entries with metadata."""
+        ...
+
+    def ls(self, path: str = ".") -> list[str]:
+        """Return entry names for a directory, or an empty list if it is missing."""
+        ...
+
+    def glob(self, pattern: str) -> list[str]:
+        """Return file paths matching a safe glob pattern."""
+        ...
+
     def fs(self) -> FileSystem:
         """Return a live filesystem handle.
 
@@ -701,6 +753,58 @@ class BashTool:
             >>> result.exit_code  # file is gone
             1
         """
+        ...
+
+    def read_file(self, path: str) -> str:
+        """Read a VFS file as UTF-8 text."""
+        ...
+
+    def write_file(self, path: str, content: str) -> None:
+        """Write UTF-8 text into the VFS."""
+        ...
+
+    def append_file(self, path: str, content: str) -> None:
+        """Append UTF-8 text to a VFS file."""
+        ...
+
+    def mkdir(self, path: str, recursive: bool = False) -> None:
+        """Create a directory in the VFS."""
+        ...
+
+    def exists(self, path: str) -> bool:
+        """Return whether a VFS path exists."""
+        ...
+
+    def remove(self, path: str, recursive: bool = False) -> None:
+        """Remove a VFS file or directory."""
+        ...
+
+    def stat(self, path: str) -> dict[str, Any]:
+        """Return metadata for a VFS path."""
+        ...
+
+    def chmod(self, path: str, mode: int) -> None:
+        """Change VFS permissions for a path."""
+        ...
+
+    def symlink(self, target: str, link: str) -> None:
+        """Create a symlink in the VFS."""
+        ...
+
+    def read_link(self, path: str) -> str:
+        """Return the symlink target for a VFS path."""
+        ...
+
+    def read_dir(self, path: str) -> list[dict[str, Any]]:
+        """Return directory entries with metadata."""
+        ...
+
+    def ls(self, path: str = ".") -> list[str]:
+        """Return entry names for a directory, or an empty list if it is missing."""
+        ...
+
+    def glob(self, pattern: str) -> list[str]:
+        """Return file paths matching a safe glob pattern."""
         ...
 
     def fs(self) -> FileSystem:

@@ -125,6 +125,21 @@ result = tool.execute_sync("echo hello")
 # Reset state
 tool.reset()
 
+# Direct VFS helpers (text-oriented convenience wrappers)
+tool.read_file("/tmp/data.txt")      # -> str
+tool.write_file("/tmp/data.txt", "hello")
+tool.append_file("/tmp/data.txt", "\nworld")
+tool.mkdir("/tmp/nested", recursive=True)
+tool.exists("/tmp/data.txt")         # -> bool
+tool.remove("/tmp/nested", recursive=True)
+tool.stat("/tmp/data.txt")           # -> dict
+tool.chmod("/tmp/data.txt", 0o644)
+tool.symlink("/tmp/data.txt", "/tmp/link.txt")
+tool.read_link("/tmp/link.txt")      # -> str
+tool.read_dir("/tmp")                # -> list[dict]
+tool.ls("/tmp")                      # -> list[str]
+tool.glob("/tmp/*.txt")              # -> list[str]
+
 # LLM metadata
 tool.name              # "bashkit"
 tool.short_description # str

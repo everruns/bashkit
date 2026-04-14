@@ -84,6 +84,21 @@ bash = Bash(
 from bashkit import Bash
 
 bash = Bash()
+bash.mkdir("/data", recursive=True)
+bash.write_file("/data/config.json", '{"debug": true}\n')
+assert bash.read_file("/data/config.json") == '{"debug": true}\n'
+assert bash.ls("/data") == ["config.json"]
+assert bash.glob("/data/*.json") == ["/data/config.json"]
+
+# The same convenience methods exist on BashTool()
+```
+
+### FileSystem Accessor
+
+```python
+from bashkit import Bash
+
+bash = Bash()
 fs = bash.fs()
 fs.mkdir("/data", recursive=True)
 fs.write_file("/data/blob.bin", b"\x00\x01hello")

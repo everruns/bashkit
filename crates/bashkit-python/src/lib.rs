@@ -243,6 +243,241 @@ impl FileSystemHandle {
     }
 }
 
+fn with_live_fs<T, F, Fut>(rt: &Arc<Runtime>, inner: &Arc<Mutex<Bash>>, f: F) -> PyResult<T>
+where
+    F: FnOnce(Arc<dyn FileSystem>) -> Fut,
+    Fut: Future<Output = PyResult<T>>,
+{
+    let inner = inner.clone();
+    rt.block_on(async move {
+        let fs = {
+            let bash = inner.lock().await;
+            bash.fs()
+        };
+        f(fs).await
+    })
+}
+
+fn read_text_via_live_fs(
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    path: String,
+) -> PyResult<String> {
+    with_live_fs(rt, inner, move |fs| async move {
+        let bytes = fs
+            .read_file(Path::new(&path))
+            .await
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        String::from_utf8(bytes).map_err(|e| PyRuntimeError::new_err(format!("Invalid UTF-8: {e}")))
+    })
+}
+
+fn write_text_via_live_fs(
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    path: String,
+    content: String,
+) -> PyResult<()> {
+    with_live_fs(rt, inner, move |fs| async move {
+        fs.write_file(Path::new(&path), content.as_bytes())
+            .await
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    })
+}
+
+fn append_text_via_live_fs(
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    path: String,
+    content: String,
+) -> PyResult<()> {
+    with_live_fs(rt, inner, move |fs| async move {
+        fs.append_file(Path::new(&path), content.as_bytes())
+            .await
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    })
+}
+
+fn mkdir_via_live_fs(
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    path: String,
+    recursive: bool,
+) -> PyResult<()> {
+    with_live_fs(rt, inner, move |fs| async move {
+        fs.mkdir(Path::new(&path), recursive)
+            .await
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    })
+}
+
+fn remove_via_live_fs(
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    path: String,
+    recursive: bool,
+) -> PyResult<()> {
+    with_live_fs(rt, inner, move |fs| async move {
+        fs.remove(Path::new(&path), recursive)
+            .await
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    })
+}
+
+fn exists_via_live_fs(rt: &Arc<Runtime>, inner: &Arc<Mutex<Bash>>, path: String) -> PyResult<bool> {
+    with_live_fs(rt, inner, move |fs| async move {
+        fs.exists(Path::new(&path))
+            .await
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    })
+}
+
+fn stat_via_live_fs(
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    path: String,
+) -> PyResult<FsMetadata> {
+    with_live_fs(rt, inner, move |fs| async move {
+        fs.stat(Path::new(&path))
+            .await
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    })
+}
+
+fn chmod_via_live_fs(
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    path: String,
+    mode: u32,
+) -> PyResult<()> {
+    with_live_fs(rt, inner, move |fs| async move {
+        fs.chmod(Path::new(&path), mode)
+            .await
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    })
+}
+
+fn symlink_via_live_fs(
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    target: String,
+    link: String,
+) -> PyResult<()> {
+    with_live_fs(rt, inner, move |fs| async move {
+        fs.symlink(Path::new(&target), Path::new(&link))
+            .await
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    })
+}
+
+fn read_link_via_live_fs(
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    path: String,
+) -> PyResult<String> {
+    with_live_fs(rt, inner, move |fs| async move {
+        let target = fs
+            .read_link(Path::new(&path))
+            .await
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(target.display().to_string())
+    })
+}
+
+fn read_dir_via_live_fs(
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    path: String,
+) -> PyResult<Vec<FsDirEntry>> {
+    with_live_fs(rt, inner, move |fs| async move {
+        fs.read_dir(Path::new(&path))
+            .await
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    })
+}
+
+fn is_safe_glob_pattern(pattern: &str) -> bool {
+    pattern.chars().all(|ch| {
+        ch.is_ascii_alphanumeric()
+            || matches!(ch, '*' | '?' | '[' | ']' | '.' | '_' | '-' | '/' | ' ')
+    })
+}
+
+fn glob_match_path(value: &str, pattern: &str) -> bool {
+    let mut value_chars = value.chars().peekable();
+    let mut pattern_chars = pattern.chars().peekable();
+
+    loop {
+        match (pattern_chars.peek(), value_chars.peek()) {
+            (None, None) => return true,
+            (None, Some(_)) => return false,
+            (Some('*'), _) => {
+                pattern_chars.next();
+                if pattern_chars.peek().is_none() {
+                    return true;
+                }
+                while value_chars.peek().is_some() {
+                    let remaining_value: String = value_chars.clone().collect();
+                    let remaining_pattern: String = pattern_chars.clone().collect();
+                    if glob_match_path(&remaining_value, &remaining_pattern) {
+                        return true;
+                    }
+                    value_chars.next();
+                }
+                let remaining_pattern: String = pattern_chars.collect();
+                return glob_match_path("", &remaining_pattern);
+            }
+            (Some('?'), Some(_)) => {
+                pattern_chars.next();
+                value_chars.next();
+            }
+            (Some('?'), None) => return false,
+            (Some(p), Some(v)) => {
+                if *p == *v {
+                    pattern_chars.next();
+                    value_chars.next();
+                } else {
+                    return false;
+                }
+            }
+            (Some(_), None) => return false,
+        }
+    }
+}
+
+fn normalize_find_path(path: &str) -> String {
+    if let Some(stripped) = path.strip_prefix("//") {
+        format!("/{}", stripped)
+    } else {
+        path.to_string()
+    }
+}
+
+fn glob_via_bash(rt: &Arc<Runtime>, inner: &Arc<Mutex<Bash>>, pattern: String) -> Vec<String> {
+    if !is_safe_glob_pattern(&pattern) {
+        return Vec::new();
+    }
+
+    let inner = inner.clone();
+    let command = "find / -type f 2>/dev/null".to_string();
+    let result = rt.block_on(async move {
+        let mut bash = inner.lock().await;
+        bash.exec(&command).await
+    });
+
+    match result {
+        Ok(exec) if exec.exit_code == 0 => exec
+            .stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(normalize_find_path)
+            .filter(|line| glob_match_path(line, &pattern))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 #[pyclass(name = "FileSystem")]
 struct PyFileSystem {
     inner: FileSystemHandle,
@@ -964,6 +1199,77 @@ impl PyBash {
         })
     }
 
+    fn read_file(&self, py: Python<'_>, path: String) -> PyResult<String> {
+        py.detach(|| read_text_via_live_fs(&self.rt, &self.inner, path))
+    }
+
+    fn write_file(&self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
+        py.detach(|| write_text_via_live_fs(&self.rt, &self.inner, path, content))
+    }
+
+    fn append_file(&self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
+        py.detach(|| append_text_via_live_fs(&self.rt, &self.inner, path, content))
+    }
+
+    #[pyo3(signature = (path, recursive=false))]
+    fn mkdir(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
+        py.detach(|| mkdir_via_live_fs(&self.rt, &self.inner, path, recursive))
+    }
+
+    fn exists(&self, py: Python<'_>, path: String) -> PyResult<bool> {
+        py.detach(|| exists_via_live_fs(&self.rt, &self.inner, path))
+    }
+
+    #[pyo3(signature = (path, recursive=false))]
+    fn remove(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
+        py.detach(|| remove_via_live_fs(&self.rt, &self.inner, path, recursive))
+    }
+
+    fn stat(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        let metadata = py.detach(|| stat_via_live_fs(&self.rt, &self.inner, path))?;
+        metadata_to_pydict(py, &metadata)
+    }
+
+    fn chmod(&self, py: Python<'_>, path: String, mode: u32) -> PyResult<()> {
+        py.detach(|| chmod_via_live_fs(&self.rt, &self.inner, path, mode))
+    }
+
+    fn symlink(&self, py: Python<'_>, target: String, link: String) -> PyResult<()> {
+        py.detach(|| symlink_via_live_fs(&self.rt, &self.inner, target, link))
+    }
+
+    fn read_link(&self, py: Python<'_>, path: String) -> PyResult<String> {
+        py.detach(|| read_link_via_live_fs(&self.rt, &self.inner, path))
+    }
+
+    fn read_dir(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        let entries = py.detach(|| read_dir_via_live_fs(&self.rt, &self.inner, path))?;
+        let items: Vec<Py<PyAny>> = entries
+            .iter()
+            .map(|entry| dir_entry_to_pydict(py, entry))
+            .collect::<PyResult<_>>()?;
+        Ok(PyList::new(py, &items)?.into_any().unbind())
+    }
+
+    #[pyo3(signature = (path=".".to_string()))]
+    fn ls(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        let names = match py.detach(|| read_dir_via_live_fs(&self.rt, &self.inner, path)) {
+            Ok(entries) => entries
+                .into_iter()
+                .map(|entry| entry.name)
+                .collect::<Vec<_>>(),
+            Err(_) => Vec::new(),
+        };
+        Ok(PyList::new(py, names)?.into_any().unbind())
+    }
+
+    fn glob(&self, py: Python<'_>, pattern: String) -> PyResult<Py<PyAny>> {
+        let matches = py.detach(|| -> PyResult<Vec<String>> {
+            Ok(glob_via_bash(&self.rt, &self.inner, pattern))
+        })?;
+        Ok(PyList::new(py, matches)?.into_any().unbind())
+    }
+
     /// Return a live filesystem handle backed by the current interpreter.
     ///
     /// Each operation on the returned handle acquires the interpreter lock,
@@ -1346,6 +1652,77 @@ impl BashTool {
                 Ok(())
             })
         })
+    }
+
+    fn read_file(&self, py: Python<'_>, path: String) -> PyResult<String> {
+        py.detach(|| read_text_via_live_fs(&self.rt, &self.inner, path))
+    }
+
+    fn write_file(&self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
+        py.detach(|| write_text_via_live_fs(&self.rt, &self.inner, path, content))
+    }
+
+    fn append_file(&self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
+        py.detach(|| append_text_via_live_fs(&self.rt, &self.inner, path, content))
+    }
+
+    #[pyo3(signature = (path, recursive=false))]
+    fn mkdir(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
+        py.detach(|| mkdir_via_live_fs(&self.rt, &self.inner, path, recursive))
+    }
+
+    fn exists(&self, py: Python<'_>, path: String) -> PyResult<bool> {
+        py.detach(|| exists_via_live_fs(&self.rt, &self.inner, path))
+    }
+
+    #[pyo3(signature = (path, recursive=false))]
+    fn remove(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
+        py.detach(|| remove_via_live_fs(&self.rt, &self.inner, path, recursive))
+    }
+
+    fn stat(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        let metadata = py.detach(|| stat_via_live_fs(&self.rt, &self.inner, path))?;
+        metadata_to_pydict(py, &metadata)
+    }
+
+    fn chmod(&self, py: Python<'_>, path: String, mode: u32) -> PyResult<()> {
+        py.detach(|| chmod_via_live_fs(&self.rt, &self.inner, path, mode))
+    }
+
+    fn symlink(&self, py: Python<'_>, target: String, link: String) -> PyResult<()> {
+        py.detach(|| symlink_via_live_fs(&self.rt, &self.inner, target, link))
+    }
+
+    fn read_link(&self, py: Python<'_>, path: String) -> PyResult<String> {
+        py.detach(|| read_link_via_live_fs(&self.rt, &self.inner, path))
+    }
+
+    fn read_dir(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        let entries = py.detach(|| read_dir_via_live_fs(&self.rt, &self.inner, path))?;
+        let items: Vec<Py<PyAny>> = entries
+            .iter()
+            .map(|entry| dir_entry_to_pydict(py, entry))
+            .collect::<PyResult<_>>()?;
+        Ok(PyList::new(py, &items)?.into_any().unbind())
+    }
+
+    #[pyo3(signature = (path=".".to_string()))]
+    fn ls(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        let names = match py.detach(|| read_dir_via_live_fs(&self.rt, &self.inner, path)) {
+            Ok(entries) => entries
+                .into_iter()
+                .map(|entry| entry.name)
+                .collect::<Vec<_>>(),
+            Err(_) => Vec::new(),
+        };
+        Ok(PyList::new(py, names)?.into_any().unbind())
+    }
+
+    fn glob(&self, py: Python<'_>, pattern: String) -> PyResult<Py<PyAny>> {
+        let matches = py.detach(|| -> PyResult<Vec<String>> {
+            Ok(glob_via_bash(&self.rt, &self.inner, pattern))
+        })?;
+        Ok(PyList::new(py, matches)?.into_any().unbind())
     }
 
     /// Return a live filesystem handle backed by the current interpreter.

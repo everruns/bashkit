@@ -170,6 +170,60 @@ def test_bash_fs_handle_supports_directory_ops_and_links():
     assert fs.exists("/data") is False
 
 
+def test_bash_direct_vfs_methods_cover_core_ops():
+    bash = Bash()
+
+    bash.mkdir("/data/src", recursive=True)
+    bash.write_file("/data/src/file.txt", "alpha")
+    bash.append_file("/data/src/file.txt", "beta")
+    bash.mkdir("/data/dst", recursive=True)
+    bash.write_file("/data/dst/second.txt", "second")
+    bash.symlink("/data/src/file.txt", "/data/link.txt")
+    bash.chmod("/data/src/file.txt", 0o600)
+
+    assert bash.read_file("/data/src/file.txt") == "alphabeta"
+    assert bash.exists("/data/src/file.txt") is True
+    assert bash.read_link("/data/link.txt") == "/data/src/file.txt"
+
+    stat = bash.stat("/data/src/file.txt")
+    assert stat["mode"] == 0o600
+    assert stat["size"] == len("alphabeta")
+
+    entries = sorted(entry["name"] for entry in bash.read_dir("/data"))
+    assert entries == ["dst", "link.txt", "src"]
+    assert bash.ls("/data/src") == ["file.txt"]
+    assert sorted(bash.glob("/data/*/*.txt")) == ["/data/dst/second.txt", "/data/src/file.txt"]
+
+    bash.remove("/data/link.txt")
+    bash.remove("/data", recursive=True)
+    assert bash.exists("/data") is False
+
+
+def test_bash_direct_vfs_methods_raise_on_missing_paths_and_non_utf8():
+    bash = Bash()
+    bash.fs().mkdir("/data", recursive=True)
+    bash.fs().write_file("/data/blob.bin", b"\xff\xfe\xfd")
+
+    with pytest.raises(Exception):
+        bash.read_file("/missing.txt")
+
+    with pytest.raises(Exception, match="UTF-8"):
+        bash.read_file("/data/blob.bin")
+
+    assert bash.ls("/missing-dir") == []
+    assert bash.glob("'; echo pwned") == []
+
+
+def test_bash_direct_vfs_methods_track_shell_changes_and_reset():
+    bash = Bash()
+
+    bash.execute_sync("mkdir -p /workspace && echo shell > /workspace/from-shell.txt")
+    assert bash.read_file("/workspace/from-shell.txt") == "shell\n"
+
+    bash.reset()
+    assert bash.exists("/workspace/from-shell.txt") is False
+
+
 # -- Bash: FS / mount error cases ------------------------------------------
 
 
@@ -342,6 +396,24 @@ def test_bashtool_live_mount_preserves_state(tmp_path):
 
     tool.unmount("/workspace")
     assert tool.execute_sync("echo ${KEEP:-missing}").stdout.strip() == "1"
+
+
+def test_bashtool_direct_vfs_methods_cover_core_ops():
+    tool = BashTool()
+
+    tool.mkdir("/data", recursive=True)
+    tool.write_file("/data/file.txt", "hello")
+    tool.append_file("/data/file.txt", " world")
+    tool.symlink("/data/file.txt", "/data/link.txt")
+
+    assert tool.read_file("/data/file.txt") == "hello world"
+    assert tool.exists("/data/file.txt") is True
+    assert tool.read_link("/data/link.txt") == "/data/file.txt"
+    assert sorted(tool.ls("/data")) == ["file.txt", "link.txt"]
+    assert tool.glob("/data/*.txt") == ["/data/file.txt"]
+
+    tool.reset()
+    assert tool.exists("/data/file.txt") is False
 
 
 # -- BashTool: Async execution ----------------------------------------------
