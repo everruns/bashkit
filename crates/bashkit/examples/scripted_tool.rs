@@ -29,10 +29,10 @@ async fn main() -> anyhow::Result<()> {
     // In production the callbacks would call real APIs.
     let tool = ScriptedTool::builder("ecommerce_api")
         .short_description("E-commerce API orchestrator with user, order, and inventory tools")
-        .tool(fakes::get_user_def(), fakes::get_user)
-        .tool(fakes::list_orders_def(), fakes::list_orders)
-        .tool(fakes::get_inventory_def(), fakes::get_inventory)
-        .tool(fakes::create_discount_def(), fakes::create_discount)
+        .tool_fn(fakes::get_user_def(), fakes::get_user)
+        .tool_fn(fakes::list_orders_def(), fakes::list_orders)
+        .tool_fn(fakes::get_inventory_def(), fakes::get_inventory)
+        .tool_fn(fakes::create_discount_def(), fakes::create_discount)
         .env("STORE_NAME", "Bashkit Shop")
         .build();
 

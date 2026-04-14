@@ -6,7 +6,7 @@
 //   DiscoverTool (discover/help only).
 
 use super::{
-    CallbackKind, RegisteredTool, ScriptedExecutionTrace, ScriptedTool, ToolArgs, ToolDef,
+    CallbackKind, RegisteredTool, ScriptedExecutionTrace, ScriptedTool, ToolArgs, ToolDef, ToolImpl,
 };
 use crate::ExecutionLimits;
 use crate::tool::{Tool, ToolError, ToolRequest, ToolResponse, ToolStatus, VERSION};
@@ -45,7 +45,7 @@ pub enum DiscoveryMode {
 ///
 /// # tokio_test::block_on(async {
 /// let toolset = ScriptingToolSet::builder("api")
-///     .tool(
+///     .tool_fn(
 ///         ToolDef::new("greet", "Greet someone").with_category("social"),
 ///         |_args: &ToolArgs| Ok("hello\n".to_string()),
 ///     )
@@ -188,7 +188,7 @@ impl Tool for DiscoverTool {
 ///
 /// let toolset = ScriptingToolSet::builder("api")
 ///     .short_description("Example API")
-///     .tool(
+///     .tool_fn(
 ///         ToolDef::new("ping", "Ping a host"),
 ///         |_args: &ToolArgs| Ok("pong\n".to_string()),
 ///     )
@@ -229,8 +229,16 @@ impl ScriptingToolSetBuilder {
         self
     }
 
+    /// Register a [`ToolImpl`] (definition + execution callbacks).
+    pub fn tool(mut self, tool: ToolImpl) -> Self {
+        self.tools.push(RegisteredTool::from_tool_impl(tool));
+        self
+    }
+
     /// Register a tool with its definition and synchronous execution callback.
-    pub fn tool(
+    ///
+    /// Convenience shorthand — constructs a [`ToolImpl`] internally.
+    pub fn tool_fn(
         mut self,
         def: ToolDef,
         callback: impl Fn(&ToolArgs) -> Result<String, String> + Send + Sync + 'static,
@@ -243,12 +251,14 @@ impl ScriptingToolSetBuilder {
     }
 
     /// Register a tool with its definition and **async** execution callback.
-    pub fn async_tool<F, Fut>(mut self, def: ToolDef, callback: F) -> Self
+    ///
+    /// Convenience shorthand — constructs a [`ToolImpl`] internally.
+    pub fn async_tool_fn<F, Fut>(mut self, def: ToolDef, callback: F) -> Self
     where
         F: Fn(ToolArgs) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<String, String>> + Send + 'static,
     {
-        let cb: super::AsyncToolCallback = Arc::new(move |args| Box::pin(callback(args)));
+        let cb: super::AsyncToolExec = Arc::new(move |args| Box::pin(callback(args)));
         self.tools.push(RegisteredTool {
             def,
             callback: CallbackKind::Async(cb),
@@ -301,11 +311,11 @@ impl ScriptingToolSetBuilder {
             match &reg.callback {
                 CallbackKind::Sync(cb) => {
                     let cb = Arc::clone(cb);
-                    builder = builder.tool(reg.def.clone(), move |args: &ToolArgs| (cb)(args));
+                    builder = builder.tool_fn(reg.def.clone(), move |args: &ToolArgs| (cb)(args));
                 }
                 CallbackKind::Async(cb) => {
                     let cb = Arc::clone(cb);
-                    builder = builder.async_tool(reg.def.clone(), move |args: ToolArgs| {
+                    builder = builder.async_tool_fn(reg.def.clone(), move |args: ToolArgs| {
                         let cb = Arc::clone(&cb);
                         async move { (cb)(args).await }
                     });
@@ -343,7 +353,7 @@ impl ScriptingToolSetBuilder {
 /// # tokio_test::block_on(async {
 /// // Exclusive mode (default): one tool with full schemas
 /// let toolset = ScriptingToolSet::builder("api")
-///     .tool(
+///     .tool_fn(
 ///         ToolDef::new("greet", "Greet someone")
 ///             .with_schema(serde_json::json!({
 ///                 "type": "object",
@@ -370,7 +380,7 @@ impl ScriptingToolSetBuilder {
 ///
 /// // Discovery mode: two tools
 /// let toolset = ScriptingToolSet::builder("api")
-///     .tool(
+///     .tool_fn(
 ///         ToolDef::new("greet", "Greet someone"),
 ///         |_args: &ToolArgs| Ok("hello\n".to_string()),
 ///     )
@@ -441,7 +451,7 @@ mod tests {
     fn make_tools() -> ScriptingToolSetBuilder {
         ScriptingToolSet::builder("test_api")
             .short_description("Test API")
-            .tool(
+            .tool_fn(
                 ToolDef::new("get_user", "Fetch user by ID")
                     .with_schema(serde_json::json!({
                         "type": "object",
@@ -456,7 +466,7 @@ mod tests {
                     Ok(format!("{{\"id\":{id},\"name\":\"Alice\"}}\n"))
                 },
             )
-            .tool(
+            .tool_fn(
                 ToolDef::new("list_orders", "List orders for a user")
                     .with_schema(serde_json::json!({
                         "type": "object",
@@ -559,7 +569,7 @@ mod tests {
     #[test]
     fn test_default_short_description() {
         let toolset = ScriptingToolSet::builder("mytools")
-            .tool(ToolDef::new("noop", "No-op"), |_: &ToolArgs| {
+            .tool_fn(ToolDef::new("noop", "No-op"), |_: &ToolArgs| {
                 Ok("ok\n".into())
             })
             .build();
@@ -695,7 +705,7 @@ mod tests {
     async fn test_env_vars_passed_through() {
         let toolset = ScriptingToolSet::builder("env_test")
             .env("MY_VAR", "hello")
-            .tool(ToolDef::new("noop", "No-op"), |_: &ToolArgs| {
+            .tool_fn(ToolDef::new("noop", "No-op"), |_: &ToolArgs| {
                 Ok("ok\n".into())
             })
             .build();

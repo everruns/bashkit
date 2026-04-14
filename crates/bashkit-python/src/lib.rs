@@ -1577,7 +1577,7 @@ impl ScriptedTool {
                         })
                     })
                 };
-                builder = builder.tool(def, callback);
+                builder = builder.tool_fn(def, callback);
             } else {
                 // Sync callback: ctx.run(fn, params, stdin) with ContextVars.
                 let callback = move |args: &ToolArgs| -> Result<String, String> {
@@ -1593,7 +1593,7 @@ impl ScriptedTool {
                         })
                     })
                 };
-                builder = builder.tool(def, callback);
+                builder = builder.tool_fn(def, callback);
             }
         }
 

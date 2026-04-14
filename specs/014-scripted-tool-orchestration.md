@@ -84,7 +84,7 @@ pub type AsyncToolCallback = Arc<
 ```
 
 Async variant of `ToolCallback`. Takes owned `ToolArgs` (the future may outlive the
-borrow). Register via `builder.async_tool(def, callback)`. Both sync and async
+borrow). Register via `builder.async_tool_fn(def, callback)`. Both sync and async
 callbacks can be mixed in a single `ScriptedTool`.
 
 Internally represented as `CallbackKind::Async` and `.await`-ed inside
@@ -125,14 +125,14 @@ Unknown flags (not in schema) are kept as strings.
 
 ### ScriptedToolBuilder
 
-Two arguments per tool: definition + callback. Use `.tool()` for sync and
-`.async_tool()` for async callbacks.
+Two arguments per tool: definition + callback. Use `.tool_fn()` for sync and
+`.async_tool_fn()` for async callbacks.
 
 ```rust
 ScriptedTool::builder("api_name")
     .locale("en-US")
     .short_description("...")
-    .tool(
+    .tool_fn(
         ToolDef::new("get_user", "Fetch user by ID")
             .with_schema(json!({"type": "object", "properties": {"id": {"type": "integer"}}})),
         |args| {
@@ -140,7 +140,7 @@ ScriptedTool::builder("api_name")
             Ok(format!("{{\"id\":{id}}}\n"))
         },
     )
-    .async_tool(
+    .async_tool_fn(
         ToolDef::new("fetch_url", "Fetch a URL"),
         |args| async move {
             let url = args.param_str("url").unwrap_or("?");
@@ -189,7 +189,7 @@ that lists only tool names + one-liners, deferring full schemas to `help`:
 ```rust
 ScriptedTool::builder("api")
     .compact_prompt(true)
-    .tool(...)
+    .tool_fn(...)
     .build()
 ```
 
@@ -241,7 +241,7 @@ Use the standard Rust closure-capture pattern with `Arc` to share resources:
 ```rust
 let client = Arc::new(build_authenticated_client());
 let c = client.clone();
-builder.tool(ToolDef::new("get_user", "..."), move |args| {
+builder.tool_fn(ToolDef::new("get_user", "..."), move |args| {
     let resp = c.get(&format!("/users/{}", args.param_i64("id").unwrap()));
     Ok(resp.text()?)
 });
@@ -265,7 +265,7 @@ exposes them via `take_last_execution_trace()`. This trace is for observability 
 telemetry, not scoring:
 
 ```rust
-let mut tool = ScriptedTool::builder("api").tool(...).build();
+let mut tool = ScriptedTool::builder("api").tool_fn(...).build();
 let _resp = tool.execute(ToolRequest::new("discover --search user\nhelp get_user")).await;
 let trace = tool.take_last_execution_trace().unwrap();
 assert_eq!(trace.invocations[0].name, "discover");
@@ -308,14 +308,14 @@ based on `DiscoveryMode`:
 // Exclusive mode (default): tools() returns [ScriptedTool]
 let toolset = ScriptingToolSet::builder("api")
     .short_description("My API")
-    .tool(ToolDef::new("get_user", "Fetch user").with_schema(...), callback)
+    .tool_fn(ToolDef::new("get_user", "Fetch user").with_schema(...), callback)
     .build();
 let tools = toolset.tools(); // vec![ScriptedTool]
 
 // Discovery mode: tools() returns [ScriptedTool, DiscoverTool]
 let toolset = ScriptingToolSet::builder("api")
     .short_description("My API")
-    .tool(ToolDef::new("get_user", "Fetch user").with_category("users"), callback)
+    .tool_fn(ToolDef::new("get_user", "Fetch user").with_category("users"), callback)
     .with_discovery()
     .build();
 let tools = toolset.tools(); // vec![ScriptedTool(compact), DiscoverTool]

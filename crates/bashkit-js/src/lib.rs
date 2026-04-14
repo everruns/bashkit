@@ -1544,7 +1544,7 @@ impl ScriptedTool {
                     .map_err(|_| format!("{}: callback channel closed", tool_name))?
             };
 
-            builder = builder.tool(
+            builder = builder.tool_fn(
                 ToolDef::new(&entry.name, &entry.description).with_schema(entry.schema.clone()),
                 callback,
             );

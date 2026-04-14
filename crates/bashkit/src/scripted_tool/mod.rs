@@ -35,7 +35,7 @@
 //!
 //! # tokio_test::block_on(async {
 //! let tool = ScriptedTool::builder("api")
-//!     .tool(
+//!     .tool_fn(
 //!         ToolDef::new("greet", "Greet a user")
 //!             .with_schema(serde_json::json!({
 //!                 "type": "object",
@@ -75,7 +75,7 @@
 //! let k = api_key.clone();
 //! let u = base_url.clone();
 //! let mut builder = ScriptedTool::builder("api");
-//! builder = builder.tool(
+//! builder = builder.tool_fn(
 //!     ToolDef::new("get_user", "Fetch user by ID"),
 //!     move |args: &ToolArgs| {
 //!         let _key = &*k;   // shared API key
@@ -86,7 +86,7 @@
 //!
 //! let k2 = api_key.clone();
 //! let u2 = base_url.clone();
-//! builder = builder.tool(
+//! builder = builder.tool_fn(
 //!     ToolDef::new("list_orders", "List orders"),
 //!     move |_args: &ToolArgs| {
 //!         let _key = &*k2;
@@ -106,7 +106,7 @@
 //! let call_count = Arc::new(Mutex::new(0u64));
 //! let c = call_count.clone();
 //! let tool = ScriptedTool::builder("api")
-//!     .tool(
+//!     .tool_fn(
 //!         ToolDef::new("tracked", "Counted call"),
 //!         move |_args: &ToolArgs| {
 //!             let mut count = c.lock().unwrap();
@@ -132,131 +132,23 @@ mod toolset;
 
 pub use toolset::{DiscoverTool, DiscoveryMode, ScriptingToolSet, ScriptingToolSetBuilder};
 
+// Re-export foundational types from tool_def (they used to live here).
+pub use crate::tool_def::{
+    AsyncToolCallback, AsyncToolExec, SyncToolExec, ToolArgs, ToolCallback, ToolDef, ToolImpl,
+};
+
 use crate::{ExecutionLimits, Tool, ToolService};
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-
-// ============================================================================
-// ToolDef — OpenAPI-style tool definition
-// ============================================================================
-
-/// OpenAPI-style tool definition: name, description, input schema.
-///
-/// Describes a sub-tool registered with [`ScriptedToolBuilder`].
-/// The `input_schema` is optional JSON Schema for documentation / LLM prompts
-/// and for type coercion of `--key value` flags.
-#[derive(Clone)]
-pub struct ToolDef {
-    /// Command name used as bash builtin (e.g. `"get_user"`).
-    pub name: String,
-    /// Human-readable description for LLM consumption.
-    pub description: String,
-    /// JSON Schema describing accepted arguments. Empty object if unspecified.
-    pub input_schema: serde_json::Value,
-    /// Categorical tags for discovery (e.g. `["admin", "billing"]`).
-    pub tags: Vec<String>,
-    /// Grouping category for discovery (e.g. `"payments"`).
-    pub category: Option<String>,
-}
-
-impl ToolDef {
-    /// Create a tool definition with name and description.
-    pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            description: description.into(),
-            input_schema: serde_json::Value::Object(Default::default()),
-            tags: Vec::new(),
-            category: None,
-        }
-    }
-
-    /// Attach a JSON Schema for the tool's input parameters.
-    pub fn with_schema(mut self, schema: serde_json::Value) -> Self {
-        self.input_schema = schema;
-        self
-    }
-
-    /// Add categorical tags for discovery filtering.
-    pub fn with_tags(mut self, tags: &[&str]) -> Self {
-        self.tags = tags.iter().map(|s| s.to_string()).collect();
-        self
-    }
-
-    /// Set the grouping category for discovery.
-    pub fn with_category(mut self, category: &str) -> Self {
-        self.category = Some(category.to_string());
-        self
-    }
-}
-
-// ============================================================================
-// ToolArgs — parsed arguments passed to callbacks
-// ============================================================================
-
-/// Parsed arguments passed to a tool callback.
-///
-/// `params` is a JSON object built from `--key value` flags, with values
-/// type-coerced per the `ToolDef`'s `input_schema`.
-/// `stdin` carries pipeline input from a prior command, if any.
-pub struct ToolArgs {
-    /// Parsed parameters as a JSON object. Keys from `--key value` flags.
-    pub params: serde_json::Value,
-    /// Pipeline input from a prior command (e.g. `echo data | tool`).
-    pub stdin: Option<String>,
-}
-
-impl ToolArgs {
-    /// Get a string parameter by name.
-    pub fn param_str(&self, key: &str) -> Option<&str> {
-        self.params.get(key).and_then(|v| v.as_str())
-    }
-
-    /// Get an integer parameter by name.
-    pub fn param_i64(&self, key: &str) -> Option<i64> {
-        self.params.get(key).and_then(|v| v.as_i64())
-    }
-
-    /// Get a float parameter by name.
-    pub fn param_f64(&self, key: &str) -> Option<f64> {
-        self.params.get(key).and_then(|v| v.as_f64())
-    }
-
-    /// Get a boolean parameter by name.
-    pub fn param_bool(&self, key: &str) -> Option<bool> {
-        self.params.get(key).and_then(|v| v.as_bool())
-    }
-}
-
-// ============================================================================
-// ToolCallback — execution callback type
-// ============================================================================
-
-/// Execution callback for a registered tool (synchronous).
-///
-/// Receives parsed [`ToolArgs`] with typed parameters and optional stdin.
-/// Return `Ok(stdout)` on success or `Err(message)` on failure.
-pub type ToolCallback = Arc<dyn Fn(&ToolArgs) -> Result<String, String> + Send + Sync>;
-
-/// Async execution callback for a registered tool.
-///
-/// Same contract as [`ToolCallback`] but returns a `Future`, allowing
-/// non-blocking I/O inside the callback. Takes owned [`ToolArgs`] because
-/// the future may outlive the borrow.
-pub type AsyncToolCallback = Arc<
-    dyn Fn(ToolArgs) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> + Send + Sync,
->;
 
 /// Sync or async callback for a registered tool.
 #[derive(Clone)]
 pub enum CallbackKind {
     /// Synchronous callback — blocks until complete.
-    Sync(ToolCallback),
+    Sync(SyncToolExec),
     /// Asynchronous callback — `.await`ed inside the interpreter.
-    Async(AsyncToolCallback),
+    Async(AsyncToolExec),
 }
 
 // ============================================================================
@@ -297,6 +189,26 @@ pub(crate) struct RegisteredTool {
     pub(crate) callback: CallbackKind,
 }
 
+impl RegisteredTool {
+    /// Create from a [`ToolImpl`], converting its exec/exec_sync to a
+    /// [`CallbackKind`]. Prefers async when available.
+    pub(crate) fn from_tool_impl(tool: ToolImpl) -> Self {
+        let callback = if let Some(async_cb) = tool.exec {
+            CallbackKind::Async(async_cb)
+        } else if let Some(sync_cb) = tool.exec_sync {
+            CallbackKind::Sync(sync_cb)
+        } else {
+            // Schema-only ToolImpl — wrap as a sync callback that always errors.
+            let name = tool.def.name.clone();
+            CallbackKind::Sync(Arc::new(move |_| Err(format!("{name}: no exec defined"))))
+        };
+        Self {
+            def: tool.def,
+            callback,
+        }
+    }
+}
+
 // ============================================================================
 // ScriptedToolBuilder
 // ============================================================================
@@ -308,7 +220,7 @@ pub(crate) struct RegisteredTool {
 ///
 /// let tool = ScriptedTool::builder("net")
 ///     .short_description("Network tools")
-///     .tool(
+///     .tool_fn(
 ///         ToolDef::new("ping", "Ping a host")
 ///             .with_schema(serde_json::json!({
 ///                 "type": "object",
@@ -359,11 +271,21 @@ impl ScriptedToolBuilder {
         self
     }
 
+    /// Register a [`ToolImpl`] (definition + execution callbacks).
+    ///
+    /// This is the preferred registration method. The `ToolImpl` carries its own
+    /// name, schema, and sync/async exec callbacks.
+    pub fn tool(mut self, tool: ToolImpl) -> Self {
+        self.tools.push(RegisteredTool::from_tool_impl(tool));
+        self
+    }
+
     /// Register a tool with its definition and synchronous execution callback.
     ///
+    /// Convenience shorthand — constructs a [`ToolImpl`] internally.
     /// The callback receives [`ToolArgs`] with `--key value` flags parsed into
     /// a JSON object, type-coerced per the schema.
-    pub fn tool(
+    pub fn tool_fn(
         mut self,
         def: ToolDef,
         callback: impl Fn(&ToolArgs) -> Result<String, String> + Send + Sync + 'static,
@@ -377,15 +299,16 @@ impl ScriptedToolBuilder {
 
     /// Register a tool with its definition and **async** execution callback.
     ///
-    /// Same as [`tool()`](Self::tool) but the callback returns a `Future`,
+    /// Convenience shorthand — constructs a [`ToolImpl`] internally.
+    /// Same as [`tool_fn()`](Self::tool_fn) but the callback returns a `Future`,
     /// allowing non-blocking I/O. Takes owned [`ToolArgs`] because the future
     /// may outlive the borrow.
-    pub fn async_tool<F, Fut>(mut self, def: ToolDef, callback: F) -> Self
+    pub fn async_tool_fn<F, Fut>(mut self, def: ToolDef, callback: F) -> Self
     where
         F: Fn(ToolArgs) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<String, String>> + Send + 'static,
     {
-        let cb: AsyncToolCallback = Arc::new(move |args| Box::pin(callback(args)));
+        let cb: AsyncToolExec = Arc::new(move |args| Box::pin(callback(args)));
         self.tools.push(RegisteredTool {
             def,
             callback: CallbackKind::Async(cb),
@@ -566,7 +489,7 @@ mod tests {
     fn build_test_tool() -> ScriptedTool {
         ScriptedTool::builder("test_api")
             .short_description("Test API")
-            .tool(
+            .tool_fn(
                 ToolDef::new("get_user", "Fetch user by id").with_schema(serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -580,7 +503,7 @@ mod tests {
                     ))
                 },
             )
-            .tool(
+            .tool_fn(
                 ToolDef::new("get_orders", "List orders for user").with_schema(serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -595,11 +518,11 @@ mod tests {
                     ))
                 },
             )
-            .tool(
+            .tool_fn(
                 ToolDef::new("fail_tool", "Always fails"),
                 |_args: &ToolArgs| Err("service unavailable".to_string()),
             )
-            .tool(
+            .tool_fn(
                 ToolDef::new("from_stdin", "Read from stdin, uppercase it"),
                 |args: &ToolArgs| match args.stdin.as_deref() {
                     Some(input) => Ok(input.to_uppercase()),
@@ -621,7 +544,7 @@ mod tests {
     #[test]
     fn test_builder_default_short_description() {
         let tool = ScriptedTool::builder("mytools")
-            .tool(ToolDef::new("noop", "No-op"), |_args: &ToolArgs| {
+            .tool_fn(ToolDef::new("noop", "No-op"), |_args: &ToolArgs| {
                 Ok("ok\n".to_string())
             })
             .build();
@@ -660,7 +583,7 @@ mod tests {
     #[test]
     fn test_system_prompt_includes_schema() {
         let tool = ScriptedTool::builder("schema_test")
-            .tool(
+            .tool_fn(
                 ToolDef::new("get_user", "Fetch user by id").with_schema(serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -690,7 +613,7 @@ mod tests {
     #[test]
     fn test_builder_contract_helpers() {
         let builder = ScriptedTool::builder("test_api")
-            .tool(ToolDef::new("ping", "Ping"), |_args: &ToolArgs| {
+            .tool_fn(ToolDef::new("ping", "Ping"), |_args: &ToolArgs| {
                 Ok("pong\n".to_string())
             });
         let definition = builder.build_tool_definition();
@@ -708,7 +631,7 @@ mod tests {
         use tower::ServiceExt;
 
         let service = ScriptedTool::builder("test_api")
-            .tool(ToolDef::new("ping", "Ping"), |_args: &ToolArgs| {
+            .tool_fn(ToolDef::new("ping", "Ping"), |_args: &ToolArgs| {
                 Ok("pong\n".to_string())
             })
             .build_service();
@@ -726,7 +649,7 @@ mod tests {
     fn test_locale_localizes_description() {
         let tool = ScriptedTool::builder("ua_api")
             .locale("uk-UA")
-            .tool(ToolDef::new("ping", "Ping"), |_args: &ToolArgs| {
+            .tool_fn(ToolDef::new("ping", "Ping"), |_args: &ToolArgs| {
                 Ok("pong\n".to_string())
             })
             .build();
@@ -899,7 +822,7 @@ mod tests {
     async fn test_execute_with_env() {
         let tool = ScriptedTool::builder("env_test")
             .env("API_BASE", "https://api.example.com")
-            .tool(ToolDef::new("noop", "No-op"), |_args: &ToolArgs| {
+            .tool_fn(ToolDef::new("noop", "No-op"), |_args: &ToolArgs| {
                 Ok("ok\n".to_string())
             })
             .build();
@@ -968,7 +891,7 @@ mod tests {
     #[tokio::test]
     async fn test_boolean_flag() {
         let tool = ScriptedTool::builder("bool_test")
-            .tool(
+            .tool_fn(
                 ToolDef::new("search", "Search").with_schema(serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -997,7 +920,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_schema_treats_as_strings() {
         let tool = ScriptedTool::builder("str_test")
-            .tool(
+            .tool_fn(
                 ToolDef::new("echo_args", "Echo params as JSON"),
                 |args: &ToolArgs| Ok(format!("{}\n", args.params)),
             )
@@ -1031,14 +954,14 @@ mod tests {
         let log2 = call_log.clone();
 
         let tool = ScriptedTool::builder("ctx_test")
-            .tool(
+            .tool_fn(
                 ToolDef::new("tool_a", "First tool"),
                 move |_args: &ToolArgs| {
                     log1.lock().expect("lock").push(format!("a:{}", *s1));
                     Ok("a\n".to_string())
                 },
             )
-            .tool(
+            .tool_fn(
                 ToolDef::new("tool_b", "Second tool"),
                 move |_args: &ToolArgs| {
                     log2.lock().expect("lock").push(format!("b:{}", *s2));
@@ -1066,7 +989,7 @@ mod tests {
         let c = counter.clone();
 
         let tool = ScriptedTool::builder("mut_test")
-            .tool(
+            .tool_fn(
                 ToolDef::new("increment", "Bump counter"),
                 move |_args: &ToolArgs| {
                     let mut count = c.lock().expect("lock");
@@ -1091,7 +1014,7 @@ mod tests {
     #[tokio::test]
     async fn test_fresh_interpreter_per_execute() {
         let tool = ScriptedTool::builder("isolation_test")
-            .tool(ToolDef::new("noop", "No-op"), |_args: &ToolArgs| {
+            .tool_fn(ToolDef::new("noop", "No-op"), |_args: &ToolArgs| {
                 Ok("ok\n".to_string())
             })
             .build();
@@ -1123,7 +1046,7 @@ mod tests {
         let c = counter.clone();
 
         let tool = ScriptedTool::builder("persist_test")
-            .tool(
+            .tool_fn(
                 ToolDef::new("count", "Count calls"),
                 move |_args: &ToolArgs| {
                     let mut n = c.lock().expect("lock");
@@ -1181,7 +1104,7 @@ mod tests {
     #[tokio::test]
     async fn test_async_tool_basic() {
         let tool = ScriptedTool::builder("async_api")
-            .async_tool(
+            .async_tool_fn(
                 ToolDef::new("greet", "Greet async").with_schema(serde_json::json!({
                     "type": "object",
                     "properties": { "name": {"type": "string"} }
@@ -1206,10 +1129,10 @@ mod tests {
     #[tokio::test]
     async fn test_mixed_sync_async_tools() {
         let tool = ScriptedTool::builder("mixed")
-            .tool(ToolDef::new("sync_ping", "Sync"), |_args: &ToolArgs| {
+            .tool_fn(ToolDef::new("sync_ping", "Sync"), |_args: &ToolArgs| {
                 Ok("sync-pong\n".to_string())
             })
-            .async_tool(
+            .async_tool_fn(
                 ToolDef::new("async_ping", "Async"),
                 |_args: ToolArgs| async move { Ok("async-pong\n".to_string()) },
             )
@@ -1230,7 +1153,7 @@ mod tests {
     async fn test_async_tool_error_propagates() {
         let tool = ScriptedTool::builder("err_api")
             .sanitize_errors(false)
-            .async_tool(
+            .async_tool_fn(
                 ToolDef::new("fail", "Always fails"),
                 |_args: ToolArgs| async move { Err("async boom".to_string()) },
             )
@@ -1249,7 +1172,7 @@ mod tests {
     #[tokio::test]
     async fn test_async_tool_stdin_pipe() {
         let tool = ScriptedTool::builder("pipe_api")
-            .async_tool(
+            .async_tool_fn(
                 ToolDef::new("upper", "Uppercase stdin"),
                 |args: ToolArgs| async move { Ok(args.stdin.unwrap_or_default().to_uppercase()) },
             )

@@ -709,7 +709,7 @@ mod tests {
         fn make_test_tool() -> ScriptedTool {
             ScriptedTool::builder("test_api")
                 .short_description("Test API tool")
-                .tool(ToolDef::new("greet", "Greet someone"), |args: &ToolArgs| {
+                .tool_fn(ToolDef::new("greet", "Greet someone"), |args: &ToolArgs| {
                     let name = args.param_str("name").unwrap_or("world");
                     Ok(format!("hello {name}\n"))
                 })
@@ -759,7 +759,7 @@ mod tests {
             let mut server = McpServer::new(bashkit::Bash::new);
             let tool = ScriptedTool::builder("err_api")
                 .short_description("Error API")
-                .tool(ToolDef::new("fail", "Always fails"), |_args: &ToolArgs| {
+                .tool_fn(ToolDef::new("fail", "Always fails"), |_args: &ToolArgs| {
                     Err("service down".to_string())
                 })
                 .build();
