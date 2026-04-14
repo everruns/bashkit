@@ -122,6 +122,12 @@ from bashkit import Bash, FileSystem
 # Text files (in-memory, writable)
 bash = Bash(files={"/config/app.conf": "debug=true\n"})
 
+# Lazy file providers (called on first read, then cached)
+bash = Bash(files={
+    "/config/static.txt": "ready\n",
+    "/config/report.json": lambda: '{"ok": true}\n',
+})
+
 # Real filesystem mounts (read-only by default)
 bash = Bash(mounts=[
     {"host_path": "/path/to/data", "vfs_path": "/data"},
