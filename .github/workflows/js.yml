@@ -148,6 +148,7 @@ jobs:
           ${{ matrix.run }} bash_basics.mjs
           ${{ matrix.run }} data_pipeline.mjs
           ${{ matrix.run }} llm_tool.mjs
+          ${{ matrix.run }} k8s_orchestrator.mjs
           ${{ matrix.run }} langchain_integration.mjs
 
       - name: Install Doppler CLI
