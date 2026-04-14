@@ -59,6 +59,7 @@ pub use client::GitClient;
 /// Strips ANSI escape sequences, null bytes, and dangerous C0/C1 control
 /// characters from strings before they reach interpreter stdout. Preserves
 /// tab (0x09), newline (0x0a), and carriage return (0x0d).
+#[cfg(any(feature = "git", test))]
 pub(crate) fn sanitize_git_output(s: &str) -> String {
     use regex::Regex;
     use std::sync::LazyLock;
