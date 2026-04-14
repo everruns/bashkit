@@ -90,6 +90,46 @@ callbacks can be mixed in a single `ScriptedTool`.
 Internally represented as `CallbackKind::Async` and `.await`-ed inside
 `ToolBuiltinAdapter::execute()`, which is already `async fn`.
 
+### ToolImpl — unified tool unit
+
+```rust
+pub struct ToolImpl {
+    pub def: ToolDef,
+    pub exec: Option<AsyncToolExec>,
+    pub exec_sync: Option<SyncToolExec>,
+}
+```
+
+Combines metadata (`ToolDef`) with optional sync and async exec functions.
+Implements `Builtin`, so it can be registered in both `Bash` (via `.builtin()`)
+and `ScriptedTool`/`ScriptingToolSet` (via `.tool()`).
+
+When running async, prefers `exec`; falls back to `exec_sync`.
+When running sync, prefers `exec_sync`; falls back to blocking on `exec`.
+
+Builder API:
+
+```rust
+let tool = ToolImpl::new(
+    ToolDef::new("get_user", "Fetch user by ID")
+        .with_schema(json!({"type": "object", "properties": {"id": {"type": "integer"}}})),
+)
+.with_exec_sync(|args| {
+    let id = args.param_i64("id").ok_or("missing --id")?;
+    Ok(format!("{{\"id\":{id}}}\n"))
+})
+.with_exec(|args| async move {
+    let id = args.param_i64("id").ok_or("missing --id")?;
+    Ok(format!("{{\"id\":{id}}}\n"))
+});
+
+// Register in ScriptedTool
+ScriptedTool::builder("api").tool(tool).build();
+```
+
+Type aliases for backward compatibility: `ToolCallback = SyncToolExec`,
+`AsyncToolCallback = AsyncToolExec`.
+
 ### ContextVar propagation (Python)
 
 Python callbacks (both sync and async) automatically see `contextvars.ContextVar`
@@ -338,17 +378,17 @@ Builder API mirrors `ScriptedToolBuilder`: `.tool()`, `.env()`, `.limits()`,
 
 ## Module location
 
-`crates/bashkit/src/scripted_tool/`
-
 ```
+tool_def.rs          — ToolDef, ToolArgs, ToolImpl, SyncToolExec, AsyncToolExec, parse_flags
 scripted_tool/
-├── mod.rs       — ToolDef, ToolCallback, ScriptedToolBuilder, ScriptedTool struct, tests
-├── execute.rs   — Tool impl, ToolBuiltinAdapter, documentation helpers
-└── toolset.rs   — ScriptingToolSet, ScriptingToolSetBuilder, DiscoveryMode
+├── mod.rs           — CallbackKind, ScriptedToolBuilder, ScriptedTool, re-exports from tool_def
+├── execute.rs       — Tool impl, ToolBuiltinAdapter, documentation helpers
+└── toolset.rs       — ScriptingToolSet, ScriptingToolSetBuilder, DiscoveryMode
 ```
 
 Public exports from `lib.rs` (gated by `scripted_tool` feature):
-`ToolDef`, `ToolArgs`, `ToolCallback`, `ScriptedTool`, `ScriptedToolBuilder`,
+`ToolDef`, `ToolArgs`, `ToolImpl`, `SyncToolExec`, `AsyncToolExec`,
+`ToolCallback`, `AsyncToolCallback` (aliases), `ScriptedTool`, `ScriptedToolBuilder`,
 `ScriptingToolSet`, `ScriptingToolSetBuilder`, `DiscoverTool`, `DiscoveryMode`.
 
 ## Example
