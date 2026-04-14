@@ -34,6 +34,34 @@ env:
   DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
 
 jobs:
+  typecheck:
+    name: TypeScript type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: crates/bashkit-js
+
+      - name: Build native binding (generates type declarations)
+        run: npm run build
+        working-directory: crates/bashkit-js
+
+      - name: Type-check (including tests)
+        run: npx tsc --noEmit -p tsconfig.check.json
+        working-directory: crates/bashkit-js
+
   build-and-test:
     name: ${{ matrix.runtime }} ${{ matrix.version }}
     runs-on: ubuntu-latest
@@ -166,11 +194,15 @@ jobs:
   js-check:
     name: JS Check
     if: always()
-    needs: [build-and-test]
+    needs: [typecheck, build-and-test]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
         run: |
+          if [[ "${{ needs.typecheck.result }}" != "success" ]]; then
+            echo "TypeScript type-check failed"
+            exit 1
+          fi
           if [[ "${{ needs.build-and-test.result }}" != "success" ]]; then
             echo "JS build/test failed"
             exit 1
