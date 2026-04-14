@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 /// OpenAPI-style tool definition: name, description, input schema.
 ///
-/// Describes a sub-tool registered with [`ScriptedToolBuilder`] or usable
+/// Describes a sub-tool registered with a `ScriptedToolBuilder` or usable
 /// standalone. The `input_schema` is optional JSON Schema for documentation /
 /// LLM prompts and for type coercion of `--key value` flags.
 #[derive(Clone)]
@@ -139,7 +139,7 @@ pub type AsyncToolCallback = AsyncToolExec;
 /// Complete tool: definition + sync/async exec functions.
 ///
 /// Implements [`Builtin`] so it can be registered directly in a Bash
-/// interpreter or used inside a [`ScriptedTool`].
+/// interpreter or used inside a `ScriptedTool`.
 ///
 /// # Example
 ///
