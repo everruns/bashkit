@@ -4,30 +4,268 @@ from collections.abc import Callable
 from typing import Any, Protocol
 
 class FileSystem:
-    """Direct access to BashKit's virtual filesystem or a standalone mountable FS."""
+    """Direct access to BashKit's virtual filesystem or a standalone mountable FS.
 
-    def __init__(self) -> None: ...
+    Two ways to create:
+
+    1. In-memory (default) — starts empty::
+
+        >>> fs = FileSystem()
+        >>> fs.write_file("/hello.txt", b"hi")
+        >>> fs.read_file("/hello.txt")
+        b'hi'
+
+    2. Backed by a real host directory::
+
+        >>> fs = FileSystem.real("/tmp/data", writable=False)
+        >>> fs.exists("/some-host-file.txt")
+        True
+    """
+
+    def __init__(self) -> None:
+        """Create a new empty in-memory filesystem.
+
+        Example::
+
+            >>> fs = FileSystem()
+            >>> fs.exists("/anything")
+            False
+        """
+        ...
+
     @staticmethod
-    def real(host_path: str, writable: bool = False) -> FileSystem: ...
-    def read_file(self, path: str) -> bytes: ...
-    def write_file(self, path: str, content: bytes) -> None: ...
-    def append_file(self, path: str, content: bytes) -> None: ...
-    def mkdir(self, path: str, recursive: bool = False) -> None: ...
-    def remove(self, path: str, recursive: bool = False) -> None: ...
-    def stat(self, path: str) -> dict[str, Any]: ...
-    def read_dir(self, path: str) -> list[dict[str, Any]]: ...
-    def exists(self, path: str) -> bool: ...
-    def rename(self, from_path: str, to_path: str) -> None: ...
-    def copy(self, from_path: str, to_path: str) -> None: ...
-    def symlink(self, target: str, link: str) -> None: ...
-    def chmod(self, path: str, mode: int) -> None: ...
-    def read_link(self, path: str) -> str: ...
+    def real(host_path: str, writable: bool = False) -> FileSystem:
+        """Create a filesystem backed by a real host directory.
+
+        Args:
+            host_path: Absolute path on the host to expose.
+            writable: Allow write operations (default read-only).
+
+        Example::
+
+            >>> fs = FileSystem.real("/tmp/project", writable=True)
+            >>> fs.write_file("/tmp/project/out.txt", b"data")
+        """
+        ...
+
+    def read_file(self, path: str) -> bytes:
+        """Read the entire contents of a file.
+
+        Args:
+            path: Absolute path in the filesystem.
+
+        Returns:
+            File contents as bytes.
+
+        Example::
+
+            >>> fs = FileSystem()
+            >>> fs.write_file("/demo.txt", b"hello")
+            >>> fs.read_file("/demo.txt")
+            b'hello'
+        """
+        ...
+
+    def write_file(self, path: str, content: bytes) -> None:
+        """Write content to a file, creating or overwriting it.
+
+        Args:
+            path: Absolute path in the filesystem.
+            content: Data to write.
+
+        Example::
+
+            >>> fs = FileSystem()
+            >>> fs.write_file("/output.txt", b"result data")
+        """
+        ...
+
+    def append_file(self, path: str, content: bytes) -> None:
+        """Append content to an existing file.
+
+        Args:
+            path: Absolute path in the filesystem.
+            content: Data to append.
+
+        Example::
+
+            >>> fs = FileSystem()
+            >>> fs.write_file("/log.txt", b"line1\\n")
+            >>> fs.append_file("/log.txt", b"line2\\n")
+            >>> fs.read_file("/log.txt")
+            b'line1\\nline2\\n'
+        """
+        ...
+
+    def mkdir(self, path: str, recursive: bool = False) -> None:
+        """Create a directory.
+
+        Args:
+            path: Absolute path for the new directory.
+            recursive: Create parent directories as needed.
+
+        Example::
+
+            >>> fs = FileSystem()
+            >>> fs.mkdir("/a/b/c", recursive=True)
+            >>> fs.exists("/a/b/c")
+            True
+        """
+        ...
+
+    def remove(self, path: str, recursive: bool = False) -> None:
+        """Remove a file or directory.
+
+        Args:
+            path: Absolute path to remove.
+            recursive: Remove directory contents recursively.
+
+        Example::
+
+            >>> fs = FileSystem()
+            >>> fs.write_file("/tmp.txt", b"x")
+            >>> fs.remove("/tmp.txt")
+            >>> fs.exists("/tmp.txt")
+            False
+        """
+        ...
+
+    def stat(self, path: str) -> dict[str, Any]:
+        """Get file metadata.
+
+        Returns:
+            Dict with ``file_type``, ``size``, ``mode``, ``modified``, ``created``.
+
+        Example::
+
+            >>> fs = FileSystem()
+            >>> fs.write_file("/f.txt", b"data")
+            >>> info = fs.stat("/f.txt")
+            >>> info["file_type"]
+            'file'
+            >>> info["size"]
+            4
+        """
+        ...
+
+    def read_dir(self, path: str) -> list[dict[str, Any]]:
+        """List directory entries.
+
+        Returns:
+            List of dicts, each with ``name`` and ``metadata`` keys.
+
+        Example::
+
+            >>> fs = FileSystem()
+            >>> fs.write_file("/dir/a.txt", b"a")
+            >>> entries = fs.read_dir("/dir")
+            >>> entries[0]["name"]
+            'a.txt'
+        """
+        ...
+
+    def exists(self, path: str) -> bool:
+        """Check whether a path exists.
+
+        Example::
+
+            >>> fs = FileSystem()
+            >>> fs.exists("/nope")
+            False
+            >>> fs.write_file("/yes.txt", b"")
+            >>> fs.exists("/yes.txt")
+            True
+        """
+        ...
+
+    def rename(self, from_path: str, to_path: str) -> None:
+        """Rename (move) a file or directory.
+
+        Example::
+
+            >>> fs = FileSystem()
+            >>> fs.write_file("/old.txt", b"data")
+            >>> fs.rename("/old.txt", "/new.txt")
+            >>> fs.exists("/new.txt")
+            True
+        """
+        ...
+
+    def copy(self, from_path: str, to_path: str) -> None:
+        """Copy a file.
+
+        Example::
+
+            >>> fs = FileSystem()
+            >>> fs.write_file("/src.txt", b"data")
+            >>> fs.copy("/src.txt", "/dst.txt")
+            >>> fs.read_file("/dst.txt")
+            b'data'
+        """
+        ...
+
+    def symlink(self, target: str, link: str) -> None:
+        """Create a symbolic link.
+
+        Args:
+            target: Path the symlink points to.
+            link: Path of the symlink itself.
+
+        Example::
+
+            >>> fs = FileSystem()
+            >>> fs.write_file("/real.txt", b"data")
+            >>> fs.symlink("/real.txt", "/link.txt")
+            >>> fs.read_file("/link.txt")
+            b'data'
+        """
+        ...
+
+    def chmod(self, path: str, mode: int) -> None:
+        """Change file permissions.
+
+        Args:
+            path: Absolute path.
+            mode: Octal permission bits (e.g. ``0o755``).
+
+        Example::
+
+            >>> fs = FileSystem()
+            >>> fs.write_file("/script.sh", b"#!/bin/bash")
+            >>> fs.chmod("/script.sh", 0o755)
+        """
+        ...
+
+    def read_link(self, path: str) -> str:
+        """Read the target of a symbolic link.
+
+        Example::
+
+            >>> fs = FileSystem()
+            >>> fs.write_file("/target.txt", b"data")
+            >>> fs.symlink("/target.txt", "/link.txt")
+            >>> fs.read_link("/link.txt")
+            '/target.txt'
+        """
+        ...
 
 class ExternalHandler(Protocol):
     """Protocol for the external function handler passed to Bash.
 
     Called when Monty Python code invokes a registered external function.
     Must be an async callable with this exact signature.
+
+    Example::
+
+        >>> async def my_handler(fn_name: str, args: list, kwargs: dict) -> Any:
+        ...     if fn_name == "fetch":
+        ...         return {"status": 200, "body": "ok"}
+        ...     return None
+        >>> bash = Bash(
+        ...     python=True,
+        ...     external_functions=["fetch"],
+        ...     external_handler=my_handler,
+        ... )
     """
 
     async def __call__(self, fn_name: str, args: list[Any], kwargs: dict[str, Any]) -> Any: ...
@@ -68,25 +306,185 @@ class Bash:
         external_handler: ExternalHandler | None = None,
         files: dict[str, str] | None = None,
         mounts: list[dict[str, Any]] | None = None,
-    ) -> None: ...
-    async def execute(self, commands: str) -> ExecResult: ...
-    def execute_sync(self, commands: str) -> ExecResult: ...
-    async def execute_or_throw(self, commands: str) -> ExecResult: ...
-    def execute_sync_or_throw(self, commands: str) -> ExecResult: ...
-    def cancel(self) -> None: ...
-    def reset(self) -> None: ...
+    ) -> None:
+        """Create a new Bash interpreter.
+
+        Args:
+            username: Custom username (default ``"user"``).
+            hostname: Custom hostname (default ``"bashkit"``).
+            max_commands: Limit total commands executed.
+            max_loop_iterations: Limit iterations per loop.
+            max_memory: Memory limit in bytes for the VFS.
+            timeout_seconds: Abort execution after this duration.
+            python: Enable embedded Python (``python3`` builtin).
+            external_functions: Function names callable from Python code.
+            external_handler: Async callback for external function calls.
+            files: Dict mapping VFS paths to file contents to pre-populate.
+            mounts: List of real host directory mount configs.
+
+        Example::
+
+            >>> bash = Bash(
+            ...     timeout_seconds=30,
+            ...     files={"/input.txt": "some data"},
+            ... )
+        """
+        ...
+
+    async def execute(self, commands: str) -> ExecResult:
+        """Execute bash commands asynchronously.
+
+        Args:
+            commands: Bash script to run (like ``bash -c "commands"``).
+
+        Returns:
+            ExecResult with stdout, stderr, exit_code.
+
+        Example::
+
+            >>> bash = Bash()
+            >>> result = await bash.execute("echo hello && echo world")
+            >>> print(result.stdout)
+            hello
+            world
+        """
+        ...
+
+    def execute_sync(self, commands: str) -> ExecResult:
+        """Execute bash commands synchronously (blocking).
+
+        Not supported when ``external_handler`` is configured — use
+        ``execute()`` (async) instead.
+
+        Example::
+
+            >>> bash = Bash()
+            >>> result = bash.execute_sync("date +%Y")
+            >>> print(result.exit_code)
+            0
+        """
+        ...
+
+    async def execute_or_throw(self, commands: str) -> ExecResult:
+        """Execute commands asynchronously; raise ``BashError`` on non-zero exit.
+
+        Example::
+
+            >>> bash = Bash()
+            >>> result = await bash.execute_or_throw("echo ok")
+            >>> # Raises BashError if the command fails:
+            >>> await bash.execute_or_throw("false")  # doctest: +SKIP
+            Traceback (most recent call last):
+                ...
+            BashError: ...
+        """
+        ...
+
+    def execute_sync_or_throw(self, commands: str) -> ExecResult:
+        """Execute commands synchronously; raise ``BashError`` on non-zero exit.
+
+        Example::
+
+            >>> bash = Bash()
+            >>> result = bash.execute_sync_or_throw("echo ok")
+            >>> print(result.stdout.strip())
+            ok
+        """
+        ...
+
+    def cancel(self) -> None:
+        """Cancel the currently running execution.
+
+        Safe to call from any thread. Execution aborts at the next
+        command boundary.
+
+        Example::
+
+            >>> import threading
+            >>> bash = Bash()
+            >>> threading.Timer(1.0, bash.cancel).start()
+            >>> # Long-running command will be cancelled after 1 second
+        """
+        ...
+
+    def reset(self) -> None:
+        """Reset interpreter to initial state.
+
+        Clears all VFS contents, environment variables, and shell state.
+        Re-applies the original ``files`` and ``mounts`` configuration.
+
+        Example::
+
+            >>> bash = Bash()
+            >>> bash.execute_sync("echo hi > /tmp/file.txt")
+            >>> bash.reset()
+            >>> result = bash.execute_sync("cat /tmp/file.txt")
+            >>> result.exit_code  # file is gone after reset
+            1
+        """
+        ...
+
     def fs(self) -> FileSystem:
         """Return a live filesystem handle.
 
         Each operation acquires the interpreter lock, so the handle always
         reflects the latest state (including after ``reset()``).
+
+        Example::
+
+            >>> bash = Bash()
+            >>> bash.execute_sync("echo hello > /greeting.txt")
+            >>> fs = bash.fs()
+            >>> fs.read_file("/greeting.txt")
+            b'hello\\n'
         """
         ...
-    def mount(self, vfs_path: str, fs: FileSystem) -> None: ...
-    def unmount(self, vfs_path: str) -> None: ...
+
+    def mount(self, vfs_path: str, fs: FileSystem) -> None:
+        """Mount an external filesystem at the given VFS path.
+
+        Args:
+            vfs_path: Mount point inside the VFS.
+            fs: FileSystem instance to mount.
+
+        Example::
+
+            >>> bash = Bash()
+            >>> overlay = FileSystem()
+            >>> overlay.write_file("/data.csv", b"a,b,c")
+            >>> bash.mount("/mnt/data", overlay)
+            >>> result = bash.execute_sync("cat /mnt/data/data.csv")
+            >>> print(result.stdout)
+            a,b,c
+        """
+        ...
+
+    def unmount(self, vfs_path: str) -> None:
+        """Unmount a previously mounted filesystem.
+
+        Example::
+
+            >>> bash = Bash()
+            >>> overlay = FileSystem()
+            >>> bash.mount("/mnt/ext", overlay)
+            >>> bash.unmount("/mnt/ext")
+        """
+        ...
 
 class ExecResult:
-    """Result from executing bash commands."""
+    """Result from executing bash commands.
+
+    Example::
+
+        >>> bash = Bash()
+        >>> result = bash.execute_sync("echo hello")
+        >>> result.success
+        True
+        >>> result.stdout
+        'hello\\n'
+        >>> result.exit_code
+        0
+    """
 
     stdout: str
     stderr: str
@@ -94,7 +492,24 @@ class ExecResult:
     error: str | None
     success: bool
 
-    def to_dict(self) -> dict[str, Any]: ...
+    def to_dict(self) -> dict[str, Any]:
+        """Convert result to a plain dictionary.
+
+        Returns:
+            Dict with ``stdout``, ``stderr``, ``exit_code``, ``error``,
+            ``stdout_truncated``, ``stderr_truncated``, ``final_env``.
+
+        Example::
+
+            >>> bash = Bash()
+            >>> result = bash.execute_sync("echo hi")
+            >>> d = result.to_dict()
+            >>> d["stdout"]
+            'hi\\n'
+            >>> d["exit_code"]
+            0
+        """
+        ...
 
 class BashTool:
     """Sandboxed bash interpreter for AI agents.
@@ -102,6 +517,9 @@ class BashTool:
     BashTool provides a safe execution environment for running bash commands
     with a virtual filesystem. All file operations are contained within the
     sandbox - no access to the real filesystem.
+
+    Adds LLM-facing contract metadata (``description``, ``system_prompt``,
+    ``input_schema``, ``output_schema``) on top of the core interpreter.
 
     Example:
         >>> tool = BashTool()
@@ -124,27 +542,209 @@ class BashTool:
         timeout_seconds: float | None = None,
         files: dict[str, str] | None = None,
         mounts: list[dict[str, Any]] | None = None,
-    ) -> None: ...
-    async def execute(self, commands: str) -> ExecResult: ...
-    def execute_sync(self, commands: str) -> ExecResult: ...
-    async def execute_or_throw(self, commands: str) -> ExecResult: ...
-    def execute_sync_or_throw(self, commands: str) -> ExecResult: ...
-    def cancel(self) -> None: ...
-    def description(self) -> str: ...
-    def help(self) -> str: ...
-    def system_prompt(self) -> str: ...
-    def input_schema(self) -> str: ...
-    def output_schema(self) -> str: ...
-    def reset(self) -> None: ...
+    ) -> None:
+        """Create a new BashTool.
+
+        Args:
+            username: Custom username (default ``"user"``).
+            hostname: Custom hostname (default ``"bashkit"``).
+            max_commands: Limit total commands executed.
+            max_loop_iterations: Limit iterations per loop.
+            max_memory: Memory limit in bytes for the VFS.
+            timeout_seconds: Abort execution after this duration.
+            files: Dict mapping VFS paths to file contents to pre-populate.
+            mounts: List of real host directory mount configs.
+
+        Example::
+
+            >>> tool = BashTool(timeout_seconds=30)
+            >>> print(tool.name)
+            bash
+        """
+        ...
+
+    async def execute(self, commands: str) -> ExecResult:
+        """Execute bash commands asynchronously.
+
+        Example::
+
+            >>> tool = BashTool()
+            >>> result = await tool.execute("ls /")
+            >>> result.success
+            True
+        """
+        ...
+
+    def execute_sync(self, commands: str) -> ExecResult:
+        """Execute bash commands synchronously (blocking).
+
+        Example::
+
+            >>> tool = BashTool()
+            >>> result = tool.execute_sync("echo 42")
+            >>> result.stdout.strip()
+            '42'
+        """
+        ...
+
+    async def execute_or_throw(self, commands: str) -> ExecResult:
+        """Execute commands asynchronously; raise ``BashError`` on non-zero exit.
+
+        Example::
+
+            >>> tool = BashTool()
+            >>> result = await tool.execute_or_throw("echo ok")
+            >>> result.success
+            True
+        """
+        ...
+
+    def execute_sync_or_throw(self, commands: str) -> ExecResult:
+        """Execute commands synchronously; raise ``BashError`` on non-zero exit.
+
+        Example::
+
+            >>> tool = BashTool()
+            >>> result = tool.execute_sync_or_throw("echo ok")
+            >>> result.stdout.strip()
+            'ok'
+        """
+        ...
+
+    def cancel(self) -> None:
+        """Cancel the currently running execution.
+
+        Safe to call from any thread.
+
+        Example::
+
+            >>> tool = BashTool()
+            >>> tool.cancel()  # no-op if nothing is running
+        """
+        ...
+
+    def description(self) -> str:
+        """Return the tool description for LLM consumption.
+
+        Example::
+
+            >>> tool = BashTool()
+            >>> desc = tool.description()
+            >>> "bash" in desc.lower()
+            True
+        """
+        ...
+
+    def help(self) -> str:
+        """Return extended help text.
+
+        Example::
+
+            >>> tool = BashTool()
+            >>> help_text = tool.help()
+            >>> len(help_text) > 0
+            True
+        """
+        ...
+
+    def system_prompt(self) -> str:
+        """Return the system prompt for LLM agents.
+
+        Includes tool description, usage guidelines, and capabilities.
+
+        Example::
+
+            >>> tool = BashTool()
+            >>> prompt = tool.system_prompt()
+            >>> "sandbox" in prompt.lower() or "bash" in prompt.lower()
+            True
+        """
+        ...
+
+    def input_schema(self) -> str:
+        """Return the JSON Schema for tool input.
+
+        Example::
+
+            >>> import json
+            >>> tool = BashTool()
+            >>> schema = json.loads(tool.input_schema())
+            >>> "commands" in str(schema)
+            True
+        """
+        ...
+
+    def output_schema(self) -> str:
+        """Return the JSON Schema for tool output.
+
+        Example::
+
+            >>> import json
+            >>> tool = BashTool()
+            >>> schema = json.loads(tool.output_schema())
+            >>> isinstance(schema, dict)
+            True
+        """
+        ...
+
+    def reset(self) -> None:
+        """Reset the tool to initial state.
+
+        Clears VFS, environment, and shell state.
+
+        Example::
+
+            >>> tool = BashTool()
+            >>> tool.execute_sync("touch /tmp/file")
+            >>> tool.reset()
+            >>> result = tool.execute_sync("test -f /tmp/file")
+            >>> result.exit_code  # file is gone
+            1
+        """
+        ...
+
     def fs(self) -> FileSystem:
         """Return a live filesystem handle.
 
         Each operation acquires the interpreter lock, so the handle always
         reflects the latest state (including after ``reset()``).
+
+        Example::
+
+            >>> tool = BashTool()
+            >>> tool.execute_sync("echo data > /out.txt")
+            >>> fs = tool.fs()
+            >>> fs.read_file("/out.txt")
+            b'data\\n'
         """
         ...
-    def mount(self, vfs_path: str, fs: FileSystem) -> None: ...
-    def unmount(self, vfs_path: str) -> None: ...
+
+    def mount(self, vfs_path: str, fs: FileSystem) -> None:
+        """Mount an external filesystem at the given VFS path.
+
+        Example::
+
+            >>> tool = BashTool()
+            >>> ext = FileSystem()
+            >>> ext.write_file("/info.txt", b"external")
+            >>> tool.mount("/mnt/ext", ext)
+            >>> result = tool.execute_sync("cat /mnt/ext/info.txt")
+            >>> result.stdout.strip()
+            'external'
+        """
+        ...
+
+    def unmount(self, vfs_path: str) -> None:
+        """Unmount a previously mounted filesystem.
+
+        Example::
+
+            >>> tool = BashTool()
+            >>> ext = FileSystem()
+            >>> tool.mount("/mnt/ext", ext)
+            >>> tool.unmount("/mnt/ext")
+        """
+        ...
 
 class ScriptedTool:
     """Compose Python callbacks as bash builtins for multi-tool orchestration.
@@ -172,26 +772,185 @@ class ScriptedTool:
         short_description: str | None = None,
         max_commands: int | None = None,
         max_loop_iterations: int | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Create a new ScriptedTool.
+
+        Args:
+            name: Tool name (used as the LLM tool identifier).
+            short_description: One-line description of the tool.
+            max_commands: Limit total commands per execution.
+            max_loop_iterations: Limit iterations per loop.
+
+        Example::
+
+            >>> tool = ScriptedTool("data_pipeline", short_description="ETL tools")
+            >>> print(tool.name)
+            data_pipeline
+        """
+        ...
+
     def add_tool(
         self,
         name: str,
         description: str,
         callback: Callable[[dict[str, Any], str | None], str],
         schema: dict[str, Any] | None = None,
-    ) -> None: ...
-    def env(self, key: str, value: str) -> None: ...
-    async def execute(self, commands: str) -> ExecResult: ...
-    def execute_sync(self, commands: str) -> ExecResult: ...
-    def tool_count(self) -> int: ...
-    def description(self) -> str: ...
-    def help(self) -> str: ...
-    def system_prompt(self) -> str: ...
-    def input_schema(self) -> str: ...
-    def output_schema(self) -> str: ...
+    ) -> None:
+        """Register a Python callback as a bash builtin command.
+
+        Args:
+            name: Command name (becomes a bash builtin).
+            description: Human-readable description of the sub-tool.
+            callback: ``(params_dict, stdin_or_none) -> output_string``.
+            schema: Optional JSON Schema for the tool's parameters.
+
+        Example::
+
+            >>> tool = ScriptedTool("math")
+            >>> tool.add_tool(
+            ...     "add", "Add two numbers",
+            ...     callback=lambda p, s=None: str(int(p["a"]) + int(p["b"])) + "\\n",
+            ...     schema={
+            ...         "type": "object",
+            ...         "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
+            ...     },
+            ... )
+            >>> result = tool.execute_sync("add --a 2 --b 3")
+            >>> result.stdout.strip()
+            '5'
+        """
+        ...
+
+    def env(self, key: str, value: str) -> None:
+        """Set an environment variable for subsequent executions.
+
+        Example::
+
+            >>> tool = ScriptedTool("demo")
+            >>> tool.env("API_KEY", "secret-123")
+            >>> result = tool.execute_sync("echo $API_KEY")
+            >>> result.stdout.strip()
+            'secret-123'
+        """
+        ...
+
+    async def execute(self, commands: str) -> ExecResult:
+        """Execute commands asynchronously.
+
+        Example::
+
+            >>> tool = ScriptedTool("demo")
+            >>> tool.add_tool("hi", "Say hi", callback=lambda p, s=None: "hi\\n")
+            >>> result = await tool.execute("hi")
+            >>> result.stdout.strip()
+            'hi'
+        """
+        ...
+
+    def execute_sync(self, commands: str) -> ExecResult:
+        """Execute commands synchronously (blocking).
+
+        Example::
+
+            >>> tool = ScriptedTool("demo")
+            >>> tool.add_tool("ping", "Ping", callback=lambda p, s=None: "pong\\n")
+            >>> result = tool.execute_sync("ping")
+            >>> result.stdout.strip()
+            'pong'
+        """
+        ...
+
+    def tool_count(self) -> int:
+        """Return the number of registered sub-tools.
+
+        Example::
+
+            >>> tool = ScriptedTool("demo")
+            >>> tool.tool_count()
+            0
+            >>> tool.add_tool("a", "A", callback=lambda p, s=None: "")
+            >>> tool.tool_count()
+            1
+        """
+        ...
+
+    def description(self) -> str:
+        """Return the tool description for LLM consumption.
+
+        Example::
+
+            >>> tool = ScriptedTool("api", short_description="API tools")
+            >>> desc = tool.description()
+            >>> len(desc) > 0
+            True
+        """
+        ...
+
+    def help(self) -> str:
+        """Return extended help text listing all registered sub-tools.
+
+        Example::
+
+            >>> tool = ScriptedTool("api")
+            >>> tool.add_tool("fetch", "Fetch URL", callback=lambda p, s=None: "")
+            >>> "fetch" in tool.help()
+            True
+        """
+        ...
+
+    def system_prompt(self) -> str:
+        """Return the system prompt for LLM agents.
+
+        Includes descriptions of all registered sub-tools and usage examples.
+
+        Example::
+
+            >>> tool = ScriptedTool("api")
+            >>> tool.add_tool("fetch", "Fetch URL", callback=lambda p, s=None: "")
+            >>> prompt = tool.system_prompt()
+            >>> "fetch" in prompt.lower()
+            True
+        """
+        ...
+
+    def input_schema(self) -> str:
+        """Return the JSON Schema for tool input.
+
+        Example::
+
+            >>> import json
+            >>> tool = ScriptedTool("api")
+            >>> schema = json.loads(tool.input_schema())
+            >>> "commands" in str(schema)
+            True
+        """
+        ...
+
+    def output_schema(self) -> str:
+        """Return the JSON Schema for tool output.
+
+        Example::
+
+            >>> import json
+            >>> tool = ScriptedTool("api")
+            >>> schema = json.loads(tool.output_schema())
+            >>> isinstance(schema, dict)
+            True
+        """
+        ...
 
 class BashError(Exception):
-    """Exception raised when a bash command exits with non-zero status."""
+    """Exception raised when a bash command exits with non-zero status.
+
+    Example::
+
+        >>> bash = Bash()
+        >>> try:
+        ...     bash.execute_sync_or_throw("exit 42")
+        ... except BashError as e:
+        ...     print(e.exit_code)
+        42
+    """
 
     exit_code: int
     stderr: str
@@ -201,10 +960,23 @@ def create_langchain_tool_spec() -> dict[str, Any]:
     """Create a LangChain-compatible tool specification.
 
     Returns:
-        Dict with name, description, and args_schema
+        Dict with name, description, and args_schema.
+
+    Example::
+
+        >>> spec = create_langchain_tool_spec()
+        >>> spec["name"]
+        'bash'
     """
     ...
 
 def get_version() -> str:
-    """Get the bashkit version string."""
+    """Get the bashkit version string.
+
+    Example::
+
+        >>> version = get_version()
+        >>> isinstance(version, str)
+        True
+    """
     ...
