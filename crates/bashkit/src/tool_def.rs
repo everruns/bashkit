@@ -68,10 +68,10 @@ impl ToolDef {
 }
 
 // ============================================================================
-// ToolArgs — parsed arguments passed to callbacks
+// ToolArgs — parsed arguments passed to exec functions
 // ============================================================================
 
-/// Parsed arguments passed to a tool callback.
+/// Parsed arguments passed to a tool exec function.
 ///
 /// `params` is a JSON object built from `--key value` flags, with values
 /// type-coerced per the `ToolDef`'s `input_schema`.
@@ -106,20 +106,20 @@ impl ToolArgs {
 }
 
 // ============================================================================
-// Exec types — sync and async callbacks
+// Exec types — sync and async execution functions
 // ============================================================================
 
-/// Synchronous execution callback for a tool.
+/// Synchronous execution function for a tool.
 ///
 /// Receives parsed [`ToolArgs`] with typed parameters and optional stdin.
 /// Return `Ok(stdout)` on success or `Err(message)` on failure.
 pub type SyncToolExec = Arc<dyn Fn(&ToolArgs) -> std::result::Result<String, String> + Send + Sync>;
 
-/// Asynchronous execution callback for a tool.
+/// Asynchronous execution function for a tool.
 ///
 /// Same contract as [`SyncToolExec`] but returns a `Future`, allowing
-/// non-blocking I/O inside the callback. Takes owned [`ToolArgs`] because
-/// the future may outlive the borrow.
+/// non-blocking I/O. Takes owned [`ToolArgs`] because the future may
+/// outlive the borrow.
 pub type AsyncToolExec = Arc<
     dyn Fn(ToolArgs) -> Pin<Box<dyn Future<Output = std::result::Result<String, String>> + Send>>
         + Send
@@ -136,7 +136,7 @@ pub type AsyncToolCallback = AsyncToolExec;
 // ToolImpl — complete tool: metadata + execution
 // ============================================================================
 
-/// Complete tool: definition + sync/async execution callbacks.
+/// Complete tool: definition + sync/async exec functions.
 ///
 /// Implements [`Builtin`] so it can be registered directly in a Bash
 /// interpreter or used inside a [`ScriptedTool`].
@@ -162,14 +162,14 @@ pub type AsyncToolCallback = AsyncToolExec;
 pub struct ToolImpl {
     /// Tool metadata (name, description, schema, tags).
     pub def: ToolDef,
-    /// Async execution callback (preferred when running in async context).
+    /// Async exec (preferred when running in async context).
     pub exec: Option<AsyncToolExec>,
-    /// Sync execution callback (preferred when running in sync context).
+    /// Sync exec (preferred when running in sync context).
     pub exec_sync: Option<SyncToolExec>,
 }
 
 impl ToolImpl {
-    /// Create a `ToolImpl` from a [`ToolDef`] with no execution callbacks.
+    /// Create a `ToolImpl` from a [`ToolDef`] with no exec functions.
     pub fn new(def: ToolDef) -> Self {
         Self {
             def,
@@ -178,22 +178,22 @@ impl ToolImpl {
         }
     }
 
-    /// Set the async execution callback.
-    pub fn with_exec<F, Fut>(mut self, callback: F) -> Self
+    /// Set the async exec function.
+    pub fn with_exec<F, Fut>(mut self, f: F) -> Self
     where
         F: Fn(ToolArgs) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = std::result::Result<String, String>> + Send + 'static,
     {
-        self.exec = Some(Arc::new(move |args| Box::pin(callback(args))));
+        self.exec = Some(Arc::new(move |args| Box::pin(f(args))));
         self
     }
 
-    /// Set the sync execution callback.
+    /// Set the sync exec function.
     pub fn with_exec_sync(
         mut self,
-        callback: impl Fn(&ToolArgs) -> std::result::Result<String, String> + Send + Sync + 'static,
+        f: impl Fn(&ToolArgs) -> std::result::Result<String, String> + Send + Sync + 'static,
     ) -> Self {
-        self.exec_sync = Some(Arc::new(callback));
+        self.exec_sync = Some(Arc::new(f));
         self
     }
 }

@@ -229,36 +229,36 @@ impl ScriptingToolSetBuilder {
         self
     }
 
-    /// Register a [`ToolImpl`] (definition + execution callbacks).
+    /// Register a [`ToolImpl`] (definition + exec functions).
     pub fn tool(mut self, tool: ToolImpl) -> Self {
         self.tools.push(RegisteredTool::from_tool_impl(tool));
         self
     }
 
-    /// Register a tool with its definition and synchronous execution callback.
+    /// Register a tool with its definition and synchronous exec function.
     ///
     /// Convenience shorthand — constructs a [`ToolImpl`] internally.
     pub fn tool_fn(
         mut self,
         def: ToolDef,
-        callback: impl Fn(&ToolArgs) -> Result<String, String> + Send + Sync + 'static,
+        exec: impl Fn(&ToolArgs) -> Result<String, String> + Send + Sync + 'static,
     ) -> Self {
         self.tools.push(RegisteredTool {
             def,
-            callback: CallbackKind::Sync(Arc::new(callback)),
+            callback: CallbackKind::Sync(Arc::new(exec)),
         });
         self
     }
 
-    /// Register a tool with its definition and **async** execution callback.
+    /// Register a tool with its definition and **async** exec function.
     ///
     /// Convenience shorthand — constructs a [`ToolImpl`] internally.
-    pub fn async_tool_fn<F, Fut>(mut self, def: ToolDef, callback: F) -> Self
+    pub fn async_tool_fn<F, Fut>(mut self, def: ToolDef, exec: F) -> Self
     where
         F: Fn(ToolArgs) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<String, String>> + Send + 'static,
     {
-        let cb: super::AsyncToolExec = Arc::new(move |args| Box::pin(callback(args)));
+        let cb: super::AsyncToolExec = Arc::new(move |args| Box::pin(exec(args)));
         self.tools.push(RegisteredTool {
             def,
             callback: CallbackKind::Async(cb),

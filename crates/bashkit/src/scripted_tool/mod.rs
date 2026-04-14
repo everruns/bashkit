@@ -271,44 +271,44 @@ impl ScriptedToolBuilder {
         self
     }
 
-    /// Register a [`ToolImpl`] (definition + execution callbacks).
+    /// Register a [`ToolImpl`] (definition + exec functions).
     ///
     /// This is the preferred registration method. The `ToolImpl` carries its own
-    /// name, schema, and sync/async exec callbacks.
+    /// name, schema, and sync/async exec.
     pub fn tool(mut self, tool: ToolImpl) -> Self {
         self.tools.push(RegisteredTool::from_tool_impl(tool));
         self
     }
 
-    /// Register a tool with its definition and synchronous execution callback.
+    /// Register a tool with its definition and synchronous exec function.
     ///
     /// Convenience shorthand — constructs a [`ToolImpl`] internally.
-    /// The callback receives [`ToolArgs`] with `--key value` flags parsed into
+    /// The exec receives [`ToolArgs`] with `--key value` flags parsed into
     /// a JSON object, type-coerced per the schema.
     pub fn tool_fn(
         mut self,
         def: ToolDef,
-        callback: impl Fn(&ToolArgs) -> Result<String, String> + Send + Sync + 'static,
+        exec: impl Fn(&ToolArgs) -> Result<String, String> + Send + Sync + 'static,
     ) -> Self {
         self.tools.push(RegisteredTool {
             def,
-            callback: CallbackKind::Sync(Arc::new(callback)),
+            callback: CallbackKind::Sync(Arc::new(exec)),
         });
         self
     }
 
-    /// Register a tool with its definition and **async** execution callback.
+    /// Register a tool with its definition and **async** exec function.
     ///
     /// Convenience shorthand — constructs a [`ToolImpl`] internally.
-    /// Same as [`tool_fn()`](Self::tool_fn) but the callback returns a `Future`,
+    /// Same as [`tool_fn()`](Self::tool_fn) but returns a `Future`,
     /// allowing non-blocking I/O. Takes owned [`ToolArgs`] because the future
     /// may outlive the borrow.
-    pub fn async_tool_fn<F, Fut>(mut self, def: ToolDef, callback: F) -> Self
+    pub fn async_tool_fn<F, Fut>(mut self, def: ToolDef, exec: F) -> Self
     where
         F: Fn(ToolArgs) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<String, String>> + Send + 'static,
     {
-        let cb: AsyncToolExec = Arc::new(move |args| Box::pin(callback(args)));
+        let cb: AsyncToolExec = Arc::new(move |args| Box::pin(exec(args)));
         self.tools.push(RegisteredTool {
             def,
             callback: CallbackKind::Async(cb),
