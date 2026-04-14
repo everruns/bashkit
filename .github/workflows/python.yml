@@ -126,6 +126,8 @@ jobs:
         run: |
           python crates/bashkit-python/examples/bash_basics.py
           python crates/bashkit-python/examples/k8s_orchestrator.py
+          python crates/bashkit-python/examples/data_pipeline.py
+          python crates/bashkit-python/examples/llm_tool.py
           python crates/bashkit-python/examples/langgraph_async_tool.py
           python crates/bashkit-python/examples/fastapi_async_tool.py
 

@@ -21,7 +21,7 @@
     "jsondiffpatch": ">=0.7.2"
   },
   "scripts": {
-    "examples": "node bash_basics.mjs && node data_pipeline.mjs && node llm_tool.mjs && node langchain_integration.mjs",
+    "examples": "node bash_basics.mjs && node data_pipeline.mjs && node llm_tool.mjs && node k8s_orchestrator.mjs && node langchain_integration.mjs",
     "examples:ai": "node openai_tool.mjs && node vercel_ai_tool.mjs && node langchain_agent.mjs"
   }
 }
