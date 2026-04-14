@@ -2,6 +2,71 @@
 
 ## [Unreleased]
 
+## [0.1.18] - 2026-04-14
+
+### Highlights
+
+- **Hooks system** — New interceptor hooks with tool-level pipeline integration and HTTP hook support
+- **Interactive shell** — Full REPL mode with rustyline line editing, tab completion, and streaming output
+- **Security hardening** — SSRF prevention, MCP rate limiting, template injection fixes, secret redaction, and host key verification
+- **Expansion fixes** — Correct `${@/#/prefix}` per positional param, mixed literal+quoted `${var#pattern}`, and backreferences in sed
+- **Async Python callbacks** — ScriptedTool now supports async Python callbacks with ContextVar propagation
+
+### What's Changed
+
+* chore: pre-release maintenance pass (2026-04-14) ([#1280](https://github.com/everruns/bashkit/pull/1280)) by @chaliy
+* chore(bench): add 2026-04-13 benchmark results ([#1276](https://github.com/everruns/bashkit/pull/1276)) by @chaliy
+* docs(hooks): add public hooks guide with examples ([#1275](https://github.com/everruns/bashkit/pull/1275)) by @chaliy
+* docs: add contributing section to README and emphasize issues in CONTRIBUTING.md ([#1274](https://github.com/everruns/bashkit/pull/1274)) by @chaliy
+* feat(cli): add cargo-binstall metadata ([#1273](https://github.com/everruns/bashkit/pull/1273)) by @chaliy
+* feat(scripted_tool): async Python callbacks + ContextVar propagation ([#1272](https://github.com/everruns/bashkit/pull/1272)) by @chaliy
+* fix(bench): enable jq feature and fix expected outputs for jq bench cases ([#1271](https://github.com/everruns/bashkit/pull/1271)) by @chaliy
+* chore(specs): simplify specs — remove duplication, trim stale content ([#1270](https://github.com/everruns/bashkit/pull/1270)) by @chaliy
+* feat(bench): add gbash and gbash-server benchmark runners ([#1269](https://github.com/everruns/bashkit/pull/1269)) by @chaliy
+* feat(hooks): wire tool hooks into builtin pipeline, add HTTP hooks ([#1255](https://github.com/everruns/bashkit/pull/1255)) by @chaliy
+* feat(python): bump monty to 0.0.11, add datetime/json support ([#1254](https://github.com/everruns/bashkit/pull/1254)) by @chaliy
+* feat(hooks): implement interceptor hooks system ([#1253](https://github.com/everruns/bashkit/pull/1253)) by @chaliy
+* fix(mount): add path validation, allowlist, and writable warnings ([#1252](https://github.com/everruns/bashkit/pull/1252)) by @chaliy
+* fix(ln): allow symlinks in ReadWrite RealFs mounts ([#1251](https://github.com/everruns/bashkit/pull/1251)) by @chaliy
+* fix(expansion): handle mixed literal+quoted var in ${var#pattern} ([#1250](https://github.com/everruns/bashkit/pull/1250)) by @chaliy
+* chore(deps): bump the rust-dependencies group with 2 updates ([#1249](https://github.com/everruns/bashkit/pull/1249)) by @dependabot
+* chore(ci): bump softprops/action-gh-release from 2 to 3 in the github-actions group ([#1248](https://github.com/everruns/bashkit/pull/1248)) by @dependabot
+* fix(expansion): apply ${@/#/prefix} per positional param ([#1247](https://github.com/everruns/bashkit/pull/1247)) by @chaliy
+* fix(sed): support backreferences in search patterns ([#1246](https://github.com/everruns/bashkit/pull/1246)) by @chaliy
+* fix(bashkit-js): bump langsmith 0.5.16 → 0.5.18 ([#1244](https://github.com/everruns/bashkit/pull/1244)) by @chaliy
+* fix(mcp): add request rate limiting for MCP tool calls ([#1243](https://github.com/everruns/bashkit/pull/1243)) by @chaliy
+* fix(snapshot): add keyed HMAC API and document forgery limitation ([#1242](https://github.com/everruns/bashkit/pull/1242)) by @chaliy
+* fix(interpreter): suppress DEBUG trap inside trap handlers ([#1241](https://github.com/everruns/bashkit/pull/1241)) by @chaliy
+* fix(template): prevent injection via #each data values ([#1240](https://github.com/everruns/bashkit/pull/1240)) by @chaliy
+* fix(tool): sanitize ScriptedTool callback errors ([#1239](https://github.com/everruns/bashkit/pull/1239)) by @chaliy
+* fix(trace): extend redaction to common CLI secret flags ([#1238](https://github.com/everruns/bashkit/pull/1238)) by @chaliy
+* fix(cli): emit warning when --mount-rw is used in MCP mode ([#1237](https://github.com/everruns/bashkit/pull/1237)) by @chaliy
+* feat: add hooks system with on_exit interceptor for interactive mode ([#1236](https://github.com/everruns/bashkit/pull/1236)) by @chaliy
+* fix(date): resolve relative paths in date -r against CWD ([#1234](https://github.com/everruns/bashkit/pull/1234)) by @chaliy
+* fix(network): block private IPs in allowlist check (SSRF) ([#1233](https://github.com/everruns/bashkit/pull/1233)) by @chaliy
+* fix(interpreter): re-validate budget after alias expansion ([#1232](https://github.com/everruns/bashkit/pull/1232)) by @chaliy
+* fix(ai): add output sanitization and length limiting to AI integrations ([#1231](https://github.com/everruns/bashkit/pull/1231)) by @chaliy
+* feat(builtins): add --help and --version support to all tools ([#1230](https://github.com/everruns/bashkit/pull/1230)) by @chaliy
+* fix(python): add mutex timeout to prevent execute_sync deadlock ([#1229](https://github.com/everruns/bashkit/pull/1229)) by @chaliy
+* fix(ssh): add host key verification to SSH client ([#1227](https://github.com/everruns/bashkit/pull/1227)) by @chaliy
+* fix(interactive): flush stdout/stderr after streaming command output ([#1226](https://github.com/everruns/bashkit/pull/1226)) by @chaliy
+* fix(interactive): avoid nested tokio runtime panic in tab completion ([#1224](https://github.com/everruns/bashkit/pull/1224)) by @chaliy
+* refactor(deps): simplify dependency tree ([#1223](https://github.com/everruns/bashkit/pull/1223)) by @chaliy
+* fix(interpreter): seed $RANDOM PRNG per-instance ([#1222](https://github.com/everruns/bashkit/pull/1222)) by @chaliy
+* fix(interpreter): clean up process substitution temp files ([#1221](https://github.com/everruns/bashkit/pull/1221)) by @chaliy
+* fix(mcp): sanitize JSON-RPC error responses ([#1220](https://github.com/everruns/bashkit/pull/1220)) by @chaliy
+* fix(logging): add runtime guard for unsafe logging methods ([#1219](https://github.com/everruns/bashkit/pull/1219)) by @chaliy
+* fix(interpreter): filter SHOPT_ variables from set/declare output ([#1218](https://github.com/everruns/bashkit/pull/1218)) by @chaliy
+* fix(vfs): emit warnings when tar extraction skips unsupported entry types ([#1217](https://github.com/everruns/bashkit/pull/1217)) by @chaliy
+* fix(limits): treat zero limit values as "use default" ([#1216](https://github.com/everruns/bashkit/pull/1216)) by @chaliy
+* feat(cli): interactive shell mode with rustyline ([#1215](https://github.com/everruns/bashkit/pull/1215)) by @chaliy
+* fix(interpreter): filter additional internal variables from declare -p and set ([#1212](https://github.com/everruns/bashkit/pull/1212)) by @chaliy
+* fix(date): preserve spaces in format string from variable expansion ([#1211](https://github.com/everruns/bashkit/pull/1211)) by @chaliy
+* fix(git): sanitize control characters in git output ([#1210](https://github.com/everruns/bashkit/pull/1210)) by @chaliy
+* fix(integrations): propagate framework timeout to bashkit execution limits ([#1207](https://github.com/everruns/bashkit/pull/1207)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/commits/v0.1.18
+
 ## [0.1.17] - 2026-04-08
 
 ### Highlights
