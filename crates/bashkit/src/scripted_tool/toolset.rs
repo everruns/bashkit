@@ -246,6 +246,7 @@ impl ScriptingToolSetBuilder {
         self.tools.push(RegisteredTool {
             def,
             callback: CallbackKind::Sync(Arc::new(exec)),
+            dry_run: None,
         });
         self
     }
@@ -262,6 +263,7 @@ impl ScriptingToolSetBuilder {
         self.tools.push(RegisteredTool {
             def,
             callback: CallbackKind::Async(cb),
+            dry_run: None,
         });
         self
     }

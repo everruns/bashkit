@@ -187,6 +187,7 @@ pub struct ScriptedExecutionTrace {
 pub(crate) struct RegisteredTool {
     pub(crate) def: ToolDef,
     pub(crate) callback: CallbackKind,
+    pub(crate) dry_run: Option<CallbackKind>,
 }
 
 impl RegisteredTool {
@@ -205,6 +206,7 @@ impl RegisteredTool {
         Self {
             def: tool.def,
             callback,
+            dry_run: None,
         }
     }
 }
@@ -293,6 +295,24 @@ impl ScriptedToolBuilder {
         self.tools.push(RegisteredTool {
             def,
             callback: CallbackKind::Sync(Arc::new(exec)),
+            dry_run: None,
+        });
+        self
+    }
+
+    /// Register a tool with its definition, exec function, and a custom
+    /// `--dry-run` handler. When the tool is invoked with `--dry-run`,
+    /// the custom handler runs instead of the regular callback.
+    pub fn tool_with_dry_run(
+        mut self,
+        def: ToolDef,
+        exec: impl Fn(&ToolArgs) -> Result<String, String> + Send + Sync + 'static,
+        dry_run: impl Fn(&ToolArgs) -> Result<String, String> + Send + Sync + 'static,
+    ) -> Self {
+        self.tools.push(RegisteredTool {
+            def,
+            callback: CallbackKind::Sync(Arc::new(exec)),
+            dry_run: Some(CallbackKind::Sync(Arc::new(dry_run))),
         });
         self
     }
@@ -312,6 +332,7 @@ impl ScriptedToolBuilder {
         self.tools.push(RegisteredTool {
             def,
             callback: CallbackKind::Async(cb),
+            dry_run: None,
         });
         self
     }
@@ -1353,6 +1374,115 @@ mod tests {
         assert!(
             !resp.stdout.contains("Alice"),
             "callback should NOT be invoked"
+        );
+    }
+
+    // -- Issue #1279: --dry-run flag tests --
+
+    #[tokio::test]
+    async fn test_dry_run_validates_args() {
+        let tool = build_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "get_user --dry-run --id 42".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        let parsed: serde_json::Value =
+            serde_json::from_str(resp.stdout.trim()).expect("stdout should be valid JSON");
+        assert_eq!(parsed["dry_run"], true);
+        assert_eq!(parsed["valid"], true);
+        assert_eq!(parsed["params"]["id"], 42);
+    }
+
+    #[tokio::test]
+    async fn test_dry_run_does_not_invoke_callback() {
+        let tool = build_test_tool();
+        // fail_tool always errors, but --dry-run should succeed
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "fail_tool --dry-run".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(
+            resp.exit_code, 0,
+            "--dry-run should not invoke the callback"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dry_run_help_precedence() {
+        let tool = build_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "get_user --help --dry-run".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        // Should return help text, not dry-run JSON
+        assert!(
+            resp.stdout.contains("Fetch user by id"),
+            "should show help text"
+        );
+        assert!(
+            !resp.stdout.contains("dry_run"),
+            "should NOT show dry-run JSON"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_custom_dry_run_handler() {
+        let tool = ScriptedTool::builder("dr_test")
+            .tool_with_dry_run(
+                ToolDef::new("check", "Validate input").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "id": {"type": "integer"} }
+                })),
+                |args: &ToolArgs| {
+                    let id = args.param_i64("id").ok_or("missing --id")?;
+                    Ok(format!("executed {id}\n"))
+                },
+                |args: &ToolArgs| {
+                    let id = args.param_i64("id").ok_or("missing --id")?;
+                    Ok(format!("custom-dry-run id={id}\n"))
+                },
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "check --dry-run --id 7".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout.trim(), "custom-dry-run id=7");
+    }
+
+    #[tokio::test]
+    async fn test_help_flag_returns_help() {
+        let tool = build_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "get_user --help".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(
+            resp.stdout.contains("get_user"),
+            "help should include tool name"
+        );
+        assert!(
+            resp.stdout.contains("Fetch user by id"),
+            "help should include description"
+        );
+        assert!(
+            resp.stdout.contains("--id"),
+            "help should include parameter flags"
         );
     }
 }

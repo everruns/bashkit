@@ -48,6 +48,7 @@ struct ToolBuiltinAdapter {
     schema: serde_json::Value,
     log: InvocationLog,
     sanitize_errors: bool,
+    dry_run: Option<CallbackKind>,
 }
 
 impl ToolBuiltinAdapter {
@@ -66,6 +67,7 @@ impl Builtin for ToolBuiltinAdapter {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         // Intercept --help before calling the callback — return the same
         // quality output as `help <tool>` without invoking the callback.
+        // --help takes precedence over --dry-run.
         if ctx.args.iter().any(|a| a == "--help") {
             let result = ExecResult::ok(self.help_text());
             push_invocation(
@@ -76,6 +78,65 @@ impl Builtin for ToolBuiltinAdapter {
                 result.exit_code,
             );
             return Ok(result);
+        }
+
+        // Intercept --dry-run: validate args without executing the callback.
+        if ctx.args.iter().any(|a| a == "--dry-run") {
+            let stripped: Vec<String> = ctx
+                .args
+                .iter()
+                .filter(|a| a.as_str() != "--dry-run")
+                .cloned()
+                .collect();
+            let exit_result = match parse_flags(&stripped, &self.schema) {
+                Ok(params) => {
+                    if let Some(ref dr) = self.dry_run {
+                        // Custom dry-run handler
+                        let tool_args = ToolArgs {
+                            params,
+                            stdin: ctx.stdin.map(String::from),
+                        };
+                        let cb_result = match dr {
+                            CallbackKind::Sync(cb) => (cb)(&tool_args),
+                            CallbackKind::Async(cb) => (cb)(tool_args).await,
+                        };
+                        match cb_result {
+                            Ok(stdout) => ExecResult::ok(stdout),
+                            Err(msg) => ExecResult::err(msg, 1),
+                        }
+                    } else {
+                        // Default: return structured JSON validation result
+                        let obj = serde_json::json!({
+                            "dry_run": true,
+                            "valid": true,
+                            "tool": self.name,
+                            "params": params,
+                        });
+                        ExecResult::ok(format!(
+                            "{}\n",
+                            serde_json::to_string(&obj).unwrap_or_default()
+                        ))
+                    }
+                }
+                Err(err) => {
+                    let obj = serde_json::json!({
+                        "dry_run": true,
+                        "valid": false,
+                        "tool": self.name,
+                        "error": err,
+                    });
+                    let json = serde_json::to_string(&obj).unwrap_or_default();
+                    ExecResult::err(format!("{json}\n"), 1)
+                }
+            };
+            push_invocation(
+                &self.log,
+                &self.name,
+                ScriptedCommandKind::Tool,
+                ctx.args,
+                exit_result.exit_code,
+            );
+            return Ok(exit_result);
         }
 
         let exit_result = match parse_flags(ctx.args, &self.schema) {
@@ -376,6 +437,7 @@ impl ScriptedTool {
                 schema: tool.def.input_schema.clone(),
                 log: Arc::clone(&log),
                 sanitize_errors: self.sanitize_errors,
+                dry_run: tool.dry_run.clone(),
             });
             builder = builder.builtin(name, builtin);
         }
