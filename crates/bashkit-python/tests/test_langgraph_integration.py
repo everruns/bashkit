@@ -6,6 +6,7 @@ callbacks. Requires ``langchain-core`` to be installed.
 
 import asyncio
 import contextvars
+import json
 
 import pytest
 
@@ -101,7 +102,8 @@ async def test_async_execute_with_contextvar():
     )
     r = await tool.execute("fetch --url https://example.com")
     assert r.exit_code == 0
-    assert "https://example.com" in r.stdout
+    parsed = json.loads(r.stdout)
+    assert parsed["url"] == "https://example.com"
     assert len(events) == 1
     assert events[0]["url"] == "https://example.com"
 
