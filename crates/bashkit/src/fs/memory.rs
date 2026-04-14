@@ -1602,6 +1602,26 @@ impl FileSystem for InMemoryFs {
             None => Err(IoError::new(ErrorKind::NotFound, "not found").into()),
         }
     }
+
+    async fn set_modified_time(&self, path: &Path, time: SystemTime) -> Result<()> {
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
+        let path = Self::normalize_path(path);
+        let mut entries = self.entries.write().unwrap();
+
+        match entries.get_mut(&path) {
+            Some(FsEntry::File { metadata, .. })
+            | Some(FsEntry::LazyFile { metadata, .. })
+            | Some(FsEntry::Directory { metadata })
+            | Some(FsEntry::Symlink { metadata, .. })
+            | Some(FsEntry::Fifo { metadata, .. }) => {
+                metadata.modified = time;
+                Ok(())
+            }
+            None => Err(IoError::new(ErrorKind::NotFound, "not found").into()),
+        }
+    }
 }
 
 #[async_trait]

@@ -94,6 +94,7 @@
 
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use super::limits::{FsLimits, FsUsage};
 use super::traits::{DirEntry, Metadata};
@@ -192,6 +193,11 @@ pub trait FsBackend: Send + Sync {
 
     /// Change file permissions.
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()>;
+
+    /// Set the last modification time for a file or directory.
+    async fn set_modified_time(&self, _path: &Path, _time: SystemTime) -> Result<()> {
+        Err(std::io::Error::other("set_modified_time not supported").into())
+    }
 
     /// Get storage usage statistics.
     fn usage(&self) -> FsUsage {

@@ -478,6 +478,14 @@ impl FsBackend for RealFs {
         Ok(())
     }
 
+    async fn set_modified_time(&self, path: &Path, time: SystemTime) -> Result<()> {
+        self.check_writable()?;
+        let real = self.resolve(path)?;
+        let file = std::fs::File::open(&real)?;
+        file.set_modified(time)?;
+        Ok(())
+    }
+
     fn usage(&self) -> FsUsage {
         // Could walk the real directory, but that's expensive. Return zeros.
         FsUsage::default()

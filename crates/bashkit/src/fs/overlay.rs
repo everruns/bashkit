@@ -36,6 +36,7 @@ use std::collections::HashSet;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::time::SystemTime;
 
 use super::limits::{FsLimits, FsUsage};
 use super::memory::InMemoryFs;
@@ -849,6 +850,59 @@ impl FileSystem for OverlayFs {
             }
 
             return self.upper.chmod(&path, mode).await;
+        }
+
+        Err(IoError::new(ErrorKind::NotFound, "not found").into())
+    }
+
+    async fn set_modified_time(&self, path: &Path, time: SystemTime) -> Result<()> {
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::other(e.to_string()))?;
+        let path = Self::normalize_path(path);
+
+        if self.is_whiteout(&path) {
+            return Err(IoError::new(ErrorKind::NotFound, "not found").into());
+        }
+
+        if self.upper.exists(&path).await.unwrap_or(false) {
+            return self.upper.set_modified_time(&path, time).await;
+        }
+
+        if self.lower.exists(&path).await.unwrap_or(false) {
+            let stat = self.lower.stat(&path).await?;
+
+            match stat.file_type {
+                FileType::File | FileType::Fifo => {
+                    let content = self.lower.read_file(&path).await?;
+                    self.check_write_limits(content.len())?;
+                    if let Some(parent) = path.parent()
+                        && !self.upper.exists(parent).await.unwrap_or(false)
+                    {
+                        self.upper.mkdir(parent, true).await?;
+                    }
+                    self.upper.write_file(&path, &content).await?;
+                    self.hide_lower_file(stat.size);
+                }
+                FileType::Directory => {
+                    self.check_dir_limits()?;
+                    self.upper.mkdir(&path, true).await?;
+                    self.hide_lower_dir();
+                }
+                FileType::Symlink => {
+                    let target = self.lower.read_link(&path).await?;
+                    self.check_write_limits(0)?;
+                    if let Some(parent) = path.parent()
+                        && !self.upper.exists(parent).await.unwrap_or(false)
+                    {
+                        self.upper.mkdir(parent, true).await?;
+                    }
+                    self.upper.symlink(&target, &path).await?;
+                    self.hide_lower_file(0);
+                }
+            }
+
+            return self.upper.set_modified_time(&path, time).await;
         }
 
         Err(IoError::new(ErrorKind::NotFound, "not found").into())

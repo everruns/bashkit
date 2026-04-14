@@ -50,6 +50,7 @@ use async_trait::async_trait;
 use std::io::Error as IoError;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use super::backend::FsBackend;
 use super::limits::{FsLimits, FsUsage};
@@ -256,6 +257,11 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
         let path = Self::normalize(path);
         self.backend.chmod(&path, mode).await
+    }
+
+    async fn set_modified_time(&self, path: &Path, time: SystemTime) -> Result<()> {
+        let path = Self::normalize(path);
+        self.backend.set_modified_time(&path, time).await
     }
 }
 

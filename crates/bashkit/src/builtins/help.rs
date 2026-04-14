@@ -260,7 +260,7 @@ const BUILTINS: &[CmdInfo] = &[
     CmdInfo {
         name: "touch",
         category: "files",
-        usage: "touch FILE...",
+        usage: "touch [-t STAMP] FILE...",
         description: "Create/update files",
     },
     CmdInfo {
