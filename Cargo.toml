@@ -7,7 +7,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.17"
+version = "0.1.18"
 edition = "2024"
 license = "MIT"
 authors = ["Everruns"]
