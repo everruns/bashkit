@@ -90,6 +90,41 @@ impl DiscoverTool {
             ..Default::default()
         }
     }
+
+    /// Translate structured MCP input into a [`ToolRequest`].
+    ///
+    /// Priority: `commands` (backward compat) > `all` > `query`.
+    fn resolve_request(args: &serde_json::Value) -> Result<ToolRequest, String> {
+        let obj = args.as_object().ok_or("arguments must be a JSON object")?;
+
+        let timeout_ms = obj.get("timeout_ms").and_then(|v| v.as_u64());
+
+        // Raw commands pass-through (backward compatible)
+        if let Some(commands) = obj.get("commands").and_then(|v| v.as_str()) {
+            return Ok(ToolRequest {
+                commands: commands.to_string(),
+                timeout_ms,
+            });
+        }
+
+        // Structured: all
+        if obj.get("all").and_then(|v| v.as_bool()).unwrap_or(false) {
+            return Ok(ToolRequest {
+                commands: "discover --categories".to_string(),
+                timeout_ms,
+            });
+        }
+
+        // Structured: query
+        if let Some(query) = obj.get("query").and_then(|v| v.as_str()) {
+            return Ok(ToolRequest {
+                commands: format!("discover --search {query}"),
+                timeout_ms,
+            });
+        }
+
+        Err("one of `commands`, `all`, or `query` is required".to_string())
+    }
 }
 
 #[async_trait]
@@ -129,8 +164,27 @@ impl Tool for DiscoverTool {
     }
 
     fn input_schema(&self) -> serde_json::Value {
-        let schema = schema_for!(ToolRequest);
-        serde_json::to_value(schema).unwrap_or_default()
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query to find tools (matched against names, descriptions, and categories)"
+                },
+                "all": {
+                    "type": "boolean",
+                    "description": "List all available tools grouped by category. When true, query is ignored."
+                },
+                "commands": {
+                    "type": "string",
+                    "description": "Raw bash commands (backward compatible). Takes precedence over query/all."
+                },
+                "timeout_ms": {
+                    "type": "integer",
+                    "description": "Optional timeout in milliseconds"
+                }
+            }
+        })
     }
 
     fn output_schema(&self) -> serde_json::Value {
@@ -146,16 +200,12 @@ impl Tool for DiscoverTool {
         &self,
         args: serde_json::Value,
     ) -> Result<crate::tool::ToolExecution, crate::tool::ToolError> {
-        // Extract commands string from args to validate before delegating
-        let commands = args
-            .as_object()
-            .and_then(|obj| obj.get("commands"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        if let Err(msg) = Self::validate_commands(commands) {
+        let req = Self::resolve_request(&args).map_err(ToolError::UserFacing)?;
+        if let Err(msg) = Self::validate_commands(&req.commands) {
             return Err(ToolError::UserFacing(msg));
         }
-        self.inner.execution(args)
+        self.inner
+            .execution(serde_json::to_value(req).unwrap_or_default())
     }
 
     async fn execute(&self, req: ToolRequest) -> ToolResponse {
@@ -895,5 +945,56 @@ mod tests {
         assert_eq!(tools.len(), 2);
         assert_eq!(tools[0].name(), "api");
         assert_eq!(tools[1].name(), "api_discover");
+    }
+
+    // -- Structured discover input (MCP) --
+
+    #[tokio::test]
+    async fn test_discover_structured_query() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let args = serde_json::json!({ "query": "user" });
+        let exec = tools[1].execution(args).expect("valid structured args");
+        let output = exec.execute().await.expect("execution succeeds");
+        let stdout = output.result["stdout"].as_str().unwrap_or("");
+        assert!(stdout.contains("get_user"), "stdout: {stdout}");
+    }
+
+    #[tokio::test]
+    async fn test_discover_structured_all() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let args = serde_json::json!({ "all": true });
+        let exec = tools[1].execution(args).expect("valid structured args");
+        let output = exec.execute().await.expect("execution succeeds");
+        let stdout = output.result["stdout"].as_str().unwrap_or("");
+        assert!(stdout.contains("users"), "stdout: {stdout}");
+        assert!(stdout.contains("orders"), "stdout: {stdout}");
+    }
+
+    #[tokio::test]
+    async fn test_discover_backward_compat() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let args = serde_json::json!({ "commands": "discover --search user" });
+        let exec = tools[1].execution(args).expect("valid commands args");
+        let output = exec.execute().await.expect("execution succeeds");
+        let stdout = output.result["stdout"].as_str().unwrap_or("");
+        assert!(stdout.contains("get_user"), "stdout: {stdout}");
+    }
+
+    #[test]
+    fn test_discover_input_schema_is_structured() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let schema = tools[1].input_schema();
+        let props = &schema["properties"];
+        assert!(props["query"].is_object(), "missing query property");
+        assert!(props["all"].is_object(), "missing all property");
+        assert!(props["commands"].is_object(), "missing commands property");
+        assert!(
+            props["timeout_ms"].is_object(),
+            "missing timeout_ms property"
+        );
     }
 }
