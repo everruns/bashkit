@@ -24,6 +24,8 @@ export type { ExecResult };
  */
 export type FileValue = string | (() => string) | (() => Promise<string>);
 
+const MAX_JSON_NESTING_DEPTH = 64;
+
 /**
  * Options for creating a Bash or BashTool instance.
  */
@@ -123,6 +125,27 @@ async function resolveFiles(
     }
   }
   return resolved;
+}
+
+function validateJsonNestingDepth(value: unknown, depth = 0): void {
+  if (depth > MAX_JSON_NESTING_DEPTH) {
+    throw new RangeError(
+      `JSON nesting depth exceeds maximum of ${MAX_JSON_NESTING_DEPTH}`,
+    );
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      validateJsonNestingDepth(item, depth + 1);
+    }
+    return;
+  }
+
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      validateJsonNestingDepth(item, depth + 1);
+    }
+  }
 }
 
 /**
@@ -400,7 +423,13 @@ export class Bash {
   }
 
   /** Get metadata for a path (fileType, size, mode, timestamps). */
-  stat(path: string): { fileType: string; size: number; mode: number; modified: number; created: number } {
+  stat(path: string): {
+    fileType: string;
+    size: number;
+    mode: number;
+    modified: number;
+    created: number;
+  } {
     return this.native.stat(path);
   }
 
@@ -425,7 +454,18 @@ export class Bash {
   }
 
   /** List directory entries with metadata. */
-  readDir(path: string): Array<{ name: string; metadata: { fileType: string; size: number; mode: number; modified: number; created: number } }> {
+  readDir(
+    path: string,
+  ): Array<{
+    name: string;
+    metadata: {
+      fileType: string;
+      size: number;
+      mode: number;
+      modified: number;
+      created: number;
+    };
+  }> {
     return this.native.readDir(path);
   }
 
@@ -632,7 +672,13 @@ export class BashTool {
   }
 
   /** Get metadata for a path (fileType, size, mode, timestamps). */
-  stat(path: string): { fileType: string; size: number; mode: number; modified: number; created: number } {
+  stat(path: string): {
+    fileType: string;
+    size: number;
+    mode: number;
+    modified: number;
+    created: number;
+  } {
     return this.native.stat(path);
   }
 
@@ -657,7 +703,18 @@ export class BashTool {
   }
 
   /** List directory entries with metadata. */
-  readDir(path: string): Array<{ name: string; metadata: { fileType: string; size: number; mode: number; modified: number; created: number } }> {
+  readDir(
+    path: string,
+  ): Array<{
+    name: string;
+    metadata: {
+      fileType: string;
+      size: number;
+      mode: number;
+      modified: number;
+      created: number;
+    };
+  }> {
     return this.native.readDir(path);
   }
 
@@ -813,6 +870,9 @@ export class ScriptedTool {
     callback: ToolCallback,
     schema?: Record<string, unknown>,
   ): void {
+    if (schema) {
+      validateJsonNestingDepth(schema);
+    }
     // Wrap the user callback to handle JSON serialization protocol
     const wrappedCallback = (requestJson: string): string => {
       const request = JSON.parse(requestJson) as {
