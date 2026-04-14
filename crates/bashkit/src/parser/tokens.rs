@@ -17,6 +17,13 @@ pub enum Token {
     /// but is marked as quoted (affects heredoc delimiter semantics)
     QuotedWord(String),
 
+    /// A word that mixes quoted and unquoted segments where the unquoted
+    /// portion contains glob metacharacters (*, ?, [).  Semantically
+    /// equivalent to QuotedWord for IFS splitting (suppressed), but the
+    /// interpreter must still perform glob expansion on the result.
+    /// Example: `"$var"*.ext` or `./"$dir"/*.log`
+    QuotedGlobWord(String),
+
     /// Newline character
     Newline,
 
