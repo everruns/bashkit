@@ -15,7 +15,7 @@
 //! - **Experimental: Git** - Virtual git operations on the VFS (`git` feature)
 //! - **Experimental: Python** - Embedded Python via [Monty](https://github.com/pydantic/monty) (`python` feature)
 //!
-//! # Built-in Commands (156)
+//! # Built-in Commands (160)
 //!
 //! | Category | Commands |
 //! |----------|----------|
@@ -37,7 +37,7 @@
 //! | Structured data | `json`, `csv`, `yaml`, `tomlq`, `semver` |
 //! | Network | `curl`, `wget`, `http` (requires [`NetworkAllowlist`])
 //! | Arithmetic | `bc` |
-//! | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature)
+//! | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature), `ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature), `ssh`, `scp`, `sftp` (requires `ssh` feature)
 //!
 //! # Shell Features
 //!
@@ -382,8 +382,8 @@
 //! - [`custom_builtins_guide`] - Creating custom builtins
 //! - [`compatibility_scorecard`] - Feature parity tracking
 //! - [`live_mounts_guide`] - Live mount/unmount on running instances
-//! - [`python_guide`] - Embedded Python (Monty) guide (requires `python` feature)
-//! - [`logging_guide`] - Structured logging with security (requires `logging` feature)
+//! - `python_guide` - Embedded Python (Monty) guide (requires `python` feature)
+//! - `logging_guide` - Structured logging with security (requires `logging` feature)
 //!
 //! # Resources
 //!
@@ -843,7 +843,7 @@ impl Bash {
     /// `on_error`) and frozen at build time.
     ///
     /// HTTP hooks (`before_http`, `after_http`) live on the
-    /// [`HttpClient`] and are set via
+    /// `HttpClient` (requires `http_client` feature) and are set via
     /// the builder as well.
     pub fn hooks(&self) -> &hooks::Hooks {
         self.interpreter.hooks()

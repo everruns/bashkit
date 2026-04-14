@@ -309,31 +309,23 @@ struct DiscoverBuiltin {
 }
 
 impl DiscoverBuiltin {
-    fn filter_tools(&self, args: &[String]) -> (Vec<&ToolDefSnapshot>, bool) {
-        let json_mode = args.iter().any(|a| a == "--json");
-
-        if args.iter().any(|a| a == "--categories") {
-            return (Vec::new(), json_mode);
-        }
-
+    fn filter_tools(&self, args: &[String]) -> Vec<&ToolDefSnapshot> {
         if let Some(pos) = args.iter().position(|a| a == "--category") {
             let cat = args.get(pos + 1).map(|s| s.as_str()).unwrap_or("");
-            let filtered: Vec<&ToolDefSnapshot> = self
+            return self
                 .tools
                 .iter()
                 .filter(|t| t.category.as_deref() == Some(cat))
                 .collect();
-            return (filtered, json_mode);
         }
 
         if let Some(pos) = args.iter().position(|a| a == "--tag") {
             let tag = args.get(pos + 1).map(|s| s.as_str()).unwrap_or("");
-            let filtered: Vec<&ToolDefSnapshot> = self
+            return self
                 .tools
                 .iter()
                 .filter(|t| t.tags.iter().any(|tg| tg == tag))
                 .collect();
-            return (filtered, json_mode);
         }
 
         if let Some(pos) = args.iter().position(|a| a == "--search") {
@@ -341,7 +333,7 @@ impl DiscoverBuiltin {
                 .get(pos + 1)
                 .map(|s| s.to_lowercase())
                 .unwrap_or_default();
-            let filtered: Vec<&ToolDefSnapshot> = self
+            return self
                 .tools
                 .iter()
                 .filter(|t| {
@@ -349,10 +341,9 @@ impl DiscoverBuiltin {
                         || t.description.to_lowercase().contains(&keyword)
                 })
                 .collect();
-            return (filtered, json_mode);
         }
 
-        (self.tools.iter().collect(), json_mode)
+        self.tools.iter().collect()
     }
 }
 
@@ -395,7 +386,7 @@ impl Builtin for DiscoverBuiltin {
                     ExecResult::ok(out)
                 }
             } else {
-                let (filtered, _) = self.filter_tools(args);
+                let filtered = self.filter_tools(args);
 
                 if json_mode {
                     let arr: Vec<serde_json::Value> = filtered

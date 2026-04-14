@@ -1,5 +1,8 @@
 # 017 — Transparent Request Signing (bot-auth)
 
+## Status
+Implemented
+
 > Ed25519 request signing for all outbound HTTP requests per RFC 9421 / web-bot-auth profile.
 
 ## Problem
