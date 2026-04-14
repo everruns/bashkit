@@ -304,7 +304,7 @@ class Bash:
         python: bool = False,
         external_functions: list[str] | None = None,
         external_handler: ExternalHandler | None = None,
-        files: dict[str, str] | None = None,
+        files: dict[str, str | Callable[[], str]] | None = None,
         mounts: list[dict[str, Any]] | None = None,
     ) -> None:
         """Create a new Bash interpreter.
@@ -319,7 +319,7 @@ class Bash:
             python: Enable embedded Python (``python3`` builtin).
             external_functions: Function names callable from Python code.
             external_handler: Async callback for external function calls.
-            files: Dict mapping VFS paths to file contents to pre-populate.
+            files: Dict mapping VFS paths to file contents or lazy callables.
             mounts: List of real host directory mount configs.
 
         Example::
@@ -592,7 +592,7 @@ class BashTool:
         max_loop_iterations: int | None = None,
         max_memory: int | None = None,
         timeout_seconds: float | None = None,
-        files: dict[str, str] | None = None,
+        files: dict[str, str | Callable[[], str]] | None = None,
         mounts: list[dict[str, Any]] | None = None,
     ) -> None:
         """Create a new BashTool.
@@ -604,7 +604,7 @@ class BashTool:
             max_loop_iterations: Limit iterations per loop.
             max_memory: Memory limit in bytes for the VFS.
             timeout_seconds: Abort execution after this duration.
-            files: Dict mapping VFS paths to file contents to pre-populate.
+            files: Dict mapping VFS paths to file contents or lazy callables.
             mounts: List of real host directory mount configs.
 
         Example::

@@ -125,6 +125,12 @@ result = tool.execute_sync("echo hello")
 # Reset state
 tool.reset()
 
+# Initial files accept eager strings or lazy sync callables.
+tool = BashTool(files={
+    "/config/static.txt": "ready\n",
+    "/config/generated.json": lambda: '{"ok": true}\n",
+})
+
 # Direct VFS helpers (text-oriented convenience wrappers)
 tool.read_file("/tmp/data.txt")      # -> str
 tool.write_file("/tmp/data.txt", "hello")

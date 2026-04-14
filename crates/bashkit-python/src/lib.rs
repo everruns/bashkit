@@ -8,16 +8,17 @@
 use bashkit::tool::VERSION;
 use bashkit::{
     Bash, BashTool as RustBashTool, DirEntry as FsDirEntry, ExcType, ExecutionLimits,
-    ExtFunctionResult, FileSystem, FileType as FsFileType, InMemoryFs, Metadata as FsMetadata,
-    MontyException, MontyObject, PosixFs, PythonExternalFnHandler, PythonLimits, RealFs,
-    RealFsMode, ScriptedTool as RustScriptedTool, Tool, ToolArgs, ToolDef, ToolRequest,
+    ExtFunctionResult, FileSystem, FileSystemExt, FileType as FsFileType, InMemoryFs,
+    Metadata as FsMetadata, MontyException, MontyObject, OverlayFs, PosixFs,
+    PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool,
+    Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
 };
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PySet, PyTuple};
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -130,6 +131,13 @@ struct RealMountConfig {
     writable: bool,
 }
 
+enum PyFileMount {
+    Static { path: String, content: String },
+    Lazy { path: String, provider: Py<PyAny> },
+}
+
+const PY_FILE_PROVIDER_TYPE_ERROR_PREFIX: &str = "__bashkit_py_file_provider_type_error__:";
+
 fn make_runtime() -> PyResult<Arc<Runtime>> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -171,14 +179,255 @@ fn parse_mounts(mounts: Option<&Bound<'_, PyList>>) -> PyResult<Vec<RealMountCon
     Ok(configs)
 }
 
+fn parse_files(files: Option<&Bound<'_, PyDict>>) -> PyResult<Vec<PyFileMount>> {
+    let Some(dict) = files else {
+        return Ok(Vec::new());
+    };
+
+    let mut mounts = Vec::with_capacity(dict.len());
+    for (path_obj, value_obj) in dict.iter() {
+        let path: String = path_obj.extract()?;
+        if let Ok(content) = value_obj.extract::<String>() {
+            mounts.push(PyFileMount::Static { path, content });
+            continue;
+        }
+        if value_obj.is_callable() {
+            mounts.push(PyFileMount::Lazy {
+                path,
+                provider: value_obj.unbind(),
+            });
+            continue;
+        }
+        return Err(PyTypeError::new_err(format!(
+            "files['{path}'] must be str or callable returning str"
+        )));
+    }
+    Ok(mounts)
+}
+
+fn clone_file_mounts(py: Python<'_>, mounts: &[PyFileMount]) -> Vec<PyFileMount> {
+    mounts
+        .iter()
+        .map(|mount| match mount {
+            PyFileMount::Static { path, content } => PyFileMount::Static {
+                path: path.clone(),
+                content: content.clone(),
+            },
+            PyFileMount::Lazy { path, provider } => PyFileMount::Lazy {
+                path: path.clone(),
+                provider: provider.clone_ref(py),
+            },
+        })
+        .collect()
+}
+
+fn map_fs_error_to_py(err: impl ToString) -> PyErr {
+    let msg = err.to_string();
+    if let Some((_, rest)) = msg.split_once(PY_FILE_PROVIDER_TYPE_ERROR_PREFIX) {
+        PyTypeError::new_err(rest.to_string())
+    } else {
+        PyRuntimeError::new_err(msg)
+    }
+}
+
+// Lazy Python file providers need read-time Python exceptions, so the binding
+// keeps them in a small overlay wrapper instead of bashkit's byte-only lazy loader.
+struct PythonLazyFilesFs {
+    overlay: Arc<OverlayFs>,
+    providers: RwLock<std::collections::HashMap<PathBuf, Py<PyAny>>>,
+}
+
+impl PythonLazyFilesFs {
+    fn new(lower: Arc<dyn FileSystem>, files: &[PyFileMount]) -> Self {
+        let overlay = Arc::new(OverlayFs::new(lower));
+        let mut providers = std::collections::HashMap::new();
+
+        for file in files {
+            if let PyFileMount::Lazy { path, provider } = file {
+                overlay
+                    .upper()
+                    .add_lazy_file(path, 0, 0o644, Arc::new(Vec::<u8>::new));
+                providers.insert(
+                    bashkit::normalize_path(Path::new(path)),
+                    Python::attach(|py| provider.clone_ref(py)),
+                );
+            }
+        }
+
+        Self {
+            overlay,
+            providers: RwLock::new(providers),
+        }
+    }
+
+    fn normalize_path(path: &Path) -> PathBuf {
+        bashkit::normalize_path(path)
+    }
+
+    async fn materialize_if_needed(&self, path: &Path) -> bashkit::Result<()> {
+        let normalized = Self::normalize_path(path);
+        let provider = {
+            let mut providers = self.providers.write().unwrap();
+            providers.remove(&normalized)
+        };
+        let Some(provider) = provider else {
+            return Ok(());
+        };
+
+        let loaded = Python::attach(|py| -> std::result::Result<Vec<u8>, String> {
+            let value = provider.bind(py).call0().map_err(|e| e.to_string())?;
+            let text = value.extract::<String>().map_err(|_| {
+                format!(
+                    "{PY_FILE_PROVIDER_TYPE_ERROR_PREFIX}file provider for '{}' must return str",
+                    normalized.display()
+                )
+            })?;
+            Ok(text.into_bytes())
+        });
+
+        match loaded {
+            Ok(content) => {
+                self.overlay.write_file(&normalized, &content).await?;
+                Ok(())
+            }
+            Err(message) => {
+                self.providers.write().unwrap().insert(normalized, provider);
+                Err(std::io::Error::other(message).into())
+            }
+        }
+    }
+
+    fn remove_provider_paths(&self, path: &Path, recursive: bool) {
+        let normalized = Self::normalize_path(path);
+        let mut providers = self.providers.write().unwrap();
+        providers.retain(|candidate, _| {
+            !(candidate == &normalized || (recursive && candidate.starts_with(&normalized)))
+        });
+    }
+
+    fn move_provider_paths(&self, from: &Path, to: &Path) {
+        let from = Self::normalize_path(from);
+        let to = Self::normalize_path(to);
+        let mut providers = self.providers.write().unwrap();
+        let mut moved = Vec::new();
+
+        for (path, provider) in &*providers {
+            if path == &from || path.starts_with(&from) {
+                let new_path = if path == &from {
+                    to.clone()
+                } else {
+                    to.join(path.strip_prefix(&from).unwrap())
+                };
+                moved.push((
+                    path.clone(),
+                    new_path,
+                    Python::attach(|py| provider.clone_ref(py)),
+                ));
+            }
+        }
+
+        for (old_path, _, _) in &moved {
+            providers.remove(old_path);
+        }
+        for (_, new_path, provider) in moved {
+            providers.insert(new_path, provider);
+        }
+    }
+}
+
+#[async_trait]
+impl FileSystemExt for PythonLazyFilesFs {}
+
+#[async_trait]
+impl FileSystem for PythonLazyFilesFs {
+    async fn read_file(&self, path: &Path) -> bashkit::Result<Vec<u8>> {
+        self.materialize_if_needed(path).await?;
+        self.overlay.read_file(path).await
+    }
+
+    async fn write_file(&self, path: &Path, content: &[u8]) -> bashkit::Result<()> {
+        self.remove_provider_paths(path, false);
+        self.overlay.write_file(path, content).await
+    }
+
+    async fn append_file(&self, path: &Path, content: &[u8]) -> bashkit::Result<()> {
+        self.materialize_if_needed(path).await?;
+        self.overlay.append_file(path, content).await
+    }
+
+    async fn mkdir(&self, path: &Path, recursive: bool) -> bashkit::Result<()> {
+        self.overlay.mkdir(path, recursive).await
+    }
+
+    async fn remove(&self, path: &Path, recursive: bool) -> bashkit::Result<()> {
+        self.remove_provider_paths(path, recursive);
+        self.overlay.remove(path, recursive).await
+    }
+
+    async fn stat(&self, path: &Path) -> bashkit::Result<FsMetadata> {
+        self.overlay.stat(path).await
+    }
+
+    async fn read_dir(&self, path: &Path) -> bashkit::Result<Vec<FsDirEntry>> {
+        self.overlay.read_dir(path).await
+    }
+
+    async fn exists(&self, path: &Path) -> bashkit::Result<bool> {
+        self.overlay.exists(path).await
+    }
+
+    async fn rename(&self, from: &Path, to: &Path) -> bashkit::Result<()> {
+        self.overlay.rename(from, to).await?;
+        self.move_provider_paths(from, to);
+        Ok(())
+    }
+
+    async fn copy(&self, from: &Path, to: &Path) -> bashkit::Result<()> {
+        self.materialize_if_needed(from).await?;
+        self.overlay.copy(from, to).await
+    }
+
+    async fn symlink(&self, target: &Path, link: &Path) -> bashkit::Result<()> {
+        self.overlay.symlink(target, link).await
+    }
+
+    async fn read_link(&self, path: &Path) -> bashkit::Result<PathBuf> {
+        self.overlay.read_link(path).await
+    }
+
+    async fn chmod(&self, path: &Path, mode: u32) -> bashkit::Result<()> {
+        self.overlay.chmod(path, mode).await
+    }
+}
+
 /// Apply `files` dict and `mounts` list to a builder.
 fn apply_fs_config(
     mut builder: bashkit::BashBuilder,
-    files: &std::collections::HashMap<String, String>,
+    files: &[PyFileMount],
     real_mounts: &[RealMountConfig],
-) -> bashkit::BashBuilder {
-    for (path, content) in files {
-        builder = builder.mount_text(path, content.clone());
+) -> PyResult<bashkit::BashBuilder> {
+    let lazy_files: Vec<PyFileMount> = files
+        .iter()
+        .filter_map(|file| match file {
+            PyFileMount::Lazy { path, provider } => Some(PyFileMount::Lazy {
+                path: path.clone(),
+                provider: Python::attach(|py| provider.clone_ref(py)),
+            }),
+            PyFileMount::Static { .. } => None,
+        })
+        .collect();
+
+    if !lazy_files.is_empty() {
+        builder = builder.fs(Arc::new(PythonLazyFilesFs::new(
+            Arc::new(InMemoryFs::new()),
+            &lazy_files,
+        )));
+    }
+
+    for file in files {
+        if let PyFileMount::Static { path, content } = file {
+            builder = builder.mount_text(path, content.clone());
+        }
     }
 
     for mount in real_mounts {
@@ -190,7 +439,7 @@ fn apply_fs_config(
         };
     }
 
-    builder
+    Ok(builder)
 }
 
 fn system_time_to_unix_seconds(time: SystemTime) -> f64 {
@@ -267,7 +516,7 @@ fn read_text_via_live_fs(
         let bytes = fs
             .read_file(Path::new(&path))
             .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            .map_err(map_fs_error_to_py)?;
         String::from_utf8(bytes).map_err(|e| PyRuntimeError::new_err(format!("Invalid UTF-8: {e}")))
     })
 }
@@ -281,7 +530,7 @@ fn write_text_via_live_fs(
     with_live_fs(rt, inner, move |fs| async move {
         fs.write_file(Path::new(&path), content.as_bytes())
             .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(map_fs_error_to_py)
     })
 }
 
@@ -294,7 +543,7 @@ fn append_text_via_live_fs(
     with_live_fs(rt, inner, move |fs| async move {
         fs.append_file(Path::new(&path), content.as_bytes())
             .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(map_fs_error_to_py)
     })
 }
 
@@ -307,7 +556,7 @@ fn mkdir_via_live_fs(
     with_live_fs(rt, inner, move |fs| async move {
         fs.mkdir(Path::new(&path), recursive)
             .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(map_fs_error_to_py)
     })
 }
 
@@ -320,7 +569,7 @@ fn remove_via_live_fs(
     with_live_fs(rt, inner, move |fs| async move {
         fs.remove(Path::new(&path), recursive)
             .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(map_fs_error_to_py)
     })
 }
 
@@ -328,7 +577,7 @@ fn exists_via_live_fs(rt: &Arc<Runtime>, inner: &Arc<Mutex<Bash>>, path: String)
     with_live_fs(rt, inner, move |fs| async move {
         fs.exists(Path::new(&path))
             .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(map_fs_error_to_py)
     })
 }
 
@@ -338,9 +587,7 @@ fn stat_via_live_fs(
     path: String,
 ) -> PyResult<FsMetadata> {
     with_live_fs(rt, inner, move |fs| async move {
-        fs.stat(Path::new(&path))
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        fs.stat(Path::new(&path)).await.map_err(map_fs_error_to_py)
     })
 }
 
@@ -353,7 +600,7 @@ fn chmod_via_live_fs(
     with_live_fs(rt, inner, move |fs| async move {
         fs.chmod(Path::new(&path), mode)
             .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(map_fs_error_to_py)
     })
 }
 
@@ -366,7 +613,7 @@ fn symlink_via_live_fs(
     with_live_fs(rt, inner, move |fs| async move {
         fs.symlink(Path::new(&target), Path::new(&link))
             .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(map_fs_error_to_py)
     })
 }
 
@@ -379,7 +626,7 @@ fn read_link_via_live_fs(
         let target = fs
             .read_link(Path::new(&path))
             .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            .map_err(map_fs_error_to_py)?;
         Ok(target.display().to_string())
     })
 }
@@ -392,7 +639,7 @@ fn read_dir_via_live_fs(
     with_live_fs(rt, inner, move |fs| async move {
         fs.read_dir(Path::new(&path))
             .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(map_fs_error_to_py)
     })
 }
 
@@ -540,7 +787,7 @@ impl PyFileSystem {
             self.with_fs(|fs| async move {
                 fs.read_file(Path::new(&path))
                     .await
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                    .map_err(map_fs_error_to_py)
             })
         })?;
         Ok(PyBytes::new(py, &data))
@@ -551,7 +798,7 @@ impl PyFileSystem {
             self.with_fs(|fs| async move {
                 fs.write_file(Path::new(&path), &content)
                     .await
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                    .map_err(map_fs_error_to_py)
             })
         })
     }
@@ -561,7 +808,7 @@ impl PyFileSystem {
             self.with_fs(|fs| async move {
                 fs.append_file(Path::new(&path), &content)
                     .await
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                    .map_err(map_fs_error_to_py)
             })
         })
     }
@@ -572,7 +819,7 @@ impl PyFileSystem {
             self.with_fs(|fs| async move {
                 fs.mkdir(Path::new(&path), recursive)
                     .await
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                    .map_err(map_fs_error_to_py)
             })
         })
     }
@@ -583,18 +830,16 @@ impl PyFileSystem {
             self.with_fs(|fs| async move {
                 fs.remove(Path::new(&path), recursive)
                     .await
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                    .map_err(map_fs_error_to_py)
             })
         })
     }
 
     fn stat(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
         let metadata = py.detach(|| {
-            self.with_fs(|fs| async move {
-                fs.stat(Path::new(&path))
-                    .await
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
-            })
+            self.with_fs(
+                |fs| async move { fs.stat(Path::new(&path)).await.map_err(map_fs_error_to_py) },
+            )
         })?;
         metadata_to_pydict(py, &metadata)
     }
@@ -604,7 +849,7 @@ impl PyFileSystem {
             self.with_fs(|fs| async move {
                 fs.read_dir(Path::new(&path))
                     .await
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                    .map_err(map_fs_error_to_py)
             })
         })?;
         let items: Vec<Py<PyAny>> = entries
@@ -619,7 +864,7 @@ impl PyFileSystem {
             self.with_fs(|fs| async move {
                 fs.exists(Path::new(&path))
                     .await
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                    .map_err(map_fs_error_to_py)
             })
         })
     }
@@ -629,7 +874,7 @@ impl PyFileSystem {
             self.with_fs(|fs| async move {
                 fs.rename(Path::new(&from_path), Path::new(&to_path))
                     .await
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                    .map_err(map_fs_error_to_py)
             })
         })
     }
@@ -639,7 +884,7 @@ impl PyFileSystem {
             self.with_fs(|fs| async move {
                 fs.copy(Path::new(&from_path), Path::new(&to_path))
                     .await
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                    .map_err(map_fs_error_to_py)
             })
         })
     }
@@ -649,7 +894,7 @@ impl PyFileSystem {
             self.with_fs(|fs| async move {
                 fs.symlink(Path::new(&target), Path::new(&link))
                     .await
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                    .map_err(map_fs_error_to_py)
             })
         })
     }
@@ -659,7 +904,7 @@ impl PyFileSystem {
             self.with_fs(|fs| async move {
                 fs.chmod(Path::new(&path), mode)
                     .await
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                    .map_err(map_fs_error_to_py)
             })
         })
     }
@@ -669,7 +914,7 @@ impl PyFileSystem {
             self.with_fs(|fs| async move {
                 fs.read_link(Path::new(&path))
                     .await
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                    .map_err(map_fs_error_to_py)
             })
         })?;
         Ok(target.display().to_string())
@@ -852,7 +1097,7 @@ pub struct PyBash {
     external_functions: Vec<String>,
     /// Async Python callable invoked when Monty calls an external function.
     external_handler: Option<Py<PyAny>>,
-    files: std::collections::HashMap<String, String>,
+    files: Vec<PyFileMount>,
     real_mounts: Vec<RealMountConfig>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
@@ -888,7 +1133,7 @@ impl PyBash {
         python: bool,
         external_functions: Option<Vec<String>>,
         external_handler: Option<Py<PyAny>>,
-        files: Option<std::collections::HashMap<String, String>>,
+        files: Option<&Bound<'_, PyDict>>,
         mounts: Option<&Bound<'_, PyList>>,
     ) -> PyResult<Self> {
         let mut builder = Bash::builder();
@@ -916,7 +1161,7 @@ impl PyBash {
             builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
         }
 
-        let files = files.unwrap_or_default();
+        let files = parse_files(files)?;
         let real_mounts = parse_mounts(mounts)?;
 
         let fn_names = external_functions.clone().unwrap_or_default();
@@ -959,7 +1204,7 @@ impl PyBash {
         }
         let handler_for_build = external_handler.as_ref().map(|h| h.clone_ref(py));
         builder = apply_python_config(builder, python, fn_names, handler_for_build);
-        builder = apply_fs_config(builder, &files, &real_mounts);
+        builder = apply_fs_config(builder, &files, &real_mounts)?;
 
         let bash = builder.build();
         let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
@@ -1156,7 +1401,7 @@ impl PyBash {
         let timeout_seconds = self.timeout_seconds;
         let python = self.python;
         let external_functions = self.external_functions.clone();
-        let files = self.files.clone();
+        let files = clone_file_mounts(py, &self.files);
         let real_mounts = self.real_mounts.clone();
         // Clone handler ref while still holding the GIL (before py.detach).
         let handler_clone = self.external_handler.as_ref().map(|h| h.clone_ref(py));
@@ -1187,7 +1432,7 @@ impl PyBash {
                     builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
                 }
                 builder = apply_python_config(builder, python, external_functions, handler_clone);
-                builder = apply_fs_config(builder, &files, &real_mounts);
+                builder = apply_fs_config(builder, &files, &real_mounts)?;
                 *bash = builder.build();
                 // Swap the cancellation token to the new interpreter's token so
                 // cancel() targets the current (not stale) interpreter.
@@ -1359,7 +1604,7 @@ pub struct BashTool {
     cancelled: Arc<RwLock<Arc<AtomicBool>>>,
     username: Option<String>,
     hostname: Option<String>,
-    files: std::collections::HashMap<String, String>,
+    files: Vec<PyFileMount>,
     real_mounts: Vec<RealMountConfig>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
@@ -1415,7 +1660,7 @@ impl BashTool {
         max_loop_iterations: Option<u64>,
         max_memory: Option<u64>,
         timeout_seconds: Option<f64>,
-        files: Option<std::collections::HashMap<String, String>>,
+        files: Option<&Bound<'_, PyDict>>,
         mounts: Option<&Bound<'_, PyList>>,
     ) -> PyResult<Self> {
         let mut builder = Bash::builder();
@@ -1443,9 +1688,9 @@ impl BashTool {
             builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
         }
 
-        let files = files.unwrap_or_default();
+        let files = parse_files(files)?;
         let real_mounts = parse_mounts(mounts)?;
-        builder = apply_fs_config(builder, &files, &real_mounts);
+        builder = apply_fs_config(builder, &files, &real_mounts)?;
 
         let bash = builder.build();
         let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
@@ -1610,7 +1855,7 @@ impl BashTool {
         let inner = self.inner.clone();
         let username = self.username.clone();
         let hostname = self.hostname.clone();
-        let files = self.files.clone();
+        let files = clone_file_mounts(py, &self.files);
         let real_mounts = self.real_mounts.clone();
         let max_commands = self.max_commands;
         let max_loop_iterations = self.max_loop_iterations;
@@ -1642,7 +1887,7 @@ impl BashTool {
                 if let Some(mm) = max_memory {
                     builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
                 }
-                builder = apply_fs_config(builder, &files, &real_mounts);
+                builder = apply_fs_config(builder, &files, &real_mounts)?;
                 *bash = builder.build();
                 // Swap the cancellation token to the new interpreter's token so
                 // cancel() targets the current (not stale) interpreter.
