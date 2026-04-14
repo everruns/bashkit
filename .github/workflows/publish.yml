@@ -48,11 +48,12 @@ jobs:
           sed -i '/^monty = .*/d' "$TOML"
           sed -i '/^python = \["dep:monty"\]/d' "$TOML"
           sed -i '/^\[\[example\]\]/{N;N;/python_scripts/d}' "$TOML"
+          sed -i '/^\[\[example\]\]/{N;N;/python_external_functions/d}' "$TOML"
 
           # --- bashkit-cli: remove python feature ---
           CLI_TOML=crates/bashkit-cli/Cargo.toml
           sed -i '/^python = \["bashkit\/python"\]/d' "$CLI_TOML"
-          sed -i 's/default = \["python"\]/default = []/' "$CLI_TOML"
+          sed -i 's/, "python"//; s/"python", //; s/\["python"\]/[]/' "$CLI_TOML"
 
           # --- bashkit-js: remove python from features list ---
           JS_TOML=crates/bashkit-js/Cargo.toml
@@ -90,7 +91,7 @@ jobs:
           TOML=crates/bashkit-cli/Cargo.toml
           # Remove python feature and default that references it
           sed -i '/^python = \["bashkit\/python"\]/d' "$TOML"
-          sed -i 's/default = \["python"\]/default = []/' "$TOML"
+          sed -i 's/, "python"//; s/"python", //; s/\["python"\]/[]/' "$TOML"
           echo "--- bashkit-cli Cargo.toml after stripping ---"
           cat "$TOML"
 
