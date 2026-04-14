@@ -1187,4 +1187,86 @@ mod tests {
         assert_eq!(resp.exit_code, 0);
         assert!(resp.stdout.contains("HELLO"));
     }
+
+    // -- ToolImpl registration --
+
+    #[tokio::test]
+    async fn test_tool_impl_in_scripted_tool() {
+        let get_user = ToolImpl::new(ToolDef::new("get_user", "Fetch user by ID").with_schema(
+            serde_json::json!({
+                "type": "object",
+                "properties": { "id": {"type": "integer"} },
+                "required": ["id"]
+            }),
+        ))
+        .with_exec_sync(|args| {
+            let id = args.param_i64("id").ok_or("missing --id")?;
+            Ok(format!("{{\"id\":{id},\"name\":\"Alice\"}}\n"))
+        });
+
+        let tool = ScriptedTool::builder("api")
+            .short_description("Test API")
+            .tool(get_user)
+            .build();
+
+        assert!(tool.system_prompt().contains("get_user"));
+        assert!(tool.help().contains("get_user"));
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "get_user --id 42 | jq -r '.name'".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout.trim(), "Alice");
+    }
+
+    #[tokio::test]
+    async fn test_tool_impl_async_exec_in_scripted_tool() {
+        let greet = ToolImpl::new(ToolDef::new("greet", "Greet someone").with_schema(
+            serde_json::json!({
+                "type": "object",
+                "properties": { "name": {"type": "string"} }
+            }),
+        ))
+        .with_exec(|args| async move {
+            let name = args.param_str("name").unwrap_or("world");
+            Ok(format!("hello {name}\n"))
+        });
+
+        let tool = ScriptedTool::builder("api").tool(greet).build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "greet --name Bob".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout.trim(), "hello Bob");
+    }
+
+    #[tokio::test]
+    async fn test_tool_impl_mixed_with_tool_fn() {
+        let tool_impl = ToolImpl::new(ToolDef::new("impl_cmd", "From ToolImpl"))
+            .with_exec_sync(|_args| Ok("from_impl\n".to_string()));
+
+        let tool = ScriptedTool::builder("mixed")
+            .tool(tool_impl)
+            .tool_fn(ToolDef::new("fn_cmd", "From tool_fn"), |_args| {
+                Ok("from_fn\n".to_string())
+            })
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "echo $(impl_cmd) $(fn_cmd)".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(resp.stdout.contains("from_impl"));
+        assert!(resp.stdout.contains("from_fn"));
+    }
 }

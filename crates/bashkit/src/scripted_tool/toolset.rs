@@ -832,4 +832,68 @@ mod tests {
             Ok(_) => panic!("expected error for disallowed command"),
         }
     }
+
+    // -- ToolImpl registration --
+
+    #[tokio::test]
+    async fn test_tool_impl_registration() {
+        let get_user = ToolImpl::new(
+            ToolDef::new("get_user", "Fetch user by ID")
+                .with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "id": {"type": "integer"} },
+                    "required": ["id"]
+                }))
+                .with_category("users"),
+        )
+        .with_exec_sync(|args| {
+            let id = args.param_i64("id").ok_or("missing --id")?;
+            Ok(format!("{{\"id\":{id},\"name\":\"Alice\"}}\n"))
+        });
+
+        let list_orders = ToolImpl::new(
+            ToolDef::new("list_orders", "List orders")
+                .with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "user_id": {"type": "integer"} }
+                }))
+                .with_category("orders"),
+        )
+        .with_exec_sync(|args| {
+            let uid = args.param_i64("user_id").ok_or("missing --user_id")?;
+            Ok(format!("[{{\"order_id\":1,\"user_id\":{uid}}}]\n"))
+        });
+
+        // Exclusive mode
+        let toolset = ScriptingToolSet::builder("api")
+            .short_description("Test API")
+            .tool(get_user.clone())
+            .tool(list_orders.clone())
+            .build();
+
+        let tools = toolset.tools();
+        assert_eq!(tools.len(), 1);
+        assert!(tools[0].system_prompt().contains("get_user"));
+        assert!(tools[0].system_prompt().contains("list_orders"));
+
+        let resp = tools[0]
+            .execute(ToolRequest {
+                commands: "get_user --id 1 | jq -r '.name'".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.stdout.trim(), "Alice");
+
+        // Discovery mode
+        let toolset = ScriptingToolSet::builder("api")
+            .tool(get_user)
+            .tool(list_orders)
+            .with_discovery()
+            .build();
+
+        let tools = toolset.tools();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].name(), "api");
+        assert_eq!(tools[1].name(), "api_discover");
+    }
 }
