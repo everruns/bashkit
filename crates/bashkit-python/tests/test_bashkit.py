@@ -640,6 +640,25 @@ def test_bashtool_restore_snapshot_after_reset_restores_original_state():
     assert tool.execute_sync("cat /workspace/tool.txt").stdout.strip() == "saved"
 
 
+def test_bashtool_empty_snapshot_roundtrip():
+    fresh = BashTool()
+    snapshot = fresh.snapshot()
+    restored = BashTool.from_snapshot(snapshot)
+
+    assert restored.execute_sync("pwd").stdout == fresh.execute_sync("pwd").stdout
+    assert restored.execute_sync("echo ${MISSING:-empty}").stdout == "empty\n"
+
+
+def test_bashtool_invalid_snapshot_raises_bash_error():
+    tool = BashTool()
+
+    with pytest.raises(BashError):
+        BashTool.from_snapshot(b"not valid snapshot")
+
+    with pytest.raises(BashError):
+        tool.restore_snapshot(b"not valid snapshot")
+
+
 # Issue #424: reset() should preserve security configuration
 def test_reset_preserves_config():
     bash = Bash(max_commands=5, username="testuser", hostname="testhost")

@@ -133,7 +133,6 @@ tool = BashTool(files={
 # Snapshot / restore state
 blob = tool.snapshot()
 restored = BashTool.from_snapshot(blob, username="user")
-restored.restore_snapshot(blob)
 
 # Direct VFS helpers (text-oriented convenience wrappers)
 tool.read_file("/tmp/data.txt")      # -> str
@@ -169,7 +168,6 @@ from bashkit import Bash
 bash = Bash()
 blob = bash.snapshot()              # -> bytes
 restored = Bash.from_snapshot(blob) # -> Bash
-restored.restore_snapshot(blob)
 ```
 
 ### ExecResult
