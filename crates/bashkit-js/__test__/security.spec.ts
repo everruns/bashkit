@@ -11,7 +11,28 @@
  */
 
 import test from "ava";
-import { Bash, BashTool, BashError } from "../wrapper.js";
+import { Bash, BashTool, BashError, ScriptedTool } from "../wrapper.js";
+
+function sleepMs(ms: number): void {
+  const signal = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(signal, 0, 0, ms);
+}
+
+function nestedSchemaObject(depth: number): Record<string, unknown> {
+  let value: Record<string, unknown> = { type: "string" };
+  for (let i = 0; i < depth; i++) {
+    value = { child: value };
+  }
+  return value;
+}
+
+function nestedSchemaArray(depth: number): unknown {
+  let value: unknown = 1;
+  for (let i = 0; i < depth; i++) {
+    value = [value];
+  }
+  return value;
+}
 
 // ============================================================================
 // 1. WHITE-BOX — Resource Limit Enforcement (TM-DOS)
@@ -1103,4 +1124,206 @@ test("BB: sync constructor rejects async file providers", (t) => {
     undefined,
     "sync constructor must reject async providers",
   );
+});
+
+// ============================================================================
+// 19. WHITE-BOX — Additional Callback / Schema Security
+// ============================================================================
+
+test("WB: direct VFS write accepts file at exact size limit (TM-DOS-005)", (t) => {
+  const bash = new Bash();
+  const content = "X".repeat(10_000_000);
+
+  bash.writeFile("/tmp/exact-limit.txt", content);
+
+  t.is(bash.stat("/tmp/exact-limit.txt").size, 10_000_000);
+  t.is(bash.executeSync("wc -c /tmp/exact-limit.txt").exitCode, 0);
+});
+
+test("WB: direct VFS write rejects file above size limit (TM-DOS-005)", (t) => {
+  const bash = new Bash();
+  const err = t.throws(() =>
+    bash.writeFile("/tmp/too-large.txt", "X".repeat(10_000_001)),
+  );
+
+  t.truthy(err);
+  t.regex(String(err.message), /file too large/i);
+});
+
+test("WB: BashTool.writeFile stores EOF marker content verbatim", (t) => {
+  const tool = new BashTool();
+  const content = "EOF\necho injected\nEOF\n";
+
+  tool.writeFile("/tmp/eof-marker.txt", content);
+
+  t.is(tool.readFile("/tmp/eof-marker.txt"), content);
+  t.not(tool.executeSync("test -e /tmp/injected").exitCode, 0);
+});
+
+test("WB: BashTool.writeFile stores repeated heredoc marker content verbatim", (t) => {
+  const tool = new BashTool();
+  const content = "HEREDOC\nline two\nHEREDOC\nline four\n";
+
+  tool.writeFile("/tmp/heredoc-marker.txt", content);
+
+  t.is(tool.readFile("/tmp/heredoc-marker.txt"), content);
+});
+
+test("WB: ScriptedTool slow callback completes without deadlock (TM-DOS-023)", async (t) => {
+  const tool = new ScriptedTool({ name: "slow" });
+  tool.addTool("slow", "Slow callback", () => {
+    sleepMs(50);
+    return "done\n";
+  });
+
+  const started = performance.now();
+  const result = await tool.execute("slow");
+  const elapsed = performance.now() - started;
+
+  t.is(result.exitCode, 0);
+  t.is(result.stdout.trim(), "done");
+  t.true(elapsed >= 40, `elapsed=${elapsed}`);
+  t.true(elapsed < 1_000, `elapsed=${elapsed}`);
+});
+
+test("WB: ScriptedTool stdin injection stays literal (TM-INJ-001)", async (t) => {
+  const tool = new ScriptedTool({ name: "echo_stdin" });
+  tool.addTool("echo_stdin", "Echo stdin", (_params, stdin) => stdin ?? "");
+
+  const result = await tool.execute("echo '$(echo injected)' | echo_stdin");
+
+  t.is(result.exitCode, 0);
+  t.is(result.stdout.trim(), "$(echo injected)");
+});
+
+test("WB: ScriptedTool schema nesting at exact limit is accepted (TM-DOS-027)", (t) => {
+  const tool = new ScriptedTool({ name: "depth_63" });
+
+  tool.addTool("test", "Depth 63", () => "ok\n", nestedSchemaObject(63));
+
+  t.is(tool.toolCount(), 1);
+});
+
+test("WB: ScriptedTool schema nesting beyond limit is rejected (TM-DOS-027)", (t) => {
+  const tool = new ScriptedTool({ name: "depth_64" });
+
+  const err = t.throws(() =>
+    tool.addTool("test", "Depth 64", () => "ok\n", nestedSchemaObject(64)),
+  );
+
+  t.truthy(err);
+  t.regex(String(err.message), /nesting depth exceeds maximum of 64/i);
+});
+
+test("WB: ScriptedTool schema array nesting bomb is rejected (TM-DOS-027)", (t) => {
+  const tool = new ScriptedTool({ name: "array_bomb" });
+
+  const err = t.throws(() =>
+    tool.addTool(
+      "test",
+      "Array bomb",
+      () => "ok\n",
+      nestedSchemaArray(70) as Record<string, unknown>,
+    ),
+  );
+
+  t.truthy(err);
+  t.regex(String(err.message), /nesting depth exceeds maximum of 64/i);
+});
+
+// ============================================================================
+// 20. WHITE-BOX — Additional State Confusion
+// ============================================================================
+
+test("WB: exported environment persists in-instance but not across instances (TM-ISO-010)", (t) => {
+  const first = new Bash();
+  first.executeSync("export EVIL=payload");
+
+  t.is(first.executeSync("echo $EVIL").stdout.trim(), "payload");
+
+  const second = new Bash();
+  t.is(second.executeSync("echo ${EVIL:-clean}").stdout.trim(), "clean");
+});
+
+test("WB: aliases stay isolated between instances (TM-ISO-007)", (t) => {
+  const first = new Bash();
+  first.executeSync("alias ll='echo alias-one'");
+
+  t.true(
+    first.executeSync("alias").stdout.includes("alias ll='echo alias-one'"),
+  );
+
+  const second = new Bash();
+  t.is(second.executeSync("alias").stdout.trim(), "");
+});
+
+test("WB: reset clears nested VFS trees completely (TM-ISO-001)", (t) => {
+  const bash = new Bash();
+  bash.executeSync("mkdir -p /tmp/a/b/c");
+  bash.executeSync("echo data > /tmp/a/b/c/file.txt");
+  bash.executeSync("export SECRET=abc123");
+  bash.reset();
+
+  const result = bash.executeSync(
+    "cat /tmp/a/b/c/file.txt 2>&1; echo ${SECRET:-gone}",
+  );
+  t.false(result.stdout.includes("data"));
+  t.true(result.stdout.includes("gone"));
+});
+
+// ============================================================================
+// 21. BLACK-BOX — Additional Network / Encoding / Timing
+// ============================================================================
+
+test("BB: /dev/udp network escape attempt (TM-NET-001)", (t) => {
+  const bash = new Bash();
+  const result = bash.executeSync(
+    "echo test > /dev/udp/127.0.0.1/53 2>&1; echo $?",
+  );
+
+  t.not(result.stdout.trim(), "0", "/dev/udp must not allow network access");
+  t.true(result.stderr.includes("/dev/udp") || result.stdout.trim() === "1");
+});
+
+test("BB: UTF-8 overlong encoding attempt stays inert", (t) => {
+  const bash = new Bash();
+  const result = bash.executeSync(
+    "echo 'test\\xC0\\xAFetc\\xC0\\xAFpasswd' 2>/dev/null || echo safe",
+  );
+
+  t.false(result.stdout.includes("root:"));
+  t.true(result.stdout.includes("test"));
+});
+
+test("BB: trailing backslash at end of command does not crash", (t) => {
+  const bash = new Bash();
+  const result = bash.executeSync("echo hello\\");
+
+  t.is(result.exitCode, 0);
+  t.is(result.stdout.trim(), "hello\\");
+});
+
+test("BB: CRLF payload in string literal remains data", (t) => {
+  const bash = new Bash();
+  const result = bash.executeSync("echo 'before\\r\\nHTTP/1.1 200 OK\\r\\n'");
+
+  t.is(result.exitCode, 0);
+  t.true(result.stdout.includes("HTTP/1.1 200 OK"));
+});
+
+test("BB: equivalent file probes stay within coarse timing delta (TM-DOS-023)", (t) => {
+  const bash = new Bash();
+  bash.executeSync("echo secret > /tmp/present.txt");
+
+  const presentStart = performance.now();
+  const present = bash.executeSync("cat /tmp/present.txt >/dev/null");
+  const presentElapsed = performance.now() - presentStart;
+
+  const missingStart = performance.now();
+  const missing = bash.executeSync("cat /tmp/missing.txt >/dev/null 2>&1");
+  const missingElapsed = performance.now() - missingStart;
+
+  t.is(present.exitCode, 0);
+  t.not(missing.exitCode, 0);
+  t.true(Math.abs(presentElapsed - missingElapsed) < 250);
 });
