@@ -1269,4 +1269,90 @@ mod tests {
         assert!(resp.stdout.contains("from_impl"));
         assert!(resp.stdout.contains("from_fn"));
     }
+
+    // -- Issue #1278: --help flag tests --
+
+    #[tokio::test]
+    async fn test_tool_help_flag_returns_help_text() {
+        let tool = build_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "get_user --help".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        assert!(
+            resp.stdout.contains("get_user"),
+            "help should include tool name"
+        );
+        assert!(
+            resp.stdout.contains("Fetch user by id"),
+            "help should include description"
+        );
+        assert!(
+            resp.stdout.contains("--id"),
+            "help should include parameter flags"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_help_flag_does_not_invoke_callback() {
+        let tool = build_test_tool();
+        // fail_tool always returns an error, but --help should not invoke it
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "fail_tool --help".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(
+            resp.exit_code, 0,
+            "--help should succeed even for fail_tool"
+        );
+        assert!(
+            resp.stdout.contains("Always fails"),
+            "help should include description"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_help_flag_same_as_help_builtin() {
+        let tool = build_test_tool();
+        let help_output = tool
+            .execute(ToolRequest {
+                commands: "help get_user".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        let flag_output = tool
+            .execute(ToolRequest {
+                commands: "get_user --help".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(
+            help_output.stdout, flag_output.stdout,
+            "`--help` should produce same output as `help <tool>`"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_help_flag_stripped_from_args() {
+        let tool = build_test_tool();
+        // get_user --help --id 42 should not call the callback with --help in args
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "get_user --help --id 42".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 0);
+        // Output should be help text, not the callback result
+        assert!(resp.stdout.contains("Fetch user by id"));
+        assert!(
+            !resp.stdout.contains("Alice"),
+            "callback should NOT be invoked"
+        );
+    }
 }

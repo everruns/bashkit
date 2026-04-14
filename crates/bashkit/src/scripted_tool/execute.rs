@@ -43,15 +43,41 @@ fn push_invocation(
 /// Parses `--key value` flags from `ctx.args` using the schema for type coercion.
 struct ToolBuiltinAdapter {
     name: String,
+    description: String,
     callback: CallbackKind,
     schema: serde_json::Value,
     log: InvocationLog,
     sanitize_errors: bool,
 }
 
+impl ToolBuiltinAdapter {
+    /// Generate help text from the tool's schema, identical to `help <tool>`.
+    fn help_text(&self) -> String {
+        let mut out = format!("{} - {}\n", self.name, self.description);
+        if let Some(usage) = usage_from_schema(&self.schema) {
+            out.push_str(&format!("Usage: {} {}\n", self.name, usage));
+        }
+        out
+    }
+}
+
 #[async_trait]
 impl Builtin for ToolBuiltinAdapter {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        // Intercept --help before calling the callback — return the same
+        // quality output as `help <tool>` without invoking the callback.
+        if ctx.args.iter().any(|a| a == "--help") {
+            let result = ExecResult::ok(self.help_text());
+            push_invocation(
+                &self.log,
+                &self.name,
+                ScriptedCommandKind::Help,
+                ctx.args,
+                result.exit_code,
+            );
+            return Ok(result);
+        }
+
         let exit_result = match parse_flags(ctx.args, &self.schema) {
             Ok(params) => {
                 let tool_args = ToolArgs {
@@ -345,6 +371,7 @@ impl ScriptedTool {
             let name = tool.def.name.clone();
             let builtin: Box<dyn Builtin> = Box::new(ToolBuiltinAdapter {
                 name: name.clone(),
+                description: tool.def.description.clone(),
                 callback: tool.callback.clone(),
                 schema: tool.def.input_schema.clone(),
                 log: Arc::clone(&log),
