@@ -254,6 +254,12 @@ pub struct Word {
     /// True if this word came from a quoted source (single or double quotes)
     /// Quoted words should not undergo brace expansion or glob expansion
     pub quoted: bool,
+    /// True when the word mixes quoted and unquoted segments and the unquoted
+    /// portion contains glob metacharacters (`*`, `?`, `[`).  For example,
+    /// `"$var"*.txt` — the quoted expansion suppresses IFS splitting
+    /// (`quoted == true`) but the unquoted `*` must still undergo glob
+    /// expansion.
+    pub has_unquoted_glob: bool,
 }
 
 impl Word {
@@ -262,6 +268,7 @@ impl Word {
         Self {
             parts: vec![WordPart::Literal(s.into())],
             quoted: false,
+            has_unquoted_glob: false,
         }
     }
 
@@ -270,6 +277,7 @@ impl Word {
         Self {
             parts: vec![WordPart::Literal(s.into())],
             quoted: true,
+            has_unquoted_glob: false,
         }
     }
 }
@@ -578,6 +586,7 @@ mod tests {
         let w = Word {
             parts: vec![WordPart::Variable("HOME".into())],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "$HOME");
     }
@@ -587,6 +596,7 @@ mod tests {
         let w = Word {
             parts: vec![WordPart::ArithmeticExpansion("1+2".into())],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "$((1+2))");
     }
@@ -596,6 +606,7 @@ mod tests {
         let w = Word {
             parts: vec![WordPart::Length("var".into())],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${#var}");
     }
@@ -608,6 +619,7 @@ mod tests {
                 index: "0".into(),
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${arr[0]}");
     }
@@ -617,6 +629,7 @@ mod tests {
         let w = Word {
             parts: vec![WordPart::ArrayLength("arr".into())],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${#arr[@]}");
     }
@@ -626,6 +639,7 @@ mod tests {
         let w = Word {
             parts: vec![WordPart::ArrayIndices("arr".into())],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${!arr[@]}");
     }
@@ -639,6 +653,7 @@ mod tests {
                 length: Some("3".into()),
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${var:2:3}");
     }
@@ -652,6 +667,7 @@ mod tests {
                 length: None,
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${var:2}");
     }
@@ -665,6 +681,7 @@ mod tests {
                 length: Some("2".into()),
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${arr[@]:1:2}");
     }
@@ -678,6 +695,7 @@ mod tests {
                 length: None,
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${arr[@]:1}");
     }
@@ -692,6 +710,7 @@ mod tests {
                 colon_variant: false,
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${!ref}");
     }
@@ -701,6 +720,7 @@ mod tests {
         let w = Word {
             parts: vec![WordPart::PrefixMatch("MY_".into())],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${!MY_*}");
     }
@@ -713,6 +733,7 @@ mod tests {
                 operator: 'Q',
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${var@Q}");
     }
@@ -725,6 +746,7 @@ mod tests {
                 WordPart::Variable("USER".into()),
             ],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "hello $USER");
     }
@@ -739,6 +761,7 @@ mod tests {
                 colon_variant: true,
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${var:-fallback}");
     }
@@ -753,6 +776,7 @@ mod tests {
                 colon_variant: false,
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${var-fallback}");
     }
@@ -767,6 +791,7 @@ mod tests {
                 colon_variant: true,
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${var:=val}");
     }
@@ -781,6 +806,7 @@ mod tests {
                 colon_variant: true,
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${var:+alt}");
     }
@@ -795,6 +821,7 @@ mod tests {
                 colon_variant: true,
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${var:?msg}");
     }
@@ -810,6 +837,7 @@ mod tests {
                 colon_variant: false,
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${var#pat}");
 
@@ -822,6 +850,7 @@ mod tests {
                 colon_variant: false,
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${var##pat}");
 
@@ -834,6 +863,7 @@ mod tests {
                 colon_variant: false,
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${var%pat}");
 
@@ -846,6 +876,7 @@ mod tests {
                 colon_variant: false,
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${var%%pat}");
     }
@@ -863,6 +894,7 @@ mod tests {
                 colon_variant: false,
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${var/old/new}");
 
@@ -877,6 +909,7 @@ mod tests {
                 colon_variant: false,
             }],
             quoted: false,
+            has_unquoted_glob: false,
         };
         assert_eq!(format!("{w}"), "${var///old/new}");
     }
@@ -892,6 +925,7 @@ mod tests {
                     colon_variant: false,
                 }],
                 quoted: false,
+                has_unquoted_glob: false,
             };
             assert_eq!(format!("{w}"), expected);
         };

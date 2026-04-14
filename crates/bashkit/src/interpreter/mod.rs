@@ -1680,8 +1680,9 @@ impl Interpreter {
             for w in words {
                 let fields = self.expand_word_to_fields(w).await?;
 
-                // Quoted words skip brace/glob expansion
-                if w.quoted {
+                // Quoted words skip brace/glob expansion — unless the
+                // word has unquoted glob chars (e.g. `"$var"*.ext`)
+                if w.quoted && !w.has_unquoted_glob {
                     vals.extend(fields);
                     continue;
                 }
@@ -1751,7 +1752,7 @@ impl Interpreter {
         let mut values = Vec::new();
         for w in &select_cmd.words {
             let fields = self.expand_word_to_fields(w).await?;
-            if w.quoted {
+            if w.quoted && !w.has_unquoted_glob {
                 values.extend(fields);
             } else {
                 for expanded in fields {
@@ -3833,8 +3834,11 @@ impl Interpreter {
             // Use field expansion so "${arr[@]}" produces multiple args
             let fields = self.expand_word_to_fields(word).await?;
 
-            // Skip brace and glob expansion for quoted words
-            if word.quoted {
+            // Skip brace and glob expansion for quoted words — unless the
+            // word has unquoted glob chars (e.g. `"$var"*.ext`) in which case
+            // the quoted expansion suppresses IFS splitting but the unquoted
+            // portion must still undergo glob expansion.
+            if word.quoted && !word.has_unquoted_glob {
                 args.extend(fields);
                 continue;
             }
@@ -10901,6 +10905,57 @@ echo "count=$COUNT"
         assert!(output.starts_with("keys: "), "got: {}", output);
         assert!(output.contains("a"), "got: {}", output);
         assert!(output.contains("b"), "got: {}", output);
+    }
+
+    /// Issue #1277: glob `*` not expanded when adjacent to quoted variable expansion.
+    /// In `"$var"*.ext`, the unquoted `*` must undergo glob expansion even though
+    /// the word contains a quoted expansion (which suppresses IFS splitting).
+    #[tokio::test]
+    async fn test_glob_adjacent_to_quoted_variable() {
+        let mut bash = crate::Bash::new();
+        bash.fs()
+            .mkdir(std::path::Path::new("/tmp/test"), true)
+            .await
+            .unwrap();
+        bash.fs()
+            .write_file(
+                std::path::Path::new("/tmp/test/tag_hello.tmp.html"),
+                b"hello",
+            )
+            .await
+            .unwrap();
+        bash.fs()
+            .write_file(
+                std::path::Path::new("/tmp/test/tag_world.tmp.html"),
+                b"world",
+            )
+            .await
+            .unwrap();
+
+        // Test: ./"$p"*.tmp.html should expand the glob
+        let result = bash
+            .exec(r#"cd /tmp/test; p="tag_"; for f in ./"$p"*.tmp.html; do echo "$f"; done"#)
+            .await
+            .unwrap();
+        let mut lines: Vec<&str> = result.stdout.trim().lines().collect();
+        lines.sort();
+        assert_eq!(
+            lines,
+            vec!["./tag_hello.tmp.html", "./tag_world.tmp.html"],
+            "glob * adjacent to quoted var should expand"
+        );
+
+        // Test: ls ./"$p"*.tmp.html should also work
+        let result = bash
+            .exec(r#"cd /tmp/test; p="tag_"; ls ./"$p"*.tmp.html"#)
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0, "ls stderr: {}", result.stderr);
+        assert!(
+            result.stdout.contains("tag_hello.tmp.html"),
+            "ls output: {}",
+            result.stdout
+        );
     }
 
     #[tokio::test]
