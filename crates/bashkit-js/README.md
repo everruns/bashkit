@@ -13,7 +13,7 @@ deno add npm:@everruns/bashkit  # Deno
 ## Features
 
 - **Sandboxed execution** — all commands run in-process with a virtual filesystem, no containers needed
-- **156 built-in commands** — echo, cat, grep, sed, awk, jq, curl, find, and more
+- **160 built-in commands** — echo, cat, grep, sed, awk, jq, curl, find, and more
 - **Full bash syntax** — variables, pipelines, redirects, loops, functions, arrays
 - **Resource limits** — protect against infinite loops and runaway scripts
 - **Sync and async APIs** — `executeSync()` and `execute()` (Promise-based)

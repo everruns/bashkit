@@ -37,9 +37,9 @@ ignore = [
     # atomic-polyfill: transitive via monty -> postcard -> heapless
     # Unmaintained but no security vulnerability; upstream dep we can't control
     "RUSTSEC-2023-0089",
-    # rsa: Marvin timing attack — transitive via russh-keys -> ssh-key -> rsa
-    # Only used for RSA key parsing; no direct timing attack exposure
-    "RUSTSEC-2023-0071",
+    # rand: unsoundness with custom logger using rand::rng() (RUSTSEC-2026-0097)
+    # Transitive via russh, statrs, proptest, reqwest; we don't use custom loggers
+    "RUSTSEC-2026-0097",
 ]
 
 [bans]

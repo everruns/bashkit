@@ -274,15 +274,15 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-**148 core builtins + 8 feature-gated = 156 total**
+**148 core builtins + 12 feature-gated = 160 total**
 
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,
-`continue`, `return`, `grep`, `sed`, `awk`, `jq`, `sleep`, `head`, `tail`,
+`continue`, `return`, `grep`, `sed`, `awk`, `sleep`, `head`, `tail`,
 `basename`, `dirname`, `realpath`, `readlink`, `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`,
 `touch`, `chmod`, `chown`, `ln`, `wc`,
 `sort`, `uniq`, `cut`, `tr`, `paste`, `column`, `diff`, `comm`, `date`,
-`wait`, `curl`, `wget`, `timeout`, `command`, `getopts`,
+`wait`, `curl`, `wget`, `timeout`, `command`, `exec`, `getopts`,
 `type`, `which`, `hash`, `declare`, `typeset`, `let`, `kill`, `shopt`,
 `trap`, `caller`, `mapfile`, `readarray`, `seq`, `tac`, `rev`, `yes`, `expr`,
 `time` (keyword), `whoami`, `hostname`, `uname`, `id`, `ls`, `rmdir`, `find`, `xargs`, `tee`,
@@ -296,7 +296,9 @@ Features that may be added in the future (not intentionally excluded):
 `compgen`, `csv`, `fc`, `help`, `http`, `iconv`, `json`,
 `numfmt`, `parallel`, `patch`, `rg`, `template`, `tomlq`, `yaml`, `zip`, `unzip`,
 `alias`, `unalias`,
+`jq` (requires `jq` feature),
 `git` (requires `git` feature, see [010-git-support.md](010-git-support.md)),
+`ssh`, `scp`, `sftp` (requires `ssh` feature, see [015-ssh-support.md](015-ssh-support.md)),
 `python`, `python3` (requires `python` feature, see [011-python-builtin.md](011-python-builtin.md)),
 `ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature, see [016-zapcode-runtime.md](016-zapcode-runtime.md))
 
