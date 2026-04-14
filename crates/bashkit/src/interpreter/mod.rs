@@ -11463,11 +11463,11 @@ cat /tmp/test_fd.txt"#,
             );
         }
 
-        let user_names = ["HOME", "PATH", "USER", "MY_VAR", "foo", "_"];
-        for name in &user_names {
+        let regular_vars = ["HOME", "PATH", "USER", "MY_VAR", "foo", "_"];
+        for name in &regular_vars {
             assert!(
                 !is_internal_variable(name),
-                "is_internal_variable() should return false for user variable {name}"
+                "is_internal_variable() should return false for regular variable {name}"
             );
         }
     }

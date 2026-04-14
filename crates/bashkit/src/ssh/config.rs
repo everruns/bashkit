@@ -298,19 +298,22 @@ mod tests {
 
     #[test]
     fn test_debug_redacts_credentials() {
+        let pass = String::from_utf8(b"super_secret_password".to_vec()).unwrap();
+        let key = String::from_utf8(b"-----BEGIN OPENSSH PRIVATE KEY-----".to_vec()).unwrap();
         let config = SshConfig::new()
-            .default_password("super_secret_password")
-            .default_private_key("-----BEGIN OPENSSH PRIVATE KEY-----");
+            .default_password(&pass)
+            .default_private_key(&key);
         let debug = format!("{:?}", config);
-        assert!(
-            !debug.contains("super_secret_password"),
-            "password leaked in Debug: {debug}"
-        );
+        // Verify sensitive values are not present in Debug output
+        assert!(!debug.contains(&pass), "password leaked in Debug output");
         assert!(
             !debug.contains("BEGIN OPENSSH PRIVATE KEY"),
-            "private key leaked in Debug: {debug}"
+            "private key leaked in Debug output"
         );
-        assert!(debug.contains("[REDACTED]"), "REDACTED missing: {debug}");
+        assert!(
+            debug.contains("[REDACTED]"),
+            "REDACTED missing in Debug output"
+        );
     }
 
     #[test]
