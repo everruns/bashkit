@@ -398,6 +398,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 mod builtins;
+mod credential;
 mod error;
 mod fs;
 mod git;
@@ -423,6 +424,7 @@ pub mod trace;
 
 pub use async_trait::async_trait;
 pub use builtins::{Builtin, Context as BuiltinContext};
+pub use credential::Credential;
 pub use error::{Error, Result};
 pub use fs::{
     DirEntry, FileSystem, FileSystemExt, FileType, FsBackend, FsLimitExceeded, FsLimits, FsUsage,
@@ -1145,6 +1147,9 @@ pub struct BashBuilder {
     hooks_before_http: Vec<hooks::Interceptor<hooks::HttpRequestEvent>>,
     #[cfg(feature = "http_client")]
     hooks_after_http: Vec<hooks::Interceptor<hooks::HttpResponseEvent>>,
+    /// Credential injection policy
+    #[cfg(feature = "http_client")]
+    credential_policy: Option<credential::CredentialPolicy>,
 }
 
 impl BashBuilder {
@@ -1828,6 +1833,83 @@ impl BashBuilder {
         self
     }
 
+    /// Inject credentials for outbound HTTP requests matching the given URL pattern.
+    ///
+    /// The pattern uses the same matching as [`NetworkAllowlist`]
+    /// (scheme + host + port + path prefix). Injected headers **overwrite**
+    /// any existing headers with the same name set by the script, preventing
+    /// credential spoofing.
+    ///
+    /// The script never sees the real credential — it is injected transparently
+    /// by a `before_http` hook after the allowlist check.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, Credential, NetworkAllowlist};
+    ///
+    /// let bash = Bash::builder()
+    ///     .network(NetworkAllowlist::new()
+    ///         .allow("https://api.github.com"))
+    ///     .credential("https://api.github.com",
+    ///         Credential::bearer("ghp_xxxx"))
+    ///     .build();
+    /// // Scripts can now: curl -s https://api.github.com/repos/foo/bar
+    /// // Authorization: Bearer ghp_xxxx is added transparently.
+    /// ```
+    ///
+    /// See [`credential_injection_guide`] for the full guide.
+    #[cfg(feature = "http_client")]
+    pub fn credential(mut self, pattern: &str, cred: credential::Credential) -> Self {
+        self.credential_policy
+            .get_or_insert_with(credential::CredentialPolicy::new)
+            .add_injection(pattern, cred);
+        self
+    }
+
+    /// Inject credentials via a placeholder env var visible to scripts.
+    ///
+    /// Sets environment variable `env_name` to an opaque placeholder string.
+    /// When a request to `pattern` contains the placeholder in any header
+    /// value, it is replaced with the real credential on the wire.
+    ///
+    /// The placeholder is a random string (`bk_placeholder_<hex>`) that:
+    /// - Cannot be reversed to the real credential
+    /// - Is only replaced for requests matching the URL pattern
+    /// - Passes most SDK non-empty validation checks
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, Credential, NetworkAllowlist};
+    ///
+    /// let bash = Bash::builder()
+    ///     .network(NetworkAllowlist::new()
+    ///         .allow("https://api.openai.com"))
+    ///     .credential_placeholder("OPENAI_API_KEY",
+    ///         "https://api.openai.com",
+    ///         Credential::bearer("sk-real-key"))
+    ///     .build();
+    /// // Scripts see $OPENAI_API_KEY as "bk_placeholder_..." and use it normally.
+    /// // The placeholder is replaced with the real key in outbound headers.
+    /// ```
+    ///
+    /// See [`credential_injection_guide`] for the full guide.
+    #[cfg(feature = "http_client")]
+    pub fn credential_placeholder(
+        mut self,
+        env_name: &str,
+        pattern: &str,
+        cred: credential::Credential,
+    ) -> Self {
+        let placeholder = self
+            .credential_policy
+            .get_or_insert_with(credential::CredentialPolicy::new)
+            .add_placeholder(pattern, cred);
+        self.env.insert(env_name.to_string(), placeholder);
+        self
+    }
+
     /// Mount a text file in the virtual filesystem.
     ///
     /// This creates a regular file (mode `0o644`) with the specified content at
@@ -2202,13 +2284,26 @@ impl BashBuilder {
             result.interpreter.set_hooks(hooks);
         }
 
+        // Convert credential policy into a before_http hook.
+        // Credential hook runs FIRST so subsequent hooks see injected headers.
+        #[cfg(feature = "http_client")]
+        let mut hooks_before_http = Vec::new();
+        #[cfg(feature = "http_client")]
+        if let Some(policy) = self.credential_policy
+            && !policy.is_empty()
+        {
+            hooks_before_http.push(policy.into_hook());
+        }
+        #[cfg(feature = "http_client")]
+        hooks_before_http.extend(self.hooks_before_http);
+
         // Set HTTP hooks on the HttpClient (transport-level, not interpreter-level)
         #[cfg(feature = "http_client")]
-        if (!self.hooks_before_http.is_empty() || !self.hooks_after_http.is_empty())
+        if (!hooks_before_http.is_empty() || !self.hooks_after_http.is_empty())
             && let Some(client) = result.interpreter.http_client_mut()
         {
-            if !self.hooks_before_http.is_empty() {
-                client.set_before_http(self.hooks_before_http);
+            if !hooks_before_http.is_empty() {
+                client.set_before_http(hooks_before_http);
             }
             if !self.hooks_after_http.is_empty() {
                 client.set_after_http(self.hooks_after_http);
@@ -2447,6 +2542,18 @@ impl BashBuilder {
 // These modules embed external markdown guides into rustdoc.
 // Source files live in crates/bashkit/docs/ - edit there, not here.
 // See specs/008-documentation.md for the documentation approach.
+
+/// Guide for transparent credential injection in outbound HTTP requests.
+///
+/// Two modes: **injection** (script unaware) and **placeholder** (opaque
+/// env var replaced on the wire). Credentials are scoped per URL pattern
+/// and never visible to sandboxed scripts.
+///
+/// **Related:** [`BashBuilder::credential`], [`BashBuilder::credential_placeholder`],
+/// [`Credential`], [`NetworkAllowlist`], [`threat_model`]
+#[cfg(feature = "http_client")]
+#[doc = include_str!("../docs/credential-injection.md")]
+pub mod credential_injection_guide {}
 
 /// Guide for creating custom builtins to extend Bashkit.
 ///
