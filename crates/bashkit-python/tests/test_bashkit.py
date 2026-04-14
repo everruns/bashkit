@@ -99,6 +99,51 @@ def test_bash_files_dict():
     assert bash.execute_sync("cat /etc/version").stdout == "1.2.3\n"
 
 
+def test_bash_files_dict_callables_are_lazy_and_cached():
+    calls = []
+    payload = json.dumps({"enabled": True, "count": 2})
+
+    def load_config():
+        calls.append("load")
+        return payload
+
+    bash = Bash(
+        files={
+            "/config/static.txt": "static\n",
+            "/config/lazy.json": load_config,
+        },
+    )
+
+    assert calls == []
+    assert bash.execute_sync("cat /config/static.txt").stdout == "static\n"
+    assert calls == []
+    assert bash.execute_sync("cat /config/lazy.json").stdout == payload
+    assert calls == ["load"]
+    assert bash.read_file("/config/lazy.json") == payload
+    assert calls == ["load"]
+
+
+def test_bash_files_dict_callable_errors_and_invalid_returns_raise():
+    def explode():
+        raise RuntimeError("provider exploded")
+
+    def invalid():
+        return 123
+
+    bash = Bash(
+        files={
+            "/config/error.txt": explode,
+            "/config/invalid.txt": invalid,
+        },
+    )
+
+    with pytest.raises(Exception, match="provider exploded"):
+        bash.execute_sync_or_throw("cat /config/error.txt")
+
+    with pytest.raises(TypeError, match="str"):
+        bash.read_file("/config/invalid.txt")
+
+
 def test_bash_mounts_readonly_by_default(tmp_path):
     (tmp_path / "data.txt").write_text("original\n")
     bash = Bash(mounts=[{"host_path": str(tmp_path), "vfs_path": "/data"}])
@@ -374,6 +419,29 @@ def test_file_persistence():
     tool.execute_sync("echo content > /tmp/test.txt")
     r = tool.execute_sync("cat /tmp/test.txt")
     assert r.stdout.strip() == "content"
+
+
+def test_bashtool_files_dict_callables_are_lazy_and_cached():
+    calls = []
+
+    def generate_report():
+        calls.append("generate")
+        return "a,b\n1,2\n"
+
+    tool = BashTool(
+        files={
+            "/reports/static.txt": "ready\n",
+            "/reports/generated.csv": generate_report,
+        },
+    )
+
+    assert calls == []
+    assert tool.execute_sync("cat /reports/static.txt").stdout == "ready\n"
+    assert calls == []
+    assert tool.execute_sync("cat /reports/generated.csv").stdout == "a,b\n1,2\n"
+    assert calls == ["generate"]
+    assert tool.read_file("/reports/generated.csv") == "a,b\n1,2\n"
+    assert calls == ["generate"]
 
 
 def test_bashtool_realfs_and_fs_handle(tmp_path):
