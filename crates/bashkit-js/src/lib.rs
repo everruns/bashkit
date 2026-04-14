@@ -1306,6 +1306,7 @@ type ToolTsfn = napi::threadsafe_function::ThreadsafeFunction<
     (String,),
     napi::Status,
     false,
+    true,
 >;
 
 /// Entry for a registered JS tool callback.
@@ -1370,7 +1371,10 @@ impl ScriptedTool {
         callback: napi::bindgen_prelude::Function<(String,), String>,
         schema: Option<String>,
     ) -> napi::Result<()> {
-        let tsfn: ToolTsfn = callback.build_threadsafe_function::<(String,)>().build()?;
+        let tsfn: ToolTsfn = callback
+            .build_threadsafe_function::<(String,)>()
+            .weak::<true>()
+            .build()?;
 
         let schema_val = match schema {
             Some(s) => serde_json::from_str(&s)
