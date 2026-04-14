@@ -305,15 +305,15 @@ mod tests {
             .default_private_key(&key);
         let debug = format!("{:?}", config);
         // Verify sensitive values are not present in Debug output
-        assert!(
-            !debug.contains(&pass),
-            "password leaked in Debug output"
-        );
+        assert!(!debug.contains(&pass), "password leaked in Debug output");
         assert!(
             !debug.contains("BEGIN OPENSSH PRIVATE KEY"),
             "private key leaked in Debug output"
         );
-        assert!(debug.contains("[REDACTED]"), "REDACTED missing in Debug output");
+        assert!(
+            debug.contains("[REDACTED]"),
+            "REDACTED missing in Debug output"
+        );
     }
 
     #[test]
