@@ -2,13 +2,28 @@
 Deep Agents integration for Bashkit.
 
 Provides middleware and backend for Deep Agents using Bashkit's VFS:
-- BashkitMiddleware: Adds `bash` tool via AgentMiddleware.tools
-- BashkitBackend: SandboxBackendProtocol for execute/read_file/write_file/etc.
 
-Use together for shared VFS:
-    >>> backend = BashkitBackend()
-    >>> middleware = backend.create_middleware()  # shares VFS
+- ``BashkitMiddleware``: Adds ``bash`` tool via ``AgentMiddleware.tools``
+- ``BashkitBackend``: ``SandboxBackendProtocol`` for execute/read_file/write_file/etc.
+
+Standalone middleware (creates its own VFS)::
+
+    >>> from bashkit.deepagents import create_bash_middleware
+    >>> middleware = create_bash_middleware(timeout_seconds=30)
+    >>> agent = create_deep_agent(middleware=[middleware])
+
+Backend with shared VFS (recommended)::
+
+    >>> from bashkit.deepagents import create_bashkit_backend
+    >>> backend = create_bashkit_backend()
+    >>> middleware = backend.create_middleware()  # shares VFS with backend
     >>> agent = create_deep_agent(backend=backend, middleware=[middleware])
+
+The backend exposes file operations on the same VFS used by bash::
+
+    >>> backend = create_bashkit_backend()
+    >>> backend.execute("echo hello > /greeting.txt")
+    >>> content = backend.read("/greeting.txt")
 """
 
 from __future__ import annotations

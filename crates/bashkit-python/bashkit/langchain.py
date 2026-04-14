@@ -4,17 +4,31 @@ LangChain integration for Bashkit.
 Provides LangChain-compatible tools wrapping BashTool and ScriptedTool
 for use with LangChain agents and chains.
 
-Example (BashTool):
-    >>> from bashkit.langchain import create_bash_tool
-    >>> tool = create_bash_tool()
-    >>> result = tool.invoke({"commands": "echo hello"})
+Create a bash tool and use it directly::
 
-Example (ScriptedTool):
+    >>> from bashkit.langchain import create_bash_tool
+    >>> tool = create_bash_tool(timeout_seconds=30)
+    >>> result = tool.invoke({"commands": "echo hello"})
+    >>> print(result)
+    hello
+
+Use with a LangChain agent::
+
+    >>> from bashkit.langchain import create_bash_tool
+    >>> from langchain_anthropic import ChatAnthropic
+    >>> from langgraph.prebuilt import create_react_agent
+    >>>
+    >>> tool = create_bash_tool()
+    >>> agent = create_react_agent(ChatAnthropic(model="claude-sonnet-4-20250514"), [tool])
+
+Wrap a ScriptedTool for multi-tool orchestration::
+
     >>> from bashkit import ScriptedTool
     >>> from bashkit.langchain import create_scripted_tool
     >>>
     >>> st = ScriptedTool("api")
-    >>> st.add_tool("greet", "Greet user", callback=lambda p, s=None: f"hello {p.get('name')}\\n")
+    >>> st.add_tool("greet", "Greet user",
+    ...     callback=lambda p, s=None: f"hello {p.get('name')}\\n")
     >>> tool = create_scripted_tool(st)
     >>> result = tool.invoke({"commands": "greet --name Alice"})
 """

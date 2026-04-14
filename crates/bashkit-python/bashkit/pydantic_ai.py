@@ -3,12 +3,17 @@ PydanticAI integration for Bashkit.
 
 Provides a Tool that wraps BashTool for use with PydanticAI agents.
 
-Example:
+Create a tool and attach it to a PydanticAI agent::
+
     >>> from bashkit.pydantic_ai import create_bash_tool
     >>> from pydantic_ai import Agent
     >>>
-    >>> tool = create_bash_tool()
+    >>> tool = create_bash_tool(timeout_seconds=30)
     >>> agent = Agent('anthropic:claude-sonnet-4-20250514', tools=[tool])
+
+The agent can then run bash commands in a sandboxed VFS::
+
+    >>> result = await agent.run("List files in the home directory")
 """
 
 from __future__ import annotations
