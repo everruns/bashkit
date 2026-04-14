@@ -153,7 +153,7 @@ pub async fn run_scripted_agent(
     for mock_tool in &task.tools {
         let def = build_tool_def(mock_tool);
         let callback = make_mock_callback(mock_tool.mock.clone());
-        builder = builder.tool(def, move |args: &ToolArgs| callback(args));
+        builder = builder.tool_fn(def, move |args: &ToolArgs| callback(args));
     }
     if task.discovery_mode {
         builder = builder.with_discovery();

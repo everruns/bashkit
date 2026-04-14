@@ -1,4 +1,4 @@
-//! ScriptedTool execution: Tool impl, builtin adapter, flag parser, documentation helpers.
+//! ScriptedTool execution: Tool impl, builtin adapter, documentation helpers.
 
 use super::{
     CallbackKind, ScriptedCommandInvocation, ScriptedCommandKind, ScriptedExecutionTrace,
@@ -12,6 +12,7 @@ use crate::tool::{
     Tool, ToolError, ToolExecution, ToolOutputChunk, ToolRequest, ToolResponse, ToolStatus,
     VERSION, localized, tool_output_from_response, tool_request_from_value,
 };
+use crate::tool_def::{parse_flags, usage_from_schema};
 use async_trait::async_trait;
 use schemars::schema_for;
 use std::sync::{Arc, Mutex};
@@ -32,110 +33,6 @@ fn push_invocation(
         args: args.to_vec(),
         exit_code,
     });
-}
-
-// ============================================================================
-// Flag parser — `--key value` / `--key=value` → JSON object
-// ============================================================================
-
-/// Parse `--key value` and `--key=value` flags into a JSON object.
-/// Types are coerced according to the schema's property definitions.
-/// Unknown flags (not in schema) are kept as strings.
-/// Bare `--flag` without a value is treated as `true` if the schema says boolean,
-/// otherwise as `true` when the next arg also starts with `--` or is absent.
-fn parse_flags(
-    raw_args: &[String],
-    schema: &serde_json::Value,
-) -> std::result::Result<serde_json::Value, String> {
-    let properties = schema
-        .get("properties")
-        .and_then(|p| p.as_object())
-        .cloned()
-        .unwrap_or_default();
-
-    let mut result = serde_json::Map::new();
-    let mut i = 0;
-
-    while i < raw_args.len() {
-        let arg = &raw_args[i];
-
-        let Some(flag) = arg.strip_prefix("--") else {
-            return Err(format!("expected --flag, got: {arg}"));
-        };
-
-        // --key=value
-        if let Some((key, raw_value)) = flag.split_once('=') {
-            let value = coerce_value(raw_value, properties.get(key));
-            result.insert(key.to_string(), value);
-            i += 1;
-            continue;
-        }
-
-        // --flag (boolean) or --key value
-        let key = flag;
-        let prop_schema = properties.get(key);
-        let is_boolean = prop_schema
-            .and_then(|s| s.get("type"))
-            .and_then(|t| t.as_str())
-            == Some("boolean");
-
-        if is_boolean {
-            result.insert(key.to_string(), serde_json::Value::Bool(true));
-            i += 1;
-        } else if i + 1 < raw_args.len() && !raw_args[i + 1].starts_with("--") {
-            let raw_value = &raw_args[i + 1];
-            let value = coerce_value(raw_value, prop_schema);
-            result.insert(key.to_string(), value);
-            i += 2;
-        } else {
-            // No value follows and not boolean — treat as true
-            result.insert(key.to_string(), serde_json::Value::Bool(true));
-            i += 1;
-        }
-    }
-
-    Ok(serde_json::Value::Object(result))
-}
-
-/// Coerce a raw string value to the type declared in the property schema.
-fn coerce_value(raw: &str, prop_schema: Option<&serde_json::Value>) -> serde_json::Value {
-    let type_str = prop_schema
-        .and_then(|s| s.get("type"))
-        .and_then(|t| t.as_str())
-        .unwrap_or("string");
-
-    match type_str {
-        "integer" => raw
-            .parse::<i64>()
-            .map(serde_json::Value::from)
-            .unwrap_or_else(|_| serde_json::Value::String(raw.to_string())),
-        "number" => raw
-            .parse::<f64>()
-            .map(|n| serde_json::json!(n))
-            .unwrap_or_else(|_| serde_json::Value::String(raw.to_string())),
-        "boolean" => match raw {
-            "true" | "1" | "yes" => serde_json::Value::Bool(true),
-            "false" | "0" | "no" => serde_json::Value::Bool(false),
-            _ => serde_json::Value::String(raw.to_string()),
-        },
-        _ => serde_json::Value::String(raw.to_string()),
-    }
-}
-
-/// Generate a usage hint from schema properties: `--id <integer> --name <string>`.
-fn usage_from_schema(schema: &serde_json::Value) -> Option<String> {
-    let props = schema.get("properties")?.as_object()?;
-    if props.is_empty() {
-        return None;
-    }
-    let flags: Vec<String> = props
-        .iter()
-        .map(|(key, prop)| {
-            let ty = prop.get("type").and_then(|t| t.as_str()).unwrap_or("value");
-            format!("--{key} <{ty}>")
-        })
-        .collect();
-    Some(flags.join(" "))
 }
 
 // ============================================================================
@@ -795,7 +692,7 @@ mod tests {
     fn build_help_test_tool() -> ScriptedTool {
         ScriptedTool::builder("test_api")
             .short_description("Test API")
-            .tool(
+            .tool_fn(
                 ToolDef::new("get_user", "Fetch user by ID").with_schema(serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -804,7 +701,7 @@ mod tests {
                 })),
                 |_args: &super::ToolArgs| Ok("{\"id\":1}\n".to_string()),
             )
-            .tool(
+            .tool_fn(
                 ToolDef::new("list_orders", "List orders for user").with_schema(
                     serde_json::json!({
                         "type": "object",
@@ -909,7 +806,7 @@ mod tests {
     async fn test_compact_prompt_omits_usage() {
         let tool = ScriptedTool::builder("compact_test")
             .compact_prompt(true)
-            .tool(
+            .tool_fn(
                 ToolDef::new("get_user", "Fetch user").with_schema(serde_json::json!({
                     "type": "object",
                     "properties": { "id": {"type": "integer"} }
@@ -925,7 +822,7 @@ mod tests {
     #[tokio::test]
     async fn test_non_compact_prompt_has_usage() {
         let tool = ScriptedTool::builder("full_test")
-            .tool(
+            .tool_fn(
                 ToolDef::new("get_user", "Fetch user").with_schema(serde_json::json!({
                     "type": "object",
                     "properties": { "id": {"type": "integer"} }
@@ -945,7 +842,7 @@ mod tests {
 
         let tool = ScriptedTool::builder("test")
             .short_description("test")
-            .tool(
+            .tool_fn(
                 ToolDef::new("fail", "Always fails"),
                 |_args: &super::ToolArgs| Err("service error".to_string()),
             )
@@ -969,31 +866,31 @@ mod tests {
     fn build_discover_test_tool() -> ScriptedTool {
         ScriptedTool::builder("big_api")
             .short_description("Big API")
-            .tool(
+            .tool_fn(
                 ToolDef::new("create_charge", "Create a payment charge")
                     .with_category("payments")
                     .with_tags(&["billing", "write"]),
                 |_args: &super::ToolArgs| Ok("ok\n".to_string()),
             )
-            .tool(
+            .tool_fn(
                 ToolDef::new("refund", "Issue a refund")
                     .with_category("payments")
                     .with_tags(&["billing", "write"]),
                 |_args: &super::ToolArgs| Ok("ok\n".to_string()),
             )
-            .tool(
+            .tool_fn(
                 ToolDef::new("get_user", "Fetch user by ID")
                     .with_category("users")
                     .with_tags(&["read"]),
                 |_args: &super::ToolArgs| Ok("ok\n".to_string()),
             )
-            .tool(
+            .tool_fn(
                 ToolDef::new("delete_user", "Delete a user account")
                     .with_category("users")
                     .with_tags(&["admin", "write"]),
                 |_args: &super::ToolArgs| Ok("ok\n".to_string()),
             )
-            .tool(
+            .tool_fn(
                 ToolDef::new("get_inventory", "Check inventory levels").with_category("inventory"),
                 |_args: &super::ToolArgs| Ok("ok\n".to_string()),
             )
@@ -1154,7 +1051,7 @@ mod tests {
     #[tokio::test]
     async fn test_callback_error_sanitized_by_default() {
         let tool = ScriptedTool::builder("api")
-            .tool(
+            .tool_fn(
                 ToolDef::new("fail", "Always fails"),
                 |_args: &super::ToolArgs| {
                     Err("connection failed: postgres://admin:secret@internal-db:5432/prod".into())
@@ -1181,7 +1078,7 @@ mod tests {
     async fn test_callback_error_unsanitized_when_disabled() {
         let tool = ScriptedTool::builder("api")
             .sanitize_errors(false)
-            .tool(
+            .tool_fn(
                 ToolDef::new("fail", "Always fails"),
                 |_args: &super::ToolArgs| {
                     Err("connection failed: postgres://admin:secret@internal-db:5432/prod".into())

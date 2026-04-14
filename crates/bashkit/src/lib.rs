@@ -418,6 +418,9 @@ mod snapshot;
 mod ssh;
 /// Tool contract for LLM integration
 pub mod tool;
+/// Reusable tool primitives: ToolDef, ToolArgs, ToolImpl, exec types.
+#[cfg(feature = "scripted_tool")]
+pub(crate) mod tool_def;
 /// Structured execution trace events.
 pub mod trace;
 
@@ -456,6 +459,8 @@ pub use scripted_tool::{
     ScriptedCommandKind, ScriptedExecutionTrace, ScriptedTool, ScriptedToolBuilder,
     ScriptingToolSet, ScriptingToolSetBuilder, ToolArgs, ToolCallback, ToolDef,
 };
+#[cfg(feature = "scripted_tool")]
+pub use tool_def::{AsyncToolExec, SyncToolExec, ToolImpl};
 
 #[cfg(feature = "http_client")]
 pub use network::{HttpClient, HttpHandler};

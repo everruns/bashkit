@@ -6,7 +6,7 @@
 //   DiscoverTool (discover/help only).
 
 use super::{
-    CallbackKind, RegisteredTool, ScriptedExecutionTrace, ScriptedTool, ToolArgs, ToolDef,
+    CallbackKind, RegisteredTool, ScriptedExecutionTrace, ScriptedTool, ToolArgs, ToolDef, ToolImpl,
 };
 use crate::ExecutionLimits;
 use crate::tool::{Tool, ToolError, ToolRequest, ToolResponse, ToolStatus, VERSION};
@@ -45,7 +45,7 @@ pub enum DiscoveryMode {
 ///
 /// # tokio_test::block_on(async {
 /// let toolset = ScriptingToolSet::builder("api")
-///     .tool(
+///     .tool_fn(
 ///         ToolDef::new("greet", "Greet someone").with_category("social"),
 ///         |_args: &ToolArgs| Ok("hello\n".to_string()),
 ///     )
@@ -188,7 +188,7 @@ impl Tool for DiscoverTool {
 ///
 /// let toolset = ScriptingToolSet::builder("api")
 ///     .short_description("Example API")
-///     .tool(
+///     .tool_fn(
 ///         ToolDef::new("ping", "Ping a host"),
 ///         |_args: &ToolArgs| Ok("pong\n".to_string()),
 ///     )
@@ -229,26 +229,36 @@ impl ScriptingToolSetBuilder {
         self
     }
 
-    /// Register a tool with its definition and synchronous execution callback.
-    pub fn tool(
+    /// Register a [`ToolImpl`] (definition + exec functions).
+    pub fn tool(mut self, tool: ToolImpl) -> Self {
+        self.tools.push(RegisteredTool::from_tool_impl(tool));
+        self
+    }
+
+    /// Register a tool with its definition and synchronous exec function.
+    ///
+    /// Convenience shorthand — constructs a [`ToolImpl`] internally.
+    pub fn tool_fn(
         mut self,
         def: ToolDef,
-        callback: impl Fn(&ToolArgs) -> Result<String, String> + Send + Sync + 'static,
+        exec: impl Fn(&ToolArgs) -> Result<String, String> + Send + Sync + 'static,
     ) -> Self {
         self.tools.push(RegisteredTool {
             def,
-            callback: CallbackKind::Sync(Arc::new(callback)),
+            callback: CallbackKind::Sync(Arc::new(exec)),
         });
         self
     }
 
-    /// Register a tool with its definition and **async** execution callback.
-    pub fn async_tool<F, Fut>(mut self, def: ToolDef, callback: F) -> Self
+    /// Register a tool with its definition and **async** exec function.
+    ///
+    /// Convenience shorthand — constructs a [`ToolImpl`] internally.
+    pub fn async_tool_fn<F, Fut>(mut self, def: ToolDef, exec: F) -> Self
     where
         F: Fn(ToolArgs) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<String, String>> + Send + 'static,
     {
-        let cb: super::AsyncToolCallback = Arc::new(move |args| Box::pin(callback(args)));
+        let cb: super::AsyncToolExec = Arc::new(move |args| Box::pin(exec(args)));
         self.tools.push(RegisteredTool {
             def,
             callback: CallbackKind::Async(cb),
@@ -301,11 +311,11 @@ impl ScriptingToolSetBuilder {
             match &reg.callback {
                 CallbackKind::Sync(cb) => {
                     let cb = Arc::clone(cb);
-                    builder = builder.tool(reg.def.clone(), move |args: &ToolArgs| (cb)(args));
+                    builder = builder.tool_fn(reg.def.clone(), move |args: &ToolArgs| (cb)(args));
                 }
                 CallbackKind::Async(cb) => {
                     let cb = Arc::clone(cb);
-                    builder = builder.async_tool(reg.def.clone(), move |args: ToolArgs| {
+                    builder = builder.async_tool_fn(reg.def.clone(), move |args: ToolArgs| {
                         let cb = Arc::clone(&cb);
                         async move { (cb)(args).await }
                     });
@@ -343,7 +353,7 @@ impl ScriptingToolSetBuilder {
 /// # tokio_test::block_on(async {
 /// // Exclusive mode (default): one tool with full schemas
 /// let toolset = ScriptingToolSet::builder("api")
-///     .tool(
+///     .tool_fn(
 ///         ToolDef::new("greet", "Greet someone")
 ///             .with_schema(serde_json::json!({
 ///                 "type": "object",
@@ -370,7 +380,7 @@ impl ScriptingToolSetBuilder {
 ///
 /// // Discovery mode: two tools
 /// let toolset = ScriptingToolSet::builder("api")
-///     .tool(
+///     .tool_fn(
 ///         ToolDef::new("greet", "Greet someone"),
 ///         |_args: &ToolArgs| Ok("hello\n".to_string()),
 ///     )
@@ -441,7 +451,7 @@ mod tests {
     fn make_tools() -> ScriptingToolSetBuilder {
         ScriptingToolSet::builder("test_api")
             .short_description("Test API")
-            .tool(
+            .tool_fn(
                 ToolDef::new("get_user", "Fetch user by ID")
                     .with_schema(serde_json::json!({
                         "type": "object",
@@ -456,7 +466,7 @@ mod tests {
                     Ok(format!("{{\"id\":{id},\"name\":\"Alice\"}}\n"))
                 },
             )
-            .tool(
+            .tool_fn(
                 ToolDef::new("list_orders", "List orders for a user")
                     .with_schema(serde_json::json!({
                         "type": "object",
@@ -559,7 +569,7 @@ mod tests {
     #[test]
     fn test_default_short_description() {
         let toolset = ScriptingToolSet::builder("mytools")
-            .tool(ToolDef::new("noop", "No-op"), |_: &ToolArgs| {
+            .tool_fn(ToolDef::new("noop", "No-op"), |_: &ToolArgs| {
                 Ok("ok\n".into())
             })
             .build();
@@ -695,7 +705,7 @@ mod tests {
     async fn test_env_vars_passed_through() {
         let toolset = ScriptingToolSet::builder("env_test")
             .env("MY_VAR", "hello")
-            .tool(ToolDef::new("noop", "No-op"), |_: &ToolArgs| {
+            .tool_fn(ToolDef::new("noop", "No-op"), |_: &ToolArgs| {
                 Ok("ok\n".into())
             })
             .build();
@@ -821,5 +831,69 @@ mod tests {
             ),
             Ok(_) => panic!("expected error for disallowed command"),
         }
+    }
+
+    // -- ToolImpl registration --
+
+    #[tokio::test]
+    async fn test_tool_impl_registration() {
+        let get_user = ToolImpl::new(
+            ToolDef::new("get_user", "Fetch user by ID")
+                .with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "id": {"type": "integer"} },
+                    "required": ["id"]
+                }))
+                .with_category("users"),
+        )
+        .with_exec_sync(|args| {
+            let id = args.param_i64("id").ok_or("missing --id")?;
+            Ok(format!("{{\"id\":{id},\"name\":\"Alice\"}}\n"))
+        });
+
+        let list_orders = ToolImpl::new(
+            ToolDef::new("list_orders", "List orders")
+                .with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "user_id": {"type": "integer"} }
+                }))
+                .with_category("orders"),
+        )
+        .with_exec_sync(|args| {
+            let uid = args.param_i64("user_id").ok_or("missing --user_id")?;
+            Ok(format!("[{{\"order_id\":1,\"user_id\":{uid}}}]\n"))
+        });
+
+        // Exclusive mode
+        let toolset = ScriptingToolSet::builder("api")
+            .short_description("Test API")
+            .tool(get_user.clone())
+            .tool(list_orders.clone())
+            .build();
+
+        let tools = toolset.tools();
+        assert_eq!(tools.len(), 1);
+        assert!(tools[0].system_prompt().contains("get_user"));
+        assert!(tools[0].system_prompt().contains("list_orders"));
+
+        let resp = tools[0]
+            .execute(ToolRequest {
+                commands: "get_user --id 1 | jq -r '.name'".into(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.stdout.trim(), "Alice");
+
+        // Discovery mode
+        let toolset = ScriptingToolSet::builder("api")
+            .tool(get_user)
+            .tool(list_orders)
+            .with_discovery()
+            .build();
+
+        let tools = toolset.tools();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].name(), "api");
+        assert_eq!(tools[1].name(), "api_discover");
     }
 }

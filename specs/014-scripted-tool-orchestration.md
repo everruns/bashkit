@@ -84,11 +84,51 @@ pub type AsyncToolCallback = Arc<
 ```
 
 Async variant of `ToolCallback`. Takes owned `ToolArgs` (the future may outlive the
-borrow). Register via `builder.async_tool(def, callback)`. Both sync and async
+borrow). Register via `builder.async_tool_fn(def, callback)`. Both sync and async
 callbacks can be mixed in a single `ScriptedTool`.
 
 Internally represented as `CallbackKind::Async` and `.await`-ed inside
 `ToolBuiltinAdapter::execute()`, which is already `async fn`.
+
+### ToolImpl — unified tool unit
+
+```rust
+pub struct ToolImpl {
+    pub def: ToolDef,
+    pub exec: Option<AsyncToolExec>,
+    pub exec_sync: Option<SyncToolExec>,
+}
+```
+
+Combines metadata (`ToolDef`) with optional sync and async exec functions.
+Implements `Builtin`, so it can be registered in both `Bash` (via `.builtin()`)
+and `ScriptedTool`/`ScriptingToolSet` (via `.tool()`).
+
+When running async, prefers `exec`; falls back to `exec_sync`.
+When running sync, prefers `exec_sync`; falls back to blocking on `exec`.
+
+Builder API:
+
+```rust
+let tool = ToolImpl::new(
+    ToolDef::new("get_user", "Fetch user by ID")
+        .with_schema(json!({"type": "object", "properties": {"id": {"type": "integer"}}})),
+)
+.with_exec_sync(|args| {
+    let id = args.param_i64("id").ok_or("missing --id")?;
+    Ok(format!("{{\"id\":{id}}}\n"))
+})
+.with_exec(|args| async move {
+    let id = args.param_i64("id").ok_or("missing --id")?;
+    Ok(format!("{{\"id\":{id}}}\n"))
+});
+
+// Register in ScriptedTool
+ScriptedTool::builder("api").tool(tool).build();
+```
+
+Type aliases for backward compatibility: `ToolCallback = SyncToolExec`,
+`AsyncToolCallback = AsyncToolExec`.
 
 ### ContextVar propagation (Python)
 
@@ -125,14 +165,14 @@ Unknown flags (not in schema) are kept as strings.
 
 ### ScriptedToolBuilder
 
-Two arguments per tool: definition + callback. Use `.tool()` for sync and
-`.async_tool()` for async callbacks.
+Two arguments per tool: definition + callback. Use `.tool_fn()` for sync and
+`.async_tool_fn()` for async callbacks.
 
 ```rust
 ScriptedTool::builder("api_name")
     .locale("en-US")
     .short_description("...")
-    .tool(
+    .tool_fn(
         ToolDef::new("get_user", "Fetch user by ID")
             .with_schema(json!({"type": "object", "properties": {"id": {"type": "integer"}}})),
         |args| {
@@ -140,7 +180,7 @@ ScriptedTool::builder("api_name")
             Ok(format!("{{\"id\":{id}}}\n"))
         },
     )
-    .async_tool(
+    .async_tool_fn(
         ToolDef::new("fetch_url", "Fetch a URL"),
         |args| async move {
             let url = args.param_str("url").unwrap_or("?");
@@ -189,7 +229,7 @@ that lists only tool names + one-liners, deferring full schemas to `help`:
 ```rust
 ScriptedTool::builder("api")
     .compact_prompt(true)
-    .tool(...)
+    .tool_fn(...)
     .build()
 ```
 
@@ -241,7 +281,7 @@ Use the standard Rust closure-capture pattern with `Arc` to share resources:
 ```rust
 let client = Arc::new(build_authenticated_client());
 let c = client.clone();
-builder.tool(ToolDef::new("get_user", "..."), move |args| {
+builder.tool_fn(ToolDef::new("get_user", "..."), move |args| {
     let resp = c.get(&format!("/users/{}", args.param_i64("id").unwrap()));
     Ok(resp.text()?)
 });
@@ -265,7 +305,7 @@ exposes them via `take_last_execution_trace()`. This trace is for observability 
 telemetry, not scoring:
 
 ```rust
-let mut tool = ScriptedTool::builder("api").tool(...).build();
+let mut tool = ScriptedTool::builder("api").tool_fn(...).build();
 let _resp = tool.execute(ToolRequest::new("discover --search user\nhelp get_user")).await;
 let trace = tool.take_last_execution_trace().unwrap();
 assert_eq!(trace.invocations[0].name, "discover");
@@ -308,14 +348,14 @@ based on `DiscoveryMode`:
 // Exclusive mode (default): tools() returns [ScriptedTool]
 let toolset = ScriptingToolSet::builder("api")
     .short_description("My API")
-    .tool(ToolDef::new("get_user", "Fetch user").with_schema(...), callback)
+    .tool_fn(ToolDef::new("get_user", "Fetch user").with_schema(...), callback)
     .build();
 let tools = toolset.tools(); // vec![ScriptedTool]
 
 // Discovery mode: tools() returns [ScriptedTool, DiscoverTool]
 let toolset = ScriptingToolSet::builder("api")
     .short_description("My API")
-    .tool(ToolDef::new("get_user", "Fetch user").with_category("users"), callback)
+    .tool_fn(ToolDef::new("get_user", "Fetch user").with_category("users"), callback)
     .with_discovery()
     .build();
 let tools = toolset.tools(); // vec![ScriptedTool(compact), DiscoverTool]
@@ -338,17 +378,17 @@ Builder API mirrors `ScriptedToolBuilder`: `.tool()`, `.env()`, `.limits()`,
 
 ## Module location
 
-`crates/bashkit/src/scripted_tool/`
-
 ```
+tool_def.rs          — ToolDef, ToolArgs, ToolImpl, SyncToolExec, AsyncToolExec, parse_flags
 scripted_tool/
-├── mod.rs       — ToolDef, ToolCallback, ScriptedToolBuilder, ScriptedTool struct, tests
-├── execute.rs   — Tool impl, ToolBuiltinAdapter, documentation helpers
-└── toolset.rs   — ScriptingToolSet, ScriptingToolSetBuilder, DiscoveryMode
+├── mod.rs           — CallbackKind, ScriptedToolBuilder, ScriptedTool, re-exports from tool_def
+├── execute.rs       — Tool impl, ToolBuiltinAdapter, documentation helpers
+└── toolset.rs       — ScriptingToolSet, ScriptingToolSetBuilder, DiscoveryMode
 ```
 
 Public exports from `lib.rs` (gated by `scripted_tool` feature):
-`ToolDef`, `ToolArgs`, `ToolCallback`, `ScriptedTool`, `ScriptedToolBuilder`,
+`ToolDef`, `ToolArgs`, `ToolImpl`, `SyncToolExec`, `AsyncToolExec`,
+`ToolCallback`, `AsyncToolCallback` (aliases), `ScriptedTool`, `ScriptedToolBuilder`,
 `ScriptingToolSet`, `ScriptingToolSetBuilder`, `DiscoverTool`, `DiscoveryMode`.
 
 ## Example
