@@ -178,6 +178,15 @@ echo $?
 0
 ### end
 
+### touch_t_sets_file_mtime
+# touch -t should set the file mtime
+echo "test" > /tmp/touch_timestamp.txt
+touch -t 202604061200.00 /tmp/touch_timestamp.txt
+date -r /tmp/touch_timestamp.txt +%Y%m%d%H%M.%S
+### expect
+202604061200.00
+### end
+
 ### mktemp_creates_file
 # mktemp creates a temp file and prints its path
 f=$(mktemp)

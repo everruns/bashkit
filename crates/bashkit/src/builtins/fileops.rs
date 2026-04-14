@@ -1,7 +1,11 @@
 //! File operation builtins - mkdir, rm, cp, mv, touch, chmod
+// Decision: touch delegates mtime changes to the filesystem layer so `touch`
+// and `touch -t` stay consistent across in-memory, overlay, and realfs backends.
 
 use async_trait::async_trait;
+use chrono::{Datelike, Local, LocalResult, NaiveDate, TimeZone};
 use std::path::Path;
+use std::time::SystemTime;
 
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
@@ -315,12 +319,71 @@ impl Builtin for Mv {
 /// Usage: touch FILE...
 pub struct Touch;
 
+fn parse_touch_timestamp(raw: &str) -> std::result::Result<SystemTime, String> {
+    let (main, seconds) = match raw.split_once('.') {
+        Some((main, seconds)) => {
+            if seconds.len() != 2 || !seconds.chars().all(|ch| ch.is_ascii_digit()) {
+                return Err(format!("touch: invalid date format '{}'\n", raw));
+            }
+            let seconds = seconds
+                .parse::<u32>()
+                .map_err(|_| format!("touch: invalid date format '{}'\n", raw))?;
+            (main, seconds)
+        }
+        None => (raw, 0),
+    };
+
+    if !main.chars().all(|ch| ch.is_ascii_digit()) {
+        return Err(format!("touch: invalid date format '{}'\n", raw));
+    }
+
+    let year = match main.len() {
+        8 => Local::now().year(),
+        10 => {
+            let yy = main[0..2]
+                .parse::<i32>()
+                .map_err(|_| format!("touch: invalid date format '{}'\n", raw))?;
+            if yy >= 69 { 1900 + yy } else { 2000 + yy }
+        }
+        12 => main[0..4]
+            .parse::<i32>()
+            .map_err(|_| format!("touch: invalid date format '{}'\n", raw))?,
+        _ => return Err(format!("touch: invalid date format '{}'\n", raw)),
+    };
+
+    let offset = main.len() - 8;
+    let month = main[offset..offset + 2]
+        .parse::<u32>()
+        .map_err(|_| format!("touch: invalid date format '{}'\n", raw))?;
+    let day = main[offset + 2..offset + 4]
+        .parse::<u32>()
+        .map_err(|_| format!("touch: invalid date format '{}'\n", raw))?;
+    let hour = main[offset + 4..offset + 6]
+        .parse::<u32>()
+        .map_err(|_| format!("touch: invalid date format '{}'\n", raw))?;
+    let minute = main[offset + 6..offset + 8]
+        .parse::<u32>()
+        .map_err(|_| format!("touch: invalid date format '{}'\n", raw))?;
+
+    let naive = NaiveDate::from_ymd_opt(year, month, day)
+        .and_then(|date| date.and_hms_opt(hour, minute, seconds))
+        .ok_or_else(|| format!("touch: invalid date format '{}'\n", raw))?;
+
+    let local = match Local.from_local_datetime(&naive) {
+        LocalResult::Single(dt) => dt,
+        LocalResult::Ambiguous(dt, _) => dt,
+        LocalResult::None => return Err(format!("touch: invalid date format '{}'\n", raw)),
+    };
+
+    Ok(local.into())
+}
+
 #[async_trait]
 impl Builtin for Touch {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: touch [OPTION]... FILE...\nUpdate the access and modification times of each FILE to the current time.\nA FILE argument that does not exist is created empty.\n\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            "Usage: touch [OPTION]... FILE...\nUpdate the access and modification times of each FILE to the current time.\nA FILE argument that does not exist is created empty.\n\n  -t STAMP\tuse [[CC]YY]MMDDhhmm[.ss] instead of current time\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
             Some("touch (bashkit) 0.1"),
         ) {
             return Ok(r);
@@ -333,20 +396,66 @@ impl Builtin for Touch {
             ));
         }
 
-        for file in ctx.args.iter().filter(|a| !a.starts_with('-')) {
-            let path = resolve_path(ctx.cwd, file);
-
-            // Check if file exists
-            if !ctx.fs.exists(&path).await.unwrap_or(false) {
-                // Create empty file
-                if let Err(e) = ctx.fs.write_file(&path, &[]).await {
+        let mut files = Vec::new();
+        let mut target_time = SystemTime::now();
+        let mut i = 0;
+        while i < ctx.args.len() {
+            let arg = &ctx.args[i];
+            if arg == "-t" {
+                i += 1;
+                if i >= ctx.args.len() {
                     return Ok(ExecResult::err(
-                        format!("touch: cannot touch '{}': {}\n", file, e),
+                        "touch: option requires an argument -- 't'\n".to_string(),
                         1,
                     ));
                 }
+                match parse_touch_timestamp(&ctx.args[i]) {
+                    Ok(parsed) => target_time = parsed,
+                    Err(err) => return Ok(ExecResult::err(err, 1)),
+                }
+            } else if let Some(stamp) = arg.strip_prefix("-t")
+                && !stamp.is_empty()
+            {
+                match parse_touch_timestamp(stamp) {
+                    Ok(parsed) => target_time = parsed,
+                    Err(err) => return Ok(ExecResult::err(err, 1)),
+                }
+            } else if arg.starts_with('-') {
+                return Ok(ExecResult::err(
+                    format!("touch: invalid option -- '{}'\n", arg),
+                    1,
+                ));
+            } else {
+                files.push(arg);
             }
-            // For existing files, we would update mtime but VFS doesn't track it in a modifiable way
+            i += 1;
+        }
+
+        if files.is_empty() {
+            return Ok(ExecResult::err(
+                "touch: missing file operand\n".to_string(),
+                1,
+            ));
+        }
+
+        for file in files {
+            let path = resolve_path(ctx.cwd, file);
+
+            if !ctx.fs.exists(&path).await.unwrap_or(false)
+                && let Err(e) = ctx.fs.write_file(&path, &[]).await
+            {
+                return Ok(ExecResult::err(
+                    format!("touch: cannot touch '{}': {}\n", file, e),
+                    1,
+                ));
+            }
+
+            if let Err(e) = ctx.fs.set_modified_time(&path, target_time).await {
+                return Ok(ExecResult::err(
+                    format!("touch: cannot touch '{}': {}\n", file, e),
+                    1,
+                ));
+            }
         }
 
         Ok(ExecResult::ok(String::new()))
@@ -816,6 +925,7 @@ impl Builtin for Mktemp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{DateTime, Datelike, Local, Timelike};
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -912,6 +1022,78 @@ mod tests {
         let result = Touch.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(fs.exists(&cwd.join("newfile.txt")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_touch_t_sets_existing_file_mtime() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+        let file = cwd.join("existing.txt");
+        fs.write_file(&file, b"content").await.unwrap();
+
+        let args = vec![
+            "-t".to_string(),
+            "202604061200.00".to_string(),
+            "existing.txt".to_string(),
+        ];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Touch.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+
+        let metadata = fs.stat(&file).await.unwrap();
+        let modified: DateTime<Local> = metadata.modified.into();
+        assert_eq!(modified.year(), 2026);
+        assert_eq!(modified.month(), 4);
+        assert_eq!(modified.day(), 6);
+        assert_eq!(modified.hour(), 12);
+        assert_eq!(modified.minute(), 0);
+        assert_eq!(modified.second(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_touch_t_rejects_invalid_timestamp() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec![
+            "-t".to_string(),
+            "not-a-timestamp".to_string(),
+            "existing.txt".to_string(),
+        ];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Touch.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid date format"));
     }
 
     #[tokio::test]

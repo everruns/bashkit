@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::io::Error as IoError;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::time::SystemTime;
 
 use super::limits::{FsLimits, FsUsage};
 use super::traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata};
@@ -480,6 +481,12 @@ impl FileSystem for MountableFs {
         self.validate_path(path)?;
         let (fs, resolved) = self.resolve(path);
         fs.chmod(&resolved, mode).await
+    }
+
+    async fn set_modified_time(&self, path: &Path, time: SystemTime) -> Result<()> {
+        self.validate_path(path)?;
+        let (fs, resolved) = self.resolve(path);
+        fs.set_modified_time(&resolved, time).await
     }
 }
 
