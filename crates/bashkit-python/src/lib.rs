@@ -725,6 +725,43 @@ fn glob_via_bash(rt: &Arc<Runtime>, inner: &Arc<Mutex<Bash>>, pattern: String) -
     }
 }
 
+// Decision: snapshot factories build with caller kwargs first, then restore
+// bytes into that configured instance so limits and identity settings survive.
+fn raise_snapshot_error<E: std::fmt::Display>(err: E) -> PyErr {
+    BashError::new_err(err.to_string())
+}
+
+fn snapshot_live_bash(
+    py: Python<'_>,
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+) -> PyResult<Vec<u8>> {
+    let rt = rt.clone();
+    let inner = inner.clone();
+    py.detach(|| {
+        rt.block_on(async move {
+            let bash = inner.lock().await;
+            bash.snapshot().map_err(raise_snapshot_error)
+        })
+    })
+}
+
+fn restore_live_bash(
+    py: Python<'_>,
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    data: Vec<u8>,
+) -> PyResult<()> {
+    let rt = rt.clone();
+    let inner = inner.clone();
+    py.detach(|| {
+        rt.block_on(async move {
+            let mut bash = inner.lock().await;
+            bash.restore_snapshot(&data).map_err(raise_snapshot_error)
+        })
+    })
+}
+
 #[pyclass(name = "FileSystem")]
 struct PyFileSystem {
     inner: FileSystemHandle,
@@ -1444,6 +1481,67 @@ impl PyBash {
         })
     }
 
+    /// Serialize interpreter state to bytes for checkpoint/restore flows.
+    fn snapshot<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = snapshot_live_bash(py, &self.rt, &self.inner)?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// Restore interpreter state from bytes previously produced by `snapshot()`.
+    fn restore_snapshot(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
+        restore_live_bash(py, &self.rt, &self.inner, data)
+    }
+
+    /// Create a new Bash instance from a snapshot and optional constructor kwargs.
+    #[staticmethod]
+    #[pyo3(signature = (
+        data,
+        username=None,
+        hostname=None,
+        max_commands=None,
+        max_loop_iterations=None,
+        max_memory=None,
+        timeout_seconds=None,
+        python=false,
+        external_functions=None,
+        external_handler=None,
+        files=None,
+        mounts=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn from_snapshot(
+        py: Python<'_>,
+        data: Vec<u8>,
+        username: Option<String>,
+        hostname: Option<String>,
+        max_commands: Option<u64>,
+        max_loop_iterations: Option<u64>,
+        max_memory: Option<u64>,
+        timeout_seconds: Option<f64>,
+        python: bool,
+        external_functions: Option<Vec<String>>,
+        external_handler: Option<Py<PyAny>>,
+        files: Option<&Bound<'_, PyDict>>,
+        mounts: Option<&Bound<'_, PyList>>,
+    ) -> PyResult<Self> {
+        let bash = Self::new(
+            py,
+            username,
+            hostname,
+            max_commands,
+            max_loop_iterations,
+            max_memory,
+            timeout_seconds,
+            python,
+            external_functions,
+            external_handler,
+            files,
+            mounts,
+        )?;
+        bash.restore_snapshot(py, data)?;
+        Ok(bash)
+    }
+
     fn read_file(&self, py: Python<'_>, path: String) -> PyResult<String> {
         py.detach(|| read_text_via_live_fs(&self.rt, &self.inner, path))
     }
@@ -1897,6 +1995,58 @@ impl BashTool {
                 Ok(())
             })
         })
+    }
+
+    /// Serialize interpreter state to bytes for checkpoint/restore flows.
+    fn snapshot<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = snapshot_live_bash(py, &self.rt, &self.inner)?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// Restore interpreter state from bytes previously produced by `snapshot()`.
+    fn restore_snapshot(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
+        restore_live_bash(py, &self.rt, &self.inner, data)
+    }
+
+    /// Create a new BashTool instance from a snapshot and optional constructor kwargs.
+    #[staticmethod]
+    #[pyo3(signature = (
+        data,
+        username=None,
+        hostname=None,
+        max_commands=None,
+        max_loop_iterations=None,
+        max_memory=None,
+        timeout_seconds=None,
+        files=None,
+        mounts=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn from_snapshot(
+        py: Python<'_>,
+        data: Vec<u8>,
+        username: Option<String>,
+        hostname: Option<String>,
+        max_commands: Option<u64>,
+        max_loop_iterations: Option<u64>,
+        max_memory: Option<u64>,
+        timeout_seconds: Option<f64>,
+        files: Option<&Bound<'_, PyDict>>,
+        mounts: Option<&Bound<'_, PyList>>,
+    ) -> PyResult<Self> {
+        let tool = Self::new(
+            py,
+            username,
+            hostname,
+            max_commands,
+            max_loop_iterations,
+            max_memory,
+            timeout_seconds,
+            files,
+            mounts,
+        )?;
+        tool.restore_snapshot(py, data)?;
+        Ok(tool)
     }
 
     fn read_file(&self, py: Python<'_>, path: String) -> PyResult<String> {
