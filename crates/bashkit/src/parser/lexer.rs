@@ -516,6 +516,11 @@ impl<'a> Lexer<'a> {
         // the interpreter suppresses IFS field splitting — matching POSIX
         // behaviour for words like  +"$fmt"  or  prefix"$var"suffix.
         let mut has_quoted_expansion = false;
+        // Track whether any glob metacharacter (*, ?, [) appears in an
+        // unquoted portion of the word.  When both `has_quoted_expansion` and
+        // this flag are true, the word needs IFS-splitting suppression (quoted)
+        // *and* glob expansion on the unquoted portion — e.g. `"$var"*.ext`.
+        let mut has_unquoted_glob = false;
 
         while let Some(ch) = self.peek_char() {
             // Handle quoted strings within words (e.g., a="Hello" or VAR="value")
@@ -943,6 +948,10 @@ impl<'a> Lexer<'a> {
                     }
                 }
             } else if self.is_word_char(ch) {
+                // Track glob metacharacters in unquoted portions
+                if matches!(ch, '*' | '?' | '[') {
+                    has_unquoted_glob = true;
+                }
                 word.push(ch);
                 self.advance();
             } else {
@@ -952,6 +961,11 @@ impl<'a> Lexer<'a> {
 
         if word.is_empty() {
             None
+        } else if has_quoted_expansion && has_unquoted_glob {
+            // Mixed quoted/unquoted word with glob chars in the unquoted
+            // portion — e.g. `"$var"*.ext`.  Suppress IFS splitting (quoted)
+            // but glob expansion must still apply on the unquoted portions.
+            Some(Token::QuotedGlobWord(word))
         } else if has_quoted_expansion {
             // A double-quoted segment contained a variable/command expansion.
             // Promote to QuotedWord so the interpreter suppresses IFS field
@@ -1268,12 +1282,21 @@ impl<'a> Lexer<'a> {
 
         // Check for continuation after closing quote: "foo"bar or "foo"/* etc.
         // If there's adjacent unquoted content (word chars, globs, more quotes),
-        // concatenate and return as Word (not QuotedWord) so glob expansion works
-        // on the unquoted portion.
+        // concatenate so the word stays a single token.  When the continuation
+        // contains glob metacharacters, return QuotedGlobWord so the interpreter
+        // suppresses IFS splitting (the double-quoted segment) while still
+        // performing glob expansion on the unquoted portion.
         if let Some(ch) = self.peek_char()
             && (self.is_word_char(ch) || ch == '\'' || ch == '"' || ch == '$')
         {
+            let before_len = content.len();
             self.read_continuation_into(&mut content);
+            let has_glob = content[before_len..]
+                .chars()
+                .any(|c| matches!(c, '*' | '?' | '['));
+            if has_glob && content[..before_len].contains('$') {
+                return Some(Token::QuotedGlobWord(content));
+            }
             return Some(Token::Word(content));
         }
 
