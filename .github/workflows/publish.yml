@@ -117,19 +117,4 @@ jobs:
         run: |
           EXPECTED=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "Expected version: $EXPECTED"
-          PASS=true
-
-          for CRATE in bashkit bashkit-cli; do
-            ACTUAL=$(curl -s "https://crates.io/api/v1/crates/$CRATE" | python3 -c "import sys,json; print(json.load(sys.stdin)['crate']['max_version'])")
-            if [ "$ACTUAL" = "$EXPECTED" ]; then
-              echo "✓ $CRATE@$ACTUAL on crates.io"
-            else
-              echo "✗ $CRATE: expected $EXPECTED, got $ACTUAL"
-              PASS=false
-            fi
-          done
-
-          if [ "$PASS" = "false" ]; then
-            echo "::error::Some crates.io packages were not published correctly"
-            exit 1
-          fi
+          python3 scripts/verify_crates_publish.py --expected "$EXPECTED" bashkit bashkit-cli
