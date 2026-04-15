@@ -17,7 +17,7 @@ Enable with:
 bashkit = { version = "0.1", features = ["ssh"] }
 ```
 
-Pulls in `russh` + `russh-keys` for the default transport implementation.
+Pulls in the `russh`-based default transport implementation.
 
 ### Configuration
 

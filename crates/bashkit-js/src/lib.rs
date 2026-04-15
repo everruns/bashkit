@@ -1023,6 +1023,55 @@ impl BashTool {
         })
     }
 
+    // ========================================================================
+    // Snapshot / Resume
+    // ========================================================================
+
+    /// Serialize interpreter state (shell variables, VFS contents, counters) to bytes.
+    #[napi]
+    pub fn snapshot(&self) -> napi::Result<napi::bindgen_prelude::Buffer> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let bytes = bash
+                .snapshot()
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            Ok(napi::bindgen_prelude::Buffer::from(bytes))
+        })
+    }
+
+    /// Restore interpreter state from a snapshot previously created with `snapshot()`.
+    #[napi]
+    pub fn restore_snapshot(&self, data: napi::bindgen_prelude::Buffer) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let mut bash = s.inner.lock().await;
+            bash.restore_snapshot(&data)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Create a new BashTool instance from a snapshot.
+    ///
+    /// Accepts optional `BashOptions` so restored instances preserve caller-provided
+    /// execution limits and identity settings.
+    #[napi(factory)]
+    pub fn from_snapshot(
+        data: napi::bindgen_prelude::Buffer,
+        options: Option<BashOptions>,
+    ) -> napi::Result<Self> {
+        let opts = options.unwrap_or_else(default_opts);
+        let mut state = shared_state_from_opts(opts, None)?;
+
+        state
+            .inner
+            .get_mut()
+            .restore_snapshot(&data)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+        Ok(Self {
+            state: Arc::new(state),
+        })
+    }
+
     /// Get tool name.
     #[napi(getter)]
     pub fn name(&self) -> &str {

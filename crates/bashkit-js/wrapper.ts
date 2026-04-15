@@ -454,9 +454,7 @@ export class Bash {
   }
 
   /** List directory entries with metadata. */
-  readDir(
-    path: string,
-  ): Array<{
+  readDir(path: string): Array<{
     name: string;
     metadata: {
       fileType: string;
@@ -630,6 +628,38 @@ export class BashTool {
     this.native.reset();
   }
 
+  /**
+   * Serialize interpreter state (variables, VFS, counters) to a Uint8Array.
+   */
+  snapshot(): Uint8Array {
+    return this.native.snapshot();
+  }
+
+  /**
+   * Restore interpreter state from a previously captured snapshot.
+   * Preserves current configuration (limits, identity) but replaces
+   * shell state and VFS contents.
+   */
+  restoreSnapshot(data: Uint8Array): void {
+    this.native.restoreSnapshot(Buffer.from(data));
+  }
+
+  /**
+   * Create a new BashTool instance from a snapshot.
+   *
+   * Any provided options are applied before restoring the snapshot so limits
+   * and identity settings survive round-trips.
+   */
+  static fromSnapshot(data: Uint8Array, options?: BashOptions): BashTool {
+    const resolved = resolveFilesSync(options?.files);
+    const instance = Object.create(BashTool.prototype) as BashTool;
+    instance.native = NativeBashTool.fromSnapshot(
+      Buffer.from(data),
+      toNativeOptions(options, resolved),
+    );
+    return instance;
+  }
+
   // ==========================================================================
   // VFS file helpers
   // ==========================================================================
@@ -703,9 +733,7 @@ export class BashTool {
   }
 
   /** List directory entries with metadata. */
-  readDir(
-    path: string,
-  ): Array<{
+  readDir(path: string): Array<{
     name: string;
     metadata: {
       fileType: string;
