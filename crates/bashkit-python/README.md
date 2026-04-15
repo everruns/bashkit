@@ -80,6 +80,31 @@ bash = Bash(
 )
 ```
 
+### Live Output
+
+```python
+from bashkit import Bash
+
+bash = Bash()
+
+def on_output(stdout: str, stderr: str) -> None:
+    if stdout:
+        print(stdout, end="", flush=True)
+    if stderr:
+        print(stderr, end="", flush=True)
+
+result = bash.execute_sync(
+    "for i in 1 2 3; do echo out-$i; echo err-$i >&2; done",
+    on_output=on_output,
+)
+```
+
+`on_output` is optional and fires during execution with chunked `(stdout, stderr)`
+pairs. Chunks are not line-aligned or exact terminal interleaving, but
+concatenating all callback chunks matches the final `ExecResult.stdout` and
+`ExecResult.stderr`. The handler must be synchronous; `async def` callbacks and
+callbacks that return awaitables are rejected.
+
 ## Virtual Filesystem
 
 ### Direct Methods on Bash and BashTool

@@ -28,7 +28,7 @@ Python examples use [PEP 723](https://peps.python.org/pep-0723/) inline script m
 
 ### bash_basics.py / k8s_orchestrator.py
 
-Core features and ScriptedTool orchestration:
+Core features, live output callbacks, and ScriptedTool orchestration:
 
 ```bash
 uv run crates/bashkit-python/examples/bash_basics.py
