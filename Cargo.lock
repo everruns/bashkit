@@ -319,7 +319,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bashkit"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -365,7 +365,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-bench"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "anyhow",
  "bashkit",
@@ -380,7 +380,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-cli"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "anyhow",
  "bashkit",
@@ -396,7 +396,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-eval"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-js"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "bashkit",
  "napi",
@@ -425,7 +425,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-python"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "bashkit",
  "num-bigint",
@@ -4607,9 +4607,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.10"
+version = "0.103.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df33b2b81ac578cabaf06b89b0631153a3f416b0a886e8a7a1707fb51abbd1ef"
+checksum = "8279bb85272c9f10811ae6a6c547ff594d6a7f3c6c6b02ee9726d1d0dcfcdd06"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -5321,7 +5321,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

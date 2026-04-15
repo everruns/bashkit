@@ -1731,7 +1731,7 @@ version = "0.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-webpki]]
-version = "0.103.10"
+version = "0.103.12"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustversion]]
