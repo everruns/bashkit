@@ -8,7 +8,8 @@
 """Basic usage of the Bash interface.
 
 Demonstrates core Bash features: command execution, pipelines, variables,
-loops, virtual filesystem persistence, snapshot/restore, and resource limits.
+loops, live output callbacks, virtual filesystem persistence, snapshot/restore,
+and resource limits.
 
 Run:
     uv run crates/bashkit-python/examples/bash_basics.py
@@ -19,6 +20,7 @@ uv automatically installs bashkit from PyPI (pre-built wheels, no Rust needed).
 from __future__ import annotations
 
 import asyncio
+import sys
 
 from bashkit import Bash
 
@@ -86,6 +88,35 @@ EOF
     print(f"reset: {r.stdout.strip()}")
     assert r.stdout.strip() == "unset"
 
+    print()
+
+
+def demo_live_output():
+    """Stream stdout/stderr chunks while a command is running."""
+    print("=== Live Output ===\n")
+
+    bash = Bash()
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+
+    def on_output(stdout: str, stderr: str) -> None:
+        # Chunks are incremental, not guaranteed to align to lines.
+        if stdout:
+            stdout_chunks.append(stdout)
+            print(stdout, end="", flush=True)
+        if stderr:
+            stderr_chunks.append(stderr)
+            print(stderr, end="", file=sys.stderr, flush=True)
+
+    result = bash.execute_sync(
+        "for i in 1 2 3; do echo out-$i; echo err-$i >&2; done",
+        on_output=on_output,
+    )
+    assert result.success
+    assert "".join(stdout_chunks) == result.stdout
+    assert "".join(stderr_chunks) == result.stderr
+
+    print("streaming callback output matched final ExecResult")
     print()
 
 
@@ -175,6 +206,7 @@ def demo_config():
 def main():
     print("Bashkit — Bash interface examples\n")
     demo_sync()
+    demo_live_output()
     demo_snapshot_restore()
     asyncio.run(demo_async())
     demo_config()
