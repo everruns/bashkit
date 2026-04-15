@@ -30,7 +30,7 @@ def _assert_sanitized_error(text: str) -> None:
 # ===========================================================================
 
 
-def test_vfs_cannot_read_host_etc_passwd():
+def test_tm_inf_001_vfs_cannot_read_host_etc_passwd():
     """VFS must not expose host /etc/passwd."""
     bash = Bash()
     r = bash.execute_sync("cat /etc/passwd")
@@ -39,14 +39,14 @@ def test_vfs_cannot_read_host_etc_passwd():
         assert "root:x:0:0" not in r.stdout, "Host /etc/passwd leaked into VFS"
 
 
-def test_vfs_cannot_read_host_proc():
+def test_tm_esc_003_vfs_cannot_read_host_proc():
     """VFS must not expose /proc filesystem."""
     bash = Bash()
     r = bash.execute_sync("cat /proc/self/cmdline")
     assert r.exit_code != 0 or r.stdout == "", "Host /proc leaked into VFS"
 
 
-def test_vfs_writes_isolated_between_instances():
+def test_tm_iso_002_vfs_writes_are_isolated_between_instances():
     """Files written in one VFS are not visible in another instance."""
     bash = Bash()
     bash.execute_sync("echo pwned > /tmp/vfs_test_file.txt")
@@ -59,7 +59,7 @@ def test_vfs_writes_isolated_between_instances():
     assert r2.exit_code != 0, "VFS state leaked between interpreter instances"
 
 
-def test_vfs_directory_traversal():
+def test_tm_inj_005_vfs_directory_traversal_is_blocked():
     """Directory traversal must not escape VFS."""
     bash = Bash()
     r = bash.execute_sync("cat /home/user/../../../etc/hostname")
@@ -183,14 +183,14 @@ def test_resource_limits_survive_reset():
     assert len(lines) < 5 or r.exit_code != 0, "max_commands not enforced after reset"
 
 
-def test_max_loop_iterations_enforced():
+def test_tm_dos_016_max_loop_iterations_enforced():
     """Infinite loops must be stopped by max_loop_iterations."""
     bash = Bash(max_loop_iterations=5)
     r = bash.execute_sync("while true; do echo x; done")
     assert r.exit_code != 0 or r.stdout.count("x") <= 50
 
 
-def test_fork_bomb_prevented():
+def test_tm_dos_021_fork_bomb_prevented():
     """Fork bombs cannot run (no real processes in VFS)."""
     bash = Bash(max_commands=10)
     bash.execute_sync(":(){ :|:& };:")

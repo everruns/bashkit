@@ -28,14 +28,14 @@ from bashkit import Bash, BashTool, ScriptedTool
 class TestSandboxEscapeCreative:
     """Try unconventional methods to escape the sandbox."""
 
-    def test_dev_tcp_network_escape(self):
+    def test_tm_net_001_dev_tcp_network_escape(self):
         """Bash /dev/tcp pseudo-device must not allow real network access."""
         bash = Bash()
         r = bash.execute_sync("echo test > /dev/tcp/127.0.0.1/80 2>/dev/null; echo $?")
         # Should fail — no real /dev/tcp in VFS
         assert "0" not in r.stdout.strip() or r.exit_code != 0
 
-    def test_dev_udp_network_escape(self):
+    def test_tm_net_001_dev_udp_network_escape(self):
         """Bash /dev/udp pseudo-device must not allow network access."""
         bash = Bash()
         r = bash.execute_sync("echo test > /dev/udp/127.0.0.1/53 2>/dev/null; echo $?")
@@ -75,7 +75,7 @@ class TestSandboxEscapeCreative:
         r = bash.execute_sync("cat '/etc\\x00/passwd' 2>/dev/null || echo safe")
         assert "root:" not in r.stdout
 
-    def test_unicode_path_normalization_escape(self):
+    def test_tm_uni_003_unicode_path_normalization_escape(self):
         """Unicode normalization tricks must not bypass path checks."""
         bash = Bash()
         # Unicode fullwidth solidus (U+FF0F) — should not be treated as path separator
@@ -110,7 +110,7 @@ class TestMontySandboxLimits:
         r = bash.execute_sync("python3 -c 'while True: pass'")
         assert r.exit_code != 0
 
-    def test_python_memory_bomb(self):
+    def test_tm_dos_059_python_memory_bomb(self):
         """Python allocating huge lists must be stopped by allocation limit."""
         bash = Bash()
         r = bash.execute_sync("python3 -c 'x = [0] * 10000000'")
@@ -253,7 +253,7 @@ class TestMontySandboxLimits:
 class TestResourceLimitBoundaries:
     """Test exact boundaries of resource limits."""
 
-    def test_max_commands_exact_boundary(self):
+    def test_tm_dos_002_max_commands_exact_boundary(self):
         """Exactly max_commands should execute, max_commands+1 should not."""
         bash = Bash(max_commands=3)
         r = bash.execute_sync("echo 1; echo 2; echo 3; echo 4; echo 5")
@@ -261,7 +261,7 @@ class TestResourceLimitBoundaries:
         # Should stop at or before 3
         assert len(lines) <= 3
 
-    def test_max_loop_iterations_exact_boundary(self):
+    def test_tm_dos_016_max_loop_iterations_exact_boundary(self):
         """Loop should stop at exactly max_loop_iterations."""
         bash = Bash(max_loop_iterations=5)
         r = bash.execute_sync("for i in 1 2 3 4 5 6 7 8 9 10; do echo $i; done")
@@ -333,7 +333,7 @@ class TestShellMetacharacterAttacks:
         r = bash.execute_sync("echo hello | cat")
         assert "hello" in r.stdout
 
-    def test_process_substitution(self):
+    def test_tm_esc_002_process_substitution(self):
         """Process substitution <() should either work in VFS or fail safely."""
         bash = Bash()
         r = bash.execute_sync("cat <(echo process_sub) 2>/dev/null || echo no_procsub")
@@ -673,7 +673,7 @@ class TestConcurrentSafety:
 class TestStateConfusion:
     """Attack interpreter state management."""
 
-    def test_env_pollution_between_calls(self):
+    def test_tm_iso_001_env_pollution_between_calls(self):
         """Environment from one call must persist (stateful), but not leak to new instances."""
         b1 = Bash()
         b1.execute_sync("export EVIL=payload")
@@ -685,7 +685,7 @@ class TestStateConfusion:
         r2 = b2.execute_sync("echo ${EVIL:-clean}")
         assert r2.stdout.strip() == "clean"
 
-    def test_function_persistence(self):
+    def test_tm_iso_003_function_persistence_is_per_instance(self):
         """Shell functions persist within instance but not across instances."""
         b1 = Bash()
         b1.execute_sync("myfunc() { echo secret; }")
@@ -789,7 +789,7 @@ class TestEncodingAttacks:
         # Either handles both parts or fails cleanly
         assert isinstance(r.exit_code, int)
 
-    def test_emoji_and_rtl_in_commands(self):
+    def test_tm_uni_004_emoji_and_rtl_in_commands(self):
         """Emoji and RTL characters in commands must not crash."""
         bash = Bash()
         r = bash.execute_sync("echo '\U0001f680 \u202e reversed \u202c'")
