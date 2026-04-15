@@ -1,7 +1,7 @@
-"""Tests for framework integration modules (langchain, deepagents, pydantic_ai).
+"""Tests for AI adapter modules (LangChain, DeepAgents, and PydanticAI).
 
-These tests verify the integration modules work without the external frameworks
-by testing the import-guarding, factory functions, and mock behavior.
+These tests verify the adapter modules import cleanly without their optional
+dependencies and keep their timeout and factory surfaces wired correctly.
 """
 
 import pytest
