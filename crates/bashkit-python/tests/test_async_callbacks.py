@@ -10,6 +10,7 @@ Covers:
 
 import asyncio
 import contextvars
+import gc
 
 import pytest
 
@@ -21,6 +22,13 @@ from bashkit import ScriptedTool
 
 request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id")
 trace_writer: contextvars.ContextVar[list] = contextvars.ContextVar("trace_writer")
+
+
+@pytest.fixture(autouse=True)
+def _collect_between_tests():
+    """Drop Rust-backed callback runtimes outside async test bodies on Python 3.12."""
+    yield
+    gc.collect()
 
 
 # ===========================================================================
