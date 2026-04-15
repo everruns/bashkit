@@ -2,6 +2,44 @@
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-04-15
+
+### Highlights
+
+- **Scripted tool ergonomics** — New `ToolImpl` composition plus `--help`, `--dry-run`, and structured discover schema for MCP-backed callbacks
+- **Python bindings** — Added direct VFS helpers, callable file providers, snapshot restore, stronger parity coverage, and security regression tests
+- **Targeted fixes** — Correct `touch` mtimes for existing paths, quoted-adjacent glob expansion, Python publish stripping for multi-feature defaults, and `rustls-webpki` audit advisories
+- **Docs and CI polish** — New snapshotting guide, richer Python/Node examples, aligned package docs, and JS type-check coverage in CI
+- **External contribution** — Python snapshot restore support landed via @oliverlambson in [#1298](https://github.com/everruns/bashkit/pull/1298)
+
+### What's Changed
+
+* docs(readme): align Python and Node package guides ([#1307](https://github.com/everruns/bashkit/pull/1307)) by @chaliy
+* test(python): tag security tests with threat-model ids ([#1306](https://github.com/everruns/bashkit/pull/1306)) by @chaliy
+* test(python): add parity suites for builtins, strings, and scripts ([#1305](https://github.com/everruns/bashkit/pull/1305)) by @chaliy
+* refactor(python): split binding tests by category ([#1304](https://github.com/everruns/bashkit/pull/1304)) by @chaliy
+* fix(python): cover issue 1264 security gaps ([#1303](https://github.com/everruns/bashkit/pull/1303)) by @chaliy
+* docs: add public snapshotting guide ([#1302](https://github.com/everruns/bashkit/pull/1302)) by @chaliy
+* test(node): add missing security coverage ([#1300](https://github.com/everruns/bashkit/pull/1300)) by @chaliy
+* test(node): add integration workflow coverage ([#1299](https://github.com/everruns/bashkit/pull/1299)) by @chaliy
+* feat(python): add snapshot restore support ([#1298](https://github.com/everruns/bashkit/pull/1298)) by @oliverlambson
+* feat(python): support callable file providers ([#1297](https://github.com/everruns/bashkit/pull/1297)) by @chaliy
+* feat(python): add direct VFS convenience methods ([#1295](https://github.com/everruns/bashkit/pull/1295)) by @chaliy
+* fix(touch): update mtimes for existing paths ([#1294](https://github.com/everruns/bashkit/pull/1294)) by @chaliy
+* feat(scripted-tool): add --dry-run flag with pluggable validation ([#1293](https://github.com/everruns/bashkit/pull/1293)) by @chaliy
+* feat(scripting-toolset): structured discover input schema for MCP ([#1292](https://github.com/everruns/bashkit/pull/1292)) by @chaliy
+* docs(python): add @example blocks to type stubs and modules ([#1291](https://github.com/everruns/bashkit/pull/1291)) by @chaliy
+* docs: add missing examples to Python and Node bindings ([#1290](https://github.com/everruns/bashkit/pull/1290)) by @chaliy
+* ci(node): add TypeScript type-check job to JS workflow ([#1289](https://github.com/everruns/bashkit/pull/1289)) by @chaliy
+* feat(scripted-tool): add --help flag to tool callbacks ([#1288](https://github.com/everruns/bashkit/pull/1288)) by @chaliy
+* fix(glob): expand glob * adjacent to quoted variable expansion ([#1287](https://github.com/everruns/bashkit/pull/1287)) by @chaliy
+* fix(security): resolve 6 CodeQL alerts in test code ([#1286](https://github.com/everruns/bashkit/pull/1286)) by @chaliy
+* fix(ci): handle multi-feature default array in python stripping ([#1285](https://github.com/everruns/bashkit/pull/1285)) by @chaliy
+* feat(scripted_tool): add ToolImpl combining ToolDef + sync/async exec ([#1284](https://github.com/everruns/bashkit/pull/1284)) by @chaliy
+* feat(credential): generic credential injection for outbound HTTP requests ([#1282](https://github.com/everruns/bashkit/pull/1282)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/commits/v0.1.19
+
 ## [0.1.18] - 2026-04-14
 
 ### Highlights
