@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from bashkit import Bash, BashTool, FileSystem, ScriptedTool, create_langchain_tool_spec
+from bashkit import Bash, BashError, BashTool, FileSystem, ScriptedTool, create_langchain_tool_spec
 
 # ===========================================================================
 # Bash: Core interpreter
@@ -76,6 +76,63 @@ def test_bash_reset():
     bash.reset()
     r = bash.execute_sync("echo ${KEEP:-empty}")
     assert r.stdout.strip() == "empty"
+
+
+def test_bash_snapshot_roundtrip_from_snapshot_preserves_state_and_kwargs():
+    bash = Bash()
+    bash.execute_sync("export FOO=bar; mkdir -p /workspace && cd /workspace && echo data > state.txt")
+
+    snapshot = bash.snapshot()
+    assert isinstance(snapshot, bytes)
+    assert snapshot
+
+    restored = Bash.from_snapshot(
+        snapshot,
+        username="alice",
+        hostname="box",
+        max_commands=5,
+    )
+
+    assert restored.execute_sync("whoami").stdout.strip() == "alice"
+    assert restored.execute_sync("hostname").stdout.strip() == "box"
+    assert restored.execute_sync("echo $FOO").stdout.strip() == "bar"
+    assert restored.execute_sync("pwd").stdout.strip() == "/workspace"
+    assert restored.execute_sync("cat /workspace/state.txt").stdout.strip() == "data"
+
+    limited = restored.execute_sync("echo 1; echo 2; echo 3; echo 4; echo 5; echo 6")
+    assert limited.exit_code != 0 or limited.stdout.count("\n") <= 5
+
+
+def test_bash_restore_snapshot_after_reset_restores_original_state():
+    bash = Bash()
+    bash.execute_sync("export KEEP=1; mkdir -p /workspace && cd /workspace && echo saved > state.txt")
+    snapshot = bash.snapshot()
+
+    bash.reset()
+    bash.restore_snapshot(snapshot)
+
+    assert bash.execute_sync("echo $KEEP").stdout.strip() == "1"
+    assert bash.execute_sync("pwd").stdout.strip() == "/workspace"
+    assert bash.execute_sync("cat /workspace/state.txt").stdout.strip() == "saved"
+
+
+def test_bash_empty_snapshot_roundtrip():
+    fresh = Bash()
+    snapshot = fresh.snapshot()
+    restored = Bash.from_snapshot(snapshot)
+
+    assert restored.execute_sync("pwd").stdout == fresh.execute_sync("pwd").stdout
+    assert restored.execute_sync("echo ${MISSING:-empty}").stdout == "empty\n"
+
+
+def test_bash_invalid_snapshot_raises_bash_error():
+    bash = Bash()
+
+    with pytest.raises(BashError):
+        Bash.from_snapshot(b"not valid snapshot")
+
+    with pytest.raises(BashError):
+        bash.restore_snapshot(b"not valid snapshot")
 
 
 def test_bash_fs_handle_bytes_roundtrip():
@@ -543,6 +600,63 @@ def test_reset():
     tool.reset()
     r = tool.execute_sync("echo ${KEEP:-empty}")
     assert r.stdout.strip() == "empty"
+
+
+def test_bashtool_snapshot_roundtrip_from_snapshot_preserves_state_and_kwargs():
+    tool = BashTool()
+    tool.execute_sync("export FOO=bar; mkdir -p /workspace && cd /workspace && echo data > tool.txt")
+
+    snapshot = tool.snapshot()
+    assert isinstance(snapshot, bytes)
+    assert snapshot
+
+    restored = BashTool.from_snapshot(
+        snapshot,
+        username="alice",
+        hostname="box",
+        max_commands=5,
+    )
+
+    assert restored.execute_sync("whoami").stdout.strip() == "alice"
+    assert restored.execute_sync("hostname").stdout.strip() == "box"
+    assert restored.execute_sync("echo $FOO").stdout.strip() == "bar"
+    assert restored.execute_sync("pwd").stdout.strip() == "/workspace"
+    assert restored.execute_sync("cat /workspace/tool.txt").stdout.strip() == "data"
+
+    limited = restored.execute_sync("echo 1; echo 2; echo 3; echo 4; echo 5; echo 6")
+    assert limited.exit_code != 0 or limited.stdout.count("\n") <= 5
+
+
+def test_bashtool_restore_snapshot_after_reset_restores_original_state():
+    tool = BashTool()
+    tool.execute_sync("export KEEP=1; mkdir -p /workspace && cd /workspace && echo saved > tool.txt")
+    snapshot = tool.snapshot()
+
+    tool.reset()
+    tool.restore_snapshot(snapshot)
+
+    assert tool.execute_sync("echo $KEEP").stdout.strip() == "1"
+    assert tool.execute_sync("pwd").stdout.strip() == "/workspace"
+    assert tool.execute_sync("cat /workspace/tool.txt").stdout.strip() == "saved"
+
+
+def test_bashtool_empty_snapshot_roundtrip():
+    fresh = BashTool()
+    snapshot = fresh.snapshot()
+    restored = BashTool.from_snapshot(snapshot)
+
+    assert restored.execute_sync("pwd").stdout == fresh.execute_sync("pwd").stdout
+    assert restored.execute_sync("echo ${MISSING:-empty}").stdout == "empty\n"
+
+
+def test_bashtool_invalid_snapshot_raises_bash_error():
+    tool = BashTool()
+
+    with pytest.raises(BashError):
+        BashTool.from_snapshot(b"not valid snapshot")
+
+    with pytest.raises(BashError):
+        tool.restore_snapshot(b"not valid snapshot")
 
 
 # Issue #424: reset() should preserve security configuration

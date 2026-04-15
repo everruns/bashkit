@@ -424,6 +424,32 @@ class Bash:
         """
         ...
 
+    def snapshot(self) -> bytes:
+        """Serialize interpreter state to bytes."""
+        ...
+
+    def restore_snapshot(self, data: bytes) -> None:
+        """Restore interpreter state from bytes produced by ``snapshot()``."""
+        ...
+
+    @staticmethod
+    def from_snapshot(
+        data: bytes,
+        username: str | None = None,
+        hostname: str | None = None,
+        max_commands: int | None = None,
+        max_loop_iterations: int | None = None,
+        max_memory: int | None = None,
+        timeout_seconds: float | None = None,
+        python: bool = False,
+        external_functions: list[str] | None = None,
+        external_handler: ExternalHandler | None = None,
+        files: dict[str, str] | None = None,
+        mounts: list[dict[str, Any]] | None = None,
+    ) -> Bash:
+        """Create a new ``Bash`` from snapshot bytes and optional constructor kwargs."""
+        ...
+
     def read_file(self, path: str) -> str:
         """Read a VFS file as UTF-8 text."""
         ...
@@ -753,6 +779,29 @@ class BashTool:
             >>> result.exit_code  # file is gone
             1
         """
+        ...
+
+    def snapshot(self) -> bytes:
+        """Serialize interpreter state to bytes."""
+        ...
+
+    def restore_snapshot(self, data: bytes) -> None:
+        """Restore interpreter state from bytes produced by ``snapshot()``."""
+        ...
+
+    @staticmethod
+    def from_snapshot(
+        data: bytes,
+        username: str | None = None,
+        hostname: str | None = None,
+        max_commands: int | None = None,
+        max_loop_iterations: int | None = None,
+        max_memory: int | None = None,
+        timeout_seconds: float | None = None,
+        files: dict[str, str] | None = None,
+        mounts: list[dict[str, Any]] | None = None,
+    ) -> BashTool:
+        """Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs."""
         ...
 
     def read_file(self, path: str) -> str:

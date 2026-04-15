@@ -177,6 +177,27 @@ result = tool.execute_sync("greet --name Alice")
 print(result.stdout)  # hello Alice
 ```
 
+### Snapshot / Restore
+
+```python
+from bashkit import Bash
+
+bash = Bash(username="agent", max_commands=100)
+bash.execute_sync("export BUILD_ID=42; mkdir -p /workspace && cd /workspace && echo ready > state.txt")
+
+snapshot = bash.snapshot()
+
+restored = Bash.from_snapshot(snapshot, username="agent", max_commands=100)
+assert restored.execute_sync("echo $BUILD_ID").stdout.strip() == "42"
+assert restored.execute_sync("cat /workspace/state.txt").stdout.strip() == "ready"
+
+restored.reset()
+restored.restore_snapshot(snapshot)
+assert restored.execute_sync("pwd").stdout.strip() == "/workspace"
+
+# BashTool exposes the same snapshot/restore API.
+```
+
 ### LangChain
 
 ```python
@@ -237,6 +258,9 @@ print(result.stdout)  # Alice
 - `execute_or_throw(commands: str) -> ExecResult` — async, raises on non-zero exit
 - `execute_sync_or_throw(commands: str) -> ExecResult` — sync, raises on non-zero exit
 - `reset()` — reset interpreter state
+- `snapshot() -> bytes` — serialize interpreter state
+- `restore_snapshot(data: bytes)` — restore serialized interpreter state
+- `from_snapshot(data: bytes, **kwargs) -> Bash` — construct and restore in one step
 - `fs() -> FileSystem` — direct filesystem access
 
 ### BashTool
@@ -248,6 +272,7 @@ Convenience wrapper for AI agents. Inherits all execution methods from `Bash`, p
 - `system_prompt() -> str` — token-efficient system prompt for LLM integration
 - `input_schema() -> str` — JSON input schema
 - `output_schema() -> str` — JSON output schema
+- `snapshot() -> bytes` / `restore_snapshot(data: bytes)` / `from_snapshot(...)` — checkpoint and resume interpreter state
 
 ### ExecResult
 
