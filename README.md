@@ -19,6 +19,7 @@ Awesomely fast virtual sandbox with bash and file system. Written in Rust.
 - **Multi-tenant isolation** - Each interpreter instance is fully independent
 - **Custom builtins** - Extend with domain-specific commands
 - **LLM tool contract** - `BashTool` with discovery metadata, streaming output, and system prompts
+- **Snapshotting** - Serialize shell state and VFS contents for checkpoint/resume workflows
 - **Scripted tool orchestration** - Compose ToolDef+callback pairs into multi-tool bash scripts (`scripted_tool` feature)
 - **MCP server** - Model Context Protocol endpoint via `bashkit mcp`
 - **Async-first** - Built on tokio
@@ -190,6 +191,28 @@ let mut bash = Bash::builder()
 // id → "uid=1000(deploy) gid=1000(deploy)..."
 // echo $USER → "deploy"
 ```
+
+## Snapshotting
+
+Checkpoint an interpreter to bytes, then restore it later:
+
+```rust
+use bashkit::Bash;
+
+# #[tokio::main]
+# async fn main() -> bashkit::Result<()> {
+let mut bash = Bash::new();
+bash.exec("export BUILD_ID=42; echo ready > /tmp/state.txt").await?;
+
+let snapshot = bash.snapshot()?;
+let mut restored = Bash::from_snapshot(&snapshot)?;
+assert_eq!(restored.exec("echo $BUILD_ID").await?.stdout.trim(), "42");
+# Ok(())
+# }
+```
+
+See [docs/snapshotting.md](docs/snapshotting.md) for Rust, Python, and Node examples,
+plus snapshot security notes.
 
 ## Experimental: Git Support
 
