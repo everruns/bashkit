@@ -261,6 +261,68 @@ test("integration: BashTool reset clears state", (t) => {
   t.is(tool.executeSync("whoami").stdout.trim(), "testuser");
 });
 
+test("integration: BashTool snapshot roundtrip preserves state and config", (t) => {
+  const tool = new BashTool({
+    username: "agent",
+    maxCommands: 5,
+    maxLoopIterations: 50,
+  });
+  tool.executeSync(
+    "export BUILD_ID=42; mkdir -p /workspace && cd /workspace && echo ready > state.txt",
+  );
+
+  const snapshot = tool.snapshot();
+  const restored = BashTool.fromSnapshot(snapshot, {
+    username: "agent",
+    maxCommands: 5,
+    maxLoopIterations: 50,
+  });
+
+  t.is(restored.executeSync("echo $BUILD_ID").stdout.trim(), "42");
+  t.is(restored.executeSync("cat /workspace/state.txt").stdout.trim(), "ready");
+  t.is(restored.executeSync("pwd").stdout.trim(), "/workspace");
+  t.is(restored.executeSync("whoami").stdout.trim(), "agent");
+
+  const limited = restored.executeSync("true; true; true; true; true; true");
+  t.true(
+    limited.exitCode !== 0 || limited.error !== undefined,
+    "fromSnapshot() must preserve maxCommands",
+  );
+});
+
+test("integration: BashTool restoreSnapshot after reset restores original state", (t) => {
+  const tool = new BashTool({ username: "agent" });
+  tool.executeSync("export SNAP=yes; mkdir -p /tmp/restore && cd /tmp/restore");
+
+  const snapshot = tool.snapshot();
+
+  tool.reset();
+  t.is(tool.executeSync("echo ${SNAP:-missing}").stdout.trim(), "missing");
+
+  tool.restoreSnapshot(snapshot);
+  t.is(tool.executeSync("echo $SNAP").stdout.trim(), "yes");
+  t.is(tool.executeSync("pwd").stdout.trim(), "/tmp/restore");
+  t.is(tool.executeSync("whoami").stdout.trim(), "agent");
+});
+
+test("integration: BashTool empty snapshot roundtrip works", (t) => {
+  const tool = new BashTool();
+  const expectedPwd = tool.executeSync("pwd").stdout.trim();
+  const snapshot = tool.snapshot();
+  const restored = BashTool.fromSnapshot(snapshot);
+
+  t.is(restored.executeSync("pwd").stdout.trim(), expectedPwd);
+  t.is(restored.executeSync("echo ${MISSING:-unset}").stdout.trim(), "unset");
+});
+
+test("integration: BashTool invalid snapshot throws", (t) => {
+  const tool = new BashTool();
+  const invalid = new Uint8Array([0, 1, 2, 3, 4]);
+
+  t.throws(() => tool.restoreSnapshot(invalid));
+  t.throws(() => BashTool.fromSnapshot(invalid));
+});
+
 test("integration: multiple resets remain stable", (t) => {
   const bash = new Bash();
   for (let i = 0; i < 10; i++) {

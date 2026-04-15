@@ -42,7 +42,6 @@ reqwest = { workspace = true, optional = true }
 
 # SSH client (for ssh/scp/sftp) - optional, enabled with ssh feature
 russh = { workspace = true, optional = true }
-russh-keys = { workspace = true, optional = true }
 
 # Fault injection for testing (optional)
 fail = { workspace = true, optional = true }
@@ -102,7 +101,7 @@ logging = ["tracing"]
 git = []
 # Enable ssh/scp/sftp builtins for remote command execution and file transfer
 # Usage: cargo build --features ssh
-ssh = ["russh", "russh-keys"]
+ssh = ["russh"]
 # Enable ScriptedTool: compose ToolDef+callback pairs into a single Tool
 # Usage: cargo build --features scripted_tool
 scripted_tool = []

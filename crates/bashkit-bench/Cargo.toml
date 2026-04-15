@@ -22,9 +22,6 @@ serde_json.workspace = true
 clap.workspace = true
 anyhow.workspace = true
 
-# Statistics
-statrs = "0.18"
-
 # Terminal output
 colored = "3"
 tabled = "0.20"

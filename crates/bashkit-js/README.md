@@ -219,13 +219,15 @@ console.log(result.stdout); // Alice
 
 ## Snapshot / Restore
 
-State snapshots are currently available on `Bash` instances:
+State snapshots are available on both `Bash` and `BashTool` instances:
 
 ```typescript
-import { Bash } from "@everruns/bashkit";
+import { Bash, BashTool } from "@everruns/bashkit";
 
 const bash = new Bash({ username: "agent", maxCommands: 100 });
-await bash.execute("export BUILD_ID=42; mkdir -p /workspace && cd /workspace && echo ready > state.txt");
+await bash.execute(
+  "export BUILD_ID=42; mkdir -p /workspace && cd /workspace && echo ready > state.txt",
+);
 
 const snapshot = bash.snapshot();
 
@@ -235,6 +237,17 @@ console.log((await restored.execute("echo $BUILD_ID")).stdout); // 42\n
 restored.reset();
 restored.restoreSnapshot(snapshot);
 console.log(restored.executeSync("pwd").stdout); // /workspace\n
+
+const tool = new BashTool({ username: "agent", maxCommands: 5 });
+tool.executeSync("export TOOL_STATE=ready");
+
+const toolSnapshot = tool.snapshot();
+const restoredTool = BashTool.fromSnapshot(toolSnapshot, {
+  username: "agent",
+  maxCommands: 5,
+});
+
+console.log(restoredTool.executeSync("echo $TOOL_STATE").stdout); // ready\n
 ```
 
 ## Framework Integrations
@@ -266,7 +279,10 @@ const bash = bashTool();
 ### LangChain
 
 ```typescript
-import { createBashTool, createScriptedTool } from "@everruns/bashkit/langchain";
+import {
+  createBashTool,
+  createScriptedTool,
+} from "@everruns/bashkit/langchain";
 ```
 
 ## API Reference
@@ -288,8 +304,11 @@ import { createBashTool, createScriptedTool } from "@everruns/bashkit/langchain"
 
 ### BashTool
 
-- All execution, cancellation, reset, and direct VFS helpers from `Bash`
+- All execution, cancellation, reset, snapshot, restore, and direct VFS helpers from `Bash`
 - Tool metadata: `name`, `version`, `shortDescription`
+- `snapshot()`
+- `restoreSnapshot(data)`
+- `BashTool.fromSnapshot(data, options?)`
 - `description()`
 - `help()`
 - `systemPrompt()`
@@ -334,12 +353,12 @@ import { createBashTool, createScriptedTool } from "@everruns/bashkit/langchain"
 
 ## Platform Support
 
-| OS | Architecture |
-|----|-------------|
-| macOS | `x86_64`, `aarch64` |
-| Linux | `x86_64`, `aarch64` |
-| Windows | `x86_64` |
-| WASM | `wasm32-wasip1-threads` |
+| OS      | Architecture            |
+| ------- | ----------------------- |
+| macOS   | `x86_64`, `aarch64`     |
+| Linux   | `x86_64`, `aarch64`     |
+| Windows | `x86_64`                |
+| WASM    | `wasm32-wasip1-threads` |
 
 ## How It Works
 
