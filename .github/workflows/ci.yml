@@ -80,8 +80,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Examples have a dedicated job below; skipping them here avoids
+      # duplicated example links that can exhaust runner disk on main.
       - name: Run tests
-        run: cargo test --features http_client,ssh
+        run: cargo test --workspace --lib --bins --tests --features http_client,ssh
+
+      - name: Run doc tests
+        run: cargo test --workspace --doc --features http_client,ssh
 
       - name: Run realfs tests
         run: cargo test --features realfs -p bashkit --test realfs_tests -p bashkit-cli
