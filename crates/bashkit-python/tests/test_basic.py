@@ -54,6 +54,14 @@ _NAMES = (
     "test_bash_cancel_after_reset_still_works",
     "test_bashtool_cancel_then_reset_clears_cancellation",
     "test_bashtool_cancel_after_reset_still_works",
+    "test_bash_clear_cancel_allows_subsequent_execution",
+    "test_bashtool_clear_cancel_allows_subsequent_execution",
+    "test_bash_async_clear_cancel_after_cancelled_execute",
+    "test_bashtool_async_clear_cancel_after_cancelled_execute",
+    "test_bash_clear_cancel_on_fresh_instance_is_noop",
+    "test_bashtool_clear_cancel_on_fresh_instance_is_noop",
+    "test_bash_clear_cancel_after_reset_is_noop",
+    "test_bashtool_clear_cancel_after_reset_is_noop",
 )
 
 globals().update({name: getattr(_categories, name) for name in _NAMES})
