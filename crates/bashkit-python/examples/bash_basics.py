@@ -8,7 +8,7 @@
 """Basic usage of the Bash interface.
 
 Demonstrates core Bash features: command execution, pipelines, variables,
-loops, virtual filesystem persistence, and resource limits.
+loops, virtual filesystem persistence, snapshot/restore, and resource limits.
 
 Run:
     uv run crates/bashkit-python/examples/bash_basics.py
@@ -89,6 +89,33 @@ EOF
     print()
 
 
+def demo_snapshot_restore():
+    """Snapshot and restore interpreter state."""
+    print("=== Snapshot / Restore ===\n")
+
+    bash = Bash()
+    bash.execute_sync("export BUILD_ID=42; mkdir -p /workspace && cd /workspace && echo ready > state.txt")
+
+    snapshot = bash.snapshot()
+    print(f"snapshot: captured {len(snapshot)} bytes")
+    assert snapshot
+
+    # Restore shell state into a freshly configured instance.
+    restored = Bash.from_snapshot(snapshot, username="agent")
+    assert restored.execute_sync("whoami").stdout.strip() == "agent"
+    assert restored.execute_sync("echo $BUILD_ID").stdout.strip() == "42"
+    assert restored.execute_sync("pwd").stdout.strip() == "/workspace"
+    assert restored.execute_sync("cat /workspace/state.txt").stdout.strip() == "ready"
+
+    # Reset and restore also works on an existing instance.
+    restored.reset()
+    restored.restore_snapshot(snapshot)
+    print(f"restore:  {restored.execute_sync('echo $BUILD_ID').stdout.strip()}")
+    assert restored.execute_sync("echo $BUILD_ID").stdout.strip() == "42"
+
+    print()
+
+
 async def demo_async():
     """Async API basics."""
     print("=== Async API ===\n")
@@ -148,6 +175,7 @@ def demo_config():
 def main():
     print("Bashkit — Bash interface examples\n")
     demo_sync()
+    demo_snapshot_restore()
     asyncio.run(demo_async())
     demo_config()
     print("All examples passed.")

@@ -130,6 +130,9 @@ tool = BashTool(files={
     "/config/static.txt": "ready\n",
     "/config/generated.json": lambda: '{"ok": true}\n",
 })
+# Snapshot / restore state
+blob = tool.snapshot()
+restored = BashTool.from_snapshot(blob, username="user")
 
 # Direct VFS helpers (text-oriented convenience wrappers)
 tool.read_file("/tmp/data.txt")      # -> str
@@ -155,6 +158,16 @@ tool.system_prompt()   # compact system prompt
 tool.input_schema()    # JSON schema string
 tool.output_schema()   # JSON schema string
 tool.version           # from Rust crate
+```
+
+Snapshot/restore methods also exist on `Bash` and mirror the Node bindings:
+
+```python
+from bashkit import Bash
+
+bash = Bash()
+blob = bash.snapshot()              # -> bytes
+restored = Bash.from_snapshot(blob) # -> Bash
 ```
 
 ### ExecResult
