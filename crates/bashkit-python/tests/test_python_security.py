@@ -31,13 +31,13 @@ _DEEPAGENTS_SRC = (Path(__file__).resolve().parent.parent / "bashkit" / "deepage
 class TestSandboxEscape:
     """Try to break out of the sandbox through the bash interpreter."""
 
-    def test_no_real_filesystem_read(self):
+    def test_tm_inf_001_no_real_filesystem_read(self):
         bash = Bash()
         r = bash.execute_sync("cat /etc/passwd")
         # VFS has no /etc/passwd
         assert "root:" not in r.stdout
 
-    def test_no_real_filesystem_proc(self):
+    def test_tm_esc_003_no_real_filesystem_proc(self):
         bash = Bash()
         r = bash.execute_sync("cat /proc/self/environ 2>/dev/null || echo blocked")
         assert "blocked" in r.stdout or r.exit_code != 0
@@ -47,7 +47,7 @@ class TestSandboxEscape:
         r = bash.execute_sync("ls /sys/ 2>/dev/null || echo blocked")
         assert "blocked" in r.stdout or r.exit_code != 0
 
-    def test_path_traversal_via_bash(self):
+    def test_tm_inj_005_path_traversal_via_bash(self):
         bash = Bash()
         r = bash.execute_sync("cat /home/../../../../etc/passwd 2>/dev/null")
         assert "root:" not in r.stdout
@@ -67,27 +67,27 @@ class TestSandboxEscape:
 class TestResourceLimits:
     """Verify resource limits prevent denial of service."""
 
-    def test_infinite_bash_loop_blocked(self):
+    def test_tm_dos_017_infinite_bash_loop_blocked(self):
         bash = Bash(max_loop_iterations=100)
         r = bash.execute_sync("while true; do echo x; done")
         # Should be stopped by loop iteration limit
         lines = [line for line in r.stdout.strip().splitlines() if line.strip()]
         assert len(lines) <= 101
 
-    def test_fork_bomb_blocked(self):
+    def test_tm_dos_021_fork_bomb_blocked(self):
         bash = Bash()
         r = bash.execute_sync(":(){ :|:& };:")
         # Fork bomb should either fail or be harmless in VFS
         # Key: should not crash the host
         assert isinstance(r.exit_code, int)
 
-    def test_max_loop_iterations(self):
+    def test_tm_dos_016_max_loop_iterations(self):
         bash = Bash(max_loop_iterations=10)
         r = bash.execute_sync("for i in $(seq 1 100); do echo $i; done")
         lines = [line for line in r.stdout.strip().splitlines() if line.strip()]
         assert len(lines) <= 11  # 10 iterations + possible off-by-one
 
-    def test_max_commands(self):
+    def test_tm_dos_002_max_commands(self):
         bash = Bash(max_commands=5)
         cmds = "\n".join(f"echo {i}" for i in range(20))
         r = bash.execute_sync(cmds)
@@ -282,7 +282,7 @@ class TestJsonNesting:
 class TestErrorLeakage:
     """Verify errors don't leak host system information."""
 
-    def test_bash_error_no_host_paths(self):
+    def test_tm_int_001_bash_error_no_host_paths(self):
         bash = Bash()
         r = bash.execute_sync("cat /nonexistent/file")
         combined = r.stdout + r.stderr
