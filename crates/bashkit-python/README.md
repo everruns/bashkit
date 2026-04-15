@@ -2,83 +2,87 @@
 
 [![PyPI](https://img.shields.io/pypi/v/bashkit)](https://pypi.org/project/bashkit/)
 
-A sandboxed bash interpreter for AI agents.
-
-```python
-from bashkit import BashTool
-
-tool = BashTool()
-result = tool.execute_sync("echo 'Hello, World!'")
-print(result.stdout)  # Hello, World!
-```
+Sandboxed bash interpreter for Python. Native bindings to the `bashkit` Rust core for fast, in-process execution with a virtual filesystem.
 
 ## Features
 
-- **Sandboxed execution** — all commands run in-process with a virtual filesystem, no containers needed
-- **160 built-in commands** — echo, cat, grep, sed, awk, jq, curl, find, and more
-- **Full bash syntax** — variables, pipelines, redirects, loops, functions, arrays
-- **Resource limits** — protect against infinite loops and runaway scripts
-- **Framework integrations** — LangChain, PydanticAI, and Deep Agents
+- Sandboxed execution in-process, without containers or subprocess orchestration
+- Full bash syntax: variables, pipelines, redirects, loops, functions, and arrays
+- 160 built-in commands including `grep`, `sed`, `awk`, `jq`, `curl`, and `find`
+- Persistent interpreter state across calls, including variables, cwd, and VFS contents
+- Direct virtual filesystem APIs, constructor mounts, and live host mounts
+- Snapshot and restore support on `Bash` and `BashTool`
+- AI integrations for LangChain, PydanticAI, and Deep Agents
 
 ## Installation
 
 ```bash
 pip install bashkit
 
-# With framework support
+# Optional integrations
 pip install 'bashkit[langchain]'
 pip install 'bashkit[pydantic-ai]'
+pip install 'bashkit[deepagents]'
 ```
 
-## Usage
+## Quick Start
 
-### Async
+### Sync Execution
+
+```python
+from bashkit import Bash
+
+bash = Bash()
+
+result = bash.execute_sync("echo 'Hello, World!'")
+print(result.stdout)  # Hello, World!
+
+bash.execute_sync("export APP_ENV=dev")
+print(bash.execute_sync("echo $APP_ENV").stdout)  # dev
+```
+
+### Async Execution
 
 ```python
 import asyncio
 from bashkit import Bash
 
+
 async def main():
     bash = Bash()
 
-    # Simple command
-    result = await bash.execute("echo 'Hello, World!'")
-    print(result.stdout)  # Hello, World!
-
-    # Pipeline
     result = await bash.execute("echo -e 'banana\\napple\\ncherry' | sort")
     print(result.stdout)  # apple\nbanana\ncherry
 
-    # Virtual filesystem persists between calls
-    await bash.execute("echo 'data' > /tmp/file.txt")
-    result = await bash.execute("cat /tmp/file.txt")
-    print(result.stdout)  # data
+    await bash.execute("printf 'data\\n' > /tmp/file.txt")
+    saved = await bash.execute("cat /tmp/file.txt")
+    print(saved.stdout)  # data
+
 
 asyncio.run(main())
 ```
 
-### Sync
+## Configuration
+
+### Constructor Options
 
 ```python
-from bashkit import BashTool
+from bashkit import Bash
 
-tool = BashTool()
-result = tool.execute_sync("echo 'Hello!'")
-print(result.stdout)
-```
-
-### Configuration
-
-```python
 bash = Bash(
-    username="agent",           # Custom username (whoami)
-    hostname="sandbox",         # Custom hostname
-    max_commands=1000,          # Limit total commands
-    max_loop_iterations=10000,  # Limit loop iterations
+    username="agent",
+    hostname="sandbox",
+    max_commands=1000,
+    max_loop_iterations=10000,
+    max_memory=10 * 1024 * 1024,
+    timeout_seconds=30,
+    python=False,
 )
 ```
 
-### Direct Filesystem Access
+## Virtual Filesystem
+
+### Direct Methods on Bash and BashTool
 
 ```python
 from bashkit import Bash
@@ -86,12 +90,15 @@ from bashkit import Bash
 bash = Bash()
 bash.mkdir("/data", recursive=True)
 bash.write_file("/data/config.json", '{"debug": true}\n')
-assert bash.read_file("/data/config.json") == '{"debug": true}\n'
-assert bash.ls("/data") == ["config.json"]
-assert bash.glob("/data/*.json") == ["/data/config.json"]
+bash.append_file("/data/config.json", '{"trace": false}\n')
 
-# The same convenience methods exist on BashTool()
+print(bash.read_file("/data/config.json"))
+print(bash.exists("/data/config.json"))
+print(bash.ls("/data"))
+print(bash.glob("/data/*.json"))
 ```
+
+The same direct filesystem helpers are available on `BashTool()`.
 
 ### FileSystem Accessor
 
@@ -100,39 +107,40 @@ from bashkit import Bash
 
 bash = Bash()
 fs = bash.fs()
+
 fs.mkdir("/data", recursive=True)
 fs.write_file("/data/blob.bin", b"\x00\x01hello")
-assert fs.read_file("/data/blob.bin") == b"\x00\x01hello"
-
-# Additional filesystem operations
-fs.append_file("/data/blob.bin", b" world")
 fs.copy("/data/blob.bin", "/data/backup.bin")
-fs.rename("/data/backup.bin", "/data/copy.bin")
-info = fs.stat("/data/blob.bin")       # dict with size, type, etc.
-entries = fs.read_dir("/data")         # detailed directory listing
-fs.symlink("/data/link", "/data/blob.bin")
-fs.chmod("/data/blob.bin", 0o644)
+
+assert fs.read_file("/data/blob.bin") == b"\x00\x01hello"
+assert fs.exists("/data/backup.bin")
 ```
 
-### Files and Mounts
+### Pre-Initialized Files
 
 ```python
-from bashkit import Bash, FileSystem
+from bashkit import Bash
 
-# Text files (in-memory, writable)
-bash = Bash(files={"/config/app.conf": "debug=true\n"})
-
-# Lazy file providers (called on first read, then cached)
 bash = Bash(files={
     "/config/static.txt": "ready\n",
     "/config/report.json": lambda: '{"ok": true}\n',
 })
 
-# Real filesystem mounts (read-only by default)
+print(bash.execute_sync("cat /config/static.txt").stdout)
+print(bash.execute_sync("cat /config/report.json").stdout)
+```
+
+### Real Filesystem Mounts
+
+```python
+from bashkit import Bash
+
 bash = Bash(mounts=[
     {"host_path": "/path/to/data", "vfs_path": "/data"},
     {"host_path": "/path/to/workspace", "vfs_path": "/workspace", "writable": True},
 ])
+
+print(bash.execute_sync("ls /workspace").stdout)
 ```
 
 ### Live Mounts
@@ -142,42 +150,92 @@ from bashkit import Bash, FileSystem
 
 bash = Bash()
 workspace = FileSystem.real("/path/to/workspace", writable=True)
-bash.mount("/workspace", workspace)
 
+bash.mount("/workspace", workspace)
 bash.execute_sync("echo 'hello' > /workspace/demo.txt")
 bash.unmount("/workspace")
 ```
 
-### BashTool — Convenience Wrapper for AI Agents
+## Error Handling
 
-`BashTool` is a convenience wrapper specifically designed for AI agents. It wraps `Bash` and adds contract metadata (`description`, Markdown `help`, `system_prompt`, JSON schemas) needed by tool-use protocols. Use this when integrating with LangChain, PydanticAI, or similar agent frameworks.
+```python
+from bashkit import Bash, BashError
+
+bash = Bash()
+
+try:
+    bash.execute_sync_or_throw("exit 42")
+except BashError as err:
+    print(err.exit_code)  # 42
+    print(err.stderr)
+    print(str(err))
+```
+
+Use `execute_or_throw()` and `execute_sync_or_throw()` when you want failures surfaced as exceptions instead of inspecting `exit_code` manually.
+
+## Cancellation
+
+```python
+from bashkit import Bash
+
+bash = Bash()
+
+bash.cancel()  # no-op if nothing is running
+bash.reset()   # reset state before reusing the instance
+```
+
+`BashTool` exposes the same `cancel()` and `reset()` methods.
+
+## BashTool
+
+`BashTool` wraps `Bash` and adds tool-contract metadata for agent frameworks:
+
+- `name`
+- `short_description`
+- `version`
+- `description()`
+- `help()`
+- `system_prompt()`
+- `input_schema()`
+- `output_schema()`
 
 ```python
 from bashkit import BashTool
 
 tool = BashTool()
-print(tool.input_schema())    # JSON schema for LLM tool-use
-print(tool.description())     # Token-efficient tool description
-print(tool.system_prompt())   # Token-efficient prompt
-print(tool.help())            # Markdown help document
 
-result = await tool.execute("echo 'Hello!'")
+print(tool.description())
+print(tool.input_schema())
+
+result = tool.execute_sync("echo 'Hello from BashTool'")
+print(result.stdout)
 ```
 
-### Scripted Tool Orchestration
+## ScriptedTool
 
-Compose multiple tools into a single bash-scriptable interface:
+Use `ScriptedTool` to register Python callbacks as bash-callable tools:
 
 ```python
 from bashkit import ScriptedTool
 
+
+def get_user(params, stdin=None):
+    return '{"id": 1, "name": "Alice"}'
+
+
 tool = ScriptedTool("api")
-tool.add_tool("greet", "Greet a user", callback=lambda p, s=None: f"hello {p.get('name', 'world')}")
-result = tool.execute_sync("greet --name Alice")
-print(result.stdout)  # hello Alice
+tool.add_tool(
+    "get_user",
+    "Fetch user by ID",
+    callback=get_user,
+    schema={"type": "object", "properties": {"id": {"type": "integer"}}},
+)
+
+result = tool.execute_sync("get_user --id 1 | jq -r '.name'")
+print(result.stdout)  # Alice
 ```
 
-### Snapshot / Restore
+## Snapshot / Restore
 
 ```python
 from bashkit import Bash
@@ -194,17 +252,18 @@ assert restored.execute_sync("cat /workspace/state.txt").stdout.strip() == "read
 restored.reset()
 restored.restore_snapshot(snapshot)
 assert restored.execute_sync("pwd").stdout.strip() == "/workspace"
-
-# BashTool exposes the same snapshot/restore API.
 ```
+
+`BashTool` exposes the same `snapshot()`, `restore_snapshot(...)`, and `from_snapshot(...)` APIs.
+
+## Framework Integrations
 
 ### LangChain
 
 ```python
 from bashkit.langchain import create_bash_tool
 
-bash_tool = create_bash_tool()
-# Use with any LangChain agent
+tool = create_bash_tool()
 ```
 
 ### PydanticAI
@@ -212,110 +271,94 @@ bash_tool = create_bash_tool()
 ```python
 from bashkit.pydantic_ai import create_bash_tool
 
-bash_tool = create_bash_tool()
-# Use with any PydanticAI agent
+tool = create_bash_tool()
 ```
 
 ### Deep Agents
 
 ```python
 from bashkit.deepagents import BashkitBackend, BashkitMiddleware
-# Use with Deep Agents framework
 ```
-
-## ScriptedTool — Multi-Tool Orchestration
-
-Compose Python callbacks as bash builtins. An LLM writes a single bash script that pipes, loops, and branches across all registered tools.
-
-```python
-from bashkit import ScriptedTool
-
-def get_user(params, stdin=None):
-    return '{"id": 1, "name": "Alice"}'
-
-tool = ScriptedTool("api")
-tool.add_tool("get_user", "Fetch user by ID",
-    callback=get_user,
-    schema={"type": "object", "properties": {"id": {"type": "integer"}}})
-
-result = tool.execute_sync("get_user --id 1 | jq -r '.name'")
-print(result.stdout)  # Alice
-```
-
-## Features
-
-- **Sandboxed, in-process execution**: All commands run in isolation with a virtual filesystem
-- **160 built-in commands**: echo, cat, grep, sed, awk, jq, curl, find, and more
-- **Full bash syntax**: Variables, pipelines, redirects, loops, functions, arrays
-- **Resource limits**: Protect against infinite loops and runaway scripts
 
 ## API Reference
 
 ### Bash
 
-- `execute(commands: str) -> ExecResult` — execute commands asynchronously
-- `execute_sync(commands: str) -> ExecResult` — execute commands synchronously
-- `execute_or_throw(commands: str) -> ExecResult` — async, raises on non-zero exit
-- `execute_sync_or_throw(commands: str) -> ExecResult` — sync, raises on non-zero exit
-- `reset()` — reset interpreter state
-- `snapshot() -> bytes` — serialize interpreter state
-- `restore_snapshot(data: bytes)` — restore serialized interpreter state
-- `from_snapshot(data: bytes, **kwargs) -> Bash` — construct and restore in one step
-- `fs() -> FileSystem` — direct filesystem access
+- `execute(commands: str) -> ExecResult`
+- `execute_sync(commands: str) -> ExecResult`
+- `execute_or_throw(commands: str) -> ExecResult`
+- `execute_sync_or_throw(commands: str) -> ExecResult`
+- `cancel()`
+- `reset()`
+- `snapshot() -> bytes`
+- `restore_snapshot(data: bytes)`
+- `from_snapshot(data: bytes, **kwargs) -> Bash`
+- `mount(vfs_path: str, fs: FileSystem)`
+- `unmount(vfs_path: str)`
+- Direct VFS helpers: `read_file`, `write_file`, `append_file`, `mkdir`, `remove`, `exists`, `stat`, `read_dir`, `ls`, `glob`, `copy`, `rename`, `symlink`, `chmod`, `read_link`
 
 ### BashTool
 
-Convenience wrapper for AI agents. Inherits all execution methods from `Bash`, plus:
-
-- `description() -> str` — token-efficient tool description
-- `help() -> str` — Markdown help document
-- `system_prompt() -> str` — token-efficient system prompt for LLM integration
-- `input_schema() -> str` — JSON input schema
-- `output_schema() -> str` — JSON output schema
-- `snapshot() -> bytes` / `restore_snapshot(data: bytes)` / `from_snapshot(...)` — checkpoint and resume interpreter state
-
-### ExecResult
-
-- `stdout: str` — standard output
-- `stderr: str` — standard error
-- `exit_code: int` — exit code (0 = success)
-- `error: Optional[str]` — error message if execution failed
-- `success: bool` — True if exit_code == 0
-- `to_dict() -> dict` — convert to dictionary
-
-### FileSystem
-
-- `mkdir(path, recursive=False)` — create directory
-- `write_file(path, content)` — write bytes to file
-- `read_file(path) -> bytes` — read file contents
-- `append_file(path, content)` — append bytes to file
-- `exists(path) -> bool` — check if path exists
-- `remove(path, recursive=False)` — delete file/directory
-- `stat(path) -> dict` — file metadata (size, type, etc.)
-- `read_dir(path) -> list` — detailed directory listing
-- `rename(src, dst)` — rename file/directory
-- `copy(src, dst)` — copy file
-- `symlink(link, target)` — create symlink
-- `chmod(path, mode)` — change file permissions
-- `read_link(path) -> str` — read symlink target
+- All execution, cancellation, reset, snapshot, restore, mount, and direct VFS helpers from `Bash`
+- Tool metadata: `name`, `short_description`, `version`
+- `description() -> str`
+- `help() -> str`
+- `system_prompt() -> str`
+- `input_schema() -> str`
+- `output_schema() -> str`
 
 ### ScriptedTool
 
-- `add_tool(name, description, callback, schema=None)` — register a tool
-- `execute(script: str) -> ExecResult` — execute script asynchronously
-- `execute_sync(script: str) -> ExecResult` — execute script synchronously
-- `execute_or_throw(script: str) -> ExecResult` — async, raises on non-zero exit
-- `execute_sync_or_throw(script: str) -> ExecResult` — sync, raises on non-zero exit
-- `env(key: str, value: str)` — set environment variable
-- `tool_count() -> int` — number of registered tools
+- `add_tool(name, description, callback, schema=None)`
+- `execute(script: str) -> ExecResult`
+- `execute_sync(script: str) -> ExecResult`
+- `execute_or_throw(script: str) -> ExecResult`
+- `execute_sync_or_throw(script: str) -> ExecResult`
+- `env(key: str, value: str)`
+- `tool_count() -> int`
 
-## How it works
+### FileSystem
 
-Bashkit is built on top of [Bashkit core](https://github.com/everruns/bashkit), a bash interpreter written in Rust. The Python package provides a native extension for fast, sandboxed execution without spawning subprocesses or containers.
+- `mkdir(path, recursive=False)`
+- `write_file(path, content)`
+- `read_file(path) -> bytes`
+- `append_file(path, content)`
+- `exists(path) -> bool`
+- `remove(path, recursive=False)`
+- `stat(path) -> dict`
+- `read_dir(path) -> list`
+- `rename(src, dst)`
+- `copy(src, dst)`
+- `symlink(target, link)`
+- `chmod(path, mode)`
+- `read_link(path) -> str`
+- `FileSystem.real(host_path, writable=False) -> FileSystem`
+
+### ExecResult and BashError
+
+- `ExecResult.stdout`
+- `ExecResult.stderr`
+- `ExecResult.exit_code`
+- `ExecResult.error`
+- `ExecResult.success`
+- `ExecResult.to_dict()`
+- `BashError.exit_code`
+- `BashError.stderr`
+
+## Platform Support
+
+- Linux: `x86_64`, `aarch64` (glibc and musl wheels)
+- macOS: `x86_64`, `aarch64`
+- Windows: `x86_64`
+- Python: `3.9` through `3.13`
+
+## How It Works
+
+Bashkit is built on the `bashkit` Rust core, which implements a sandboxed bash interpreter and virtual filesystem. The Python package exposes that engine through a native extension, so commands run in-process with persistent state and resource limits, without shelling out to the host system.
 
 ## Part of Everruns
 
-Bashkit is part of the [Everruns](https://github.com/everruns) ecosystem — tools and runtimes for building reliable AI agents. See the [bashkit monorepo](https://github.com/everruns/bashkit) for the Rust core, Node.js package (`@everruns/bashkit`), and more.
+Bashkit is part of the [Everruns](https://github.com/everruns) ecosystem. See the [bashkit monorepo](https://github.com/everruns/bashkit) for the Rust core, the JavaScript package (`@everruns/bashkit`), and related tooling.
 
 ## License
 

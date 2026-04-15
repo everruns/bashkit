@@ -1,6 +1,17 @@
 # @everruns/bashkit
 
-Sandboxed bash interpreter for JavaScript/TypeScript. Native NAPI-RS bindings to the [bashkit](https://github.com/everruns/bashkit) Rust core. Works with Node.js, Bun, and Deno.
+Sandboxed bash interpreter for JavaScript and TypeScript. Native NAPI-RS bindings to the `bashkit` Rust core for Node.js, Bun, and Deno.
+
+## Features
+
+- Sandboxed, in-process execution with a virtual filesystem
+- Full bash syntax: variables, pipelines, redirects, loops, functions, and arrays
+- 160 built-in commands including `grep`, `sed`, `awk`, `jq`, `curl`, and `find`
+- Sync and async execution APIs
+- Direct VFS helpers, constructor mounts, and live host mounts
+- Cancellation support via `cancel()`
+- Snapshot and restore support on `Bash`
+- AI framework adapters for OpenAI, Anthropic, Vercel AI SDK, and LangChain
 
 ## Install
 
@@ -10,231 +21,333 @@ bun add @everruns/bashkit       # Bun
 deno add npm:@everruns/bashkit  # Deno
 ```
 
-## Features
+## Quick Start
 
-- **Sandboxed execution** — all commands run in-process with a virtual filesystem, no containers needed
-- **160 built-in commands** — echo, cat, grep, sed, awk, jq, curl, find, and more
-- **Full bash syntax** — variables, pipelines, redirects, loops, functions, arrays
-- **Resource limits** — protect against infinite loops and runaway scripts
-- **Sync and async APIs** — `executeSync()` and `execute()` (Promise-based)
-- **Virtual filesystem access** — read, write, mkdir, glob directly from JS
-- **Cancellation** — `cancel()` and `AbortSignal` support
-- **Scripted tool orchestration** — compose JS callbacks as bash builtins via `ScriptedTool`
-- **LLM tool contract** — `BashTool` with discovery metadata, schemas, and system prompts
-
-## Usage
+### Sync Execution
 
 ```typescript
-import { Bash, BashTool, ScriptedTool, getVersion } from '@everruns/bashkit';
+import { Bash } from "@everruns/bashkit";
 
-// Basic usage
 const bash = new Bash();
+
 const result = bash.executeSync('echo "Hello, World!"');
 console.log(result.stdout); // Hello, World!\n
 
-// Async
-const r = await bash.execute('echo "async!"');
-console.log(r.stdout); // async!\n
-
-// State persists between calls
-bash.executeSync('X=42');
-bash.executeSync('echo $X'); // stdout: 42\n
-
-// With tool-contract metadata
-const tool = new BashTool();
-console.log(tool.name);           // "bashkit"
-console.log(tool.inputSchema());  // JSON schema for LLM tool-use
-console.log(tool.description());  // Token-efficient tool description
-console.log(tool.help());         // Markdown help document
-console.log(tool.systemPrompt()); // Compact system prompt
-
-const tr = tool.executeSync('echo hello');
-console.log(tr.stdout); // hello\n
+bash.executeSync("X=42");
+console.log(bash.executeSync("echo $X").stdout); // 42\n
 ```
 
-### Virtual Filesystem
-
-Read, write, and inspect files directly without executing bash commands:
+### Async Execution
 
 ```typescript
+import { Bash } from "@everruns/bashkit";
+
 const bash = new Bash();
-bash.writeFile('/data/config.json', '{"key": "value"}');
-const content = bash.readFile('/data/config.json');
-bash.mkdir('/data/subdir', true);   // recursive
-bash.exists('/data/config.json');   // true
-bash.remove('/data/subdir', true);  // recursive
-bash.ls('/data');                   // string[]
-bash.glob('**/*.json');             // string[]
+
+const result = await bash.execute('echo -e "banana\\napple\\ncherry" | sort');
+console.log(result.stdout); // apple\nbanana\ncherry\n
+
+await bash.execute('printf "data\\n" > /tmp/file.txt');
+console.log((await bash.execute("cat /tmp/file.txt")).stdout); // data\n
 ```
 
-### File Mounts
+## Configuration
 
-Mount files at construction time with strings, sync functions, or async functions:
+### BashOptions
 
 ```typescript
+import { Bash } from "@everruns/bashkit";
+
+const bash = new Bash({
+  username: "agent",
+  hostname: "sandbox",
+  maxCommands: 1000,
+  maxLoopIterations: 10000,
+  maxMemory: 10 * 1024 * 1024,
+  timeoutMs: 30_000,
+  mounts: [{ path: "/workspace", root: "./src", writable: true }],
+  python: false,
+});
+```
+
+## Virtual Filesystem
+
+### Direct Methods on Bash and BashTool
+
+```typescript
+import { Bash } from "@everruns/bashkit";
+
+const bash = new Bash();
+
+bash.mkdir("/data", true);
+bash.writeFile("/data/config.json", '{"debug":true}');
+bash.appendFile("/data/config.json", "\n");
+
+console.log(bash.readFile("/data/config.json"));
+console.log(bash.exists("/data/config.json"));
+console.log(bash.ls("/data"));
+console.log(bash.glob("/data/*.json"));
+```
+
+`BashTool` exposes the same direct filesystem helpers.
+
+### FileSystem Accessor
+
+Call `bash.fs()` or `tool.fs()` when you need the underlying filesystem handle directly. For most applications, the convenience methods on `Bash` and `BashTool` are simpler and more explicit.
+
+### Pre-Initialized Files
+
+```typescript
+import { Bash } from "@everruns/bashkit";
+
 const bash = new Bash({
   files: {
-    '/config.json': '{"key": "value"}',
-    '/lazy.txt': () => 'computed on first read',
-    '/async.txt': async () => fetchContent(),
+    "/config.json": '{"key":"value"}',
+    "/lazy.txt": () => "computed on first read",
   },
 });
 
-// For async file providers, use the static factory
-const bash2 = await Bash.create({
-  files: { '/data.txt': async () => loadData() },
+console.log(bash.readFile("/config.json"));
+
+const asyncBash = await Bash.create({
+  files: {
+    "/async.txt": async () => "loaded asynchronously",
+  },
 });
 ```
 
-### Cancellation
+### Real Filesystem Mounts
 
 ```typescript
+import { Bash } from "@everruns/bashkit";
+
+const bash = new Bash({
+  mounts: [
+    { path: "/docs", root: "./docs" },
+    { path: "/workspace", root: "./src", writable: true },
+  ],
+});
+
+console.log(bash.executeSync("ls /workspace").stdout);
+```
+
+### Live Mounts
+
+```typescript
+import { Bash } from "@everruns/bashkit";
+
 const bash = new Bash();
 
-// Cancel method
-const promise = bash.execute('sleep 60');
-bash.cancel();
-
-// AbortSignal
-const controller = new AbortController();
-const promise2 = bash.execute('sleep 60', { signal: controller.signal });
-controller.abort();
+bash.mount("./src", "/workspace", true);
+console.log(bash.executeSync("ls /workspace").stdout);
+bash.unmount("/workspace");
 ```
 
-### Error Handling
+## Error Handling
 
 ```typescript
-import { BashError } from '@everruns/bashkit';
+import { Bash, BashError } from "@everruns/bashkit";
 
-// Throws BashError on non-zero exit
+const bash = new Bash();
+
 try {
-  bash.executeSyncOrThrow('exit 1');
-} catch (e) {
-  if (e instanceof BashError) {
-    console.log(e.exitCode); // 1
-    console.log(e.stderr);
+  bash.executeSyncOrThrow("exit 1");
+} catch (err) {
+  if (err instanceof BashError) {
+    console.log(err.exitCode);
+    console.log(err.stderr);
   }
 }
-
-// Async variant
-await bash.executeOrThrow('false');
 ```
 
-### ScriptedTool
-
-Compose JS callbacks as bash builtins — an LLM writes a single bash script that pipes, loops, and branches across all registered tools:
+## Cancellation
 
 ```typescript
-const tool = new ScriptedTool({ name: 'api' });
-tool.addTool('get_user', 'Fetch user by ID', (params) => {
-  return JSON.stringify({ id: params.id, name: 'Alice' });
+import { Bash } from "@everruns/bashkit";
+
+const bash = new Bash();
+
+const running = bash.execute("sleep 60");
+bash.cancel();
+await running;
+
+bash.reset(); // reset before reusing the instance
+```
+
+`BashTool` exposes the same `cancel()` and `reset()` methods. For synchronous execution, `executeSync(...)` and `executeSyncOrThrow(...)` also accept `{ signal }`.
+
+## BashTool
+
+`BashTool` wraps the interpreter with tool-contract metadata for agent frameworks:
+
+- `name`
+- `version`
+- `shortDescription`
+- `description()`
+- `help()`
+- `systemPrompt()`
+- `inputSchema()`
+- `outputSchema()`
+
+```typescript
+import { BashTool } from "@everruns/bashkit";
+
+const tool = new BashTool();
+
+console.log(tool.name);
+console.log(tool.inputSchema());
+
+const result = tool.executeSync("echo hello");
+console.log(result.stdout);
+```
+
+## ScriptedTool
+
+Use `ScriptedTool` to register JavaScript callbacks as bash-callable tools:
+
+```typescript
+import { ScriptedTool } from "@everruns/bashkit";
+
+const tool = new ScriptedTool({ name: "api" });
+tool.addTool("get_user", "Fetch user by ID", (params) => {
+  return JSON.stringify({ id: params.id, name: "Alice" });
 });
 
 const result = tool.executeSync("get_user --id 1 | jq -r '.name'");
 console.log(result.stdout); // Alice
 ```
 
-## API
+## Snapshot / Restore
 
-### `Bash`
-
-Core interpreter with virtual filesystem.
-
-- `new Bash(options?)` — create instance
-- `Bash.create(options?)` — async factory for async file providers
-- `executeSync(commands)` — run bash commands, returns `ExecResult`
-- `executeSyncOrThrow(commands)` — run, throws `BashError` on non-zero exit
-- `execute(commands)` — async execution, returns `Promise<ExecResult>`
-- `executeOrThrow(commands)` — async, throws `BashError` on non-zero exit
-- `cancel()` — cancel running execution
-- `reset()` — clear state, preserve config
-- `readFile(path)` — read file as string
-- `writeFile(path, content)` — write/overwrite file
-- `mkdir(path, recursive?)` — create directory
-- `exists(path)` — check path exists
-- `remove(path, recursive?)` — delete file/directory
-- `ls(path?)` — list directory contents
-- `glob(pattern)` — find files by pattern
-
-### `BashTool`
-
-Interpreter + tool-contract metadata. All `Bash` methods, plus:
-
-- `name` — tool name (`"bashkit"`)
-- `version` — version string
-- `shortDescription` — one-liner
-- `description()` — token-efficient tool description
-- `help()` — Markdown help document
-- `systemPrompt()` — compact system prompt for LLM orchestration
-- `inputSchema()` — JSON input schema
-- `outputSchema()` — JSON output schema
-
-### `ScriptedTool`
-
-Multi-tool orchestration — register JS callbacks as bash builtins.
-
-- `new ScriptedTool(options)` — create with name, shortDescription, limits
-- `addTool(name, description, callback, schema?)` — register a tool
-- `executeSync(script)` / `execute(script)` — run script
-- `executeSyncOrThrow(script)` / `executeOrThrow(script)` — run, throw on error
-- `env(key, value)` — set environment variable
-- `toolCount()` — number of registered tools
-- Tool metadata: `name`, `shortDescription`, `version`, `description()`, `help()`, `systemPrompt()`, `inputSchema()`, `outputSchema()`
-
-### `BashOptions`
+State snapshots are currently available on `Bash` instances:
 
 ```typescript
-interface BashOptions {
-  username?: string;
-  hostname?: string;
-  maxCommands?: number;
-  maxLoopIterations?: number;
-  files?: Record<string, string | (() => string) | (() => Promise<string>)>;
-  python?: boolean;
-  externalFunctions?: string[];
-}
+import { Bash } from "@everruns/bashkit";
+
+const bash = new Bash({ username: "agent", maxCommands: 100 });
+await bash.execute("export BUILD_ID=42; mkdir -p /workspace && cd /workspace && echo ready > state.txt");
+
+const snapshot = bash.snapshot();
+
+const restored = Bash.fromSnapshot(snapshot);
+console.log((await restored.execute("echo $BUILD_ID")).stdout); // 42\n
+
+restored.reset();
+restored.restoreSnapshot(snapshot);
+console.log(restored.executeSync("pwd").stdout); // /workspace\n
 ```
 
-### `ExecResult`
+## Framework Integrations
+
+### OpenAI
 
 ```typescript
-interface ExecResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  success: boolean;
-  error?: string;
-  stdoutTruncated?: boolean;
-  stderrTruncated?: boolean;
-}
+import { bashTool } from "@everruns/bashkit/openai";
+
+const bash = bashTool();
 ```
 
-### `BashError`
+### Anthropic
 
 ```typescript
-class BashError extends Error {
-  exitCode: number;
-  stderr: string;
-  display(): string;
-}
+import { bashTool } from "@everruns/bashkit/anthropic";
+
+const bash = bashTool();
 ```
 
-### `getVersion()`
+### Vercel AI SDK
 
-Returns the bashkit version string.
+```typescript
+import { bashTool } from "@everruns/bashkit/ai";
+
+const bash = bashTool();
+```
+
+### LangChain
+
+```typescript
+import { createBashTool, createScriptedTool } from "@everruns/bashkit/langchain";
+```
+
+## API Reference
+
+### Bash
+
+- `new Bash(options?)`
+- `Bash.create(options?)`
+- `executeSync(commands, { signal? })`
+- `execute(commands)`
+- `executeSyncOrThrow(commands, { signal? })`
+- `executeOrThrow(commands)`
+- `cancel()`
+- `reset()`
+- `snapshot()`
+- `restoreSnapshot(data)`
+- `Bash.fromSnapshot(data)`
+- Direct VFS helpers: `readFile`, `writeFile`, `appendFile`, `mkdir`, `remove`, `exists`, `stat`, `readDir`, `ls`, `glob`, `mount`, `unmount`, `fs`
+
+### BashTool
+
+- All execution, cancellation, reset, and direct VFS helpers from `Bash`
+- Tool metadata: `name`, `version`, `shortDescription`
+- `description()`
+- `help()`
+- `systemPrompt()`
+- `inputSchema()`
+- `outputSchema()`
+
+### ScriptedTool
+
+- `new ScriptedTool(options)`
+- `addTool(name, description, callback, schema?)`
+- `executeSync(script)`
+- `execute(script)`
+- `executeSyncOrThrow(script)`
+- `executeOrThrow(script)`
+- `env(key, value)`
+- `toolCount()`
+
+### BashOptions
+
+- `username?: string`
+- `hostname?: string`
+- `maxCommands?: number`
+- `maxLoopIterations?: number`
+- `maxMemory?: number`
+- `timeoutMs?: number`
+- `files?: Record<string, string | (() => string) | (() => Promise<string>)>`
+- `mounts?: Array<{ path: string; root: string; writable?: boolean }>`
+- `python?: boolean`
+- `externalFunctions?: string[]`
+
+### ExecResult and BashError
+
+- `ExecResult.stdout`
+- `ExecResult.stderr`
+- `ExecResult.exitCode`
+- `ExecResult.error`
+- `ExecResult.success`
+- `ExecResult.stdoutTruncated`
+- `ExecResult.stderrTruncated`
+- `BashError.exitCode`
+- `BashError.stderr`
 
 ## Platform Support
 
 | OS | Architecture |
 |----|-------------|
-| macOS | x86_64, aarch64 (Apple Silicon) |
-| Linux | x86_64, aarch64 |
-| Windows | x86_64 |
-| WASM | wasm32-wasip1-threads |
+| macOS | `x86_64`, `aarch64` |
+| Linux | `x86_64`, `aarch64` |
+| Windows | `x86_64` |
+| WASM | `wasm32-wasip1-threads` |
+
+## How It Works
+
+The JavaScript package wraps the Rust `bashkit` interpreter through NAPI-RS bindings. Commands execute in-process against a virtual filesystem, with the Rust core enforcing parsing, execution, and resource limits while the JS wrapper exposes a TypeScript-friendly API and framework adapters.
 
 ## Part of Everruns
 
-Bashkit is part of the [Everruns](https://github.com/everruns) ecosystem — tools and runtimes for building reliable AI agents. See the [bashkit monorepo](https://github.com/everruns/bashkit) for the Rust core, Python package (`bashkit`), and more.
+Bashkit is part of the [Everruns](https://github.com/everruns) ecosystem. See the [bashkit monorepo](https://github.com/everruns/bashkit) for the Rust core, the Python package (`bashkit`), and related tooling.
 
 ## License
 
