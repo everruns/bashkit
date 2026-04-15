@@ -4014,6 +4014,13 @@ fn
     }
 
     #[tokio::test]
+    async fn test_default_ppid_is_sandboxed() {
+        let mut bash = Bash::new();
+        let result = bash.exec("echo $PPID").await.unwrap();
+        assert_eq!(result.stdout, "0\n");
+    }
+
+    #[tokio::test]
     async fn test_custom_hostname() {
         let mut bash = Bash::builder().hostname("my-server").build();
         let result = bash.exec("hostname").await.unwrap();
@@ -6250,6 +6257,7 @@ echo missing fi"#,
         assert_eq!(count.load(Ordering::Relaxed), 1);
     }
 
+    #[cfg(feature = "http_client")]
     #[tokio::test]
     async fn test_before_http_hook_cancels_request() {
         use crate::NetworkAllowlist;
@@ -6274,6 +6282,7 @@ echo missing fi"#,
         assert!(result.stderr.contains("cancelled by before_http hook"));
     }
 
+    #[cfg(feature = "http_client")]
     #[tokio::test]
     async fn test_after_http_hook_observes_response() {
         use std::sync::{Arc, Mutex};

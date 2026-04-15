@@ -729,7 +729,7 @@ mod tests {
         );
         let resolved = result.unwrap();
         assert!(
-            resolved.starts_with(dir.path()),
+            resolved.starts_with(fs.root()),
             "resolved path must be under root"
         );
     }
@@ -750,7 +750,7 @@ mod tests {
             "fallback path must be normalized, got: {}",
             resolved.display()
         );
-        assert!(resolved.starts_with(dir.path()));
+        assert!(resolved.starts_with(fs.root()));
     }
 
     #[tokio::test]
