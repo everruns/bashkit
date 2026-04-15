@@ -3,6 +3,9 @@
 from collections.abc import Callable
 from typing import Any, Protocol
 
+# Synchronous chunk callback for live stdout/stderr streaming.
+OutputHandler = Callable[[str, str], None]
+
 class FileSystem:
     """Direct access to BashKit's virtual filesystem or a standalone mountable FS.
 
@@ -331,11 +334,13 @@ class Bash:
         """
         ...
 
-    async def execute(self, commands: str) -> ExecResult:
+    async def execute(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
         """Execute bash commands asynchronously.
 
         Args:
             commands: Bash script to run (like ``bash -c "commands"``).
+            on_output: Optional callback receiving chunked ``(stdout, stderr)``
+                pairs during execution. Must be synchronous.
 
         Returns:
             ExecResult with stdout, stderr, exit_code.
@@ -350,11 +355,11 @@ class Bash:
         """
         ...
 
-    def execute_sync(self, commands: str) -> ExecResult:
+    def execute_sync(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
         """Execute bash commands synchronously (blocking).
 
         Not supported when ``external_handler`` is configured — use
-        ``execute()`` (async) instead.
+        ``execute()`` (async) instead. ``on_output`` must be synchronous.
 
         Example::
 
@@ -365,8 +370,10 @@ class Bash:
         """
         ...
 
-    async def execute_or_throw(self, commands: str) -> ExecResult:
+    async def execute_or_throw(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
         """Execute commands asynchronously; raise ``BashError`` on non-zero exit.
+
+        ``on_output`` must be synchronous.
 
         Example::
 
@@ -380,8 +387,10 @@ class Bash:
         """
         ...
 
-    def execute_sync_or_throw(self, commands: str) -> ExecResult:
+    def execute_sync_or_throw(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
         """Execute commands synchronously; raise ``BashError`` on non-zero exit.
+
+        ``on_output`` must be synchronous.
 
         Example::
 
@@ -641,8 +650,10 @@ class BashTool:
         """
         ...
 
-    async def execute(self, commands: str) -> ExecResult:
+    async def execute(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
         """Execute bash commands asynchronously.
+
+        ``on_output`` must be synchronous.
 
         Example::
 
@@ -653,8 +664,10 @@ class BashTool:
         """
         ...
 
-    def execute_sync(self, commands: str) -> ExecResult:
+    def execute_sync(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
         """Execute bash commands synchronously (blocking).
+
+        ``on_output`` must be synchronous.
 
         Example::
 
@@ -665,8 +678,10 @@ class BashTool:
         """
         ...
 
-    async def execute_or_throw(self, commands: str) -> ExecResult:
+    async def execute_or_throw(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
         """Execute commands asynchronously; raise ``BashError`` on non-zero exit.
+
+        ``on_output`` must be synchronous.
 
         Example::
 
@@ -677,8 +692,10 @@ class BashTool:
         """
         ...
 
-    def execute_sync_or_throw(self, commands: str) -> ExecResult:
+    def execute_sync_or_throw(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
         """Execute commands synchronously; raise ``BashError`` on non-zero exit.
+
+        ``on_output`` must be synchronous.
 
         Example::
 

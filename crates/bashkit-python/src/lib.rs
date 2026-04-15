@@ -7,11 +7,12 @@
 
 use bashkit::tool::VERSION;
 use bashkit::{
-    Bash, BashTool as RustBashTool, DirEntry as FsDirEntry, ExcType, ExecutionLimits,
-    ExtFunctionResult, FileSystem, FileSystemExt, FileType as FsFileType, InMemoryFs,
-    Metadata as FsMetadata, MontyException, MontyObject, OverlayFs, PosixFs,
-    PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool,
-    Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
+    Bash, BashTool as RustBashTool, DirEntry as FsDirEntry, ExcType, ExecResult as RustExecResult,
+    ExecutionLimits, ExtFunctionResult, FileSystem, FileSystemExt, FileType as FsFileType,
+    InMemoryFs, Metadata as FsMetadata, MontyException, MontyObject,
+    OutputCallback as RustOutputCallback, OverlayFs, PosixFs, PythonExternalFnHandler,
+    PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool, Tool, ToolArgs, ToolDef,
+    ToolRequest, async_trait,
 };
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -20,7 +21,7 @@ use pyo3_async_runtimes::tokio::future_into_py;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex as StdMutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
@@ -1031,6 +1032,186 @@ impl ExecResult {
 // Bash — core interpreter
 // ============================================================================
 
+fn py_exec_result_from_rust(result: RustExecResult) -> ExecResult {
+    ExecResult {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exit_code: result.exit_code,
+        error: None,
+        stdout_truncated: result.stdout_truncated,
+        stderr_truncated: result.stderr_truncated,
+        final_env: result.final_env,
+    }
+}
+
+fn py_exec_result_from_error(err: impl ToString) -> ExecResult {
+    let msg = err.to_string();
+    ExecResult {
+        stdout: String::new(),
+        stderr: msg.clone(),
+        exit_code: 1,
+        error: Some(msg),
+        stdout_truncated: false,
+        stderr_truncated: false,
+        final_env: None,
+    }
+}
+
+fn py_exec_result_from_bash_result(result: bashkit::Result<RustExecResult>) -> ExecResult {
+    match result {
+        Ok(result) => py_exec_result_from_rust(result),
+        Err(err) => py_exec_result_from_error(err),
+    }
+}
+
+// Snapshot caller-owned ContextVars at execute*-call time so output callbacks
+// invoked later from the Rust runtime still see the embedding framework's
+// request-scoped state. Keep inspect.isawaitable cached so callbacks that
+// accidentally return coroutine/awaitable objects fail synchronously.
+struct PyOutputHandler {
+    callback: Py<PyAny>,
+    context: Py<PyAny>,
+    is_awaitable: Py<PyAny>,
+}
+
+fn copy_current_context(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    py.import("contextvars")?
+        .call_method0("copy_context")
+        .map(|ctx| ctx.unbind())
+}
+
+fn is_coroutine_callable(py: Python<'_>, callable: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let inspect = py.import("inspect")?;
+    let is_coro_fn = inspect.getattr("iscoroutinefunction")?;
+    Ok(is_coro_fn.call1((callable,))?.extract::<bool>()?
+        || callable
+            .getattr("__call__")
+            .ok()
+            .and_then(|c| is_coro_fn.call1((c,)).ok())
+            .and_then(|r| r.extract::<bool>().ok())
+            .unwrap_or(false))
+}
+
+fn prepare_output_handler(
+    py: Python<'_>,
+    on_output: Option<Py<PyAny>>,
+) -> PyResult<Option<PyOutputHandler>> {
+    let Some(on_output) = on_output else {
+        return Ok(None);
+    };
+
+    let bound = on_output.bind(py);
+    if !bound.is_callable() {
+        return Err(PyTypeError::new_err("on_output must be callable"));
+    }
+    if is_coroutine_callable(py, bound)? {
+        return Err(PyTypeError::new_err(
+            "on_output must be a synchronous callable (async/coroutine handlers are not supported)",
+        ));
+    }
+
+    let is_awaitable = py.import("inspect")?.getattr("isawaitable")?.unbind();
+
+    Ok(Some(PyOutputHandler {
+        callback: on_output,
+        context: copy_current_context(py)?,
+        is_awaitable,
+    }))
+}
+
+fn take_output_handler_error(callback_error: &StdMutex<Option<PyErr>>) -> Option<PyErr> {
+    callback_error
+        .lock()
+        .ok()
+        .and_then(|mut callback_error| callback_error.take())
+}
+
+fn close_awaitable_if_possible(awaitable: &Bound<'_, PyAny>) {
+    if let Ok(close) = awaitable.getattr("close") {
+        let _ = close.call0();
+    }
+}
+
+fn build_python_output_callback(
+    on_output: PyOutputHandler,
+    cancelled: Arc<AtomicBool>,
+    callback_requested_cancel: Arc<AtomicBool>,
+    callback_error: Arc<StdMutex<Option<PyErr>>>,
+) -> RustOutputCallback {
+    Box::new(move |stdout_chunk, stderr_chunk| {
+        let has_error = callback_error
+            .lock()
+            .map(|callback_error| callback_error.is_some())
+            .unwrap_or(false);
+        if has_error {
+            return;
+        }
+
+        let callback_result = Python::attach(|py| {
+            // Re-enter the caller's copied ContextVar snapshot for each chunk.
+            let result = on_output.context.bind(py).call_method1(
+                "run",
+                (on_output.callback.bind(py), stdout_chunk, stderr_chunk),
+            )?;
+            let is_awaitable = on_output
+                .is_awaitable
+                .bind(py)
+                .call1((&result,))?
+                .extract::<bool>()?;
+            if is_awaitable {
+                close_awaitable_if_possible(&result);
+                return Err(PyTypeError::new_err(
+                    "on_output must be synchronous and must not return an awaitable",
+                ));
+            }
+            Ok(())
+        });
+
+        if let Err(err) = callback_result {
+            if let Ok(mut callback_error) = callback_error.lock()
+                && callback_error.is_none()
+            {
+                *callback_error = Some(err);
+            }
+            if !cancelled.swap(true, Ordering::Relaxed) {
+                callback_requested_cancel.store(true, Ordering::Relaxed);
+            }
+        }
+    })
+}
+
+async fn exec_bash_with_optional_output(
+    bash: &mut Bash,
+    commands: &str,
+    on_output: Option<PyOutputHandler>,
+) -> PyResult<ExecResult> {
+    let result = if let Some(on_output) = on_output {
+        // Preserve explicit cancel() calls across execute* entry. Only clear
+        // cancellation if an on_output failure introduced it for this call.
+        let cancelled = bash.cancellation_token();
+        let callback_requested_cancel = Arc::new(AtomicBool::new(false));
+        let callback_error = Arc::new(StdMutex::new(None));
+        let output_callback = build_python_output_callback(
+            on_output,
+            cancelled.clone(),
+            callback_requested_cancel.clone(),
+            callback_error.clone(),
+        );
+        let result = bash.exec_streaming(commands, output_callback).await;
+        if let Some(err) = take_output_handler_error(&callback_error) {
+            if callback_requested_cancel.load(Ordering::Relaxed) {
+                cancelled.store(false, Ordering::Relaxed);
+            }
+            return Err(err);
+        }
+        result
+    } else {
+        bash.exec(commands).await
+    };
+
+    Ok(py_exec_result_from_bash_result(result))
+}
+
 /// Build a `PythonExternalFnHandler` from a Python async callable.
 ///
 /// The handler converts MontyObject args/kwargs to Python objects, calls the
@@ -1219,21 +1400,8 @@ impl PyBash {
             return Err(PyValueError::new_err("external_handler must be callable"));
         }
         if let Some(ref handler) = external_handler {
-            // Check both the object itself and its __call__ method to support
-            // objects with `async def __call__` (matching the ExternalHandler Protocol),
-            // decorated coroutines, and similar async callables that return False
-            // from iscoroutinefunction(obj) but True for iscoroutinefunction(obj.__call__).
-            let inspect = py.import("inspect")?;
-            let is_coro_fn = inspect.getattr("iscoroutinefunction")?;
             let bound = handler.bind(py);
-            let is_coro = is_coro_fn.call1((bound,))?.extract::<bool>()?
-                || bound
-                    .getattr("__call__")
-                    .ok()
-                    .and_then(|c| is_coro_fn.call1((c,)).ok())
-                    .and_then(|r| r.extract::<bool>().ok())
-                    .unwrap_or(false);
-            if !is_coro {
+            if !is_coroutine_callable(py, bound)? {
                 return Err(PyValueError::new_err(
                     "external_handler must be an async callable (coroutine function)",
                 ));
@@ -1277,33 +1445,18 @@ impl PyBash {
     }
 
     /// Execute commands asynchronously.
-    fn execute<'py>(&self, py: Python<'py>, commands: String) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(signature = (commands, on_output=None))]
+    fn execute<'py>(
+        &self,
+        py: Python<'py>,
+        commands: String,
+        on_output: Option<Py<PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let on_output = prepare_output_handler(py, on_output)?;
         let inner = self.inner.clone();
         future_into_py(py, async move {
             let mut bash = inner.lock().await;
-            match bash.exec(&commands).await {
-                Ok(result) => Ok(ExecResult {
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    exit_code: result.exit_code,
-                    error: None,
-                    stdout_truncated: result.stdout_truncated,
-                    stderr_truncated: result.stderr_truncated,
-                    final_env: result.final_env,
-                }),
-                Err(e) => {
-                    let msg = e.to_string();
-                    Ok(ExecResult {
-                        stdout: String::new(),
-                        stderr: msg.clone(),
-                        exit_code: 1,
-                        error: Some(msg),
-                        stdout_truncated: false,
-                        stderr_truncated: false,
-                        final_env: None,
-                    })
-                }
-            }
+            exec_bash_with_optional_output(&mut bash, &commands, on_output).await
         })
     }
 
@@ -1322,12 +1475,19 @@ impl PyBash {
     /// same `Bash` instance. If the lock cannot be acquired within the timeout,
     /// a `RuntimeError` is raised. For concurrent workloads, use separate `Bash`
     /// instances per thread or use the async `execute()` method.
-    fn execute_sync(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
+    #[pyo3(signature = (commands, on_output=None))]
+    fn execute_sync(
+        &self,
+        py: Python<'_>,
+        commands: String,
+        on_output: Option<Py<PyAny>>,
+    ) -> PyResult<ExecResult> {
         if self.external_handler.is_some() {
             return Err(PyRuntimeError::new_err(
                 "execute_sync is not supported when external_handler is configured — use execute() (async) instead, e.g. asyncio.run(bash.execute(...))",
             ));
         }
+        let on_output = prepare_output_handler(py, on_output)?;
         let inner = self.inner.clone();
 
         py.detach(|| {
@@ -1347,29 +1507,7 @@ impl PyBash {
                             ));
                         }
                     };
-                match bash.exec(&commands).await {
-                    Ok(result) => Ok(ExecResult {
-                        stdout: result.stdout,
-                        stderr: result.stderr,
-                        exit_code: result.exit_code,
-                        error: None,
-                        stdout_truncated: result.stdout_truncated,
-                        stderr_truncated: result.stderr_truncated,
-                        final_env: result.final_env,
-                    }),
-                    Err(e) => {
-                        let msg = e.to_string();
-                        Ok(ExecResult {
-                            stdout: String::new(),
-                            stderr: msg.clone(),
-                            exit_code: 1,
-                            error: Some(msg),
-                            stdout_truncated: false,
-                            stderr_truncated: false,
-                            final_env: None,
-                        })
-                    }
-                }
+                exec_bash_with_optional_output(&mut bash, &commands, on_output).await
             })
         })
     }
@@ -1377,8 +1515,14 @@ impl PyBash {
     /// Execute commands synchronously. Raises `BashError` on non-zero exit.
     ///
     /// Not supported when `external_handler` is configured.
-    fn execute_sync_or_throw(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
-        let result = self.execute_sync(py, commands)?;
+    #[pyo3(signature = (commands, on_output=None))]
+    fn execute_sync_or_throw(
+        &self,
+        py: Python<'_>,
+        commands: String,
+        on_output: Option<Py<PyAny>>,
+    ) -> PyResult<ExecResult> {
+        let result = self.execute_sync(py, commands, on_output)?;
         if result.exit_code != 0 {
             return Err(raise_bash_error(&result));
         }
@@ -1386,37 +1530,18 @@ impl PyBash {
     }
 
     /// Execute commands asynchronously. Raises `BashError` on non-zero exit.
+    #[pyo3(signature = (commands, on_output=None))]
     fn execute_or_throw<'py>(
         &self,
         py: Python<'py>,
         commands: String,
+        on_output: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let on_output = prepare_output_handler(py, on_output)?;
         let inner = self.inner.clone();
         future_into_py(py, async move {
             let mut bash = inner.lock().await;
-            let result = match bash.exec(&commands).await {
-                Ok(r) => ExecResult {
-                    stdout: r.stdout,
-                    stderr: r.stderr,
-                    exit_code: r.exit_code,
-                    error: None,
-                    stdout_truncated: r.stdout_truncated,
-                    stderr_truncated: r.stderr_truncated,
-                    final_env: r.final_env,
-                },
-                Err(e) => {
-                    let msg = e.to_string();
-                    ExecResult {
-                        stdout: String::new(),
-                        stderr: msg.clone(),
-                        exit_code: 1,
-                        error: Some(msg),
-                        stdout_truncated: false,
-                        stderr_truncated: false,
-                        final_env: None,
-                    }
-                }
-            };
+            let result = exec_bash_with_optional_output(&mut bash, &commands, on_output).await?;
             if result.exit_code != 0 {
                 return Err(raise_bash_error(&result));
             }
@@ -1817,33 +1942,18 @@ impl BashTool {
         }
     }
 
-    fn execute<'py>(&self, py: Python<'py>, commands: String) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(signature = (commands, on_output=None))]
+    fn execute<'py>(
+        &self,
+        py: Python<'py>,
+        commands: String,
+        on_output: Option<Py<PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let on_output = prepare_output_handler(py, on_output)?;
         let inner = self.inner.clone();
         future_into_py(py, async move {
             let mut bash = inner.lock().await;
-            match bash.exec(&commands).await {
-                Ok(result) => Ok(ExecResult {
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    exit_code: result.exit_code,
-                    error: None,
-                    stdout_truncated: result.stdout_truncated,
-                    stderr_truncated: result.stderr_truncated,
-                    final_env: result.final_env,
-                }),
-                Err(e) => {
-                    let msg = e.to_string();
-                    Ok(ExecResult {
-                        stdout: String::new(),
-                        stderr: msg.clone(),
-                        exit_code: 1,
-                        error: Some(msg),
-                        stdout_truncated: false,
-                        stderr_truncated: false,
-                        final_env: None,
-                    })
-                }
-            }
+            exec_bash_with_optional_output(&mut bash, &commands, on_output).await
         })
     }
 
@@ -1853,7 +1963,14 @@ impl BashTool {
     ///
     /// Acquires async mutex with 30-second timeout. For concurrent workloads,
     /// use separate `BashTool` instances per thread or the async `execute()`.
-    fn execute_sync(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
+    #[pyo3(signature = (commands, on_output=None))]
+    fn execute_sync(
+        &self,
+        py: Python<'_>,
+        commands: String,
+        on_output: Option<Py<PyAny>>,
+    ) -> PyResult<ExecResult> {
+        let on_output = prepare_output_handler(py, on_output)?;
         let inner = self.inner.clone();
 
         py.detach(|| {
@@ -1872,36 +1989,20 @@ impl BashTool {
                             ));
                         }
                     };
-                match bash.exec(&commands).await {
-                    Ok(result) => Ok(ExecResult {
-                        stdout: result.stdout,
-                        stderr: result.stderr,
-                        exit_code: result.exit_code,
-                        error: None,
-                        stdout_truncated: result.stdout_truncated,
-                        stderr_truncated: result.stderr_truncated,
-                        final_env: result.final_env,
-                    }),
-                    Err(e) => {
-                        let msg = e.to_string();
-                        Ok(ExecResult {
-                            stdout: String::new(),
-                            stderr: msg.clone(),
-                            exit_code: 1,
-                            error: Some(msg),
-                            stdout_truncated: false,
-                            stderr_truncated: false,
-                            final_env: None,
-                        })
-                    }
-                }
+                exec_bash_with_optional_output(&mut bash, &commands, on_output).await
             })
         })
     }
 
     /// Execute commands synchronously. Raises `BashError` on non-zero exit.
-    fn execute_sync_or_throw(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
-        let result = self.execute_sync(py, commands)?;
+    #[pyo3(signature = (commands, on_output=None))]
+    fn execute_sync_or_throw(
+        &self,
+        py: Python<'_>,
+        commands: String,
+        on_output: Option<Py<PyAny>>,
+    ) -> PyResult<ExecResult> {
+        let result = self.execute_sync(py, commands, on_output)?;
         if result.exit_code != 0 {
             return Err(raise_bash_error(&result));
         }
@@ -1909,37 +2010,18 @@ impl BashTool {
     }
 
     /// Execute commands asynchronously. Raises `BashError` on non-zero exit.
+    #[pyo3(signature = (commands, on_output=None))]
     fn execute_or_throw<'py>(
         &self,
         py: Python<'py>,
         commands: String,
+        on_output: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let on_output = prepare_output_handler(py, on_output)?;
         let inner = self.inner.clone();
         future_into_py(py, async move {
             let mut bash = inner.lock().await;
-            let result = match bash.exec(&commands).await {
-                Ok(r) => ExecResult {
-                    stdout: r.stdout,
-                    stderr: r.stderr,
-                    exit_code: r.exit_code,
-                    error: None,
-                    stdout_truncated: r.stdout_truncated,
-                    stderr_truncated: r.stderr_truncated,
-                    final_env: r.final_env,
-                },
-                Err(e) => {
-                    let msg = e.to_string();
-                    ExecResult {
-                        stdout: String::new(),
-                        stderr: msg.clone(),
-                        exit_code: 1,
-                        error: Some(msg),
-                        stdout_truncated: false,
-                        stderr_truncated: false,
-                        final_env: None,
-                    }
-                }
-            };
+            let result = exec_bash_with_optional_output(&mut bash, &commands, on_output).await?;
             if result.exit_code != 0 {
                 return Err(raise_bash_error(&result));
             }
@@ -2271,13 +2353,8 @@ impl ScriptedTool {
         }
 
         // Snapshot the caller's contextvars at execute()-call time.
-        let py_ctx: Py<PyAny> = Python::attach(|py| {
-            let contextvars = py.import("contextvars").expect("contextvars stdlib");
-            contextvars
-                .call_method0("copy_context")
-                .expect("copy_context")
-                .unbind()
-        });
+        let py_ctx: Py<PyAny> =
+            Python::attach(|py| copy_current_context(py).expect("copy_context"));
 
         // Resources for async callbacks: a shared event loop and a helper
         // function that drives coroutines inside the captured ContextVar
