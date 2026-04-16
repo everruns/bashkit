@@ -321,6 +321,18 @@ async fn snapshot_preserves_cwd() {
 }
 
 #[tokio::test]
+async fn snapshot_preserves_functions() {
+    let mut bash = Bash::new();
+    bash.exec("greet() { echo \"hi $1\"; }").await.unwrap();
+
+    let bytes = bash.snapshot().unwrap();
+    let mut bash2 = Bash::from_snapshot(&bytes).unwrap();
+
+    let r = bash2.exec("greet world").await.unwrap();
+    assert_eq!(r.stdout.trim(), "hi world");
+}
+
+#[tokio::test]
 async fn snapshot_restore_into_existing_instance() {
     let mut bash = Bash::new();
     bash.exec("x=42; echo 'data' > /tmp/saved.txt")
@@ -347,7 +359,7 @@ async fn snapshot_restore_into_existing_instance() {
 #[tokio::test]
 async fn snapshot_without_filesystem_preserves_shell_only() {
     let mut bash = Bash::new();
-    bash.exec("x=42; echo 'saved' > /tmp/state.txt")
+    bash.exec("x=42; greet() { echo \"hi $1\"; }; echo 'saved' > /tmp/state.txt")
         .await
         .unwrap();
 
@@ -365,6 +377,9 @@ async fn snapshot_without_filesystem_preserves_shell_only() {
 
     let r = bash.exec("echo $x").await.unwrap();
     assert_eq!(r.stdout.trim(), "42");
+
+    let r = bash.exec("greet world").await.unwrap();
+    assert_eq!(r.stdout.trim(), "hi world");
 
     let r = bash.exec("cat /tmp/state.txt").await.unwrap();
     assert_eq!(r.stdout.trim(), "changed");

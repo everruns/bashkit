@@ -9,7 +9,7 @@ use super::span::Span;
 use std::fmt;
 
 /// A complete bash script.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Script {
     pub commands: Vec<Command>,
     /// Source span of the entire script
@@ -17,7 +17,7 @@ pub struct Script {
 }
 
 /// A single command in the script.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Command {
     /// A simple command (e.g., `echo hello`)
     Simple(SimpleCommand),
@@ -36,7 +36,7 @@ pub enum Command {
 }
 
 /// A simple command with arguments and redirections.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SimpleCommand {
     /// Command name
     pub name: Word,
@@ -51,7 +51,7 @@ pub struct SimpleCommand {
 }
 
 /// A pipeline of commands.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Pipeline {
     /// Whether the pipeline is negated (!)
     pub negated: bool,
@@ -62,7 +62,7 @@ pub struct Pipeline {
 }
 
 /// A list of commands with operators.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CommandList {
     /// First command
     pub first: Box<Command>,
@@ -73,7 +73,7 @@ pub struct CommandList {
 }
 
 /// Operators for command lists.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ListOperator {
     /// && - execute next if previous succeeded
     And,
@@ -86,7 +86,7 @@ pub enum ListOperator {
 }
 
 /// Compound commands (control structures).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CompoundCommand {
     /// If statement
     If(IfCommand),
@@ -121,7 +121,7 @@ pub enum CompoundCommand {
 /// In bashkit's sandboxed model, the coprocess runs synchronously and its
 /// stdout is buffered for later reading via the NAME array FDs.
 /// `NAME[0]` = virtual read FD, `NAME[1]` = virtual write FD, `NAME_PID` = virtual PID.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CoprocCommand {
     /// Coprocess name (defaults to "COPROC")
     pub name: String,
@@ -136,7 +136,7 @@ pub struct CoprocCommand {
 /// Note: Bashkit only supports wall-clock time measurement.
 /// User/system CPU time is not tracked (always reported as 0).
 /// This is a known incompatibility with bash.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TimeCommand {
     /// Use POSIX output format (-p flag)
     pub posix_format: bool,
@@ -147,7 +147,7 @@ pub struct TimeCommand {
 }
 
 /// If statement.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IfCommand {
     pub condition: Vec<Command>,
     pub then_branch: Vec<Command>,
@@ -158,7 +158,7 @@ pub struct IfCommand {
 }
 
 /// For loop.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ForCommand {
     pub variable: String,
     pub words: Option<Vec<Word>>,
@@ -168,7 +168,7 @@ pub struct ForCommand {
 }
 
 /// Select loop.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SelectCommand {
     pub variable: String,
     pub words: Vec<Word>,
@@ -178,7 +178,7 @@ pub struct SelectCommand {
 }
 
 /// C-style arithmetic for loop: for ((init; cond; step)); do body; done
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ArithmeticForCommand {
     /// Initialization expression
     pub init: String,
@@ -193,7 +193,7 @@ pub struct ArithmeticForCommand {
 }
 
 /// While loop.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WhileCommand {
     pub condition: Vec<Command>,
     pub body: Vec<Command>,
@@ -202,7 +202,7 @@ pub struct WhileCommand {
 }
 
 /// Until loop.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UntilCommand {
     pub condition: Vec<Command>,
     pub body: Vec<Command>,
@@ -211,7 +211,7 @@ pub struct UntilCommand {
 }
 
 /// Case statement.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CaseCommand {
     pub word: Word,
     pub cases: Vec<CaseItem>,
@@ -220,7 +220,7 @@ pub struct CaseCommand {
 }
 
 /// Terminator for a case item.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum CaseTerminator {
     /// `;;` — stop matching
     Break,
@@ -231,7 +231,7 @@ pub enum CaseTerminator {
 }
 
 /// A single case item.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CaseItem {
     pub patterns: Vec<Word>,
     pub commands: Vec<Command>,
@@ -239,7 +239,7 @@ pub struct CaseItem {
 }
 
 /// Function definition.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FunctionDef {
     pub name: String,
     pub body: Box<Command>,
@@ -248,7 +248,7 @@ pub struct FunctionDef {
 }
 
 /// A word (potentially with expansions).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Word {
     pub parts: Vec<WordPart>,
     /// True if this word came from a quoted source (single or double quotes)
@@ -390,7 +390,7 @@ impl fmt::Display for Word {
 }
 
 /// Parts of a word.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum WordPart {
     /// Literal text
     Literal(String),
@@ -450,7 +450,7 @@ pub enum WordPart {
 }
 
 /// Parameter expansion operators
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ParameterOp {
     /// :- use default if unset/empty
     UseDefault,
@@ -489,7 +489,7 @@ pub enum ParameterOp {
 }
 
 /// I/O redirection.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Redirect {
     /// File descriptor (default: 1 for output, 0 for input)
     pub fd: Option<i32>,
@@ -502,7 +502,7 @@ pub struct Redirect {
 }
 
 /// Types of redirections.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum RedirectKind {
     /// > - redirect output
     Output,
@@ -527,7 +527,7 @@ pub enum RedirectKind {
 }
 
 /// Variable assignment.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Assignment {
     pub name: String,
     /// Optional array index for indexed assignments like `arr[0]=value`
@@ -538,7 +538,7 @@ pub struct Assignment {
 }
 
 /// Value in an assignment - scalar or array
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AssignmentValue {
     /// Scalar value: VAR=value
     Scalar(Word),

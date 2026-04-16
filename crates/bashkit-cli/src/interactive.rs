@@ -641,6 +641,7 @@ mod tests {
             assoc_arrays: std::collections::HashMap::new(),
             cwd: std::path::PathBuf::from("/"),
             last_exit_code: 0,
+            functions: std::collections::HashMap::new(),
             aliases: std::collections::HashMap::new(),
             traps: std::collections::HashMap::new(),
         }

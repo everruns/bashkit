@@ -317,13 +317,18 @@ back to a private loop because there is no caller loop to reuse.
 from bashkit import Bash
 
 bash = Bash(username="agent", max_commands=100)
-bash.execute_sync("export BUILD_ID=42; mkdir -p /workspace && cd /workspace && echo ready > state.txt")
+bash.execute_sync(
+    "export BUILD_ID=42; "
+    "greet() { echo \"hi $1\"; }; "
+    "mkdir -p /workspace && cd /workspace && echo ready > state.txt"
+)
 
 snapshot = bash.snapshot()
 shell_only = bash.snapshot(exclude_filesystem=True)
 
 restored = Bash.from_snapshot(snapshot, username="agent", max_commands=100)
 assert restored.execute_sync("echo $BUILD_ID").stdout.strip() == "42"
+assert restored.execute_sync("greet agent").stdout.strip() == "hi agent"
 assert restored.execute_sync("cat /workspace/state.txt").stdout.strip() == "ready"
 
 restored.reset()

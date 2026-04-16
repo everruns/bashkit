@@ -426,6 +426,9 @@ pub struct ShellState {
     pub cwd: PathBuf,
     /// Last exit code
     pub last_exit_code: i32,
+    /// Defined shell functions
+    #[serde(default)]
+    pub functions: HashMap<String, FunctionDef>,
     /// Shell aliases
     pub aliases: HashMap<String, String>,
     /// Trap handlers
@@ -1133,6 +1136,7 @@ impl Interpreter {
             assoc_arrays: self.assoc_arrays.clone(),
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
+            functions: self.functions.clone(),
             aliases: self.aliases.clone(),
             traps: self.traps.clone(),
         }
@@ -1146,6 +1150,7 @@ impl Interpreter {
         self.assoc_arrays = state.assoc_arrays.clone();
         self.cwd = state.cwd.clone();
         self.last_exit_code = state.last_exit_code;
+        self.functions = state.functions.clone();
         self.aliases = state.aliases.clone();
         self.traps = state.traps.clone();
         // Recompute memory budget from restored state to prevent desync

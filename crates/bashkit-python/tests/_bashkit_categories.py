@@ -81,7 +81,9 @@ def test_bash_reset():
 
 def test_bash_snapshot_roundtrip_from_snapshot_preserves_state_and_kwargs():
     bash = Bash()
-    bash.execute_sync("export FOO=bar; mkdir -p /workspace && cd /workspace && echo data > state.txt")
+    bash.execute_sync(
+        'export FOO=bar; greet() { echo "hi $1"; }; mkdir -p /workspace && cd /workspace && echo data > state.txt'
+    )
 
     snapshot = bash.snapshot()
     assert isinstance(snapshot, bytes)
@@ -97,6 +99,7 @@ def test_bash_snapshot_roundtrip_from_snapshot_preserves_state_and_kwargs():
     assert restored.execute_sync("whoami").stdout.strip() == "alice"
     assert restored.execute_sync("hostname").stdout.strip() == "box"
     assert restored.execute_sync("echo $FOO").stdout.strip() == "bar"
+    assert restored.execute_sync("greet agent").stdout.strip() == "hi agent"
     assert restored.execute_sync("pwd").stdout.strip() == "/workspace"
     assert restored.execute_sync("cat /workspace/state.txt").stdout.strip() == "data"
 
@@ -618,7 +621,9 @@ def test_reset():
 
 def test_bashtool_snapshot_roundtrip_from_snapshot_preserves_state_and_kwargs():
     tool = BashTool()
-    tool.execute_sync("export FOO=bar; mkdir -p /workspace && cd /workspace && echo data > tool.txt")
+    tool.execute_sync(
+        'export FOO=bar; greet() { echo "hi $1"; }; mkdir -p /workspace && cd /workspace && echo data > tool.txt'
+    )
 
     snapshot = tool.snapshot()
     assert isinstance(snapshot, bytes)
@@ -634,6 +639,7 @@ def test_bashtool_snapshot_roundtrip_from_snapshot_preserves_state_and_kwargs():
     assert restored.execute_sync("whoami").stdout.strip() == "alice"
     assert restored.execute_sync("hostname").stdout.strip() == "box"
     assert restored.execute_sync("echo $FOO").stdout.strip() == "bar"
+    assert restored.execute_sync("greet agent").stdout.strip() == "hi agent"
     assert restored.execute_sync("pwd").stdout.strip() == "/workspace"
     assert restored.execute_sync("cat /workspace/tool.txt").stdout.strip() == "data"
 
