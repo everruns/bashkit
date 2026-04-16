@@ -797,14 +797,18 @@ fn snapshot_live_bash(
     rt: &Arc<Runtime>,
     inner: &Arc<Mutex<Bash>>,
     exclude_filesystem: bool,
+    exclude_functions: bool,
 ) -> PyResult<Vec<u8>> {
     let rt = rt.clone();
     let inner = inner.clone();
     py.detach(|| {
         rt.block_on(async move {
             let bash = inner.lock().await;
-            bash.snapshot_with_options(RustSnapshotOptions { exclude_filesystem })
-                .map_err(raise_snapshot_error)
+            bash.snapshot_with_options(RustSnapshotOptions {
+                exclude_filesystem,
+                exclude_functions,
+            })
+            .map_err(raise_snapshot_error)
         })
     })
 }
@@ -2700,14 +2704,21 @@ impl PyBash {
     }
 
     /// Serialize interpreter state to bytes for checkpoint/restore flows.
-    #[pyo3(signature = (exclude_filesystem=false))]
+    #[pyo3(signature = (exclude_filesystem=false, exclude_functions=false))]
     fn snapshot<'py>(
         &self,
         py: Python<'py>,
         exclude_filesystem: bool,
+        exclude_functions: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
         self.reject_external_handler_reentry()?;
-        let bytes = snapshot_live_bash(py, &self.rt, &self.inner, exclude_filesystem)?;
+        let bytes = snapshot_live_bash(
+            py,
+            &self.rt,
+            &self.inner,
+            exclude_filesystem,
+            exclude_functions,
+        )?;
         Ok(PyBytes::new(py, &bytes))
     }
 
@@ -3264,13 +3275,20 @@ impl BashTool {
     }
 
     /// Serialize interpreter state to bytes for checkpoint/restore flows.
-    #[pyo3(signature = (exclude_filesystem=false))]
+    #[pyo3(signature = (exclude_filesystem=false, exclude_functions=false))]
     fn snapshot<'py>(
         &self,
         py: Python<'py>,
         exclude_filesystem: bool,
+        exclude_functions: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = snapshot_live_bash(py, &self.rt, &self.inner, exclude_filesystem)?;
+        let bytes = snapshot_live_bash(
+            py,
+            &self.rt,
+            &self.inner,
+            exclude_filesystem,
+            exclude_functions,
+        )?;
         Ok(PyBytes::new(py, &bytes))
     }
 

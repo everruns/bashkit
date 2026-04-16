@@ -142,6 +142,19 @@ def test_bash_snapshot_can_exclude_filesystem():
     assert bash.execute_sync("cat /tmp/state.txt").stdout.strip() == "changed"
 
 
+def test_bash_snapshot_can_exclude_functions():
+    bash = Bash()
+    bash.execute_sync('greet() { echo "hi $1"; }; export KEEP=1')
+
+    snapshot = bash.snapshot(exclude_functions=True)
+
+    bash.execute_sync("export KEEP=2")
+    bash.restore_snapshot(snapshot)
+
+    assert bash.execute_sync("echo $KEEP").stdout.strip() == "1"
+    assert bash.execute_sync("type greet >/dev/null 2>&1; echo $?").stdout.strip() == "1"
+
+
 def test_bash_shell_state_exposes_read_only_snapshot_view():
     bash = Bash()
     result = bash.execute_sync(
@@ -740,6 +753,19 @@ def test_bashtool_snapshot_can_exclude_filesystem():
 
     assert tool.execute_sync("echo $KEEP").stdout.strip() == "1"
     assert tool.execute_sync("cat /tmp/tool.txt").stdout.strip() == "changed"
+
+
+def test_bashtool_snapshot_can_exclude_functions():
+    tool = BashTool()
+    tool.execute_sync('greet() { echo "hi $1"; }; export KEEP=1')
+
+    snapshot = tool.snapshot(exclude_functions=True)
+
+    tool.execute_sync("export KEEP=2")
+    tool.restore_snapshot(snapshot)
+
+    assert tool.execute_sync("echo $KEEP").stdout.strip() == "1"
+    assert tool.execute_sync("type greet >/dev/null 2>&1; echo $?").stdout.strip() == "1"
 
 
 def test_bashtool_shell_state_exposes_read_only_snapshot_view():

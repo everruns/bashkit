@@ -110,6 +110,7 @@ export interface BashOptions {
 
 export interface SnapshotOptions {
   excludeFilesystem?: boolean;
+  excludeFunctions?: boolean;
 }
 
 export interface OutputChunk {
@@ -310,6 +311,7 @@ function toNativeSnapshotOptions(
   if (!options) return undefined;
   return {
     excludeFilesystem: options.excludeFilesystem,
+    excludeFunctions: options.excludeFunctions,
   };
 }
 

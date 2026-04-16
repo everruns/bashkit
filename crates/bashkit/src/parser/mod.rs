@@ -45,6 +45,7 @@ const DEFAULT_MAX_PARSER_OPERATIONS: usize = 100_000;
 
 /// Parser for bash scripts.
 pub struct Parser<'a> {
+    input: &'a str,
     lexer: Lexer<'a>,
     current_token: Option<tokens::Token>,
     /// Span of the current token
@@ -90,6 +91,7 @@ impl<'a> Parser<'a> {
             None => (None, Span::new()),
         };
         Self {
+            input,
             lexer,
             current_token,
             current_span,
@@ -127,6 +129,18 @@ impl<'a> Parser<'a> {
             self.current_span.start.line,
             self.current_span.start.column,
         )
+    }
+
+    fn current_command_end_offset(&self) -> usize {
+        if self.current_token.is_some() {
+            self.current_span.start.offset
+        } else {
+            self.input.len()
+        }
+    }
+
+    fn source_slice(&self, start_offset: usize, end_offset: usize) -> Option<String> {
+        self.input.get(start_offset..end_offset).map(str::to_owned)
     }
 
     /// Consume one unit of fuel, returning an error if exhausted
@@ -1720,10 +1734,12 @@ impl<'a> Parser<'a> {
 
         // Parse body as brace group
         let body = self.parse_brace_group()?;
+        let end_offset = self.current_command_end_offset();
 
         Ok(Command::Function(FunctionDef {
             name,
             body: Box::new(Command::Compound(body, Vec::new())),
+            source: self.source_slice(start_span.start.offset, end_offset),
             span: start_span.merge(self.current_span),
         }))
     }
@@ -1757,10 +1773,12 @@ impl<'a> Parser<'a> {
 
         // Parse body as brace group
         let body = self.parse_brace_group()?;
+        let end_offset = self.current_command_end_offset();
 
         Ok(Command::Function(FunctionDef {
             name,
             body: Box::new(Command::Compound(body, Vec::new())),
+            source: self.source_slice(start_span.start.offset, end_offset),
             span: start_span.merge(self.current_span),
         }))
     }

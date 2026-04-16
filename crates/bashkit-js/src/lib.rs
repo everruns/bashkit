@@ -724,6 +724,7 @@ pub struct BashOptions {
 #[napi(object)]
 pub struct SnapshotOptions {
     pub exclude_filesystem: Option<bool>,
+    pub exclude_functions: Option<bool>,
 }
 
 fn default_opts() -> BashOptions {
@@ -753,7 +754,11 @@ fn default_opts() -> BashOptions {
 fn to_snapshot_options(options: Option<SnapshotOptions>) -> RustSnapshotOptions {
     RustSnapshotOptions {
         exclude_filesystem: options
+            .as_ref()
             .and_then(|options| options.exclude_filesystem)
+            .unwrap_or(false),
+        exclude_functions: options
+            .and_then(|options| options.exclude_functions)
             .unwrap_or(false),
     }
 }

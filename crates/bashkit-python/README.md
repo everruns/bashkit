@@ -237,7 +237,8 @@ print(state.cwd)  # still /workspace
 It is a Python-friendly inspection view rather than a full Rust-shell mirror,
 and fields like `env`, `variables`, and `arrays` are exposed as immutable
 mappings. Use `snapshot(exclude_filesystem=True)` when you need shell-only
-restore bytes.
+restore bytes, or `snapshot(exclude_filesystem=True, exclude_functions=True)`
+when prompt rendering does not need function restore.
 Transient fields like `last_exit_code` and `traps` are captured on the snapshot,
 but the next top-level `execute()` / `execute_sync()` clears them before running
 the new command.
@@ -351,6 +352,7 @@ bash.execute_sync(
 
 snapshot = bash.snapshot()
 shell_only = bash.snapshot(exclude_filesystem=True)
+prompt_only = bash.snapshot(exclude_filesystem=True, exclude_functions=True)
 
 restored = Bash.from_snapshot(snapshot, username="agent", max_commands=100)
 assert restored.execute_sync("echo $BUILD_ID").stdout.strip() == "42"
