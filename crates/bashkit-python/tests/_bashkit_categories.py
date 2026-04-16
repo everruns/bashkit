@@ -1,5 +1,6 @@
 """Tests for bashkit Python package."""
 
+import asyncio
 import json
 
 import pytest
@@ -1753,11 +1754,17 @@ def test_bashtool_clear_cancel_allows_subsequent_execution():
 
 @pytest.mark.asyncio
 async def test_bash_async_clear_cancel_after_cancelled_execute():
-    """Async: cancel() during execute, await it, clear_cancel(), then execute again."""
-    bash = Bash()
+    """Async: cancel in-flight, await it, then clear_cancel() to recover."""
+    bash = Bash(max_commands=5000, max_loop_iterations=5000)
+    task = bash.execute("for i in $(seq 1 1000); do sleep 0.001; done")
+    await asyncio.sleep(0.01)
     bash.cancel()
-    r = await bash.execute("echo should_fail")
-    assert r.exit_code != 0
+
+    cancelled = await task
+    assert cancelled.exit_code != 0
+
+    still_cancelled = await bash.execute("echo should_still_fail")
+    assert still_cancelled.exit_code != 0
 
     bash.clear_cancel()
     r = await bash.execute("echo works_again")
@@ -1767,11 +1774,17 @@ async def test_bash_async_clear_cancel_after_cancelled_execute():
 
 @pytest.mark.asyncio
 async def test_bashtool_async_clear_cancel_after_cancelled_execute():
-    """BashTool async: cancel() → await execute → clear_cancel() → execute succeeds."""
-    tool = BashTool()
+    """BashTool async: cancel in-flight, await it, then clear_cancel() to recover."""
+    tool = BashTool(max_commands=5000, max_loop_iterations=5000)
+    task = tool.execute("for i in $(seq 1 1000); do sleep 0.001; done")
+    await asyncio.sleep(0.01)
     tool.cancel()
-    r = await tool.execute("echo should_fail")
-    assert r.exit_code != 0
+
+    cancelled = await task
+    assert cancelled.exit_code != 0
+
+    still_cancelled = await tool.execute("echo should_still_fail")
+    assert still_cancelled.exit_code != 0
 
     tool.clear_cancel()
     r = await tool.execute("echo works_again")
