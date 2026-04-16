@@ -7,6 +7,7 @@ Requires ``fastapi`` and ``httpx`` to be installed.
 
 import asyncio
 import contextvars
+import gc
 import json
 
 import pytest
@@ -24,6 +25,13 @@ from bashkit import Bash, ScriptedTool  # noqa: E402
 # ---------------------------------------------------------------------------
 
 current_request_id: contextvars.ContextVar[str] = contextvars.ContextVar("current_request_id", default="none")
+
+
+@pytest.fixture(autouse=True)
+def _collect_between_tests():
+    """Drop Rust-backed callback runtimes outside async test bodies on Python 3.12."""
+    yield
+    gc.collect()
 
 
 def build_custom_builtin_app():
@@ -44,9 +52,12 @@ def build_custom_builtin_app():
 
     @app.get("/builtin/{name}")
     def builtin_endpoint(name: str, request: Request):
-        current_request_id.set(request.headers.get("x-request-id", "unknown"))
-        result = bash.execute_sync(f"request-meta {name}")
-        return {"stdout": result.stdout, "exit_code": result.exit_code}
+        token = current_request_id.set(request.headers.get("x-request-id", "unknown"))
+        try:
+            result = bash.execute_sync(f"request-meta {name}")
+            return {"stdout": result.stdout, "exit_code": result.exit_code}
+        finally:
+            current_request_id.reset(token)
 
     return app
 
@@ -67,19 +78,22 @@ def test_sync_endpoint_with_async_callback():
 
     @app.get("/greet/{name}")
     def greet_endpoint(name: str, request: Request):
-        current_request_id.set(request.headers.get("x-request-id", "unknown"))
-        tool = ScriptedTool("api")
-        tool.add_tool(
-            "greet",
-            "Greet",
-            callback=greet,
-            schema={"type": "object", "properties": {"name": {"type": "string"}}},
-        )
-        r = tool.execute_sync(f"greet --name {name}")
-        return {"stdout": r.stdout, "exit_code": r.exit_code}
+        token = current_request_id.set(request.headers.get("x-request-id", "unknown"))
+        try:
+            tool = ScriptedTool("api")
+            tool.add_tool(
+                "greet",
+                "Greet",
+                callback=greet,
+                schema={"type": "object", "properties": {"name": {"type": "string"}}},
+            )
+            r = tool.execute_sync(f"greet --name {name}")
+            return {"stdout": r.stdout, "exit_code": r.exit_code}
+        finally:
+            current_request_id.reset(token)
 
-    client = TestClient(app)
-    resp = client.get("/greet/Alice", headers={"x-request-id": "req-123"})
+    with TestClient(app) as client:
+        resp = client.get("/greet/Alice", headers={"x-request-id": "req-123"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["exit_code"] == 0
@@ -102,19 +116,22 @@ def test_async_endpoint_with_async_callback():
 
     @app.get("/user/{uid}")
     async def user_endpoint(uid: int, request: Request):
-        current_request_id.set(request.headers.get("x-request-id", "unknown"))
-        tool = ScriptedTool("api")
-        tool.add_tool(
-            "lookup",
-            "Lookup user",
-            callback=lookup,
-            schema={"type": "object", "properties": {"id": {"type": "integer"}}},
-        )
-        r = await tool.execute(f"lookup --id {uid}")
-        return {"stdout": r.stdout, "exit_code": r.exit_code}
+        token = current_request_id.set(request.headers.get("x-request-id", "unknown"))
+        try:
+            tool = ScriptedTool("api")
+            tool.add_tool(
+                "lookup",
+                "Lookup user",
+                callback=lookup,
+                schema={"type": "object", "properties": {"id": {"type": "integer"}}},
+            )
+            r = await tool.execute(f"lookup --id {uid}")
+            return {"stdout": r.stdout, "exit_code": r.exit_code}
+        finally:
+            current_request_id.reset(token)
 
-    client = TestClient(app)
-    resp = client.get("/user/42", headers={"x-request-id": "req-456"})
+    with TestClient(app) as client:
+        resp = client.get("/user/42", headers={"x-request-id": "req-456"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["exit_code"] == 0
@@ -162,8 +179,8 @@ def test_pipeline_in_endpoint():
         lines = r.stdout.strip().split("\n")
         return {"name": lines[0] if lines else "", "total": lines[1] if len(lines) > 1 else ""}
 
-    client = TestClient(app)
-    resp = client.get("/user/42/summary")
+    with TestClient(app) as client:
+        resp = client.get("/user/42/summary")
     assert resp.status_code == 200
     data = resp.json()
     assert data["name"] == "Alice"
@@ -180,18 +197,20 @@ def test_concurrent_requests_context_isolation():
 
     @app.get("/echo")
     def echo_endpoint(request: Request):
-        current_request_id.set(request.headers.get("x-request-id", "none"))
-        tool = ScriptedTool("api")
-        tool.add_tool("echo_rid", "Echo request ID", callback=echo_request_id)
-        r = tool.execute_sync("echo_rid")
-        return {"request_id": r.stdout.strip()}
+        token = current_request_id.set(request.headers.get("x-request-id", "none"))
+        try:
+            tool = ScriptedTool("api")
+            tool.add_tool("echo_rid", "Echo request ID", callback=echo_request_id)
+            r = tool.execute_sync("echo_rid")
+            return {"request_id": r.stdout.strip()}
+        finally:
+            current_request_id.reset(token)
 
-    client = TestClient(app)
-
-    # Sequential requests should each see their own request ID
-    r1 = client.get("/echo", headers={"x-request-id": "aaa"})
-    r2 = client.get("/echo", headers={"x-request-id": "bbb"})
-    r3 = client.get("/echo", headers={"x-request-id": "ccc"})
+    with TestClient(app) as client:
+        # Sequential requests should each see their own request ID
+        r1 = client.get("/echo", headers={"x-request-id": "aaa"})
+        r2 = client.get("/echo", headers={"x-request-id": "bbb"})
+        r3 = client.get("/echo", headers={"x-request-id": "ccc"})
 
     assert r1.json()["request_id"] == "aaa"
     assert r2.json()["request_id"] == "bbb"
@@ -202,7 +221,7 @@ def test_error_handling_in_endpoint():
     """FastAPI endpoint handles ScriptedTool callback errors gracefully."""
     app = FastAPI()
 
-    async def failing_tool(params, stdin=None):
+    def failing_tool(params, stdin=None):
         raise ValueError("simulated failure")
 
     @app.get("/fail")
@@ -212,8 +231,8 @@ def test_error_handling_in_endpoint():
         r = tool.execute_sync("fail")
         return {"exit_code": r.exit_code, "stderr": r.stderr}
 
-    client = TestClient(app)
-    resp = client.get("/fail")
+    with TestClient(app) as client:
+        resp = client.get("/fail")
     assert resp.status_code == 200
     data = resp.json()
     assert data["exit_code"] != 0
@@ -223,8 +242,8 @@ def test_sync_endpoint_with_async_custom_builtin():
     """FastAPI sync endpoint propagates request context into async custom builtins."""
     app = build_custom_builtin_app()
 
-    client = TestClient(app)
-    resp = client.get("/builtin/alice", headers={"x-request-id": "req-builtins-123"})
+    with TestClient(app) as client:
+        resp = client.get("/builtin/alice", headers={"x-request-id": "req-builtins-123"})
 
     assert resp.status_code == 200
     data = resp.json()
@@ -238,10 +257,10 @@ def test_sync_endpoint_custom_builtin_context_isolation():
     """Sequential FastAPI requests keep custom builtin ContextVars isolated."""
     app = build_custom_builtin_app()
 
-    client = TestClient(app)
-    first = client.get("/builtin/alpha", headers={"x-request-id": "req-alpha"})
-    second = client.get("/builtin/beta", headers={"x-request-id": "req-beta"})
-    third = client.get("/builtin/gamma", headers={"x-request-id": "req-gamma"})
+    with TestClient(app) as client:
+        first = client.get("/builtin/alpha", headers={"x-request-id": "req-alpha"})
+        second = client.get("/builtin/beta", headers={"x-request-id": "req-beta"})
+        third = client.get("/builtin/gamma", headers={"x-request-id": "req-gamma"})
 
     assert json.loads(first.json()["stdout"])["request_id"] == "req-alpha"
     assert json.loads(second.json()["stdout"])["request_id"] == "req-beta"
