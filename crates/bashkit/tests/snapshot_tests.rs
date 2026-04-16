@@ -333,6 +333,49 @@ async fn snapshot_preserves_functions() {
 }
 
 #[tokio::test]
+async fn snapshot_restores_functions_from_source_when_ast_missing() {
+    let mut bash = Bash::new();
+    bash.exec("greet() { echo \"hi $1\"; }").await.unwrap();
+
+    let bytes = bash.snapshot().unwrap();
+    let mut json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
+    json["shell"]["functions"]["greet"] = serde_json::json!({
+        "source": "greet() { echo \"hi $1\"; }"
+    });
+
+    let rewritten: Snapshot = serde_json::from_value(json).unwrap();
+    let bytes = rewritten.to_bytes().unwrap();
+    let mut restored = Bash::from_snapshot(&bytes).unwrap();
+
+    let result = restored.exec("greet world").await.unwrap();
+    assert_eq!(result.stdout.trim(), "hi world");
+}
+
+#[tokio::test]
+async fn snapshot_without_functions_skips_function_restore() {
+    let mut bash = Bash::new();
+    bash.exec("greet() { echo \"hi $1\"; }; answer=42")
+        .await
+        .unwrap();
+
+    let bytes = bash
+        .snapshot_with_options(SnapshotOptions {
+            exclude_filesystem: true,
+            exclude_functions: true,
+        })
+        .unwrap();
+    let snap = Snapshot::from_bytes(&bytes).unwrap();
+    assert!(snap.shell.functions.is_empty());
+
+    let mut restored = Bash::from_snapshot(&bytes).unwrap();
+    let result = restored
+        .exec("echo $answer; type greet >/dev/null 2>&1; echo $?")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "42\n1\n");
+}
+
+#[tokio::test]
 async fn snapshot_restore_into_existing_instance() {
     let mut bash = Bash::new();
     bash.exec("x=42; echo 'data' > /tmp/saved.txt")
@@ -366,6 +409,7 @@ async fn snapshot_without_filesystem_preserves_shell_only() {
     let bytes = bash
         .snapshot_with_options(SnapshotOptions {
             exclude_filesystem: true,
+            exclude_functions: false,
         })
         .unwrap();
 

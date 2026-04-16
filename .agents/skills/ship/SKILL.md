@@ -17,8 +17,10 @@ This skill implements the complete "Shipping" definition and Pre-PR Checklist fr
 ### Phase 1: Pre-flight
 
 1. Confirm we're NOT on `main` or `master`
-2. Confirm there are no uncommitted changes (`git diff --quiet && git diff --cached --quiet`)
-3. If uncommitted changes exist, stop and tell the user
+2. If `HEAD` is detached and the current task has local changes ready to ship, create a branch first instead of stopping
+3. Confirm whether uncommitted changes belong to the task being shipped
+4. If the worktree is dirty only because of the current task, keep going: validate, commit, and ship those changes
+5. If unrelated uncommitted changes exist, stop and tell the user
 
 ### Phase 2: Test Coverage
 

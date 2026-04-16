@@ -34,6 +34,7 @@ bash.exec("export BUILD_ID=42; mkdir -p /workspace && cd /workspace && echo read
 let snapshot = bash.snapshot()?;
 let shell_only = bash.snapshot_with_options(SnapshotOptions {
     exclude_filesystem: true,
+    exclude_functions: false,
 })?;
 
 let mut restored = Bash::from_snapshot(&snapshot)?;
@@ -66,6 +67,7 @@ bash.execute_sync(
 
 snapshot = bash.snapshot()
 shell_only = bash.snapshot(exclude_filesystem=True)
+prompt_only = bash.snapshot(exclude_filesystem=True, exclude_functions=True)
 
 restored = Bash.from_snapshot(snapshot, username="agent", max_commands=100)
 assert restored.execute_sync("echo $BUILD_ID").stdout.strip() == "42"
@@ -91,6 +93,10 @@ bash.executeSync(
 
 const snapshot = bash.snapshot();
 const shellOnly = bash.snapshot({ excludeFilesystem: true });
+const promptOnly = bash.snapshot({
+  excludeFilesystem: true,
+  excludeFunctions: true,
+});
 
 const restored = Bash.fromSnapshot(snapshot, {
   username: "agent",

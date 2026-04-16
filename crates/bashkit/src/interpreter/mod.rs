@@ -427,7 +427,11 @@ pub struct ShellState {
     /// Last exit code
     pub last_exit_code: i32,
     /// Defined shell functions
-    #[serde(default)]
+    #[serde(
+        default,
+        serialize_with = "serialize_snapshotted_functions",
+        deserialize_with = "deserialize_snapshotted_functions"
+    )]
     pub functions: HashMap<String, FunctionDef>,
     /// Shell aliases
     pub aliases: HashMap<String, String>,
@@ -457,6 +461,129 @@ pub struct ShellStateView {
     pub aliases: HashMap<String, String>,
     /// Trap handlers
     pub traps: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ShellStateOptions {
+    pub(crate) include_functions: bool,
+}
+
+impl Default for ShellStateOptions {
+    fn default() -> Self {
+        Self {
+            include_functions: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SnapshottedFunction {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ast: Option<FunctionDef>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+enum SnapshottedFunctionRepr {
+    Snapshot(SnapshottedFunction),
+    Legacy(FunctionDef),
+}
+
+fn serialize_snapshotted_functions<S>(
+    functions: &HashMap<String, FunctionDef>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let snapshotted: HashMap<String, SnapshottedFunction> = functions
+        .iter()
+        .map(|(name, func)| {
+            let mut ast = func.clone();
+            ast.source = None;
+            (
+                name.clone(),
+                SnapshottedFunction {
+                    source: func.source.clone(),
+                    ast: Some(ast),
+                },
+            )
+        })
+        .collect();
+    serde::Serialize::serialize(&snapshotted, serializer)
+}
+
+fn deserialize_snapshotted_functions<'de, D>(
+    deserializer: D,
+) -> std::result::Result<HashMap<String, FunctionDef>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let snapshotted =
+        <HashMap<String, SnapshottedFunctionRepr> as serde::Deserialize>::deserialize(
+            deserializer,
+        )?;
+    snapshotted
+        .into_iter()
+        .map(|(name, repr)| {
+            let func = match repr {
+                SnapshottedFunctionRepr::Legacy(func) => func,
+                SnapshottedFunctionRepr::Snapshot(snapshot) => {
+                    match (snapshot.ast, snapshot.source) {
+                        (Some(mut func), source) => {
+                            if func.source.is_none() {
+                                func.source = source;
+                            }
+                            func
+                        }
+                        (None, Some(source)) => deserialize_function_from_source(&name, &source)
+                            .map_err(serde::de::Error::custom)?,
+                        (None, None) => {
+                            return Err(serde::de::Error::custom(format!(
+                                "snapshot function '{name}' missing both ast and source"
+                            )));
+                        }
+                    }
+                }
+            };
+            if func.name != name {
+                return Err(serde::de::Error::custom(format!(
+                    "snapshot function key '{name}' does not match parsed name '{}'",
+                    func.name
+                )));
+            }
+            Ok((name, func))
+        })
+        .collect()
+}
+
+fn deserialize_function_from_source(
+    name: &str,
+    source: &str,
+) -> std::result::Result<FunctionDef, String> {
+    let script = Parser::new(source)
+        .parse()
+        .map_err(|err| format!("failed to parse function '{name}' from source: {err}"))?;
+    let mut commands = script.commands.into_iter();
+    let command = commands.next().ok_or_else(|| {
+        format!("failed to parse function '{name}' from source: missing function command")
+    })?;
+    if commands.next().is_some() {
+        return Err(format!(
+            "failed to parse function '{name}' from source: expected exactly one command"
+        ));
+    }
+    match command {
+        Command::Function(mut func) => {
+            func.source = Some(source.to_string());
+            Ok(func)
+        }
+        other => Err(format!(
+            "failed to parse function '{name}' from source: expected function definition, got {other:?}"
+        )),
+    }
 }
 
 /// Interpreter state.
@@ -1153,6 +1280,10 @@ impl Interpreter {
 
     /// Capture the current shell state (variables, env, cwd, options).
     pub fn shell_state(&self) -> ShellState {
+        self.shell_state_with_options(ShellStateOptions::default())
+    }
+
+    pub(crate) fn shell_state_with_options(&self, options: ShellStateOptions) -> ShellState {
         ShellState {
             env: self.env.clone(),
             variables: self.variables.clone(),
@@ -1160,7 +1291,11 @@ impl Interpreter {
             assoc_arrays: self.assoc_arrays.clone(),
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
-            functions: self.functions.clone(),
+            functions: if options.include_functions {
+                self.functions.clone()
+            } else {
+                HashMap::new()
+            },
             aliases: self.aliases.clone(),
             traps: self.traps.clone(),
         }

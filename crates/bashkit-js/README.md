@@ -263,6 +263,10 @@ await bash.execute(
 
 const snapshot = bash.snapshot();
 const shellOnly = bash.snapshot({ excludeFilesystem: true });
+const promptOnly = bash.snapshot({
+  excludeFilesystem: true,
+  excludeFunctions: true,
+});
 
 const restored = Bash.fromSnapshot(snapshot);
 console.log((await restored.execute("echo $BUILD_ID")).stdout); // 42\n

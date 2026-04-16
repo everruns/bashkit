@@ -36,7 +36,7 @@
 //! - Environment variables
 //! - Current working directory
 //! - Last exit code (`$?`)
-//! - Shell functions
+//! - Shell functions (AST plus original source when available)
 //! - Shell aliases
 //! - Trap handlers
 //! - VFS contents (files, directories, symlinks)
@@ -53,7 +53,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::fs::VfsSnapshot;
-use crate::interpreter::ShellState;
+use crate::interpreter::{ShellState, ShellStateOptions};
 
 /// Schema version for snapshot format compatibility.
 const SNAPSHOT_VERSION: u32 = 1;
@@ -100,6 +100,8 @@ pub struct Snapshot {
 pub struct SnapshotOptions {
     /// Skip virtual filesystem contents and capture shell state only.
     pub exclude_filesystem: bool,
+    /// Skip shell functions and avoid cloning AST-backed function state.
+    pub exclude_functions: bool,
 }
 
 impl Snapshot {
@@ -210,7 +212,11 @@ impl Snapshot {
 
 impl crate::Bash {
     fn build_snapshot(&self, options: SnapshotOptions) -> Snapshot {
-        let shell = self.interpreter.shell_state();
+        let shell = self
+            .interpreter
+            .shell_state_with_options(ShellStateOptions {
+                include_functions: !options.exclude_functions,
+            });
         let vfs = if options.exclude_filesystem {
             None
         } else {

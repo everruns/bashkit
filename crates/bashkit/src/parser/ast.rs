@@ -243,6 +243,9 @@ pub struct CaseItem {
 pub struct FunctionDef {
     pub name: String,
     pub body: Box<Command>,
+    /// Original source text for this function when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     /// Source span of this function definition
     pub span: Span,
 }
@@ -1223,6 +1226,7 @@ mod tests {
                 assignments: vec![],
                 span: Span::new(),
             })),
+            source: None,
             span: Span::new(),
         };
         assert_eq!(func.name, "my_func");
@@ -1271,6 +1275,7 @@ mod tests {
                 assignments: vec![],
                 span: Span::new(),
             })),
+            source: None,
             span: Span::new(),
         });
         assert!(matches!(func, Command::Function(_)));
