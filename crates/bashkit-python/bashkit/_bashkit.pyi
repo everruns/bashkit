@@ -296,10 +296,13 @@ class ShellState:
     """Read-only snapshot of shell state.
 
     Returned by ``Bash.shell_state()`` and ``BashTool.shell_state()`` for
-    prompt rendering and state inspection. Mapping fields are immutable views.
-    Transient fields like ``last_exit_code`` and ``traps`` reflect the captured
-    snapshot, but the next top-level ``execute()`` / ``execute_sync()`` clears
-    them before running a new command.
+    prompt rendering and state inspection. This is a Python-friendly
+    inspection view, not a full-fidelity Rust ``ShellState`` mirror.
+    Mapping fields are immutable views. Use
+    ``snapshot(exclude_filesystem=True)`` when you need shell-only restore
+    bytes. Transient fields like ``last_exit_code`` and ``traps`` reflect the
+    captured snapshot, but the next top-level ``execute()`` / ``execute_sync()``
+    clears them before running a new command.
     """
 
     @property
@@ -522,15 +525,6 @@ class Bash:
 
     def shell_state(self) -> ShellState:
         """Capture a read-only shell-state snapshot."""
-        ...
-
-    def restore_shell_state(self, state: ShellState) -> None:
-        """Restore shell state from a previous ``shell_state()`` capture.
-
-        Restores the captured shell-state object. The next top-level
-        ``execute()`` / ``execute_sync()`` still clears transient fields like
-        ``last_exit_code`` and ``traps`` before running the new command.
-        """
         ...
 
     def restore_snapshot(self, data: bytes) -> None:
@@ -940,15 +934,6 @@ class BashTool:
 
     def shell_state(self) -> ShellState:
         """Capture a read-only shell-state snapshot."""
-        ...
-
-    def restore_shell_state(self, state: ShellState) -> None:
-        """Restore shell state from a previous ``shell_state()`` capture.
-
-        Restores the captured shell-state object. The next top-level
-        ``execute()`` / ``execute_sync()`` still clears transient fields like
-        ``last_exit_code`` and ``traps`` before running the new command.
-        """
         ...
 
     def restore_snapshot(self, data: bytes) -> None:
