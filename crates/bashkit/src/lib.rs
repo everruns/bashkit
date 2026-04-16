@@ -426,7 +426,7 @@ pub(crate) mod tool_def;
 pub mod trace;
 
 pub use async_trait::async_trait;
-pub use builtins::{Builtin, Context as BuiltinContext};
+pub use builtins::{Builtin, Context as BuiltinContext, ExecutionExtensions};
 pub use credential::Credential;
 pub use error::{Error, Result};
 pub use fs::{
@@ -579,6 +579,21 @@ impl Bash {
     /// input size, then parses the script with a timeout, AST depth limit, and fuel limit,
     /// then executes the resulting AST.
     pub async fn exec(&mut self, script: &str) -> Result<ExecResult> {
+        self.exec_with_extensions(script, ExecutionExtensions::new())
+            .await
+    }
+
+    /// Execute a bash script with per-execution builtin extensions.
+    pub async fn exec_with_extensions(
+        &mut self,
+        script: &str,
+        extensions: ExecutionExtensions,
+    ) -> Result<ExecResult> {
+        let _extensions_guard = self.interpreter.scoped_execution_extensions(extensions);
+        self.exec_impl(script).await
+    }
+
+    async fn exec_impl(&mut self, script: &str) -> Result<ExecResult> {
         // THREAT[TM-ISO-005/006/007]: Reset transient state between exec() calls
         self.interpreter.reset_transient_state();
 
@@ -826,8 +841,19 @@ impl Bash {
         script: &str,
         output_callback: OutputCallback,
     ) -> Result<ExecResult> {
+        self.exec_streaming_with_extensions(script, output_callback, ExecutionExtensions::new())
+            .await
+    }
+
+    /// Execute a bash script with streaming output and per-execution builtin extensions.
+    pub async fn exec_streaming_with_extensions(
+        &mut self,
+        script: &str,
+        output_callback: OutputCallback,
+        extensions: ExecutionExtensions,
+    ) -> Result<ExecResult> {
         self.interpreter.set_output_callback(output_callback);
-        let result = self.exec(script).await;
+        let result = self.exec_with_extensions(script, extensions).await;
         self.interpreter.clear_output_callback();
         result
     }
@@ -4063,8 +4089,8 @@ fn
 
     mod custom_builtins {
         use super::*;
-        use crate::ExecResult;
         use crate::builtins::{Builtin, Context};
+        use crate::{ExecResult, ExecutionExtensions};
         use async_trait::async_trait;
 
         /// A simple custom builtin that outputs a static string
@@ -4084,6 +4110,38 @@ fn
             let result = bash.exec("hello").await.unwrap();
             assert_eq!(result.stdout, "Hello from custom builtin!\n");
             assert_eq!(result.exit_code, 0);
+        }
+
+        struct ExecutionScoped;
+
+        #[async_trait]
+        impl Builtin for ExecutionScoped {
+            async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
+                let value = ctx
+                    .execution_extension::<String>()
+                    .cloned()
+                    .unwrap_or_else(|| "missing".to_string());
+                Ok(ExecResult::ok(format!("{value}\n")))
+            }
+        }
+
+        #[tokio::test]
+        async fn test_custom_builtin_execution_extensions_are_per_call() {
+            let mut bash = Bash::builder()
+                .builtin("read-ext", Box::new(ExecutionScoped))
+                .build();
+
+            let result = bash
+                .exec_with_extensions(
+                    "read-ext",
+                    ExecutionExtensions::new().with("scoped".to_string()),
+                )
+                .await
+                .unwrap();
+            assert_eq!(result.stdout, "scoped\n");
+
+            let result = bash.exec("read-ext").await.unwrap();
+            assert_eq!(result.stdout, "missing\n");
         }
 
         /// A custom builtin that uses arguments

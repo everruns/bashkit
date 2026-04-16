@@ -20,9 +20,10 @@ uv automatically installs bashkit from PyPI (pre-built wheels, no Rust needed).
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 
-from bashkit import Bash
+from bashkit import Bash, BuiltinContext
 
 
 def demo_sync():
@@ -120,6 +121,37 @@ def demo_live_output():
     print()
 
 
+def demo_callback_builtins():
+    """Register Python callbacks as persistent bash builtins."""
+    print("=== Callback Builtins ===\n")
+
+    def order_cli(ctx: BuiltinContext) -> str:
+        help_str = f"usage: {ctx.name} [-h] {{get}} ...\n"
+        if not ctx.argv or ctx.argv[0] in {"help", "--help"}:
+            return help_str
+        if ctx.argv[0] == "get" and len(ctx.argv) >= 2:
+            return json.dumps({"id": ctx.argv[1], "status": "shipped", "items": ["widget"]}) + "\n"
+        return help_str
+
+    bash = Bash(custom_builtins={"order-cli": order_cli})
+
+    bash.execute_sync("mkdir -p /scratch && order-cli get 42 > /scratch/order.json")
+    r = bash.execute_sync("cat /scratch/order.json | jq -r '.items[]'")
+    print(f"item: {r.stdout.strip()}")
+    assert r.stdout.strip() == "widget"
+
+    bash.reset()
+    r = bash.execute_sync("order-cli get 7 | jq -r '.status'")
+    print(f"reset: {r.stdout.strip()}")
+    assert r.stdout.strip() == "shipped"
+
+    r = bash.execute_sync("order-cli --help")
+    print(r.stdout.strip())
+    assert r.stdout.strip() == "usage: order-cli [-h] {get} ..."
+
+    print()
+
+
 def demo_snapshot_restore():
     """Snapshot and restore interpreter state."""
     print("=== Snapshot / Restore ===\n")
@@ -207,6 +239,7 @@ def main():
     print("Bashkit — Bash interface examples\n")
     demo_sync()
     demo_live_output()
+    demo_callback_builtins()
     demo_snapshot_restore()
     asyncio.run(demo_async())
     demo_config()

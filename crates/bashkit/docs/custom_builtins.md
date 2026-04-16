@@ -78,6 +78,41 @@ pub struct BuiltinContext<'a> {
 }
 ```
 
+### Per-Execution Extensions
+
+For request-scoped data that should not live on the builtin itself, use
+`Bash::exec_with_extensions()` (or `exec_streaming_with_extensions()`) and read
+the value inside the builtin with `ctx.execution_extension::<T>()`.
+
+```rust,ignore
+use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, ExecutionExtensions, async_trait};
+
+struct RequestId;
+
+#[async_trait]
+impl Builtin for RequestId {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        let req = ctx
+            .execution_extension::<String>()
+            .cloned()
+            .unwrap_or_else(|| "missing".to_string());
+        Ok(ExecResult::ok(format!("{req}\n")))
+    }
+}
+
+let mut bash = Bash::builder()
+    .builtin("request-id", Box::new(RequestId))
+    .build();
+
+let result = bash
+    .exec_with_extensions(
+        "request-id",
+        ExecutionExtensions::new().with("req-123".to_string()),
+    )
+    .await?;
+assert_eq!(result.stdout, "req-123\n");
+```
+
 ### Arguments
 
 Arguments are passed as a slice of strings, excluding the command name itself:

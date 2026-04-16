@@ -139,12 +139,23 @@ Type aliases for backward compatibility: `ToolCallback = SyncToolExec`,
 Python callbacks (both sync and async) automatically see `contextvars.ContextVar`
 values that were set by the caller at `execute()` / `execute_sync()` time:
 
-1. `build_rust_tool()` (called at execute time) snapshots the caller's context
-   via `contextvars.copy_context()`.
-2. Sync callbacks are invoked via `ctx.run(fn, params, stdin)`.
-3. Async callbacks are invoked via
-   `ctx.run(lambda: loop.run_until_complete(fn(params, stdin)))` so that the
-   `asyncio.Task` inherits the captured context.
+1. Each Python surface owns one long-lived callback engine. The engine holds
+   reusable machinery only: `ctx.run(...)` callback entry and one cached
+   private asyncio loop for sync fallback.
+2. Each `execute()` / `execute_sync()` call creates a fresh callback session
+   that snapshots the caller's `contextvars` state.
+3. `execute()` also captures the caller's active asyncio loop via
+   `TaskLocals`, so async callbacks can be scheduled back onto that same loop.
+4. `Bash` / `BashTool` pass the callback session through bashkit's generic
+   execution extensions, so persistent builtin adapters resolve request-scoped
+   callback state without mutating shared runtime state.
+5. Sync callbacks are invoked via `ctx.run(fn, params, stdin)`.
+6. Async callbacks are created under `ctx.run(...)`; when they run on the
+   caller loop, the session owns the spawned Python tasks so cancellation only
+   affects that execution's callbacks.
+7. `execute_sync()` has no caller-owned loop to reuse, so async callbacks fall
+   back to the engine's private loop on the worker thread. This preserves sync
+   support, but loop-bound caller resources only work with `await execute()`.
 
 This enables framework patterns like LangGraph's `get_stream_writer()` and
 FastAPI's request-scoped state.
