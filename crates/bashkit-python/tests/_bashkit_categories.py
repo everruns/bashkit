@@ -1723,3 +1723,97 @@ def test_bashtool_cancel_after_reset_still_works():
     tool.cancel()
     r = tool.execute_sync("echo hi")
     assert r.exit_code != 0 or "cancel" in r.stderr.lower() or "cancel" in (r.error or "").lower()
+
+
+def test_bash_clear_cancel_allows_subsequent_execution():
+    """clear_cancel() after cancel() must allow the next execute to succeed."""
+    bash = Bash()
+    bash.cancel()
+    r = bash.execute_sync("echo should_fail")
+    assert r.exit_code != 0
+
+    bash.clear_cancel()
+    r = bash.execute_sync("echo works_again")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "works_again"
+
+
+def test_bashtool_clear_cancel_allows_subsequent_execution():
+    """BashTool: clear_cancel() after cancel() must allow the next execute to succeed."""
+    tool = BashTool()
+    tool.cancel()
+    r = tool.execute_sync("echo should_fail")
+    assert r.exit_code != 0
+
+    tool.clear_cancel()
+    r = tool.execute_sync("echo works_again")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "works_again"
+
+
+@pytest.mark.asyncio
+async def test_bash_async_clear_cancel_after_cancelled_execute():
+    """Async: cancel() during execute, await it, clear_cancel(), then execute again."""
+    bash = Bash()
+    bash.cancel()
+    r = await bash.execute("echo should_fail")
+    assert r.exit_code != 0
+
+    bash.clear_cancel()
+    r = await bash.execute("echo works_again")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "works_again"
+
+
+@pytest.mark.asyncio
+async def test_bashtool_async_clear_cancel_after_cancelled_execute():
+    """BashTool async: cancel() → await execute → clear_cancel() → execute succeeds."""
+    tool = BashTool()
+    tool.cancel()
+    r = await tool.execute("echo should_fail")
+    assert r.exit_code != 0
+
+    tool.clear_cancel()
+    r = await tool.execute("echo works_again")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "works_again"
+
+
+def test_bash_clear_cancel_on_fresh_instance_is_noop():
+    """clear_cancel() on a never-cancelled instance is a harmless no-op."""
+    bash = Bash()
+    bash.clear_cancel()
+    r = bash.execute_sync("echo ok")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "ok"
+
+
+def test_bashtool_clear_cancel_on_fresh_instance_is_noop():
+    """BashTool: clear_cancel() on a never-cancelled instance is a harmless no-op."""
+    tool = BashTool()
+    tool.clear_cancel()
+    r = tool.execute_sync("echo ok")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "ok"
+
+
+def test_bash_clear_cancel_after_reset_is_noop():
+    """cancel() → reset() orphans the old token; clear_cancel() on the new token is a no-op."""
+    bash = Bash()
+    bash.cancel()
+    bash.reset()
+    bash.clear_cancel()
+    r = bash.execute_sync("echo ok")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "ok"
+
+
+def test_bashtool_clear_cancel_after_reset_is_noop():
+    """BashTool: cancel() → reset() → clear_cancel() is a safe no-op on the new token."""
+    tool = BashTool()
+    tool.cancel()
+    tool.reset()
+    tool.clear_cancel()
+    r = tool.execute_sync("echo ok")
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "ok"

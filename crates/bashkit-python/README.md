@@ -205,11 +205,17 @@ from bashkit import Bash
 
 bash = Bash()
 
-bash.cancel()  # no-op if nothing is running
-bash.reset()   # reset state before reusing the instance
+bash.cancel()        # abort in-flight execution (no-op if idle)
+bash.clear_cancel()  # clear the sticky flag so subsequent executions work
 ```
 
-`BashTool` exposes the same `cancel()` and `reset()` methods.
+`cancel()` sets a sticky flag that causes every future `execute()` to fail
+immediately with `"execution cancelled"`. Call `clear_cancel()` after the
+cancelled execution finishes to restore the instance for reuse — this
+preserves all VFS state. Use `reset()` only when you want to discard VFS
+and shell state entirely.
+
+`BashTool` exposes the same `cancel()`, `clear_cancel()`, and `reset()` methods.
 
 ## BashTool
 
@@ -314,6 +320,7 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 - `execute_or_throw(commands: str) -> ExecResult`
 - `execute_sync_or_throw(commands: str) -> ExecResult`
 - `cancel()`
+- `clear_cancel()`
 - `reset()`
 - `snapshot() -> bytes`
 - `restore_snapshot(data: bytes)`
@@ -324,7 +331,7 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 
 ### BashTool
 
-- All execution, cancellation, reset, snapshot, restore, mount, and direct VFS helpers from `Bash`
+- All execution, cancellation (`cancel()`, `clear_cancel()`), reset, snapshot, restore, mount, and direct VFS helpers from `Bash`
 - Tool metadata: `name`, `short_description`, `version`
 - `description() -> str`
 - `help() -> str`

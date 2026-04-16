@@ -1444,6 +1444,23 @@ impl PyBash {
         }
     }
 
+    /// Clear the cancellation flag so subsequent executions proceed normally.
+    ///
+    /// Call this after a `cancel()` once the in-flight execution has finished
+    /// and you want to reuse the same `Bash` instance (preserving VFS state).
+    /// Without this, every future `execute()` will immediately fail with
+    /// ``"execution cancelled"``.
+    ///
+    /// **Note:** Calling this while an execution is still in-flight may
+    /// allow that execution to continue past the cancellation point.
+    /// Wait for the cancelled execution to finish before clearing
+    /// (await the async call or let `execute_sync` return).
+    fn clear_cancel(&self) {
+        if let Ok(token) = self.cancelled.read() {
+            token.store(false, Ordering::Relaxed);
+        }
+    }
+
     /// Execute commands asynchronously.
     #[pyo3(signature = (commands, on_output=None))]
     fn execute<'py>(
@@ -1939,6 +1956,23 @@ impl BashTool {
     fn cancel(&self) {
         if let Ok(token) = self.cancelled.read() {
             token.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Clear the cancellation flag so subsequent executions proceed normally.
+    ///
+    /// Call this after a `cancel()` once the in-flight execution has finished
+    /// and you want to reuse the same `BashTool` instance (preserving VFS state).
+    /// Without this, every future `execute()` will immediately fail with
+    /// ``"execution cancelled"``.
+    ///
+    /// **Note:** Calling this while an execution is still in-flight may
+    /// allow that execution to continue past the cancellation point.
+    /// Wait for the cancelled execution to finish before clearing
+    /// (await the async call or let `execute_sync` return).
+    fn clear_cancel(&self) {
+        if let Ok(token) = self.cancelled.read() {
+            token.store(false, Ordering::Relaxed);
         }
     }
 

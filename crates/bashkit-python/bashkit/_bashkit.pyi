@@ -416,6 +416,30 @@ class Bash:
         """
         ...
 
+    def clear_cancel(self) -> None:
+        """Clear the cancellation flag so subsequent executions proceed normally.
+
+        Call this after a ``cancel()`` once the in-flight execution has
+        finished and you want to reuse the same ``Bash`` instance
+        (preserving VFS state). Without this, every future ``execute()``
+        will immediately fail with ``"execution cancelled"``.
+
+        **Note:** Calling this while an execution is still in-flight may
+        allow that execution to continue past the cancellation point.
+        Wait for the cancelled execution to finish before clearing
+        (await the async call or let ``execute_sync`` return).
+
+        Example::
+
+            >>> bash = Bash()
+            >>> bash.cancel()
+            >>> bash.clear_cancel()
+            >>> result = bash.execute_sync("echo ok")
+            >>> result.exit_code
+            0
+        """
+        ...
+
     def reset(self) -> None:
         """Reset interpreter to initial state.
 
@@ -715,6 +739,30 @@ class BashTool:
 
             >>> tool = BashTool()
             >>> tool.cancel()  # no-op if nothing is running
+        """
+        ...
+
+    def clear_cancel(self) -> None:
+        """Clear the cancellation flag so subsequent executions proceed normally.
+
+        Call this after a ``cancel()`` once the in-flight execution has
+        finished and you want to reuse the same ``BashTool`` instance
+        (preserving VFS state). Without this, every future ``execute()``
+        will immediately fail with ``"execution cancelled"``.
+
+        **Note:** Calling this while an execution is still in-flight may
+        allow that execution to continue past the cancellation point.
+        Wait for the cancelled execution to finish before clearing
+        (await the async call or let ``execute_sync`` return).
+
+        Example::
+
+            >>> tool = BashTool()
+            >>> tool.cancel()
+            >>> tool.clear_cancel()
+            >>> result = tool.execute_sync("echo ok")
+            >>> result.exit_code
+            0
         """
         ...
 
