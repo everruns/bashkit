@@ -7,6 +7,7 @@ Requires ``fastapi`` and ``httpx`` to be installed.
 
 import asyncio
 import contextvars
+import json
 
 import pytest
 
@@ -16,13 +17,39 @@ httpx = pytest.importorskip("httpx")
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from bashkit import ScriptedTool  # noqa: E402
+from bashkit import Bash, ScriptedTool  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # ContextVar for request-scoped state
 # ---------------------------------------------------------------------------
 
 current_request_id: contextvars.ContextVar[str] = contextvars.ContextVar("current_request_id", default="none")
+
+
+def build_custom_builtin_app():
+    async def get_request_metadata(ctx):
+        await asyncio.sleep(0)
+        return (
+            json.dumps(
+                {
+                    "argv": ctx.argv,
+                    "request_id": current_request_id.get(),
+                }
+            )
+            + "\n"
+        )
+
+    bash = Bash(custom_builtins={"request-meta": get_request_metadata})
+    app = FastAPI()
+
+    @app.get("/builtin/{name}")
+    def builtin_endpoint(name: str, request: Request):
+        current_request_id.set(request.headers.get("x-request-id", "unknown"))
+        result = bash.execute_sync(f"request-meta {name}")
+        return {"stdout": result.stdout, "exit_code": result.exit_code}
+
+    return app
+
 
 # ===========================================================================
 # Tests
@@ -190,3 +217,54 @@ def test_error_handling_in_endpoint():
     assert resp.status_code == 200
     data = resp.json()
     assert data["exit_code"] != 0
+
+
+def test_sync_endpoint_with_async_custom_builtin():
+    """FastAPI sync endpoint propagates request context into async custom builtins."""
+    app = build_custom_builtin_app()
+
+    client = TestClient(app)
+    resp = client.get("/builtin/alice", headers={"x-request-id": "req-builtins-123"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["exit_code"] == 0
+    body = json.loads(data["stdout"])
+    assert body["argv"] == ["alice"]
+    assert body["request_id"] == "req-builtins-123"
+
+
+def test_sync_endpoint_custom_builtin_context_isolation():
+    """Sequential FastAPI requests keep custom builtin ContextVars isolated."""
+    app = build_custom_builtin_app()
+
+    client = TestClient(app)
+    first = client.get("/builtin/alpha", headers={"x-request-id": "req-alpha"})
+    second = client.get("/builtin/beta", headers={"x-request-id": "req-beta"})
+    third = client.get("/builtin/gamma", headers={"x-request-id": "req-gamma"})
+
+    assert json.loads(first.json()["stdout"])["request_id"] == "req-alpha"
+    assert json.loads(second.json()["stdout"])["request_id"] == "req-beta"
+    assert json.loads(third.json()["stdout"])["request_id"] == "req-gamma"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_sync_requests_with_shared_bash_and_async_custom_builtin():
+    """Concurrent sync endpoints using one Bash keep custom builtin request context isolated."""
+    app = build_custom_builtin_app()
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        responses = await asyncio.gather(
+            client.get("/builtin/slow", headers={"x-request-id": "req-slow"}),
+            client.get("/builtin/fast", headers={"x-request-id": "req-fast"}),
+        )
+
+    bodies = [json.loads(response.json()["stdout"]) for response in responses]
+
+    assert responses[0].status_code == 200
+    assert responses[1].status_code == 200
+    assert bodies[0]["argv"] == ["slow"]
+    assert bodies[0]["request_id"] == "req-slow"
+    assert bodies[1]["argv"] == ["fast"]
+    assert bodies[1]["request_id"] == "req-fast"
