@@ -197,7 +197,7 @@ let mut bash = Bash::builder()
 Checkpoint an interpreter to bytes, then restore it later:
 
 ```rust
-use bashkit::Bash;
+use bashkit::{Bash, SnapshotOptions};
 
 # #[tokio::main]
 # async fn main() -> bashkit::Result<()> {
@@ -205,8 +205,12 @@ let mut bash = Bash::new();
 bash.exec("export BUILD_ID=42; echo ready > /tmp/state.txt").await?;
 
 let snapshot = bash.snapshot()?;
+let shell_only = bash.snapshot_with_options(SnapshotOptions {
+    exclude_filesystem: true,
+})?;
 let mut restored = Bash::from_snapshot(&snapshot)?;
 assert_eq!(restored.exec("echo $BUILD_ID").await?.stdout.trim(), "42");
+restored.restore_snapshot(&shell_only)?;
 # Ok(())
 # }
 ```

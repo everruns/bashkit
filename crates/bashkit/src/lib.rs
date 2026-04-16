@@ -443,7 +443,7 @@ pub use limits::{
     ExecutionCounters, ExecutionLimits, LimitExceeded, MemoryBudget, MemoryLimits, SessionLimits,
 };
 pub use network::NetworkAllowlist;
-pub use snapshot::Snapshot;
+pub use snapshot::{Snapshot, SnapshotOptions};
 pub use ssh::{SshAllowlist, SshConfig, TrustedHostKey};
 pub use tool::BashToolBuilder as ToolBuilder;
 pub use tool::{

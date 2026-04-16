@@ -1,6 +1,6 @@
 //! Tests for VFS snapshot/restore and shell state snapshot/restore
 
-use bashkit::{Bash, FileSystem, InMemoryFs, Snapshot};
+use bashkit::{Bash, FileSystem, InMemoryFs, Snapshot, SnapshotOptions};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -342,6 +342,32 @@ async fn snapshot_restore_into_existing_instance() {
 
     let r = bash.exec("cat /tmp/saved.txt").await.unwrap();
     assert_eq!(r.stdout.trim(), "data");
+}
+
+#[tokio::test]
+async fn snapshot_without_filesystem_preserves_shell_only() {
+    let mut bash = Bash::new();
+    bash.exec("x=42; echo 'saved' > /tmp/state.txt")
+        .await
+        .unwrap();
+
+    let bytes = bash
+        .snapshot_with_options(SnapshotOptions {
+            exclude_filesystem: true,
+        })
+        .unwrap();
+
+    bash.exec("x=99; echo 'changed' > /tmp/state.txt")
+        .await
+        .unwrap();
+
+    bash.restore_snapshot(&bytes).unwrap();
+
+    let r = bash.exec("echo $x").await.unwrap();
+    assert_eq!(r.stdout.trim(), "42");
+
+    let r = bash.exec("cat /tmp/state.txt").await.unwrap();
+    assert_eq!(r.stdout.trim(), "changed");
 }
 
 #[tokio::test]

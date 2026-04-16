@@ -17,7 +17,8 @@ use bashkit::tool::VERSION;
 use bashkit::{
     Bash as RustBash, BashTool as RustBashTool, ExecResult as RustExecResult, ExecutionLimits,
     ExtFunctionResult, FileType, Metadata, MontyObject, OutputCallback, PythonExternalFnHandler,
-    PythonLimits, ScriptedTool as RustScriptedTool, Tool, ToolArgs, ToolDef, ToolRequest,
+    PythonLimits, ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool,
+    ToolArgs, ToolDef, ToolRequest,
 };
 use napi::JsValue;
 use napi_derive::napi;
@@ -687,6 +688,11 @@ pub struct BashOptions {
     pub external_functions: Option<Vec<String>>,
 }
 
+#[napi(object)]
+pub struct SnapshotOptions {
+    pub exclude_filesystem: Option<bool>,
+}
+
 fn default_opts() -> BashOptions {
     BashOptions {
         username: None,
@@ -708,6 +714,14 @@ fn default_opts() -> BashOptions {
         mounts: None,
         python: None,
         external_functions: None,
+    }
+}
+
+fn to_snapshot_options(options: Option<SnapshotOptions>) -> RustSnapshotOptions {
+    RustSnapshotOptions {
+        exclude_filesystem: options
+            .and_then(|options| options.exclude_filesystem)
+            .unwrap_or(false),
     }
 }
 
@@ -917,11 +931,15 @@ impl Bash {
     /// Returns a `Buffer` (Uint8Array) that can be persisted and used with
     /// `Bash.fromSnapshot()` to restore the session later.
     #[napi]
-    pub fn snapshot(&self) -> napi::Result<napi::bindgen_prelude::Buffer> {
+    pub fn snapshot(
+        &self,
+        options: Option<SnapshotOptions>,
+    ) -> napi::Result<napi::bindgen_prelude::Buffer> {
+        let options = to_snapshot_options(options);
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let bytes = bash
-                .snapshot()
+                .snapshot_with_options(options)
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
             Ok(napi::bindgen_prelude::Buffer::from(bytes))
         })
@@ -1334,11 +1352,15 @@ impl BashTool {
 
     /// Serialize interpreter state (shell variables, VFS contents, counters) to bytes.
     #[napi]
-    pub fn snapshot(&self) -> napi::Result<napi::bindgen_prelude::Buffer> {
+    pub fn snapshot(
+        &self,
+        options: Option<SnapshotOptions>,
+    ) -> napi::Result<napi::bindgen_prelude::Buffer> {
+        let options = to_snapshot_options(options);
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let bytes = bash
-                .snapshot()
+                .snapshot_with_options(options)
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
             Ok(napi::bindgen_prelude::Buffer::from(bytes))
         })

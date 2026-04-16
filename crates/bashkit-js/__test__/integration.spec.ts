@@ -305,6 +305,32 @@ test("integration: BashTool restoreSnapshot after reset restores original state"
   t.is(tool.executeSync("whoami").stdout.trim(), "agent");
 });
 
+test("integration: Bash snapshot can exclude filesystem", (t) => {
+  const bash = new Bash();
+  bash.executeSync("export KEEP=1; echo saved > /tmp/state.txt");
+
+  const snapshot = bash.snapshot({ excludeFilesystem: true });
+
+  bash.executeSync("export KEEP=2; echo changed > /tmp/state.txt");
+  bash.restoreSnapshot(snapshot);
+
+  t.is(bash.executeSync("echo $KEEP").stdout.trim(), "1");
+  t.is(bash.executeSync("cat /tmp/state.txt").stdout.trim(), "changed");
+});
+
+test("integration: BashTool snapshot can exclude filesystem", (t) => {
+  const tool = new BashTool();
+  tool.executeSync("export KEEP=1; echo saved > /tmp/tool.txt");
+
+  const snapshot = tool.snapshot({ excludeFilesystem: true });
+
+  tool.executeSync("export KEEP=2; echo changed > /tmp/tool.txt");
+  tool.restoreSnapshot(snapshot);
+
+  t.is(tool.executeSync("echo $KEEP").stdout.trim(), "1");
+  t.is(tool.executeSync("cat /tmp/tool.txt").stdout.trim(), "changed");
+});
+
 test("integration: BashTool empty snapshot roundtrip works", (t) => {
   const tool = new BashTool();
   const expectedPwd = tool.executeSync("pwd").stdout.trim();

@@ -85,6 +85,9 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --lib --bins --tests --features http_client,ssh
 
+      - name: Run strict bash parity tests
+        run: cargo test -p bashkit --test spec_tests --features http_client,ssh -- bash_comparison_tests --ignored
+
       - name: Run doc tests
         run: cargo test --workspace --doc --features http_client,ssh
 

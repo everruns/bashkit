@@ -489,7 +489,7 @@ class Bash:
         """
         ...
 
-    def snapshot(self) -> bytes:
+    def snapshot(self, exclude_filesystem: bool = False) -> bytes:
         """Serialize interpreter state to bytes."""
         ...
 
@@ -894,7 +894,7 @@ class BashTool:
         """
         ...
 
-    def snapshot(self) -> bytes:
+    def snapshot(self, exclude_filesystem: bool = False) -> bytes:
         """Serialize interpreter state to bytes."""
         ...
 

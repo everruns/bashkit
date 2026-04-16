@@ -7,8 +7,10 @@ to a known-good virtual workspace.
 ## What a snapshot captures
 
 - Shell state: variables, exported env, arrays, aliases, and current working directory
-- Virtual filesystem contents
+- Virtual filesystem contents by default
 - Session counters used by interpreter limits
+
+Pass snapshot options to skip VFS capture when you only want shell state.
 
 `restore_snapshot()` preserves the current instance configuration such as limits,
 builtins, and filesystem backend, then replaces shell state and VFS contents
@@ -21,7 +23,7 @@ that instance first and call `restore_snapshot()` on it.
 ## Rust
 
 ```rust
-use bashkit::{Bash, ExecutionLimits};
+use bashkit::{Bash, ExecutionLimits, SnapshotOptions};
 
 # #[tokio::main]
 # async fn main() -> bashkit::Result<()> {
@@ -30,6 +32,9 @@ bash.exec("export BUILD_ID=42; mkdir -p /workspace && cd /workspace && echo read
     .await?;
 
 let snapshot = bash.snapshot()?;
+let shell_only = bash.snapshot_with_options(SnapshotOptions {
+    exclude_filesystem: true,
+})?;
 
 let mut restored = Bash::from_snapshot(&snapshot)?;
 assert_eq!(restored.exec("echo $BUILD_ID").await?.stdout.trim(), "42");
@@ -42,6 +47,7 @@ assert_eq!(
 let limits = ExecutionLimits::new().max_commands(100);
 let mut configured = Bash::builder().limits(limits).build();
 configured.restore_snapshot(&snapshot)?;
+configured.restore_snapshot(&shell_only)?;
 # Ok(())
 # }
 ```
@@ -59,6 +65,7 @@ bash.execute_sync(
 )
 
 snapshot = bash.snapshot()
+shell_only = bash.snapshot(exclude_filesystem=True)
 
 restored = Bash.from_snapshot(snapshot, username="agent", max_commands=100)
 assert restored.execute_sync("echo $BUILD_ID").stdout.strip() == "42"
@@ -67,11 +74,12 @@ assert restored.execute_sync("cat /workspace/state.txt").stdout.strip() == "read
 restored.reset()
 restored.restore_snapshot(snapshot)
 assert restored.execute_sync("pwd").stdout.strip() == "/workspace"
+restored.restore_snapshot(shell_only)
 ```
 
 ## Node.js / TypeScript
 
-Node exposes snapshotting on `Bash`:
+Node exposes snapshotting on `Bash` and `BashTool`:
 
 ```typescript
 import { Bash } from "@everruns/bashkit";
@@ -82,6 +90,7 @@ bash.executeSync(
 );
 
 const snapshot = bash.snapshot();
+const shellOnly = bash.snapshot({ excludeFilesystem: true });
 
 const restored = Bash.fromSnapshot(snapshot, {
   username: "agent",
@@ -93,9 +102,8 @@ if (restored.executeSync("echo $BUILD_ID").stdout.trim() !== "42") {
 
 restored.reset();
 restored.restoreSnapshot(snapshot);
+restored.restoreSnapshot(shellOnly);
 ```
-
-`BashTool` snapshot parity for Node is tracked in [issue #1301](https://github.com/everruns/bashkit/issues/1301).
 
 ## Security note
 

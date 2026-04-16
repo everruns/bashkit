@@ -117,6 +117,19 @@ def test_bash_restore_snapshot_after_reset_restores_original_state():
     assert bash.execute_sync("cat /workspace/state.txt").stdout.strip() == "saved"
 
 
+def test_bash_snapshot_can_exclude_filesystem():
+    bash = Bash()
+    bash.execute_sync("export KEEP=1; echo saved > /tmp/state.txt")
+
+    snapshot = bash.snapshot(exclude_filesystem=True)
+
+    bash.execute_sync("export KEEP=2; echo changed > /tmp/state.txt")
+    bash.restore_snapshot(snapshot)
+
+    assert bash.execute_sync("echo $KEEP").stdout.strip() == "1"
+    assert bash.execute_sync("cat /tmp/state.txt").stdout.strip() == "changed"
+
+
 def test_bash_empty_snapshot_roundtrip():
     fresh = Bash()
     snapshot = fresh.snapshot()
@@ -639,6 +652,19 @@ def test_bashtool_restore_snapshot_after_reset_restores_original_state():
     assert tool.execute_sync("echo $KEEP").stdout.strip() == "1"
     assert tool.execute_sync("pwd").stdout.strip() == "/workspace"
     assert tool.execute_sync("cat /workspace/tool.txt").stdout.strip() == "saved"
+
+
+def test_bashtool_snapshot_can_exclude_filesystem():
+    tool = BashTool()
+    tool.execute_sync("export KEEP=1; echo saved > /tmp/tool.txt")
+
+    snapshot = tool.snapshot(exclude_filesystem=True)
+
+    tool.execute_sync("export KEEP=2; echo changed > /tmp/tool.txt")
+    tool.restore_snapshot(snapshot)
+
+    assert tool.execute_sync("echo $KEEP").stdout.strip() == "1"
+    assert tool.execute_sync("cat /tmp/tool.txt").stdout.strip() == "changed"
 
 
 def test_bashtool_empty_snapshot_roundtrip():

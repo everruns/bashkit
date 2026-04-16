@@ -1,6 +1,6 @@
 // Decision: Snapshot format uses serde_json for Phase 1 (debuggable, human-readable).
 // Phase 2 can add bincode/postcard for compactness.
-// VFS contents are included by default (opt-out via SnapshotOptions in future).
+// VFS contents are included by default; SnapshotOptions can opt out for shell-only restores.
 // Session limit budgets are transferred (not reset) to preserve resource accounting.
 
 //! Snapshot/resume — serialize interpreter state between `exec()` calls.
@@ -93,6 +93,13 @@ pub struct Snapshot {
     pub session_commands: u64,
     /// Session-level exec() call counter.
     pub session_exec_calls: u64,
+}
+
+/// Controls which interpreter state is captured in snapshot bytes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SnapshotOptions {
+    /// Skip virtual filesystem contents and capture shell state only.
+    pub exclude_filesystem: bool,
 }
 
 impl Snapshot {
@@ -202,6 +209,23 @@ impl Snapshot {
 }
 
 impl crate::Bash {
+    fn build_snapshot(&self, options: SnapshotOptions) -> Snapshot {
+        let shell = self.interpreter.shell_state();
+        let vfs = if options.exclude_filesystem {
+            None
+        } else {
+            self.fs.vfs_snapshot()
+        };
+        let counters = self.interpreter.counters();
+        Snapshot {
+            version: SNAPSHOT_VERSION,
+            shell,
+            vfs,
+            session_commands: counters.session_commands,
+            session_exec_calls: counters.session_exec_calls,
+        }
+    }
+
     /// Capture the current interpreter state as a serializable snapshot.
     ///
     /// The snapshot includes shell state (variables, env, cwd, arrays, aliases,
@@ -232,17 +256,12 @@ impl crate::Bash {
     /// # }
     /// ```
     pub fn snapshot(&self) -> crate::Result<Vec<u8>> {
-        let shell = self.interpreter.shell_state();
-        let vfs = self.fs.vfs_snapshot();
-        let counters = self.interpreter.counters();
-        let snap = Snapshot {
-            version: SNAPSHOT_VERSION,
-            shell,
-            vfs,
-            session_commands: counters.session_commands,
-            session_exec_calls: counters.session_exec_calls,
-        };
-        snap.to_bytes()
+        self.snapshot_with_options(SnapshotOptions::default())
+    }
+
+    /// Capture the current interpreter state using caller-provided snapshot options.
+    pub fn snapshot_with_options(&self, options: SnapshotOptions) -> crate::Result<Vec<u8>> {
+        self.build_snapshot(options).to_bytes()
     }
 
     /// Create a new Bash instance restored from a snapshot.
@@ -309,17 +328,16 @@ impl crate::Bash {
     /// Use this instead of [`snapshot()`](Self::snapshot) when snapshots cross
     /// trust boundaries (network, shared storage, untrusted input).
     pub fn snapshot_to_bytes_keyed(&self, key: &[u8]) -> crate::Result<Vec<u8>> {
-        let shell = self.interpreter.shell_state();
-        let vfs = self.fs.vfs_snapshot();
-        let counters = self.interpreter.counters();
-        let snap = Snapshot {
-            version: SNAPSHOT_VERSION,
-            shell,
-            vfs,
-            session_commands: counters.session_commands,
-            session_exec_calls: counters.session_exec_calls,
-        };
-        snap.to_bytes_keyed(key)
+        self.snapshot_to_bytes_keyed_with_options(key, SnapshotOptions::default())
+    }
+
+    /// Capture a keyed snapshot using caller-provided snapshot options.
+    pub fn snapshot_to_bytes_keyed_with_options(
+        &self,
+        key: &[u8],
+        options: SnapshotOptions,
+    ) -> crate::Result<Vec<u8>> {
+        self.build_snapshot(options).to_bytes_keyed(key)
     }
 
     /// Create a new Bash instance from a keyed (HMAC-protected) snapshot.

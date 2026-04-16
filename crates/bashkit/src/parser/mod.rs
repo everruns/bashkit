@@ -3207,11 +3207,8 @@ impl<'a> Parser<'a> {
                                         continue;
                                     }
                                     '{' => brace_depth += 1,
-                                    '}' => {
-                                        if brace_depth > 0 {
-                                            brace_depth -= 1;
-                                        }
-                                    }
+                                    '}' if brace_depth > 0 => brace_depth -= 1,
+                                    '}' => {}
                                     _ => {}
                                 }
                                 index.push(chars.next().unwrap());

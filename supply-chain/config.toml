@@ -5,9 +5,11 @@
 version = "0.10"
 
 [policy.bashkit]
+audit-as-crates-io = false
 criteria = "safe-to-deploy"
 
 [policy.bashkit-cli]
+audit-as-crates-io = false
 criteria = "safe-to-deploy"
 
 [policy.bashkit-js]
@@ -15,6 +17,10 @@ audit-as-crates-io = false
 criteria = "safe-to-deploy"
 
 [policy.bashkit-python]
+audit-as-crates-io = false
+criteria = "safe-to-deploy"
+
+[policy.monty]
 audit-as-crates-io = false
 criteria = "safe-to-deploy"
 

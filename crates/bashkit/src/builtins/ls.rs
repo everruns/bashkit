@@ -126,7 +126,7 @@ impl Builtin for Ls {
 
         // Sort file arguments by time if -t, preserving original paths
         if opts.sort_by_time {
-            file_args.sort_by(|a, b| b.1.modified.cmp(&a.1.modified));
+            file_args.sort_by_key(|entry| std::cmp::Reverse(entry.1.modified));
         }
 
         // Output file arguments first (preserving path as given by user)
@@ -211,7 +211,7 @@ async fn list_directory(
     let mut sorted_entries = entries;
     if opts.sort_by_time {
         // Sort by modification time, newest first
-        sorted_entries.sort_by(|a, b| b.metadata.modified.cmp(&a.metadata.modified));
+        sorted_entries.sort_by_key(|entry| std::cmp::Reverse(entry.metadata.modified));
     } else {
         // Sort alphabetically
         sorted_entries.sort_by(|a, b| a.name.cmp(&b.name));
