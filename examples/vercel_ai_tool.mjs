@@ -89,12 +89,36 @@ async function main() {
   );
 }
 
+function shouldSkipOpenAiExample(err) {
+  const details = JSON.stringify(
+    err,
+    Object.getOwnPropertyNames(err ?? {}),
+    2
+  ).toLowerCase();
+  const message = `${err?.message ?? ""}\n${details}`;
+  return (
+    message.includes("api key") ||
+    message.includes("openai") ||
+    message.includes("insufficient_quota") ||
+    message.includes("rate limit") ||
+    message.includes("maxretriesexceeded") ||
+    err?.status === 429 ||
+    err?.statusCode === 429 ||
+    err?.code === "insufficient_quota" ||
+    err?.type === "insufficient_quota" ||
+    err?.lastError?.status === 429 ||
+    err?.lastError?.statusCode === 429 ||
+    err?.lastError?.code === "insufficient_quota" ||
+    err?.lastError?.type === "insufficient_quota"
+  );
+}
+
 main().catch((err) => {
-  if (err.message?.includes("API key") || err.message?.includes("OPENAI")) {
+  if (shouldSkipOpenAiExample(err)) {
     console.error(
-      "Set OPENAI_API_KEY to run this example. See the file header for details."
+      "Skipping example: OpenAI credentials are missing or the project is out of quota."
     );
-    process.exit(1);
+    process.exit(0);
   }
   throw err;
 });

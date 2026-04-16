@@ -10,6 +10,7 @@ Sandboxed bash interpreter for JavaScript and TypeScript. Native NAPI-RS binding
 - Sync and async execution APIs
 - Direct VFS helpers, constructor mounts, and live host mounts
 - Cancellation support via `cancel()`
+- Sticky cancellation recovery via `clearCancel()`
 - Snapshot and restore support on `Bash`
 - AI framework adapters for OpenAI, Anthropic, Vercel AI SDK, and LangChain
 
@@ -171,10 +172,17 @@ const running = bash.execute("sleep 60");
 bash.cancel();
 await running;
 
-bash.reset(); // reset before reusing the instance
+bash.clearCancel(); // preserve session/VFS state before reusing the instance
 ```
 
-`BashTool` exposes the same `cancel()` and `reset()` methods. For synchronous execution, `executeSync(...)` and `executeSyncOrThrow(...)` also accept `{ signal }`.
+`cancel()` sets a sticky flag that causes future executions to fail with
+`"execution cancelled"`. Call `clearCancel()` after the cancelled execution
+has finished to reuse the same instance without losing shell or VFS state.
+Use `reset()` only when you want to discard state entirely.
+
+`BashTool` exposes the same `cancel()`, `clearCancel()`, and `reset()` methods.
+For synchronous execution, `executeSync(...)` and `executeSyncOrThrow(...)`
+also accept `{ signal }`.
 
 ## BashTool
 
@@ -296,6 +304,7 @@ import {
 - `executeSyncOrThrow(commands, { signal? })`
 - `executeOrThrow(commands)`
 - `cancel()`
+- `clearCancel()`
 - `reset()`
 - `snapshot()`
 - `restoreSnapshot(data)`
@@ -304,7 +313,7 @@ import {
 
 ### BashTool
 
-- All execution, cancellation, reset, snapshot, restore, and direct VFS helpers from `Bash`
+- All execution, cancellation (`cancel()`, `clearCancel()`), reset, snapshot, restore, and direct VFS helpers from `Bash`
 - Tool metadata: `name`, `version`, `shortDescription`
 - `snapshot()`
 - `restoreSnapshot(data)`

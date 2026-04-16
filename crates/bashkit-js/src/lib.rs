@@ -556,7 +556,6 @@ impl Bash {
     /// Execute bash commands synchronously.
     #[napi]
     pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
-        self.state.cancelled.store(false, Ordering::SeqCst);
         block_on_with(&self.state, |s| async move {
             let mut bash = s.inner.lock().await;
             match bash.exec(&commands).await {
@@ -626,6 +625,16 @@ impl Bash {
     #[napi]
     pub fn cancel(&self) {
         self.state.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    /// Clear the cancellation flag so subsequent executions proceed normally.
+    ///
+    /// Call this after a `cancel()` once the in-flight execution has finished
+    /// and you want to reuse the same `Bash` instance without discarding shell
+    /// or VFS state.
+    #[napi]
+    pub fn clear_cancel(&self) {
+        self.state.cancelled.store(false, Ordering::SeqCst);
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
@@ -944,7 +953,6 @@ impl BashTool {
     /// Execute bash commands synchronously.
     #[napi]
     pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
-        self.state.cancelled.store(false, Ordering::SeqCst);
         block_on_with(&self.state, |s| async move {
             let mut bash = s.inner.lock().await;
             match bash.exec(&commands).await {
@@ -1011,6 +1019,16 @@ impl BashTool {
     #[napi]
     pub fn cancel(&self) {
         self.state.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    /// Clear the cancellation flag so subsequent executions proceed normally.
+    ///
+    /// Call this after a `cancel()` once the in-flight execution has finished
+    /// and you want to reuse the same `BashTool` instance without discarding
+    /// shell or VFS state.
+    #[napi]
+    pub fn clear_cancel(&self) {
+        self.state.cancelled.store(false, Ordering::SeqCst);
     }
 
     /// Reset interpreter to fresh state, preserving configuration.

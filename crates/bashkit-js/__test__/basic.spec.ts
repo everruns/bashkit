@@ -317,6 +317,62 @@ test("Bash: reset preserves username config", (t) => {
   t.is(bash.executeSync("whoami").stdout.trim(), "keeper");
 });
 
+test("Bash: cancel stays sticky until clearCancel", (t) => {
+  const bash = new Bash();
+  bash.cancel();
+  const cancelled = bash.executeSync("echo nope");
+  t.not(cancelled.exitCode, 0);
+
+  bash.clearCancel();
+  const result = bash.executeSync("echo ok");
+  t.is(result.exitCode, 0);
+  t.is(result.stdout.trim(), "ok");
+});
+
+test("BashTool: cancel stays sticky until clearCancel", (t) => {
+  const tool = new BashTool();
+  tool.cancel();
+  const cancelled = tool.executeSync("echo nope");
+  t.not(cancelled.exitCode, 0);
+
+  tool.clearCancel();
+  const result = tool.executeSync("echo ok");
+  t.is(result.exitCode, 0);
+  t.is(result.stdout.trim(), "ok");
+});
+
+test("Bash: async cancel stays sticky until clearCancel", async (t) => {
+  const bash = new Bash();
+  setTimeout(() => bash.cancel(), 10);
+
+  const cancelled = await bash.execute("for i in $(seq 1 10000); do echo $i; done");
+  t.not(cancelled.exitCode, 0);
+
+  const stillCancelled = await bash.execute("echo nope");
+  t.not(stillCancelled.exitCode, 0);
+
+  bash.clearCancel();
+  const result = await bash.execute("echo ok");
+  t.is(result.exitCode, 0);
+  t.is(result.stdout.trim(), "ok");
+});
+
+test("BashTool: async cancel stays sticky until clearCancel", async (t) => {
+  const tool = new BashTool();
+  setTimeout(() => tool.cancel(), 10);
+
+  const cancelled = await tool.execute("for i in $(seq 1 10000); do echo $i; done");
+  t.not(cancelled.exitCode, 0);
+
+  const stillCancelled = await tool.execute("echo nope");
+  t.not(stillCancelled.exitCode, 0);
+
+  tool.clearCancel();
+  const result = await tool.execute("echo ok");
+  t.is(result.exitCode, 0);
+  t.is(result.stdout.trim(), "ok");
+});
+
 // ============================================================================
 // Bash — executeSyncOrThrow
 // ============================================================================
