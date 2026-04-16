@@ -1,7 +1,13 @@
+#
+# Keep coverage generation separate from Codecov upload.
+# Mirrors Monty's CI shape so upload uses the existing CODECOV_TOKEN secret
+# without mixing tokened steps into the report-generation job.
 name: Coverage
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
 
 permissions:
@@ -12,7 +18,7 @@ env:
 
 jobs:
   coverage:
-    name: Code Coverage
+    name: Generate Coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -42,17 +48,36 @@ jobs:
             --skip-clean \
             --engine llvm
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
-        with:
-          files: coverage/cobertura.xml
-          flags: unittests
-          fail_ci_if_error: false
-          verbose: true
-
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage/
           retention-days: 30
+
+  coverage-upload:
+    name: Upload Coverage
+    needs: coverage
+    if: ${{ secrets.CODECOV_TOKEN != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: coverage-report
+          path: coverage
+
+      - name: List coverage artifacts
+        run: ls -lh coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v6
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/cobertura.xml
+          disable_search: true
+          flags: unittests
+          fail_ci_if_error: false
+          verbose: true
