@@ -1,10 +1,29 @@
 """Type stubs for bashkit native module."""
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 # Synchronous chunk callback for live stdout/stderr streaming.
 OutputHandler = Callable[[str, str], None]
+
+class BuiltinContext:
+    """Invocation context for a custom builtin callback.
+
+    Attributes:
+        name: Builtin command name.
+        argv: Raw argv tokens after shell parsing, excluding the command name.
+        stdin: Pipeline input from the previous command, if any.
+        env: Environment variables visible to the builtin.
+        cwd: Current working directory at invocation time.
+    """
+
+    name: str
+    argv: list[str]
+    stdin: str | None
+    env: dict[str, str]
+    cwd: str
+
+BuiltinCallback = Callable[[BuiltinContext], str | Awaitable[str]]
 
 class FileSystem:
     """Direct access to BashKit's virtual filesystem or a standalone mountable FS.
@@ -309,6 +328,7 @@ class Bash:
         external_handler: ExternalHandler | None = None,
         files: dict[str, str | Callable[[], str]] | None = None,
         mounts: list[dict[str, Any]] | None = None,
+        custom_builtins: dict[str, BuiltinCallback] | None = None,
     ) -> None:
         """Create a new Bash interpreter.
 
@@ -324,12 +344,19 @@ class Bash:
             external_handler: Async callback for external function calls.
             files: Dict mapping VFS paths to file contents or lazy callables.
             mounts: List of real host directory mount configs.
+            custom_builtins: Constructor-time Python callbacks exposed as
+                bash builtins. Each callback receives a ``BuiltinContext``
+                with raw ``argv`` tokens and optional pipeline ``stdin``,
+                and must return a stdout string or await one. Async callbacks
+                run on the caller's active asyncio loop for ``await execute()``
+                and on a private loop for ``execute_sync()``.
 
         Example::
 
             >>> bash = Bash(
             ...     timeout_seconds=30,
             ...     files={"/input.txt": "some data"},
+            ...     custom_builtins={"ping": lambda ctx: "pong\\n"},
             ... )
         """
         ...
@@ -341,6 +368,9 @@ class Bash:
             commands: Bash script to run (like ``bash -c "commands"``).
             on_output: Optional callback receiving chunked ``(stdout, stderr)``
                 pairs during execution. Must be synchronous.
+
+        Async ``custom_builtins`` callbacks run on the caller's active asyncio
+        loop.
 
         Returns:
             ExecResult with stdout, stderr, exit_code.
@@ -360,6 +390,7 @@ class Bash:
 
         Not supported when ``external_handler`` is configured — use
         ``execute()`` (async) instead. ``on_output`` must be synchronous.
+        Async ``custom_builtins`` callbacks run on a private loop here.
 
         Example::
 
@@ -444,7 +475,8 @@ class Bash:
         """Reset interpreter to initial state.
 
         Clears all VFS contents, environment variables, and shell state.
-        Re-applies the original ``files`` and ``mounts`` configuration.
+        Re-applies the original ``files``, ``mounts``, and
+        ``custom_builtins`` configuration.
 
         Example::
 
@@ -479,6 +511,7 @@ class Bash:
         external_handler: ExternalHandler | None = None,
         files: dict[str, str] | None = None,
         mounts: list[dict[str, Any]] | None = None,
+        custom_builtins: dict[str, BuiltinCallback] | None = None,
     ) -> Bash:
         """Create a new ``Bash`` from snapshot bytes and optional constructor kwargs."""
         ...
@@ -653,6 +686,7 @@ class BashTool:
         timeout_seconds: float | None = None,
         files: dict[str, str | Callable[[], str]] | None = None,
         mounts: list[dict[str, Any]] | None = None,
+        custom_builtins: dict[str, BuiltinCallback] | None = None,
     ) -> None:
         """Create a new BashTool.
 
@@ -665,10 +699,18 @@ class BashTool:
             timeout_seconds: Abort execution after this duration.
             files: Dict mapping VFS paths to file contents or lazy callables.
             mounts: List of real host directory mount configs.
+            custom_builtins: Constructor-time Python callbacks exposed as
+                bash builtins. Each callback receives a ``BuiltinContext``
+                and must return a stdout string or await one. Async callbacks
+                run on the caller's active asyncio loop for ``await execute()``
+                and on a private loop for ``execute_sync()``.
 
         Example::
 
-            >>> tool = BashTool(timeout_seconds=30)
+            >>> tool = BashTool(
+            ...     timeout_seconds=30,
+            ...     custom_builtins={"ping": lambda ctx: "pong\\n"},
+            ... )
             >>> print(tool.name)
             bash
         """
@@ -676,6 +718,9 @@ class BashTool:
 
     async def execute(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
         """Execute bash commands asynchronously.
+
+        Async ``custom_builtins`` callbacks run on the caller's active asyncio
+        loop.
 
         ``on_output`` must be synchronous.
 
@@ -690,6 +735,8 @@ class BashTool:
 
     def execute_sync(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
         """Execute bash commands synchronously (blocking).
+
+        Async ``custom_builtins`` callbacks run on a private loop here.
 
         ``on_output`` must be synchronous.
 
@@ -833,7 +880,8 @@ class BashTool:
     def reset(self) -> None:
         """Reset the tool to initial state.
 
-        Clears VFS, environment, and shell state.
+        Clears VFS, environment, and shell state while re-applying
+        constructor-time ``custom_builtins``.
 
         Example::
 
@@ -865,6 +913,7 @@ class BashTool:
         timeout_seconds: float | None = None,
         files: dict[str, str] | None = None,
         mounts: list[dict[str, Any]] | None = None,
+        custom_builtins: dict[str, BuiltinCallback] | None = None,
     ) -> BashTool:
         """Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs."""
         ...
@@ -1019,7 +1068,10 @@ class ScriptedTool:
         Args:
             name: Command name (becomes a bash builtin).
             description: Human-readable description of the sub-tool.
-            callback: ``(params_dict, stdin_or_none) -> output_string``.
+            callback: ``(params_dict, stdin_or_none) -> output_string`` or
+                an async callback that resolves to one. Async callbacks run on
+                the caller's active asyncio loop for ``await execute()`` and on
+                a private loop for ``execute_sync()``.
             schema: Optional JSON Schema for the tool's parameters.
 
         Example::
@@ -1055,6 +1107,8 @@ class ScriptedTool:
     async def execute(self, commands: str) -> ExecResult:
         """Execute commands asynchronously.
 
+        Async callbacks run on the caller's active asyncio loop.
+
         Example::
 
             >>> tool = ScriptedTool("demo")
@@ -1067,6 +1121,8 @@ class ScriptedTool:
 
     def execute_sync(self, commands: str) -> ExecResult:
         """Execute commands synchronously (blocking).
+
+        Async callbacks run on a private loop here.
 
         Example::
 

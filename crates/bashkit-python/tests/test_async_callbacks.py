@@ -11,6 +11,8 @@ Covers:
 import asyncio
 import contextvars
 import gc
+import threading
+import weakref
 
 import pytest
 
@@ -73,6 +75,59 @@ async def test_async_callback_async_execute():
     r = await tool.execute("greet --name Awaited")
     assert r.exit_code == 0
     assert r.stdout.strip() == "hello Awaited"
+
+
+@pytest.mark.asyncio
+async def test_async_callback_async_execute_uses_caller_loop():
+    """Async execute() runs callbacks on the caller's active event loop."""
+
+    caller_loop = asyncio.get_running_loop()
+
+    async def inspect_loop(params, stdin=None):
+        same_loop = asyncio.get_running_loop() is caller_loop
+        return f"same_loop={same_loop}\n"
+
+    tool = ScriptedTool("api")
+    tool.add_tool("inspect_loop", "Inspect loop", callback=inspect_loop)
+    r = await tool.execute("inspect_loop")
+
+    assert r.exit_code == 0
+    assert r.stdout.strip() == "same_loop=True"
+
+
+@pytest.mark.asyncio
+async def test_async_callback_async_execute_cancels_callback_task():
+    """Cancelling execute() also cancels the underlying callback task."""
+
+    started = asyncio.Event()
+    released = asyncio.Event()
+    cancelled = asyncio.Event()
+    completed = []
+
+    async def block(params, stdin=None):
+        started.set()
+        try:
+            await released.wait()
+            completed.append("completed")
+            return "done\n"
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    tool = ScriptedTool("api")
+    tool.add_tool("block", "Block", callback=block)
+    future = tool.execute("block")
+
+    await started.wait()
+    future.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await future
+
+    released.set()
+    await asyncio.sleep(0.05)
+
+    assert cancelled.is_set()
+    assert completed == []
 
 
 def test_async_callback_with_await():
@@ -142,6 +197,115 @@ def test_mixed_sync_async_callbacks():
     assert r.exit_code == 0
     assert "sync-hello A" in r.stdout
     assert "async-hello B" in r.stdout
+
+
+def test_async_callback_sync_execute_reuses_private_loop_within_script():
+    """execute_sync() reuses one private loop across async callback invocations."""
+
+    first_loop = None
+
+    async def inspect_loop(params, stdin=None):
+        nonlocal first_loop
+        current_loop = asyncio.get_running_loop()
+        same_loop = first_loop is None or first_loop is current_loop
+        first_loop = current_loop
+        return f"same_loop={same_loop}\n"
+
+    tool = ScriptedTool("api")
+    tool.add_tool("inspect_loop", "Inspect loop", callback=inspect_loop)
+    r = tool.execute_sync("inspect_loop; inspect_loop")
+
+    assert r.exit_code == 0
+    assert r.stdout.splitlines() == ["same_loop=True", "same_loop=True"]
+
+
+def test_async_callback_sync_execute_isolates_private_loops_per_threaded_call():
+    """Concurrent execute_sync() calls on one ScriptedTool do not share a private loop."""
+
+    first_started = threading.Event()
+    results = {}
+    errors = []
+
+    async def inspect_loop(params, stdin=None):
+        name = params.get("name", "world")
+        if name == "slow":
+            first_started.set()
+            await asyncio.sleep(0.1)
+        return f"{name}\n"
+
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "inspect_loop",
+        "Inspect loop",
+        callback=inspect_loop,
+        schema={"type": "object", "properties": {"name": {"type": "string"}}},
+    )
+
+    def run(name: str):
+        try:
+            results[name] = tool.execute_sync(f"inspect_loop --name {name}")
+        except BaseException as exc:  # pragma: no cover - exercised only on failure.
+            errors.append(exc)
+
+    slow_thread = threading.Thread(target=run, args=("slow",))
+    fast_thread = threading.Thread(target=run, args=("fast",))
+    slow_thread.start()
+    assert first_started.wait(timeout=5)
+    fast_thread.start()
+    slow_thread.join(timeout=5)
+    fast_thread.join(timeout=5)
+
+    assert not slow_thread.is_alive()
+    assert not fast_thread.is_alive()
+    assert errors == []
+    assert results["slow"].exit_code == 0
+    assert results["slow"].stdout.strip() == "slow"
+    assert results["fast"].exit_code == 0
+    assert results["fast"].stdout.strip() == "fast"
+
+
+@pytest.mark.asyncio
+async def test_async_execute_releases_finished_callback_tasks_before_completion():
+    """Completed caller-loop callback tasks are released before execute() returns."""
+
+    finalized = []
+    blocker_started = asyncio.Event()
+    blocker_released = asyncio.Event()
+
+    async def emit(params, stdin=None):
+        weakref.finalize(asyncio.current_task(), finalized.append, params["name"])
+        return f"{params['name']}\n"
+
+    async def block(params, stdin=None):
+        blocker_started.set()
+        await blocker_released.wait()
+        return "released\n"
+
+    tool = ScriptedTool("api")
+    tool.add_tool(
+        "emit",
+        "Emit name",
+        callback=emit,
+        schema={"type": "object", "properties": {"name": {"type": "string"}}},
+    )
+    tool.add_tool("block", "Block", callback=block)
+
+    future = tool.execute("emit --name one; emit --name two; emit --name three; block")
+
+    await blocker_started.wait()
+    for _ in range(50):
+        gc.collect()
+        await asyncio.sleep(0)
+        if sorted(finalized) == ["one", "three", "two"]:
+            break
+
+    assert sorted(finalized) == ["one", "three", "two"]
+
+    blocker_released.set()
+    result = await future
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["one", "two", "three", "released"]
 
 
 # ===========================================================================

@@ -53,7 +53,32 @@ pub struct Context<'a> {
     /// Internal builtins only — None for custom builtins.
     pub(crate) shell: Option<ShellRef<'a>>,
 }
+
+impl Context<'_> {
+    pub fn execution_extension<T>(&self) -> Option<&T>
+    where
+        T: Send + Sync + 'static;
+}
 ```
+
+### Execution Extensions
+
+`Bash::exec_with_extensions()` and `Bash::exec_streaming_with_extensions()`
+accept a typed, per-call extension bag. Builtins read values from it via
+`ctx.execution_extension::<T>()`.
+
+Use this for request-scoped data that is not shell state:
+
+- tracing/request IDs
+- auth or tenant context
+- host-language runtime sessions (Python/JS callback bridges)
+- metrics/audit sinks for one execution
+
+Rules:
+
+- Extensions live for exactly one `exec*()` call
+- Builtins may read them but must not retain references beyond execution
+- Long-lived builtin registrations must not store request-scoped data themselves
 
 ### Shell State Access (ShellRef)
 
@@ -65,7 +90,8 @@ Internal builtins that need interpreter state receive it via `Context.shell`:
   history (VFS persistence) — state with invariants the interpreter must enforce
 - **Read-only methods** for introspection (functions, builtins, keywords,
   call stack, history, jobs) — builtins shouldn't mutate these
-- `pub(crate)` keeps ShellRef out of the public API; custom builtins get `None`
+- `pub(crate)` keeps ShellRef out of the public API; custom builtins use
+  public `execution_extension()` instead of direct shell access
 - No dynamic dispatch — concrete struct, not trait
 
 **Builtins using ShellRef:**
