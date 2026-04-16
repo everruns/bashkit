@@ -12,13 +12,15 @@ use bashkit::{
     FileSystem, FileSystemExt, FileType as FsFileType, InMemoryFs, Metadata as FsMetadata,
     MontyException, MontyObject, OutputCallback as RustOutputCallback, OverlayFs, PosixFs,
     PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool,
-    SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
+    ShellState as RustShellState, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs, ToolDef,
+    ToolRequest, async_trait,
 };
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PySet, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PyModule, PySet, PyTuple};
 use pyo3_async_runtimes::TaskLocals;
 use pyo3_async_runtimes::tokio::future_into_py;
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -786,6 +788,102 @@ fn restore_live_bash(
     })
 }
 
+fn mapping_proxy(py: Python<'_>, dict: Bound<'_, PyDict>) -> PyResult<Py<PyAny>> {
+    Ok(PyModule::import(py, "types")?
+        .getattr("MappingProxyType")?
+        .call1((dict,))?
+        .unbind())
+}
+
+fn readonly_string_map(py: Python<'_>, map: &HashMap<String, String>) -> PyResult<Py<PyAny>> {
+    let dict = PyDict::new(py);
+    for (key, value) in map {
+        dict.set_item(key, value)?;
+    }
+    mapping_proxy(py, dict)
+}
+
+fn readonly_indexed_arrays(
+    py: Python<'_>,
+    map: &HashMap<String, HashMap<usize, String>>,
+) -> PyResult<Py<PyAny>> {
+    let outer = PyDict::new(py);
+    for (name, values) in map {
+        let inner = PyDict::new(py);
+        for (index, value) in values {
+            inner.set_item(*index, value)?;
+        }
+        outer.set_item(name, mapping_proxy(py, inner)?)?;
+    }
+    mapping_proxy(py, outer)
+}
+
+fn readonly_assoc_arrays(
+    py: Python<'_>,
+    map: &HashMap<String, HashMap<String, String>>,
+) -> PyResult<Py<PyAny>> {
+    let outer = PyDict::new(py);
+    for (name, values) in map {
+        let inner = PyDict::new(py);
+        for (key, value) in values {
+            inner.set_item(key, value)?;
+        }
+        outer.set_item(name, mapping_proxy(py, inner)?)?;
+    }
+    mapping_proxy(py, outer)
+}
+
+fn capture_shell_state(
+    py: Python<'_>,
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+) -> PyResult<ShellState> {
+    let rt = rt.clone();
+    let inner = inner.clone();
+    py.detach(|| {
+        rt.block_on(async move {
+            let bash = inner.lock().await;
+            Ok(ShellState::from(bash.shell_state()))
+        })
+    })
+}
+
+async fn validate_restore_shell_state_cwd(bash: &Bash, state: &RustShellState) -> PyResult<()> {
+    // Decision: shell-state restore is VFS-relative. Reject dangling cwd values
+    // before mutating env/vars so a failed restore leaves the shell coherent.
+    let metadata = bash.fs().stat(&state.cwd).await.map_err(|err| {
+        PyRuntimeError::new_err(format!(
+            "Cannot restore shell state: cwd '{}' is missing from the current VFS: {err}",
+            state.cwd.display()
+        ))
+    })?;
+    if !metadata.file_type.is_dir() {
+        return Err(PyRuntimeError::new_err(format!(
+            "Cannot restore shell state: cwd '{}' is not a directory in the current VFS",
+            state.cwd.display()
+        )));
+    }
+    Ok(())
+}
+
+fn restore_live_shell_state(
+    py: Python<'_>,
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    state: RustShellState,
+) -> PyResult<()> {
+    let rt = rt.clone();
+    let inner = inner.clone();
+    py.detach(|| {
+        rt.block_on(async move {
+            let mut bash = inner.lock().await;
+            validate_restore_shell_state_cwd(&bash, &state).await?;
+            bash.restore_shell_state(&state);
+            Ok(())
+        })
+    })
+}
+
 #[pyclass(name = "FileSystem")]
 struct PyFileSystem {
     inner: FileSystemHandle,
@@ -985,6 +1083,81 @@ impl PyFileSystem {
 // ============================================================================
 // ExecResult
 // ============================================================================
+
+// Decision: keep shell state immutable in Python. Getters expose read-only
+// mappingproxy views while restore_shell_state() uses the original Rust snapshot.
+/// Read-only snapshot of shell state for prompt rendering and inspection.
+///
+/// Transient fields like `last_exit_code` and `traps` reflect the captured
+/// snapshot, but Rust core clears them before each top-level `exec()`.
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct ShellState {
+    inner: RustShellState,
+}
+
+impl From<RustShellState> for ShellState {
+    fn from(inner: RustShellState) -> Self {
+        Self { inner }
+    }
+}
+
+#[pymethods]
+impl ShellState {
+    fn __repr__(&self) -> String {
+        format!(
+            "ShellState(cwd={:?}, last_exit_code={}, env={}, variables={}, arrays={}, assoc_arrays={}, aliases={}, traps={})",
+            self.inner.cwd.to_string_lossy(),
+            self.inner.last_exit_code,
+            self.inner.env.len(),
+            self.inner.variables.len(),
+            self.inner.arrays.len(),
+            self.inner.assoc_arrays.len(),
+            self.inner.aliases.len(),
+            self.inner.traps.len(),
+        )
+    }
+
+    #[getter]
+    fn env(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        readonly_string_map(py, &self.inner.env)
+    }
+
+    #[getter]
+    fn variables(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        readonly_string_map(py, &self.inner.variables)
+    }
+
+    #[getter]
+    fn arrays(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        readonly_indexed_arrays(py, &self.inner.arrays)
+    }
+
+    #[getter]
+    fn assoc_arrays(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        readonly_assoc_arrays(py, &self.inner.assoc_arrays)
+    }
+
+    #[getter]
+    fn cwd(&self) -> String {
+        self.inner.cwd.to_string_lossy().into_owned()
+    }
+
+    #[getter]
+    fn last_exit_code(&self) -> i32 {
+        self.inner.last_exit_code
+    }
+
+    #[getter]
+    fn aliases(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        readonly_string_map(py, &self.inner.aliases)
+    }
+
+    #[getter]
+    fn traps(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        readonly_string_map(py, &self.inner.traps)
+    }
+}
 
 /// Result from executing bash commands
 #[pyclass(from_py_object)]
@@ -2416,6 +2589,21 @@ impl PyBash {
         Ok(PyBytes::new(py, &bytes))
     }
 
+    /// Capture a read-only shell-state snapshot for prompt rendering or restore.
+    fn shell_state(&self, py: Python<'_>) -> PyResult<ShellState> {
+        capture_shell_state(py, &self.rt, &self.inner)
+    }
+
+    /// Restore shell state from a previous `shell_state()` capture.
+    ///
+    /// Transient fields like `last_exit_code` and `traps` are restored on the
+    /// shell state itself, but the next top-level `execute*()` call clears them
+    /// before running the new command. The captured `cwd` must still exist as a
+    /// directory in the target shell's current VFS.
+    fn restore_shell_state(&self, py: Python<'_>, state: PyRef<'_, ShellState>) -> PyResult<()> {
+        restore_live_shell_state(py, &self.rt, &self.inner, state.inner.clone())
+    }
+
     /// Restore interpreter state from bytes previously produced by `snapshot()`.
     fn restore_snapshot(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
         restore_live_bash(py, &self.rt, &self.inner, data)
@@ -2950,6 +3138,21 @@ impl BashTool {
     ) -> PyResult<Bound<'py, PyBytes>> {
         let bytes = snapshot_live_bash(py, &self.rt, &self.inner, exclude_filesystem)?;
         Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// Capture a read-only shell-state snapshot for prompt rendering or restore.
+    fn shell_state(&self, py: Python<'_>) -> PyResult<ShellState> {
+        capture_shell_state(py, &self.rt, &self.inner)
+    }
+
+    /// Restore shell state from a previous `shell_state()` capture.
+    ///
+    /// Transient fields like `last_exit_code` and `traps` are restored on the
+    /// shell state itself, but the next top-level `execute*()` call clears them
+    /// before running the new command. The captured `cwd` must still exist as a
+    /// directory in the target shell's current VFS.
+    fn restore_shell_state(&self, py: Python<'_>, state: PyRef<'_, ShellState>) -> PyResult<()> {
+        restore_live_shell_state(py, &self.rt, &self.inner, state.inner.clone())
     }
 
     /// Restore interpreter state from bytes previously produced by `snapshot()`.
@@ -3599,6 +3802,7 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBash>()?;
     m.add_class::<BashTool>()?;
     m.add_class::<ScriptedTool>()?;
+    m.add_class::<ShellState>()?;
     m.add_class::<ExecResult>()?;
     m.add_class::<PyBuiltinContext>()?;
     m.add_class::<PyFileSystem>()?;

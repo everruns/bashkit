@@ -2,10 +2,19 @@
 
 import asyncio
 import json
+from collections.abc import Mapping
 
 import pytest
 
-from bashkit import Bash, BashError, BashTool, FileSystem, ScriptedTool, create_langchain_tool_spec
+from bashkit import (
+    Bash,
+    BashError,
+    BashTool,
+    FileSystem,
+    ScriptedTool,
+    ShellState,
+    create_langchain_tool_spec,
+)
 
 # ===========================================================================
 # Bash: Core interpreter
@@ -131,6 +140,67 @@ def test_bash_snapshot_can_exclude_filesystem():
 
     assert bash.execute_sync("echo $KEEP").stdout.strip() == "1"
     assert bash.execute_sync("cat /tmp/state.txt").stdout.strip() == "changed"
+
+
+def test_bash_shell_state_exposes_read_only_state_and_restore_roundtrip():
+    bash = Bash()
+    result = bash.execute_sync(
+        "export EXPORTED=env; "
+        "LOCAL=var; "
+        "arr[2]=beta; "
+        "declare -A assoc; assoc[key]=value; "
+        "mkdir -p /workspace && cd /workspace; "
+        "false"
+    )
+    assert result.exit_code == 1
+
+    state = bash.shell_state()
+    assert isinstance(state, ShellState)
+    assert state.cwd == "/workspace"
+    assert state.last_exit_code == 1
+    assert state.env["EXPORTED"] == "env"
+    assert state.variables["LOCAL"] == "var"
+    assert state.arrays["arr"][2] == "beta"
+    assert state.assoc_arrays["assoc"]["key"] == "value"
+    assert isinstance(state.env, Mapping)
+    assert isinstance(state.variables, Mapping)
+    assert isinstance(state.arrays, Mapping)
+    assert isinstance(state.assoc_arrays, Mapping)
+    assert isinstance(state.aliases, Mapping)
+    assert isinstance(state.traps, Mapping)
+
+    with pytest.raises(AttributeError):
+        state.cwd = "/tmp"
+    with pytest.raises(TypeError):
+        state.variables["LOCAL"] = "changed"
+
+    bash.reset()
+    bash.execute_sync("mkdir -p /workspace")
+    bash.restore_shell_state(state)
+    restored = bash.shell_state()
+    assert restored.last_exit_code == 1
+    # Bash::exec() clears transient state like $? before each top-level run.
+    assert bash.execute_sync("pwd").stdout.strip() == "/workspace"
+    assert bash.execute_sync("echo $EXPORTED").stdout.strip() == "env"
+    assert bash.execute_sync("echo $LOCAL").stdout.strip() == "var"
+    assert bash.execute_sync("echo ${arr[2]}").stdout.strip() == "beta"
+    assert bash.execute_sync("echo ${assoc[key]}").stdout.strip() == "value"
+
+
+def test_bash_restore_shell_state_rejects_missing_cwd_after_reset():
+    bash = Bash()
+    bash.execute_sync("export KEEP=1; mkdir -p /workspace && cd /workspace")
+    state = bash.shell_state()
+
+    bash.reset()
+    reset_cwd = bash.execute_sync("pwd").stdout.strip()
+
+    with pytest.raises(RuntimeError, match=r"/workspace"):
+        bash.restore_shell_state(state)
+
+    assert bash.execute_sync("pwd").stdout.strip() == reset_cwd
+    assert bash.execute_sync("echo ${KEEP:-empty}").stdout.strip() == "empty"
+    assert bash.execute_sync("echo ok > after-reset.txt && cat after-reset.txt").stdout.strip() == "ok"
 
 
 def test_bash_empty_snapshot_roundtrip():
@@ -671,6 +741,67 @@ def test_bashtool_snapshot_can_exclude_filesystem():
 
     assert tool.execute_sync("echo $KEEP").stdout.strip() == "1"
     assert tool.execute_sync("cat /tmp/tool.txt").stdout.strip() == "changed"
+
+
+def test_bashtool_shell_state_exposes_read_only_state_and_restore_roundtrip():
+    tool = BashTool()
+    result = tool.execute_sync(
+        "export EXPORTED=env; "
+        "LOCAL=var; "
+        "arr[2]=beta; "
+        "declare -A assoc; assoc[key]=value; "
+        "mkdir -p /workspace && cd /workspace; "
+        "false"
+    )
+    assert result.exit_code == 1
+
+    state = tool.shell_state()
+    assert isinstance(state, ShellState)
+    assert state.cwd == "/workspace"
+    assert state.last_exit_code == 1
+    assert state.env["EXPORTED"] == "env"
+    assert state.variables["LOCAL"] == "var"
+    assert state.arrays["arr"][2] == "beta"
+    assert state.assoc_arrays["assoc"]["key"] == "value"
+    assert isinstance(state.env, Mapping)
+    assert isinstance(state.variables, Mapping)
+    assert isinstance(state.arrays, Mapping)
+    assert isinstance(state.assoc_arrays, Mapping)
+    assert isinstance(state.aliases, Mapping)
+    assert isinstance(state.traps, Mapping)
+
+    with pytest.raises(AttributeError):
+        state.cwd = "/tmp"
+    with pytest.raises(TypeError):
+        state.variables["LOCAL"] = "changed"
+
+    tool.reset()
+    tool.execute_sync("mkdir -p /workspace")
+    tool.restore_shell_state(state)
+    restored = tool.shell_state()
+    assert restored.last_exit_code == 1
+    # Bash::exec() clears transient state like $? before each top-level run.
+    assert tool.execute_sync("pwd").stdout.strip() == "/workspace"
+    assert tool.execute_sync("echo $EXPORTED").stdout.strip() == "env"
+    assert tool.execute_sync("echo $LOCAL").stdout.strip() == "var"
+    assert tool.execute_sync("echo ${arr[2]}").stdout.strip() == "beta"
+    assert tool.execute_sync("echo ${assoc[key]}").stdout.strip() == "value"
+
+
+def test_bashtool_restore_shell_state_rejects_missing_cwd_on_fresh_instance():
+    tool = BashTool()
+    tool.execute_sync("export KEEP=1; mkdir -p /workspace && cd /workspace")
+    state = tool.shell_state()
+
+    fresh = BashTool()
+    fresh_cwd = fresh.execute_sync("pwd").stdout.strip()
+
+    with pytest.raises(RuntimeError, match=r"/workspace"):
+        fresh.restore_shell_state(state)
+
+    assert fresh.execute_sync("pwd").stdout.strip() == fresh_cwd
+    assert fresh.execute_sync("echo ${KEEP:-empty}").stdout.strip() == "empty"
+    assert fresh.execute_sync("echo ok > fresh.txt && cat fresh.txt").stdout.strip() == "ok"
 
 
 def test_bashtool_empty_snapshot_roundtrip():

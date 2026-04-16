@@ -217,6 +217,33 @@ and shell state entirely.
 
 `BashTool` exposes the same `cancel()`, `clear_cancel()`, and `reset()` methods.
 
+## Shell State
+
+```python
+from bashkit import Bash
+
+bash = Bash()
+bash.execute_sync("mkdir -p /workspace && cd /workspace")
+
+state = bash.shell_state()
+prompt = f"{state.cwd}$ "
+print(prompt)  # /workspace$
+
+bash.reset()
+bash.execute_sync("mkdir -p /workspace")
+bash.restore_shell_state(state)
+print(bash.execute_sync("pwd").stdout.strip())  # /workspace
+```
+
+`ShellState` is a read-only snapshot for prompt rendering and inspection.
+Fields like `env`, `variables`, and `arrays` are exposed as immutable mappings.
+It does not include VFS contents, so the captured `cwd` must already exist in
+the target shell before `restore_shell_state()`.
+Transient fields like `last_exit_code` and `traps` are captured on the snapshot,
+but the next top-level `execute()` / `execute_sync()` clears them before running
+the new command.
+`BashTool` exposes the same `shell_state()` and `restore_shell_state()` methods.
+
 ## BashTool
 
 `BashTool` wraps `Bash` and adds tool-contract metadata for agent frameworks:

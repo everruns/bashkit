@@ -134,6 +134,10 @@ tool = BashTool(files={
 blob = tool.snapshot()
 restored = BashTool.from_snapshot(blob, username="user")
 
+# Capture / restore shell state
+state = tool.shell_state()         # -> ShellState
+tool.restore_shell_state(state)
+
 # Direct VFS helpers (text-oriented convenience wrappers)
 tool.read_file("/tmp/data.txt")      # -> str
 tool.write_file("/tmp/data.txt", "hello")
@@ -170,7 +174,31 @@ bash.execute_sync("greet() { echo \"hi $1\"; }")
 blob = bash.snapshot()              # -> bytes
 restored = Bash.from_snapshot(blob) # -> Bash
 assert restored.execute_sync("greet agent").stdout.strip() == "hi agent"
+state = bash.shell_state()          # -> ShellState
+bash.restore_shell_state(state)
 ```
+
+### ShellState
+
+`ShellState` is a read-only Python object returned by `Bash.shell_state()` and
+`BashTool.shell_state()` for prompt rendering and state inspection.
+
+```python
+state.cwd             # str
+state.env             # Mapping[str, str]
+state.variables       # Mapping[str, str]
+state.arrays          # Mapping[str, Mapping[int, str]]
+state.assoc_arrays    # Mapping[str, Mapping[str, str]]
+state.last_exit_code  # int
+state.aliases         # Mapping[str, str]
+state.traps           # Mapping[str, str]
+```
+
+`restore_shell_state()` accepts a previously captured `ShellState`.
+
+Transient fields follow Rust-core semantics: `last_exit_code` and `traps` are
+captured and restored on the shell state object itself, but the next top-level
+`execute()` / `execute_sync()` clears them before running the new command.
 
 ### ExecResult
 
