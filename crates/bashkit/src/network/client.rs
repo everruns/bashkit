@@ -5,7 +5,7 @@
 //!
 //! # Security Mitigations
 //!
-//! This module mitigates the following threats (see `specs/006-threat-model.md`):
+//! This module mitigates the following threats (see `specs/threat-model.md`):
 //!
 //! - **TM-NET-008**: Large response DoS → `max_response_bytes` limit (10MB default)
 //! - **TM-NET-009**: Connection hang → connect timeout (10s)

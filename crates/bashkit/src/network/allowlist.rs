@@ -4,7 +4,7 @@
 //!
 //! # Security Mitigations
 //!
-//! This module mitigates the following threats (see `specs/006-threat-model.md`):
+//! This module mitigates the following threats (see `specs/threat-model.md`):
 //!
 //! - **TM-NET-001**: DNS spoofing → literal host matching, no DNS resolution
 //! - **TM-NET-002**: DNS rebinding → allowlist uses literal strings

@@ -1,6 +1,6 @@
 //! Git Remote Security Tests
 //!
-//! Tests for git remote-related threats documented in specs/006-threat-model.md
+//! Tests for git remote-related threats documented in specs/threat-model.md
 //! Section 8: Git Security (TM-GIT-010 through TM-GIT-013)
 
 #![cfg(feature = "git")]

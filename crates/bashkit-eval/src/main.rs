@@ -1,5 +1,5 @@
 // bashkit-eval: LLM evaluation harness for bashkit tool usage
-// See specs/012-eval.md for design decisions
+// See specs/eval.md for design decisions
 // Supports multiple eval types: "bash" (original) and "scripting-tool"
 
 use anyhow::Result;

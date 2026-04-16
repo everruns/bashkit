@@ -1,6 +1,6 @@
 # Fuzz testing for Bashkit parser
 # Run with: cargo +nightly fuzz run parser_fuzz
-# See specs/006-threat-model.md for security context
+# See specs/threat-model.md for security context
 
 [package]
 name = "bashkit-fuzz"

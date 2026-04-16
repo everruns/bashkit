@@ -1,4 +1,4 @@
-# 019 — Generic Credential Injection
+# Generic Credential Injection
 
 > Transparent per-host credential injection for outbound HTTP requests, without exposing secrets to sandboxed scripts.
 

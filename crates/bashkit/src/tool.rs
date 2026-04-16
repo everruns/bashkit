@@ -409,7 +409,7 @@ impl ToolStatus {
 /// # Public Contract
 ///
 /// This trait is a **public library contract**. Breaking changes require a major version bump.
-/// See `specs/009-tool-contract.md` for the full specification.
+/// See `specs/tool-contract.md` for the full specification.
 ///
 /// All tools must implement this trait to be usable by LLMs and agents.
 /// The trait provides introspection (schemas, docs) and execution methods.

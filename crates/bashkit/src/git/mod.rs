@@ -42,7 +42,7 @@
 //!
 //! # Security Threats
 //!
-//! See `specs/006-threat-model.md` Section 9: Git Security (TM-GIT-*)
+//! See `specs/threat-model.md` Section 9: Git Security (TM-GIT-*)
 
 mod config;
 

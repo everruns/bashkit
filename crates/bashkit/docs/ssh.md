@@ -3,7 +3,7 @@
 Bashkit provides `ssh`, `scp`, and `sftp` builtins for remote command execution
 and file transfer over SSH. The default transport uses [russh](https://crates.io/crates/russh).
 
-**See also:** [`specs/015-ssh-support.md`][spec]
+**See also:** [`specs/ssh-support.md`][spec]
 
 ## Quick Start
 
@@ -74,4 +74,4 @@ Tried in order: none (public services) → public key (`-i` flag or `default_pri
 - Remote paths shell-escaped (TM-SSH-008)
 - Response size and session count limits
 
-[spec]: https://github.com/everruns/bashkit/blob/main/specs/015-ssh-support.md
+[spec]: https://github.com/everruns/bashkit/blob/main/specs/ssh-support.md

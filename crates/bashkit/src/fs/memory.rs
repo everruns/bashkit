@@ -5,7 +5,7 @@
 //!
 //! # Security Mitigations
 //!
-//! This module mitigates the following threats (see `specs/006-threat-model.md`):
+//! This module mitigates the following threats (see `specs/threat-model.md`):
 //!
 //! - **TM-ESC-001**: Path traversal → `normalize_path()` collapses `..` safely
 //! - **TM-ESC-002**: Symlink escape → symlinks stored but not followed

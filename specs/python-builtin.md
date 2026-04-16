@@ -1,4 +1,4 @@
-# 011: Python Builtin (Monty)
+# Python Builtin (Monty)
 
 > **Experimental.** Monty is an early-stage Python interpreter that may have
 > undiscovered crash or security bugs. Resource limits are enforced by Monty's
@@ -258,7 +258,7 @@ These types may change in breaking ways between bashkit releases.
 
 ### Security
 
-See `specs/006-threat-model.md` section "Python / Monty Security (TM-PY)"
+See `specs/threat-model.md` section "Python / Monty Security (TM-PY)"
 for the full threat analysis.
 
 #### Threat: Code injection via bash variable expansion

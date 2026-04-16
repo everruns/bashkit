@@ -3,7 +3,7 @@
 //! Tests for TM-LOG-* threats to ensure sensitive data is properly redacted
 //! and log injection attacks are prevented.
 //!
-//! These tests verify the security properties documented in specs/006-threat-model.md
+//! These tests verify the security properties documented in specs/threat-model.md
 //! section 7 "Logging Security".
 
 #![cfg(feature = "logging")]

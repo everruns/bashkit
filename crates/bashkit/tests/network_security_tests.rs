@@ -1,6 +1,6 @@
 //! Network Security Tests
 //!
-//! Tests for HTTP-related security threats documented in specs/006-threat-model.md
+//! Tests for HTTP-related security threats documented in specs/threat-model.md
 //! Section 5.3: HTTP Attack Vectors
 //!
 //! These tests verify:

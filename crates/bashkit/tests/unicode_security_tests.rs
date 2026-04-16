@@ -1,6 +1,6 @@
 //! Unicode Security Tests (TM-UNI-*)
 //!
-//! Tests for Unicode-specific threats identified in specs/006-threat-model.md.
+//! Tests for Unicode-specific threats identified in specs/threat-model.md.
 //! Covers byte-boundary safety, invisible characters, homoglyphs, normalization,
 //! and bidi attacks across parser, builtins, and VFS.
 //!

@@ -9,7 +9,7 @@
 // MCP mode keeps the sandboxed defaults since requests come from LLM agents.
 // Decision: interactive mode uses rustyline for line editing — lightweight, MIT,
 // no heavy deps (no SQLite, no crossterm). Multiline via parse error detection.
-// See specs/018-interactive-shell.md
+// See specs/interactive-shell.md
 
 //! Bashkit CLI - Command line interface for virtual bash execution
 //!

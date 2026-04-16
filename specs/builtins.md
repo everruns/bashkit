@@ -1,4 +1,4 @@
-# 005: Builtin Commands
+# Builtin Commands
 
 ## Status
 Implemented
@@ -7,7 +7,7 @@ Implemented
 
 Bashkit provides built-in commands for script execution in a virtual environment.
 All builtins operate on the virtual filesystem. For the complete list of 160
-builtins and per-command details, see `specs/009-implementation-status.md`.
+builtins and per-command details, see `specs/implementation-status.md`.
 
 ### Standard Flags
 
@@ -117,13 +117,13 @@ macro in `interpreter/mod.rs`. To add a new one:
 2. Add `mod mycommand;` and `pub use mycommand::MyCommand;` in `builtins/mod.rs`
 3. Add one line to the `register_builtins!` table in `interpreter/mod.rs`
 4. Add spec tests in `tests/spec_cases/`
-5. Update `specs/009-implementation-status.md`
+5. Update `specs/implementation-status.md`
 
 ### Network Builtins
 
 `curl`, `wget`, `http` require the `http_client` feature + URL allowlist.
 When `bot-auth` feature is enabled, all outbound HTTP requests are transparently
-signed with Ed25519 per RFC 9421 (see `specs/017-request-signing.md`).
+signed with Ed25519 per RFC 9421 (see `specs/request-signing.md`).
 
 ## Alternatives Considered
 

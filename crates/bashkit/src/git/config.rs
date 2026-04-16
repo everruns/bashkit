@@ -2,7 +2,7 @@
 //!
 //! # Security Mitigations
 //!
-//! This module mitigates the following threats (see `specs/006-threat-model.md`):
+//! This module mitigates the following threats (see `specs/threat-model.md`):
 //!
 //! - **TM-GIT-001**: Unauthorized clone → remote URL allowlist (Phase 2)
 //! - **TM-GIT-002**: Host identity leak → configurable virtual identity

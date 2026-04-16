@@ -745,7 +745,7 @@ All threats use stable IDs in the format `TM-<CATEGORY>-<NUMBER>`:
 | TM-PY | Python/Monty Security |
 | TM-UNI | Unicode Security |
 
-Full threat analysis: [`specs/006-threat-model.md`][spec]
+Full threat analysis: [`specs/threat-model.md`][spec]
 
 [limits]: https://docs.rs/bashkit/latest/bashkit/struct.ExecutionLimits.html
 [fslimits]: https://docs.rs/bashkit/latest/bashkit/struct.FsLimits.html
@@ -757,7 +757,7 @@ Full threat analysis: [`specs/006-threat-model.md`][spec]
 [failpoint_tests]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/tests/security_failpoint_tests.rs
 [network_tests]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/tests/network_security_tests.rs
 [fuzz]: https://github.com/everruns/bashkit/tree/main/crates/bashkit/fuzz
-[spec]: https://github.com/everruns/bashkit/blob/main/specs/006-threat-model.md
+[spec]: https://github.com/everruns/bashkit/blob/main/specs/threat-model.md
 [parser]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/src/parser/mod.rs
 [interp]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/src/interpreter/mod.rs
 [date]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/src/builtins/date.rs

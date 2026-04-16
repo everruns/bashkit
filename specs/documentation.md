@@ -1,4 +1,4 @@
-# 008: Documentation Approach
+# Documentation Approach
 
 ## Status
 

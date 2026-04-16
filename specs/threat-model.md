@@ -621,11 +621,11 @@ allowlist.allow("https://api.example.com");
 | TM-NET-018 | JSON body injection | `http POST url name='x","admin":true'` via unescaped string formatting | Use `serde_json` for JSON construction | **MITIGATED** |
 | TM-NET-019 | Query param injection | `http GET url q=='foo&admin=true'` injects extra params | URL-encode via `url::form_urlencoded` | **MITIGATED** |
 | TM-NET-020 | Form body injection | `http --form POST url user='x&role=admin'` injects extra fields | URL-encode via `url::form_urlencoded` | **MITIGATED** |
-| TM-NET-021 | Bot identity spoofing | Forge requests as a trusted bot | Ed25519 request signing (bot-auth feature, `specs/017-request-signing.md`) | **MITIGATED** (opt-in) |
+| TM-NET-021 | Bot identity spoofing | Forge requests as a trusted bot | Ed25519 request signing (bot-auth feature, `specs/request-signing.md`) | **MITIGATED** (opt-in) |
 
 **Current Risk**: LOW - Multiple mitigations in place
 
-**Bot-auth signing** (feature `bot-auth`): When configured, all outbound HTTP requests from curl/wget/http builtins are transparently signed with Ed25519 per RFC 9421. Signing is non-blocking — failures send requests unsigned. See `specs/017-request-signing.md`.
+**Bot-auth signing** (feature `bot-auth`): When configured, all outbound HTTP requests from curl/wget/http builtins are transparently signed with Ed25519 per RFC 9421. Signing is non-blocking — failures send requests unsigned. See `specs/request-signing.md`.
 
 **Implementation**: `network/client.rs`
 ```rust
@@ -2085,10 +2085,10 @@ specs are rare in practice).
 
 ## References
 
-- `specs/001-architecture.md` - System design
-- `specs/003-vfs.md` - Virtual filesystem design
-- `specs/005-security-testing.md` - Fail-point testing
-- `specs/011-python-builtin.md` - Python builtin specification
+- `specs/architecture.md` - System design
+- `specs/vfs.md` - Virtual filesystem design
+- `specs/security-testing.md` - Fail-point testing
+- `specs/python-builtin.md` - Python builtin specification
 - `src/builtins/system.rs` - Hardcoded system builtins
 - `tests/threat_model_tests.rs` - Threat model test suite
 - `tests/security_failpoint_tests.rs` - Fail-point security tests

@@ -1,4 +1,4 @@
-# 017 — Transparent Request Signing (bot-auth)
+# Transparent Request Signing (bot-auth)
 
 ## Status
 Implemented

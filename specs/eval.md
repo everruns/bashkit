@@ -1,4 +1,4 @@
-# Spec 012: bashkit-eval — LLM Evaluation Harness
+# bashkit-eval: LLM Evaluation Harness
 
 ## Status
 
@@ -168,7 +168,8 @@ Keep README highlights concise. Full per-task details live in the saved markdown
 ## Scripting Tool Eval Mode
 
 In addition to the default "bash" eval (testing direct bash tool usage), there is a
-"scripting-tool" eval mode that tests `ScriptedTool` orchestration (see spec 014).
+"scripting-tool" eval mode that tests `ScriptedTool` orchestration (see the
+scripted tool orchestration spec).
 
 ### Purpose
 

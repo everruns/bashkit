@@ -250,4 +250,4 @@ TypeScript execution is fully sandboxed:
 - Opt-in only: requires both `typescript` Cargo feature AND `.typescript()` builder call
 - Path traversal (`../../../etc/passwd`) is blocked by VFS normalization
 
-See [TM-TS threat entries](../specs/006-threat-model.md) for the full security analysis.
+See [TM-TS threat entries](../specs/threat-model.md) for the full security analysis.

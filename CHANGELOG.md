@@ -533,7 +533,7 @@
 
 * feat(python): add external function handler support ([#394](https://github.com/everruns/bashkit/pull/394)) by Alexandru Chiculita
 * feat(cli): enable http, git, python by default ([#507](https://github.com/everruns/bashkit/pull/507))
-* chore: run maintenance checklist (012-maintenance) ([#508](https://github.com/everruns/bashkit/pull/508))
+* chore: run maintenance checklist (maintenance) ([#508](https://github.com/everruns/bashkit/pull/508))
 * docs: convert doc examples to tested doctests ([#504](https://github.com/everruns/bashkit/pull/504))
 * fix(security): batch 3 — issues #498-#499 ([#503](https://github.com/everruns/bashkit/pull/503))
 * fix(security): batch 2 — issues #493-#497 ([#502](https://github.com/everruns/bashkit/pull/502))
