@@ -1,4 +1,4 @@
-# 009: Tool Contract
+# Tool Contract
 
 ## Status
 Implemented

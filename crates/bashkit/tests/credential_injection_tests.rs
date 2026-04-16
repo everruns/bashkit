@@ -1,6 +1,6 @@
 //! Credential Injection Integration Tests
 //!
-//! Tests for generic credential injection (specs/019-credential-injection.md).
+//! Tests for generic credential injection (specs/credential-injection.md).
 //!
 //! Tests verify:
 //! - Injection mode: headers added transparently

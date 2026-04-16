@@ -4,7 +4,7 @@
 //!
 //! # Security Mitigations
 //!
-//! This module mitigates the following threats (see `specs/006-threat-model.md`):
+//! This module mitigates the following threats (see `specs/threat-model.md`):
 //!
 //! - **TM-DOS-005**: Large file creation → `max_file_size`
 //! - **TM-DOS-006**: Many small files → `max_file_count`

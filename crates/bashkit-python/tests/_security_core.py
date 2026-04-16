@@ -13,7 +13,7 @@ from bashkit import Bash, BashTool, ScriptedTool
 # Decision: keep the issue-1264 parity cases in this hidden core module while
 # the public `test_security.py` module re-exports the merged security suite.
 # New threat-model-traceable cases use `test_tm_*` names so they can map back
-# to `specs/006-threat-model.md`.
+# to `specs/threat-model.md`.
 
 
 def _assert_sanitized_error(text: str) -> None:

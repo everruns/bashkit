@@ -5,7 +5,7 @@
  * error sanitization) and black-box tests (adversarial inputs an attacker
  * would try without source knowledge).
  *
- * Threat-model IDs reference specs/006-threat-model.md.
+ * Threat-model IDs reference specs/threat-model.md.
  *
  * Run: npx ava __test__/security.spec.ts
  */

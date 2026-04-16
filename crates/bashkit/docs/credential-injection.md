@@ -7,7 +7,7 @@ real credentials, preventing exfiltration.
 **See also:**
 - [Threat Model](./threat-model.md) - Security properties
 - [Custom Builtins](./custom_builtins.md) - Extending the shell
-- [Spec 019](https://github.com/everruns/bashkit/blob/main/specs/019-credential-injection.md) - Design decisions
+- [Credential Injection Spec](https://github.com/everruns/bashkit/blob/main/specs/credential-injection.md) - Design decisions
 
 ## Two Modes
 
@@ -126,7 +126,7 @@ injected `Authorization: Bearer real`.
 
 If credential injection fails (e.g., callback error), the request is sent
 **without** credentials. This follows the same principle as bot-auth signing
-(spec 017): tool availability is never sacrificed for authentication.
+(request-signing spec): tool availability is never sacrificed for authentication.
 
 ## Multiple Credentials
 

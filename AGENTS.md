@@ -23,34 +23,34 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 
 | Spec | Description |
 |------|-------------|
-| 001-architecture | Core interpreter architecture, module structure |
-| 002-parser | Bash syntax parser design |
-| 003-vfs | Virtual filesystem abstraction |
-| 004-testing | Testing strategy and patterns |
-| 005-builtins | Builtin command design (trait, ShellRef, ExecutionPlan) |
-| 005-security-testing | Fail-point injection for security testing |
-| 006-threat-model | Security threats and mitigations |
-| 007-parallel-execution | Threading model, Arc usage |
-| 008-documentation | Rustdoc guides, embedded markdown |
-| 008-release-process | Version tagging, crates.io + PyPI + npm publishing |
-| 009-implementation-status | Feature status, test coverage, limitations, POSIX compliance |
-| 009-tool-contract | Public LLM Tool trait contract |
-| 010-git-support | Sandboxed git operations on VFS |
-| 011-python-builtin | Embedded Python via Monty, security, resource limits |
-| 012-eval | LLM evaluation harness, dataset format, scoring |
-| 012-maintenance | Pre-release maintenance requirements |
-| 013-python-package | Python package, PyPI wheels, platform matrix |
-| 014-scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |
-| 015-ssh-support | Sandboxed SSH/SCP/SFTP operations |
-| 016-zapcode-runtime | Embedded TypeScript via ZapCode, VFS bridging, resource limits |
-| 017-request-signing | Transparent Ed25519 request signing (bot-auth) per RFC 9421 |
-| 018-interactive-shell | Interactive REPL mode with rustyline line editing |
+| architecture | Core interpreter architecture, module structure |
+| parser | Bash syntax parser design |
+| vfs | Virtual filesystem abstraction |
+| testing | Testing strategy and patterns |
+| builtins | Builtin command design (trait, ShellRef, ExecutionPlan) |
+| security-testing | Fail-point injection for security testing |
+| threat-model | Security threats and mitigations |
+| parallel-execution | Threading model, Arc usage |
+| documentation | Rustdoc guides, embedded markdown |
+| release-process | Version tagging, crates.io + PyPI + npm publishing |
+| implementation-status | Feature status, test coverage, limitations, POSIX compliance |
+| tool-contract | Public LLM Tool trait contract |
+| git-support | Sandboxed git operations on VFS |
+| python-builtin | Embedded Python via Monty, security, resource limits |
+| eval | LLM evaluation harness, dataset format, scoring |
+| maintenance | Pre-release maintenance requirements |
+| python-package | Python package, PyPI wheels, platform matrix |
+| scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |
+| ssh-support | Sandboxed SSH/SCP/SFTP operations |
+| zapcode-runtime | Embedded TypeScript via ZapCode, VFS bridging, resource limits |
+| request-signing | Transparent Ed25519 request signing (bot-auth) per RFC 9421 |
+| interactive-shell | Interactive REPL mode with rustyline line editing |
 
 ### Documentation
 
 - **Public docs** live in `docs/` — user-facing articles (security, guides, etc.)
 - **Rustdoc guides** live in `crates/bashkit/docs/` as markdown files
-- Rustdoc guides embedded via `include_str!` (see `specs/008-documentation.md`)
+- Rustdoc guides embedded via `include_str!` (see `specs/documentation.md`)
 - Edit `crates/bashkit/docs/*.md`, not the doc modules in `lib.rs`
 - Add "See also" cross-links when creating new guides
 - Run `cargo doc --open` to preview rustdoc changes
@@ -120,13 +120,13 @@ just pre-pr       # Pre-PR checks
 3. `cargo clippy --all-targets --all-features -- -D warnings`
 4. `cargo test --all-features`
 5. Unit tests cover both positive (expected behavior) and negative (error handling, edge cases) scenarios
-6. Security tests if change touches user input, parsing, sandboxing, or permissions (see `specs/005-security-testing.md`)
+6. Security tests if change touches user input, parsing, sandboxing, or permissions (see `specs/security-testing.md`)
 7. Compatibility/differential tests if change affects Bash behavior parity (compare against real Bash)
 8. Rebase on main: `git fetch origin main && git rebase origin/main` (for worktrees: verify the worktree `HEAD` is on latest `origin/main` before editing)
 9. Update specs if behavior changes
 10. CI green before merge
 11. Resolve all PR comments
-12. `cargo bench --bench parallel_execution` if touching Arc/async/Interpreter/builtins (see `specs/007-parallel-execution.md`)
+12. `cargo bench --bench parallel_execution` if touching Arc/async/Interpreter/builtins (see `specs/parallel-execution.md`)
 13. `just bench` if changes might impact performance (interpreter, builtins, tools)
 14. `ruff check crates/bashkit-python && ruff format --check crates/bashkit-python` if touching Python code
 

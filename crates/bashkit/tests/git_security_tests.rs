@@ -1,6 +1,6 @@
 //! Git Security Tests
 //!
-//! Tests for git-related threats documented in specs/006-threat-model.md
+//! Tests for git-related threats documented in specs/threat-model.md
 //! Section 8: Git Security (TM-GIT-*)
 
 #![cfg(feature = "git")]

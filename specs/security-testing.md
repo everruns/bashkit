@@ -189,4 +189,4 @@ cd crates/bashkit-js && npm test
 - `crates/bashkit/src/fs/memory.rs` - Filesystem fail points
 - `crates/bashkit/src/interpreter/mod.rs` - Interpreter fail points, panic catching
 - `crates/bashkit/src/builtins/system.rs` - Hardcoded system builtins
-- `specs/006-threat-model.md` - Threat model specification
+- `specs/threat-model.md` - Threat model specification

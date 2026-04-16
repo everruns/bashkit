@@ -1,4 +1,4 @@
-# 002: Parser Design
+# Parser Design
 
 ## Status
 Implemented (core features)

@@ -1,4 +1,4 @@
-# 001: Architecture
+# Architecture
 
 ## Status
 Implemented

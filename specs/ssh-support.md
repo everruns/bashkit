@@ -1,4 +1,4 @@
-# 015: SSH Support
+# SSH Support
 
 ## Status
 

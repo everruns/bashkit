@@ -1,4 +1,4 @@
-# 012: Pre-Release Maintenance
+# Pre-Release Maintenance
 
 ## Status
 Implemented
@@ -37,7 +37,7 @@ dependency rot, or security gaps ship in a release.
 
 ### Security
 
-- Threat model (`specs/006-threat-model.md`) covers all current features
+- Threat model (`specs/threat-model.md`) covers all current features
 - Public threat model doc (`crates/bashkit/docs/threat-model.md`) in sync with spec
 - Every new builtin/feature has a corresponding TM-XXX entry
 - Security tests exist for every MITIGATED threat
@@ -49,7 +49,7 @@ dependency rot, or security gaps ship in a release.
 
 - All tests pass
 - No test gaps for recently added features
-- Test counts in `009-implementation-status.md` match reality
+- Test counts in `implementation-status.md` match reality
 - Bash compatibility — no new regressions against real bash
 - Coverage reviewed — no major uncovered paths
 
@@ -75,7 +75,7 @@ dependency rot, or security gaps ship in a release.
 ### Specs
 
 - Each spec status reflects reality
-- `009-implementation-status.md` feature tables match code
+- `implementation-status.md` feature tables match code
 - No orphaned TODOs in specs that are now resolved
 - New features have spec entries
 
@@ -103,7 +103,7 @@ dependency rot, or security gaps ship in a release.
   - Core classes: `Bash`, `BashTool`, `ExecResult`, `ScriptedTool`, `BashError`
   - Execution methods: `execute`, `execute_sync`, `executeOrThrow`/`execute_or_throw`
   - Configuration: `username`, `hostname`, `max_commands`, `max_loop_iterations`, `python`, `external_functions`/`external_handler`
-  - Mount API: `files` dict, `mounts` list (read-only default), runtime `mount`/`unmount` (see `specs/003-vfs.md` § Binding API Parity)
+  - Mount API: `files` dict, `mounts` list (read-only default), runtime `mount`/`unmount` (see `specs/vfs.md` § Binding API Parity)
   - Tool metadata: `name`, `description`, `help`, `system_prompt`, `input_schema`, `output_schema`, `version`
   - Module functions: `getVersion`/`get_version`
   - Framework integrations: LangChain available in both bindings
@@ -172,6 +172,6 @@ Use `/maintain` skill to execute this checklist interactively.
 
 ## References
 
-- `specs/008-release-process.md` — release workflow
-- `specs/009-implementation-status.md` — feature status
-- `specs/006-threat-model.md` — threat model
+- `specs/release-process.md` — release workflow
+- `specs/implementation-status.md` — feature status
+- `specs/threat-model.md` — threat model

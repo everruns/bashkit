@@ -1,4 +1,4 @@
-# 004: Testing Strategy
+# Testing Strategy
 
 ## Status
 Implemented
@@ -13,7 +13,7 @@ Bashkit uses a multi-layer testing strategy:
 4. **Comparison tests** - Direct comparison with real bash
 5. **Differential fuzzing** - Property-based testing against real bash
 
-For current test counts and pass rates, see `specs/009-implementation-status.md`.
+For current test counts and pass rates, see `specs/implementation-status.md`.
 
 ## Spec Test Framework
 
@@ -85,7 +85,7 @@ cargo tarpaulin --features http_client --out html --output-dir coverage
 3. Run `just check-bash-compat` to verify expected output matches real bash
 4. If test fails due to unimplemented feature, add `### skip: reason`
 5. If Bashkit intentionally differs from bash, add `### bash_diff: reason`
-6. Update `specs/009-implementation-status.md` for skipped tests
+6. Update `specs/implementation-status.md` for skipped tests
 
 ### Checking Expected Outputs
 

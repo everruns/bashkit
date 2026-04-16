@@ -1,4 +1,4 @@
-# 018: Interactive Shell Mode
+# Interactive Shell Mode
 
 ## Status
 Phase 1: Implemented
@@ -212,6 +212,6 @@ bashkit
 
 ## See Also
 
-- `specs/001-architecture.md` - Core interpreter architecture
-- `specs/005-builtins.md` - Builtin command reference
-- `specs/009-implementation-status.md` - Feature status
+- `specs/architecture.md` - Core interpreter architecture
+- `specs/builtins.md` - Builtin command reference
+- `specs/implementation-status.md` - Feature status

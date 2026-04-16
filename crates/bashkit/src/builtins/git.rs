@@ -14,7 +14,7 @@
 //! # Security
 //!
 //! All operations are confined to the virtual filesystem and use
-//! the configured author identity. See `specs/006-threat-model.md`
+//! the configured author identity. See `specs/threat-model.md`
 //! Section 9: Git Security (TM-GIT-*).
 //!
 //! # Example

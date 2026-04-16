@@ -2546,7 +2546,7 @@ impl BashBuilder {
 // =============================================================================
 // These modules embed external markdown guides into rustdoc.
 // Source files live in crates/bashkit/docs/ - edit there, not here.
-// See specs/008-documentation.md for the documentation approach.
+// See specs/documentation.md for the documentation approach.
 
 /// Guide for transparent credential injection in outbound HTTP requests.
 ///

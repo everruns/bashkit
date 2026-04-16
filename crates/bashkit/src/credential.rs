@@ -3,7 +3,7 @@
 // Decision: Overwrite semantics — injected headers replace existing headers with same name.
 // Decision: Non-blocking — injection failures don't block the request.
 // Decision: Built on before_http hooks — no new interception points.
-// See specs/019-credential-injection.md
+// See specs/credential-injection.md
 
 //! Generic credential injection for outbound HTTP requests.
 //!

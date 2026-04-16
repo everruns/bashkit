@@ -12,7 +12,7 @@
 ## POSIX Shell Compliance
 
 Bashkit provides substantial compliance with IEEE Std 1003.1-2024 (POSIX.1-2024)
-Shell Command Language. See [specs/009-implementation-status.md](../specs/009-implementation-status.md)
+Shell Command Language. See [specs/implementation-status.md](../specs/implementation-status.md)
 for detailed compliance status.
 
 | POSIX Category | Status |
@@ -402,7 +402,7 @@ let bash = Bash::builder()
     .build();
 ```
 
-See [specs/006-threat-model.md](../specs/006-threat-model.md) for HTTP security details.
+See [specs/threat-model.md](../specs/threat-model.md) for HTTP security details.
 
 ---
 
@@ -485,5 +485,5 @@ Identified from eval analysis — all items now implemented:
 
 ## See Also
 
-- [specs/009-implementation-status.md](../../../specs/009-implementation-status.md) - Detailed implementation status
+- [specs/implementation-status.md](../../../specs/implementation-status.md) - Detailed implementation status
 - [specs/](../../../specs/) - Design specifications

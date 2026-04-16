@@ -1,4 +1,4 @@
-# 016: ZapCode TypeScript Runtime
+# ZapCode TypeScript Runtime
 
 > **Experimental.** ZapCode is an early-stage TypeScript interpreter. Resource
 > limits are enforced by ZapCode's VM. Do not rely on it for untrusted-input
@@ -253,7 +253,7 @@ let bash = Bash::builder()
 
 ### Security
 
-See `specs/006-threat-model.md` section "TypeScript / ZapCode Security (TM-TS)"
+See `specs/threat-model.md` section "TypeScript / ZapCode Security (TM-TS)"
 for the full threat analysis.
 
 #### Threat: Code injection via bash variable expansion

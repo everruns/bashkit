@@ -1,4 +1,4 @@
-# 003: Virtual Filesystem Design
+# Virtual Filesystem Design
 
 ## Status
 Active

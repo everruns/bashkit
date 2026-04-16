@@ -190,4 +190,4 @@ assert_eq!(result.stdout, "2.0");
 - [`BashBuilder::mount_text`] — pre-build text file mounts
 - [`BashBuilder::fs`] — custom filesystem injection
 - [`Bash::fs`] — direct filesystem access
-- [VFS specification](https://github.com/everruns/bashkit/blob/main/specs/003-vfs.md)
+- [VFS specification](https://github.com/everruns/bashkit/blob/main/specs/vfs.md)

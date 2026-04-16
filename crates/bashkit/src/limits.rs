@@ -4,7 +4,7 @@
 //!
 //! # Security Mitigations
 //!
-//! This module mitigates the following threats (see `specs/006-threat-model.md`):
+//! This module mitigates the following threats (see `specs/threat-model.md`):
 //!
 //! - **TM-DOS-001**: Large script input → `max_input_bytes`
 //! - **TM-DOS-002, TM-DOS-004, TM-DOS-019**: Command flooding → `max_commands`

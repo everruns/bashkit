@@ -12,7 +12,7 @@ configurable resource limits and no host access.
 - [Threat Model](./threat-model.md) - Security considerations (TM-PY-*)
 - [Custom Builtins](./custom_builtins.md) - Writing your own builtins
 - [Compatibility Reference](./compatibility.md) - Bash feature support
-- [`specs/011-python-builtin.md`][spec] - Full specification
+- [`specs/python-builtin.md`][spec] - Full specification
 
 ## Quick Start
 
@@ -203,4 +203,4 @@ All Python execution runs in a virtual environment:
 
 See threat IDs TM-PY-001 through TM-PY-029 in the [threat model](./threat-model.md).
 
-[spec]: https://github.com/everruns/bashkit/blob/main/specs/011-python-builtin.md
+[spec]: https://github.com/everruns/bashkit/blob/main/specs/python-builtin.md

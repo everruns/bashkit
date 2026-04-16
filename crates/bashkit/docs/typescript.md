@@ -13,7 +13,7 @@ resource limits and no host access.
 - [Threat Model](./threat-model.md) - Security considerations (TM-TS-*)
 - [Custom Builtins](./custom_builtins.md) - Writing your own builtins
 - [Compatibility Reference](./compatibility.md) - Bash feature support
-- [`specs/016-zapcode-runtime.md`][spec] - Full specification
+- [`specs/zapcode-runtime.md`][spec] - Full specification
 
 ## Quick Start
 
@@ -249,4 +249,4 @@ All TypeScript execution runs in a virtual environment:
 
 See threat IDs TM-TS-001 through TM-TS-023 in the [threat model](./threat-model.md).
 
-[spec]: https://github.com/everruns/bashkit/blob/main/specs/016-zapcode-runtime.md
+[spec]: https://github.com/everruns/bashkit/blob/main/specs/zapcode-runtime.md

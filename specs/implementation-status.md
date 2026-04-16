@@ -1,4 +1,4 @@
-# 009: Implementation Status
+# Implementation Status
 
 ## Status
 Living document (updated as features change)
@@ -49,7 +49,7 @@ enables common patterns like `bash script.sh` while maintaining security:
 - Variables set in `bash -c` affect the parent (shared interpreter state)
 - Resource limits are shared/inherited from parent execution
 
-See [006-threat-model.md](006-threat-model.md) threat TM-ESC-015 for security analysis.
+See [threat-model.md](threat-model.md) threat TM-ESC-015 for security analysis.
 
 ## POSIX Compliance
 
@@ -297,10 +297,10 @@ Features that may be added in the future (not intentionally excluded):
 `numfmt`, `parallel`, `patch`, `rg`, `template`, `tomlq`, `yaml`, `zip`, `unzip`,
 `alias`, `unalias`,
 `jq` (requires `jq` feature),
-`git` (requires `git` feature, see [010-git-support.md](010-git-support.md)),
-`ssh`, `scp`, `sftp` (requires `ssh` feature, see [015-ssh-support.md](015-ssh-support.md)),
-`python`, `python3` (requires `python` feature, see [011-python-builtin.md](011-python-builtin.md)),
-`ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature, see [016-zapcode-runtime.md](016-zapcode-runtime.md))
+`git` (requires `git` feature, see [git-support.md](git-support.md)),
+`ssh`, `scp`, `sftp` (requires `ssh` feature, see [ssh-support.md](ssh-support.md)),
+`python`, `python3` (requires `python` feature, see [python-builtin.md](python-builtin.md)),
+`ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature, see [zapcode-runtime.md](zapcode-runtime.md))
 
 ### Not Yet Implemented
 
@@ -495,7 +495,7 @@ NAPI-RS bindings in `crates/bashkit-js/`. TypeScript wrapper in `wrapper.ts`.
 
 ### Python (`bashkit`)
 
-PyO3 bindings in `crates/bashkit-python/`. See [013-python-package.md](013-python-package.md).
+PyO3 bindings in `crates/bashkit-python/`. See [python-package.md](python-package.md).
 
 | Feature | Status | Notes |
 |---------|--------|-------|
@@ -533,7 +533,7 @@ PyO3 bindings in `crates/bashkit-python/`. See [013-python-package.md](013-pytho
 | Bidi/tag/annotation | 3 | Various | Detection gaps documented |
 | Cross-component E2E | 5 | Pipeline | End-to-end multi-byte flows |
 
-See [006-threat-model.md](006-threat-model.md) TM-UNI-001 through TM-UNI-019.
+See [threat-model.md](threat-model.md) TM-UNI-001 through TM-UNI-019.
 
 ### Comparison with Real Bash
 

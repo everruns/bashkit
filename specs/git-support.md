@@ -1,4 +1,4 @@
-# 010: Git Support
+# Git Support
 
 ## Status
 Phase 1: Implemented
@@ -77,7 +77,7 @@ mode messages (actual network operations not supported in VFS-only mode).
 
 ### Security
 
-See `specs/006-threat-model.md` Section 8: Git Security (TM-GIT-*)
+See `specs/threat-model.md` Section 8: Git Security (TM-GIT-*)
 
 #### Key Mitigations
 
@@ -190,6 +190,6 @@ just pre-pr
 
 ## See Also
 
-- `specs/006-threat-model.md` - Security threats and mitigations
-- `specs/005-builtins.md` - Builtin command reference
+- `specs/threat-model.md` - Security threats and mitigations
+- `specs/builtins.md` - Builtin command reference
 - `crates/bashkit/src/git/` - Implementation
