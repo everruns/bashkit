@@ -99,9 +99,11 @@ cargo tarpaulin --features http_client --out html --output-dir coverage
 
 ## Comparison Testing
 
-The `bash_comparison_tests` test runs in CI and compares Bashkit output against
-real bash. Tests marked with `### bash_diff` are excluded from comparison.
-Tests marked with `### skip` are excluded from both spec tests and comparison.
+The `bash_comparison_tests` test is ignored by default for local `cargo test`
+runs because it compares against the host shell environment. CI runs it
+explicitly as a strict parity gate. Tests marked with `### bash_diff` are
+excluded from comparison. Tests marked with `### skip` are excluded from both
+spec tests and comparison.
 
 ## Differential Fuzzing
 

@@ -262,24 +262,28 @@ await bash.execute(
 );
 
 const snapshot = bash.snapshot();
+const shellOnly = bash.snapshot({ excludeFilesystem: true });
 
 const restored = Bash.fromSnapshot(snapshot);
 console.log((await restored.execute("echo $BUILD_ID")).stdout); // 42\n
 
 restored.reset();
 restored.restoreSnapshot(snapshot);
+restored.restoreSnapshot(shellOnly);
 console.log(restored.executeSync("pwd").stdout); // /workspace\n
 
 const tool = new BashTool({ username: "agent", maxCommands: 5 });
 tool.executeSync("export TOOL_STATE=ready");
 
 const toolSnapshot = tool.snapshot();
+const toolShellOnly = tool.snapshot({ excludeFilesystem: true });
 const restoredTool = BashTool.fromSnapshot(toolSnapshot, {
   username: "agent",
   maxCommands: 5,
 });
 
 console.log(restoredTool.executeSync("echo $TOOL_STATE").stdout); // ready\n
+restoredTool.restoreSnapshot(toolShellOnly);
 ```
 
 ## Framework Integrations

@@ -14,7 +14,8 @@
 # 2. Edit the .test.sh files manually
 # 3. Or add ### bash_diff marker if the difference is intentional
 #
-# This is a wrapper around: cargo test --test spec_tests -- bash_comparison_tests
+# This is a wrapper around:
+# cargo test --test spec_tests -- bash_comparison_tests --ignored
 
 set -euo pipefail
 
@@ -61,9 +62,9 @@ echo "Checking spec tests against real bash..."
 echo ""
 
 if $VERBOSE; then
-    cargo test --test spec_tests -- bash_comparison_tests_verbose --ignored --nocapture 2>&1
+    cargo test --test spec_tests -- bash_comparison_tests --ignored --nocapture 2>&1
 else
-    cargo test --test spec_tests -- bash_comparison_tests --nocapture 2>&1
+    cargo test --test spec_tests -- bash_comparison_tests --ignored 2>&1
 fi
 
 exit_code=$?
