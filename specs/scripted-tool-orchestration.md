@@ -139,12 +139,16 @@ Type aliases for backward compatibility: `ToolCallback = SyncToolExec`,
 Python callbacks (both sync and async) automatically see `contextvars.ContextVar`
 values that were set by the caller at `execute()` / `execute_sync()` time:
 
-1. `build_rust_tool()` (called at execute time) snapshots the caller's context
-   via `contextvars.copy_context()`.
-2. Sync callbacks are invoked via `ctx.run(fn, params, stdin)`.
-3. Async callbacks are invoked via
-   `ctx.run(lambda: loop.run_until_complete(fn(params, stdin)))` so that the
-   `asyncio.Task` inherits the captured context.
+1. Each `execute()` / `execute_sync()` call creates a fresh callback session
+   that snapshots the caller's `contextvars` state.
+2. `execute()` also captures the caller's active asyncio loop via
+   `TaskLocals`, so async callbacks can be scheduled back onto that same loop.
+3. Sync callbacks are invoked via `ctx.run(fn, params, stdin)`.
+4. Async callbacks are created under `ctx.run(...)`; when they run on the
+   caller loop, the session owns the spawned Python tasks so cancellation only
+   affects that execution's callbacks.
+5. `execute_sync()` has no caller-owned loop to reuse, so async callbacks fall
+   back to a private per-execution loop on the worker thread.
 
 This enables framework patterns like LangGraph's `get_stream_writer()` and
 FastAPI's request-scoped state.

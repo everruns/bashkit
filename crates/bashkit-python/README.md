@@ -266,6 +266,11 @@ result = tool.execute_sync("get_user --id 1 | jq -r '.name'")
 print(result.stdout)  # Alice
 ```
 
+`ScriptedTool` callbacks receive `(params_dict, stdin_or_none)` and must return
+the tool stdout string. Async callbacks are also supported. `await tool.execute(...)`
+runs async callbacks on the caller's active asyncio loop; `execute_sync()` falls
+back to a private loop because there is no caller loop to reuse.
+
 ## Snapshot / Restore
 
 ```python

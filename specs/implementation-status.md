@@ -501,7 +501,7 @@ PyO3 bindings in `crates/bashkit-python/`. See [python-package.md](python-packag
 |---------|--------|-------|
 | Sync callbacks (`ScriptedTool.add_tool`) | Done | `(params, stdin) -> str` |
 | Async callbacks (`async def`) | Done | Auto-detected via `inspect.iscoroutinefunction` |
-| ContextVar propagation | Done | `copy_context()` at `execute()` time, restored via `ctx.run()` |
+| ContextVar propagation | Done | `execute()` captures caller loop + `copy_context()`; callbacks re-enter via `ctx.run()` |
 | LangGraph integration | Done | Example + integration tests |
 | FastAPI integration | Done | Example + integration tests |
 

@@ -1,6 +1,6 @@
 """Type stubs for bashkit native module."""
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 # Synchronous chunk callback for live stdout/stderr streaming.
@@ -1011,7 +1011,7 @@ class ScriptedTool:
         self,
         name: str,
         description: str,
-        callback: Callable[[dict[str, Any], str | None], str],
+        callback: Callable[[dict[str, Any], str | None], str | Awaitable[str]],
         schema: dict[str, Any] | None = None,
     ) -> None:
         """Register a Python callback as a bash builtin command.
@@ -1019,7 +1019,10 @@ class ScriptedTool:
         Args:
             name: Command name (becomes a bash builtin).
             description: Human-readable description of the sub-tool.
-            callback: ``(params_dict, stdin_or_none) -> output_string``.
+            callback: ``(params_dict, stdin_or_none) -> output_string`` or
+                an async callback that resolves to one. Async callbacks run on
+                the caller's active asyncio loop for ``await execute()`` and on
+                a private loop for ``execute_sync()``.
             schema: Optional JSON Schema for the tool's parameters.
 
         Example::
@@ -1055,6 +1058,8 @@ class ScriptedTool:
     async def execute(self, commands: str) -> ExecResult:
         """Execute commands asynchronously.
 
+        Async callbacks run on the caller's active asyncio loop.
+
         Example::
 
             >>> tool = ScriptedTool("demo")
@@ -1067,6 +1072,8 @@ class ScriptedTool:
 
     def execute_sync(self, commands: str) -> ExecResult:
         """Execute commands synchronously (blocking).
+
+        Async callbacks run on a private loop here.
 
         Example::
 

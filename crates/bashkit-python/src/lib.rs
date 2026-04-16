@@ -18,13 +18,14 @@ use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PySet, PyTuple};
 use pyo3_async_runtimes::tokio::future_into_py;
+use pyo3_async_runtimes::TaskLocals;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
-use tokio::sync::Mutex;
+use tokio::sync::{oneshot, Mutex};
 
 // ============================================================================
 // JSON <-> Python helpers
@@ -2324,6 +2325,501 @@ impl BashTool {
 }
 
 // ============================================================================
+// ScriptedTool callback sessions
+// ============================================================================
+
+struct PyCallbackSessionState {
+    context: Py<PyAny>,
+    caller_loop_locals: Option<TaskLocals>,
+}
+
+struct PyPrivateAsyncLoop {
+    event_loop: StdMutex<Option<Py<PyAny>>>,
+}
+
+impl PyPrivateAsyncLoop {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            event_loop: StdMutex::new(None),
+        })
+    }
+
+    fn event_loop(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let mut event_loop = self.event_loop.lock().expect("tool async loop lock");
+        if event_loop.is_none() {
+            let asyncio = py.import("asyncio")?;
+            *event_loop = Some(asyncio.call_method0("new_event_loop")?.unbind());
+        }
+        Ok(event_loop
+            .as_ref()
+            .expect("tool async loop prepared")
+            .clone_ref(py))
+    }
+
+    fn run_awaitable(&self, py: Python<'_>, awaitable: &Py<PyAny>) -> PyResult<Py<PyAny>> {
+        self.event_loop(py)?
+            .bind(py)
+            .call_method1("run_until_complete", (awaitable.bind(py),))
+            .map(|value| value.unbind())
+    }
+}
+
+struct PyCallbackEngine {
+    caller: Py<PyAny>,
+}
+
+impl PyCallbackEngine {
+    fn new(py: Python<'_>) -> PyResult<Arc<Self>> {
+        Ok(Arc::new(Self {
+            caller: create_context_callback_caller(py)?,
+        }))
+    }
+
+    fn invoke(
+        &self,
+        py: Python<'_>,
+        context: &Py<PyAny>,
+        callback: &Py<PyAny>,
+        args: Vec<Py<PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let args = PyTuple::new(py, &args)?;
+        self.caller.call1(py, (context, callback, args))
+    }
+}
+
+struct PyCallbackSession {
+    state: StdMutex<PyCallbackSessionState>,
+    active_caller_tasks: Arc<StdMutex<Vec<Py<PyAny>>>>,
+    private_async_loop: Arc<PyPrivateAsyncLoop>,
+    engine: Arc<PyCallbackEngine>,
+}
+
+impl PyCallbackSession {
+    fn capture(
+        py: Python<'_>,
+        engine: Arc<PyCallbackEngine>,
+        needs_async_callbacks: bool,
+        use_caller_loop: bool,
+    ) -> PyResult<Arc<Self>> {
+        Ok(Arc::new(Self {
+            state: StdMutex::new(capture_callback_state(
+                py,
+                needs_async_callbacks,
+                use_caller_loop,
+            )?),
+            active_caller_tasks: Arc::new(StdMutex::new(Vec::new())),
+            private_async_loop: PyPrivateAsyncLoop::new(),
+            engine,
+        }))
+    }
+
+    fn current_context(&self, py: Python<'_>) -> Py<PyAny> {
+        self.state
+            .lock()
+            .expect("tool callback session lock")
+            .context
+            .clone_ref(py)
+    }
+
+    fn current_caller_loop_locals(&self) -> Option<TaskLocals> {
+        self.state
+            .lock()
+            .expect("tool callback session lock")
+            .caller_loop_locals
+            .clone()
+    }
+
+    fn active_caller_tasks(&self) -> Arc<StdMutex<Vec<Py<PyAny>>>> {
+        self.active_caller_tasks.clone()
+    }
+
+    fn cancel_active_caller_tasks(&self, py: Python<'_>) -> PyResult<()> {
+        let Some(locals) = self.current_caller_loop_locals() else {
+            return Ok(());
+        };
+        let tasks = self
+            .active_caller_tasks
+            .lock()
+            .expect("tool active caller tasks lock")
+            .drain(..)
+            .collect::<Vec<_>>();
+        for task in tasks {
+            cancel_python_task(py, &locals, &task)?;
+        }
+        Ok(())
+    }
+
+    fn invoke(
+        &self,
+        py: Python<'_>,
+        callback: &Py<PyAny>,
+        args: Vec<Py<PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let context = self.current_context(py);
+        self.engine.invoke(py, &context, callback, args)
+    }
+
+    fn run_awaitable_on_private_loop(
+        &self,
+        py: Python<'_>,
+        awaitable: &Py<PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        self.private_async_loop.run_awaitable(py, awaitable)
+    }
+}
+
+fn capture_callback_state(
+    py: Python<'_>,
+    needs_async_callbacks: bool,
+    use_caller_loop: bool,
+) -> PyResult<PyCallbackSessionState> {
+    if needs_async_callbacks && use_caller_loop {
+        let locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
+        return Ok(PyCallbackSessionState {
+            context: locals.context(py).unbind(),
+            caller_loop_locals: Some(locals),
+        });
+    }
+
+    Ok(PyCallbackSessionState {
+        context: copy_current_context(py)?,
+        caller_loop_locals: None,
+    })
+}
+
+fn create_context_callback_caller(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    pyo3::types::PyModule::from_code(
+        py,
+        c"def _call(ctx, fn, args):\n    return ctx.run(fn, *args)",
+        c"<bashkit_callback>",
+        c"_bashkit_callback",
+    )?
+    .getattr("_call")
+    .map(|caller| caller.unbind())
+}
+
+fn asyncio_cancelled_error(py: Python<'_>) -> PyResult<PyErr> {
+    Ok(PyErr::from_value(
+        py.import("asyncio")?.call_method0("CancelledError")?,
+    ))
+}
+
+fn call_soon_threadsafe_with_context(
+    py: Python<'_>,
+    locals: &TaskLocals,
+    callback: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("context", locals.context(py))?;
+    locals
+        .event_loop(py)
+        .call_method("call_soon_threadsafe", (callback,), Some(&kwargs))?;
+    Ok(())
+}
+
+fn cancel_python_task(py: Python<'_>, locals: &TaskLocals, task: &Py<PyAny>) -> PyResult<()> {
+    let cancel = task.bind(py).getattr("cancel")?;
+    call_soon_threadsafe_with_context(py, locals, &cancel)
+}
+
+fn remove_active_caller_task(
+    active_caller_tasks: &Arc<StdMutex<Vec<Py<PyAny>>>>,
+    task: &Bound<'_, PyAny>,
+) {
+    let task_ptr = task.as_ptr();
+    if let Ok(mut active_tasks) = active_caller_tasks.lock() {
+        active_tasks.retain(|active_task| active_task.bind(task.py()).as_ptr() != task_ptr);
+    }
+}
+
+#[pyclass]
+struct PyCallbackTaskCompleter {
+    tx: Option<oneshot::Sender<PyResult<Py<PyAny>>>>,
+    active_caller_tasks: Arc<StdMutex<Vec<Py<PyAny>>>>,
+}
+
+#[pymethods]
+impl PyCallbackTaskCompleter {
+    #[pyo3(signature = (task))]
+    fn __call__(&mut self, task: &Bound<'_, PyAny>) -> PyResult<()> {
+        remove_active_caller_task(&self.active_caller_tasks, task);
+        let result = match task.call_method0("result") {
+            Ok(value) => Ok(value.unbind()),
+            Err(err) => Err(err),
+        };
+        if let Some(tx) = self.tx.take() {
+            let _ = tx.send(result);
+        }
+        Ok(())
+    }
+}
+
+#[pyclass]
+struct PyScheduleCallbackTask {
+    awaitable: Py<PyAny>,
+    on_complete: Py<PyAny>,
+    shared_task: Arc<StdMutex<Option<Py<PyAny>>>>,
+    active_caller_tasks: Arc<StdMutex<Vec<Py<PyAny>>>>,
+    cancel_requested: Arc<AtomicBool>,
+}
+
+#[pymethods]
+impl PyScheduleCallbackTask {
+    fn __call__(&self) -> PyResult<()> {
+        Python::attach(|py| {
+            let task = py
+                .import("asyncio")?
+                .call_method1("ensure_future", (self.awaitable.bind(py),))?;
+            *self.shared_task.lock().expect("tool callback task lock") =
+                Some(task.clone().unbind());
+            self.active_caller_tasks
+                .lock()
+                .expect("tool active caller tasks lock")
+                .push(task.clone().unbind());
+            task.call_method1("add_done_callback", (self.on_complete.bind(py),))?;
+            if self.cancel_requested.load(Ordering::Relaxed) {
+                let _ = task.call_method0("cancel");
+            }
+            Ok(())
+        })
+    }
+}
+
+#[pyclass]
+struct PyCancelActiveCallbackTasks {
+    session: Arc<PyCallbackSession>,
+}
+
+#[pymethods]
+impl PyCancelActiveCallbackTasks {
+    #[pyo3(signature = (future))]
+    fn __call__(&self, future: &Bound<'_, PyAny>) -> PyResult<()> {
+        if future.call_method0("cancelled")?.extract::<bool>()? {
+            self.session.cancel_active_caller_tasks(future.py())?;
+        }
+        Ok(())
+    }
+}
+
+fn attach_future_cancellation_callback(
+    py: Python<'_>,
+    future: &Bound<'_, PyAny>,
+    session: Arc<PyCallbackSession>,
+) -> PyResult<()> {
+    let on_cancel = Py::new(py, PyCancelActiveCallbackTasks { session })?
+        .into_bound(py)
+        .into_any()
+        .unbind();
+    future.call_method1("add_done_callback", (on_cancel.bind(py),))?;
+    Ok(())
+}
+
+#[pyclass]
+struct PyCancelActiveCallbackTasksNow {
+    session: Arc<PyCallbackSession>,
+}
+
+#[pymethods]
+impl PyCancelActiveCallbackTasksNow {
+    fn __call__(&self, py: Python<'_>) -> PyResult<()> {
+        self.session.cancel_active_caller_tasks(py)
+    }
+}
+
+fn create_execute_cancel_wrapper(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    pyo3::types::PyModule::from_code(
+        py,
+        c"import asyncio\nclass _CancelForwardingAwaitable:\n    def __init__(self, inner, on_cancel):\n        self._inner = inner\n        self._on_cancel = on_cancel\n    def cancel(self):\n        self._on_cancel()\n        return self._inner.cancel()\n    def __await__(self):\n        async def _await_inner():\n            try:\n                return await self._inner\n            except asyncio.CancelledError:\n                self._on_cancel()\n                self._inner.cancel()\n                raise\n        return _await_inner().__await__()\n    def __getattr__(self, name):\n        return getattr(self._inner, name)\ndef wrap(inner, on_cancel):\n    return _CancelForwardingAwaitable(inner, on_cancel)",
+        c"<bashkit_cancel_wrapper>",
+        c"_bashkit_cancel_wrapper",
+    )?
+    .getattr("wrap")
+    .map(|wrap| wrap.unbind())
+}
+
+fn wrap_future_with_cancel<'py>(
+    py: Python<'py>,
+    future: Bound<'py, PyAny>,
+    session: Arc<PyCallbackSession>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let on_cancel = Py::new(py, PyCancelActiveCallbackTasksNow { session })?
+        .into_bound(py)
+        .into_any()
+        .unbind();
+    create_execute_cancel_wrapper(py)?
+        .bind(py)
+        .call1((future, on_cancel.bind(py)))
+}
+
+struct PyCancellableLoopFuture {
+    result_rx: Option<oneshot::Receiver<PyResult<Py<PyAny>>>>,
+    locals: TaskLocals,
+    shared_task: Arc<StdMutex<Option<Py<PyAny>>>>,
+    cancel_requested: Arc<AtomicBool>,
+    completed: bool,
+}
+
+impl PyCancellableLoopFuture {
+    fn new(
+        py: Python<'_>,
+        session: Arc<PyCallbackSession>,
+        awaitable: Py<PyAny>,
+    ) -> PyResult<Self> {
+        let locals = session
+            .current_caller_loop_locals()
+            .expect("caller loop locals required for async callback session");
+        let (tx, rx) = oneshot::channel();
+        let shared_task = Arc::new(StdMutex::new(None));
+        let cancel_requested = Arc::new(AtomicBool::new(false));
+        let active_caller_tasks = session.active_caller_tasks();
+        let on_complete = Py::new(
+            py,
+            PyCallbackTaskCompleter {
+                tx: Some(tx),
+                active_caller_tasks: active_caller_tasks.clone(),
+            },
+        )?
+        .into_bound(py)
+        .into_any()
+        .unbind();
+        let scheduler = Py::new(
+            py,
+            PyScheduleCallbackTask {
+                awaitable,
+                on_complete,
+                shared_task: shared_task.clone(),
+                active_caller_tasks,
+                cancel_requested: cancel_requested.clone(),
+            },
+        )?
+        .into_bound(py)
+        .into_any()
+        .unbind();
+        call_soon_threadsafe_with_context(py, &locals, scheduler.bind(py))?;
+        Ok(Self {
+            result_rx: Some(rx),
+            locals,
+            shared_task,
+            cancel_requested,
+            completed: false,
+        })
+    }
+
+    async fn wait(mut self) -> PyResult<Py<PyAny>> {
+        let result_rx = self.result_rx.take().expect("callback result receiver");
+        let result = match result_rx.await {
+            Ok(result) => result,
+            Err(_) => Err(Python::attach(asyncio_cancelled_error)?),
+        };
+        self.completed = true;
+        result
+    }
+}
+
+impl Drop for PyCancellableLoopFuture {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+
+        self.cancel_requested.store(true, Ordering::Relaxed);
+        Python::attach(|py| {
+            let maybe_task = self
+                .shared_task
+                .lock()
+                .ok()
+                .and_then(|shared_task| shared_task.as_ref().map(|task| task.clone_ref(py)));
+            if let Some(task) = maybe_task {
+                let _ = cancel_python_task(py, &self.locals, &task);
+            }
+        });
+    }
+}
+
+fn build_py_tool_entry(
+    py: Python<'_>,
+    name: String,
+    description: String,
+    callback: Py<PyAny>,
+    schema: Option<Bound<'_, pyo3::PyAny>>,
+) -> PyResult<PyToolEntry> {
+    let schema_val = match schema {
+        Some(ref schema) => py_to_json(py, schema)?,
+        None => serde_json::Value::Object(Default::default()),
+    };
+    let bound = callback.bind(py);
+    if !bound.is_callable() {
+        return Err(PyTypeError::new_err(format!(
+            "tool '{name}' callback must be callable"
+        )));
+    }
+    let is_async = is_coroutine_callable(py, bound)?;
+    Ok(PyToolEntry {
+        name,
+        description,
+        schema: schema_val,
+        callback,
+        is_async,
+    })
+}
+
+fn make_py_tool_callback_args(py: Python<'_>, args: &ToolArgs) -> Result<Vec<Py<PyAny>>, String> {
+    let params = json_to_py(py, &args.params).map_err(|e: PyErr| e.to_string())?;
+    let stdin_arg = match args.stdin.as_deref() {
+        Some(stdin) => stdin
+            .into_pyobject(py)
+            .expect("str -> Python object")
+            .into_any()
+            .unbind(),
+        None => py.None(),
+    };
+    Ok(vec![params, stdin_arg])
+}
+
+fn call_python_string_callback_sync(
+    py: Python<'_>,
+    session: &PyCallbackSession,
+    callback_name: &str,
+    callback: &Py<PyAny>,
+    args: Vec<Py<PyAny>>,
+) -> Result<String, String> {
+    let result = session
+        .invoke(py, callback, args)
+        .map_err(|e| format!("{callback_name}: {e}"))?;
+    result
+        .extract::<String>(py)
+        .map_err(|e| format!("{callback_name}: callback must return str, got {e}"))
+}
+
+async fn call_python_string_callback_async(
+    session: Arc<PyCallbackSession>,
+    callback_name: &str,
+    callback: &Py<PyAny>,
+    args: Vec<Py<PyAny>>,
+) -> Result<String, String> {
+    let awaitable = Python::attach(|py| session.invoke(py, callback, args))
+        .map_err(|e| format!("{callback_name}: {e}"))?;
+
+    let result = if session.current_caller_loop_locals().is_some() {
+        let future = Python::attach(|py| PyCancellableLoopFuture::new(py, session, awaitable))
+            .map_err(|e| format!("{callback_name}: {e}"))?;
+        future
+            .wait()
+            .await
+            .map_err(|e| format!("{callback_name}: {e}"))?
+    } else {
+        Python::attach(|py| session.run_awaitable_on_private_loop(py, &awaitable))
+            .map_err(|e| format!("{callback_name}: {e}"))?
+    };
+
+    Python::attach(|py| {
+        result
+            .extract::<String>(py)
+            .map_err(|e| format!("{callback_name}: callback must return str, got {e}"))
+    })
+}
+
+// ============================================================================
 // ScriptedTool — multi-tool orchestration via bash scripts
 // ============================================================================
 
@@ -2369,6 +2865,7 @@ pub struct ScriptedTool {
     /// Shared tokio runtime — reused across all sync calls to avoid
     /// per-call OS thread/fd exhaustion (issue #414).
     rt: Arc<Runtime>,
+    callback_engine: Arc<PyCallbackEngine>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
 }
@@ -2376,107 +2873,56 @@ pub struct ScriptedTool {
 impl ScriptedTool {
     /// Build a Rust ScriptedTool from stored Python config.
     ///
-    /// Called at execute() time so that `contextvars.copy_context()` captures the
-    /// caller's ContextVar state. Each Python callback is invoked via `ctx.run()`
-    /// to restore those vars.
-    fn build_rust_tool(&self) -> RustScriptedTool {
+    /// The supplied session captures the caller's `ContextVar` state and, for
+    /// async execute(), the caller's active asyncio loop. Each Python callback
+    /// is invoked via `ctx.run()` to restore those vars.
+    fn build_rust_tool_with_session(
+        &self,
+        py: Python<'_>,
+        session: Arc<PyCallbackSession>,
+    ) -> RustScriptedTool {
         let mut builder = RustScriptedTool::builder(&self.name);
 
         if let Some(ref desc) = self.short_desc {
             builder = builder.short_description(desc);
         }
 
-        // Snapshot the caller's contextvars at execute()-call time.
-        let py_ctx: Py<PyAny> =
-            Python::attach(|py| copy_current_context(py).expect("copy_context"));
-
-        // Resources for async callbacks: a shared event loop and a helper
-        // function that drives coroutines inside the captured ContextVar
-        // snapshot. Created once per execute() call and shared across all
-        // async callback invocations to avoid FD exhaustion.
-        let has_async = self.tools.iter().any(|e| e.is_async);
-        let async_loop: Option<Py<PyAny>> = if has_async {
-            Some(Python::attach(|py| {
-                let asyncio = py.import("asyncio").expect("asyncio stdlib");
-                asyncio
-                    .call_method0("new_event_loop")
-                    .expect("new_event_loop")
-                    .unbind()
-            }))
-        } else {
-            None
-        };
-        // Helper: ctx.run(lambda: loop.run_until_complete(fn(p, s)))
-        // Wrapping run_until_complete inside ctx.run() ensures the Task
-        // created by run_until_complete inherits the captured context,
-        // making ContextVars visible throughout the coroutine body.
-        let async_runner: Option<Py<PyAny>> = if has_async {
-            Some(Python::attach(|py| {
-                pyo3::types::PyModule::from_code(
-                    py,
-                    c"def _run(ctx, loop, fn, params, stdin):\n    return ctx.run(lambda: loop.run_until_complete(fn(params, stdin)))",
-                    c"<bashkit_async>",
-                    c"_bashkit_async",
-                )
-                .expect("async helper module")
-                .getattr("_run")
-                .expect("_run function")
-                .unbind()
-            }))
-        } else {
-            None
-        };
-
         for entry in &self.tools {
-            let py_cb = Python::attach(|py| entry.callback.clone_ref(py));
-            let tool_name = entry.name.clone();
+            let py_callback = entry.callback.clone_ref(py);
             let def =
                 ToolDef::new(&entry.name, &entry.description).with_schema(entry.schema.clone());
-            let ctx = Python::attach(|py| py_ctx.clone_ref(py));
+            let tool_name = entry.name.clone();
 
             if entry.is_async {
-                // Async callback: the runner helper calls
-                //   ctx.run(lambda: loop.run_until_complete(fn(params, stdin)))
-                // which ensures the Task inherits the captured ContextVars.
-                // The GIL serialises access so the shared loop is safe.
-                let ev_loop = async_loop
-                    .as_ref()
-                    .map(|l| Python::attach(|py| l.clone_ref(py)))
-                    .expect("async_loop must exist when is_async is true");
-                let runner = async_runner
-                    .as_ref()
-                    .map(|r| Python::attach(|py| r.clone_ref(py)))
-                    .expect("async_runner must exist when is_async is true");
-                let callback = move |args: &ToolArgs| -> Result<String, String> {
-                    Python::attach(|py| {
-                        let params =
-                            json_to_py(py, &args.params).map_err(|e: PyErr| e.to_string())?;
-                        let stdin_arg = args.stdin.as_deref().map(|s| s.to_string());
-                        let result = runner
-                            .call1(py, (&ctx, &ev_loop, &py_cb, params, stdin_arg))
-                            .map_err(|e| format!("{}: {}", tool_name, e))?;
-                        result.extract::<String>(py).map_err(|e| {
-                            format!("{}: callback must return str, got {}", tool_name, e)
-                        })
-                    })
-                };
-                builder = builder.tool_fn(def, callback);
+                let session = session.clone();
+                builder = builder.async_tool_fn(def, move |args: ToolArgs| {
+                    let session = session.clone();
+                    let tool_name = tool_name.clone();
+                    let py_callback = Python::attach(|py| py_callback.clone_ref(py));
+                    async move {
+                        let py_args = Python::attach(|py| make_py_tool_callback_args(py, &args))?;
+                        call_python_string_callback_async(
+                            session,
+                            &tool_name,
+                            &py_callback,
+                            py_args,
+                        )
+                        .await
+                    }
+                });
             } else {
-                // Sync callback: ctx.run(fn, params, stdin) with ContextVars.
-                let callback = move |args: &ToolArgs| -> Result<String, String> {
+                let session = session.clone();
+                builder = builder.tool_fn(def, move |args: &ToolArgs| {
                     Python::attach(|py| {
-                        let params =
-                            json_to_py(py, &args.params).map_err(|e: PyErr| e.to_string())?;
-                        let stdin_arg = args.stdin.as_deref().map(|s| s.to_string());
-                        let result = ctx
-                            .call_method1(py, "run", (&py_cb, params, stdin_arg))
-                            .map_err(|e| format!("{}: {}", tool_name, e))?;
-                        result.extract::<String>(py).map_err(|e| {
-                            format!("{}: callback must return str, got {}", tool_name, e)
-                        })
+                        call_python_string_callback_sync(
+                            py,
+                            session.as_ref(),
+                            &tool_name,
+                            &py_callback,
+                            make_py_tool_callback_args(py, args)?,
+                        )
                     })
-                };
-                builder = builder.tool_fn(def, callback);
+                });
             }
         }
 
@@ -2517,6 +2963,7 @@ impl ScriptedTool {
         max_loop_iterations: Option<u64>,
     ) -> PyResult<Self> {
         let rt = make_runtime()?;
+        let callback_engine = Python::attach(PyCallbackEngine::new)?;
 
         Ok(Self {
             name,
@@ -2524,6 +2971,7 @@ impl ScriptedTool {
             tools: Vec::new(),
             env_vars: Vec::new(),
             rt,
+            callback_engine,
             max_commands,
             max_loop_iterations,
         })
@@ -2553,28 +3001,13 @@ impl ScriptedTool {
         callback: Py<PyAny>,
         schema: Option<Bound<'_, pyo3::PyAny>>,
     ) -> PyResult<()> {
-        let schema_val = match schema {
-            Some(ref s) => py_to_json(py, s)?,
-            None => serde_json::Value::Object(Default::default()),
-        };
-        // Detect async callbacks using the same pattern as external_handler
-        let inspect = py.import("inspect")?;
-        let is_coro_fn = inspect.getattr("iscoroutinefunction")?;
-        let bound = callback.bind(py);
-        let is_async = is_coro_fn.call1((bound,))?.extract::<bool>()?
-            || bound
-                .getattr("__call__")
-                .ok()
-                .and_then(|c| is_coro_fn.call1((c,)).ok())
-                .and_then(|r| r.extract::<bool>().ok())
-                .unwrap_or(false);
-        self.tools.push(PyToolEntry {
+        self.tools.push(build_py_tool_entry(
+            py,
             name,
             description,
-            schema: schema_val,
             callback,
-            is_async,
-        });
+            schema,
+        )?);
         Ok(())
     }
 
@@ -2585,8 +3018,14 @@ impl ScriptedTool {
 
     /// Execute a bash script asynchronously.
     fn execute<'py>(&self, py: Python<'py>, commands: String) -> PyResult<Bound<'py, PyAny>> {
-        let tool = self.build_rust_tool();
-        future_into_py(py, async move {
+        let session = PyCallbackSession::capture(
+            py,
+            self.callback_engine.clone(),
+            self.tools.iter().any(|entry| entry.is_async),
+            true,
+        )?;
+        let tool = self.build_rust_tool_with_session(py, session.clone());
+        let future = future_into_py(py, async move {
             let resp = tool
                 .execute(ToolRequest {
                     commands,
@@ -2602,13 +3041,21 @@ impl ScriptedTool {
                 stderr_truncated: resp.stderr_truncated,
                 final_env: resp.final_env,
             })
-        })
+        })?;
+        attach_future_cancellation_callback(py, &future, session.clone())?;
+        wrap_future_with_cancel(py, future, session)
     }
 
     /// Execute a bash script synchronously (blocking).
     /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
     fn execute_sync(&self, py: Python<'_>, commands: String) -> PyResult<ExecResult> {
-        let tool = self.build_rust_tool();
+        let session = PyCallbackSession::capture(
+            py,
+            self.callback_engine.clone(),
+            self.tools.iter().any(|entry| entry.is_async),
+            false,
+        )?;
+        let tool = self.build_rust_tool_with_session(py, session);
 
         let resp = py.detach(|| {
             self.rt.block_on(async move {
@@ -2651,30 +3098,72 @@ impl ScriptedTool {
 
     /// Get the token-efficient description.
     fn description(&self) -> String {
-        self.build_rust_tool().description().to_string()
+        Python::attach(|py| {
+            let session = PyCallbackSession::capture(
+                py,
+                self.callback_engine.clone(),
+                false,
+                false,
+            )
+            .expect("callback session");
+            self.build_rust_tool_with_session(py, session)
+                .description()
+                .to_string()
+        })
     }
 
     /// Get help as a Markdown document.
     fn help(&self) -> String {
-        self.build_rust_tool().help()
+        Python::attach(|py| {
+            let session = PyCallbackSession::capture(
+                py,
+                self.callback_engine.clone(),
+                false,
+                false,
+            )
+            .expect("callback session");
+            self.build_rust_tool_with_session(py, session).help()
+        })
     }
 
     /// Get compact system-prompt text for orchestration.
     fn system_prompt(&self) -> String {
-        self.build_rust_tool().system_prompt()
+        Python::attach(|py| {
+            let session = PyCallbackSession::capture(
+                py,
+                self.callback_engine.clone(),
+                false,
+                false,
+            )
+            .expect("callback session");
+            self.build_rust_tool_with_session(py, session)
+                .system_prompt()
+        })
     }
 
     /// Get JSON input schema.
-    fn input_schema(&self) -> PyResult<String> {
-        let tool = self.build_rust_tool();
+    fn input_schema(&self, py: Python<'_>) -> PyResult<String> {
+        let session = PyCallbackSession::capture(
+            py,
+            self.callback_engine.clone(),
+            false,
+            false,
+        )?;
+        let tool = self.build_rust_tool_with_session(py, session);
         let schema = tool.input_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| PyValueError::new_err(format!("Schema serialization failed: {}", e)))
     }
 
     /// Get JSON output schema.
-    fn output_schema(&self) -> PyResult<String> {
-        let tool = self.build_rust_tool();
+    fn output_schema(&self, py: Python<'_>) -> PyResult<String> {
+        let session = PyCallbackSession::capture(
+            py,
+            self.callback_engine.clone(),
+            false,
+            false,
+        )?;
+        let tool = self.build_rust_tool_with_session(py, session);
         let schema = tool.output_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| PyValueError::new_err(format!("Schema serialization failed: {}", e)))
