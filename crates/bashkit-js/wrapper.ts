@@ -126,8 +126,8 @@ export interface ExecuteOptions {
    *
    * Limitation: do not call back into the same `Bash` / `BashTool` instance
    * from this handler (`execute*`, `readFile`, `fs()`, etc.). The current
-   * binding delivers chunks while that instance is still mid-execution, so
-   * same-instance re-entry can deadlock or panic.
+   * binding rejects same-instance re-entry to avoid deadlocks and runtime
+   * panics.
    */
   onOutput?: OnOutput;
 }

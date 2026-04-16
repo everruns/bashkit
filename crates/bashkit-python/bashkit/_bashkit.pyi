@@ -372,6 +372,9 @@ class Bash:
             python: Enable embedded Python (``python3`` builtin).
             external_functions: Function names callable from Python code.
             external_handler: Async callback for external function calls.
+                The callback must not call back into the same ``Bash`` instance
+                via live methods like ``read_file()``, ``fs()``, or
+                ``execute()``; those re-entrant calls are rejected.
             files: Dict mapping VFS paths to file contents or lazy callables.
             mounts: List of real host directory mount configs.
             custom_builtins: Constructor-time Python callbacks exposed as

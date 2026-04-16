@@ -29,6 +29,8 @@ _NAMES = (
     "test_bashtool_pre_exec_error_in_stderr",
     "test_bash_pre_exec_error_in_stderr_async",
     "test_bash_external_handler_error_propagates",
+    "test_bash_external_handler_reentrant_read_file_rejected",
+    "test_bash_external_handler_reentrant_fs_handle_rejected",
     "test_bash_external_functions_without_handler_raises",
     "test_bash_non_callable_handler_raises",
     "test_bash_external_handler_requires_python_true",
