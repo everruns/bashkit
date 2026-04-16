@@ -402,8 +402,10 @@ async fn run_category_tests(
 
 /// Comparison test - runs against real bash in CI
 /// This test compares Bashkit output against real bash for all non-skipped tests.
-/// It fails if any mismatch is found, ensuring Bashkit stays compatible with bash.
+/// It is ignored by default because host toolchains and environments vary locally.
+/// CI runs it explicitly as the strict parity gate.
 #[tokio::test]
+#[ignore = "strict host-bash parity gate; run explicitly in CI or via just check-bash-compat"]
 async fn bash_comparison_tests() {
     let dir = spec_cases_dir().join("bash");
     let all_tests = load_spec_tests(&dir);

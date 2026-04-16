@@ -12,7 +12,7 @@ use bashkit::{
     FileSystem, FileSystemExt, FileType as FsFileType, InMemoryFs, Metadata as FsMetadata,
     MontyException, MontyObject, OutputCallback as RustOutputCallback, OverlayFs, PosixFs,
     PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool,
-    Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
+    SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
 };
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -757,13 +757,15 @@ fn snapshot_live_bash(
     py: Python<'_>,
     rt: &Arc<Runtime>,
     inner: &Arc<Mutex<Bash>>,
+    exclude_filesystem: bool,
 ) -> PyResult<Vec<u8>> {
     let rt = rt.clone();
     let inner = inner.clone();
     py.detach(|| {
         rt.block_on(async move {
             let bash = inner.lock().await;
-            bash.snapshot().map_err(raise_snapshot_error)
+            bash.snapshot_with_options(RustSnapshotOptions { exclude_filesystem })
+                .map_err(raise_snapshot_error)
         })
     })
 }
@@ -2404,8 +2406,13 @@ impl PyBash {
     }
 
     /// Serialize interpreter state to bytes for checkpoint/restore flows.
-    fn snapshot<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = snapshot_live_bash(py, &self.rt, &self.inner)?;
+    #[pyo3(signature = (exclude_filesystem=false))]
+    fn snapshot<'py>(
+        &self,
+        py: Python<'py>,
+        exclude_filesystem: bool,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = snapshot_live_bash(py, &self.rt, &self.inner, exclude_filesystem)?;
         Ok(PyBytes::new(py, &bytes))
     }
 
@@ -2935,8 +2942,13 @@ impl BashTool {
     }
 
     /// Serialize interpreter state to bytes for checkpoint/restore flows.
-    fn snapshot<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = snapshot_live_bash(py, &self.rt, &self.inner)?;
+    #[pyo3(signature = (exclude_filesystem=false))]
+    fn snapshot<'py>(
+        &self,
+        py: Python<'py>,
+        exclude_filesystem: bool,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = snapshot_live_bash(py, &self.rt, &self.inner, exclude_filesystem)?;
         Ok(PyBytes::new(py, &bytes))
     }
 

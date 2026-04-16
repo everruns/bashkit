@@ -320,6 +320,7 @@ bash = Bash(username="agent", max_commands=100)
 bash.execute_sync("export BUILD_ID=42; mkdir -p /workspace && cd /workspace && echo ready > state.txt")
 
 snapshot = bash.snapshot()
+shell_only = bash.snapshot(exclude_filesystem=True)
 
 restored = Bash.from_snapshot(snapshot, username="agent", max_commands=100)
 assert restored.execute_sync("echo $BUILD_ID").stdout.strip() == "42"
@@ -328,6 +329,7 @@ assert restored.execute_sync("cat /workspace/state.txt").stdout.strip() == "read
 restored.reset()
 restored.restore_snapshot(snapshot)
 assert restored.execute_sync("pwd").stdout.strip() == "/workspace"
+restored.restore_snapshot(shell_only)
 ```
 
 `BashTool` exposes the same `snapshot()`, `restore_snapshot(...)`, and `from_snapshot(...)` APIs.

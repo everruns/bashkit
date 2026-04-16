@@ -6,6 +6,7 @@ import type {
   ScriptedTool as NativeScriptedToolType,
   ExecResult,
   BashOptions as NativeBashOptions,
+  SnapshotOptions as NativeSnapshotOptions,
 } from "./index.cjs";
 
 const require = createRequire(import.meta.url);
@@ -105,6 +106,10 @@ export interface BashOptions {
    * the embedded interpreter. When called, they invoke the external handler.
    */
   externalFunctions?: string[];
+}
+
+export interface SnapshotOptions {
+  excludeFilesystem?: boolean;
 }
 
 export interface OutputChunk {
@@ -296,6 +301,15 @@ function toNativeOptions(
     })),
     python: options?.python,
     externalFunctions: options?.externalFunctions,
+  };
+}
+
+function toNativeSnapshotOptions(
+  options?: SnapshotOptions,
+): NativeSnapshotOptions | undefined {
+  if (!options) return undefined;
+  return {
+    excludeFilesystem: options.excludeFilesystem,
   };
 }
 
@@ -518,8 +532,8 @@ export class Bash {
    * const r = await bash2.execute("echo $x"); // "42\n"
    * ```
    */
-  snapshot(): Uint8Array {
-    return this.native.snapshot();
+  snapshot(options?: SnapshotOptions): Uint8Array {
+    return this.native.snapshot(toNativeSnapshotOptions(options));
   }
 
   /**
@@ -830,8 +844,8 @@ export class BashTool {
   /**
    * Serialize interpreter state (variables, VFS, counters) to a Uint8Array.
    */
-  snapshot(): Uint8Array {
-    return this.native.snapshot();
+  snapshot(options?: SnapshotOptions): Uint8Array {
+    return this.native.snapshot(toNativeSnapshotOptions(options));
   }
 
   /**
