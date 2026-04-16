@@ -2,10 +2,19 @@
 
 import asyncio
 import json
+from collections.abc import Mapping
 
 import pytest
 
-from bashkit import Bash, BashError, BashTool, FileSystem, ScriptedTool, create_langchain_tool_spec
+from bashkit import (
+    Bash,
+    BashError,
+    BashTool,
+    FileSystem,
+    ScriptedTool,
+    ShellState,
+    create_langchain_tool_spec,
+)
 
 # ===========================================================================
 # Bash: Core interpreter
@@ -131,6 +140,66 @@ def test_bash_snapshot_can_exclude_filesystem():
 
     assert bash.execute_sync("echo $KEEP").stdout.strip() == "1"
     assert bash.execute_sync("cat /tmp/state.txt").stdout.strip() == "changed"
+
+
+def test_bash_shell_state_exposes_read_only_snapshot_view():
+    bash = Bash()
+    result = bash.execute_sync(
+        "export EXPORTED=env; "
+        "LOCAL=var; "
+        "arr[2]=beta; "
+        "declare -A assoc; assoc[key]=value; "
+        "mkdir -p /workspace && cd /workspace; "
+        "false"
+    )
+    assert result.exit_code == 1
+
+    state = bash.shell_state()
+    env = state.env
+    variables = state.variables
+    arrays = state.arrays
+    assoc_arrays = state.assoc_arrays
+    aliases = state.aliases
+    traps = state.traps
+    assert isinstance(state, ShellState)
+    assert state.cwd == "/workspace"
+    assert state.last_exit_code == 1
+    assert env["EXPORTED"] == "env"
+    assert variables["LOCAL"] == "var"
+    assert arrays["arr"][2] == "beta"
+    assert assoc_arrays["assoc"]["key"] == "value"
+    assert isinstance(env, Mapping)
+    assert isinstance(variables, Mapping)
+    assert isinstance(arrays, Mapping)
+    assert isinstance(assoc_arrays, Mapping)
+    assert isinstance(aliases, Mapping)
+    assert isinstance(traps, Mapping)
+    assert state.env is env
+    assert state.variables is variables
+    assert state.arrays is arrays
+    assert state.assoc_arrays is assoc_arrays
+    assert state.aliases is aliases
+    assert state.traps is traps
+    assert state.arrays["arr"] is arrays["arr"]
+    assert state.assoc_arrays["assoc"] is assoc_arrays["assoc"]
+    assert not hasattr(state, "functions")
+    assert not hasattr(bash, "restore_shell_state")
+
+    with pytest.raises(AttributeError):
+        state.cwd = "/tmp"
+    with pytest.raises(TypeError):
+        variables["LOCAL"] = "changed"
+    with pytest.raises(AttributeError):
+        _ = state.functions
+
+    bash.execute_sync("export EXPORTED=changed; LOCAL=other; arr[2]=gamma; assoc[key]=next; cd /; true")
+
+    assert state.cwd == "/workspace"
+    assert state.last_exit_code == 1
+    assert state.env["EXPORTED"] == "env"
+    assert state.variables["LOCAL"] == "var"
+    assert state.arrays["arr"][2] == "beta"
+    assert state.assoc_arrays["assoc"]["key"] == "value"
 
 
 def test_bash_empty_snapshot_roundtrip():
@@ -671,6 +740,66 @@ def test_bashtool_snapshot_can_exclude_filesystem():
 
     assert tool.execute_sync("echo $KEEP").stdout.strip() == "1"
     assert tool.execute_sync("cat /tmp/tool.txt").stdout.strip() == "changed"
+
+
+def test_bashtool_shell_state_exposes_read_only_snapshot_view():
+    tool = BashTool()
+    result = tool.execute_sync(
+        "export EXPORTED=env; "
+        "LOCAL=var; "
+        "arr[2]=beta; "
+        "declare -A assoc; assoc[key]=value; "
+        "mkdir -p /workspace && cd /workspace; "
+        "false"
+    )
+    assert result.exit_code == 1
+
+    state = tool.shell_state()
+    env = state.env
+    variables = state.variables
+    arrays = state.arrays
+    assoc_arrays = state.assoc_arrays
+    aliases = state.aliases
+    traps = state.traps
+    assert isinstance(state, ShellState)
+    assert state.cwd == "/workspace"
+    assert state.last_exit_code == 1
+    assert env["EXPORTED"] == "env"
+    assert variables["LOCAL"] == "var"
+    assert arrays["arr"][2] == "beta"
+    assert assoc_arrays["assoc"]["key"] == "value"
+    assert isinstance(env, Mapping)
+    assert isinstance(variables, Mapping)
+    assert isinstance(arrays, Mapping)
+    assert isinstance(assoc_arrays, Mapping)
+    assert isinstance(aliases, Mapping)
+    assert isinstance(traps, Mapping)
+    assert state.env is env
+    assert state.variables is variables
+    assert state.arrays is arrays
+    assert state.assoc_arrays is assoc_arrays
+    assert state.aliases is aliases
+    assert state.traps is traps
+    assert state.arrays["arr"] is arrays["arr"]
+    assert state.assoc_arrays["assoc"] is assoc_arrays["assoc"]
+    assert not hasattr(state, "functions")
+    assert not hasattr(tool, "restore_shell_state")
+
+    with pytest.raises(AttributeError):
+        state.cwd = "/tmp"
+    with pytest.raises(TypeError):
+        variables["LOCAL"] = "changed"
+    with pytest.raises(AttributeError):
+        _ = state.functions
+
+    tool.execute_sync("export EXPORTED=changed; LOCAL=other; arr[2]=gamma; assoc[key]=next; cd /; true")
+
+    assert state.cwd == "/workspace"
+    assert state.last_exit_code == 1
+    assert state.env["EXPORTED"] == "env"
+    assert state.variables["LOCAL"] == "var"
+    assert state.arrays["arr"][2] == "beta"
+    assert state.assoc_arrays["assoc"]["key"] == "value"
 
 
 def test_bashtool_empty_snapshot_roundtrip():

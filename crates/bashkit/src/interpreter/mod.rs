@@ -435,6 +435,30 @@ pub struct ShellState {
     pub traps: HashMap<String, String>,
 }
 
+/// Lightweight inspection view of shell state.
+///
+/// Omits AST-backed function definitions so prompt rendering and other UI-only
+/// inspection paths don't pay to clone data they never expose or restore.
+#[derive(Debug, Clone, Default)]
+pub struct ShellStateView {
+    /// Environment variables
+    pub env: HashMap<String, String>,
+    /// Shell variables
+    pub variables: HashMap<String, String>,
+    /// Indexed arrays
+    pub arrays: HashMap<String, HashMap<usize, String>>,
+    /// Associative arrays
+    pub assoc_arrays: HashMap<String, HashMap<String, String>>,
+    /// Current working directory
+    pub cwd: PathBuf,
+    /// Last exit code
+    pub last_exit_code: i32,
+    /// Shell aliases
+    pub aliases: HashMap<String, String>,
+    /// Trap handlers
+    pub traps: HashMap<String, String>,
+}
+
 /// Interpreter state.
 pub struct Interpreter {
     fs: Arc<dyn FileSystem>,
@@ -1137,6 +1161,20 @@ impl Interpreter {
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
             functions: self.functions.clone(),
+            aliases: self.aliases.clone(),
+            traps: self.traps.clone(),
+        }
+    }
+
+    /// Capture a lightweight shell-state view for prompt/UI inspection.
+    pub fn shell_state_view(&self) -> ShellStateView {
+        ShellStateView {
+            env: self.env.clone(),
+            variables: self.variables.clone(),
+            arrays: self.arrays.clone(),
+            assoc_arrays: self.assoc_arrays.clone(),
+            cwd: self.cwd.clone(),
+            last_exit_code: self.last_exit_code,
             aliases: self.aliases.clone(),
             traps: self.traps.clone(),
         }

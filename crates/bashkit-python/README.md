@@ -217,6 +217,32 @@ and shell state entirely.
 
 `BashTool` exposes the same `cancel()`, `clear_cancel()`, and `reset()` methods.
 
+## Shell State
+
+```python
+from bashkit import Bash
+
+bash = Bash()
+bash.execute_sync("mkdir -p /workspace && cd /workspace")
+
+state = bash.shell_state()
+prompt = f"{state.cwd}$ "
+print(prompt)  # /workspace$
+
+bash.execute_sync("cd /")
+print(state.cwd)  # still /workspace
+```
+
+`ShellState` is a read-only snapshot for prompt rendering and inspection.
+It is a Python-friendly inspection view rather than a full Rust-shell mirror,
+and fields like `env`, `variables`, and `arrays` are exposed as immutable
+mappings. Use `snapshot(exclude_filesystem=True)` when you need shell-only
+restore bytes.
+Transient fields like `last_exit_code` and `traps` are captured on the snapshot,
+but the next top-level `execute()` / `execute_sync()` clears them before running
+the new command.
+`BashTool` exposes the same `shell_state()` method.
+
 ## BashTool
 
 `BashTool` wraps `Bash` and adds tool-contract metadata for agent frameworks:

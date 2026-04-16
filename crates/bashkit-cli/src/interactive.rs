@@ -64,7 +64,7 @@ fn error_result(exit_code: i32) -> bashkit::ExecResult {
 
 // --- PS1 prompt expansion ---
 
-fn expand_ps1(ps1: &str, state: &bashkit::ShellState) -> String {
+fn expand_ps1(ps1: &str, state: &bashkit::ShellStateView) -> String {
     let mut out = String::with_capacity(ps1.len());
     let mut chars = ps1.chars().peekable();
     while let Some(c) = chars.next() {
@@ -157,7 +157,7 @@ fn expand_ps1(ps1: &str, state: &bashkit::ShellState) -> String {
 
 struct BashkitHelper {
     fs: Arc<dyn bashkit::FileSystem>,
-    state_fn: Box<dyn Fn() -> bashkit::ShellState + Send + Sync>,
+    state_fn: Box<dyn Fn() -> bashkit::ShellStateView + Send + Sync>,
 }
 
 impl BashkitHelper {
@@ -280,8 +280,8 @@ impl Completer for BashkitHelper {
             }
             // Complete functions and aliases
             let state = (self.state_fn)();
-            // Functions are visible via compgen but we don't have direct access
-            // to the function names from ShellState. We do have aliases.
+            // Functions are visible via compgen but the lightweight
+            // ShellStateView intentionally omits function names. We do have aliases.
             for name in state.aliases.keys() {
                 if name.starts_with(partial) {
                     candidates.push(name.clone());
@@ -453,7 +453,7 @@ pub async fn run(mut bash: bashkit::Bash, exit_state: Arc<ExitState>) -> Result<
     let fs = bash.fs();
     // Shared state snapshot for the helper (completion, hints).
     // Updated before each readline call.
-    let state_ref = Arc::new(std::sync::Mutex::new(bash.shell_state()));
+    let state_ref = Arc::new(std::sync::Mutex::new(bash.shell_state_view()));
     let state_for_helper = Arc::clone(&state_ref);
     let helper = BashkitHelper {
         fs,
@@ -467,10 +467,10 @@ pub async fn run(mut bash: bashkit::Bash, exit_state: Arc<ExitState>) -> Result<
 
     loop {
         // Update shared state for helper (completion, hints)
-        *state_ref.lock().unwrap() = bash.shell_state();
+        *state_ref.lock().unwrap() = bash.shell_state_view();
 
         // Build prompt from PS1
-        let state = bash.shell_state();
+        let state = bash.shell_state_view();
         let ps1 = state
             .variables
             .get("PS1")
@@ -550,7 +550,7 @@ pub async fn run(mut bash: bashkit::Bash, exit_state: Arc<ExitState>) -> Result<
                     }
                     // Read continuation line for incomplete input
                     let ps2 = bash
-                        .shell_state()
+                        .shell_state_view()
                         .variables
                         .get("PS2")
                         .cloned()
@@ -633,15 +633,14 @@ mod tests {
 
     // --- PS1 tests ---
 
-    fn empty_state() -> bashkit::ShellState {
-        bashkit::ShellState {
+    fn empty_state() -> bashkit::ShellStateView {
+        bashkit::ShellStateView {
             env: std::collections::HashMap::new(),
             variables: std::collections::HashMap::new(),
             arrays: std::collections::HashMap::new(),
             assoc_arrays: std::collections::HashMap::new(),
             cwd: std::path::PathBuf::from("/"),
             last_exit_code: 0,
-            functions: std::collections::HashMap::new(),
             aliases: std::collections::HashMap::new(),
             traps: std::collections::HashMap::new(),
         }
@@ -720,7 +719,7 @@ mod tests {
     #[test]
     fn default_prompt_shows_cwd() {
         let bash = test_bash();
-        let state = bash.shell_state();
+        let state = bash.shell_state_view();
         let prompt = expand_ps1(DEFAULT_PS1, &state);
         assert!(prompt.contains("user"));
         assert!(prompt.ends_with("$ "));
@@ -749,7 +748,7 @@ mod tests {
         let mut bash = test_bash();
         bash.exec("mkdir -p /tmp/testdir").await.unwrap();
         bash.exec("cd /tmp/testdir").await.unwrap();
-        let state = bash.shell_state();
+        let state = bash.shell_state_view();
         let prompt = expand_ps1("\\w$ ", &state);
         assert!(prompt.contains("/tmp/testdir"));
     }
@@ -882,7 +881,7 @@ mod tests {
     /// Build a BashkitHelper wired to the given Bash instance's VFS and state.
     fn make_helper(bash: &bashkit::Bash) -> BashkitHelper {
         let fs = bash.fs();
-        let state = bash.shell_state();
+        let state = bash.shell_state_view();
         BashkitHelper {
             fs: Arc::clone(&fs),
             state_fn: Box::new(move || state.clone()),
@@ -1393,7 +1392,7 @@ mod tests {
         let mut bash = test_bash();
         bash.exec("MY_CUSTOM_VAR=hello").await.unwrap();
         bash.exec("export EXPORTED_VAR=world").await.unwrap();
-        let state = bash.shell_state();
+        let state = bash.shell_state_view();
 
         // Verify state contains our variables (used by $VAR completion in complete())
         assert!(
@@ -1412,7 +1411,7 @@ mod tests {
         // Aliases should be available in shell state for completion.
         let mut bash = test_bash();
         bash.exec("alias ll='ls -la'").await.unwrap();
-        let state = bash.shell_state();
+        let state = bash.shell_state_view();
         assert!(
             state.aliases.contains_key("ll"),
             "alias in state: {:?}",

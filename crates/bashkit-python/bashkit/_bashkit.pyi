@@ -1,6 +1,6 @@
 """Type stubs for bashkit native module."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Protocol
 
 # Synchronous chunk callback for live stdout/stderr streaming.
@@ -292,6 +292,36 @@ class ExternalHandler(Protocol):
 
     async def __call__(self, fn_name: str, args: list[Any], kwargs: dict[str, Any]) -> Any: ...
 
+class ShellState:
+    """Read-only snapshot of shell state.
+
+    Returned by ``Bash.shell_state()`` and ``BashTool.shell_state()`` for
+    prompt rendering and state inspection. This is a Python-friendly
+    inspection view, not a full-fidelity Rust ``ShellState`` mirror.
+    Mapping fields are immutable views. Use
+    ``snapshot(exclude_filesystem=True)`` when you need shell-only restore
+    bytes. Transient fields like ``last_exit_code`` and ``traps`` reflect the
+    captured snapshot, but the next top-level ``execute()`` / ``execute_sync()``
+    clears them before running a new command.
+    """
+
+    @property
+    def env(self) -> Mapping[str, str]: ...
+    @property
+    def variables(self) -> Mapping[str, str]: ...
+    @property
+    def arrays(self) -> Mapping[str, Mapping[int, str]]: ...
+    @property
+    def assoc_arrays(self) -> Mapping[str, Mapping[str, str]]: ...
+    @property
+    def cwd(self) -> str: ...
+    @property
+    def last_exit_code(self) -> int: ...
+    @property
+    def aliases(self) -> Mapping[str, str]: ...
+    @property
+    def traps(self) -> Mapping[str, str]: ...
+
 class Bash:
     """Core bash interpreter with virtual filesystem.
 
@@ -491,6 +521,10 @@ class Bash:
 
     def snapshot(self, exclude_filesystem: bool = False) -> bytes:
         """Serialize interpreter state to bytes."""
+        ...
+
+    def shell_state(self) -> ShellState:
+        """Capture a read-only shell-state snapshot."""
         ...
 
     def restore_snapshot(self, data: bytes) -> None:
@@ -896,6 +930,10 @@ class BashTool:
 
     def snapshot(self, exclude_filesystem: bool = False) -> bytes:
         """Serialize interpreter state to bytes."""
+        ...
+
+    def shell_state(self) -> ShellState:
+        """Capture a read-only shell-state snapshot."""
         ...
 
     def restore_snapshot(self, data: bytes) -> None:

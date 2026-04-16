@@ -51,6 +51,7 @@ from bashkit._bashkit import (
     ExecResult,
     FileSystem,
     ScriptedTool,
+    ShellState,
     create_langchain_tool_spec,
     get_version,
 )
@@ -63,6 +64,7 @@ __all__ = [
     "BashTool",
     "ExecResult",
     "FileSystem",
+    "ShellState",
     "ScriptedTool",
     "create_langchain_tool_spec",
     "get_version",

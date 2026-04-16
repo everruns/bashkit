@@ -12,13 +12,16 @@ use bashkit::{
     FileSystem, FileSystemExt, FileType as FsFileType, InMemoryFs, Metadata as FsMetadata,
     MontyException, MontyObject, OutputCallback as RustOutputCallback, OverlayFs, PosixFs,
     PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool,
-    SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
+    ShellStateView as RustShellStateView, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
+    ToolDef, ToolRequest, async_trait,
 };
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PySet, PyTuple};
+use pyo3::sync::PyOnceLock;
+use pyo3::types::{PyBytes, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PyModule, PySet, PyTuple};
 use pyo3_async_runtimes::TaskLocals;
 use pyo3_async_runtimes::tokio::future_into_py;
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -786,6 +789,74 @@ fn restore_live_bash(
     })
 }
 
+static MAPPING_PROXY_TYPE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
+
+fn mapping_proxy(py: Python<'_>, dict: Bound<'_, PyDict>) -> PyResult<Py<PyAny>> {
+    let mapping_proxy_type =
+        MAPPING_PROXY_TYPE.get_or_try_init(py, || -> PyResult<Py<PyAny>> {
+            Ok(PyModule::import(py, "types")?
+                .getattr("MappingProxyType")?
+                .unbind())
+        })?;
+    Ok(mapping_proxy_type.bind(py).call1((dict,))?.unbind())
+}
+
+fn readonly_string_map(py: Python<'_>, map: &HashMap<String, String>) -> PyResult<Py<PyAny>> {
+    let dict = PyDict::new(py);
+    for (key, value) in map {
+        dict.set_item(key, value)?;
+    }
+    mapping_proxy(py, dict)
+}
+
+fn readonly_indexed_arrays(
+    py: Python<'_>,
+    map: &HashMap<String, HashMap<usize, String>>,
+) -> PyResult<Py<PyAny>> {
+    let outer = PyDict::new(py);
+    for (name, values) in map {
+        let inner = PyDict::new(py);
+        for (index, value) in values {
+            inner.set_item(*index, value)?;
+        }
+        outer.set_item(name, mapping_proxy(py, inner)?)?;
+    }
+    mapping_proxy(py, outer)
+}
+
+fn readonly_assoc_arrays(
+    py: Python<'_>,
+    map: &HashMap<String, HashMap<String, String>>,
+) -> PyResult<Py<PyAny>> {
+    let outer = PyDict::new(py);
+    for (name, values) in map {
+        let inner = PyDict::new(py);
+        for (key, value) in values {
+            inner.set_item(key, value)?;
+        }
+        outer.set_item(name, mapping_proxy(py, inner)?)?;
+    }
+    mapping_proxy(py, outer)
+}
+
+fn capture_shell_state(
+    py: Python<'_>,
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+) -> PyResult<ShellState> {
+    let rt = rt.clone();
+    let inner = inner.clone();
+    py.detach(|| {
+        rt.block_on(async move {
+            let shell_state = {
+                let bash = inner.lock().await;
+                bash.shell_state_view()
+            };
+            Ok(ShellState::from(shell_state))
+        })
+    })
+}
+
 #[pyclass(name = "FileSystem")]
 struct PyFileSystem {
     inner: FileSystemHandle,
@@ -985,6 +1056,150 @@ impl PyFileSystem {
 // ============================================================================
 // ExecResult
 // ============================================================================
+
+// Decision: Python ShellState is an inspection-focused view, not a full Rust
+// ShellState mirror. Copy only Python-friendly fields so Rust-only additions
+// like AST-backed functions do not silently widen the Python API surface. Use
+// snapshot(exclude_filesystem=True) when callers need shell-only restore bytes.
+/// Read-only snapshot of shell state for prompt rendering and inspection.
+///
+/// Transient fields like `last_exit_code` and `traps` reflect the captured
+/// snapshot, but the core interpreter clears them before each top-level
+/// `execute()` or `execute_sync()` call.
+#[pyclass(skip_from_py_object)]
+pub struct ShellState {
+    env: HashMap<String, String>,
+    variables: HashMap<String, String>,
+    arrays: HashMap<String, HashMap<usize, String>>,
+    assoc_arrays: HashMap<String, HashMap<String, String>>,
+    cwd: String,
+    last_exit_code: i32,
+    aliases: HashMap<String, String>,
+    traps: HashMap<String, String>,
+    cached_env: PyOnceLock<Py<PyAny>>,
+    cached_variables: PyOnceLock<Py<PyAny>>,
+    cached_arrays: PyOnceLock<Py<PyAny>>,
+    cached_assoc_arrays: PyOnceLock<Py<PyAny>>,
+    cached_aliases: PyOnceLock<Py<PyAny>>,
+    cached_traps: PyOnceLock<Py<PyAny>>,
+}
+
+impl From<RustShellStateView> for ShellState {
+    fn from(inner: RustShellStateView) -> Self {
+        let RustShellStateView {
+            env,
+            variables,
+            arrays,
+            assoc_arrays,
+            cwd,
+            last_exit_code,
+            aliases,
+            traps,
+            ..
+        } = inner;
+        Self {
+            env,
+            variables,
+            arrays,
+            assoc_arrays,
+            cwd: cwd.to_string_lossy().into_owned(),
+            last_exit_code,
+            aliases,
+            traps,
+            cached_env: PyOnceLock::new(),
+            cached_variables: PyOnceLock::new(),
+            cached_arrays: PyOnceLock::new(),
+            cached_assoc_arrays: PyOnceLock::new(),
+            cached_aliases: PyOnceLock::new(),
+            cached_traps: PyOnceLock::new(),
+        }
+    }
+}
+
+impl ShellState {
+    fn cached_mapping<F>(
+        &self,
+        py: Python<'_>,
+        cache: &PyOnceLock<Py<PyAny>>,
+        build: F,
+    ) -> PyResult<Py<PyAny>>
+    where
+        F: FnOnce(Python<'_>) -> PyResult<Py<PyAny>>,
+    {
+        cache
+            .get_or_try_init(py, || build(py))
+            .map(|mapping| mapping.clone_ref(py))
+    }
+}
+
+#[pymethods]
+impl ShellState {
+    fn __repr__(&self) -> String {
+        format!(
+            "ShellState(cwd={:?}, last_exit_code={}, env={}, variables={}, arrays={}, assoc_arrays={}, aliases={}, traps={})",
+            self.cwd,
+            self.last_exit_code,
+            self.env.len(),
+            self.variables.len(),
+            self.arrays.len(),
+            self.assoc_arrays.len(),
+            self.aliases.len(),
+            self.traps.len(),
+        )
+    }
+
+    #[getter]
+    fn env(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.cached_mapping(py, &self.cached_env, |py| {
+            readonly_string_map(py, &self.env)
+        })
+    }
+
+    #[getter]
+    fn variables(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.cached_mapping(py, &self.cached_variables, |py| {
+            readonly_string_map(py, &self.variables)
+        })
+    }
+
+    #[getter]
+    fn arrays(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.cached_mapping(py, &self.cached_arrays, |py| {
+            readonly_indexed_arrays(py, &self.arrays)
+        })
+    }
+
+    #[getter]
+    fn assoc_arrays(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.cached_mapping(py, &self.cached_assoc_arrays, |py| {
+            readonly_assoc_arrays(py, &self.assoc_arrays)
+        })
+    }
+
+    #[getter]
+    fn cwd(&self) -> String {
+        self.cwd.clone()
+    }
+
+    #[getter]
+    fn last_exit_code(&self) -> i32 {
+        self.last_exit_code
+    }
+
+    #[getter]
+    fn aliases(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.cached_mapping(py, &self.cached_aliases, |py| {
+            readonly_string_map(py, &self.aliases)
+        })
+    }
+
+    #[getter]
+    fn traps(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.cached_mapping(py, &self.cached_traps, |py| {
+            readonly_string_map(py, &self.traps)
+        })
+    }
+}
 
 /// Result from executing bash commands
 #[pyclass(from_py_object)]
@@ -2416,6 +2631,11 @@ impl PyBash {
         Ok(PyBytes::new(py, &bytes))
     }
 
+    /// Capture a read-only shell-state snapshot for prompt rendering and inspection.
+    fn shell_state(&self, py: Python<'_>) -> PyResult<ShellState> {
+        capture_shell_state(py, &self.rt, &self.inner)
+    }
+
     /// Restore interpreter state from bytes previously produced by `snapshot()`.
     fn restore_snapshot(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
         restore_live_bash(py, &self.rt, &self.inner, data)
@@ -2950,6 +3170,11 @@ impl BashTool {
     ) -> PyResult<Bound<'py, PyBytes>> {
         let bytes = snapshot_live_bash(py, &self.rt, &self.inner, exclude_filesystem)?;
         Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// Capture a read-only shell-state snapshot for prompt rendering and inspection.
+    fn shell_state(&self, py: Python<'_>) -> PyResult<ShellState> {
+        capture_shell_state(py, &self.rt, &self.inner)
     }
 
     /// Restore interpreter state from bytes previously produced by `snapshot()`.
@@ -3599,6 +3824,7 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBash>()?;
     m.add_class::<BashTool>()?;
     m.add_class::<ScriptedTool>()?;
+    m.add_class::<ShellState>()?;
     m.add_class::<ExecResult>()?;
     m.add_class::<PyBuiltinContext>()?;
     m.add_class::<PyFileSystem>()?;
