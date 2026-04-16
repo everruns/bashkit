@@ -68,7 +68,11 @@ just compat-report
 
 ## Coverage
 
-Coverage is tracked with cargo-tarpaulin and uploaded to Codecov.
+Coverage is uploaded to Codecov from three sources:
+
+- Rust unit/integration coverage via `cargo tarpaulin`
+- Rust coverage exercised through Python binding tests via `cargo llvm-cov`
+- Rust coverage exercised through Node binding tests via `cargo llvm-cov`
 
 ```bash
 cargo tarpaulin --features http_client --out html --output-dir coverage
