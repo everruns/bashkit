@@ -438,7 +438,9 @@ pub use fs::{
 #[cfg(feature = "realfs")]
 pub use fs::{RealFs, RealFsMode};
 pub use git::GitConfig;
-pub use interpreter::{ControlFlow, ExecResult, HistoryEntry, OutputCallback, ShellState};
+pub use interpreter::{
+    ControlFlow, ExecResult, HistoryEntry, OutputCallback, ShellState, ShellStateView,
+};
 pub use limits::{
     ExecutionCounters, ExecutionLimits, LimitExceeded, MemoryBudget, MemoryLimits, SessionLimits,
 };
@@ -1032,10 +1034,19 @@ impl Bash {
         self.interpreter.shell_state()
     }
 
+    /// Capture a lightweight shell-state view for prompt/UI inspection.
+    ///
+    /// Unlike [`shell_state()`](Self::shell_state), this omits function
+    /// definitions so callers that only need prompt/completion data avoid
+    /// cloning AST-heavy state.
+    pub fn shell_state_view(&self) -> ShellStateView {
+        self.interpreter.shell_state_view()
+    }
+
     /// Restore shell state from a previous snapshot.
     ///
-    /// Restores variables, env, cwd, arrays, aliases, traps, and options.
-    /// Does not restore functions or builtins — those remain as-is.
+    /// Restores variables, env, cwd, arrays, functions, aliases, traps, and
+    /// options. Does not restore builtins or VFS contents.
     pub fn restore_shell_state(&mut self, state: &ShellState) {
         self.interpreter.restore_shell_state(state);
     }

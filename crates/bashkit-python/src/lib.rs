@@ -12,8 +12,8 @@ use bashkit::{
     FileSystem, FileSystemExt, FileType as FsFileType, InMemoryFs, Metadata as FsMetadata,
     MontyException, MontyObject, OutputCallback as RustOutputCallback, OverlayFs, PosixFs,
     PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool,
-    ShellState as RustShellState, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs, ToolDef,
-    ToolRequest, async_trait,
+    ShellStateView as RustShellStateView, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
+    ToolDef, ToolRequest, async_trait,
 };
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -843,7 +843,7 @@ fn capture_shell_state(
     py.detach(|| {
         rt.block_on(async move {
             let bash = inner.lock().await;
-            Ok(ShellState::from(bash.shell_state()))
+            Ok(ShellState::from(bash.shell_state_view()))
         })
     })
 }
@@ -1069,9 +1069,9 @@ pub struct ShellState {
     traps: HashMap<String, String>,
 }
 
-impl From<RustShellState> for ShellState {
-    fn from(inner: RustShellState) -> Self {
-        let RustShellState {
+impl From<RustShellStateView> for ShellState {
+    fn from(inner: RustShellStateView) -> Self {
+        let RustShellStateView {
             env,
             variables,
             arrays,
