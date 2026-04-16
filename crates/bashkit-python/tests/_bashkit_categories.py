@@ -1934,6 +1934,26 @@ async def test_bash_async_clear_cancel_after_cancelled_execute():
 
 
 @pytest.mark.asyncio
+async def test_bash_async_clear_cancel_preserves_state_after_cancelled_execute():
+    """Async: clear_cancel() recovers reuse without dropping shell/VFS state."""
+    bash = Bash(max_commands=5000, max_loop_iterations=5000)
+    seeded = await bash.execute('SESSION=kept\nprintf "persisted\\n" > /tmp/cancel-state.txt')
+    assert seeded.exit_code == 0
+
+    task = bash.execute("for i in $(seq 1 1000); do sleep 0.001; done")
+    await asyncio.sleep(0.01)
+    bash.cancel()
+
+    cancelled = await task
+    assert cancelled.exit_code != 0
+
+    bash.clear_cancel()
+    restored = await bash.execute('printf "%s:%s" "$SESSION" "$(cat /tmp/cancel-state.txt)"')
+    assert restored.exit_code == 0
+    assert restored.stdout == "kept:persisted"
+
+
+@pytest.mark.asyncio
 async def test_bashtool_async_clear_cancel_after_cancelled_execute():
     """BashTool async: cancel in-flight, await it, then clear_cancel() to recover."""
     tool = BashTool(max_commands=5000, max_loop_iterations=5000)
@@ -1951,6 +1971,26 @@ async def test_bashtool_async_clear_cancel_after_cancelled_execute():
     r = await tool.execute("echo works_again")
     assert r.exit_code == 0
     assert r.stdout.strip() == "works_again"
+
+
+@pytest.mark.asyncio
+async def test_bashtool_async_clear_cancel_preserves_state_after_cancelled_execute():
+    """BashTool async: clear_cancel() recovers reuse without dropping state."""
+    tool = BashTool(max_commands=5000, max_loop_iterations=5000)
+    seeded = await tool.execute('SESSION=kept\nprintf "persisted\\n" > /tmp/cancel-state.txt')
+    assert seeded.exit_code == 0
+
+    task = tool.execute("for i in $(seq 1 1000); do sleep 0.001; done")
+    await asyncio.sleep(0.01)
+    tool.cancel()
+
+    cancelled = await task
+    assert cancelled.exit_code != 0
+
+    tool.clear_cancel()
+    restored = await tool.execute('printf "%s:%s" "$SESSION" "$(cat /tmp/cancel-state.txt)"')
+    assert restored.exit_code == 0
+    assert restored.stdout == "kept:persisted"
 
 
 def test_bash_clear_cancel_on_fresh_instance_is_noop():
