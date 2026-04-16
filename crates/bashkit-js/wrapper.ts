@@ -290,6 +290,9 @@ export class Bash {
         return this.native.executeSync(commands);
       } finally {
         signal.removeEventListener("abort", onAbort);
+        if (signal.aborted) {
+          this.native.clearCancel();
+        }
       }
     }
     return this.native.executeSync(commands);
@@ -340,6 +343,16 @@ export class Bash {
    */
   cancel(): void {
     this.native.cancel();
+  }
+
+  /**
+   * Clear the cancellation flag so subsequent executions proceed normally.
+   *
+   * Call this after `cancel()` once the in-flight execution has finished and
+   * you want to reuse the same instance without discarding shell or VFS state.
+   */
+  clearCancel(): void {
+    this.native.clearCancel();
   }
 
   /**
@@ -577,6 +590,9 @@ export class BashTool {
         return this.native.executeSync(commands);
       } finally {
         signal.removeEventListener("abort", onAbort);
+        if (signal.aborted) {
+          this.native.clearCancel();
+        }
       }
     }
     return this.native.executeSync(commands);
@@ -619,6 +635,16 @@ export class BashTool {
    */
   cancel(): void {
     this.native.cancel();
+  }
+
+  /**
+   * Clear the cancellation flag so subsequent executions proceed normally.
+   *
+   * Call this after `cancel()` once the in-flight execution has finished and
+   * you want to reuse the same instance without discarding shell or VFS state.
+   */
+  clearCancel(): void {
+    this.native.clearCancel();
   }
 
   /**
