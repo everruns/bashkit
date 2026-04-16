@@ -24,8 +24,8 @@ function assertChunksMatchResult(result, chunks) {
 }
 
 for (const [label, create] of [
-  ["Bash", () => new Bash()],
-  ["BashTool", () => new BashTool()],
+  ["Bash", (options) => new Bash(options)],
+  ["BashTool", (options) => new BashTool(options)],
 ]) {
   describe(`${label} streaming output`, () => {
     it("sync rejects Promise-returning onOutput", () => {
@@ -147,6 +147,24 @@ for (const [label, create] of [
       assert.equal(result.stdout, "after-error\n");
     });
 
+    it("sync rejects same-instance execute from onOutput", () => {
+      const shell = create();
+
+      assert.throws(
+        () =>
+          shell.executeSync(SCRIPT, {
+            onOutput() {
+              shell.executeSync("echo nested");
+            },
+          }),
+        /onOutput cannot re-enter the same Bash instance/,
+      );
+
+      const result = shell.executeSync("echo after-reentry");
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.stdout, "after-reentry\n");
+    });
+
     it("sync callback errors do not clear future explicit cancel", () => {
       const shell = create();
 
@@ -203,6 +221,29 @@ for (const [label, create] of [
       assert.equal(result.exitCode, 1);
       assert.equal(result.error, "execution cancelled");
       assert.equal(result.stdout, "");
+    });
+
+    it("async rejects same-instance fs handle from onOutput", async () => {
+      const shell = create({
+        files: {
+          "/workspace/memory.md": "hello\n",
+        },
+      });
+      const fs = shell.fs();
+
+      await assert.rejects(
+        () =>
+          shell.execute(SCRIPT, {
+            onOutput() {
+              fs.readFile("/workspace/memory.md");
+            },
+          }),
+        /onOutput cannot re-enter the same Bash instance/,
+      );
+
+      const result = await shell.execute("cat /workspace/memory.md");
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.stdout, "hello\n");
     });
 
     it("async rejects async onOutput", async () => {

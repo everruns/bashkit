@@ -24,7 +24,7 @@ use pyo3_async_runtimes::tokio::future_into_py;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
@@ -36,6 +36,7 @@ use tokio::sync::{Mutex, oneshot};
 
 /// Convert serde_json::Value → Py<PyAny>
 const MAX_NESTING_DEPTH: usize = 64;
+const EXTERNAL_HANDLER_REENTRY_ERROR: &str = "external_handler cannot re-enter the same Bash instance; use handler inputs or another Bash instance for live access";
 
 fn json_to_py(py: Python<'_>, val: &serde_json::Value) -> PyResult<Py<PyAny>> {
     json_to_py_inner(py, val, 0)
@@ -502,18 +503,53 @@ fn dir_entry_to_pydict(py: Python<'_>, entry: &FsDirEntry) -> PyResult<Py<PyAny>
 #[derive(Clone)]
 enum FileSystemHandle {
     Static(Arc<dyn FileSystem>),
-    Live(Arc<Mutex<Bash>>),
+    Live {
+        inner: Arc<Mutex<Bash>>,
+        external_handler_reentry_depth: Option<Arc<AtomicUsize>>,
+    },
 }
 
 impl FileSystemHandle {
-    async fn resolve(&self) -> Arc<dyn FileSystem> {
+    async fn resolve(&self) -> PyResult<Arc<dyn FileSystem>> {
         match self {
-            Self::Static(fs) => Arc::clone(fs),
-            Self::Live(inner) => {
+            Self::Static(fs) => Ok(Arc::clone(fs)),
+            Self::Live {
+                inner,
+                external_handler_reentry_depth,
+            } => {
+                reject_external_handler_reentry_depth(external_handler_reentry_depth.as_ref())?;
                 let bash = inner.lock().await;
-                bash.fs()
+                Ok(bash.fs())
             }
         }
+    }
+}
+
+fn reject_external_handler_reentry_depth(
+    external_handler_reentry_depth: Option<&Arc<AtomicUsize>>,
+) -> PyResult<()> {
+    if let Some(depth) = external_handler_reentry_depth
+        && depth.load(Ordering::Relaxed) > 0
+    {
+        return Err(PyRuntimeError::new_err(EXTERNAL_HANDLER_REENTRY_ERROR));
+    }
+    Ok(())
+}
+
+struct ExternalHandlerReentryScope {
+    depth: Arc<AtomicUsize>,
+}
+
+impl ExternalHandlerReentryScope {
+    fn enter(depth: Arc<AtomicUsize>) -> Self {
+        depth.fetch_add(1, Ordering::Relaxed);
+        Self { depth }
+    }
+}
+
+impl Drop for ExternalHandlerReentryScope {
+    fn drop(&mut self) {
+        self.depth.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -873,7 +909,24 @@ impl PyFileSystem {
 
     fn from_live(inner: Arc<Mutex<Bash>>, rt: Arc<Runtime>) -> Self {
         Self {
-            inner: FileSystemHandle::Live(inner),
+            inner: FileSystemHandle::Live {
+                inner,
+                external_handler_reentry_depth: None,
+            },
+            rt,
+        }
+    }
+
+    fn from_live_with_reentry_guard(
+        inner: Arc<Mutex<Bash>>,
+        rt: Arc<Runtime>,
+        external_handler_reentry_depth: Arc<AtomicUsize>,
+    ) -> Self {
+        Self {
+            inner: FileSystemHandle::Live {
+                inner,
+                external_handler_reentry_depth: Some(external_handler_reentry_depth),
+            },
             rt,
         }
     }
@@ -885,7 +938,7 @@ impl PyFileSystem {
     {
         let inner = self.inner.clone();
         self.rt.block_on(async move {
-            let fs = inner.resolve().await;
+            let fs = inner.resolve().await?;
             f(fs).await
         })
     }
@@ -2182,10 +2235,18 @@ async fn exec_bash_with_optional_output(
 ///
 /// The handler converts MontyObject args/kwargs to Python objects, calls the
 /// async handler coroutine, awaits it, and converts the result back.
-fn make_external_handler(py_handler: Py<PyAny>) -> PythonExternalFnHandler {
+// Decision: reject same-instance live Bash access from external_handler.
+// Releasing the interpreter mutex during Python callbacks would widen the
+// execution model; a targeted guard keeps the failure explicit and local.
+fn make_external_handler(
+    py_handler: Py<PyAny>,
+    external_handler_reentry_depth: Arc<AtomicUsize>,
+) -> PythonExternalFnHandler {
     Arc::new(move |fn_name, args, kwargs| {
         let py_handler = Python::attach(|py| py_handler.clone_ref(py));
+        let external_handler_reentry_depth = external_handler_reentry_depth.clone();
         Box::pin(async move {
+            let _reentry_scope = ExternalHandlerReentryScope::enter(external_handler_reentry_depth);
             let fut = Python::attach(|py| {
                 let py_args = args
                     .iter()
@@ -2232,6 +2293,7 @@ fn apply_python_config(
     python: bool,
     fn_names: Vec<String>,
     handler: Option<Py<PyAny>>,
+    external_handler_reentry_depth: Arc<AtomicUsize>,
 ) -> bashkit::BashBuilder {
     // By construction, handler.is_some() implies python=true (validated in new()).
     match (python, handler) {
@@ -2239,7 +2301,7 @@ fn apply_python_config(
             builder = builder.python_with_external_handler(
                 PythonLimits::default(),
                 fn_names,
-                make_external_handler(h),
+                make_external_handler(h, external_handler_reentry_depth),
             );
         }
         (true, None) => {
@@ -2281,6 +2343,7 @@ pub struct PyBash {
     external_functions: Vec<String>,
     /// Async Python callable invoked when Monty calls an external function.
     external_handler: Option<Py<PyAny>>,
+    external_handler_reentry_depth: Arc<AtomicUsize>,
     custom_builtins: Vec<PyCustomBuiltinEntry>,
     builtin_engine: Arc<PyCallbackEngine>,
     files: Vec<PyFileMount>,
@@ -2292,6 +2355,10 @@ pub struct PyBash {
 }
 
 impl PyBash {
+    fn reject_external_handler_reentry(&self) -> PyResult<()> {
+        reject_external_handler_reentry_depth(Some(&self.external_handler_reentry_depth))
+    }
+
     fn build_live_builder(&self, py: Python<'_>) -> PyResult<bashkit::BashBuilder> {
         let mut builder = Bash::builder();
 
@@ -2325,6 +2392,7 @@ impl PyBash {
             self.python,
             self.external_functions.clone(),
             handler_clone,
+            self.external_handler_reentry_depth.clone(),
         );
         let files = clone_file_mounts(py, &self.files);
         let builder = apply_fs_config(builder, &files, &self.real_mounts)?;
@@ -2424,7 +2492,14 @@ impl PyBash {
             }
         }
         let handler_for_build = external_handler.as_ref().map(|h| h.clone_ref(py));
-        builder = apply_python_config(builder, python, fn_names, handler_for_build);
+        let external_handler_reentry_depth = Arc::new(AtomicUsize::new(0));
+        builder = apply_python_config(
+            builder,
+            python,
+            fn_names,
+            handler_for_build,
+            external_handler_reentry_depth.clone(),
+        );
         builder = apply_fs_config(builder, &files, &real_mounts)?;
         let builtin_engine = PyCallbackEngine::new(py)?;
         builder = apply_custom_builtins_to_builder(py, builder, &custom_builtins);
@@ -2443,6 +2518,7 @@ impl PyBash {
             python,
             external_functions: external_functions.unwrap_or_default(),
             external_handler,
+            external_handler_reentry_depth,
             custom_builtins,
             builtin_engine,
             files,
@@ -2489,6 +2565,7 @@ impl PyBash {
         commands: String,
         on_output: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        self.reject_external_handler_reentry()?;
         let builtin_session =
             capture_custom_builtin_session(py, &self.custom_builtins, &self.builtin_engine, true)?;
         let on_output = prepare_output_handler(py, on_output)?;
@@ -2585,6 +2662,7 @@ impl PyBash {
         commands: String,
         on_output: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        self.reject_external_handler_reentry()?;
         let builtin_session =
             capture_custom_builtin_session(py, &self.custom_builtins, &self.builtin_engine, true)?;
         let on_output = prepare_output_handler(py, on_output)?;
@@ -2611,6 +2689,7 @@ impl PyBash {
     /// python mode, external function handler, and custom builtins.
     /// Releases GIL before blocking on tokio to prevent deadlock.
     fn reset(&self, py: Python<'_>) -> PyResult<()> {
+        self.reject_external_handler_reentry()?;
         replace_live_bash_with_builder(
             py,
             &self.rt,
@@ -2627,17 +2706,20 @@ impl PyBash {
         py: Python<'py>,
         exclude_filesystem: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
+        self.reject_external_handler_reentry()?;
         let bytes = snapshot_live_bash(py, &self.rt, &self.inner, exclude_filesystem)?;
         Ok(PyBytes::new(py, &bytes))
     }
 
     /// Capture a read-only shell-state snapshot for prompt rendering and inspection.
     fn shell_state(&self, py: Python<'_>) -> PyResult<ShellState> {
+        self.reject_external_handler_reentry()?;
         capture_shell_state(py, &self.rt, &self.inner)
     }
 
     /// Restore interpreter state from bytes previously produced by `snapshot()`.
     fn restore_snapshot(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
+        self.reject_external_handler_reentry()?;
         restore_live_bash(py, &self.rt, &self.inner, data)
     }
 
@@ -2695,49 +2777,60 @@ impl PyBash {
     }
 
     fn read_file(&self, py: Python<'_>, path: String) -> PyResult<String> {
+        self.reject_external_handler_reentry()?;
         py.detach(|| read_text_via_live_fs(&self.rt, &self.inner, path))
     }
 
     fn write_file(&self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
+        self.reject_external_handler_reentry()?;
         py.detach(|| write_text_via_live_fs(&self.rt, &self.inner, path, content))
     }
 
     fn append_file(&self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
+        self.reject_external_handler_reentry()?;
         py.detach(|| append_text_via_live_fs(&self.rt, &self.inner, path, content))
     }
 
     #[pyo3(signature = (path, recursive=false))]
     fn mkdir(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
+        self.reject_external_handler_reentry()?;
         py.detach(|| mkdir_via_live_fs(&self.rt, &self.inner, path, recursive))
     }
 
     fn exists(&self, py: Python<'_>, path: String) -> PyResult<bool> {
+        self.reject_external_handler_reentry()?;
         py.detach(|| exists_via_live_fs(&self.rt, &self.inner, path))
     }
 
     #[pyo3(signature = (path, recursive=false))]
     fn remove(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
+        self.reject_external_handler_reentry()?;
         py.detach(|| remove_via_live_fs(&self.rt, &self.inner, path, recursive))
     }
 
     fn stat(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        self.reject_external_handler_reentry()?;
         let metadata = py.detach(|| stat_via_live_fs(&self.rt, &self.inner, path))?;
         metadata_to_pydict(py, &metadata)
     }
 
     fn chmod(&self, py: Python<'_>, path: String, mode: u32) -> PyResult<()> {
+        self.reject_external_handler_reentry()?;
         py.detach(|| chmod_via_live_fs(&self.rt, &self.inner, path, mode))
     }
 
     fn symlink(&self, py: Python<'_>, target: String, link: String) -> PyResult<()> {
+        self.reject_external_handler_reentry()?;
         py.detach(|| symlink_via_live_fs(&self.rt, &self.inner, target, link))
     }
 
     fn read_link(&self, py: Python<'_>, path: String) -> PyResult<String> {
+        self.reject_external_handler_reentry()?;
         py.detach(|| read_link_via_live_fs(&self.rt, &self.inner, path))
     }
 
     fn read_dir(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        self.reject_external_handler_reentry()?;
         let entries = py.detach(|| read_dir_via_live_fs(&self.rt, &self.inner, path))?;
         let items: Vec<Py<PyAny>> = entries
             .iter()
@@ -2748,6 +2841,7 @@ impl PyBash {
 
     #[pyo3(signature = (path=".".to_string()))]
     fn ls(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        self.reject_external_handler_reentry()?;
         let names = match py.detach(|| read_dir_via_live_fs(&self.rt, &self.inner, path)) {
             Ok(entries) => entries
                 .into_iter()
@@ -2759,6 +2853,7 @@ impl PyBash {
     }
 
     fn glob(&self, py: Python<'_>, pattern: String) -> PyResult<Py<PyAny>> {
+        self.reject_external_handler_reentry()?;
         let matches = py.detach(|| -> PyResult<Vec<String>> {
             Ok(glob_via_bash(&self.rt, &self.inner, pattern))
         })?;
@@ -2772,19 +2867,25 @@ impl PyBash {
     /// batch reads where consistency isn't needed, prefer reading files via
     /// `execute_sync("cat ...")`.
     fn fs(&self, py: Python<'_>) -> PyResult<Py<PyFileSystem>> {
+        self.reject_external_handler_reentry()?;
         Py::new(
             py,
-            PyFileSystem::from_live(self.inner.clone(), self.rt.clone()),
+            PyFileSystem::from_live_with_reentry_guard(
+                self.inner.clone(),
+                self.rt.clone(),
+                self.external_handler_reentry_depth.clone(),
+            ),
         )
     }
 
     /// Mount a filesystem at `vfs_path` without rebuilding the interpreter.
     fn mount(&self, py: Python<'_>, vfs_path: String, fs: PyRef<'_, PyFileSystem>) -> PyResult<()> {
+        self.reject_external_handler_reentry()?;
         let inner = self.inner.clone();
         let source = fs.inner.clone();
         py.detach(|| {
             self.rt.block_on(async move {
-                let mounted_fs = source.resolve().await;
+                let mounted_fs = source.resolve().await?;
                 let bash = inner.lock().await;
                 bash.mount(Path::new(&vfs_path), mounted_fs)
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))
@@ -2794,6 +2895,7 @@ impl PyBash {
 
     /// Unmount a live filesystem without rebuilding the interpreter.
     fn unmount(&self, py: Python<'_>, vfs_path: String) -> PyResult<()> {
+        self.reject_external_handler_reentry()?;
         let inner = self.inner.clone();
         py.detach(|| {
             self.rt.block_on(async move {
@@ -3316,7 +3418,7 @@ impl BashTool {
         let source = fs.inner.clone();
         py.detach(|| {
             self.rt.block_on(async move {
-                let mounted_fs = source.resolve().await;
+                let mounted_fs = source.resolve().await?;
                 let bash = inner.lock().await;
                 bash.mount(Path::new(&vfs_path), mounted_fs)
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;

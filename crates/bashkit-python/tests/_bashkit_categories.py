@@ -1704,6 +1704,55 @@ async def test_bash_external_handler_error_propagates():
 
 
 @pytest.mark.asyncio
+async def test_bash_external_handler_reentrant_read_file_rejected():
+    """Same-instance live VFS access from external_handler must fail fast."""
+
+    bash = None
+
+    async def handler(fn_name: str, args: list, kwargs: dict):
+        assert fn_name == "read__memory"
+        return bash.read_file("/workspace/memory.md")
+
+    bash = Bash(
+        python=True,
+        external_functions=["read__memory"],
+        external_handler=handler,
+        files={"/workspace/memory.md": "hello from memory\n"},
+    )
+    r = await asyncio.wait_for(
+        bash.execute('python3 -c "print(read__memory())"'),
+        timeout=1,
+    )
+    assert r.exit_code != 0
+    assert "external_handler cannot re-enter the same Bash instance" in (r.stderr + (r.error or ""))
+
+
+@pytest.mark.asyncio
+async def test_bash_external_handler_reentrant_fs_handle_rejected():
+    """Live fs handles from the same Bash instance must also fail fast."""
+
+    bash = None
+
+    async def handler(fn_name: str, args: list, kwargs: dict):
+        assert fn_name == "read__memory"
+        fs = bash.fs()
+        return fs.read_file("/workspace/memory.md").decode()
+
+    bash = Bash(
+        python=True,
+        external_functions=["read__memory"],
+        external_handler=handler,
+        files={"/workspace/memory.md": "hello from memory\n"},
+    )
+    r = await asyncio.wait_for(
+        bash.execute('python3 -c "print(read__memory())"'),
+        timeout=1,
+    )
+    assert r.exit_code != 0
+    assert "external_handler cannot re-enter the same Bash instance" in (r.stderr + (r.error or ""))
+
+
+@pytest.mark.asyncio
 async def test_bash_reset_preserves_python_and_handler():
     """reset() must preserve python=True and external_handler config."""
     calls = []
