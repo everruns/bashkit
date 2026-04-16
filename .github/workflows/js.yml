@@ -184,7 +184,7 @@ jobs:
         uses: dopplerhq/cli-action@v4
 
       - name: Run AI examples
-        if: env.DOPPLER_TOKEN != ''
+        if: env.DOPPLER_TOKEN != '' && github.event_name != 'pull_request'
         working-directory: examples
         run: |
           doppler run -- ${{ matrix.run }} openai_tool.mjs
