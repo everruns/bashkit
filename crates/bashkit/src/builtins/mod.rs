@@ -225,6 +225,7 @@ pub use typescript::{
 };
 
 use async_trait::async_trait;
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -289,6 +290,57 @@ pub(crate) use crate::interpreter::ShellRef;
 
 // Re-export for use by builtins
 pub use crate::interpreter::BuiltinSideEffect;
+
+/// Typed, per-execution data exposed to builtin implementations.
+///
+/// This is intentionally separate from shell state: extensions live for one
+/// `Bash::exec*()` call, while the shell/interpreter may persist across many
+/// executions.
+#[derive(Default)]
+pub struct ExecutionExtensions {
+    values: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+}
+
+impl ExecutionExtensions {
+    /// Create an empty execution extension bag.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Insert a typed value, replacing any previous value of the same type.
+    pub fn insert<T>(&mut self, value: T) -> Option<T>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.values
+            .insert(TypeId::of::<T>(), Box::new(value))
+            .and_then(|prev| prev.downcast::<T>().ok().map(|prev| *prev))
+    }
+
+    /// Builder-style insert.
+    pub fn with<T>(mut self, value: T) -> Self
+    where
+        T: Send + Sync + 'static,
+    {
+        let _ = self.insert(value);
+        self
+    }
+
+    /// Look up a typed value by exact type.
+    pub fn get<T>(&self) -> Option<&T>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.values
+            .get(&TypeId::of::<T>())
+            .and_then(|value| value.downcast_ref::<T>())
+    }
+
+    /// Return whether the bag is empty.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+}
 
 /// A sub-command that a builtin wants the interpreter to execute.
 ///
@@ -463,6 +515,16 @@ pub struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
+    /// Look up a typed per-execution extension, if present.
+    pub fn execution_extension<T>(&self) -> Option<&T>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.shell
+            .as_ref()
+            .and_then(|shell| shell.execution_extensions.get::<T>())
+    }
+
     /// Create a new Context for testing purposes.
     ///
     /// This helper handles the conditional `http_client` field automatically.

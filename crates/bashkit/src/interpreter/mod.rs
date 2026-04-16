@@ -22,8 +22,8 @@ pub use state::{BuiltinSideEffect, ControlFlow, ExecResult};
 use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 
 /// Monotonic counter for unique process substitution file paths
 static PROC_SUB_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -129,6 +129,8 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) history: &'a [HistoryEntry],
     /// Shared job table (read-only, accessed via `jobs`).
     pub(crate) jobs: &'a SharedJobTable,
+    /// Typed per-execution extensions for the current `exec*()` call.
+    pub(crate) execution_extensions: Arc<builtins::ExecutionExtensions>,
 }
 
 impl ShellRef<'_> {
@@ -170,6 +172,22 @@ impl ShellRef<'_> {
     /// Get the shared job table for wait operations.
     pub(crate) fn jobs(&self) -> &SharedJobTable {
         self.jobs
+    }
+}
+
+pub(crate) struct ExecutionExtensionsGuard {
+    slot: Arc<StdMutex<Arc<builtins::ExecutionExtensions>>>,
+    previous: Option<Arc<builtins::ExecutionExtensions>>,
+}
+
+impl Drop for ExecutionExtensionsGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            *self
+                .slot
+                .lock()
+                .expect("interpreter execution extensions lock") = previous;
+        }
     }
 }
 
@@ -465,6 +483,10 @@ pub struct Interpreter {
     /// When set, output is emitted incrementally via this callback in addition
     /// to being accumulated in the returned ExecResult.
     output_callback: Option<OutputCallback>,
+    /// Typed per-execution extensions visible to builtins for the current
+    /// `exec*()` call. Stored behind a mutex so drop guards can restore it
+    /// without borrowing the interpreter across `.await`.
+    execution_extensions: Arc<StdMutex<Arc<builtins::ExecutionExtensions>>>,
     /// Monotonic counter incremented each time output is emitted via callback.
     /// Used to detect whether sub-calls already emitted output, preventing duplicates.
     output_emit_count: u64,
@@ -832,6 +854,9 @@ impl Interpreter {
             ssh_client: None,
             pipeline_stdin: None,
             output_callback: None,
+            execution_extensions: Arc::new(StdMutex::new(Arc::new(
+                builtins::ExecutionExtensions::new(),
+            ))),
             output_emit_count: 0,
             nounset_error: None,
             traps: HashMap::new(),
@@ -864,6 +889,30 @@ impl Interpreter {
     /// Return a reference to the hooks registry.
     pub fn hooks(&self) -> &crate::hooks::Hooks {
         &self.hooks
+    }
+
+    pub(crate) fn current_execution_extensions(&self) -> Arc<builtins::ExecutionExtensions> {
+        self.execution_extensions
+            .lock()
+            .expect("interpreter execution extensions lock")
+            .clone()
+    }
+
+    pub(crate) fn scoped_execution_extensions(
+        &self,
+        extensions: builtins::ExecutionExtensions,
+    ) -> ExecutionExtensionsGuard {
+        let previous = {
+            let mut slot = self
+                .execution_extensions
+                .lock()
+                .expect("interpreter execution extensions lock");
+            std::mem::replace(&mut *slot, Arc::new(extensions))
+        };
+        ExecutionExtensionsGuard {
+            slot: self.execution_extensions.clone(),
+            previous: Some(previous),
+        }
     }
 
     /// Replace the hooks registry (called from BashBuilder::build).
@@ -3697,260 +3746,279 @@ impl Interpreter {
         Some(trace)
     }
 
-    async fn execute_simple_command(
-        &mut self,
-        command: &SimpleCommand,
+    // THREAT[TM-DOS-089]: Box the full simple-command path because nested
+    // `echo $(echo $(...))` repeatedly polls this helper, and its large async
+    // state (name/arg expansion, alias/env handling, xtrace, redirects) was
+    // still enough to overflow smaller Linux/tarpaulin stacks.
+    fn execute_simple_command<'a>(
+        &'a mut self,
+        command: &'a SimpleCommand,
         stdin: Option<String>,
-    ) -> Result<ExecResult> {
-        let (_debug_stdout, _debug_stderr) = self.run_debug_trap().await;
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
+            let (_debug_stdout, _debug_stderr) = self.run_debug_trap().await;
 
-        let name = self.expand_word(&command.name).await?;
+            let name = self.expand_word(&command.name).await?;
 
-        if let Some(err_msg) = self.nounset_error.take() {
-            self.last_exit_code = 1;
-            return Ok(ExecResult {
-                stdout: String::new(),
-                stderr: err_msg,
-                exit_code: 1,
-                control_flow: ControlFlow::Return(1),
-                ..Default::default()
-            });
-        }
-
-        let pre_expanded_args = if !name.is_empty() {
-            Some(self.expand_command_args(command).await?)
-        } else {
-            None
-        };
-
-        let var_saves: Vec<(String, Option<String>)> = command
-            .assignments
-            .iter()
-            .map(|a| (a.name.clone(), self.variables.get(&a.name).cloned()))
-            .collect();
-
-        let pre_assign_subst_gen = self.subst_generation;
-
-        self.process_command_assignments(&command.assignments)
-            .await?;
-
-        // Alias expansion
-        if let Some(result) = self
-            .try_alias_expansion(&name, command, stdin.clone(), var_saves.clone())
-            .await
-        {
-            return result;
-        }
-
-        // Empty command handling
-        if name.is_empty() {
-            if command.name.quoted && command.assignments.is_empty() {
-                self.last_exit_code = 127;
-                return Ok(ExecResult::err(
-                    "bash: : command not found\n".to_string(),
-                    127,
-                ));
+            if let Some(err_msg) = self.nounset_error.take() {
+                self.last_exit_code = 1;
+                return Ok(ExecResult {
+                    stdout: String::new(),
+                    stderr: err_msg,
+                    exit_code: 1,
+                    control_flow: ControlFlow::Return(1),
+                    ..Default::default()
+                });
             }
-            let exit_code = if !command.assignments.is_empty()
-                && self.subst_generation == pre_assign_subst_gen
-            {
-                0
+
+            let pre_expanded_args = if !name.is_empty() {
+                Some(self.expand_command_args(command).await?)
             } else {
-                self.last_exit_code
+                None
             };
-            self.last_exit_code = exit_code;
-            return Ok(ExecResult {
-                stdout: String::new(),
-                stderr: String::new(),
-                exit_code,
-                control_flow: crate::interpreter::ControlFlow::None,
-                ..Default::default()
-            });
-        }
 
-        // Inject prefix assignments into env for command duration
-        let mut env_saves: Vec<(String, Option<String>)> = Vec::new();
-        for assignment in &command.assignments {
-            if assignment.index.is_none()
-                && let Some(value) = self.variables.get(&assignment.name).cloned()
+            let var_saves: Vec<(String, Option<String>)> = command
+                .assignments
+                .iter()
+                .map(|a| (a.name.clone(), self.variables.get(&a.name).cloned()))
+                .collect();
+
+            let pre_assign_subst_gen = self.subst_generation;
+
+            self.process_command_assignments(&command.assignments)
+                .await?;
+
+            // Alias expansion
+            if let Some(result) = self
+                .try_alias_expansion(&name, command, stdin.clone(), var_saves.clone())
+                .await
             {
-                let old = self.env.insert(assignment.name.clone(), value);
-                env_saves.push((assignment.name.clone(), old));
+                return result;
             }
-        }
 
-        let args = pre_expanded_args.unwrap_or_default();
+            // Empty command handling
+            if name.is_empty() {
+                if command.name.quoted && command.assignments.is_empty() {
+                    self.last_exit_code = 127;
+                    return Ok(ExecResult::err(
+                        "bash: : command not found\n".to_string(),
+                        127,
+                    ));
+                }
+                let exit_code = if !command.assignments.is_empty()
+                    && self.subst_generation == pre_assign_subst_gen
+                {
+                    0
+                } else {
+                    self.last_exit_code
+                };
+                self.last_exit_code = exit_code;
+                return Ok(ExecResult {
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    exit_code,
+                    control_flow: crate::interpreter::ControlFlow::None,
+                    ..Default::default()
+                });
+            }
 
-        // Check for glob error sentinel
-        if let Some(first) = args.first()
-            && first.starts_with("\x00ERR\x00")
-        {
-            let err_msg = first.trim_start_matches("\x00ERR\x00").to_string();
-            self.last_exit_code = 1;
+            // Inject prefix assignments into env for command duration
+            let mut env_saves: Vec<(String, Option<String>)> = Vec::new();
+            for assignment in &command.assignments {
+                if assignment.index.is_none()
+                    && let Some(value) = self.variables.get(&assignment.name).cloned()
+                {
+                    let old = self.env.insert(assignment.name.clone(), value);
+                    env_saves.push((assignment.name.clone(), old));
+                }
+            }
+
+            let args = pre_expanded_args.unwrap_or_default();
+
+            // Check for glob error sentinel
+            if let Some(first) = args.first()
+                && first.starts_with("\x00ERR\x00")
+            {
+                let err_msg = first.trim_start_matches("\x00ERR\x00").to_string();
+                self.last_exit_code = 1;
+                self.restore_variables(var_saves);
+                let result = ExecResult::err(err_msg, 1);
+                return self.apply_redirections(result, &command.redirects).await;
+            }
+
+            let xtrace_line = self.build_xtrace_line(&name, &args);
+
+            let result = self
+                .execute_dispatched_command(&name, args, command, stdin)
+                .await;
+
+            // Restore env
+            for (name, old) in env_saves {
+                match old {
+                    Some(v) => {
+                        self.env.insert(name, v);
+                    }
+                    None => {
+                        self.env.remove(&name);
+                    }
+                }
+            }
+
+            // Restore variables
             self.restore_variables(var_saves);
-            let result = ExecResult::err(err_msg, 1);
-            return self.apply_redirections(result, &command.redirects).await;
-        }
 
-        let xtrace_line = self.build_xtrace_line(&name, &args);
+            // Prepend xtrace to stderr
+            let mut result = if let Some(trace) = xtrace_line {
+                result.map(|mut r| {
+                    r.stderr = trace + &r.stderr;
+                    r
+                })
+            } else {
+                result
+            };
 
-        let result = self
-            .execute_dispatched_command(&name, args, command, stdin)
-            .await;
+            self.run_deferred_proc_subs(&mut result).await?;
 
-        // Restore env
-        for (name, old) in env_saves {
-            match old {
-                Some(v) => {
-                    self.env.insert(name, v);
-                }
-                None => {
-                    self.env.remove(&name);
-                }
-            }
-        }
-
-        // Restore variables
-        self.restore_variables(var_saves);
-
-        // Prepend xtrace to stderr
-        let mut result = if let Some(trace) = xtrace_line {
-            result.map(|mut r| {
-                r.stderr = trace + &r.stderr;
-                r
-            })
-        } else {
             result
-        };
-
-        self.run_deferred_proc_subs(&mut result).await?;
-
-        result
+        })
     }
 
     /// Expand command arguments with field splitting, brace, and glob expansion.
-    async fn expand_command_args(&mut self, command: &SimpleCommand) -> Result<Vec<String>> {
-        let mut args: Vec<String> = Vec::new();
-        for word in &command.args {
-            // Use field expansion so "${arr[@]}" produces multiple args
-            let fields = self.expand_word_to_fields(word).await?;
+    /// Boxed because nested command substitution repeatedly expands `echo` args,
+    /// and the combined field/glob state still materially contributes to per-level
+    /// poll-stack growth on smaller Linux/tarpaulin stacks.
+    fn expand_command_args<'a>(
+        &'a mut self,
+        command: &'a SimpleCommand,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut args: Vec<String> = Vec::new();
+            for word in &command.args {
+                // Use field expansion so "${arr[@]}" produces multiple args
+                let fields = self.expand_word_to_fields(word).await?;
 
-            // Skip brace and glob expansion for quoted words — unless the
-            // word has unquoted glob chars (e.g. `"$var"*.ext`) in which case
-            // the quoted expansion suppresses IFS splitting but the unquoted
-            // portion must still undergo glob expansion.
-            if word.quoted && !word.has_unquoted_glob {
-                args.extend(fields);
-                continue;
-            }
+                // Skip brace and glob expansion for quoted words — unless the
+                // word has unquoted glob chars (e.g. `"$var"*.ext`) in which case
+                // the quoted expansion suppresses IFS splitting but the unquoted
+                // portion must still undergo glob expansion.
+                if word.quoted && !word.has_unquoted_glob {
+                    args.extend(fields);
+                    continue;
+                }
 
-            // For each field, apply brace and glob expansion
-            for expanded in fields {
-                // Step 1: Brace expansion (produces multiple strings)
-                let brace_expanded = self.expand_braces(&expanded);
+                // For each field, apply brace and glob expansion
+                for expanded in fields {
+                    // Step 1: Brace expansion (produces multiple strings)
+                    let brace_expanded = self.expand_braces(&expanded);
 
-                // Step 2: For each brace-expanded item, do glob expansion
-                for item in brace_expanded {
-                    match self.expand_glob_item(&item).await {
-                        Ok(items) => args.extend(items),
-                        Err(pat) => {
-                            self.last_exit_code = 1;
-                            return Ok(vec![format!("\x00ERR\x00-bash: no match: {}\n", pat)]);
+                    // Step 2: For each brace-expanded item, do glob expansion
+                    for item in brace_expanded {
+                        match self.expand_glob_item(&item).await {
+                            Ok(items) => args.extend(items),
+                            Err(pat) => {
+                                self.last_exit_code = 1;
+                                return Ok(vec![format!("\x00ERR\x00-bash: no match: {}\n", pat)]);
+                            }
                         }
                     }
                 }
             }
-        }
-        Ok(args)
+            Ok(args)
+        })
     }
 
     /// Execute a command after name resolution and prefix assignment setup.
     ///
     /// Handles stdin processing and dispatch to functions, special builtins,
     /// regular builtins, or command-not-found. Args are pre-expanded.
-    async fn execute_dispatched_command(
-        &mut self,
-        name: &str,
+    // THREAT[TM-DOS-089]: Box the dispatch wrapper too so per-level stdin
+    // plumbing, trace bookkeeping, and dispatch future selection stay off the
+    // recursive poll stack during nested command substitution.
+    fn execute_dispatched_command<'a>(
+        &'a mut self,
+        name: &'a str,
         args: Vec<String>,
-        command: &SimpleCommand,
+        command: &'a SimpleCommand,
         stdin: Option<String>,
-    ) -> Result<ExecResult> {
-        // Track $_ (last argument of previous command, from already-expanded args)
-        if let Some(last) = args.last() {
-            self.insert_variable_checked("_".to_string(), last.clone());
-        } else {
-            self.insert_variable_checked("_".to_string(), name.to_string());
-        }
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
+            // Track $_ (last argument of previous command, from already-expanded args)
+            if let Some(last) = args.last() {
+                self.insert_variable_checked("_".to_string(), last.clone());
+            } else {
+                self.insert_variable_checked("_".to_string(), name.to_string());
+            }
 
-        // Check for nounset error from argument expansion
-        if let Some(err_msg) = self.nounset_error.take() {
-            self.last_exit_code = 1;
-            return Ok(ExecResult {
-                stdout: String::new(),
-                stderr: err_msg,
-                exit_code: 1,
-                control_flow: ControlFlow::Return(1),
-                ..Default::default()
-            });
-        }
+            // Check for nounset error from argument expansion
+            if let Some(err_msg) = self.nounset_error.take() {
+                self.last_exit_code = 1;
+                return Ok(ExecResult {
+                    stdout: String::new(),
+                    stderr: err_msg,
+                    exit_code: 1,
+                    control_flow: ControlFlow::Return(1),
+                    ..Default::default()
+                });
+            }
 
-        // Handle input redirections first
-        let stdin = self
-            .process_input_redirections(stdin, &command.redirects)
-            .await?;
+            // Handle input redirections first
+            let stdin = self
+                .process_input_redirections(stdin, &command.redirects)
+                .await?;
 
-        // For `read -u FD`, check if FD is a coproc read FD and inject data as stdin
-        let stdin = if name == "read" && stdin.is_none() {
-            self.try_coproc_read_stdin(&args).or(stdin)
-        } else {
-            stdin
-        };
+            // For `read -u FD`, check if FD is a coproc read FD and inject data as stdin
+            let stdin = if name == "read" && stdin.is_none() {
+                self.try_coproc_read_stdin(&args).or(stdin)
+            } else {
+                stdin
+            };
 
-        // If no explicit stdin, inherit from pipeline_stdin (for compound cmds in pipes).
-        // For `read`, consume one line; for other commands, provide all remaining data.
-        let stdin = if stdin.is_some() {
-            stdin
-        } else if let Some(ref ps) = self.pipeline_stdin {
-            if !ps.is_empty() {
-                if name == "read" {
-                    // Consume one line from pipeline stdin
-                    let data = ps.clone();
-                    if let Some(newline_pos) = data.find('\n') {
-                        let line = data[..=newline_pos].to_string();
-                        self.pipeline_stdin = Some(data[newline_pos + 1..].to_string());
-                        Some(line)
+            // If no explicit stdin, inherit from pipeline_stdin (for compound cmds in pipes).
+            // For `read`, consume one line; for other commands, provide all remaining data.
+            let stdin = if stdin.is_some() {
+                stdin
+            } else if let Some(ref ps) = self.pipeline_stdin {
+                if !ps.is_empty() {
+                    if name == "read" {
+                        // Consume one line from pipeline stdin
+                        let data = ps.clone();
+                        if let Some(newline_pos) = data.find('\n') {
+                            let line = data[..=newline_pos].to_string();
+                            self.pipeline_stdin = Some(data[newline_pos + 1..].to_string());
+                            Some(line)
+                        } else {
+                            // Last line without trailing newline
+                            self.pipeline_stdin = Some(String::new());
+                            Some(data)
+                        }
                     } else {
-                        // Last line without trailing newline
-                        self.pipeline_stdin = Some(String::new());
-                        Some(data)
+                        Some(ps.clone())
                     }
                 } else {
-                    Some(ps.clone())
+                    None
                 }
             } else {
                 None
+            };
+
+            // TRACE: Record command start event
+            let trace_start = if self.trace.mode() != crate::trace::TraceMode::Off {
+                self.trace
+                    .command_start(name, &args, self.cwd.to_string_lossy().as_ref());
+                Some(std::time::Instant::now())
+            } else {
+                None
+            };
+
+            let result = self.dispatch_command(name, command, args, stdin).await;
+
+            // TRACE: Record command exit event for all dispatch paths
+            if let (Some(start), Ok(r)) = (trace_start, &result) {
+                self.trace.command_exit(name, r.exit_code, start.elapsed());
             }
-        } else {
-            None
-        };
 
-        // TRACE: Record command start event
-        let trace_start = if self.trace.mode() != crate::trace::TraceMode::Off {
-            self.trace
-                .command_start(name, &args, self.cwd.to_string_lossy().as_ref());
-            Some(std::time::Instant::now())
-        } else {
-            None
-        };
-
-        let result = self.dispatch_command(name, command, args, stdin).await;
-
-        // TRACE: Record command exit event for all dispatch paths
-        if let (Some(start), Ok(r)) = (trace_start, &result) {
-            self.trace.command_exit(name, r.exit_code, start.elapsed());
-        }
-
-        result
+            result
+        })
     }
 
     /// Inner dispatch logic for command execution.
@@ -4086,38 +4154,97 @@ impl Interpreter {
 
     /// Execute a registered (non-special) builtin with panic safety.
     /// The builtin must exist in `self.builtins` (caller checks with `contains_key`).
-    async fn execute_registered_builtin(
-        &mut self,
-        name: &str,
-        args: &[String],
-        stdin: Option<&str>,
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        // Fire before_tool hooks — may modify args or cancel the invocation
-        let args = if !self.hooks.before_tool.is_empty() {
-            let event = crate::hooks::ToolEvent {
-                name: name.to_string(),
-                args: args.to_vec(),
+    ///
+    /// Keep this helper boxed: the builtin path now carries execution-extension
+    /// plumbing plus panic-catching state, and nested command substitution hits it
+    /// on every `echo $(...)` level. Boxing keeps that larger state machine off the
+    /// recursive poll stack so the stack-overflow regression stays fixed.
+    fn execute_registered_builtin<'a>(
+        &'a mut self,
+        name: &'a str,
+        args: &'a [String],
+        stdin: Option<&'a str>,
+        redirects: &'a [Redirect],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
+            // Fire before_tool hooks — may modify args or cancel the invocation
+            let args = if !self.hooks.before_tool.is_empty() {
+                let event = crate::hooks::ToolEvent {
+                    name: name.to_string(),
+                    args: args.to_vec(),
+                };
+                match self.hooks.fire_before_tool(event) {
+                    Some(modified) => std::borrow::Cow::Owned(modified.args),
+                    None => {
+                        let result = ExecResult::err(
+                            format!("bash: {name}: cancelled by before_tool hook\n"),
+                            1,
+                        );
+                        return self.apply_redirections(result, redirects).await;
+                    }
+                }
+            } else {
+                std::borrow::Cow::Borrowed(args)
             };
-            match self.hooks.fire_before_tool(event) {
-                Some(modified) => std::borrow::Cow::Owned(modified.args),
-                None => {
-                    let result = ExecResult::err(
-                        format!("bash: {name}: cancelled by before_tool hook\n"),
-                        1,
-                    );
-                    return self.apply_redirections(result, redirects).await;
+            let args: &[String] = &args;
+
+            let builtin = self.builtins.get(name).unwrap();
+
+            // Check for execution plan first
+            {
+                let execution_extensions = self.current_execution_extensions();
+                let shell_ref = ShellRef {
+                    builtins: &self.builtins,
+                    functions: &self.functions,
+                    aliases: &mut self.aliases,
+                    traps: &mut self.traps,
+                    call_stack: &self.call_stack,
+                    history: &self.history,
+                    jobs: &self.jobs,
+                    execution_extensions,
+                };
+                let plan_ctx = builtins::Context {
+                    args,
+                    env: &self.env,
+                    variables: &mut self.variables,
+                    cwd: &mut self.cwd,
+                    fs: Arc::clone(&self.fs),
+                    stdin,
+                    #[cfg(feature = "http_client")]
+                    http_client: self.http_client.as_ref(),
+                    #[cfg(feature = "git")]
+                    git_client: self.git_client.as_ref(),
+                    #[cfg(feature = "ssh")]
+                    ssh_client: self.ssh_client.as_ref(),
+                    shell: Some(shell_ref),
+                };
+
+                let plan_result = AssertUnwindSafe(builtin.execution_plan(&plan_ctx))
+                    .catch_unwind()
+                    .await;
+
+                match plan_result {
+                    Ok(Ok(Some(plan))) => {
+                        let result = self.execute_builtin_plan(plan, redirects).await?;
+                        self.fire_after_tool(name, &result);
+                        return Ok(result);
+                    }
+                    Ok(Ok(None)) => { /* fall through to normal execute() */ }
+                    Ok(Err(e)) => return Err(e),
+                    Err(_panic) => {
+                        let result = ExecResult::err(
+                            format!("bash: {}: builtin failed unexpectedly\n", name),
+                            1,
+                        );
+                        let result = self.apply_redirections(result, redirects).await?;
+                        self.fire_after_tool(name, &result);
+                        return Ok(result);
+                    }
                 }
             }
-        } else {
-            std::borrow::Cow::Borrowed(args)
-        };
-        let args: &[String] = &args;
 
-        let builtin = self.builtins.get(name).unwrap();
-
-        // Check for execution plan first
-        {
+            let builtin = self.builtins.get(name).unwrap();
+            let execution_extensions = self.current_execution_extensions();
             let shell_ref = ShellRef {
                 builtins: &self.builtins,
                 functions: &self.functions,
@@ -4126,8 +4253,9 @@ impl Interpreter {
                 call_stack: &self.call_stack,
                 history: &self.history,
                 jobs: &self.jobs,
+                execution_extensions,
             };
-            let plan_ctx = builtins::Context {
+            let ctx = builtins::Context {
                 args,
                 env: &self.env,
                 variables: &mut self.variables,
@@ -4143,87 +4271,38 @@ impl Interpreter {
                 shell: Some(shell_ref),
             };
 
-            let plan_result = AssertUnwindSafe(builtin.execution_plan(&plan_ctx))
-                .catch_unwind()
-                .await;
+            // THREAT[TM-INT-001]: Execute builtin with panic catching for security
+            let result = AssertUnwindSafe(builtin.execute(ctx)).catch_unwind().await;
 
-            match plan_result {
-                Ok(Ok(Some(plan))) => {
-                    let result = self.execute_builtin_plan(plan, redirects).await?;
-                    self.fire_after_tool(name, &result);
-                    return Ok(result);
-                }
-                Ok(Ok(None)) => { /* fall through to normal execute() */ }
+            let result = match result {
+                Ok(Ok(exec_result)) => exec_result,
                 Ok(Err(e)) => return Err(e),
                 Err(_panic) => {
-                    let result = ExecResult::err(
-                        format!("bash: {}: builtin failed unexpectedly\n", name),
-                        1,
-                    );
-                    let result = self.apply_redirections(result, redirects).await?;
-                    self.fire_after_tool(name, &result);
-                    return Ok(result);
+                    ExecResult::err(format!("bash: {}: builtin failed unexpectedly\n", name), 1)
                 }
-            }
-        }
+            };
 
-        let builtin = self.builtins.get(name).unwrap();
-        let shell_ref = ShellRef {
-            builtins: &self.builtins,
-            functions: &self.functions,
-            aliases: &mut self.aliases,
-            traps: &mut self.traps,
-            call_stack: &self.call_stack,
-            history: &self.history,
-            jobs: &self.jobs,
-        };
-        let ctx = builtins::Context {
-            args,
-            env: &self.env,
-            variables: &mut self.variables,
-            cwd: &mut self.cwd,
-            fs: Arc::clone(&self.fs),
-            stdin,
-            #[cfg(feature = "http_client")]
-            http_client: self.http_client.as_ref(),
-            #[cfg(feature = "git")]
-            git_client: self.git_client.as_ref(),
-            #[cfg(feature = "ssh")]
-            ssh_client: self.ssh_client.as_ref(),
-            shell: Some(shell_ref),
-        };
+            self.apply_builtin_side_effects(&result);
 
-        // THREAT[TM-INT-001]: Execute builtin with panic catching for security
-        let result = AssertUnwindSafe(builtin.execute(ctx)).catch_unwind().await;
-
-        let result = match result {
-            Ok(Ok(exec_result)) => exec_result,
-            Ok(Err(e)) => return Err(e),
-            Err(_panic) => {
-                ExecResult::err(format!("bash: {}: builtin failed unexpectedly\n", name), 1)
-            }
-        };
-
-        self.apply_builtin_side_effects(&result);
-
-        // Sync exported variables into env so subprocess isolation can see them
-        if name == "export" && result.exit_code == 0 {
-            for arg in args {
-                if let Some(eq_pos) = arg.find('=') {
-                    let var_name = &arg[..eq_pos];
-                    if let Some(value) = self.variables.get(var_name) {
-                        self.env.insert(var_name.to_string(), value.clone());
+            // Sync exported variables into env so subprocess isolation can see them
+            if name == "export" && result.exit_code == 0 {
+                for arg in args {
+                    if let Some(eq_pos) = arg.find('=') {
+                        let var_name = &arg[..eq_pos];
+                        if let Some(value) = self.variables.get(var_name) {
+                            self.env.insert(var_name.to_string(), value.clone());
+                        }
+                    } else if let Some(value) = self.variables.get(arg.as_str()) {
+                        // export NAME (without =) — mark existing variable as exported
+                        self.env.insert(arg.to_string(), value.clone());
                     }
-                } else if let Some(value) = self.variables.get(arg.as_str()) {
-                    // export NAME (without =) — mark existing variable as exported
-                    self.env.insert(arg.to_string(), value.clone());
                 }
             }
-        }
 
-        let result = self.apply_redirections(result, redirects).await?;
-        self.fire_after_tool(name, &result);
-        Ok(result)
+            let result = self.apply_redirections(result, redirects).await?;
+            self.fire_after_tool(name, &result);
+            Ok(result)
+        })
     }
 
     /// Fire `after_tool` hooks if any are registered (observational).
@@ -4262,60 +4341,65 @@ impl Interpreter {
         }
     }
 
-    async fn dispatch_command(
-        &mut self,
-        name: &str,
-        command: &SimpleCommand,
+    // THREAT[TM-DOS-089]: Box the final dispatch split so function lookup,
+    // special builtin handling, registered builtin execution, and path search
+    // do not contribute another large async frame per nested substitution level.
+    fn dispatch_command<'a>(
+        &'a mut self,
+        name: &'a str,
+        command: &'a SimpleCommand,
         args: Vec<String>,
         stdin: Option<String>,
-    ) -> Result<ExecResult> {
-        // Check for functions first
-        if let Some(func_def) = self.functions.get(name).cloned() {
-            return self
-                .execute_function_call(name, &func_def, args, stdin, &command.redirects)
-                .await;
-        }
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
+            // Check for functions first
+            if let Some(func_def) = self.functions.get(name).cloned() {
+                return self
+                    .execute_function_call(name, &func_def, args, stdin, &command.redirects)
+                    .await;
+            }
 
-        // Interpreter-level special builtins
-        if let Some(result) = self
-            .dispatch_special_builtin(name, &args, stdin.clone(), &command.redirects)
-            .await
-        {
-            return result;
-        }
+            // Interpreter-level special builtins
+            if let Some(result) = self
+                .dispatch_special_builtin(name, &args, stdin.clone(), &command.redirects)
+                .await
+            {
+                return result;
+            }
 
-        // Registered builtins
-        if self.builtins.contains_key(name) {
-            return self
-                .execute_registered_builtin(name, &args, stdin.as_deref(), &command.redirects)
-                .await;
-        }
+            // Registered builtins
+            if self.builtins.contains_key(name) {
+                return self
+                    .execute_registered_builtin(name, &args, stdin.as_deref(), &command.redirects)
+                    .await;
+            }
 
-        // Script execution by path
-        if name.contains('/') {
-            return self
-                .try_execute_script_by_path(name, &args, stdin, &command.redirects)
-                .await;
-        }
+            // Script execution by path
+            if name.contains('/') {
+                return self
+                    .try_execute_script_by_path(name, &args, stdin, &command.redirects)
+                    .await;
+            }
 
-        // $PATH search
-        if let Some(result) = self
-            .try_execute_script_via_path_search(name, &args, stdin, &command.redirects)
-            .await?
-        {
-            return Ok(result);
-        }
+            // $PATH search
+            if let Some(result) = self
+                .try_execute_script_via_path_search(name, &args, stdin, &command.redirects)
+                .await?
+            {
+                return Ok(result);
+            }
 
-        // Command not found
-        let known: Vec<&str> = self
-            .builtins
-            .keys()
-            .map(|s| s.as_str())
-            .chain(self.functions.keys().map(|s| s.as_str()))
-            .chain(self.aliases.keys().map(|s| s.as_str()))
-            .collect();
-        let msg = command_not_found_message(name, &known);
-        Ok(ExecResult::err(msg, 127))
+            // Command not found
+            let known: Vec<&str> = self
+                .builtins
+                .keys()
+                .map(|s| s.as_str())
+                .chain(self.functions.keys().map(|s| s.as_str()))
+                .chain(self.aliases.keys().map(|s| s.as_str()))
+                .collect();
+            let msg = command_not_found_message(name, &known);
+            Ok(ExecResult::err(msg, 127))
+        })
     }
 
     /// Execute a script file by resolved path.
@@ -5421,6 +5505,7 @@ impl Interpreter {
                 let remaining = &args[cmd_args_start..];
                 if let Some(builtin) = self.builtins.get(remaining[0].as_str()) {
                     let builtin_args = &remaining[1..];
+                    let execution_extensions = self.current_execution_extensions();
                     let shell_ref = ShellRef {
                         builtins: &self.builtins,
                         functions: &self.functions,
@@ -5429,6 +5514,7 @@ impl Interpreter {
                         call_stack: &self.call_stack,
                         history: &self.history,
                         jobs: &self.jobs,
+                        execution_extensions,
                     };
                     let ctx = builtins::Context {
                         args: builtin_args,
@@ -6832,131 +6918,139 @@ impl Interpreter {
     /// Expand a word to multiple fields (for array iteration and command args)
     /// Returns Vec<String> where array expansions like "${arr[@]}" produce multiple fields.
     /// "${arr[*]}" in quoted context joins elements into a single field (bash behavior).
-    async fn expand_word_to_fields(&mut self, word: &Word) -> Result<Vec<String>> {
-        // Check if the word contains only an array expansion or $@/$*
-        if word.parts.len() == 1 {
-            // Handle $@ and $* as special parameters
-            if let WordPart::Variable(name) = &word.parts[0] {
-                if name == "@" {
-                    let positional = self
-                        .call_stack
-                        .last()
-                        .map(|f| f.positional.clone())
-                        .unwrap_or_default();
-                    if word.quoted {
-                        // "$@" preserves individual positional params
-                        return Ok(positional);
+    /// Boxed because nested command substitution repeatedly enters this helper through
+    /// `expand_command_args`, and its special-parameter/array handling still inflated
+    /// the recursive poll path enough to trip smaller stacks.
+    fn expand_word_to_fields<'a>(
+        &'a mut self,
+        word: &'a Word,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>>> + Send + 'a>> {
+        Box::pin(async move {
+            // Check if the word contains only an array expansion or $@/$*
+            if word.parts.len() == 1 {
+                // Handle $@ and $* as special parameters
+                if let WordPart::Variable(name) = &word.parts[0] {
+                    if name == "@" {
+                        let positional = self
+                            .call_stack
+                            .last()
+                            .map(|f| f.positional.clone())
+                            .unwrap_or_default();
+                        if word.quoted {
+                            // "$@" preserves individual positional params
+                            return Ok(positional);
+                        }
+                        // $@ unquoted: each param is subject to further IFS splitting
+                        let mut fields = Vec::new();
+                        for p in &positional {
+                            fields.extend(self.ifs_split(p));
+                        }
+                        return Ok(fields);
                     }
-                    // $@ unquoted: each param is subject to further IFS splitting
-                    let mut fields = Vec::new();
-                    for p in &positional {
-                        fields.extend(self.ifs_split(p));
+                    if name == "*" {
+                        let positional = self
+                            .call_stack
+                            .last()
+                            .map(|f| f.positional.clone())
+                            .unwrap_or_default();
+                        if word.quoted {
+                            // "$*" joins with first char of IFS.
+                            // IFS unset → space; IFS="" → no separator.
+                            let sep = match self.variables.get("IFS") {
+                                Some(ifs) => ifs
+                                    .chars()
+                                    .next()
+                                    .map(|c| c.to_string())
+                                    .unwrap_or_default(),
+                                None => " ".to_string(),
+                            };
+                            return Ok(vec![positional.join(&sep)]);
+                        }
+                        // $* unquoted: each param is subject to IFS splitting
+                        let mut fields = Vec::new();
+                        for p in &positional {
+                            fields.extend(self.ifs_split(p));
+                        }
+                        return Ok(fields);
                     }
-                    return Ok(fields);
                 }
-                if name == "*" {
-                    let positional = self
-                        .call_stack
-                        .last()
-                        .map(|f| f.positional.clone())
-                        .unwrap_or_default();
-                    if word.quoted {
-                        // "$*" joins with first char of IFS.
-                        // IFS unset → space; IFS="" → no separator.
-                        let sep = match self.variables.get("IFS") {
-                            Some(ifs) => ifs
-                                .chars()
-                                .next()
-                                .map(|c| c.to_string())
-                                .unwrap_or_default(),
-                            None => " ".to_string(),
-                        };
-                        return Ok(vec![positional.join(&sep)]);
+                if let WordPart::ArrayAccess { name, index } = &word.parts[0]
+                    && (index == "@" || index == "*")
+                {
+                    // Check assoc arrays first
+                    if let Some(arr) = self.assoc_arrays.get(name) {
+                        let mut keys: Vec<_> = arr.keys().cloned().collect();
+                        keys.sort();
+                        let values: Vec<String> =
+                            keys.iter().filter_map(|k| arr.get(k).cloned()).collect();
+                        if word.quoted && index == "*" {
+                            let sep = self.get_ifs_separator();
+                            return Ok(vec![values.join(&sep)]);
+                        }
+                        return Ok(values);
                     }
-                    // $* unquoted: each param is subject to IFS splitting
-                    let mut fields = Vec::new();
-                    for p in &positional {
-                        fields.extend(self.ifs_split(p));
+                    if let Some(arr) = self.arrays.get(name) {
+                        let mut indices: Vec<_> = arr.keys().collect();
+                        indices.sort();
+                        let values: Vec<String> =
+                            indices.iter().filter_map(|i| arr.get(i).cloned()).collect();
+                        // "${arr[*]}" joins into single field with IFS; "${arr[@]}" keeps separate
+                        if word.quoted && index == "*" {
+                            let sep = self.get_ifs_separator();
+                            return Ok(vec![values.join(&sep)]);
+                        }
+                        return Ok(values);
                     }
-                    return Ok(fields);
+                    return Ok(Vec::new());
+                }
+                // "${!arr[@]}" - array keys/indices as separate fields
+                if let WordPart::ArrayIndices(name) = &word.parts[0] {
+                    let resolved = self.resolve_nameref(name);
+                    if let Some(arr) = self.assoc_arrays.get(resolved) {
+                        let mut keys: Vec<_> = arr.keys().cloned().collect();
+                        keys.sort();
+                        return Ok(keys);
+                    }
+                    if let Some(arr) = self.arrays.get(resolved) {
+                        let mut indices: Vec<_> = arr.keys().collect();
+                        indices.sort();
+                        return Ok(indices.iter().map(|i| i.to_string()).collect());
+                    }
+                    return Ok(Vec::new());
                 }
             }
-            if let WordPart::ArrayAccess { name, index } = &word.parts[0]
-                && (index == "@" || index == "*")
-            {
-                // Check assoc arrays first
-                if let Some(arr) = self.assoc_arrays.get(name) {
-                    let mut keys: Vec<_> = arr.keys().cloned().collect();
-                    keys.sort();
-                    let values: Vec<String> =
-                        keys.iter().filter_map(|k| arr.get(k).cloned()).collect();
-                    if word.quoted && index == "*" {
-                        let sep = self.get_ifs_separator();
-                        return Ok(vec![values.join(&sep)]);
-                    }
-                    return Ok(values);
-                }
-                if let Some(arr) = self.arrays.get(name) {
-                    let mut indices: Vec<_> = arr.keys().collect();
-                    indices.sort();
-                    let values: Vec<String> =
-                        indices.iter().filter_map(|i| arr.get(i).cloned()).collect();
-                    // "${arr[*]}" joins into single field with IFS; "${arr[@]}" keeps separate
-                    if word.quoted && index == "*" {
-                        let sep = self.get_ifs_separator();
-                        return Ok(vec![values.join(&sep)]);
-                    }
-                    return Ok(values);
-                }
-                return Ok(Vec::new());
+
+            // For other words, expand to a single field then apply IFS word splitting
+            // when the word is unquoted and contains an expansion.
+            // Per POSIX, unquoted variable/command/arithmetic expansion results undergo
+            // field splitting on IFS.
+            let expanded = self.expand_word(word).await?;
+
+            // IFS splitting applies to unquoted expansions only.
+            // Skip splitting for assignment-like words (e.g., result="$1") where
+            // the lexer stripped quotes from a mixed-quoted word (produces Token::Word
+            // with quoted: false even though the expansion was inside double quotes).
+            let is_assignment_word =
+                matches!(word.parts.first(), Some(WordPart::Literal(s)) if s.contains('='));
+            let has_expansion = !word.quoted
+                && !is_assignment_word
+                && word.parts.iter().any(|p| {
+                    matches!(
+                        p,
+                        WordPart::Variable(_)
+                            | WordPart::CommandSubstitution(_)
+                            | WordPart::ArithmeticExpansion(_)
+                            | WordPart::ParameterExpansion { .. }
+                            | WordPart::ArrayAccess { .. }
+                    )
+                });
+
+            if has_expansion {
+                Ok(self.ifs_split(&expanded))
+            } else {
+                Ok(vec![expanded])
             }
-            // "${!arr[@]}" - array keys/indices as separate fields
-            if let WordPart::ArrayIndices(name) = &word.parts[0] {
-                let resolved = self.resolve_nameref(name);
-                if let Some(arr) = self.assoc_arrays.get(resolved) {
-                    let mut keys: Vec<_> = arr.keys().cloned().collect();
-                    keys.sort();
-                    return Ok(keys);
-                }
-                if let Some(arr) = self.arrays.get(resolved) {
-                    let mut indices: Vec<_> = arr.keys().collect();
-                    indices.sort();
-                    return Ok(indices.iter().map(|i| i.to_string()).collect());
-                }
-                return Ok(Vec::new());
-            }
-        }
-
-        // For other words, expand to a single field then apply IFS word splitting
-        // when the word is unquoted and contains an expansion.
-        // Per POSIX, unquoted variable/command/arithmetic expansion results undergo
-        // field splitting on IFS.
-        let expanded = self.expand_word(word).await?;
-
-        // IFS splitting applies to unquoted expansions only.
-        // Skip splitting for assignment-like words (e.g., result="$1") where
-        // the lexer stripped quotes from a mixed-quoted word (produces Token::Word
-        // with quoted: false even though the expansion was inside double quotes).
-        let is_assignment_word =
-            matches!(word.parts.first(), Some(WordPart::Literal(s)) if s.contains('='));
-        let has_expansion = !word.quoted
-            && !is_assignment_word
-            && word.parts.iter().any(|p| {
-                matches!(
-                    p,
-                    WordPart::Variable(_)
-                        | WordPart::CommandSubstitution(_)
-                        | WordPart::ArithmeticExpansion(_)
-                        | WordPart::ParameterExpansion { .. }
-                        | WordPart::ArrayAccess { .. }
-                )
-            });
-
-        if has_expansion {
-            Ok(self.ifs_split(&expanded))
-        } else {
-            Ok(vec![expanded])
-        }
+        })
     }
 
     /// Resolve name for parameter expansion, handling array subscripts and special params.
