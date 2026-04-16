@@ -138,15 +138,26 @@ async function main() {
 }
 
 function shouldSkipOpenAiExample(err) {
-  const message = err?.message ?? "";
+  const details = JSON.stringify(
+    err,
+    Object.getOwnPropertyNames(err ?? {}),
+    2
+  ).toLowerCase();
+  const message = `${err?.message ?? ""}\n${details}`;
   return (
-    message.includes("API key") ||
-    message.includes("OPENAI") ||
+    message.includes("api key") ||
+    message.includes("openai") ||
     message.includes("insufficient_quota") ||
     message.includes("rate limit") ||
+    message.includes("maxretriesexceeded") ||
     err?.status === 429 ||
+    err?.statusCode === 429 ||
     err?.code === "insufficient_quota" ||
-    err?.type === "insufficient_quota"
+    err?.type === "insufficient_quota" ||
+    err?.lastError?.status === 429 ||
+    err?.lastError?.statusCode === 429 ||
+    err?.lastError?.code === "insufficient_quota" ||
+    err?.lastError?.type === "insufficient_quota"
   );
 }
 
