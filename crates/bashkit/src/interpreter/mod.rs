@@ -3569,16 +3569,15 @@ impl Interpreter {
                     // Resolve nameref for array assignments
                     let arr_name = self.resolve_nameref(&assignment.name).to_string();
                     let arr = self.arrays.entry(arr_name).or_default();
-                    let mut idx = if assignment.append {
+                    let start_idx = if assignment.append {
                         arr.keys().max().map(|k| k + 1).unwrap_or(0)
                     } else {
                         arr.clear();
                         0
                     };
 
-                    for field in all_fields {
+                    for (idx, field) in (start_idx..).zip(all_fields) {
                         arr.insert(idx, field);
-                        idx += 1;
                     }
                 }
             }
@@ -8376,20 +8375,8 @@ impl Interpreter {
                     let left = self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
                     let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
                     return Some(match chars[i] {
-                        '/' => {
-                            if right != 0 {
-                                left.wrapping_div(right)
-                            } else {
-                                0
-                            }
-                        }
-                        '%' => {
-                            if right != 0 {
-                                left.wrapping_rem(right)
-                            } else {
-                                0
-                            }
-                        }
+                        '/' if right != 0 => left.wrapping_div(right),
+                        '%' if right != 0 => left.wrapping_rem(right),
                         _ => 0,
                     });
                 }

@@ -340,6 +340,41 @@ pub fn format_script_for_log(script: &str, config: &LogConfig) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    struct UnsafeLoggingEnvGuard {
+        _lock: MutexGuard<'static, ()>,
+        previous: Option<OsString>,
+    }
+
+    impl UnsafeLoggingEnvGuard {
+        fn set(value: Option<&str>) -> Self {
+            static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+            let lock = LOCK.get_or_init(|| Mutex::new(()));
+            let guard = lock.lock().unwrap();
+            let previous = std::env::var_os("BASHKIT_UNSAFE_LOGGING");
+
+            match value {
+                Some(value) => unsafe { std::env::set_var("BASHKIT_UNSAFE_LOGGING", value) },
+                None => unsafe { std::env::remove_var("BASHKIT_UNSAFE_LOGGING") },
+            }
+
+            Self {
+                _lock: guard,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for UnsafeLoggingEnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe { std::env::set_var("BASHKIT_UNSAFE_LOGGING", value) },
+                None => unsafe { std::env::remove_var("BASHKIT_UNSAFE_LOGGING") },
+            }
+        }
+    }
 
     #[test]
     fn test_default_redaction() {
@@ -428,10 +463,9 @@ mod tests {
         assert!(!formatted.contains("echo"));
 
         // With unsafe flag: log content (requires env var)
-        unsafe { std::env::set_var("BASHKIT_UNSAFE_LOGGING", "1") };
+        let _guard = UnsafeLoggingEnvGuard::set(Some("1"));
         let config = LogConfig::new().unsafe_log_scripts();
         let formatted = format_script_for_log(script, &config);
-        unsafe { std::env::remove_var("BASHKIT_UNSAFE_LOGGING") };
         assert!(formatted.contains("echo"));
     }
 
@@ -446,9 +480,8 @@ mod tests {
 
     #[test]
     fn test_disabled_redaction() {
-        unsafe { std::env::set_var("BASHKIT_UNSAFE_LOGGING", "1") };
+        let _guard = UnsafeLoggingEnvGuard::set(Some("1"));
         let config = LogConfig::new().unsafe_disable_redaction();
-        unsafe { std::env::remove_var("BASHKIT_UNSAFE_LOGGING") };
 
         // Should not redact when disabled
         assert!(!config.should_redact_env("PASSWORD"));
@@ -461,7 +494,7 @@ mod tests {
     #[test]
     fn test_unsafe_methods_noop_without_env() {
         // Ensure env var is NOT set
-        unsafe { std::env::remove_var("BASHKIT_UNSAFE_LOGGING") };
+        let _guard = UnsafeLoggingEnvGuard::set(None);
 
         // unsafe_disable_redaction should be a no-op
         let config = LogConfig::new().unsafe_disable_redaction();
