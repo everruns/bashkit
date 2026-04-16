@@ -155,26 +155,40 @@ def test_bash_shell_state_exposes_read_only_snapshot_view():
     assert result.exit_code == 1
 
     state = bash.shell_state()
+    env = state.env
+    variables = state.variables
+    arrays = state.arrays
+    assoc_arrays = state.assoc_arrays
+    aliases = state.aliases
+    traps = state.traps
     assert isinstance(state, ShellState)
     assert state.cwd == "/workspace"
     assert state.last_exit_code == 1
-    assert state.env["EXPORTED"] == "env"
-    assert state.variables["LOCAL"] == "var"
-    assert state.arrays["arr"][2] == "beta"
-    assert state.assoc_arrays["assoc"]["key"] == "value"
-    assert isinstance(state.env, Mapping)
-    assert isinstance(state.variables, Mapping)
-    assert isinstance(state.arrays, Mapping)
-    assert isinstance(state.assoc_arrays, Mapping)
-    assert isinstance(state.aliases, Mapping)
-    assert isinstance(state.traps, Mapping)
+    assert env["EXPORTED"] == "env"
+    assert variables["LOCAL"] == "var"
+    assert arrays["arr"][2] == "beta"
+    assert assoc_arrays["assoc"]["key"] == "value"
+    assert isinstance(env, Mapping)
+    assert isinstance(variables, Mapping)
+    assert isinstance(arrays, Mapping)
+    assert isinstance(assoc_arrays, Mapping)
+    assert isinstance(aliases, Mapping)
+    assert isinstance(traps, Mapping)
+    assert state.env is env
+    assert state.variables is variables
+    assert state.arrays is arrays
+    assert state.assoc_arrays is assoc_arrays
+    assert state.aliases is aliases
+    assert state.traps is traps
+    assert state.arrays["arr"] is arrays["arr"]
+    assert state.assoc_arrays["assoc"] is assoc_arrays["assoc"]
     assert not hasattr(state, "functions")
     assert not hasattr(bash, "restore_shell_state")
 
     with pytest.raises(AttributeError):
         state.cwd = "/tmp"
     with pytest.raises(TypeError):
-        state.variables["LOCAL"] = "changed"
+        variables["LOCAL"] = "changed"
     with pytest.raises(AttributeError):
         _ = state.functions
 
@@ -741,26 +755,40 @@ def test_bashtool_shell_state_exposes_read_only_snapshot_view():
     assert result.exit_code == 1
 
     state = tool.shell_state()
+    env = state.env
+    variables = state.variables
+    arrays = state.arrays
+    assoc_arrays = state.assoc_arrays
+    aliases = state.aliases
+    traps = state.traps
     assert isinstance(state, ShellState)
     assert state.cwd == "/workspace"
     assert state.last_exit_code == 1
-    assert state.env["EXPORTED"] == "env"
-    assert state.variables["LOCAL"] == "var"
-    assert state.arrays["arr"][2] == "beta"
-    assert state.assoc_arrays["assoc"]["key"] == "value"
-    assert isinstance(state.env, Mapping)
-    assert isinstance(state.variables, Mapping)
-    assert isinstance(state.arrays, Mapping)
-    assert isinstance(state.assoc_arrays, Mapping)
-    assert isinstance(state.aliases, Mapping)
-    assert isinstance(state.traps, Mapping)
+    assert env["EXPORTED"] == "env"
+    assert variables["LOCAL"] == "var"
+    assert arrays["arr"][2] == "beta"
+    assert assoc_arrays["assoc"]["key"] == "value"
+    assert isinstance(env, Mapping)
+    assert isinstance(variables, Mapping)
+    assert isinstance(arrays, Mapping)
+    assert isinstance(assoc_arrays, Mapping)
+    assert isinstance(aliases, Mapping)
+    assert isinstance(traps, Mapping)
+    assert state.env is env
+    assert state.variables is variables
+    assert state.arrays is arrays
+    assert state.assoc_arrays is assoc_arrays
+    assert state.aliases is aliases
+    assert state.traps is traps
+    assert state.arrays["arr"] is arrays["arr"]
+    assert state.assoc_arrays["assoc"] is assoc_arrays["assoc"]
     assert not hasattr(state, "functions")
     assert not hasattr(tool, "restore_shell_state")
 
     with pytest.raises(AttributeError):
         state.cwd = "/tmp"
     with pytest.raises(TypeError):
-        state.variables["LOCAL"] = "changed"
+        variables["LOCAL"] = "changed"
     with pytest.raises(AttributeError):
         _ = state.functions
 

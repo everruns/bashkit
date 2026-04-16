@@ -17,6 +17,7 @@ use bashkit::{
 };
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PyModule, PySet, PyTuple};
 use pyo3_async_runtimes::TaskLocals;
 use pyo3_async_runtimes::tokio::future_into_py;
@@ -788,11 +789,16 @@ fn restore_live_bash(
     })
 }
 
+static MAPPING_PROXY_TYPE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
+
 fn mapping_proxy(py: Python<'_>, dict: Bound<'_, PyDict>) -> PyResult<Py<PyAny>> {
-    Ok(PyModule::import(py, "types")?
-        .getattr("MappingProxyType")?
-        .call1((dict,))?
-        .unbind())
+    let mapping_proxy_type =
+        MAPPING_PROXY_TYPE.get_or_try_init(py, || -> PyResult<Py<PyAny>> {
+            Ok(PyModule::import(py, "types")?
+                .getattr("MappingProxyType")?
+                .unbind())
+        })?;
+    Ok(mapping_proxy_type.bind(py).call1((dict,))?.unbind())
 }
 
 fn readonly_string_map(py: Python<'_>, map: &HashMap<String, String>) -> PyResult<Py<PyAny>> {
@@ -842,8 +848,11 @@ fn capture_shell_state(
     let inner = inner.clone();
     py.detach(|| {
         rt.block_on(async move {
-            let bash = inner.lock().await;
-            Ok(ShellState::from(bash.shell_state_view()))
+            let shell_state = {
+                let bash = inner.lock().await;
+                bash.shell_state_view()
+            };
+            Ok(ShellState::from(shell_state))
         })
     })
 }
@@ -1055,9 +1064,9 @@ impl PyFileSystem {
 /// Read-only snapshot of shell state for prompt rendering and inspection.
 ///
 /// Transient fields like `last_exit_code` and `traps` reflect the captured
-/// snapshot, but Rust core clears them before each top-level `exec()`.
+/// snapshot, but the core interpreter clears them before each top-level
+/// `execute()` or `execute_sync()` call.
 #[pyclass(skip_from_py_object)]
-#[derive(Clone)]
 pub struct ShellState {
     env: HashMap<String, String>,
     variables: HashMap<String, String>,
@@ -1067,6 +1076,12 @@ pub struct ShellState {
     last_exit_code: i32,
     aliases: HashMap<String, String>,
     traps: HashMap<String, String>,
+    cached_env: PyOnceLock<Py<PyAny>>,
+    cached_variables: PyOnceLock<Py<PyAny>>,
+    cached_arrays: PyOnceLock<Py<PyAny>>,
+    cached_assoc_arrays: PyOnceLock<Py<PyAny>>,
+    cached_aliases: PyOnceLock<Py<PyAny>>,
+    cached_traps: PyOnceLock<Py<PyAny>>,
 }
 
 impl From<RustShellStateView> for ShellState {
@@ -1091,7 +1106,29 @@ impl From<RustShellStateView> for ShellState {
             last_exit_code,
             aliases,
             traps,
+            cached_env: PyOnceLock::new(),
+            cached_variables: PyOnceLock::new(),
+            cached_arrays: PyOnceLock::new(),
+            cached_assoc_arrays: PyOnceLock::new(),
+            cached_aliases: PyOnceLock::new(),
+            cached_traps: PyOnceLock::new(),
         }
+    }
+}
+
+impl ShellState {
+    fn cached_mapping<F>(
+        &self,
+        py: Python<'_>,
+        cache: &PyOnceLock<Py<PyAny>>,
+        build: F,
+    ) -> PyResult<Py<PyAny>>
+    where
+        F: FnOnce(Python<'_>) -> PyResult<Py<PyAny>>,
+    {
+        cache
+            .get_or_try_init(py, || build(py))
+            .map(|mapping| mapping.clone_ref(py))
     }
 }
 
@@ -1113,22 +1150,30 @@ impl ShellState {
 
     #[getter]
     fn env(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        readonly_string_map(py, &self.env)
+        self.cached_mapping(py, &self.cached_env, |py| {
+            readonly_string_map(py, &self.env)
+        })
     }
 
     #[getter]
     fn variables(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        readonly_string_map(py, &self.variables)
+        self.cached_mapping(py, &self.cached_variables, |py| {
+            readonly_string_map(py, &self.variables)
+        })
     }
 
     #[getter]
     fn arrays(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        readonly_indexed_arrays(py, &self.arrays)
+        self.cached_mapping(py, &self.cached_arrays, |py| {
+            readonly_indexed_arrays(py, &self.arrays)
+        })
     }
 
     #[getter]
     fn assoc_arrays(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        readonly_assoc_arrays(py, &self.assoc_arrays)
+        self.cached_mapping(py, &self.cached_assoc_arrays, |py| {
+            readonly_assoc_arrays(py, &self.assoc_arrays)
+        })
     }
 
     #[getter]
@@ -1143,12 +1188,16 @@ impl ShellState {
 
     #[getter]
     fn aliases(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        readonly_string_map(py, &self.aliases)
+        self.cached_mapping(py, &self.cached_aliases, |py| {
+            readonly_string_map(py, &self.aliases)
+        })
     }
 
     #[getter]
     fn traps(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        readonly_string_map(py, &self.traps)
+        self.cached_mapping(py, &self.cached_traps, |py| {
+            readonly_string_map(py, &self.traps)
+        })
     }
 }
 
