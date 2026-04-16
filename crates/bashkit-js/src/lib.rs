@@ -15,16 +15,17 @@
 
 use bashkit::tool::VERSION;
 use bashkit::{
-    Bash as RustBash, BashTool as RustBashTool, ExecutionLimits, ExtFunctionResult, FileType,
-    Metadata, MontyObject, PythonExternalFnHandler, PythonLimits, ScriptedTool as RustScriptedTool,
-    Tool, ToolArgs, ToolDef, ToolRequest,
+    Bash as RustBash, BashTool as RustBashTool, ExecResult as RustExecResult, ExecutionLimits,
+    ExtFunctionResult, FileType, Metadata, MontyObject, OutputCallback, PythonExternalFnHandler,
+    PythonLimits, ScriptedTool as RustScriptedTool, Tool, ToolArgs, ToolDef, ToolRequest,
 };
+use napi::JsValue;
 use napi_derive::napi;
 use std::collections::HashMap;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 
 // ---------------------------------------------------------------------------
@@ -399,6 +400,240 @@ pub struct ExecResult {
     pub success: bool,
 }
 
+// The native JS callback arrives as one `[stdout, stderr]` tuple payload even
+// though napi-rs models the args as `(String, String)`. Keep the public TS
+// wrapper responsible for adapting that odd FFI shape into its
+// object-shaped `{ stdout, stderr }` callback API.
+type SyncOutputFn = napi::bindgen_prelude::FunctionRef<(String, String), Option<String>>;
+type OutputTsfn = napi::threadsafe_function::ThreadsafeFunction<
+    (String, String),
+    Option<String>,
+    (String, String),
+    napi::Status,
+    false,
+    true,
+>;
+
+fn js_exec_result_from_rust(result: RustExecResult) -> ExecResult {
+    ExecResult {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exit_code: result.exit_code,
+        error: None,
+        stdout_truncated: result.stdout_truncated,
+        stderr_truncated: result.stderr_truncated,
+        final_env: result.final_env,
+        success: result.exit_code == 0,
+    }
+}
+
+fn js_exec_result_from_error(err: impl ToString) -> ExecResult {
+    let msg = err.to_string();
+    ExecResult {
+        stdout: String::new(),
+        stderr: msg.clone(),
+        exit_code: 1,
+        error: Some(msg),
+        stdout_truncated: false,
+        stderr_truncated: false,
+        final_env: None,
+        success: false,
+    }
+}
+
+fn js_exec_result_from_bash_result(result: bashkit::Result<RustExecResult>) -> ExecResult {
+    match result {
+        Ok(result) => js_exec_result_from_rust(result),
+        Err(err) => js_exec_result_from_error(err),
+    }
+}
+
+fn callback_error_reason(err: impl ToString) -> String {
+    format!("onOutput callback failed: {}", err.to_string())
+}
+
+fn record_callback_error(
+    callback_error: &StdMutex<Option<String>>,
+    cancelled: &Arc<AtomicBool>,
+    callback_requested_cancel: &Arc<AtomicBool>,
+    message: String,
+) {
+    if let Ok(mut callback_error) = callback_error.lock()
+        && callback_error.is_none()
+    {
+        *callback_error = Some(message);
+    }
+    if !cancelled.swap(true, Ordering::SeqCst) {
+        callback_requested_cancel.store(true, Ordering::SeqCst);
+    }
+}
+
+fn take_callback_error(callback_error: &StdMutex<Option<String>>) -> Option<napi::Error> {
+    callback_error
+        .lock()
+        .ok()
+        .and_then(|mut callback_error| callback_error.take())
+        .map(napi::Error::from_reason)
+}
+
+fn build_sync_output_callback(
+    env_raw: usize,
+    on_output: SyncOutputFn,
+    cancelled: Arc<AtomicBool>,
+    callback_requested_cancel: Arc<AtomicBool>,
+    callback_error: Arc<StdMutex<Option<String>>>,
+) -> OutputCallback {
+    Box::new(move |stdout_chunk, stderr_chunk| {
+        let has_error = callback_error
+            .lock()
+            .map(|callback_error| callback_error.is_some())
+            .unwrap_or(false);
+        if has_error {
+            return;
+        }
+
+        let env = napi::Env::from_raw(env_raw as napi::sys::napi_env);
+        let callback = match on_output.borrow_back(&env) {
+            Ok(callback) => callback,
+            Err(err) => {
+                record_callback_error(
+                    &callback_error,
+                    &cancelled,
+                    &callback_requested_cancel,
+                    callback_error_reason(err),
+                );
+                return;
+            }
+        };
+
+        match callback.call((stdout_chunk.to_string(), stderr_chunk.to_string())) {
+            Ok(Some(err)) => {
+                record_callback_error(
+                    &callback_error,
+                    &cancelled,
+                    &callback_requested_cancel,
+                    callback_error_reason(err),
+                );
+            }
+            Ok(None) => {}
+            Err(err) => {
+                record_callback_error(
+                    &callback_error,
+                    &cancelled,
+                    &callback_requested_cancel,
+                    callback_error_reason(err),
+                );
+            }
+        }
+    })
+}
+
+fn build_async_output_callback(
+    tsfn: Arc<OutputTsfn>,
+    cancelled: Arc<AtomicBool>,
+    callback_requested_cancel: Arc<AtomicBool>,
+) -> (OutputCallback, Arc<StdMutex<Option<String>>>) {
+    let callback_error = Arc::new(StdMutex::new(None));
+    let callback_error_output = callback_error.clone();
+    let cancelled_output = cancelled.clone();
+    let callback_requested_cancel_output = callback_requested_cancel.clone();
+
+    let output_callback: OutputCallback = Box::new(move |stdout_chunk, stderr_chunk| {
+        let has_error = callback_error_output
+            .lock()
+            .map(|callback_error| callback_error.is_some())
+            .unwrap_or(false);
+        if has_error {
+            return;
+        }
+
+        let stdout = stdout_chunk.to_string();
+        let stderr = stderr_chunk.to_string();
+        let tsfn = tsfn.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        // OutputCallback in core bashkit is synchronous. Dispatch onto the
+        // shared callback runtime, then block until JS finishes so callback
+        // errors abort execution immediately and chunk ordering stays stable.
+        callback_runtime().spawn(async move {
+            let result: Result<Option<String>, String> = tsfn
+                .call_async((stdout, stderr))
+                .await
+                .map_err(callback_error_reason);
+            let _ = tx.send(result);
+        });
+
+        match rx.recv() {
+            Ok(Ok(Some(err))) => {
+                record_callback_error(
+                    &callback_error_output,
+                    &cancelled_output,
+                    &callback_requested_cancel_output,
+                    callback_error_reason(err),
+                );
+            }
+            Ok(Ok(None)) => {}
+            Ok(Err(err)) => {
+                record_callback_error(
+                    &callback_error_output,
+                    &cancelled_output,
+                    &callback_requested_cancel_output,
+                    err,
+                );
+            }
+            Err(_) => {
+                record_callback_error(
+                    &callback_error_output,
+                    &cancelled_output,
+                    &callback_requested_cancel_output,
+                    "onOutput callback failed: callback channel closed".to_string(),
+                );
+            }
+        }
+    });
+
+    (output_callback, callback_error)
+}
+
+fn create_output_tsfn(
+    on_output: napi::bindgen_prelude::Function<'_, (String, String), Option<String>>,
+) -> napi::Result<Arc<OutputTsfn>> {
+    let tsfn = on_output
+        .build_threadsafe_function::<(String, String)>()
+        .weak::<true>()
+        .build()?;
+    Ok(Arc::new(tsfn))
+}
+
+async fn execute_rust_bash(
+    bash: &mut RustBash,
+    commands: &str,
+    output_callback: Option<OutputCallback>,
+    callback_error: Option<&Arc<StdMutex<Option<String>>>>,
+    cancelled: Option<&Arc<AtomicBool>>,
+    callback_requested_cancel: Option<&Arc<AtomicBool>>,
+) -> napi::Result<ExecResult> {
+    let result = if let Some(output_callback) = output_callback {
+        bash.exec_streaming(commands, output_callback).await
+    } else {
+        bash.exec(commands).await
+    };
+
+    if let Some(callback_error) = callback_error
+        && let Some(err) = take_callback_error(callback_error)
+    {
+        if let Some((cancelled, callback_requested_cancel)) =
+            cancelled.zip(callback_requested_cancel)
+            && callback_requested_cancel.load(Ordering::SeqCst)
+        {
+            cancelled.store(false, Ordering::SeqCst);
+        }
+        return Err(err);
+    }
+
+    Ok(js_exec_result_from_bash_result(result))
+}
+
 // ============================================================================
 // MountConfig + BashOptions
 // ============================================================================
@@ -554,34 +789,44 @@ impl Bash {
     }
 
     /// Execute bash commands synchronously.
-    #[napi]
-    pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
+    #[napi(
+        ts_args_type = "commands: string, onOutput?: (chunkPair: [string, string]) => string | undefined"
+    )]
+    pub fn execute_sync(
+        &self,
+        commands: String,
+        on_output: Option<napi::bindgen_prelude::Function<'_, (String, String), Option<String>>>,
+    ) -> napi::Result<ExecResult> {
+        let env_raw = on_output
+            .as_ref()
+            .map(|on_output| on_output.value().env as usize);
+        let on_output = on_output
+            .map(|on_output| on_output.create_ref())
+            .transpose()?;
         block_on_with(&self.state, |s| async move {
             let mut bash = s.inner.lock().await;
-            match bash.exec(&commands).await {
-                Ok(result) => Ok(ExecResult {
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    exit_code: result.exit_code,
-                    error: None,
-                    stdout_truncated: result.stdout_truncated,
-                    stderr_truncated: result.stderr_truncated,
-                    final_env: result.final_env,
-                    success: result.exit_code == 0,
-                }),
-                Err(e) => {
-                    let msg = e.to_string();
-                    Ok(ExecResult {
-                        stdout: String::new(),
-                        stderr: msg.clone(),
-                        exit_code: 1,
-                        error: Some(msg),
-                        stdout_truncated: false,
-                        stderr_truncated: false,
-                        final_env: None,
-                        success: false,
-                    })
-                }
+            if let Some((env_raw, on_output)) = env_raw.zip(on_output) {
+                let cancelled = bash.cancellation_token();
+                let callback_requested_cancel = Arc::new(AtomicBool::new(false));
+                let callback_error = Arc::new(StdMutex::new(None));
+                let output_callback = build_sync_output_callback(
+                    env_raw,
+                    on_output,
+                    cancelled.clone(),
+                    callback_requested_cancel.clone(),
+                    callback_error.clone(),
+                );
+                execute_rust_bash(
+                    &mut bash,
+                    &commands,
+                    Some(output_callback),
+                    Some(&callback_error),
+                    Some(&cancelled),
+                    Some(&callback_requested_cancel),
+                )
+                .await
+            } else {
+                execute_rust_bash(&mut bash, &commands, None, None, None, None).await
             }
         })
     }
@@ -591,31 +836,47 @@ impl Bash {
     pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
         let s = self.state.clone();
         let mut bash = s.inner.lock().await;
-        match bash.exec(&commands).await {
-            Ok(result) => Ok(ExecResult {
-                stdout: result.stdout,
-                stderr: result.stderr,
-                exit_code: result.exit_code,
-                error: None,
-                stdout_truncated: result.stdout_truncated,
-                stderr_truncated: result.stderr_truncated,
-                final_env: result.final_env,
-                success: result.exit_code == 0,
-            }),
-            Err(e) => {
-                let msg = e.to_string();
-                Ok(ExecResult {
-                    stdout: String::new(),
-                    stderr: msg.clone(),
-                    exit_code: 1,
-                    error: Some(msg),
-                    stdout_truncated: false,
-                    stderr_truncated: false,
-                    final_env: None,
-                    success: false,
-                })
-            }
-        }
+        execute_rust_bash(&mut bash, &commands, None, None, None, None).await
+    }
+
+    #[napi(
+        js_name = "executeWithOutput",
+        ts_args_type = "commands: string, onOutput: (chunkPair: [string, string]) => string | undefined"
+    )]
+    pub fn execute_with_output<'env>(
+        &self,
+        commands: String,
+        on_output: napi::bindgen_prelude::Function<'env, (String, String), Option<String>>,
+    ) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, ExecResult>> {
+        let raw_env = on_output.value().env;
+        let tsfn = create_output_tsfn(on_output)?;
+        let state = self.state.clone();
+        let promise = napi::bindgen_prelude::execute_tokio_future(
+            raw_env,
+            async move {
+                let mut bash = state.inner.lock().await;
+                let cancelled = bash.cancellation_token();
+                let callback_requested_cancel = Arc::new(AtomicBool::new(false));
+                let (output_callback, callback_error) = build_async_output_callback(
+                    tsfn,
+                    cancelled.clone(),
+                    callback_requested_cancel.clone(),
+                );
+                execute_rust_bash(
+                    &mut bash,
+                    &commands,
+                    Some(output_callback),
+                    Some(&callback_error),
+                    Some(&cancelled),
+                    Some(&callback_requested_cancel),
+                )
+                .await
+            },
+            |env, val| unsafe {
+                <ExecResult as napi::bindgen_prelude::ToNapiValue>::to_napi_value(env, val)
+            },
+        )?;
+        Ok(napi::bindgen_prelude::PromiseRaw::new(raw_env, promise))
     }
 
     /// Cancel the currently running execution.
@@ -951,34 +1212,44 @@ impl BashTool {
     }
 
     /// Execute bash commands synchronously.
-    #[napi]
-    pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
+    #[napi(
+        ts_args_type = "commands: string, onOutput?: (chunkPair: [string, string]) => string | undefined"
+    )]
+    pub fn execute_sync(
+        &self,
+        commands: String,
+        on_output: Option<napi::bindgen_prelude::Function<'_, (String, String), Option<String>>>,
+    ) -> napi::Result<ExecResult> {
+        let env_raw = on_output
+            .as_ref()
+            .map(|on_output| on_output.value().env as usize);
+        let on_output = on_output
+            .map(|on_output| on_output.create_ref())
+            .transpose()?;
         block_on_with(&self.state, |s| async move {
             let mut bash = s.inner.lock().await;
-            match bash.exec(&commands).await {
-                Ok(result) => Ok(ExecResult {
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    exit_code: result.exit_code,
-                    error: None,
-                    stdout_truncated: result.stdout_truncated,
-                    stderr_truncated: result.stderr_truncated,
-                    final_env: result.final_env,
-                    success: result.exit_code == 0,
-                }),
-                Err(e) => {
-                    let msg = e.to_string();
-                    Ok(ExecResult {
-                        stdout: String::new(),
-                        stderr: msg.clone(),
-                        exit_code: 1,
-                        error: Some(msg),
-                        stdout_truncated: false,
-                        stderr_truncated: false,
-                        final_env: None,
-                        success: false,
-                    })
-                }
+            if let Some((env_raw, on_output)) = env_raw.zip(on_output) {
+                let cancelled = bash.cancellation_token();
+                let callback_requested_cancel = Arc::new(AtomicBool::new(false));
+                let callback_error = Arc::new(StdMutex::new(None));
+                let output_callback = build_sync_output_callback(
+                    env_raw,
+                    on_output,
+                    cancelled.clone(),
+                    callback_requested_cancel.clone(),
+                    callback_error.clone(),
+                );
+                execute_rust_bash(
+                    &mut bash,
+                    &commands,
+                    Some(output_callback),
+                    Some(&callback_error),
+                    Some(&cancelled),
+                    Some(&callback_requested_cancel),
+                )
+                .await
+            } else {
+                execute_rust_bash(&mut bash, &commands, None, None, None, None).await
             }
         })
     }
@@ -988,31 +1259,47 @@ impl BashTool {
     pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
         let s = self.state.clone();
         let mut bash = s.inner.lock().await;
-        match bash.exec(&commands).await {
-            Ok(result) => Ok(ExecResult {
-                stdout: result.stdout,
-                stderr: result.stderr,
-                exit_code: result.exit_code,
-                error: None,
-                stdout_truncated: result.stdout_truncated,
-                stderr_truncated: result.stderr_truncated,
-                final_env: result.final_env,
-                success: result.exit_code == 0,
-            }),
-            Err(e) => {
-                let msg = e.to_string();
-                Ok(ExecResult {
-                    stdout: String::new(),
-                    stderr: msg.clone(),
-                    exit_code: 1,
-                    error: Some(msg),
-                    stdout_truncated: false,
-                    stderr_truncated: false,
-                    final_env: None,
-                    success: false,
-                })
-            }
-        }
+        execute_rust_bash(&mut bash, &commands, None, None, None, None).await
+    }
+
+    #[napi(
+        js_name = "executeWithOutput",
+        ts_args_type = "commands: string, onOutput: (chunkPair: [string, string]) => string | undefined"
+    )]
+    pub fn execute_with_output<'env>(
+        &self,
+        commands: String,
+        on_output: napi::bindgen_prelude::Function<'env, (String, String), Option<String>>,
+    ) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, ExecResult>> {
+        let raw_env = on_output.value().env;
+        let tsfn = create_output_tsfn(on_output)?;
+        let state = self.state.clone();
+        let promise = napi::bindgen_prelude::execute_tokio_future(
+            raw_env,
+            async move {
+                let mut bash = state.inner.lock().await;
+                let cancelled = bash.cancellation_token();
+                let callback_requested_cancel = Arc::new(AtomicBool::new(false));
+                let (output_callback, callback_error) = build_async_output_callback(
+                    tsfn,
+                    cancelled.clone(),
+                    callback_requested_cancel.clone(),
+                );
+                execute_rust_bash(
+                    &mut bash,
+                    &commands,
+                    Some(output_callback),
+                    Some(&callback_error),
+                    Some(&cancelled),
+                    Some(&callback_requested_cancel),
+                )
+                .await
+            },
+            |env, val| unsafe {
+                <ExecResult as napi::bindgen_prelude::ToNapiValue>::to_napi_value(env, val)
+            },
+        )?;
+        Ok(napi::bindgen_prelude::PromiseRaw::new(raw_env, promise))
     }
 
     /// Cancel the currently running execution.

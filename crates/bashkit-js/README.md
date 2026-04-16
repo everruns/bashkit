@@ -52,6 +52,30 @@ await bash.execute('printf "data\\n" > /tmp/file.txt');
 console.log((await bash.execute("cat /tmp/file.txt")).stdout); // data\n
 ```
 
+### Live Output
+
+```typescript
+const bash = new Bash();
+
+const result = await bash.execute(
+  'for i in 1 2 3; do echo out-$i; echo err-$i >&2; done',
+  {
+    onOutput({ stdout, stderr }) {
+      if (stdout) process.stdout.write(stdout);
+      if (stderr) process.stderr.write(stderr);
+    },
+  },
+);
+```
+
+`onOutput` is optional and fires during execution with chunk objects shaped like
+`{ stdout, stderr }`. Chunks are not line-aligned or exact terminal interleaving, but
+concatenating all callback chunks matches the final `ExecResult.stdout` and
+`ExecResult.stderr`. The handler must be synchronous; Promise-returning
+handlers are rejected. Do not call back into the same `Bash` / `BashTool`
+instance from `onOutput` via `execute*`, `readFile`, `fs()`, or similar
+same-instance APIs.
+
 ## Configuration
 
 ### BashOptions
@@ -299,10 +323,10 @@ import {
 
 - `new Bash(options?)`
 - `Bash.create(options?)`
-- `executeSync(commands, { signal? })`
-- `execute(commands)`
-- `executeSyncOrThrow(commands, { signal? })`
-- `executeOrThrow(commands)`
+- `executeSync(commands, options?)`
+- `execute(commands, options?)`
+- `executeSyncOrThrow(commands, options?)`
+- `executeOrThrow(commands, options?)`
 - `cancel()`
 - `clearCancel()`
 - `reset()`
@@ -347,6 +371,11 @@ import {
 - `mounts?: Array<{ path: string; root: string; writable?: boolean }>`
 - `python?: boolean`
 - `externalFunctions?: string[]`
+
+### ExecuteOptions
+
+- `signal?: AbortSignal`
+- `onOutput?: (chunk: { stdout: string; stderr: string }) => void`
 
 ### ExecResult and BashError
 

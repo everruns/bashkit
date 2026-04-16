@@ -1,3 +1,4 @@
+import { AsyncResource } from "node:async_hooks";
 import { createRequire } from "node:module";
 import type {
   Bash as NativeBashType,
@@ -104,6 +105,109 @@ export interface BashOptions {
    * the embedded interpreter. When called, they invoke the external handler.
    */
   externalFunctions?: string[];
+}
+
+export interface OutputChunk {
+  stdout: string;
+  stderr: string;
+}
+
+export type OnOutput = (chunk: OutputChunk) => void;
+
+export interface ExecuteOptions {
+  signal?: AbortSignal;
+  /**
+   * Live chunk callback. Must be synchronous.
+   *
+   * Limitation: do not call back into the same `Bash` / `BashTool` instance
+   * from this handler (`execute*`, `readFile`, `fs()`, etc.). The current
+   * binding delivers chunks while that instance is still mid-execution, so
+   * same-instance re-entry can deadlock or panic.
+   */
+  onOutput?: OnOutput;
+}
+
+type NativeOnOutput = (chunkPair: [string, string]) => string | undefined;
+const ASYNC_ON_OUTPUT_ERROR =
+  "onOutput must be synchronous and must not return a Promise";
+const asyncExecuteQueues = new WeakMap<object, Promise<void>>();
+
+function isAsyncFunction(fn: Function): boolean {
+  return Object.prototype.toString.call(fn) === "[object AsyncFunction]";
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+
+function cancelledExecResult(): ExecResult {
+  return {
+    stdout: "",
+    stderr: "",
+    exitCode: 1,
+    error: "execution cancelled",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    finalEnv: undefined,
+    success: false,
+  };
+}
+
+// Decision: serialize async execute() per instance in JS so queued AbortSignal
+// listeners only attach once a call reaches the front of the line.
+function queueAsyncExecute<T>(
+  owner: object,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = asyncExecuteQueues.get(owner) ?? Promise.resolve();
+  const completion = previous.then(
+    () => run(),
+    () => run(),
+  );
+  asyncExecuteQueues.set(
+    owner,
+    completion.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return completion;
+}
+
+function bindOnOutputToCurrentAsyncContext(onOutput: OnOutput): OnOutput {
+  return AsyncResource.bind(onOutput) as OnOutput;
+}
+
+function toNativeOnOutput(onOutput?: OnOutput): NativeOnOutput | undefined {
+  if (!onOutput) return undefined;
+  if (isAsyncFunction(onOutput)) {
+    throw new TypeError(ASYNC_ON_OUTPUT_ERROR);
+  }
+  const onOutputWithContext = bindOnOutputToCurrentAsyncContext(onOutput);
+  // The native binding passes one tuple payload `[stdoutChunk, stderrChunk]`.
+  // Adapt that odd FFI shape here so the public wrapper API stays future-proof.
+  return ([stdoutChunk, stderrChunk]) => {
+    try {
+      const result = onOutputWithContext({
+        stdout: stdoutChunk,
+        stderr: stderrChunk,
+      });
+      if (isPromiseLike(result)) {
+        void Promise.resolve(result).catch(() => {});
+        return ASYNC_ON_OUTPUT_ERROR;
+      }
+      return undefined;
+    } catch (error) {
+      if (error instanceof Error) {
+        return error.stack ?? error.message ?? error.toString();
+      }
+      return String(error);
+    }
+  };
 }
 
 /**
@@ -264,30 +368,22 @@ export class Bash {
    * Execute bash commands synchronously and return the result.
    *
    * If `signal` is provided, the execution will be cancelled when the signal
-   * is aborted. The result will have `error: "execution cancelled"`.
+   * is aborted. If `onOutput` is provided, it receives chunk objects with
+   * `{ stdout, stderr }` during execution. Chunks are not line-aligned. The callback must be
+   * synchronous; Promise-returning handlers are rejected. Do not re-enter the
+   * same instance from `onOutput` via `execute*`, `readFile`, `fs()`, etc.
    */
-  executeSync(
-    commands: string,
-    options?: { signal?: AbortSignal },
-  ): ExecResult {
+  executeSync(commands: string, options?: ExecuteOptions): ExecResult {
+    const nativeOnOutput = toNativeOnOutput(options?.onOutput);
     if (options?.signal) {
       const signal = options.signal;
       if (signal.aborted) {
-        return {
-          stdout: "",
-          stderr: "",
-          exitCode: 1,
-          error: "execution cancelled",
-          stdoutTruncated: false,
-          stderrTruncated: false,
-          finalEnv: undefined,
-          success: false,
-        };
+        return cancelledExecResult();
       }
       const onAbort = () => this.native.cancel();
       signal.addEventListener("abort", onAbort, { once: true });
       try {
-        return this.native.executeSync(commands);
+        return this.native.executeSync(commands, nativeOnOutput);
       } finally {
         signal.removeEventListener("abort", onAbort);
         if (signal.aborted) {
@@ -295,13 +391,17 @@ export class Bash {
         }
       }
     }
-    return this.native.executeSync(commands);
+    return this.native.executeSync(commands, nativeOnOutput);
   }
 
   /**
    * Execute bash commands asynchronously, returning a Promise.
    *
    * Non-blocking for the Node.js event loop.
+   * If `onOutput` is provided, it receives chunk objects with `{ stdout, stderr }`
+   * during execution. Chunks are not line-aligned. The callback must be
+   * synchronous; Promise-returning handlers are rejected. Do not re-enter the
+   * same instance from `onOutput` via `execute*`, `readFile`, `fs()`, etc.
    *
    * @example
    * ```typescript
@@ -309,17 +409,52 @@ export class Bash {
    * console.log(result.stdout); // hello\n
    * ```
    */
-  async execute(commands: string): Promise<ExecResult> {
-    return this.native.execute(commands);
+  async execute(
+    commands: string,
+    options?: ExecuteOptions,
+  ): Promise<ExecResult> {
+    const nativeOnOutput = toNativeOnOutput(options?.onOutput);
+    const signal = options?.signal;
+    if (signal?.aborted) {
+      return cancelledExecResult();
+    }
+    return queueAsyncExecute(this, async () => {
+      if (signal?.aborted) {
+        return cancelledExecResult();
+      }
+      if (signal) {
+        let signalTriggered = false;
+        const onAbort = () => {
+          signalTriggered = true;
+          this.native.cancel();
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        try {
+          if (nativeOnOutput) {
+            return await this.native.executeWithOutput(
+              commands,
+              nativeOnOutput,
+            );
+          }
+          return await this.native.execute(commands);
+        } finally {
+          signal.removeEventListener("abort", onAbort);
+          if (signalTriggered) {
+            this.native.clearCancel();
+          }
+        }
+      }
+      if (nativeOnOutput) {
+        return this.native.executeWithOutput(commands, nativeOnOutput);
+      }
+      return this.native.execute(commands);
+    });
   }
 
   /**
    * Execute bash commands synchronously. Throws `BashError` on non-zero exit.
    */
-  executeSyncOrThrow(
-    commands: string,
-    options?: { signal?: AbortSignal },
-  ): ExecResult {
+  executeSyncOrThrow(commands: string, options?: ExecuteOptions): ExecResult {
     const result = this.executeSync(commands, options);
     if (result.exitCode !== 0) {
       throw new BashError(result);
@@ -330,8 +465,11 @@ export class Bash {
   /**
    * Execute bash commands asynchronously. Throws `BashError` on non-zero exit.
    */
-  async executeOrThrow(commands: string): Promise<ExecResult> {
-    const result = await this.native.execute(commands);
+  async executeOrThrow(
+    commands: string,
+    options?: ExecuteOptions,
+  ): Promise<ExecResult> {
+    const result = await this.execute(commands, options);
     if (result.exitCode !== 0) {
       throw new BashError(result);
     }
@@ -565,29 +703,22 @@ export class BashTool {
 
   /**
    * Execute bash commands synchronously and return the result.
+   *
+   * If `onOutput` is provided, it must be synchronous; Promise-returning
+   * handlers are rejected. Do not re-enter the same instance from `onOutput`
+   * via `execute*`, `readFile`, `fs()`, etc.
    */
-  executeSync(
-    commands: string,
-    options?: { signal?: AbortSignal },
-  ): ExecResult {
+  executeSync(commands: string, options?: ExecuteOptions): ExecResult {
+    const nativeOnOutput = toNativeOnOutput(options?.onOutput);
     if (options?.signal) {
       const signal = options.signal;
       if (signal.aborted) {
-        return {
-          stdout: "",
-          stderr: "",
-          exitCode: 1,
-          error: "execution cancelled",
-          stdoutTruncated: false,
-          stderrTruncated: false,
-          finalEnv: undefined,
-          success: false,
-        };
+        return cancelledExecResult();
       }
       const onAbort = () => this.native.cancel();
       signal.addEventListener("abort", onAbort, { once: true });
       try {
-        return this.native.executeSync(commands);
+        return this.native.executeSync(commands, nativeOnOutput);
       } finally {
         signal.removeEventListener("abort", onAbort);
         if (signal.aborted) {
@@ -595,23 +726,62 @@ export class BashTool {
         }
       }
     }
-    return this.native.executeSync(commands);
+    return this.native.executeSync(commands, nativeOnOutput);
   }
 
   /**
    * Execute bash commands asynchronously, returning a Promise.
+   *
+   * If `onOutput` is provided, it must be synchronous; Promise-returning
+   * handlers are rejected. Do not re-enter the same instance from `onOutput`
+   * via `execute*`, `readFile`, `fs()`, etc.
    */
-  async execute(commands: string): Promise<ExecResult> {
-    return this.native.execute(commands);
+  async execute(
+    commands: string,
+    options?: ExecuteOptions,
+  ): Promise<ExecResult> {
+    const nativeOnOutput = toNativeOnOutput(options?.onOutput);
+    const signal = options?.signal;
+    if (signal?.aborted) {
+      return cancelledExecResult();
+    }
+    return queueAsyncExecute(this, async () => {
+      if (signal?.aborted) {
+        return cancelledExecResult();
+      }
+      if (signal) {
+        let signalTriggered = false;
+        const onAbort = () => {
+          signalTriggered = true;
+          this.native.cancel();
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        try {
+          if (nativeOnOutput) {
+            return await this.native.executeWithOutput(
+              commands,
+              nativeOnOutput,
+            );
+          }
+          return await this.native.execute(commands);
+        } finally {
+          signal.removeEventListener("abort", onAbort);
+          if (signalTriggered) {
+            this.native.clearCancel();
+          }
+        }
+      }
+      if (nativeOnOutput) {
+        return this.native.executeWithOutput(commands, nativeOnOutput);
+      }
+      return this.native.execute(commands);
+    });
   }
 
   /**
    * Execute bash commands synchronously. Throws `BashError` on non-zero exit.
    */
-  executeSyncOrThrow(
-    commands: string,
-    options?: { signal?: AbortSignal },
-  ): ExecResult {
+  executeSyncOrThrow(commands: string, options?: ExecuteOptions): ExecResult {
     const result = this.executeSync(commands, options);
     if (result.exitCode !== 0) {
       throw new BashError(result);
@@ -622,8 +792,11 @@ export class BashTool {
   /**
    * Execute bash commands asynchronously. Throws `BashError` on non-zero exit.
    */
-  async executeOrThrow(commands: string): Promise<ExecResult> {
-    const result = await this.native.execute(commands);
+  async executeOrThrow(
+    commands: string,
+    options?: ExecuteOptions,
+  ): Promise<ExecResult> {
+    const result = await this.execute(commands, options);
     if (result.exitCode !== 0) {
       throw new BashError(result);
     }
