@@ -4,7 +4,7 @@
 //! lexing, parsing, and execution.
 
 /// A position in source code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Position {
     /// 1-based line number
     pub line: usize,
@@ -43,7 +43,7 @@ impl std::fmt::Display for Position {
 }
 
 /// A span of source code (start to end position).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Span {
     /// Start position (inclusive)
     pub start: Position,

@@ -166,8 +166,10 @@ Snapshot/restore methods also exist on `Bash` and mirror the Node bindings:
 from bashkit import Bash
 
 bash = Bash()
+bash.execute_sync("greet() { echo \"hi $1\"; }")
 blob = bash.snapshot()              # -> bytes
 restored = Bash.from_snapshot(blob) # -> Bash
+assert restored.execute_sync("greet agent").stdout.strip() == "hi agent"
 ```
 
 ### ExecResult

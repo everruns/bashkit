@@ -36,6 +36,7 @@
 //! - Environment variables
 //! - Current working directory
 //! - Last exit code (`$?`)
+//! - Shell functions
 //! - Shell aliases
 //! - Trap handlers
 //! - VFS contents (files, directories, symlinks)
@@ -43,7 +44,6 @@
 //!
 //! # What is NOT captured
 //!
-//! - Function definitions (AST is not serializable; define functions after restore)
 //! - Builtins (immutable configuration, not state)
 //! - Active execution stack (snapshot only between `exec()` calls)
 //! - Tokio runtime state
