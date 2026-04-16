@@ -187,3 +187,29 @@ test("openai: handler respects pre-aborted signal", async (t) => {
   );
   t.is(result.content, "Execution cancelled");
 });
+
+test("openai: aborted handler leaves adapter bash reusable", async (t) => {
+  const adapter = openAiBashTool();
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 10);
+
+  const cancelled = await adapter.handler(
+    {
+      id: "c-abort-in-flight",
+      type: "function",
+      function: {
+        name: "bash",
+        arguments: JSON.stringify({
+          commands: "for i in $(seq 1 10000); do echo $i; done",
+        }),
+      },
+    },
+    { signal: controller.signal },
+  );
+
+  t.true(cancelled.content.includes("cancelled") || cancelled.content.includes("Execution error"));
+
+  const result = await adapter.bash.execute("echo ok");
+  t.is(result.exitCode, 0);
+  t.is(result.stdout.trim(), "ok");
+});

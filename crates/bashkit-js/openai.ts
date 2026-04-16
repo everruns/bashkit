@@ -267,6 +267,9 @@ export function bashTool(options?: BashToolOptions): BashToolAdapter {
     } finally {
       if (signal && onAbort) {
         signal.removeEventListener("abort", onAbort);
+        if (signal.aborted) {
+          bash.clearCancel();
+        }
       }
     }
   };
