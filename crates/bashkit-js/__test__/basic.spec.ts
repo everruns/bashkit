@@ -214,7 +214,10 @@ test("Bash: rm file", (t) => {
 test("Bash: file test -f", (t) => {
   const bash = new Bash();
   bash.executeSync("touch /tmp/exists.txt");
-  t.is(bash.executeSync("test -f /tmp/exists.txt && echo yes").stdout.trim(), "yes");
+  t.is(
+    bash.executeSync("test -f /tmp/exists.txt && echo yes").stdout.trim(),
+    "yes",
+  );
   t.not(bash.executeSync("test -f /tmp/nope.txt").exitCode, 0);
 });
 
@@ -345,7 +348,9 @@ test("Bash: async cancel stays sticky until clearCancel", async (t) => {
   const bash = new Bash();
   setTimeout(() => bash.cancel(), 10);
 
-  const cancelled = await bash.execute("for i in $(seq 1 10000); do echo $i; done");
+  const cancelled = await bash.execute(
+    "for i in $(seq 1 10000); do echo $i; done",
+  );
   t.not(cancelled.exitCode, 0);
 
   const stillCancelled = await bash.execute("echo nope");
@@ -357,11 +362,35 @@ test("Bash: async cancel stays sticky until clearCancel", async (t) => {
   t.is(result.stdout.trim(), "ok");
 });
 
+test("Bash: async clearCancel preserves shell and VFS state", async (t) => {
+  const bash = new Bash({ maxCommands: 5000, maxLoopIterations: 5000 });
+  const seeded = await bash.execute(
+    'SESSION=kept\nprintf "persisted\\n" > /tmp/cancel-state.txt',
+  );
+  t.is(seeded.exitCode, 0);
+
+  const running = bash.execute("for i in $(seq 1 1000); do sleep 0.001; done");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  bash.cancel();
+
+  const cancelled = await running;
+  t.not(cancelled.exitCode, 0);
+
+  bash.clearCancel();
+  const restored = await bash.execute(
+    'printf "%s:%s" "$SESSION" "$(cat /tmp/cancel-state.txt)"',
+  );
+  t.is(restored.exitCode, 0);
+  t.is(restored.stdout, "kept:persisted");
+});
+
 test("BashTool: async cancel stays sticky until clearCancel", async (t) => {
   const tool = new BashTool();
   setTimeout(() => tool.cancel(), 10);
 
-  const cancelled = await tool.execute("for i in $(seq 1 10000); do echo $i; done");
+  const cancelled = await tool.execute(
+    "for i in $(seq 1 10000); do echo $i; done",
+  );
   t.not(cancelled.exitCode, 0);
 
   const stillCancelled = await tool.execute("echo nope");
@@ -371,6 +400,28 @@ test("BashTool: async cancel stays sticky until clearCancel", async (t) => {
   const result = await tool.execute("echo ok");
   t.is(result.exitCode, 0);
   t.is(result.stdout.trim(), "ok");
+});
+
+test("BashTool: async clearCancel preserves shell and VFS state", async (t) => {
+  const tool = new BashTool({ maxCommands: 5000, maxLoopIterations: 5000 });
+  const seeded = await tool.execute(
+    'SESSION=kept\nprintf "persisted\\n" > /tmp/cancel-state.txt',
+  );
+  t.is(seeded.exitCode, 0);
+
+  const running = tool.execute("for i in $(seq 1 1000); do sleep 0.001; done");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  tool.cancel();
+
+  const cancelled = await running;
+  t.not(cancelled.exitCode, 0);
+
+  tool.clearCancel();
+  const restored = await tool.execute(
+    'printf "%s:%s" "$SESSION" "$(cat /tmp/cancel-state.txt)"',
+  );
+  t.is(restored.exitCode, 0);
+  t.is(restored.stdout, "kept:persisted");
 });
 
 // ============================================================================
