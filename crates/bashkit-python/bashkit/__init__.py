@@ -47,6 +47,7 @@ from bashkit._bashkit import (
     Bash,
     BashError,
     BashTool,
+    BuiltinContext,
     ExecResult,
     FileSystem,
     ScriptedTool,
@@ -58,6 +59,7 @@ __version__ = "0.1.2"
 __all__ = [
     "Bash",
     "BashError",
+    "BuiltinContext",
     "BashTool",
     "ExecResult",
     "FileSystem",

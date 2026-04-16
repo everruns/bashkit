@@ -7,25 +7,25 @@
 
 use bashkit::tool::VERSION;
 use bashkit::{
-    Bash, BashTool as RustBashTool, DirEntry as FsDirEntry, ExcType, ExecResult as RustExecResult,
-    ExecutionLimits, ExtFunctionResult, FileSystem, FileSystemExt, FileType as FsFileType,
-    InMemoryFs, Metadata as FsMetadata, MontyException, MontyObject,
-    OutputCallback as RustOutputCallback, OverlayFs, PosixFs, PythonExternalFnHandler,
-    PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool, Tool, ToolArgs, ToolDef,
-    ToolRequest, async_trait,
+    Bash, BashTool as RustBashTool, Builtin, BuiltinContext, DirEntry as FsDirEntry, ExcType,
+    ExecResult as RustExecResult, ExecutionExtensions, ExecutionLimits, ExtFunctionResult,
+    FileSystem, FileSystemExt, FileType as FsFileType, InMemoryFs, Metadata as FsMetadata,
+    MontyException, MontyObject, OutputCallback as RustOutputCallback, OverlayFs, PosixFs,
+    PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool,
+    Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
 };
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PySet, PyTuple};
-use pyo3_async_runtimes::tokio::future_into_py;
 use pyo3_async_runtimes::TaskLocals;
+use pyo3_async_runtimes::tokio::future_into_py;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 
 // ============================================================================
 // JSON <-> Python helpers
@@ -205,6 +205,26 @@ fn parse_files(files: Option<&Bound<'_, PyDict>>) -> PyResult<Vec<PyFileMount>> 
         )));
     }
     Ok(mounts)
+}
+
+fn parse_custom_builtins(
+    py: Python<'_>,
+    custom_builtins: Option<&Bound<'_, PyDict>>,
+) -> PyResult<Vec<PyCustomBuiltinEntry>> {
+    let Some(dict) = custom_builtins else {
+        return Ok(Vec::new());
+    };
+
+    let mut builtins = Vec::with_capacity(dict.len());
+    for (name_obj, callback_obj) in dict.iter() {
+        let name: String = name_obj.extract()?;
+        builtins.push(build_py_custom_builtin_entry(
+            py,
+            name,
+            callback_obj.unbind(),
+        )?);
+    }
+    Ok(builtins)
 }
 
 fn clone_file_mounts(py: Python<'_>, mounts: &[PyFileMount]) -> Vec<PyFileMount> {
@@ -1093,6 +1113,17 @@ fn is_coroutine_callable(py: Python<'_>, callable: &Bound<'_, PyAny>) -> PyResul
             .unwrap_or(false))
 }
 
+fn validate_python_callback(
+    py: Python<'_>,
+    callable: &Bound<'_, PyAny>,
+    callable_error: impl FnOnce() -> String,
+) -> PyResult<bool> {
+    if !callable.is_callable() {
+        return Err(PyTypeError::new_err(callable_error()));
+    }
+    is_coroutine_callable(py, callable)
+}
+
 fn prepare_output_handler(
     py: Python<'_>,
     on_output: Option<Py<PyAny>>,
@@ -1120,1217 +1151,78 @@ fn prepare_output_handler(
     }))
 }
 
-fn take_output_handler_error(callback_error: &StdMutex<Option<PyErr>>) -> Option<PyErr> {
-    callback_error
-        .lock()
-        .ok()
-        .and_then(|mut callback_error| callback_error.take())
-}
-
-fn close_awaitable_if_possible(awaitable: &Bound<'_, PyAny>) {
-    if let Ok(close) = awaitable.getattr("close") {
-        let _ = close.call0();
-    }
-}
-
-fn build_python_output_callback(
-    on_output: PyOutputHandler,
-    cancelled: Arc<AtomicBool>,
-    callback_requested_cancel: Arc<AtomicBool>,
-    callback_error: Arc<StdMutex<Option<PyErr>>>,
-) -> RustOutputCallback {
-    Box::new(move |stdout_chunk, stderr_chunk| {
-        let has_error = callback_error
-            .lock()
-            .map(|callback_error| callback_error.is_some())
-            .unwrap_or(false);
-        if has_error {
-            return;
-        }
-
-        let callback_result = Python::attach(|py| {
-            // Re-enter the caller's copied ContextVar snapshot for each chunk.
-            let result = on_output.context.bind(py).call_method1(
-                "run",
-                (on_output.callback.bind(py), stdout_chunk, stderr_chunk),
-            )?;
-            let is_awaitable = on_output
-                .is_awaitable
-                .bind(py)
-                .call1((&result,))?
-                .extract::<bool>()?;
-            if is_awaitable {
-                close_awaitable_if_possible(&result);
-                return Err(PyTypeError::new_err(
-                    "on_output must be synchronous and must not return an awaitable",
-                ));
-            }
-            Ok(())
-        });
-
-        if let Err(err) = callback_result {
-            if let Ok(mut callback_error) = callback_error.lock()
-                && callback_error.is_none()
-            {
-                *callback_error = Some(err);
-            }
-            if !cancelled.swap(true, Ordering::Relaxed) {
-                callback_requested_cancel.store(true, Ordering::Relaxed);
-            }
-        }
-    })
-}
-
-async fn exec_bash_with_optional_output(
-    bash: &mut Bash,
-    commands: &str,
-    on_output: Option<PyOutputHandler>,
-) -> PyResult<ExecResult> {
-    let result = if let Some(on_output) = on_output {
-        // Preserve explicit cancel() calls across execute* entry. Only clear
-        // cancellation if an on_output failure introduced it for this call.
-        let cancelled = bash.cancellation_token();
-        let callback_requested_cancel = Arc::new(AtomicBool::new(false));
-        let callback_error = Arc::new(StdMutex::new(None));
-        let output_callback = build_python_output_callback(
-            on_output,
-            cancelled.clone(),
-            callback_requested_cancel.clone(),
-            callback_error.clone(),
-        );
-        let result = bash.exec_streaming(commands, output_callback).await;
-        if let Some(err) = take_output_handler_error(&callback_error) {
-            if callback_requested_cancel.load(Ordering::Relaxed) {
-                cancelled.store(false, Ordering::Relaxed);
-            }
-            return Err(err);
-        }
-        result
-    } else {
-        bash.exec(commands).await
-    };
-
-    Ok(py_exec_result_from_bash_result(result))
-}
-
-/// Build a `PythonExternalFnHandler` from a Python async callable.
+// Decision: `custom_builtins` mirror Rust builtin semantics with a shell-first
+// context object (`argv`, `stdin`, `env`, `cwd`); `ScriptedTool` remains
+// schema-first and continues to pass `(params, stdin)`.
+//
+// Deliberately omitted for now: live `fs`, mutable shell variables, mutable
+// `cwd`, and feature-gated network/git/ssh clients from Rust `BuiltinContext`.
+// Those are reasonable follow-ups, but this PR keeps the Python surface small
+// and shell-first while we validate the core callback shape.
+/// Execution context passed to Python-backed custom builtins.
 ///
-/// The handler converts MontyObject args/kwargs to Python objects, calls the
-/// async handler coroutine, awaits it, and converts the result back.
-fn make_external_handler(py_handler: Py<PyAny>) -> PythonExternalFnHandler {
-    Arc::new(move |fn_name, args, kwargs| {
-        let py_handler = Python::attach(|py| py_handler.clone_ref(py));
-        Box::pin(async move {
-            let fut = Python::attach(|py| {
-                let py_args = args
-                    .iter()
-                    .map(|o| monty_to_py(py, o))
-                    .collect::<PyResult<Vec<_>>>()?;
-                let py_args_list = PyList::new(py, &py_args)?;
-                let py_kwargs = PyDict::new(py);
-                for (k, v) in &kwargs {
-                    py_kwargs.set_item(monty_to_py(py, k)?, monty_to_py(py, v)?)?;
-                }
-                let coro = py_handler.call1(py, (fn_name, py_args_list, py_kwargs))?;
-                pyo3_async_runtimes::tokio::into_future(coro.into_bound(py))
-            });
-            match fut {
-                Err(e) => ExtFunctionResult::Error(MontyException::new(
-                    ExcType::RuntimeError,
-                    Some(e.to_string()),
-                )),
-                Ok(awaitable) => match awaitable.await {
-                    Err(e) => ExtFunctionResult::Error(MontyException::new(
-                        ExcType::RuntimeError,
-                        Some(e.to_string()),
-                    )),
-                    Ok(py_result) => {
-                        Python::attach(|py| match py_to_monty(py, py_result.bind(py)) {
-                            Ok(v) => ExtFunctionResult::Return(v),
-                            Err(e) => ExtFunctionResult::Error(MontyException::new(
-                                ExcType::RuntimeError,
-                                Some(e.to_string()),
-                            )),
-                        })
-                    }
-                },
-            }
-        })
-    })
-}
-
-/// Apply python/external_handler configuration to a `BashBuilder`.
-///
-/// Centralises the logic shared between `new()` and `reset()`.
-fn apply_python_config(
-    mut builder: bashkit::BashBuilder,
-    python: bool,
-    fn_names: Vec<String>,
-    handler: Option<Py<PyAny>>,
-) -> bashkit::BashBuilder {
-    // By construction, handler.is_some() implies python=true (validated in new()).
-    match (python, handler) {
-        (true, Some(h)) => {
-            builder = builder.python_with_external_handler(
-                PythonLimits::default(),
-                fn_names,
-                make_external_handler(h),
-            );
-        }
-        (true, None) => {
-            builder = builder.python();
-        }
-        (false, _) => {}
-    }
-    builder
-}
-
-/// Core bash interpreter with virtual filesystem.
-///
-/// State persists between calls — files created in one `execute()` are
-/// available in subsequent calls. This is the primary interface.
-///
-/// Example:
-///     ```python
-///     from bashkit import Bash
-///
-///     bash = Bash()
-///     result = await bash.execute("echo 'Hello, World!'")
-///     print(result.stdout)  # Hello, World!
-///     ```
-#[pyclass(name = "Bash")]
-#[allow(dead_code)]
-pub struct PyBash {
-    inner: Arc<Mutex<Bash>>,
-    /// Shared tokio runtime — reused across all sync calls to avoid
-    /// per-call OS thread/fd exhaustion (issue #414).
-    rt: Arc<Runtime>,
-    /// Cancellation token. Wrapped in RwLock so reset() can swap it to
-    /// the new interpreter's token without requiring &mut self.
-    cancelled: Arc<RwLock<Arc<AtomicBool>>>,
-    username: Option<String>,
-    hostname: Option<String>,
-    /// Whether Monty Python execution is enabled (`python`/`python3` builtins).
-    python: bool,
-    /// External function names callable from Monty code via the handler.
-    external_functions: Vec<String>,
-    /// Async Python callable invoked when Monty calls an external function.
-    external_handler: Option<Py<PyAny>>,
-    files: Vec<PyFileMount>,
-    real_mounts: Vec<RealMountConfig>,
-    max_commands: Option<u64>,
-    max_loop_iterations: Option<u64>,
-    max_memory: Option<u64>,
-    timeout_seconds: Option<f64>,
+/// Fields are snapshots of the shell state at invocation time.
+#[pyclass(name = "BuiltinContext", skip_from_py_object)]
+struct PyBuiltinContext {
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    argv: Vec<String>,
+    #[pyo3(get)]
+    stdin: Option<String>,
+    #[pyo3(get)]
+    env: std::collections::HashMap<String, String>,
+    #[pyo3(get)]
+    cwd: String,
 }
 
 #[pymethods]
-impl PyBash {
-    #[new]
-    #[pyo3(signature = (
-        username=None,
-        hostname=None,
-        max_commands=None,
-        max_loop_iterations=None,
-        max_memory=None,
-        timeout_seconds=None,
-        python=false,
-        external_functions=None,
-        external_handler=None,
-        files=None,
-        mounts=None,
-    ))]
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        py: Python<'_>,
-        username: Option<String>,
-        hostname: Option<String>,
-        max_commands: Option<u64>,
-        max_loop_iterations: Option<u64>,
-        max_memory: Option<u64>,
-        timeout_seconds: Option<f64>,
-        python: bool,
-        external_functions: Option<Vec<String>>,
-        external_handler: Option<Py<PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        mounts: Option<&Bound<'_, PyList>>,
-    ) -> PyResult<Self> {
-        let mut builder = Bash::builder();
-
-        if let Some(ref u) = username {
-            builder = builder.username(u);
-        }
-        if let Some(ref h) = hostname {
-            builder = builder.hostname(h);
-        }
-
-        let mut limits = ExecutionLimits::new();
-        if let Some(mc) = max_commands {
-            limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
-        }
-        if let Some(mli) = max_loop_iterations {
-            limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
-        }
-        if let Some(ts) = timeout_seconds {
-            limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
-        }
-        builder = builder.limits(limits);
-
-        if let Some(mm) = max_memory {
-            builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
-        }
-
-        let files = parse_files(files)?;
-        let real_mounts = parse_mounts(mounts)?;
-
-        let fn_names = external_functions.clone().unwrap_or_default();
-        if !fn_names.is_empty() && external_handler.is_none() {
-            return Err(PyValueError::new_err(
-                "external_functions requires external_handler — the list has no effect without a handler",
-            ));
-        }
-        if external_handler.is_some() && !python {
-            return Err(PyValueError::new_err(
-                "external_handler requires python=True",
-            ));
-        }
-        if external_handler
-            .as_ref()
-            .is_some_and(|h| !h.bind(py).is_callable())
-        {
-            return Err(PyValueError::new_err("external_handler must be callable"));
-        }
-        if let Some(ref handler) = external_handler {
-            let bound = handler.bind(py);
-            if !is_coroutine_callable(py, bound)? {
-                return Err(PyValueError::new_err(
-                    "external_handler must be an async callable (coroutine function)",
-                ));
-            }
-        }
-        let handler_for_build = external_handler.as_ref().map(|h| h.clone_ref(py));
-        builder = apply_python_config(builder, python, fn_names, handler_for_build);
-        builder = apply_fs_config(builder, &files, &real_mounts)?;
-
-        let bash = builder.build();
-        let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
-
-        let rt = make_runtime()?;
-
-        Ok(Self {
-            inner: Arc::new(Mutex::new(bash)),
-            rt,
-            cancelled,
-            username,
-            hostname,
-            python,
-            external_functions: external_functions.unwrap_or_default(),
-            external_handler,
-            files,
-            real_mounts,
-            max_commands,
-            max_loop_iterations,
-            max_memory,
-            timeout_seconds,
-        })
-    }
-
-    /// Cancel the currently running execution.
-    ///
-    /// Safe to call from any thread. Execution will abort at the next
-    /// command boundary.
-    fn cancel(&self) {
-        if let Ok(token) = self.cancelled.read() {
-            token.store(true, Ordering::Relaxed);
-        }
-    }
-
-    /// Clear the cancellation flag so subsequent executions proceed normally.
-    ///
-    /// Call this after a `cancel()` once the in-flight execution has finished
-    /// and you want to reuse the same `Bash` instance (preserving VFS state).
-    /// Without this, every future `execute()` will immediately fail with
-    /// ``"execution cancelled"``.
-    ///
-    /// **Note:** Calling this while an execution is still in-flight may
-    /// allow that execution to continue past the cancellation point.
-    /// Wait for the cancelled execution to finish before clearing
-    /// (await the async call or let `execute_sync` return).
-    fn clear_cancel(&self) {
-        if let Ok(token) = self.cancelled.read() {
-            token.store(false, Ordering::Relaxed);
-        }
-    }
-
-    /// Execute commands asynchronously.
-    #[pyo3(signature = (commands, on_output=None))]
-    fn execute<'py>(
-        &self,
-        py: Python<'py>,
-        commands: String,
-        on_output: Option<Py<PyAny>>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let on_output = prepare_output_handler(py, on_output)?;
-        let inner = self.inner.clone();
-        future_into_py(py, async move {
-            let mut bash = inner.lock().await;
-            exec_bash_with_optional_output(&mut bash, &commands, on_output).await
-        })
-    }
-
-    /// Execute commands synchronously (blocking).
-    ///
-    /// Not supported when `external_handler` is configured: the handler is an async
-    /// Python coroutine that requires a running event loop, which is unavailable in
-    /// sync context. Use `execute()` (async) instead.
-    ///
-    /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
-    ///
-    /// # Thread safety
-    ///
-    /// This method acquires an async mutex with a 30-second timeout to prevent
-    /// deadlocks when multiple threads call `execute_sync()` concurrently on the
-    /// same `Bash` instance. If the lock cannot be acquired within the timeout,
-    /// a `RuntimeError` is raised. For concurrent workloads, use separate `Bash`
-    /// instances per thread or use the async `execute()` method.
-    #[pyo3(signature = (commands, on_output=None))]
-    fn execute_sync(
-        &self,
-        py: Python<'_>,
-        commands: String,
-        on_output: Option<Py<PyAny>>,
-    ) -> PyResult<ExecResult> {
-        if self.external_handler.is_some() {
-            return Err(PyRuntimeError::new_err(
-                "execute_sync is not supported when external_handler is configured — use execute() (async) instead, e.g. asyncio.run(bash.execute(...))",
-            ));
-        }
-        let on_output = prepare_output_handler(py, on_output)?;
-        let inner = self.inner.clone();
-
-        py.detach(|| {
-            self.rt.block_on(async move {
-                // THREAT[TM-DOS-FFI]: Use timeout on mutex acquisition to prevent
-                // deadlocks when multiple Python threads call execute_sync concurrently.
-                let mut bash =
-                    match tokio::time::timeout(std::time::Duration::from_secs(30), inner.lock())
-                        .await
-                    {
-                        Ok(guard) => guard,
-                        Err(_) => {
-                            return Err(PyRuntimeError::new_err(
-                                "execute_sync: timed out waiting for lock (30s). \
-                             Another thread may be holding the interpreter. \
-                             Use separate Bash instances for concurrent access.",
-                            ));
-                        }
-                    };
-                exec_bash_with_optional_output(&mut bash, &commands, on_output).await
-            })
-        })
-    }
-
-    /// Execute commands synchronously. Raises `BashError` on non-zero exit.
-    ///
-    /// Not supported when `external_handler` is configured.
-    #[pyo3(signature = (commands, on_output=None))]
-    fn execute_sync_or_throw(
-        &self,
-        py: Python<'_>,
-        commands: String,
-        on_output: Option<Py<PyAny>>,
-    ) -> PyResult<ExecResult> {
-        let result = self.execute_sync(py, commands, on_output)?;
-        if result.exit_code != 0 {
-            return Err(raise_bash_error(&result));
-        }
-        Ok(result)
-    }
-
-    /// Execute commands asynchronously. Raises `BashError` on non-zero exit.
-    #[pyo3(signature = (commands, on_output=None))]
-    fn execute_or_throw<'py>(
-        &self,
-        py: Python<'py>,
-        commands: String,
-        on_output: Option<Py<PyAny>>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let on_output = prepare_output_handler(py, on_output)?;
-        let inner = self.inner.clone();
-        future_into_py(py, async move {
-            let mut bash = inner.lock().await;
-            let result = exec_bash_with_optional_output(&mut bash, &commands, on_output).await?;
-            if result.exit_code != 0 {
-                return Err(raise_bash_error(&result));
-            }
-            Ok(result)
-        })
-    }
-
-    /// Reset interpreter to fresh state, preserving all configuration including
-    /// python mode and external function handler.
-    /// Releases GIL before blocking on tokio to prevent deadlock.
-    fn reset(&self, py: Python<'_>) -> PyResult<()> {
-        let inner = self.inner.clone();
-        // THREAT[TM-PY-026]: Rebuild with same config to preserve DoS protections.
-        let username = self.username.clone();
-        let hostname = self.hostname.clone();
-        let max_commands = self.max_commands;
-        let max_loop_iterations = self.max_loop_iterations;
-        let max_memory = self.max_memory;
-        let timeout_seconds = self.timeout_seconds;
-        let python = self.python;
-        let external_functions = self.external_functions.clone();
-        let files = clone_file_mounts(py, &self.files);
-        let real_mounts = self.real_mounts.clone();
-        // Clone handler ref while still holding the GIL (before py.detach).
-        let handler_clone = self.external_handler.as_ref().map(|h| h.clone_ref(py));
-        let cancelled = self.cancelled.clone();
-
-        py.detach(|| {
-            self.rt.block_on(async move {
-                let mut bash = inner.lock().await;
-                let mut builder = Bash::builder();
-                if let Some(ref u) = username {
-                    builder = builder.username(u);
-                }
-                if let Some(ref h) = hostname {
-                    builder = builder.hostname(h);
-                }
-                let mut limits = ExecutionLimits::new();
-                if let Some(mc) = max_commands {
-                    limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
-                }
-                if let Some(mli) = max_loop_iterations {
-                    limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
-                }
-                if let Some(ts) = timeout_seconds {
-                    limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
-                }
-                builder = builder.limits(limits);
-                if let Some(mm) = max_memory {
-                    builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
-                }
-                builder = apply_python_config(builder, python, external_functions, handler_clone);
-                builder = apply_fs_config(builder, &files, &real_mounts)?;
-                *bash = builder.build();
-                // Swap the cancellation token to the new interpreter's token so
-                // cancel() targets the current (not stale) interpreter.
-                if let Ok(mut token) = cancelled.write() {
-                    *token = bash.cancellation_token();
-                }
-                Ok(())
-            })
-        })
-    }
-
-    /// Serialize interpreter state to bytes for checkpoint/restore flows.
-    fn snapshot<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = snapshot_live_bash(py, &self.rt, &self.inner)?;
-        Ok(PyBytes::new(py, &bytes))
-    }
-
-    /// Restore interpreter state from bytes previously produced by `snapshot()`.
-    fn restore_snapshot(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
-        restore_live_bash(py, &self.rt, &self.inner, data)
-    }
-
-    /// Create a new Bash instance from a snapshot and optional constructor kwargs.
-    #[staticmethod]
-    #[pyo3(signature = (
-        data,
-        username=None,
-        hostname=None,
-        max_commands=None,
-        max_loop_iterations=None,
-        max_memory=None,
-        timeout_seconds=None,
-        python=false,
-        external_functions=None,
-        external_handler=None,
-        files=None,
-        mounts=None,
-    ))]
-    #[allow(clippy::too_many_arguments)]
-    fn from_snapshot(
-        py: Python<'_>,
-        data: Vec<u8>,
-        username: Option<String>,
-        hostname: Option<String>,
-        max_commands: Option<u64>,
-        max_loop_iterations: Option<u64>,
-        max_memory: Option<u64>,
-        timeout_seconds: Option<f64>,
-        python: bool,
-        external_functions: Option<Vec<String>>,
-        external_handler: Option<Py<PyAny>>,
-        files: Option<&Bound<'_, PyDict>>,
-        mounts: Option<&Bound<'_, PyList>>,
-    ) -> PyResult<Self> {
-        let bash = Self::new(
-            py,
-            username,
-            hostname,
-            max_commands,
-            max_loop_iterations,
-            max_memory,
-            timeout_seconds,
-            python,
-            external_functions,
-            external_handler,
-            files,
-            mounts,
-        )?;
-        bash.restore_snapshot(py, data)?;
-        Ok(bash)
-    }
-
-    fn read_file(&self, py: Python<'_>, path: String) -> PyResult<String> {
-        py.detach(|| read_text_via_live_fs(&self.rt, &self.inner, path))
-    }
-
-    fn write_file(&self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
-        py.detach(|| write_text_via_live_fs(&self.rt, &self.inner, path, content))
-    }
-
-    fn append_file(&self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
-        py.detach(|| append_text_via_live_fs(&self.rt, &self.inner, path, content))
-    }
-
-    #[pyo3(signature = (path, recursive=false))]
-    fn mkdir(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
-        py.detach(|| mkdir_via_live_fs(&self.rt, &self.inner, path, recursive))
-    }
-
-    fn exists(&self, py: Python<'_>, path: String) -> PyResult<bool> {
-        py.detach(|| exists_via_live_fs(&self.rt, &self.inner, path))
-    }
-
-    #[pyo3(signature = (path, recursive=false))]
-    fn remove(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
-        py.detach(|| remove_via_live_fs(&self.rt, &self.inner, path, recursive))
-    }
-
-    fn stat(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
-        let metadata = py.detach(|| stat_via_live_fs(&self.rt, &self.inner, path))?;
-        metadata_to_pydict(py, &metadata)
-    }
-
-    fn chmod(&self, py: Python<'_>, path: String, mode: u32) -> PyResult<()> {
-        py.detach(|| chmod_via_live_fs(&self.rt, &self.inner, path, mode))
-    }
-
-    fn symlink(&self, py: Python<'_>, target: String, link: String) -> PyResult<()> {
-        py.detach(|| symlink_via_live_fs(&self.rt, &self.inner, target, link))
-    }
-
-    fn read_link(&self, py: Python<'_>, path: String) -> PyResult<String> {
-        py.detach(|| read_link_via_live_fs(&self.rt, &self.inner, path))
-    }
-
-    fn read_dir(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
-        let entries = py.detach(|| read_dir_via_live_fs(&self.rt, &self.inner, path))?;
-        let items: Vec<Py<PyAny>> = entries
-            .iter()
-            .map(|entry| dir_entry_to_pydict(py, entry))
-            .collect::<PyResult<_>>()?;
-        Ok(PyList::new(py, &items)?.into_any().unbind())
-    }
-
-    #[pyo3(signature = (path=".".to_string()))]
-    fn ls(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
-        let names = match py.detach(|| read_dir_via_live_fs(&self.rt, &self.inner, path)) {
-            Ok(entries) => entries
-                .into_iter()
-                .map(|entry| entry.name)
-                .collect::<Vec<_>>(),
-            Err(_) => Vec::new(),
-        };
-        Ok(PyList::new(py, names)?.into_any().unbind())
-    }
-
-    fn glob(&self, py: Python<'_>, pattern: String) -> PyResult<Py<PyAny>> {
-        let matches = py.detach(|| -> PyResult<Vec<String>> {
-            Ok(glob_via_bash(&self.rt, &self.inner, pattern))
-        })?;
-        Ok(PyList::new(py, matches)?.into_any().unbind())
-    }
-
-    /// Return a live filesystem handle backed by the current interpreter.
-    ///
-    /// Each operation on the returned handle acquires the interpreter lock,
-    /// so it always reflects the latest state (including post-reset). For
-    /// batch reads where consistency isn't needed, prefer reading files via
-    /// `execute_sync("cat ...")`.
-    fn fs(&self, py: Python<'_>) -> PyResult<Py<PyFileSystem>> {
-        Py::new(
-            py,
-            PyFileSystem::from_live(self.inner.clone(), self.rt.clone()),
-        )
-    }
-
-    /// Mount a filesystem at `vfs_path` without rebuilding the interpreter.
-    fn mount(&self, py: Python<'_>, vfs_path: String, fs: PyRef<'_, PyFileSystem>) -> PyResult<()> {
-        let inner = self.inner.clone();
-        let source = fs.inner.clone();
-        py.detach(|| {
-            self.rt.block_on(async move {
-                let mounted_fs = source.resolve().await;
-                let bash = inner.lock().await;
-                bash.mount(Path::new(&vfs_path), mounted_fs)
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
-            })
-        })
-    }
-
-    /// Unmount a live filesystem without rebuilding the interpreter.
-    fn unmount(&self, py: Python<'_>, vfs_path: String) -> PyResult<()> {
-        let inner = self.inner.clone();
-        py.detach(|| {
-            self.rt.block_on(async move {
-                let bash = inner.lock().await;
-                bash.unmount(Path::new(&vfs_path))
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
-            })
-        })
-    }
-
+impl PyBuiltinContext {
     fn __repr__(&self) -> String {
         format!(
-            "Bash(username={:?}, hostname={:?})",
-            self.username.as_deref().unwrap_or("user"),
-            self.hostname.as_deref().unwrap_or("sandbox")
+            "BuiltinContext(name={:?}, argv={:?}, stdin={:?}, cwd={:?})",
+            self.name, self.argv, self.stdin, self.cwd
         )
     }
 }
 
-// ============================================================================
-// BashTool — interpreter + tool-contract metadata
-// ============================================================================
-
-/// Bash interpreter with tool-contract metadata (`description`, `help`,
-/// `system_prompt`, schemas).
-///
-/// Extends `Bash` with methods required by LLM tool-use protocols.
-/// Use this when integrating with LangChain, PydanticAI, or similar frameworks.
-///
-/// Example:
-///     ```python
-///     from bashkit import BashTool
-///
-///     tool = BashTool()
-///     print(tool.input_schema())  # JSON schema for LLM
-///     result = await tool.execute("echo 'Hello!'")
-///     ```
-/// with a virtual filesystem. State persists between calls - files created
-/// in one call are available in subsequent calls.
-///
-/// Example:
-///     ```python
-///     from bashkit import BashTool
-///
-///     tool = BashTool()
-///     result = await tool.execute("echo 'Hello, World!'")
-///     print(result.stdout)  # Hello, World!
-///     ```
-#[pyclass]
-#[allow(dead_code)]
-pub struct BashTool {
-    inner: Arc<Mutex<Bash>>,
-    /// Shared tokio runtime — reused across all sync calls to avoid
-    /// per-call OS thread/fd exhaustion (issue #414).
-    rt: Arc<Runtime>,
-    /// Cancellation token. Wrapped in RwLock so reset() can swap it to
-    /// the new interpreter's token without requiring &mut self.
-    cancelled: Arc<RwLock<Arc<AtomicBool>>>,
-    username: Option<String>,
-    hostname: Option<String>,
-    files: Vec<PyFileMount>,
-    real_mounts: Vec<RealMountConfig>,
-    max_commands: Option<u64>,
-    max_loop_iterations: Option<u64>,
-    max_memory: Option<u64>,
-    timeout_seconds: Option<f64>,
+fn make_py_builtin_context(
+    py: Python<'_>,
+    name: &str,
+    ctx: &BuiltinContext<'_>,
+) -> Result<Py<PyBuiltinContext>, String> {
+    Py::new(
+        py,
+        PyBuiltinContext {
+            name: name.to_string(),
+            argv: ctx.args.to_vec(),
+            stdin: ctx.stdin.map(str::to_owned),
+            env: ctx.env.clone(),
+            cwd: ctx.cwd.to_string_lossy().into_owned(),
+        },
+    )
+    .map_err(|e| e.to_string())
 }
 
-impl BashTool {
-    fn build_rust_tool(&self) -> RustBashTool {
-        let mut builder = RustBashTool::builder();
-
-        if let Some(ref username) = self.username {
-            builder = builder.username(username);
-        }
-        if let Some(ref hostname) = self.hostname {
-            builder = builder.hostname(hostname);
-        }
-
-        let mut limits = ExecutionLimits::new();
-        if let Some(mc) = self.max_commands {
-            limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
-        }
-        if let Some(mli) = self.max_loop_iterations {
-            limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
-        }
-        if let Some(ts) = self.timeout_seconds {
-            limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
-        }
-
-        builder.limits(limits).build()
-    }
-}
-
-#[pymethods]
-impl BashTool {
-    #[new]
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (
-        username=None,
-        hostname=None,
-        max_commands=None,
-        max_loop_iterations=None,
-        max_memory=None,
-        timeout_seconds=None,
-        files=None,
-        mounts=None,
-    ))]
-    fn new(
-        _py: Python<'_>,
-        username: Option<String>,
-        hostname: Option<String>,
-        max_commands: Option<u64>,
-        max_loop_iterations: Option<u64>,
-        max_memory: Option<u64>,
-        timeout_seconds: Option<f64>,
-        files: Option<&Bound<'_, PyDict>>,
-        mounts: Option<&Bound<'_, PyList>>,
-    ) -> PyResult<Self> {
-        let mut builder = Bash::builder();
-
-        if let Some(ref u) = username {
-            builder = builder.username(u);
-        }
-        if let Some(ref h) = hostname {
-            builder = builder.hostname(h);
-        }
-
-        let mut limits = ExecutionLimits::new();
-        if let Some(mc) = max_commands {
-            limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
-        }
-        if let Some(mli) = max_loop_iterations {
-            limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
-        }
-        if let Some(ts) = timeout_seconds {
-            limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
-        }
-        builder = builder.limits(limits);
-
-        if let Some(mm) = max_memory {
-            builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
-        }
-
-        let files = parse_files(files)?;
-        let real_mounts = parse_mounts(mounts)?;
-        builder = apply_fs_config(builder, &files, &real_mounts)?;
-
-        let bash = builder.build();
-        let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
-
-        let rt = make_runtime()?;
-
-        Ok(Self {
-            inner: Arc::new(Mutex::new(bash)),
-            rt,
-            cancelled,
-            username,
-            hostname,
-            files,
-            real_mounts,
-            max_commands,
-            max_loop_iterations,
-            max_memory,
-            timeout_seconds,
-        })
-    }
-
-    /// Cancel the currently running execution.
-    fn cancel(&self) {
-        if let Ok(token) = self.cancelled.read() {
-            token.store(true, Ordering::Relaxed);
-        }
-    }
-
-    /// Clear the cancellation flag so subsequent executions proceed normally.
-    ///
-    /// Call this after a `cancel()` once the in-flight execution has finished
-    /// and you want to reuse the same `BashTool` instance (preserving VFS state).
-    /// Without this, every future `execute()` will immediately fail with
-    /// ``"execution cancelled"``.
-    ///
-    /// **Note:** Calling this while an execution is still in-flight may
-    /// allow that execution to continue past the cancellation point.
-    /// Wait for the cancelled execution to finish before clearing
-    /// (await the async call or let `execute_sync` return).
-    fn clear_cancel(&self) {
-        if let Ok(token) = self.cancelled.read() {
-            token.store(false, Ordering::Relaxed);
-        }
-    }
-
-    #[pyo3(signature = (commands, on_output=None))]
-    fn execute<'py>(
-        &self,
-        py: Python<'py>,
-        commands: String,
-        on_output: Option<Py<PyAny>>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let on_output = prepare_output_handler(py, on_output)?;
-        let inner = self.inner.clone();
-        future_into_py(py, async move {
-            let mut bash = inner.lock().await;
-            exec_bash_with_optional_output(&mut bash, &commands, on_output).await
-        })
-    }
-
-    /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
-    ///
-    /// # Thread safety
-    ///
-    /// Acquires async mutex with 30-second timeout. For concurrent workloads,
-    /// use separate `BashTool` instances per thread or the async `execute()`.
-    #[pyo3(signature = (commands, on_output=None))]
-    fn execute_sync(
-        &self,
-        py: Python<'_>,
-        commands: String,
-        on_output: Option<Py<PyAny>>,
-    ) -> PyResult<ExecResult> {
-        let on_output = prepare_output_handler(py, on_output)?;
-        let inner = self.inner.clone();
-
-        py.detach(|| {
-            self.rt.block_on(async move {
-                // THREAT[TM-DOS-FFI]: Timeout on mutex to prevent deadlock.
-                let mut bash =
-                    match tokio::time::timeout(std::time::Duration::from_secs(30), inner.lock())
-                        .await
-                    {
-                        Ok(guard) => guard,
-                        Err(_) => {
-                            return Err(PyRuntimeError::new_err(
-                                "execute_sync: timed out waiting for lock (30s). \
-                             Another thread may be holding the interpreter. \
-                             Use separate BashTool instances for concurrent access.",
-                            ));
-                        }
-                    };
-                exec_bash_with_optional_output(&mut bash, &commands, on_output).await
-            })
-        })
-    }
-
-    /// Execute commands synchronously. Raises `BashError` on non-zero exit.
-    #[pyo3(signature = (commands, on_output=None))]
-    fn execute_sync_or_throw(
-        &self,
-        py: Python<'_>,
-        commands: String,
-        on_output: Option<Py<PyAny>>,
-    ) -> PyResult<ExecResult> {
-        let result = self.execute_sync(py, commands, on_output)?;
-        if result.exit_code != 0 {
-            return Err(raise_bash_error(&result));
-        }
-        Ok(result)
-    }
-
-    /// Execute commands asynchronously. Raises `BashError` on non-zero exit.
-    #[pyo3(signature = (commands, on_output=None))]
-    fn execute_or_throw<'py>(
-        &self,
-        py: Python<'py>,
-        commands: String,
-        on_output: Option<Py<PyAny>>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let on_output = prepare_output_handler(py, on_output)?;
-        let inner = self.inner.clone();
-        future_into_py(py, async move {
-            let mut bash = inner.lock().await;
-            let result = exec_bash_with_optional_output(&mut bash, &commands, on_output).await?;
-            if result.exit_code != 0 {
-                return Err(raise_bash_error(&result));
-            }
-            Ok(result)
-        })
-    }
-
-    /// Releases GIL before blocking on tokio to prevent deadlock.
-    /// THREAT[TM-PY-028]: Rebuild with same config to preserve security limits.
-    fn reset(&self, py: Python<'_>) -> PyResult<()> {
-        let inner = self.inner.clone();
-        let username = self.username.clone();
-        let hostname = self.hostname.clone();
-        let files = clone_file_mounts(py, &self.files);
-        let real_mounts = self.real_mounts.clone();
-        let max_commands = self.max_commands;
-        let max_loop_iterations = self.max_loop_iterations;
-        let max_memory = self.max_memory;
-        let timeout_seconds = self.timeout_seconds;
-        let cancelled = self.cancelled.clone();
-
-        py.detach(|| {
-            self.rt.block_on(async move {
-                let mut bash = inner.lock().await;
-                let mut builder = Bash::builder();
-                if let Some(ref u) = username {
-                    builder = builder.username(u);
-                }
-                if let Some(ref h) = hostname {
-                    builder = builder.hostname(h);
-                }
-                let mut limits = ExecutionLimits::new();
-                if let Some(mc) = max_commands {
-                    limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
-                }
-                if let Some(mli) = max_loop_iterations {
-                    limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
-                }
-                if let Some(ts) = timeout_seconds {
-                    limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
-                }
-                builder = builder.limits(limits);
-                if let Some(mm) = max_memory {
-                    builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
-                }
-                builder = apply_fs_config(builder, &files, &real_mounts)?;
-                *bash = builder.build();
-                // Swap the cancellation token to the new interpreter's token so
-                // cancel() targets the current (not stale) interpreter.
-                if let Ok(mut token) = cancelled.write() {
-                    *token = bash.cancellation_token();
-                }
-                Ok(())
-            })
-        })
-    }
-
-    /// Serialize interpreter state to bytes for checkpoint/restore flows.
-    fn snapshot<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = snapshot_live_bash(py, &self.rt, &self.inner)?;
-        Ok(PyBytes::new(py, &bytes))
-    }
-
-    /// Restore interpreter state from bytes previously produced by `snapshot()`.
-    fn restore_snapshot(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
-        restore_live_bash(py, &self.rt, &self.inner, data)
-    }
-
-    /// Create a new BashTool instance from a snapshot and optional constructor kwargs.
-    #[staticmethod]
-    #[pyo3(signature = (
-        data,
-        username=None,
-        hostname=None,
-        max_commands=None,
-        max_loop_iterations=None,
-        max_memory=None,
-        timeout_seconds=None,
-        files=None,
-        mounts=None,
-    ))]
-    #[allow(clippy::too_many_arguments)]
-    fn from_snapshot(
-        py: Python<'_>,
-        data: Vec<u8>,
-        username: Option<String>,
-        hostname: Option<String>,
-        max_commands: Option<u64>,
-        max_loop_iterations: Option<u64>,
-        max_memory: Option<u64>,
-        timeout_seconds: Option<f64>,
-        files: Option<&Bound<'_, PyDict>>,
-        mounts: Option<&Bound<'_, PyList>>,
-    ) -> PyResult<Self> {
-        let tool = Self::new(
-            py,
-            username,
-            hostname,
-            max_commands,
-            max_loop_iterations,
-            max_memory,
-            timeout_seconds,
-            files,
-            mounts,
-        )?;
-        tool.restore_snapshot(py, data)?;
-        Ok(tool)
-    }
-
-    fn read_file(&self, py: Python<'_>, path: String) -> PyResult<String> {
-        py.detach(|| read_text_via_live_fs(&self.rt, &self.inner, path))
-    }
-
-    fn write_file(&self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
-        py.detach(|| write_text_via_live_fs(&self.rt, &self.inner, path, content))
-    }
-
-    fn append_file(&self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
-        py.detach(|| append_text_via_live_fs(&self.rt, &self.inner, path, content))
-    }
-
-    #[pyo3(signature = (path, recursive=false))]
-    fn mkdir(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
-        py.detach(|| mkdir_via_live_fs(&self.rt, &self.inner, path, recursive))
-    }
-
-    fn exists(&self, py: Python<'_>, path: String) -> PyResult<bool> {
-        py.detach(|| exists_via_live_fs(&self.rt, &self.inner, path))
-    }
-
-    #[pyo3(signature = (path, recursive=false))]
-    fn remove(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
-        py.detach(|| remove_via_live_fs(&self.rt, &self.inner, path, recursive))
-    }
-
-    fn stat(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
-        let metadata = py.detach(|| stat_via_live_fs(&self.rt, &self.inner, path))?;
-        metadata_to_pydict(py, &metadata)
-    }
-
-    fn chmod(&self, py: Python<'_>, path: String, mode: u32) -> PyResult<()> {
-        py.detach(|| chmod_via_live_fs(&self.rt, &self.inner, path, mode))
-    }
-
-    fn symlink(&self, py: Python<'_>, target: String, link: String) -> PyResult<()> {
-        py.detach(|| symlink_via_live_fs(&self.rt, &self.inner, target, link))
-    }
-
-    fn read_link(&self, py: Python<'_>, path: String) -> PyResult<String> {
-        py.detach(|| read_link_via_live_fs(&self.rt, &self.inner, path))
-    }
-
-    fn read_dir(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
-        let entries = py.detach(|| read_dir_via_live_fs(&self.rt, &self.inner, path))?;
-        let items: Vec<Py<PyAny>> = entries
-            .iter()
-            .map(|entry| dir_entry_to_pydict(py, entry))
-            .collect::<PyResult<_>>()?;
-        Ok(PyList::new(py, &items)?.into_any().unbind())
-    }
-
-    #[pyo3(signature = (path=".".to_string()))]
-    fn ls(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
-        let names = match py.detach(|| read_dir_via_live_fs(&self.rt, &self.inner, path)) {
-            Ok(entries) => entries
-                .into_iter()
-                .map(|entry| entry.name)
-                .collect::<Vec<_>>(),
-            Err(_) => Vec::new(),
-        };
-        Ok(PyList::new(py, names)?.into_any().unbind())
-    }
-
-    fn glob(&self, py: Python<'_>, pattern: String) -> PyResult<Py<PyAny>> {
-        let matches = py.detach(|| -> PyResult<Vec<String>> {
-            Ok(glob_via_bash(&self.rt, &self.inner, pattern))
-        })?;
-        Ok(PyList::new(py, matches)?.into_any().unbind())
-    }
-
-    /// Return a live filesystem handle backed by the current interpreter.
-    ///
-    /// Each operation on the returned handle acquires the interpreter lock,
-    /// so it always reflects the latest state (including post-reset). For
-    /// batch reads where consistency isn't needed, prefer reading files via
-    /// `execute_sync("cat ...")`.
-    fn fs(&self, py: Python<'_>) -> PyResult<Py<PyFileSystem>> {
-        Py::new(
-            py,
-            PyFileSystem::from_live(self.inner.clone(), self.rt.clone()),
-        )
-    }
-
-    /// Mount a filesystem at `vfs_path` without rebuilding the interpreter.
-    fn mount(&self, py: Python<'_>, vfs_path: String, fs: PyRef<'_, PyFileSystem>) -> PyResult<()> {
-        let inner = self.inner.clone();
-        let source = fs.inner.clone();
-        py.detach(|| {
-            self.rt.block_on(async move {
-                let mounted_fs = source.resolve().await;
-                let bash = inner.lock().await;
-                bash.mount(Path::new(&vfs_path), mounted_fs)
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
-            })
-        })
-    }
-
-    /// Unmount a live filesystem without rebuilding the interpreter.
-    fn unmount(&self, py: Python<'_>, vfs_path: String) -> PyResult<()> {
-        let inner = self.inner.clone();
-        py.detach(|| {
-            self.rt.block_on(async move {
-                let bash = inner.lock().await;
-                bash.unmount(Path::new(&vfs_path))
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
-            })
-        })
-    }
-
-    #[getter]
-    fn name(&self) -> &str {
-        "bashkit"
-    }
-
-    #[getter]
-    fn short_description(&self) -> &str {
-        "Run bash commands in an isolated virtual filesystem"
-    }
-
-    fn description(&self) -> PyResult<String> {
-        Ok(self.build_rust_tool().description().to_string())
-    }
-
-    fn help(&self) -> PyResult<String> {
-        Ok(self.build_rust_tool().help())
-    }
-
-    fn system_prompt(&self) -> PyResult<String> {
-        Ok(self.build_rust_tool().system_prompt())
-    }
-
-    fn input_schema(&self) -> PyResult<String> {
-        let schema = self.build_rust_tool().input_schema();
-        serde_json::to_string_pretty(&schema)
-            .map_err(|e| PyValueError::new_err(format!("Schema serialization failed: {}", e)))
-    }
-
-    fn output_schema(&self) -> PyResult<String> {
-        let schema = self.build_rust_tool().output_schema();
-        serde_json::to_string_pretty(&schema)
-            .map_err(|e| PyValueError::new_err(format!("Schema serialization failed: {}", e)))
-    }
-
-    #[getter]
-    fn version(&self) -> &str {
-        VERSION
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "BashTool(username={:?}, hostname={:?})",
-            self.username.as_deref().unwrap_or("user"),
-            self.hostname.as_deref().unwrap_or("sandbox")
-        )
-    }
-}
-
-// ============================================================================
-// ScriptedTool callback sessions
-// ============================================================================
-
+// Decision: split long-lived callback machinery from per-execution callback
+// state. The engine owns reusable sync-fallback resources; each execute*()
+// call owns its captured ContextVars, caller loop, and cancellable callback
+// tasks via a fresh session.
+//
+// Decision: sync-fallback loop reuse is surface-specific. Bash/BashTool keep
+// one shared private loop because persistent custom builtins may retain
+// loop-bound asyncio state across execute_sync() calls. ScriptedTool sessions
+// use a per-execution private loop so concurrent execute_sync() calls on one
+// tool never race on run_until_complete.
 struct PyCallbackSessionState {
     context: Py<PyAny>,
     caller_loop_locals: Option<TaskLocals>,
+}
+
+#[derive(Clone, Copy)]
+enum PySyncLoopMode {
+    SharedAcrossSessions,
+    PerSession,
 }
 
 struct PyPrivateAsyncLoop {
@@ -2365,12 +1257,14 @@ impl PyPrivateAsyncLoop {
 }
 
 struct PyCallbackEngine {
+    shared_private_async_loop: Arc<PyPrivateAsyncLoop>,
     caller: Py<PyAny>,
 }
 
 impl PyCallbackEngine {
     fn new(py: Python<'_>) -> PyResult<Arc<Self>> {
         Ok(Arc::new(Self {
+            shared_private_async_loop: PyPrivateAsyncLoop::new(),
             caller: create_context_callback_caller(py)?,
         }))
     }
@@ -2400,7 +1294,12 @@ impl PyCallbackSession {
         engine: Arc<PyCallbackEngine>,
         needs_async_callbacks: bool,
         use_caller_loop: bool,
+        sync_loop_mode: PySyncLoopMode,
     ) -> PyResult<Arc<Self>> {
+        let private_async_loop = match sync_loop_mode {
+            PySyncLoopMode::SharedAcrossSessions => engine.shared_private_async_loop.clone(),
+            PySyncLoopMode::PerSession => PyPrivateAsyncLoop::new(),
+        };
         Ok(Arc::new(Self {
             state: StdMutex::new(capture_callback_state(
                 py,
@@ -2408,7 +1307,7 @@ impl PyCallbackSession {
                 use_caller_loop,
             )?),
             active_caller_tasks: Arc::new(StdMutex::new(Vec::new())),
-            private_async_loop: PyPrivateAsyncLoop::new(),
+            private_async_loop,
             engine,
         }))
     }
@@ -2466,6 +1365,12 @@ impl PyCallbackSession {
     ) -> PyResult<Py<PyAny>> {
         self.private_async_loop.run_awaitable(py, awaitable)
     }
+}
+
+struct PyCustomBuiltinEntry {
+    name: String,
+    callback: Py<PyAny>,
+    is_async: bool,
 }
 
 fn capture_callback_state(
@@ -2736,6 +1641,22 @@ impl Drop for PyCancellableLoopFuture {
     }
 }
 
+fn build_py_custom_builtin_entry(
+    py: Python<'_>,
+    name: String,
+    callback: Py<PyAny>,
+) -> PyResult<PyCustomBuiltinEntry> {
+    let bound = callback.bind(py);
+    let is_async = validate_python_callback(py, bound, || {
+        format!("custom_builtins['{name}'] must be callable")
+    })?;
+    Ok(PyCustomBuiltinEntry {
+        name,
+        callback,
+        is_async,
+    })
+}
+
 fn build_py_tool_entry(
     py: Python<'_>,
     name: String,
@@ -2748,12 +1669,9 @@ fn build_py_tool_entry(
         None => serde_json::Value::Object(Default::default()),
     };
     let bound = callback.bind(py);
-    if !bound.is_callable() {
-        return Err(PyTypeError::new_err(format!(
-            "tool '{name}' callback must be callable"
-        )));
-    }
-    let is_async = is_coroutine_callable(py, bound)?;
+    let is_async = validate_python_callback(py, bound, || {
+        format!("tool '{name}' callback must be callable")
+    })?;
     Ok(PyToolEntry {
         name,
         description,
@@ -2817,6 +1735,1418 @@ async fn call_python_string_callback_async(
             .extract::<String>(py)
             .map_err(|e| format!("{callback_name}: callback must return str, got {e}"))
     })
+}
+
+struct PyCustomBuiltinAdapter {
+    name: String,
+    callback: Py<PyAny>,
+    is_async: bool,
+}
+
+#[async_trait]
+impl Builtin for PyCustomBuiltinAdapter {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<RustExecResult> {
+        let session = ctx.execution_extension::<Arc<PyCallbackSession>>().cloned();
+        let builtin_arg = Python::attach(|py| -> Result<Py<PyAny>, String> {
+            let builtin_arg = make_py_builtin_context(py, &self.name, &ctx)
+                .map_err(|e| format!("{}: {}", self.name, e))?
+                .into_bound(py)
+                .into_any()
+                .unbind();
+            Ok(builtin_arg)
+        });
+        let callback_result = match builtin_arg {
+            Ok(builtin_arg) if self.is_async => match session {
+                Some(session) => {
+                    call_python_string_callback_async(
+                        session,
+                        &self.name,
+                        &self.callback,
+                        vec![builtin_arg],
+                    )
+                    .await
+                }
+                None => Err(format!("{}: missing Python callback session", self.name)),
+            },
+            Ok(builtin_arg) => match session {
+                Some(session) => Python::attach(|py| {
+                    call_python_string_callback_sync(
+                        py,
+                        session.as_ref(),
+                        &self.name,
+                        &self.callback,
+                        vec![builtin_arg],
+                    )
+                }),
+                None => Err(format!("{}: missing Python callback session", self.name)),
+            },
+            Err(err) => Err(err),
+        };
+
+        Ok(match callback_result {
+            Ok(stdout) => RustExecResult::ok(stdout),
+            Err(msg) => RustExecResult::err(msg, 1),
+        })
+    }
+}
+
+fn build_runtime_custom_builtin_impls(
+    py: Python<'_>,
+    builtins: &[PyCustomBuiltinEntry],
+) -> Vec<PyCustomBuiltinAdapter> {
+    builtins
+        .iter()
+        .map(|entry| PyCustomBuiltinAdapter {
+            name: entry.name.clone(),
+            callback: entry.callback.clone_ref(py),
+            is_async: entry.is_async,
+        })
+        .collect()
+}
+
+fn apply_custom_builtins_to_builder(
+    py: Python<'_>,
+    mut builder: bashkit::BashBuilder,
+    builtins: &[PyCustomBuiltinEntry],
+) -> bashkit::BashBuilder {
+    for builtin in build_runtime_custom_builtin_impls(py, builtins) {
+        let name = builtin.name.clone();
+        builder = builder.builtin(name, Box::new(builtin));
+    }
+    builder
+}
+
+fn capture_custom_builtin_session(
+    py: Python<'_>,
+    builtins: &[PyCustomBuiltinEntry],
+    engine: &Arc<PyCallbackEngine>,
+    use_caller_loop: bool,
+) -> PyResult<Option<Arc<PyCallbackSession>>> {
+    if builtins.is_empty() {
+        return Ok(None);
+    }
+    PyCallbackSession::capture(
+        py,
+        engine.clone(),
+        builtins.iter().any(|entry| entry.is_async),
+        use_caller_loop,
+        PySyncLoopMode::SharedAcrossSessions,
+    )
+    .map(Some)
+}
+
+fn replace_live_bash_with_builder(
+    py: Python<'_>,
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    cancelled: &Arc<RwLock<Arc<AtomicBool>>>,
+    builder: bashkit::BashBuilder,
+) -> PyResult<()> {
+    let rt = rt.clone();
+    let inner = inner.clone();
+    let cancelled = cancelled.clone();
+    py.detach(|| {
+        rt.block_on(async move {
+            let mut bash = inner.lock().await;
+            let rebuilt = builder.build();
+            let token = rebuilt.cancellation_token();
+            *bash = rebuilt;
+            if let Ok(mut current) = cancelled.write() {
+                *current = token;
+            }
+            Ok(())
+        })
+    })
+}
+
+fn take_output_handler_error(callback_error: &StdMutex<Option<PyErr>>) -> Option<PyErr> {
+    callback_error
+        .lock()
+        .ok()
+        .and_then(|mut callback_error| callback_error.take())
+}
+
+fn close_awaitable_if_possible(awaitable: &Bound<'_, PyAny>) {
+    if let Ok(close) = awaitable.getattr("close") {
+        let _ = close.call0();
+    }
+}
+
+fn build_python_output_callback(
+    on_output: PyOutputHandler,
+    cancelled: Arc<AtomicBool>,
+    callback_requested_cancel: Arc<AtomicBool>,
+    callback_error: Arc<StdMutex<Option<PyErr>>>,
+) -> RustOutputCallback {
+    Box::new(move |stdout_chunk, stderr_chunk| {
+        let has_error = callback_error
+            .lock()
+            .map(|callback_error| callback_error.is_some())
+            .unwrap_or(false);
+        if has_error {
+            return;
+        }
+
+        let callback_result = Python::attach(|py| {
+            // Re-enter the caller's copied ContextVar snapshot for each chunk.
+            let result = on_output.context.bind(py).call_method1(
+                "run",
+                (on_output.callback.bind(py), stdout_chunk, stderr_chunk),
+            )?;
+            let is_awaitable = on_output
+                .is_awaitable
+                .bind(py)
+                .call1((&result,))?
+                .extract::<bool>()?;
+            if is_awaitable {
+                close_awaitable_if_possible(&result);
+                return Err(PyTypeError::new_err(
+                    "on_output must be synchronous and must not return an awaitable",
+                ));
+            }
+            Ok(())
+        });
+
+        if let Err(err) = callback_result {
+            if let Ok(mut callback_error) = callback_error.lock()
+                && callback_error.is_none()
+            {
+                *callback_error = Some(err);
+            }
+            if !cancelled.swap(true, Ordering::Relaxed) {
+                callback_requested_cancel.store(true, Ordering::Relaxed);
+            }
+        }
+    })
+}
+
+async fn exec_bash_with_optional_output(
+    bash: &mut Bash,
+    commands: &str,
+    on_output: Option<PyOutputHandler>,
+    builtin_session: Option<Arc<PyCallbackSession>>,
+) -> PyResult<ExecResult> {
+    let mut execution_extensions = ExecutionExtensions::new();
+    if let Some(session) = builtin_session {
+        let _ = execution_extensions.insert(session);
+    }
+
+    let result = if let Some(on_output) = on_output {
+        // Preserve explicit cancel() calls across execute* entry. Only clear
+        // cancellation if an on_output failure introduced it for this call.
+        let cancelled = bash.cancellation_token();
+        let callback_requested_cancel = Arc::new(AtomicBool::new(false));
+        let callback_error = Arc::new(StdMutex::new(None));
+        let output_callback = build_python_output_callback(
+            on_output,
+            cancelled.clone(),
+            callback_requested_cancel.clone(),
+            callback_error.clone(),
+        );
+        let result = bash
+            .exec_streaming_with_extensions(commands, output_callback, execution_extensions)
+            .await;
+        if let Some(err) = take_output_handler_error(&callback_error) {
+            if callback_requested_cancel.load(Ordering::Relaxed) {
+                cancelled.store(false, Ordering::Relaxed);
+            }
+            return Err(err);
+        }
+        result
+    } else {
+        bash.exec_with_extensions(commands, execution_extensions)
+            .await
+    };
+
+    Ok(py_exec_result_from_bash_result(result))
+}
+
+/// Build a `PythonExternalFnHandler` from a Python async callable.
+///
+/// The handler converts MontyObject args/kwargs to Python objects, calls the
+/// async handler coroutine, awaits it, and converts the result back.
+fn make_external_handler(py_handler: Py<PyAny>) -> PythonExternalFnHandler {
+    Arc::new(move |fn_name, args, kwargs| {
+        let py_handler = Python::attach(|py| py_handler.clone_ref(py));
+        Box::pin(async move {
+            let fut = Python::attach(|py| {
+                let py_args = args
+                    .iter()
+                    .map(|o| monty_to_py(py, o))
+                    .collect::<PyResult<Vec<_>>>()?;
+                let py_args_list = PyList::new(py, &py_args)?;
+                let py_kwargs = PyDict::new(py);
+                for (k, v) in &kwargs {
+                    py_kwargs.set_item(monty_to_py(py, k)?, monty_to_py(py, v)?)?;
+                }
+                let coro = py_handler.call1(py, (fn_name, py_args_list, py_kwargs))?;
+                pyo3_async_runtimes::tokio::into_future(coro.into_bound(py))
+            });
+            match fut {
+                Err(e) => ExtFunctionResult::Error(MontyException::new(
+                    ExcType::RuntimeError,
+                    Some(e.to_string()),
+                )),
+                Ok(awaitable) => match awaitable.await {
+                    Err(e) => ExtFunctionResult::Error(MontyException::new(
+                        ExcType::RuntimeError,
+                        Some(e.to_string()),
+                    )),
+                    Ok(py_result) => {
+                        Python::attach(|py| match py_to_monty(py, py_result.bind(py)) {
+                            Ok(v) => ExtFunctionResult::Return(v),
+                            Err(e) => ExtFunctionResult::Error(MontyException::new(
+                                ExcType::RuntimeError,
+                                Some(e.to_string()),
+                            )),
+                        })
+                    }
+                },
+            }
+        })
+    })
+}
+
+/// Apply python/external_handler configuration to a `BashBuilder`.
+///
+/// Centralises the logic shared between `new()` and `reset()`.
+fn apply_python_config(
+    mut builder: bashkit::BashBuilder,
+    python: bool,
+    fn_names: Vec<String>,
+    handler: Option<Py<PyAny>>,
+) -> bashkit::BashBuilder {
+    // By construction, handler.is_some() implies python=true (validated in new()).
+    match (python, handler) {
+        (true, Some(h)) => {
+            builder = builder.python_with_external_handler(
+                PythonLimits::default(),
+                fn_names,
+                make_external_handler(h),
+            );
+        }
+        (true, None) => {
+            builder = builder.python();
+        }
+        (false, _) => {}
+    }
+    builder
+}
+
+/// Core bash interpreter with virtual filesystem.
+///
+/// State persists between calls — files created in one `execute()` are
+/// available in subsequent calls. This is the primary interface.
+///
+/// Example:
+///     ```python
+///     from bashkit import Bash
+///
+///     bash = Bash()
+///     result = await bash.execute("echo 'Hello, World!'")
+///     print(result.stdout)  # Hello, World!
+///     ```
+#[pyclass(name = "Bash")]
+#[allow(dead_code)]
+pub struct PyBash {
+    inner: Arc<Mutex<Bash>>,
+    /// Shared tokio runtime — reused across all sync calls to avoid
+    /// per-call OS thread/fd exhaustion (issue #414).
+    rt: Arc<Runtime>,
+    /// Cancellation token. Wrapped in RwLock so reset() can swap it to
+    /// the new interpreter's token without requiring &mut self.
+    cancelled: Arc<RwLock<Arc<AtomicBool>>>,
+    username: Option<String>,
+    hostname: Option<String>,
+    /// Whether Monty Python execution is enabled (`python`/`python3` builtins).
+    python: bool,
+    /// External function names callable from Monty code via the handler.
+    external_functions: Vec<String>,
+    /// Async Python callable invoked when Monty calls an external function.
+    external_handler: Option<Py<PyAny>>,
+    custom_builtins: Vec<PyCustomBuiltinEntry>,
+    builtin_engine: Arc<PyCallbackEngine>,
+    files: Vec<PyFileMount>,
+    real_mounts: Vec<RealMountConfig>,
+    max_commands: Option<u64>,
+    max_loop_iterations: Option<u64>,
+    max_memory: Option<u64>,
+    timeout_seconds: Option<f64>,
+}
+
+impl PyBash {
+    fn build_live_builder(&self, py: Python<'_>) -> PyResult<bashkit::BashBuilder> {
+        let mut builder = Bash::builder();
+
+        if let Some(ref username) = self.username {
+            builder = builder.username(username);
+        }
+        if let Some(ref hostname) = self.hostname {
+            builder = builder.hostname(hostname);
+        }
+
+        let mut limits = ExecutionLimits::new();
+        if let Some(max_commands) = self.max_commands {
+            limits = limits.max_commands(usize::try_from(max_commands).unwrap_or(usize::MAX));
+        }
+        if let Some(max_loop_iterations) = self.max_loop_iterations {
+            limits = limits
+                .max_loop_iterations(usize::try_from(max_loop_iterations).unwrap_or(usize::MAX));
+        }
+        if let Some(timeout_seconds) = self.timeout_seconds {
+            limits = limits.timeout(std::time::Duration::from_secs_f64(timeout_seconds));
+        }
+        builder = builder.limits(limits);
+
+        if let Some(max_memory) = self.max_memory {
+            builder = builder.max_memory(usize::try_from(max_memory).unwrap_or(usize::MAX));
+        }
+
+        let handler_clone = self.external_handler.as_ref().map(|h| h.clone_ref(py));
+        builder = apply_python_config(
+            builder,
+            self.python,
+            self.external_functions.clone(),
+            handler_clone,
+        );
+        let files = clone_file_mounts(py, &self.files);
+        let builder = apply_fs_config(builder, &files, &self.real_mounts)?;
+        Ok(apply_custom_builtins_to_builder(
+            py,
+            builder,
+            &self.custom_builtins,
+        ))
+    }
+}
+
+#[pymethods]
+impl PyBash {
+    #[new]
+    #[pyo3(signature = (
+        username=None,
+        hostname=None,
+        max_commands=None,
+        max_loop_iterations=None,
+        max_memory=None,
+        timeout_seconds=None,
+        python=false,
+        external_functions=None,
+        external_handler=None,
+        files=None,
+        mounts=None,
+        custom_builtins=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        py: Python<'_>,
+        username: Option<String>,
+        hostname: Option<String>,
+        max_commands: Option<u64>,
+        max_loop_iterations: Option<u64>,
+        max_memory: Option<u64>,
+        timeout_seconds: Option<f64>,
+        python: bool,
+        external_functions: Option<Vec<String>>,
+        external_handler: Option<Py<PyAny>>,
+        files: Option<&Bound<'_, PyDict>>,
+        mounts: Option<&Bound<'_, PyList>>,
+        custom_builtins: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        let mut builder = Bash::builder();
+
+        if let Some(ref u) = username {
+            builder = builder.username(u);
+        }
+        if let Some(ref h) = hostname {
+            builder = builder.hostname(h);
+        }
+
+        let mut limits = ExecutionLimits::new();
+        if let Some(mc) = max_commands {
+            limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
+        }
+        if let Some(mli) = max_loop_iterations {
+            limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
+        }
+        if let Some(ts) = timeout_seconds {
+            limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
+        }
+        builder = builder.limits(limits);
+
+        if let Some(mm) = max_memory {
+            builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
+        }
+
+        let files = parse_files(files)?;
+        let real_mounts = parse_mounts(mounts)?;
+        let custom_builtins = parse_custom_builtins(py, custom_builtins)?;
+
+        let fn_names = external_functions.clone().unwrap_or_default();
+        if !fn_names.is_empty() && external_handler.is_none() {
+            return Err(PyValueError::new_err(
+                "external_functions requires external_handler — the list has no effect without a handler",
+            ));
+        }
+        if external_handler.is_some() && !python {
+            return Err(PyValueError::new_err(
+                "external_handler requires python=True",
+            ));
+        }
+        if external_handler
+            .as_ref()
+            .is_some_and(|h| !h.bind(py).is_callable())
+        {
+            return Err(PyValueError::new_err("external_handler must be callable"));
+        }
+        if let Some(ref handler) = external_handler {
+            let bound = handler.bind(py);
+            if !is_coroutine_callable(py, bound)? {
+                return Err(PyValueError::new_err(
+                    "external_handler must be an async callable (coroutine function)",
+                ));
+            }
+        }
+        let handler_for_build = external_handler.as_ref().map(|h| h.clone_ref(py));
+        builder = apply_python_config(builder, python, fn_names, handler_for_build);
+        builder = apply_fs_config(builder, &files, &real_mounts)?;
+        let builtin_engine = PyCallbackEngine::new(py)?;
+        builder = apply_custom_builtins_to_builder(py, builder, &custom_builtins);
+
+        let bash = builder.build();
+        let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
+
+        let rt = make_runtime()?;
+
+        Ok(Self {
+            inner: Arc::new(Mutex::new(bash)),
+            rt,
+            cancelled,
+            username,
+            hostname,
+            python,
+            external_functions: external_functions.unwrap_or_default(),
+            external_handler,
+            custom_builtins,
+            builtin_engine,
+            files,
+            real_mounts,
+            max_commands,
+            max_loop_iterations,
+            max_memory,
+            timeout_seconds,
+        })
+    }
+
+    /// Cancel the currently running execution.
+    ///
+    /// Safe to call from any thread. Execution will abort at the next
+    /// command boundary.
+    fn cancel(&self) {
+        if let Ok(token) = self.cancelled.read() {
+            token.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Clear the cancellation flag so subsequent executions proceed normally.
+    ///
+    /// Call this after a `cancel()` once the in-flight execution has finished
+    /// and you want to reuse the same `Bash` instance (preserving VFS state).
+    /// Without this, every future `execute()` will immediately fail with
+    /// ``"execution cancelled"``.
+    ///
+    /// **Note:** Calling this while an execution is still in-flight may
+    /// allow that execution to continue past the cancellation point.
+    /// Wait for the cancelled execution to finish before clearing
+    /// (await the async call or let `execute_sync` return).
+    fn clear_cancel(&self) {
+        if let Ok(token) = self.cancelled.read() {
+            token.store(false, Ordering::Relaxed);
+        }
+    }
+
+    /// Execute commands asynchronously.
+    #[pyo3(signature = (commands, on_output=None))]
+    fn execute<'py>(
+        &self,
+        py: Python<'py>,
+        commands: String,
+        on_output: Option<Py<PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let builtin_session =
+            capture_custom_builtin_session(py, &self.custom_builtins, &self.builtin_engine, true)?;
+        let on_output = prepare_output_handler(py, on_output)?;
+        let inner = self.inner.clone();
+        let cancel_session = builtin_session.clone();
+        let future = future_into_py(py, async move {
+            let mut bash = inner.lock().await;
+            exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session).await
+        })?;
+        if let Some(cancel_session) = cancel_session {
+            attach_future_cancellation_callback(py, &future, cancel_session.clone())?;
+            return wrap_future_with_cancel(py, future, cancel_session);
+        }
+        Ok(future)
+    }
+
+    /// Execute commands synchronously (blocking).
+    ///
+    /// Not supported when `external_handler` is configured: the handler is an async
+    /// Python coroutine that requires a running event loop, which is unavailable in
+    /// sync context. Use `execute()` (async) instead.
+    ///
+    /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
+    ///
+    /// # Thread safety
+    ///
+    /// This method acquires an async mutex with a 30-second timeout to prevent
+    /// deadlocks when multiple threads call `execute_sync()` concurrently on the
+    /// same `Bash` instance. If the lock cannot be acquired within the timeout,
+    /// a `RuntimeError` is raised. For concurrent workloads, use separate `Bash`
+    /// instances per thread or use the async `execute()` method.
+    #[pyo3(signature = (commands, on_output=None))]
+    fn execute_sync(
+        &self,
+        py: Python<'_>,
+        commands: String,
+        on_output: Option<Py<PyAny>>,
+    ) -> PyResult<ExecResult> {
+        if self.external_handler.is_some() {
+            return Err(PyRuntimeError::new_err(
+                "execute_sync is not supported when external_handler is configured — use execute() (async) instead, e.g. asyncio.run(bash.execute(...))",
+            ));
+        }
+        let builtin_session =
+            capture_custom_builtin_session(py, &self.custom_builtins, &self.builtin_engine, false)?;
+        let on_output = prepare_output_handler(py, on_output)?;
+        let inner = self.inner.clone();
+
+        py.detach(|| {
+            self.rt.block_on(async move {
+                // THREAT[TM-DOS-FFI]: Use timeout on mutex acquisition to prevent
+                // deadlocks when multiple Python threads call execute_sync concurrently.
+                let mut bash =
+                    match tokio::time::timeout(std::time::Duration::from_secs(30), inner.lock())
+                        .await
+                    {
+                        Ok(guard) => guard,
+                        Err(_) => {
+                            return Err(PyRuntimeError::new_err(
+                                "execute_sync: timed out waiting for lock (30s). \
+                             Another thread may be holding the interpreter. \
+                             Use separate Bash instances for concurrent access.",
+                            ));
+                        }
+                    };
+                exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session)
+                    .await
+            })
+        })
+    }
+
+    /// Execute commands synchronously. Raises `BashError` on non-zero exit.
+    ///
+    /// Not supported when `external_handler` is configured.
+    #[pyo3(signature = (commands, on_output=None))]
+    fn execute_sync_or_throw(
+        &self,
+        py: Python<'_>,
+        commands: String,
+        on_output: Option<Py<PyAny>>,
+    ) -> PyResult<ExecResult> {
+        let result = self.execute_sync(py, commands, on_output)?;
+        if result.exit_code != 0 {
+            return Err(raise_bash_error(&result));
+        }
+        Ok(result)
+    }
+
+    /// Execute commands asynchronously. Raises `BashError` on non-zero exit.
+    #[pyo3(signature = (commands, on_output=None))]
+    fn execute_or_throw<'py>(
+        &self,
+        py: Python<'py>,
+        commands: String,
+        on_output: Option<Py<PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let builtin_session =
+            capture_custom_builtin_session(py, &self.custom_builtins, &self.builtin_engine, true)?;
+        let on_output = prepare_output_handler(py, on_output)?;
+        let inner = self.inner.clone();
+        let cancel_session = builtin_session.clone();
+        let future = future_into_py(py, async move {
+            let mut bash = inner.lock().await;
+            let result =
+                exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session)
+                    .await?;
+            if result.exit_code != 0 {
+                return Err(raise_bash_error(&result));
+            }
+            Ok(result)
+        })?;
+        if let Some(cancel_session) = cancel_session {
+            attach_future_cancellation_callback(py, &future, cancel_session.clone())?;
+            return wrap_future_with_cancel(py, future, cancel_session);
+        }
+        Ok(future)
+    }
+
+    /// Reset interpreter to fresh state, preserving all configuration including
+    /// python mode, external function handler, and custom builtins.
+    /// Releases GIL before blocking on tokio to prevent deadlock.
+    fn reset(&self, py: Python<'_>) -> PyResult<()> {
+        replace_live_bash_with_builder(
+            py,
+            &self.rt,
+            &self.inner,
+            &self.cancelled,
+            self.build_live_builder(py)?,
+        )
+    }
+
+    /// Serialize interpreter state to bytes for checkpoint/restore flows.
+    fn snapshot<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = snapshot_live_bash(py, &self.rt, &self.inner)?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// Restore interpreter state from bytes previously produced by `snapshot()`.
+    fn restore_snapshot(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
+        restore_live_bash(py, &self.rt, &self.inner, data)
+    }
+
+    /// Create a new Bash instance from a snapshot and optional constructor kwargs.
+    #[staticmethod]
+    #[pyo3(signature = (
+        data,
+        username=None,
+        hostname=None,
+        max_commands=None,
+        max_loop_iterations=None,
+        max_memory=None,
+        timeout_seconds=None,
+        python=false,
+        external_functions=None,
+        external_handler=None,
+        files=None,
+        mounts=None,
+        custom_builtins=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn from_snapshot(
+        py: Python<'_>,
+        data: Vec<u8>,
+        username: Option<String>,
+        hostname: Option<String>,
+        max_commands: Option<u64>,
+        max_loop_iterations: Option<u64>,
+        max_memory: Option<u64>,
+        timeout_seconds: Option<f64>,
+        python: bool,
+        external_functions: Option<Vec<String>>,
+        external_handler: Option<Py<PyAny>>,
+        files: Option<&Bound<'_, PyDict>>,
+        mounts: Option<&Bound<'_, PyList>>,
+        custom_builtins: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        let bash = Self::new(
+            py,
+            username,
+            hostname,
+            max_commands,
+            max_loop_iterations,
+            max_memory,
+            timeout_seconds,
+            python,
+            external_functions,
+            external_handler,
+            files,
+            mounts,
+            custom_builtins,
+        )?;
+        bash.restore_snapshot(py, data)?;
+        Ok(bash)
+    }
+
+    fn read_file(&self, py: Python<'_>, path: String) -> PyResult<String> {
+        py.detach(|| read_text_via_live_fs(&self.rt, &self.inner, path))
+    }
+
+    fn write_file(&self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
+        py.detach(|| write_text_via_live_fs(&self.rt, &self.inner, path, content))
+    }
+
+    fn append_file(&self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
+        py.detach(|| append_text_via_live_fs(&self.rt, &self.inner, path, content))
+    }
+
+    #[pyo3(signature = (path, recursive=false))]
+    fn mkdir(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
+        py.detach(|| mkdir_via_live_fs(&self.rt, &self.inner, path, recursive))
+    }
+
+    fn exists(&self, py: Python<'_>, path: String) -> PyResult<bool> {
+        py.detach(|| exists_via_live_fs(&self.rt, &self.inner, path))
+    }
+
+    #[pyo3(signature = (path, recursive=false))]
+    fn remove(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
+        py.detach(|| remove_via_live_fs(&self.rt, &self.inner, path, recursive))
+    }
+
+    fn stat(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        let metadata = py.detach(|| stat_via_live_fs(&self.rt, &self.inner, path))?;
+        metadata_to_pydict(py, &metadata)
+    }
+
+    fn chmod(&self, py: Python<'_>, path: String, mode: u32) -> PyResult<()> {
+        py.detach(|| chmod_via_live_fs(&self.rt, &self.inner, path, mode))
+    }
+
+    fn symlink(&self, py: Python<'_>, target: String, link: String) -> PyResult<()> {
+        py.detach(|| symlink_via_live_fs(&self.rt, &self.inner, target, link))
+    }
+
+    fn read_link(&self, py: Python<'_>, path: String) -> PyResult<String> {
+        py.detach(|| read_link_via_live_fs(&self.rt, &self.inner, path))
+    }
+
+    fn read_dir(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        let entries = py.detach(|| read_dir_via_live_fs(&self.rt, &self.inner, path))?;
+        let items: Vec<Py<PyAny>> = entries
+            .iter()
+            .map(|entry| dir_entry_to_pydict(py, entry))
+            .collect::<PyResult<_>>()?;
+        Ok(PyList::new(py, &items)?.into_any().unbind())
+    }
+
+    #[pyo3(signature = (path=".".to_string()))]
+    fn ls(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        let names = match py.detach(|| read_dir_via_live_fs(&self.rt, &self.inner, path)) {
+            Ok(entries) => entries
+                .into_iter()
+                .map(|entry| entry.name)
+                .collect::<Vec<_>>(),
+            Err(_) => Vec::new(),
+        };
+        Ok(PyList::new(py, names)?.into_any().unbind())
+    }
+
+    fn glob(&self, py: Python<'_>, pattern: String) -> PyResult<Py<PyAny>> {
+        let matches = py.detach(|| -> PyResult<Vec<String>> {
+            Ok(glob_via_bash(&self.rt, &self.inner, pattern))
+        })?;
+        Ok(PyList::new(py, matches)?.into_any().unbind())
+    }
+
+    /// Return a live filesystem handle backed by the current interpreter.
+    ///
+    /// Each operation on the returned handle acquires the interpreter lock,
+    /// so it always reflects the latest state (including post-reset). For
+    /// batch reads where consistency isn't needed, prefer reading files via
+    /// `execute_sync("cat ...")`.
+    fn fs(&self, py: Python<'_>) -> PyResult<Py<PyFileSystem>> {
+        Py::new(
+            py,
+            PyFileSystem::from_live(self.inner.clone(), self.rt.clone()),
+        )
+    }
+
+    /// Mount a filesystem at `vfs_path` without rebuilding the interpreter.
+    fn mount(&self, py: Python<'_>, vfs_path: String, fs: PyRef<'_, PyFileSystem>) -> PyResult<()> {
+        let inner = self.inner.clone();
+        let source = fs.inner.clone();
+        py.detach(|| {
+            self.rt.block_on(async move {
+                let mounted_fs = source.resolve().await;
+                let bash = inner.lock().await;
+                bash.mount(Path::new(&vfs_path), mounted_fs)
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })
+    }
+
+    /// Unmount a live filesystem without rebuilding the interpreter.
+    fn unmount(&self, py: Python<'_>, vfs_path: String) -> PyResult<()> {
+        let inner = self.inner.clone();
+        py.detach(|| {
+            self.rt.block_on(async move {
+                let bash = inner.lock().await;
+                bash.unmount(Path::new(&vfs_path))
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Bash(username={:?}, hostname={:?})",
+            self.username.as_deref().unwrap_or("user"),
+            self.hostname.as_deref().unwrap_or("sandbox")
+        )
+    }
+}
+
+// ============================================================================
+// BashTool — interpreter + tool-contract metadata
+// ============================================================================
+
+/// Bash interpreter with tool-contract metadata (`description`, `help`,
+/// `system_prompt`, schemas).
+///
+/// Extends `Bash` with methods required by LLM tool-use protocols.
+/// Use this when integrating with LangChain, PydanticAI, or similar frameworks.
+///
+/// Example:
+///     ```python
+///     from bashkit import BashTool
+///
+///     tool = BashTool()
+///     print(tool.input_schema())  # JSON schema for LLM
+///     result = await tool.execute("echo 'Hello!'")
+///     ```
+/// with a virtual filesystem. State persists between calls - files created
+/// in one call are available in subsequent calls.
+///
+/// Example:
+///     ```python
+///     from bashkit import BashTool
+///
+///     tool = BashTool()
+///     result = await tool.execute("echo 'Hello, World!'")
+///     print(result.stdout)  # Hello, World!
+///     ```
+#[pyclass]
+#[allow(dead_code)]
+pub struct BashTool {
+    inner: Arc<Mutex<Bash>>,
+    /// Shared tokio runtime — reused across all sync calls to avoid
+    /// per-call OS thread/fd exhaustion (issue #414).
+    rt: Arc<Runtime>,
+    /// Cancellation token. Wrapped in RwLock so reset() can swap it to
+    /// the new interpreter's token without requiring &mut self.
+    cancelled: Arc<RwLock<Arc<AtomicBool>>>,
+    username: Option<String>,
+    hostname: Option<String>,
+    custom_builtins: Vec<PyCustomBuiltinEntry>,
+    builtin_engine: Arc<PyCallbackEngine>,
+    files: Vec<PyFileMount>,
+    real_mounts: Vec<RealMountConfig>,
+    max_commands: Option<u64>,
+    max_loop_iterations: Option<u64>,
+    max_memory: Option<u64>,
+    timeout_seconds: Option<f64>,
+}
+
+impl BashTool {
+    fn build_live_builder(&self, py: Python<'_>) -> PyResult<bashkit::BashBuilder> {
+        let mut builder = Bash::builder();
+
+        if let Some(ref username) = self.username {
+            builder = builder.username(username);
+        }
+        if let Some(ref hostname) = self.hostname {
+            builder = builder.hostname(hostname);
+        }
+
+        let mut limits = ExecutionLimits::new();
+        if let Some(max_commands) = self.max_commands {
+            limits = limits.max_commands(usize::try_from(max_commands).unwrap_or(usize::MAX));
+        }
+        if let Some(max_loop_iterations) = self.max_loop_iterations {
+            limits = limits
+                .max_loop_iterations(usize::try_from(max_loop_iterations).unwrap_or(usize::MAX));
+        }
+        if let Some(timeout_seconds) = self.timeout_seconds {
+            limits = limits.timeout(std::time::Duration::from_secs_f64(timeout_seconds));
+        }
+        builder = builder.limits(limits);
+
+        if let Some(max_memory) = self.max_memory {
+            builder = builder.max_memory(usize::try_from(max_memory).unwrap_or(usize::MAX));
+        }
+
+        let files = clone_file_mounts(py, &self.files);
+        let builder = apply_fs_config(builder, &files, &self.real_mounts)?;
+        Ok(apply_custom_builtins_to_builder(
+            py,
+            builder,
+            &self.custom_builtins,
+        ))
+    }
+
+    fn build_rust_tool(&self) -> RustBashTool {
+        let mut builder = RustBashTool::builder();
+
+        if let Some(ref username) = self.username {
+            builder = builder.username(username);
+        }
+        if let Some(ref hostname) = self.hostname {
+            builder = builder.hostname(hostname);
+        }
+
+        let mut limits = ExecutionLimits::new();
+        if let Some(mc) = self.max_commands {
+            limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
+        }
+        if let Some(mli) = self.max_loop_iterations {
+            limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
+        }
+        if let Some(ts) = self.timeout_seconds {
+            limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
+        }
+
+        if !self.custom_builtins.is_empty() {
+            let builtins =
+                Python::attach(|py| build_runtime_custom_builtin_impls(py, &self.custom_builtins));
+            for builtin in builtins {
+                let name = builtin.name.clone();
+                builder = builder.builtin(name, Box::new(builtin));
+            }
+        }
+
+        builder.limits(limits).build()
+    }
+}
+
+#[pymethods]
+impl BashTool {
+    #[new]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        username=None,
+        hostname=None,
+        max_commands=None,
+        max_loop_iterations=None,
+        max_memory=None,
+        timeout_seconds=None,
+        files=None,
+        mounts=None,
+        custom_builtins=None,
+    ))]
+    fn new(
+        py: Python<'_>,
+        username: Option<String>,
+        hostname: Option<String>,
+        max_commands: Option<u64>,
+        max_loop_iterations: Option<u64>,
+        max_memory: Option<u64>,
+        timeout_seconds: Option<f64>,
+        files: Option<&Bound<'_, PyDict>>,
+        mounts: Option<&Bound<'_, PyList>>,
+        custom_builtins: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        let mut builder = Bash::builder();
+
+        if let Some(ref u) = username {
+            builder = builder.username(u);
+        }
+        if let Some(ref h) = hostname {
+            builder = builder.hostname(h);
+        }
+
+        let mut limits = ExecutionLimits::new();
+        if let Some(mc) = max_commands {
+            limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
+        }
+        if let Some(mli) = max_loop_iterations {
+            limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
+        }
+        if let Some(ts) = timeout_seconds {
+            limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
+        }
+        builder = builder.limits(limits);
+
+        if let Some(mm) = max_memory {
+            builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
+        }
+
+        let files = parse_files(files)?;
+        let real_mounts = parse_mounts(mounts)?;
+        let custom_builtins = parse_custom_builtins(py, custom_builtins)?;
+        builder = apply_fs_config(builder, &files, &real_mounts)?;
+        let builtin_engine = PyCallbackEngine::new(py)?;
+        builder = apply_custom_builtins_to_builder(py, builder, &custom_builtins);
+
+        let bash = builder.build();
+        let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
+
+        let rt = make_runtime()?;
+
+        Ok(Self {
+            inner: Arc::new(Mutex::new(bash)),
+            rt,
+            cancelled,
+            username,
+            hostname,
+            custom_builtins,
+            builtin_engine,
+            files,
+            real_mounts,
+            max_commands,
+            max_loop_iterations,
+            max_memory,
+            timeout_seconds,
+        })
+    }
+
+    /// Cancel the currently running execution.
+    fn cancel(&self) {
+        if let Ok(token) = self.cancelled.read() {
+            token.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Clear the cancellation flag so subsequent executions proceed normally.
+    ///
+    /// Call this after a `cancel()` once the in-flight execution has finished
+    /// and you want to reuse the same `BashTool` instance (preserving VFS state).
+    /// Without this, every future `execute()` will immediately fail with
+    /// ``"execution cancelled"``.
+    ///
+    /// **Note:** Calling this while an execution is still in-flight may
+    /// allow that execution to continue past the cancellation point.
+    /// Wait for the cancelled execution to finish before clearing
+    /// (await the async call or let `execute_sync` return).
+    fn clear_cancel(&self) {
+        if let Ok(token) = self.cancelled.read() {
+            token.store(false, Ordering::Relaxed);
+        }
+    }
+
+    #[pyo3(signature = (commands, on_output=None))]
+    fn execute<'py>(
+        &self,
+        py: Python<'py>,
+        commands: String,
+        on_output: Option<Py<PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let builtin_session =
+            capture_custom_builtin_session(py, &self.custom_builtins, &self.builtin_engine, true)?;
+        let on_output = prepare_output_handler(py, on_output)?;
+        let inner = self.inner.clone();
+        let cancel_session = builtin_session.clone();
+        let future = future_into_py(py, async move {
+            let mut bash = inner.lock().await;
+            exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session).await
+        })?;
+        if let Some(cancel_session) = cancel_session {
+            attach_future_cancellation_callback(py, &future, cancel_session.clone())?;
+            return wrap_future_with_cancel(py, future, cancel_session);
+        }
+        Ok(future)
+    }
+
+    /// Releases GIL before blocking on tokio to prevent deadlock with callbacks.
+    ///
+    /// # Thread safety
+    ///
+    /// Acquires async mutex with 30-second timeout. For concurrent workloads,
+    /// use separate `BashTool` instances per thread or the async `execute()`.
+    #[pyo3(signature = (commands, on_output=None))]
+    fn execute_sync(
+        &self,
+        py: Python<'_>,
+        commands: String,
+        on_output: Option<Py<PyAny>>,
+    ) -> PyResult<ExecResult> {
+        let builtin_session =
+            capture_custom_builtin_session(py, &self.custom_builtins, &self.builtin_engine, false)?;
+        let on_output = prepare_output_handler(py, on_output)?;
+        let inner = self.inner.clone();
+
+        py.detach(|| {
+            self.rt.block_on(async move {
+                // THREAT[TM-DOS-FFI]: Timeout on mutex to prevent deadlock.
+                let mut bash =
+                    match tokio::time::timeout(std::time::Duration::from_secs(30), inner.lock())
+                        .await
+                    {
+                        Ok(guard) => guard,
+                        Err(_) => {
+                            return Err(PyRuntimeError::new_err(
+                                "execute_sync: timed out waiting for lock (30s). \
+                             Another thread may be holding the interpreter. \
+                             Use separate BashTool instances for concurrent access.",
+                            ));
+                        }
+                    };
+                exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session)
+                    .await
+            })
+        })
+    }
+
+    /// Execute commands synchronously. Raises `BashError` on non-zero exit.
+    #[pyo3(signature = (commands, on_output=None))]
+    fn execute_sync_or_throw(
+        &self,
+        py: Python<'_>,
+        commands: String,
+        on_output: Option<Py<PyAny>>,
+    ) -> PyResult<ExecResult> {
+        let result = self.execute_sync(py, commands, on_output)?;
+        if result.exit_code != 0 {
+            return Err(raise_bash_error(&result));
+        }
+        Ok(result)
+    }
+
+    /// Execute commands asynchronously. Raises `BashError` on non-zero exit.
+    #[pyo3(signature = (commands, on_output=None))]
+    fn execute_or_throw<'py>(
+        &self,
+        py: Python<'py>,
+        commands: String,
+        on_output: Option<Py<PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let builtin_session =
+            capture_custom_builtin_session(py, &self.custom_builtins, &self.builtin_engine, true)?;
+        let on_output = prepare_output_handler(py, on_output)?;
+        let inner = self.inner.clone();
+        let cancel_session = builtin_session.clone();
+        let future = future_into_py(py, async move {
+            let mut bash = inner.lock().await;
+            let result =
+                exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session)
+                    .await?;
+            if result.exit_code != 0 {
+                return Err(raise_bash_error(&result));
+            }
+            Ok(result)
+        })?;
+        if let Some(cancel_session) = cancel_session {
+            attach_future_cancellation_callback(py, &future, cancel_session.clone())?;
+            return wrap_future_with_cancel(py, future, cancel_session);
+        }
+        Ok(future)
+    }
+
+    /// Releases GIL before blocking on tokio to prevent deadlock.
+    /// THREAT[TM-PY-028]: Rebuild with same config to preserve security limits
+    /// and registered custom builtins.
+    fn reset(&self, py: Python<'_>) -> PyResult<()> {
+        replace_live_bash_with_builder(
+            py,
+            &self.rt,
+            &self.inner,
+            &self.cancelled,
+            self.build_live_builder(py)?,
+        )
+    }
+
+    /// Serialize interpreter state to bytes for checkpoint/restore flows.
+    fn snapshot<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = snapshot_live_bash(py, &self.rt, &self.inner)?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// Restore interpreter state from bytes previously produced by `snapshot()`.
+    fn restore_snapshot(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
+        restore_live_bash(py, &self.rt, &self.inner, data)
+    }
+
+    /// Create a new BashTool instance from a snapshot and optional constructor kwargs.
+    #[staticmethod]
+    #[pyo3(signature = (
+        data,
+        username=None,
+        hostname=None,
+        max_commands=None,
+        max_loop_iterations=None,
+        max_memory=None,
+        timeout_seconds=None,
+        files=None,
+        mounts=None,
+        custom_builtins=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn from_snapshot(
+        py: Python<'_>,
+        data: Vec<u8>,
+        username: Option<String>,
+        hostname: Option<String>,
+        max_commands: Option<u64>,
+        max_loop_iterations: Option<u64>,
+        max_memory: Option<u64>,
+        timeout_seconds: Option<f64>,
+        files: Option<&Bound<'_, PyDict>>,
+        mounts: Option<&Bound<'_, PyList>>,
+        custom_builtins: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        let tool = Self::new(
+            py,
+            username,
+            hostname,
+            max_commands,
+            max_loop_iterations,
+            max_memory,
+            timeout_seconds,
+            files,
+            mounts,
+            custom_builtins,
+        )?;
+        tool.restore_snapshot(py, data)?;
+        Ok(tool)
+    }
+
+    fn read_file(&self, py: Python<'_>, path: String) -> PyResult<String> {
+        py.detach(|| read_text_via_live_fs(&self.rt, &self.inner, path))
+    }
+
+    fn write_file(&self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
+        py.detach(|| write_text_via_live_fs(&self.rt, &self.inner, path, content))
+    }
+
+    fn append_file(&self, py: Python<'_>, path: String, content: String) -> PyResult<()> {
+        py.detach(|| append_text_via_live_fs(&self.rt, &self.inner, path, content))
+    }
+
+    #[pyo3(signature = (path, recursive=false))]
+    fn mkdir(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
+        py.detach(|| mkdir_via_live_fs(&self.rt, &self.inner, path, recursive))
+    }
+
+    fn exists(&self, py: Python<'_>, path: String) -> PyResult<bool> {
+        py.detach(|| exists_via_live_fs(&self.rt, &self.inner, path))
+    }
+
+    #[pyo3(signature = (path, recursive=false))]
+    fn remove(&self, py: Python<'_>, path: String, recursive: bool) -> PyResult<()> {
+        py.detach(|| remove_via_live_fs(&self.rt, &self.inner, path, recursive))
+    }
+
+    fn stat(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        let metadata = py.detach(|| stat_via_live_fs(&self.rt, &self.inner, path))?;
+        metadata_to_pydict(py, &metadata)
+    }
+
+    fn chmod(&self, py: Python<'_>, path: String, mode: u32) -> PyResult<()> {
+        py.detach(|| chmod_via_live_fs(&self.rt, &self.inner, path, mode))
+    }
+
+    fn symlink(&self, py: Python<'_>, target: String, link: String) -> PyResult<()> {
+        py.detach(|| symlink_via_live_fs(&self.rt, &self.inner, target, link))
+    }
+
+    fn read_link(&self, py: Python<'_>, path: String) -> PyResult<String> {
+        py.detach(|| read_link_via_live_fs(&self.rt, &self.inner, path))
+    }
+
+    fn read_dir(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        let entries = py.detach(|| read_dir_via_live_fs(&self.rt, &self.inner, path))?;
+        let items: Vec<Py<PyAny>> = entries
+            .iter()
+            .map(|entry| dir_entry_to_pydict(py, entry))
+            .collect::<PyResult<_>>()?;
+        Ok(PyList::new(py, &items)?.into_any().unbind())
+    }
+
+    #[pyo3(signature = (path=".".to_string()))]
+    fn ls(&self, py: Python<'_>, path: String) -> PyResult<Py<PyAny>> {
+        let names = match py.detach(|| read_dir_via_live_fs(&self.rt, &self.inner, path)) {
+            Ok(entries) => entries
+                .into_iter()
+                .map(|entry| entry.name)
+                .collect::<Vec<_>>(),
+            Err(_) => Vec::new(),
+        };
+        Ok(PyList::new(py, names)?.into_any().unbind())
+    }
+
+    fn glob(&self, py: Python<'_>, pattern: String) -> PyResult<Py<PyAny>> {
+        let matches = py.detach(|| -> PyResult<Vec<String>> {
+            Ok(glob_via_bash(&self.rt, &self.inner, pattern))
+        })?;
+        Ok(PyList::new(py, matches)?.into_any().unbind())
+    }
+
+    /// Return a live filesystem handle backed by the current interpreter.
+    ///
+    /// Each operation on the returned handle acquires the interpreter lock,
+    /// so it always reflects the latest state (including post-reset). For
+    /// batch reads where consistency isn't needed, prefer reading files via
+    /// `execute_sync("cat ...")`.
+    fn fs(&self, py: Python<'_>) -> PyResult<Py<PyFileSystem>> {
+        Py::new(
+            py,
+            PyFileSystem::from_live(self.inner.clone(), self.rt.clone()),
+        )
+    }
+
+    /// Mount a filesystem at `vfs_path` without rebuilding the interpreter.
+    fn mount(&self, py: Python<'_>, vfs_path: String, fs: PyRef<'_, PyFileSystem>) -> PyResult<()> {
+        let inner = self.inner.clone();
+        let source = fs.inner.clone();
+        py.detach(|| {
+            self.rt.block_on(async move {
+                let mounted_fs = source.resolve().await;
+                let bash = inner.lock().await;
+                bash.mount(Path::new(&vfs_path), mounted_fs)
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+                Ok(())
+            })
+        })
+    }
+
+    /// Unmount a live filesystem without rebuilding the interpreter.
+    fn unmount(&self, py: Python<'_>, vfs_path: String) -> PyResult<()> {
+        let inner = self.inner.clone();
+        py.detach(|| {
+            self.rt.block_on(async move {
+                let bash = inner.lock().await;
+                bash.unmount(Path::new(&vfs_path))
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+                Ok(())
+            })
+        })
+    }
+
+    #[getter]
+    fn name(&self) -> &str {
+        "bashkit"
+    }
+
+    #[getter]
+    fn short_description(&self) -> &str {
+        "Run bash commands in an isolated virtual filesystem"
+    }
+
+    fn description(&self) -> PyResult<String> {
+        Ok(self.build_rust_tool().description().to_string())
+    }
+
+    fn help(&self) -> PyResult<String> {
+        Ok(self.build_rust_tool().help())
+    }
+
+    fn system_prompt(&self) -> PyResult<String> {
+        Ok(self.build_rust_tool().system_prompt())
+    }
+
+    fn input_schema(&self) -> PyResult<String> {
+        let schema = self.build_rust_tool().input_schema();
+        serde_json::to_string_pretty(&schema)
+            .map_err(|e| PyValueError::new_err(format!("Schema serialization failed: {}", e)))
+    }
+
+    fn output_schema(&self) -> PyResult<String> {
+        let schema = self.build_rust_tool().output_schema();
+        serde_json::to_string_pretty(&schema)
+            .map_err(|e| PyValueError::new_err(format!("Schema serialization failed: {}", e)))
+    }
+
+    #[getter]
+    fn version(&self) -> &str {
+        VERSION
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BashTool(username={:?}, hostname={:?})",
+            self.username.as_deref().unwrap_or("user"),
+            self.hostname.as_deref().unwrap_or("sandbox")
+        )
+    }
 }
 
 // ============================================================================
@@ -3023,6 +3353,7 @@ impl ScriptedTool {
             self.callback_engine.clone(),
             self.tools.iter().any(|entry| entry.is_async),
             true,
+            PySyncLoopMode::PerSession,
         )?;
         let tool = self.build_rust_tool_with_session(py, session.clone());
         let future = future_into_py(py, async move {
@@ -3054,6 +3385,7 @@ impl ScriptedTool {
             self.callback_engine.clone(),
             self.tools.iter().any(|entry| entry.is_async),
             false,
+            PySyncLoopMode::PerSession,
         )?;
         let tool = self.build_rust_tool_with_session(py, session);
 
@@ -3104,6 +3436,7 @@ impl ScriptedTool {
                 self.callback_engine.clone(),
                 false,
                 false,
+                PySyncLoopMode::PerSession,
             )
             .expect("callback session");
             self.build_rust_tool_with_session(py, session)
@@ -3120,6 +3453,7 @@ impl ScriptedTool {
                 self.callback_engine.clone(),
                 false,
                 false,
+                PySyncLoopMode::PerSession,
             )
             .expect("callback session");
             self.build_rust_tool_with_session(py, session).help()
@@ -3134,6 +3468,7 @@ impl ScriptedTool {
                 self.callback_engine.clone(),
                 false,
                 false,
+                PySyncLoopMode::PerSession,
             )
             .expect("callback session");
             self.build_rust_tool_with_session(py, session)
@@ -3148,6 +3483,7 @@ impl ScriptedTool {
             self.callback_engine.clone(),
             false,
             false,
+            PySyncLoopMode::PerSession,
         )?;
         let tool = self.build_rust_tool_with_session(py, session);
         let schema = tool.input_schema();
@@ -3162,6 +3498,7 @@ impl ScriptedTool {
             self.callback_engine.clone(),
             false,
             false,
+            PySyncLoopMode::PerSession,
         )?;
         let tool = self.build_rust_tool_with_session(py, session);
         let schema = tool.output_schema();
@@ -3251,6 +3588,7 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BashTool>()?;
     m.add_class::<ScriptedTool>()?;
     m.add_class::<ExecResult>()?;
+    m.add_class::<PyBuiltinContext>()?;
     m.add_class::<PyFileSystem>()?;
     m.add("BashError", m.py().get_type::<BashError>())?;
     m.add_function(wrap_pyfunction!(create_langchain_tool_spec, m)?)?;

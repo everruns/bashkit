@@ -242,6 +242,46 @@ result = tool.execute_sync("echo 'Hello from BashTool'")
 print(result.stdout)
 ```
 
+## Persistent Custom Builtins
+
+Use `custom_builtins={...}` on `Bash` or `BashTool` when you want
+constructor-time Python callback builtins without giving up persistent
+shell/VFS state:
+
+```python
+from bashkit import Bash
+import json
+
+
+def get_order(ctx):
+    if not ctx.argv or ctx.argv[0] in {"help", "--help"}:
+        return "usage: get-order <get|help> [args]\n"
+    if ctx.argv[0] == "get" and len(ctx.argv) >= 2:
+        return json.dumps(
+            {"id": ctx.argv[1], "status": "shipped", "items": ["widget"]}
+        ) + "\n"
+    return "usage: get-order <get|help> [args]\n"
+
+
+bash = Bash(custom_builtins={"get-order": get_order})
+
+bash.execute_sync("mkdir -p /scratch && get-order get 42 > /scratch/order.json")
+result = bash.execute_sync("cat /scratch/order.json | jq -r '.items[]'")
+print(result.stdout)  # widget
+```
+
+Callbacks receive a `BuiltinContext` object with raw `argv` tokens, optional
+pipeline `stdin`, the current `cwd`, and visible `env`, and must return the
+builtin stdout string. Async callbacks are also supported. `BashTool` exposes
+the same `custom_builtins` constructor kwarg and includes registered command
+names in `help()` output for LLM-facing metadata.
+
+When you use `await bash.execute(...)` or `await bash_tool.execute(...)`,
+async callbacks are scheduled back onto the caller's active asyncio loop, so
+loop-bound primitives like `asyncio.Event` and framework-owned clients keep
+working. `execute_sync()` still supports async callbacks, but it drives them on
+an internal private loop and should not be called from an async endpoint.
+
 ## ScriptedTool
 
 Use `ScriptedTool` to register Python callbacks as bash-callable tools:
@@ -291,6 +331,9 @@ assert restored.execute_sync("pwd").stdout.strip() == "/workspace"
 ```
 
 `BashTool` exposes the same `snapshot()`, `restore_snapshot(...)`, and `from_snapshot(...)` APIs.
+Python callback builtins are host-side config, not serialized shell state, so
+pass `custom_builtins=` again when constructing a restored instance if you
+need them after snapshot restore.
 
 ## Framework Integrations
 
@@ -327,6 +370,7 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 - `cancel()`
 - `clear_cancel()`
 - `reset()`
+- constructor kwarg: `custom_builtins={name: callback}`
 - `snapshot() -> bytes`
 - `restore_snapshot(data: bytes)`
 - `from_snapshot(data: bytes, **kwargs) -> Bash`
@@ -337,6 +381,7 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 ### BashTool
 
 - All execution, cancellation (`cancel()`, `clear_cancel()`), reset, snapshot, restore, mount, and direct VFS helpers from `Bash`
+- constructor kwarg: `custom_builtins={name: callback}`
 - Tool metadata: `name`, `short_description`, `version`
 - `description() -> str`
 - `help() -> str`
