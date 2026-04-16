@@ -2,6 +2,9 @@
 # Keep coverage generation separate from Codecov upload.
 # Mirrors Monty's CI shape so upload uses the existing CODECOV_TOKEN secret
 # without mixing tokened steps into the report-generation job.
+# Rust unit coverage still comes from tarpaulin; Python and Node binding jobs
+# add Rust coverage exercised through those language integrations via
+# cargo-llvm-cov.
 name: Coverage
 
 on:
@@ -15,10 +18,11 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  LLVM_COV_IGNORE_FILENAME_REGEX: "(tests/|test_cases/|/tests\\.rs$)"
 
 jobs:
   coverage:
-    name: Generate Coverage
+    name: Generate Rust Coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -51,14 +55,111 @@ jobs:
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: coverage-report
+          name: rust-coverage-report
           path: coverage/
+          retention-days: 30
+
+  python-coverage:
+    name: Generate Python Binding Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Generate Python-driven Rust coverage
+        run: |
+          set -euxo pipefail
+          mkdir -p coverage
+          eval "$(cargo llvm-cov show-env --export-prefix)"
+          cargo llvm-cov clean --workspace
+          uv venv
+          uv pip install maturin pytest pytest-asyncio langchain-core langgraph fastapi httpx
+          uv run maturin develop --release -m crates/bashkit-python/Cargo.toml
+          uv run pytest crates/bashkit-python/tests -v
+          cargo llvm-cov report \
+            --release \
+            --codecov \
+            --output-path coverage/python-rust-coverage.json \
+            --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
+
+      - name: Upload Python coverage artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-rust-coverage-report
+          path: coverage/python-rust-coverage.json
+          retention-days: 30
+
+  node-coverage:
+    name: Generate Node Binding Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: crates/bashkit-js
+
+      - name: Generate Node-driven Rust coverage
+        working-directory: crates/bashkit-js
+        run: |
+          set -euxo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/coverage"
+          eval "$(cargo llvm-cov show-env --export-prefix)"
+          cargo llvm-cov clean --workspace
+          cargo build -p bashkit-js --release
+          npm run build
+          npm test
+          node --test __test__/runtime-compat/*.test.mjs
+          cargo llvm-cov report \
+            --release \
+            --codecov \
+            --output-path "$GITHUB_WORKSPACE/coverage/node-rust-coverage.json" \
+            --ignore-filename-regex "$LLVM_COV_IGNORE_FILENAME_REGEX"
+
+      - name: Upload Node coverage artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: node-rust-coverage-report
+          path: coverage/node-rust-coverage.json
           retention-days: 30
 
   coverage-upload:
     name: Upload Coverage
-    needs: coverage
-    if: ${{ secrets.CODECOV_TOKEN != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+    needs: [coverage, python-coverage, node-coverage]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -66,17 +167,19 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: coverage-report
+          pattern: "*-coverage-report"
+          merge-multiple: true
           path: coverage
 
       - name: List coverage artifacts
         run: ls -lh coverage
 
       - name: Upload coverage to Codecov
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
         uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/cobertura.xml
+          files: coverage/cobertura.xml,coverage/python-rust-coverage.json,coverage/node-rust-coverage.json
           disable_search: true
           flags: unittests
           fail_ci_if_error: false
