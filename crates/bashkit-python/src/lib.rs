@@ -1700,7 +1700,8 @@ impl PyCallbackSession {
         awaitable: &Py<PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let context = self.current_context(py);
-        self.private_async_loop.run_awaitable(py, awaitable, &context)
+        self.private_async_loop
+            .run_awaitable(py, awaitable, &context)
     }
 }
 
