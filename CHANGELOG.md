@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-04-17
+
+### Highlights
+
+- **Snapshot fidelity** - Added shell-only snapshots, preserved shell functions in snapshots, and stored function source alongside AST for restore parity
+- **Bindings parity** - Added Python `shell_state`, `custom_builtins`, `clear_cancel()`, and streaming callback support plus JS `clearCancel` and BashTool snapshot support
+- **Bindings hardening** - Rejected same-instance callback re-entry and expanded cancel-state and FastAPI regression coverage
+- **CI and release polish** - Added coverage uploads and Codecov config, removed duplicate example builds, and hardened crates publish verification
+- **External contributions** - Thanks to @oliverlambson and @shubhlohiya for shipping Python and JS binding improvements in this release
+
+### What's Changed
+
+* fix(snapshot): store function source alongside ast ([#1332](https://github.com/everruns/bashkit/pull/1332)) by @chaliy
+* fix(bindings): reject same-instance callback re-entry ([#1331](https://github.com/everruns/bashkit/pull/1331)) by @chaliy
+* test(bindings): cover async cancel state recovery ([#1330](https://github.com/everruns/bashkit/pull/1330)) by @chaliy
+* test(python): cover fastapi custom builtins ([#1329](https://github.com/everruns/bashkit/pull/1329)) by @chaliy
+* fix(snapshot): preserve functions in shell snapshots ([#1328](https://github.com/everruns/bashkit/pull/1328)) by @chaliy
+* feat(snapshot): add shell-only snapshots ([#1327](https://github.com/everruns/bashkit/pull/1327)) by @chaliy
+* feat(python): expose shell_state on Bash and BashTool ([#1326](https://github.com/everruns/bashkit/pull/1326)) by @oliverlambson
+* chore(ci): add codecov config ([#1324](https://github.com/everruns/bashkit/pull/1324)) by @chaliy
+* docs(specs): remove numeric prefixes from spec names ([#1323](https://github.com/everruns/bashkit/pull/1323)) by @chaliy
+* test(python): cover in-flight clear_cancel recovery ([#1322](https://github.com/everruns/bashkit/pull/1322)) by @chaliy
+* feat(js): add clearCancel parity ([#1321](https://github.com/everruns/bashkit/pull/1321)) by @chaliy
+* feat(ci): add binding coverage uploads ([#1318](https://github.com/everruns/bashkit/pull/1318)) by @chaliy
+* fix(ci): split codecov upload job ([#1317](https://github.com/everruns/bashkit/pull/1317)) by @chaliy
+* fix(ci): avoid duplicate example builds in test job ([#1316](https://github.com/everruns/bashkit/pull/1316)) by @chaliy
+* feat(python): add custom_builtins to Bash and BashTool ([#1315](https://github.com/everruns/bashkit/pull/1315)) by @oliverlambson
+* feat(python): add clear_cancel() to Bash and BashTool ([#1314](https://github.com/everruns/bashkit/pull/1314)) by @shubhlohiya
+* fix(ci): harden crates publish verification ([#1313](https://github.com/everruns/bashkit/pull/1313)) by @chaliy
+* feat(javascript): add BashTool snapshot support ([#1310](https://github.com/everruns/bashkit/pull/1310)) by @chaliy
+* feat(node): expose streaming output callbacks ([#1309](https://github.com/everruns/bashkit/pull/1309)) by @oliverlambson
+* feat(python): expose streaming output callbacks ([#1308](https://github.com/everruns/bashkit/pull/1308)) by @oliverlambson
+
+**Full Changelog**: https://github.com/everruns/bashkit/commits/v0.1.20
+
 ## [0.1.19] - 2026-04-15
 
 ### Highlights
