@@ -214,6 +214,51 @@ result.to_dict()  # dict
 
 Returns dict with `name`, `description`, `args_schema` for LangChain integration.
 
+### custom_builtins and Async Callbacks
+
+`Bash` and `BashTool` accept `custom_builtins={"name": callback}` where each
+callback is `Callable[[BuiltinContext], str | Awaitable[str]]`.
+
+**Sync callbacks** are called directly under the session's captured `contextvars`
+snapshot and return a string.
+
+**Async callbacks** are driven to completion by one of two mechanisms depending
+on whether a running asyncio event loop is present on the calling thread:
+
+| Calling context | Mechanism |
+|---|---|
+| `await execute()` | Callback scheduled as a `Task` on the **caller's running loop** |
+| `execute_sync()` — no running loop | Callback driven by a **private event loop** shared across calls on the same `Bash` instance |
+| `execute_sync()` — running loop present (e.g. Jupyter / IPython) | Callback driven by a **background daemon thread** with its own fresh event loop |
+
+The background-thread path is activated via `asyncio.get_running_loop()`. If the
+call succeeds (a loop is already running on the thread), the awaitable is dispatched
+to a daemon thread whose `run_until_complete` call is wrapped in `context.run()`
+so ContextVars propagate correctly despite the thread switch. The helper is
+cached on the `PyPrivateAsyncLoop` to avoid repeated module compilation.
+
+**ContextVar propagation**: ContextVars set before `execute()` or
+`execute_sync()` are captured at call time and replayed inside each callback
+invocation regardless of which mechanism is used.
+
+```python
+import asyncio, contextvars
+from bashkit import Bash, BuiltinContext
+
+trace_id = contextvars.ContextVar("trace_id")
+trace_id.set("req-42")
+
+async def fetch(ctx: BuiltinContext) -> str:
+    await asyncio.sleep(0)            # simulate async I/O
+    return f"trace={trace_id.get()}\n"
+
+bash = Bash(custom_builtins={"fetch": fetch})
+
+# Works in plain Python, asyncio.run(), Jupyter, or any async framework:
+result = bash.execute_sync("fetch")   # "trace=req-42"
+result = await bash.execute("fetch")  # same, callback runs on caller loop
+```
+
 ## Optional Dependencies
 
 ```
@@ -227,17 +272,22 @@ pip install bashkit[dev]           # + pytest, pytest-asyncio
 
 File: `.github/workflows/python.yml`
 
-Runs on push to main and PRs (path-filtered to `crates/bashkit-python/`, `crates/bashkit/`,
-`Cargo.toml`, `Cargo.lock`).
+Runs on push to main and PRs (path-filtered to `crates/bashkit-python/`,
+`crates/bashkit/`, `examples/*.py`, `examples/*.ipynb`, `Cargo.toml`,
+`Cargo.lock`).
 
 ```
 PR / push to main
     ├── lint          (ruff check + ruff format --check)
     ├── test          (maturin develop + pytest, Python 3.9/3.12/3.13)
-    ├── examples      (build wheel + run crates/bashkit-python/examples/)
+    ├── examples      (build wheel + run crates/bashkit-python/examples/
+    │                  + execute examples/*.ipynb via nbconvert)
     ├── build-wheel   (maturin build + twine check)
     └── python-check  (gate job for branch protection)
 ```
+
+Notebooks in `examples/` are executed with `jupyter nbconvert --execute
+--ExecutePreprocessor.timeout=120`. A cell error fails the CI job.
 
 ## Linting
 
