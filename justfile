@@ -223,14 +223,55 @@ release-check:
     # Check nightly CI jobs (last 3 runs must be green)
     just check-nightly
 
+    # Match publish.yml locally: strip git-only publish blockers, dry-run, restore.
+    TMPDIR=$(mktemp -d)
+    LOCKFILE=Cargo.lock
+    BASHKIT_TOML=crates/bashkit/Cargo.toml
+    CLI_TOML=crates/bashkit-cli/Cargo.toml
+    JS_TOML=crates/bashkit-js/Cargo.toml
+    PY_TOML=crates/bashkit-python/Cargo.toml
+    cp "$LOCKFILE" "$TMPDIR/Cargo.lock"
+    cp "$BASHKIT_TOML" "$TMPDIR/bashkit.Cargo.toml"
+    cp "$CLI_TOML" "$TMPDIR/bashkit-cli.Cargo.toml"
+    cp "$JS_TOML" "$TMPDIR/bashkit-js.Cargo.toml"
+    cp "$PY_TOML" "$TMPDIR/bashkit-python.Cargo.toml"
+    trap 'cp "$TMPDIR/Cargo.lock" "$LOCKFILE"; \
+          cp "$TMPDIR/bashkit.Cargo.toml" "$BASHKIT_TOML"; \
+          cp "$TMPDIR/bashkit-cli.Cargo.toml" "$CLI_TOML"; \
+          cp "$TMPDIR/bashkit-js.Cargo.toml" "$JS_TOML"; \
+          cp "$TMPDIR/bashkit-python.Cargo.toml" "$PY_TOML"; \
+          rm -rf "$TMPDIR"' EXIT
+    perli() {
+        perl -0pi.bak -e "$1" "$2"
+        rm -f "$2.bak"
+    }
+
+    # --- bashkit core: remove monty dep and python feature ---
+    perli 's/^monty = .*?\n//m' "$BASHKIT_TOML"
+    perli 's/^python = \["dep:monty"\]\n//m' "$BASHKIT_TOML"
+    perli 's/\n\[\[example\]\]\nname = "python_scripts"\nrequired-features = \["python"\]\n//g' "$BASHKIT_TOML"
+    perli 's/\n\[\[example\]\]\nname = "python_external_functions"\nrequired-features = \["python"\]\n//g' "$BASHKIT_TOML"
+
+    # --- bashkit-cli: remove python feature ---
+    perli 's/^python = \["bashkit\/python"\]\n//m' "$CLI_TOML"
+    perli 's/, "python"//g; s/"python", //g; s/\["python"\]/[]/g' "$CLI_TOML"
+
+    # --- bashkit-js/bashkit-python: remove python from features list ---
+    perli 's/, "python"//g; s/"python", //g' "$JS_TOML"
+    perli 's/, "python"//g; s/"python", //g' "$PY_TOML"
+
     # Dry-run publish
     echo ""
     echo "Dry-run publish bashkit..."
-    cargo publish -p bashkit --dry-run
+    cargo publish -p bashkit --dry-run --allow-dirty
 
     echo ""
     echo "Dry-run publish bashkit-cli..."
-    cargo publish -p bashkit-cli --dry-run
+    # bashkit-cli verifies against the registry package of bashkit.
+    # Before the matching bashkit release is published, local dry-run cannot
+    # compile that packaged dependency graph. The real publish workflow keeps
+    # verification enabled after bashkit is live on crates.io.
+    cargo publish -p bashkit-cli --dry-run --allow-dirty --no-verify
 
     echo ""
     echo "All release checks passed!"
