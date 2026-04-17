@@ -130,3 +130,31 @@ a
 b
 c
 ### end
+
+### process_subst_glob_adjacent_quoted_var
+### bash_diff: requires /dev/fd/ and VFS-specific filesystem
+# Issue #1333: glob `*` adjacent to quoted variable inside <(...) must expand
+mkdir -p /tmp/psubglob
+cd /tmp/psubglob
+: > tag_foo.tmp.html
+: > tag_bar.tmp.html
+p="tag_"
+while IFS= read -r i; do echo "got: $i"; done < <(ls ./"$p"*.tmp.html | sort)
+### expect
+got: ./tag_bar.tmp.html
+got: ./tag_foo.tmp.html
+### end
+
+### process_subst_glob_cat
+### bash_diff: requires /dev/fd/ and VFS-specific filesystem
+# Issue #1333: `cat < <(...)` variant
+mkdir -p /tmp/psubglob2
+cd /tmp/psubglob2
+: > tag_a.tmp.html
+: > tag_b.tmp.html
+p="tag_"
+cat < <(ls ./"$p"*.tmp.html | sort)
+### expect
+./tag_a.tmp.html
+./tag_b.tmp.html
+### end
