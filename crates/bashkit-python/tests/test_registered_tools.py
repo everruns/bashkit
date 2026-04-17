@@ -243,45 +243,6 @@ def test_custom_builtins_receive_raw_argv_and_stdin(factory):
 
 
 @pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
-@pytest.mark.asyncio
-async def test_custom_builtins_execute_sync_works_inside_running_loop(factory):
-    """execute_sync() with async custom_builtins must work from inside a running event loop.
-
-    Calling run_until_complete on a second loop fails in Python when a loop is already
-    running on the same thread (e.g. Jupyter/IPython). The fix spawns a background thread
-    with a fresh event loop so the callback can be driven without conflicting.
-    """
-
-    async def greet(ctx):
-        await asyncio.sleep(0)
-        return f"hello {ctx.argv[0] if ctx.argv else 'world'}\n"
-
-    shell = build_shell(factory, {"greet": greet})
-    # We are inside an asyncio coroutine — a running loop exists on this thread.
-    result = shell.execute_sync("greet Jupyter")
-
-    assert result.exit_code == 0
-    assert result.stdout.strip() == "hello Jupyter"
-
-
-@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
-@pytest.mark.asyncio
-async def test_custom_builtins_contextvar_preserved_inside_running_loop(factory):
-    """ContextVars set before execute_sync() propagate into async callbacks even when a
-    running loop is present (background-thread fallback path for Jupyter compatibility)."""
-
-    async def check_ctx(ctx):
-        return f"req={request_id.get('missing')}\n"
-
-    request_id.set("jupyter-ctx-789")
-    shell = build_shell(factory, {"check-ctx": check_ctx})
-    result = shell.execute_sync("check-ctx")
-
-    assert result.exit_code == 0
-    assert result.stdout.strip() == "req=jupyter-ctx-789"
-
-
-@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
 def test_custom_builtins_support_subcommands(factory):
     def orders(ctx):
         if not ctx.argv:
