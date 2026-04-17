@@ -1501,12 +1501,15 @@ enum PySyncLoopMode {
 
 struct PyPrivateAsyncLoop {
     event_loop: StdMutex<Option<Py<PyAny>>>,
+    // Cached Python helper for background-thread fallback (Jupyter/IPython compatibility).
+    bg_thread_runner: StdMutex<Option<Py<PyAny>>>,
 }
 
 impl PyPrivateAsyncLoop {
     fn new() -> Arc<Self> {
         Arc::new(Self {
             event_loop: StdMutex::new(None),
+            bg_thread_runner: StdMutex::new(None),
         })
     }
 
@@ -1522,7 +1525,66 @@ impl PyPrivateAsyncLoop {
             .clone_ref(py))
     }
 
-    fn run_awaitable(&self, py: Python<'_>, awaitable: &Py<PyAny>) -> PyResult<Py<PyAny>> {
+    fn bg_thread_runner(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let mut runner = self.bg_thread_runner.lock().expect("bg thread runner lock");
+        if runner.is_none() {
+            // Spawns a daemon thread with a fresh event loop, runs the coroutine inside the
+            // supplied context so ContextVars propagate correctly, then joins and returns the
+            // result. The join() releases the GIL so the child thread can acquire it.
+            *runner = Some(
+                pyo3::types::PyModule::from_code(
+                    py,
+                    c"import asyncio, threading
+def _run(coro, ctx):
+    r = [None]; e = [None]
+    def w():
+        loop = asyncio.new_event_loop()
+        try:
+            r[0] = ctx.run(loop.run_until_complete, coro)
+        except BaseException as ex:
+            e[0] = ex
+        finally:
+            loop.close()
+    t = threading.Thread(target=w, daemon=True)
+    t.start()
+    t.join()
+    if e[0] is not None:
+        raise e[0]
+    return r[0]",
+                    c"<bashkit_bg_loop>",
+                    c"_bashkit_bg_loop",
+                )?
+                .getattr("_run")?
+                .unbind(),
+            );
+        }
+        Ok(runner.as_ref().expect("runner prepared").clone_ref(py))
+    }
+
+    // `context` is the captured ContextVar snapshot; needed for the background-thread
+    // path so that Tasks inherit the correct ContextVars (background threads start with
+    // an empty context, unlike the calling thread whose ContextVars are already set).
+    fn run_awaitable(
+        &self,
+        py: Python<'_>,
+        awaitable: &Py<PyAny>,
+        context: &Py<PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        // When a loop is already running on this thread (e.g. Jupyter / IPython),
+        // asyncio forbids run_until_complete on any loop — even a brand-new one.
+        // Fall back to a background thread that owns its own fresh event loop.
+        if py
+            .import("asyncio")?
+            .call_method0("get_running_loop")
+            .is_ok()
+        {
+            return self
+                .bg_thread_runner(py)?
+                .bind(py)
+                .call1((awaitable.bind(py), context.bind(py)))
+                .map(|v| v.unbind());
+        }
+
         self.event_loop(py)?
             .bind(py)
             .call_method1("run_until_complete", (awaitable.bind(py),))
@@ -1637,7 +1699,9 @@ impl PyCallbackSession {
         py: Python<'_>,
         awaitable: &Py<PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        self.private_async_loop.run_awaitable(py, awaitable)
+        let context = self.current_context(py);
+        self.private_async_loop
+            .run_awaitable(py, awaitable, &context)
     }
 }
 

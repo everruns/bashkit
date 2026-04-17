@@ -424,6 +424,10 @@ class Bash:
         Not supported when ``external_handler`` is configured — use
         ``execute()`` (async) instead. ``on_output`` must be synchronous.
         Async ``custom_builtins`` callbacks run on a private loop here.
+        When called from inside a running event loop (e.g. Jupyter / IPython),
+        callbacks are dispatched to a background thread with their own loop so
+        that asyncio's "cannot run while another loop is running" restriction
+        is not triggered.
 
         Example::
 
@@ -778,6 +782,10 @@ class BashTool:
         """Execute bash commands synchronously (blocking).
 
         Async ``custom_builtins`` callbacks run on a private loop here.
+        When called from inside a running event loop (e.g. Jupyter / IPython),
+        callbacks are dispatched to a background thread with their own loop so
+        that asyncio's "cannot run while another loop is running" restriction
+        is not triggered.
 
         ``on_output`` must be synchronous.
 

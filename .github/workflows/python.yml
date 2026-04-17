@@ -11,6 +11,7 @@ on:
       - "crates/bashkit-python/**"
       - "crates/bashkit/**"
       - "examples/*.py"
+      - "examples/*.ipynb"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/python.yml"
@@ -20,6 +21,7 @@ on:
       - "crates/bashkit-python/**"
       - "crates/bashkit/**"
       - "examples/*.py"
+      - "examples/*.ipynb"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/python.yml"
@@ -120,7 +122,7 @@ jobs:
       - name: Install local wheel
         run: |
           pip install bashkit --no-index --find-links crates/bashkit-python/dist --force-reinstall
-          pip install langchain-core langgraph fastapi httpx uvicorn
+          pip install langchain-core langgraph fastapi httpx uvicorn nbconvert jupyter-client ipykernel
 
       - name: Run examples
         run: |
@@ -130,6 +132,11 @@ jobs:
           python crates/bashkit-python/examples/llm_tool.py
           python crates/bashkit-python/examples/langgraph_async_tool.py
           python crates/bashkit-python/examples/fastapi_async_tool.py
+
+      - name: Run notebooks
+        run: |
+          jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeout=120 \
+            examples/jupyter_basics.ipynb --output /tmp/jupyter_basics_out.ipynb
 
   # Verify wheel builds and passes twine check
   build-wheel:
