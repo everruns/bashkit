@@ -75,6 +75,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Free ~25 GB from the hosted runner. Across 6 cargo-test stages with
+      # different feature combos, target/ grows past the default 14 GB free.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+            /usr/local/share/powershell /usr/local/.ghcup || true
+          sudo docker image prune --all --force || true
+          df -h /
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
