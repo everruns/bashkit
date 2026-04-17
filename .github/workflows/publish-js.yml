@@ -427,14 +427,25 @@ jobs:
 
       - name: Verify npm publish
         run: |
-          sleep 10
           PKG_VERSION=$(node -p "require('./package.json').version")
-          ACTUAL=$(npm view @everruns/bashkit version 2>/dev/null || echo "not found")
-          if [ "$ACTUAL" = "$PKG_VERSION" ]; then
-            echo "✓ @everruns/bashkit@$ACTUAL published to npm (latest)"
-          else
-            echo "✗ expected $PKG_VERSION on npm latest, got $ACTUAL"
-            echo "::error::npm publish verification failed"
-            exit 1
-          fi
+          TAG="${{ steps.dist-tag.outputs.tag }}"
+          ATTEMPTS=24
+          SLEEP_SECONDS=5
+
+          for attempt in $(seq 1 "$ATTEMPTS"); do
+            ACTUAL=$(npm view @everruns/bashkit "dist-tags.$TAG" 2>/dev/null || echo "not found")
+            if [ "$ACTUAL" = "$PKG_VERSION" ]; then
+              echo "✓ @everruns/bashkit@$ACTUAL published to npm ($TAG)"
+              exit 0
+            fi
+
+            echo "Attempt $attempt/$ATTEMPTS: expected $PKG_VERSION on npm tag $TAG, got $ACTUAL"
+            if [ "$attempt" -lt "$ATTEMPTS" ]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
+
+          echo "✗ expected $PKG_VERSION on npm tag $TAG after $ATTEMPTS attempts"
+          echo "::error::npm publish verification failed"
+          exit 1
         working-directory: crates/bashkit-js
