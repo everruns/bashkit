@@ -2630,204 +2630,42 @@ impl<'a> Parser<'a> {
                 Ok(word)
             }
             Some(tokens::Token::ProcessSubIn) | Some(tokens::Token::ProcessSubOut) => {
-                // Process substitution <(cmd) or >(cmd)
+                // Process substitution <(cmd) or >(cmd).
+                //
+                // Issue #1333: extract the body from the original source via span
+                // offsets rather than reconstructing a string from the token stream.
+                // Token-string reconstruction wraps `QuotedGlobWord` in `"..."`,
+                // erasing the unquoted-glob boundary and breaking glob expansion
+                // for patterns like `./"$var"*.ext` inside `<(...)`.
                 let is_input = matches!(self.current_token, Some(tokens::Token::ProcessSubIn));
+                // Span end of the `<(` / `>(` token is exactly the start of the body.
+                let body_start_offset = self.current_span.end.offset;
                 self.advance();
 
-                // Parse commands until we hit a closing paren
-                let mut cmd_str = String::new();
                 let mut depth = 1;
+                let body_end_offset;
                 loop {
                     match &self.current_token {
                         Some(tokens::Token::LeftParen) => {
                             depth += 1;
-                            cmd_str.push('(');
                             self.advance();
                         }
                         Some(tokens::Token::RightParen) => {
                             depth -= 1;
                             if depth == 0 {
+                                // Body ends at the start of the matching `)`.
+                                body_end_offset = self.current_span.start.offset;
                                 self.advance();
                                 break;
                             }
-                            cmd_str.push(')');
                             self.advance();
                         }
-                        Some(tokens::Token::Word(w)) => {
-                            if !cmd_str.is_empty() {
-                                cmd_str.push(' ');
-                            }
-                            cmd_str.push_str(w);
-                            self.advance();
-                        }
-                        Some(tokens::Token::QuotedWord(w))
-                        | Some(tokens::Token::QuotedGlobWord(w)) => {
-                            if !cmd_str.is_empty() {
-                                cmd_str.push(' ');
-                            }
-                            cmd_str.push('"');
-                            cmd_str.push_str(w);
-                            cmd_str.push('"');
-                            self.advance();
-                        }
-                        Some(tokens::Token::LiteralWord(w)) => {
-                            if !cmd_str.is_empty() {
-                                cmd_str.push(' ');
-                            }
-                            cmd_str.push('\'');
-                            cmd_str.push_str(w);
-                            cmd_str.push('\'');
-                            self.advance();
-                        }
-                        Some(tokens::Token::Pipe) => {
-                            cmd_str.push_str(" | ");
-                            self.advance();
-                        }
-                        Some(tokens::Token::Semicolon) => {
-                            cmd_str.push_str("; ");
-                            self.advance();
-                        }
-                        Some(tokens::Token::And) => {
-                            cmd_str.push_str(" && ");
-                            self.advance();
-                        }
-                        Some(tokens::Token::Or) => {
-                            cmd_str.push_str(" || ");
-                            self.advance();
-                        }
-                        Some(tokens::Token::Background) => {
-                            cmd_str.push_str(" & ");
-                            self.advance();
-                        }
-                        Some(tokens::Token::RedirectOut) => {
-                            cmd_str.push_str(" > ");
-                            self.advance();
-                        }
-                        Some(tokens::Token::RedirectAppend) => {
-                            cmd_str.push_str(" >> ");
-                            self.advance();
-                        }
-                        Some(tokens::Token::RedirectIn) => {
-                            cmd_str.push_str(" < ");
-                            self.advance();
-                        }
-                        Some(tokens::Token::HereString) => {
-                            cmd_str.push_str(" <<< ");
-                            self.advance();
-                        }
-                        Some(tokens::Token::DupOutput) => {
-                            cmd_str.push_str(" >&");
-                            self.advance();
-                        }
-                        Some(tokens::Token::RedirectFd(fd)) => {
-                            cmd_str.push_str(&format!(" {}> ", fd));
-                            self.advance();
-                        }
-                        Some(tokens::Token::LeftBrace) => {
-                            if !cmd_str.is_empty() {
-                                cmd_str.push(' ');
-                            }
-                            cmd_str.push('{');
-                            self.advance();
-                        }
-                        Some(tokens::Token::RightBrace) => {
-                            cmd_str.push_str(" }");
-                            self.advance();
-                        }
-                        Some(tokens::Token::Newline) => {
-                            cmd_str.push('\n');
-                            self.advance();
-                        }
-                        Some(tokens::Token::DoubleLeftBracket) => {
-                            if !cmd_str.is_empty() {
-                                cmd_str.push(' ');
-                            }
-                            cmd_str.push_str("[[");
-                            self.advance();
-                        }
-                        Some(tokens::Token::DoubleRightBracket) => {
-                            cmd_str.push_str(" ]]");
-                            self.advance();
-                        }
-                        Some(tokens::Token::DoubleLeftParen) => {
-                            if !cmd_str.is_empty() {
-                                cmd_str.push(' ');
-                            }
-                            cmd_str.push_str("((");
-                            self.advance();
-                        }
-                        Some(tokens::Token::DoubleRightParen) => {
-                            cmd_str.push_str("))");
-                            self.advance();
-                        }
-                        Some(tokens::Token::DoubleSemicolon) => {
-                            cmd_str.push_str(";;");
-                            self.advance();
-                        }
-                        Some(tokens::Token::SemiAmp) => {
-                            cmd_str.push_str(";&");
-                            self.advance();
-                        }
-                        Some(tokens::Token::DoubleSemiAmp) => {
-                            cmd_str.push_str(";;&");
-                            self.advance();
-                        }
-                        Some(tokens::Token::Assignment) => {
-                            cmd_str.push('=');
-                            self.advance();
-                        }
-                        Some(tokens::Token::RedirectBoth) => {
-                            cmd_str.push_str(" &>");
-                            self.advance();
-                        }
-                        Some(tokens::Token::Clobber) => {
-                            cmd_str.push_str(" >|");
-                            self.advance();
-                        }
-                        Some(tokens::Token::DupInput) => {
-                            cmd_str.push_str(" <&");
-                            self.advance();
-                        }
-                        Some(tokens::Token::HereDoc) => {
-                            cmd_str.push_str(" <<");
-                            self.advance();
-                        }
-                        Some(tokens::Token::HereDocStrip) => {
-                            cmd_str.push_str(" <<-");
-                            self.advance();
-                        }
-                        Some(tokens::Token::RedirectFdAppend(fd)) => {
-                            cmd_str.push_str(&format!(" {}>>", fd));
-                            self.advance();
-                        }
-                        Some(tokens::Token::DupFd(src, dst)) => {
-                            cmd_str.push_str(&format!(" {}>& {}", src, dst));
-                            self.advance();
-                        }
-                        Some(tokens::Token::DupFdIn(src, dst)) => {
-                            cmd_str.push_str(&format!(" {}<& {}", src, dst));
-                            self.advance();
-                        }
-                        Some(tokens::Token::DupFdClose(fd)) => {
-                            cmd_str.push_str(&format!(" {}<&-", fd));
-                            self.advance();
-                        }
-                        Some(tokens::Token::RedirectFdIn(fd)) => {
-                            cmd_str.push_str(&format!(" {}< ", fd));
-                            self.advance();
-                        }
-                        Some(tokens::Token::ProcessSubIn) => {
-                            cmd_str.push_str(" <(");
-                            depth += 1;
-                            self.advance();
-                        }
-                        Some(tokens::Token::ProcessSubOut) => {
-                            cmd_str.push_str(" >(");
+                        Some(tokens::Token::ProcessSubIn) | Some(tokens::Token::ProcessSubOut) => {
+                            // Nested <( / >( opens another paren level.
                             depth += 1;
                             self.advance();
                         }
                         Some(tokens::Token::Error(e)) => {
-                            // Propagate lexer errors
                             let msg = e.clone();
                             self.advance();
                             return Err(Error::parse(format!(
@@ -2840,13 +2678,15 @@ impl<'a> Parser<'a> {
                                 "unexpected end of input in process substitution".to_string(),
                             ));
                         }
-                        #[allow(unreachable_patterns)]
                         _ => {
-                            // Safety net for future Token variants
                             self.advance();
                         }
                     }
                 }
+
+                let cmd_str = self
+                    .source_slice(body_start_offset, body_end_offset)
+                    .unwrap_or_default();
 
                 // THREAT[TM-DOS-021]: Propagate parent parser limits to child parser
                 // to prevent depth limit bypass via nested process substitution.
