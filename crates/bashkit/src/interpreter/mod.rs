@@ -11225,6 +11225,48 @@ echo "count=$COUNT"
         );
     }
 
+    /// Issue #1333: glob `*` adjacent to quoted variable must also expand
+    /// inside process substitution `<(...)`. The fix from #1287 applied at
+    /// the top-level but not inside the subshell body of `<(cmd)`.
+    #[tokio::test]
+    async fn test_glob_adjacent_to_quoted_var_in_process_substitution() {
+        let mut bash = crate::Bash::new();
+        bash.fs()
+            .mkdir(std::path::Path::new("/tmp/ps_glob"), true)
+            .await
+            .unwrap();
+        bash.fs()
+            .write_file(
+                std::path::Path::new("/tmp/ps_glob/tag_foo.tmp.html"),
+                b"foo",
+            )
+            .await
+            .unwrap();
+        bash.fs()
+            .write_file(
+                std::path::Path::new("/tmp/ps_glob/tag_bar.tmp.html"),
+                b"bar",
+            )
+            .await
+            .unwrap();
+
+        // while-read over <(ls ./"$p"*.tmp.html) — real blocker case from bashblog.
+        let result = bash
+            .exec(
+                r#"cd /tmp/ps_glob; p="tag_"; while read -r i; do echo "got:$i"; done < <(ls ./"$p"*.tmp.html)"#,
+            )
+            .await
+            .unwrap();
+        let mut lines: Vec<&str> = result.stdout.trim().lines().collect();
+        lines.sort();
+        assert_eq!(
+            lines,
+            vec!["got:./tag_bar.tmp.html", "got:./tag_foo.tmp.html"],
+            "glob * inside <(...) should expand; stderr: {}",
+            result.stderr
+        );
+    }
+
     #[tokio::test]
     async fn test_glob_with_quoted_prefix() {
         let mut bash = crate::Bash::new();
