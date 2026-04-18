@@ -6233,6 +6233,217 @@ echo missing fi"#,
     }
 
     #[tokio::test]
+    async fn test_on_exit_hook_not_fired_for_path_script_exit() {
+        use std::path::Path;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let count = Arc::new(AtomicU32::new(0));
+        let count_clone = count.clone();
+
+        let mut bash = Bash::builder()
+            .on_exit(Box::new(move |event| {
+                count_clone.fetch_add(1, Ordering::Relaxed);
+                hooks::HookAction::Continue(event)
+            }))
+            .build();
+
+        let fs = bash.fs();
+        fs.mkdir(Path::new("/bin"), false).await.unwrap();
+        fs.write_file(Path::new("/bin/child-exit"), b"#!/usr/bin/env bash\nexit 7")
+            .await
+            .unwrap();
+        fs.chmod(Path::new("/bin/child-exit"), 0o755).await.unwrap();
+
+        let result = bash
+            .exec("PATH=/bin:$PATH\nchild-exit\necho after:$?")
+            .await
+            .unwrap();
+
+        assert_eq!(result.stdout.trim(), "after:7");
+        assert_eq!(count.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_on_exit_hook_not_fired_for_direct_script_exit() {
+        use std::path::Path;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let count = Arc::new(AtomicU32::new(0));
+        let count_clone = count.clone();
+
+        let mut bash = Bash::builder()
+            .on_exit(Box::new(move |event| {
+                count_clone.fetch_add(1, Ordering::Relaxed);
+                hooks::HookAction::Continue(event)
+            }))
+            .build();
+
+        let fs = bash.fs();
+        fs.write_file(
+            Path::new("/tmp/child-exit.sh"),
+            b"#!/usr/bin/env bash\nexit 8",
+        )
+        .await
+        .unwrap();
+        fs.chmod(Path::new("/tmp/child-exit.sh"), 0o755)
+            .await
+            .unwrap();
+
+        let result = bash
+            .exec("/tmp/child-exit.sh\necho after:$?")
+            .await
+            .unwrap();
+
+        assert_eq!(result.stdout.trim(), "after:8");
+        assert_eq!(count.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_on_exit_hook_not_fired_for_nested_bash_exit() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let count = Arc::new(AtomicU32::new(0));
+        let count_clone = count.clone();
+
+        let mut bash = Bash::builder()
+            .on_exit(Box::new(move |event| {
+                count_clone.fetch_add(1, Ordering::Relaxed);
+                hooks::HookAction::Continue(event)
+            }))
+            .build();
+
+        let result = bash.exec("bash -c 'exit 9'\necho after:$?").await.unwrap();
+
+        assert_eq!(result.stdout.trim(), "after:9");
+        assert_eq!(count.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_path_script_exit_runs_child_exit_trap() {
+        use std::path::Path;
+
+        let mut bash = Bash::new();
+        let fs = bash.fs();
+        fs.write_file(
+            Path::new("/tmp/child-trap.sh"),
+            b"#!/usr/bin/env bash\ntrap 'echo child-trap' EXIT\nexit 4",
+        )
+        .await
+        .unwrap();
+        fs.chmod(Path::new("/tmp/child-trap.sh"), 0o755)
+            .await
+            .unwrap();
+
+        let result = bash
+            .exec("/tmp/child-trap.sh\necho after:$?")
+            .await
+            .unwrap();
+
+        assert_eq!(result.stdout.trim(), "child-trap\nafter:4");
+    }
+
+    #[tokio::test]
+    async fn test_on_exit_hook_still_fires_for_source_exit() {
+        use std::path::Path;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let count = Arc::new(AtomicU32::new(0));
+        let count_clone = count.clone();
+
+        let mut bash = Bash::builder()
+            .on_exit(Box::new(move |event| {
+                count_clone.fetch_add(1, Ordering::Relaxed);
+                hooks::HookAction::Continue(event)
+            }))
+            .build();
+
+        let fs = bash.fs();
+        fs.write_file(Path::new("/tmp/source-exit.sh"), b"exit 5")
+            .await
+            .unwrap();
+
+        let result = bash.exec("source /tmp/source-exit.sh").await.unwrap();
+
+        assert_eq!(result.exit_code, 5);
+        assert_eq!(count.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn test_bash_versinfo_reports_bash_compatible_major() {
+        let mut bash = Bash::new();
+
+        let result = bash
+            .exec(r#"[[ ${BASH_VERSINFO[0]} -ge 4 ]] && echo bash4plus"#)
+            .await
+            .unwrap();
+
+        assert_eq!(result.stdout.trim(), "bash4plus");
+    }
+
+    #[tokio::test]
+    async fn test_bash_version_surface_matches_bash_compatible_tuple() {
+        let mut bash = Bash::new();
+
+        let result = bash
+            .exec(
+                r#"printf '%s\n' "$BASH_VERSION" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}" "${BASH_VERSINFO[2]}" "${BASH_VERSINFO[3]}" "${BASH_VERSINFO[4]}" "${BASH_VERSINFO[5]}""#,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.stdout,
+            "5.2.15(1)-release\n5\n2\n15\n1\nrelease\nvirtual\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_path_script_retains_bash_versinfo_array() {
+        use std::path::Path;
+
+        let mut bash = Bash::new();
+        let fs = bash.fs();
+        fs.write_file(
+            Path::new("/tmp/bash-version-check.sh"),
+            b"#!/usr/bin/env bash\nprintf '%s\\n' \"${BASH_VERSINFO[0]}\"",
+        )
+        .await
+        .unwrap();
+        fs.chmod(Path::new("/tmp/bash-version-check.sh"), 0o755)
+            .await
+            .unwrap();
+
+        let result = bash.exec("/tmp/bash-version-check.sh").await.unwrap();
+
+        assert_eq!(result.stdout.trim(), "5");
+    }
+
+    #[tokio::test]
+    async fn test_path_script_bash_versinfo_satisfies_bash4_guard() {
+        use std::path::Path;
+
+        let mut bash = Bash::new();
+        let fs = bash.fs();
+        fs.write_file(
+            Path::new("/tmp/bash-version-guard.sh"),
+            b"#!/usr/bin/env bash\nif (( BASH_VERSINFO[0] < 4 )); then echo too-old; else echo ok; fi",
+        )
+        .await
+        .unwrap();
+        fs.chmod(Path::new("/tmp/bash-version-guard.sh"), 0o755)
+            .await
+            .unwrap();
+
+        let result = bash.exec("/tmp/bash-version-guard.sh").await.unwrap();
+
+        assert_eq!(result.stdout.trim(), "ok");
+    }
+
+    #[tokio::test]
     async fn test_before_tool_hook_modifies_args() {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
