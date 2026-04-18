@@ -28,6 +28,11 @@ use std::sync::{Arc, Mutex as StdMutex};
 /// Monotonic counter for unique process substitution file paths
 static PROC_SUB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+// Important decision: report a bash-compatible version surface instead of the
+// bashkit crate semver so scripts that gate on Bash features keep working.
+const COMPAT_BASH_VERSION: &str = "5.2.15(1)-release";
+const COMPAT_BASH_VERSINFO: [&str; 6] = ["5", "2", "15", "1", "release", "virtual"];
+
 use futures_util::FutureExt;
 
 use crate::builtins::{self, Builtin};
@@ -50,6 +55,14 @@ pub struct HistoryEntry {
     pub exit_code: i32,
     /// Duration in milliseconds
     pub duration_ms: u64,
+}
+
+fn compat_bash_versinfo_array() -> HashMap<usize, String> {
+    COMPAT_BASH_VERSINFO
+        .iter()
+        .enumerate()
+        .map(|(idx, value)| (idx, (*value).to_string()))
+        .collect()
 }
 
 /// Callback for streaming output chunks as they are produced.
@@ -960,18 +973,8 @@ impl Interpreter {
         variables.insert("HOSTNAME".to_string(), hostname_val.clone());
 
         // BASH_VERSINFO array: (major minor patch build status machine)
-        let version = env!("CARGO_PKG_VERSION");
-        let parts: Vec<&str> = version.split('.').collect();
-        let mut bash_versinfo = HashMap::new();
-        bash_versinfo.insert(0, parts.first().unwrap_or(&"0").to_string());
-        bash_versinfo.insert(1, parts.get(1).unwrap_or(&"0").to_string());
-        bash_versinfo.insert(2, parts.get(2).unwrap_or(&"0").to_string());
-        bash_versinfo.insert(3, "0".to_string());
-        bash_versinfo.insert(4, "release".to_string());
-        bash_versinfo.insert(5, "virtual".to_string());
-
         let mut arrays = HashMap::new();
-        arrays.insert("BASH_VERSINFO".to_string(), bash_versinfo);
+        arrays.insert("BASH_VERSINFO".to_string(), compat_bash_versinfo_array());
 
         // Seed PRNG for $RANDOM from OS entropy via RandomState
         let random_seed = {
@@ -1441,7 +1444,7 @@ impl Interpreter {
             .check_session_limits(&self.session_limits)
             .map_err(|e| crate::error::Error::Execution(e.to_string()))?;
 
-        self.execute_script_body(script, true).await
+        self.execute_script_body(script, true, true).await
     }
 
     /// Clean up process substitution temp files (`/dev/fd/proc_sub_*`).
@@ -1459,12 +1462,14 @@ impl Interpreter {
     }
 
     /// Inner script execution — runs commands without resetting counters.
-    /// Used by `execute_source` to preserve function/source depth tracking.
-    /// `run_exit_trap`: only the top-level `execute` runs the EXIT trap.
+    /// Used by `execute_source` and nested shell contexts.
+    /// `run_exit_trap`: whether this shell context runs its EXIT trap.
+    /// `fire_exit_hook`: whether `exit` notifies host-level on_exit hooks.
     async fn execute_script_body(
         &mut self,
         script: &Script,
         run_exit_trap: bool,
+        fire_exit_hook: bool,
     ) -> Result<ExecResult> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -1515,7 +1520,7 @@ impl Interpreter {
 
             // Stop on control flow (e.g. nounset error uses Return to abort)
             if result.control_flow != ControlFlow::None {
-                if let ControlFlow::Exit(code) = result.control_flow {
+                if fire_exit_hook && let ControlFlow::Exit(code) = result.control_flow {
                     self.hooks.fire_on_exit(crate::hooks::ExitEvent { code });
                 }
                 break;
@@ -3140,7 +3145,7 @@ impl Interpreter {
             self.update_bash_source();
         }
 
-        let result = self.execute(&script).await;
+        let result = self.execute_script_body(&script, true, false).await;
 
         // Restore BASH_SOURCE
         if script_file.is_some() {
@@ -4762,6 +4767,8 @@ impl Interpreter {
         // Clear nounset_error to prevent parent expansion errors from leaking.
         self.variables = self.env.clone();
         self.arrays.clear();
+        self.arrays
+            .insert("BASH_VERSINFO".to_string(), compat_bash_versinfo_array());
         self.assoc_arrays.clear();
         self.functions.clear();
         self.traps.clear();
@@ -4786,7 +4793,7 @@ impl Interpreter {
         let prev_pipeline_stdin = self.pipeline_stdin.take();
         self.pipeline_stdin = stdin;
 
-        let result = self.execute(&script).await;
+        let result = self.execute_script_body(&script, true, false).await;
 
         // Restore full parent state — child mutations don't propagate
         self.variables = saved_vars;
@@ -4937,7 +4944,7 @@ impl Interpreter {
 
         // Execute the script commands in the current shell context.
         // Use execute_script_body (not execute) to preserve depth counters.
-        let exec_result = self.execute_script_body(&script, false).await;
+        let exec_result = self.execute_script_body(&script, false, true).await;
 
         // Pop source depth and BASH_SOURCE (always, even on error)
         self.counters.pop_function();
@@ -9300,7 +9307,7 @@ impl Interpreter {
                 return "localhost".to_string();
             }
             "BASH_VERSION" => {
-                return format!("{}-bashkit", env!("CARGO_PKG_VERSION"));
+                return COMPAT_BASH_VERSION.to_string();
             }
             "SECONDS" => {
                 // Seconds since shell started - always 0 in stateless model
