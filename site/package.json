@@ -1,0 +1,25 @@
+{
+  "name": "bashkit-site",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "description": "bashkit.sh homepage (Astro, Cloudflare)",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "wrangler dev",
+    "deploy": "astro build && wrangler deploy",
+    "check": "astro check"
+  },
+  "dependencies": {
+    "astro": "^5.7.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.4",
+    "typescript": "^5.6.0",
+    "wrangler": "^3.107.0"
+  }
+}

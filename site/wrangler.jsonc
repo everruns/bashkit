@@ -1,0 +1,11 @@
+{
+  "name": "bashkit-site",
+  "compatibility_date": "2025-10-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
