@@ -1,0 +1,651 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+
+const heroStats = [
+  { label: "Built-in commands", value: "160" },
+  { label: "Threats mitigated", value: "250+" },
+  { label: "Haiku 4.5 eval", value: "97%" },
+];
+
+const signals = [
+  {
+    title: "No process spawning",
+    detail:
+      "Every command is reimplemented in Rust. No fork, no exec, no shell escape.",
+  },
+  {
+    title: "Virtual filesystem",
+    detail:
+      "InMemoryFs, OverlayFs, MountableFs. Host access only when you explicitly mount it.",
+  },
+  {
+    title: "Resource limits",
+    detail:
+      "Caps on commands, loops, output, input, and filesystem size. DoS-resistant by construction.",
+  },
+];
+
+const surfaces = [
+  {
+    title: "POSIX-compliant interpreter",
+    detail:
+      "Substantial IEEE 1003.1-2024 Shell Command Language coverage, plus bash extensions: arrays, [[ ]], brace expansion, extended globs, coprocesses, traps.",
+  },
+  {
+    title: "160 reimplemented commands",
+    detail:
+      "grep, sed, awk, jq, curl, tar, find, xargs, and 150+ more — pure Rust, no shelling out.",
+  },
+  {
+    title: "LLM tool contract",
+    detail:
+      "BashTool with discovery metadata, streaming output, and system prompts. Plug into any agent framework.",
+  },
+  {
+    title: "MCP server",
+    detail:
+      "bashkit mcp exposes the interpreter over Model Context Protocol for Claude, Cursor, and other clients.",
+  },
+  {
+    title: "Snapshotting",
+    detail:
+      "Serialize shell state and VFS contents to bytes. Checkpoint any workload, resume anywhere.",
+  },
+  {
+    title: "Scripted tool orchestration",
+    detail:
+      "Compose ToolDef + callback pairs into an OrchestratorTool driven by a bash script.",
+  },
+];
+
+const languages = [
+  {
+    eyebrow: "Rust",
+    title: "The core crate",
+    install: "cargo add bashkit",
+    code: `use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut bash = Bash::new();
+    let out = bash.exec("echo hello world").await?;
+    println!("{}", out.stdout);
+    Ok(())
+}`,
+  },
+  {
+    eyebrow: "Python",
+    title: "PyO3 wheel + LangChain integration",
+    install: "pip install bashkit",
+    code: `from bashkit import BashTool
+
+tool = BashTool()
+result = await tool.execute("echo 'Hello, World!'")
+print(result.stdout)`,
+  },
+  {
+    eyebrow: "TypeScript",
+    title: "NAPI-RS for Node, Bun, Deno",
+    install: "npm i @everruns/bashkit",
+    code: `import { BashTool } from "@everruns/bashkit";
+
+const tool = new BashTool({
+  username: "agent",
+  hostname: "sandbox",
+});
+const { stdout } = await tool.execute("echo hi");
+console.log(stdout);`,
+  },
+];
+
+const defense = [
+  {
+    title: "No process spawning",
+    detail:
+      "160 commands reimplemented in Rust — no fork, exec, or shell escape.",
+  },
+  {
+    title: "Virtual filesystem",
+    detail:
+      "Scripts see an in-memory FS by default. No host access unless mounted.",
+  },
+  {
+    title: "Network allowlist",
+    detail: "HTTP is denied by default. Each domain must be explicitly allowed.",
+  },
+  {
+    title: "Resource limits",
+    detail:
+      "Caps on commands (10K), loops (100K), function depth, output (10MB), input (10MB).",
+  },
+  {
+    title: "Parser limits",
+    detail:
+      "Timeout, fuel budget, AST depth — pathological input can't hang the interpreter.",
+  },
+  {
+    title: "Panic recovery",
+    detail:
+      "Every builtin is wrapped in catch_unwind. A panic in one command can't crash the host.",
+  },
+];
+
+const evals = [
+  { model: "Claude Haiku 4.5", score: "97%", passed: "54/58" },
+  { model: "Claude Sonnet 4.6", score: "93%", passed: "48/58" },
+  { model: "Claude Opus 4.6", score: "91%", passed: "50/58" },
+  { model: "GPT-5.3-Codex", score: "91%", passed: "51/58" },
+  { model: "GPT-5.2", score: "77%", passed: "41/58" },
+];
+
+const apiSnippet = `$ cargo add bashkit
+$ cat > demo.rs <<'RS'
+use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut bash = Bash::new();
+    bash.exec("mkdir -p /tmp/data").await?;
+    bash.exec("echo 'hello' > /tmp/data/out.txt").await?;
+    let r = bash.exec("cat /tmp/data/out.txt | tr a-z A-Z").await?;
+    println!("{}", r.stdout); // HELLO
+    Ok(())
+}
+RS`;
+---
+
+<BaseLayout>
+  <section class="atlas-hero section">
+    <div class="container atlas-hero__grid">
+      <div class="atlas-hero__copy">
+        <span class="atlas-eyebrow">Virtual bash for AI agents</span>
+        <h1>An awesomely fast virtual bash sandbox. Written in Rust.</h1>
+        <p class="atlas-lede">
+          Bashkit runs untrusted shell scripts from AI agents without spawning a
+          single OS process. 160 POSIX-compliant commands, a virtual filesystem,
+          resource limits, and streaming LLM tool calls — all in-memory, all
+          sandboxed.
+        </p>
+
+        <div class="atlas-actions">
+          <a
+            href="https://docs.rs/bashkit"
+            class="btn btn-primary"
+            target="_blank"
+            rel="noopener noreferrer">Read the docs</a
+          >
+          <a
+            href="https://github.com/everruns/bashkit"
+            class="btn btn-secondary"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              ><path
+                d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
+              ></path></svg
+            >
+            View on GitHub
+          </a>
+        </div>
+
+        <div class="atlas-stats">
+          {
+            heroStats.map((stat) => (
+              <article class="atlas-stat">
+                <span class="atlas-stat__label">{stat.label}</span>
+                <strong>{stat.value}</strong>
+              </article>
+            ))
+          }
+        </div>
+      </div>
+
+      <aside class="atlas-panel atlas-signal-panel">
+        <div class="atlas-signal-panel__intro">
+          <span class="atlas-eyebrow">Why bashkit</span>
+          <h2>Bash you can hand to a model.</h2>
+          <p>
+            Every layer assumes the script is hostile. Isolation is the default,
+            not a flag.
+          </p>
+        </div>
+        <div class="atlas-signal-list">
+          {
+            signals.map((item) => (
+              <article class="atlas-signal-list__item">
+                <h3>{item.title}</h3>
+                <p>{item.detail}</p>
+              </article>
+            ))
+          }
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <section id="features" class="atlas-surfaces section section-alt">
+    <div class="container">
+      <div class="atlas-section-heading">
+        <div>
+          <span class="atlas-eyebrow">Product surface</span>
+          <h2>What bashkit gives you</h2>
+        </div>
+        <p>
+          A single runtime you can embed in agents, CLIs, editors, and
+          evaluation harnesses. No sidecar process, no container overhead, no
+          external dependencies at runtime.
+        </p>
+      </div>
+
+      <div class="atlas-card-grid atlas-card-grid--surfaces">
+        {
+          surfaces.map((item) => (
+            <article class="atlas-panel atlas-card">
+              <h3>{item.title}</h3>
+              <p>{item.detail}</p>
+            </article>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <section id="install" class="atlas-local section">
+    <div class="container">
+      <div class="atlas-section-heading">
+        <div>
+          <span class="atlas-eyebrow">Quick start</span>
+          <h2>Three languages, one runtime</h2>
+        </div>
+        <p>
+          Ship in Rust for the lowest overhead, or use the Python wheel and
+          npm package when you need to drop bashkit into an existing stack.
+        </p>
+      </div>
+
+      <div class="atlas-card-grid atlas-card-grid--languages">
+        {
+          languages.map((lang) => (
+            <article class="atlas-panel atlas-lang-card">
+              <span class="atlas-eyebrow">{lang.eyebrow}</span>
+              <h3>{lang.title}</h3>
+              <pre class="atlas-install"><code>{lang.install}</code></pre>
+              <pre class="atlas-code"><code>{lang.code}</code></pre>
+            </article>
+          ))
+        }
+      </div>
+
+      <article class="atlas-code-panel">
+        <div class="atlas-code-panel__header">
+          <span class="atlas-eyebrow">End-to-end</span>
+          <p>
+            A tiny Rust program that uses bashkit as an in-process shell. No
+            container, no subprocess — just a crate.
+          </p>
+        </div>
+        <pre><code>{apiSnippet}</code></pre>
+      </article>
+    </div>
+  </section>
+
+  <section id="security" class="atlas-reliability section section-alt">
+    <div class="container">
+      <div class="atlas-section-heading">
+        <div>
+          <span class="atlas-eyebrow">Security</span>
+          <h2>Hostile input is the default assumption</h2>
+        </div>
+        <p>
+          Defense in depth across every layer — process, filesystem, network,
+          parser, and runtime. See the
+          <a
+            href="https://github.com/everruns/bashkit/blob/main/specs/threat-model.md"
+            target="_blank"
+            rel="noopener noreferrer">full threat model</a
+          > for 250+ mitigations.
+        </p>
+      </div>
+
+      <div class="atlas-card-grid atlas-card-grid--reliability">
+        {
+          defense.map((item) => (
+            <article class="atlas-panel atlas-card">
+              <h3>{item.title}</h3>
+              <p>{item.detail}</p>
+            </article>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <section class="atlas-evals section">
+    <div class="container">
+      <div class="atlas-section-heading">
+        <div>
+          <span class="atlas-eyebrow">LLM evals</span>
+          <h2>How well do models use bashkit?</h2>
+        </div>
+        <p>
+          Bashkit ships with a 58-task eval harness across 15 agentic
+          categories. A snapshot of the latest run:
+        </p>
+      </div>
+
+      <article class="atlas-panel atlas-table-panel">
+        <table>
+          <thead>
+            <tr><th>Model</th><th>Score</th><th>Tasks passed</th></tr>
+          </thead>
+          <tbody>
+            {
+              evals.map((row) => (
+                <tr>
+                  <td>{row.model}</td>
+                  <td class="score">{row.score}</td>
+                  <td class="dim">{row.passed}</td>
+                </tr>
+              ))
+            }
+          </tbody>
+        </table>
+      </article>
+    </div>
+  </section>
+
+  <section class="atlas-open-source section section-alt">
+    <div class="container">
+      <div class="atlas-panel atlas-open-source__panel">
+        <span class="atlas-eyebrow">Open source</span>
+        <h2>Built for real agents. Open under MIT.</h2>
+        <p>
+          Drop it into your agent, your CLI, your editor, your eval harness.
+          Issues and PRs welcome.
+        </p>
+        <div class="atlas-actions">
+          <a
+            href="https://github.com/everruns/bashkit"
+            class="btn btn-primary"
+            target="_blank"
+            rel="noopener noreferrer">GitHub</a
+          >
+          <a
+            href="https://docs.rs/bashkit"
+            class="btn btn-secondary"
+            target="_blank"
+            rel="noopener noreferrer">docs.rs</a
+          >
+        </div>
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .atlas-hero {
+    position: relative;
+    overflow: hidden;
+    padding-top: 5rem;
+    padding-bottom: 4rem;
+    background: linear-gradient(
+      180deg,
+      #f8f6ef 0%,
+      #f1eee7 38%,
+      var(--color-white) 100%
+    );
+  }
+  .atlas-hero::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(
+      circle at center,
+      rgb(10 22 54 / 0.08) 1px,
+      transparent 1px
+    );
+    background-size: 22px 22px;
+    pointer-events: none;
+  }
+  .atlas-hero__grid,
+  .atlas-local__grid {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
+    gap: 1.5rem;
+    align-items: end;
+  }
+  .atlas-hero__copy {
+    display: grid;
+    gap: 1.1rem;
+    max-width: 53rem;
+  }
+  .atlas-eyebrow,
+  .atlas-stat__label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-navy);
+  }
+  .atlas-hero h1 {
+    font-size: clamp(2.6rem, 6vw, 5rem);
+    line-height: 0.98;
+    letter-spacing: -0.03em;
+    color: var(--color-obsidian);
+  }
+  .atlas-section-heading h2,
+  .atlas-open-source__panel h2,
+  .atlas-signal-panel h2 {
+    font-size: clamp(2rem, 4.4vw, 3.2rem);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    color: var(--color-obsidian);
+  }
+  .atlas-signal-panel h2 {
+    font-size: clamp(1.6rem, 2.6vw, 2rem);
+    max-width: 18ch;
+  }
+  .atlas-lede,
+  .atlas-section-heading p,
+  .atlas-open-source__panel p,
+  .atlas-signal-panel__intro p {
+    font-size: 1.08rem;
+    color: rgb(64 64 64 / 0.92);
+  }
+  .atlas-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.85rem;
+    padding-top: 0.2rem;
+  }
+  .atlas-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: 0.4rem;
+  }
+  .atlas-stat,
+  .atlas-panel {
+    border: 1px solid rgb(10 22 54 / 0.12);
+    background: rgb(255 255 255 / 0.78);
+    box-shadow: 0 16px 40px rgb(10 22 54 / 0.04);
+  }
+  .atlas-stat {
+    display: grid;
+    gap: 0.45rem;
+    padding: 1rem;
+  }
+  .atlas-stat strong {
+    font-size: 1.4rem;
+    line-height: 1.2;
+    font-family: var(--font-mono);
+    color: var(--color-obsidian);
+  }
+  .atlas-signal-panel {
+    display: grid;
+    gap: 1.15rem;
+    padding: 1.35rem;
+  }
+  .atlas-signal-panel__intro { display: grid; gap: 0.7rem; }
+  .atlas-signal-list { display: grid; gap: 0.9rem; }
+  .atlas-signal-list__item {
+    display: grid;
+    gap: 0.35rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid rgb(10 22 54 / 0.12);
+  }
+  .atlas-signal-list__item:first-child {
+    padding-top: 0;
+    border-top: none;
+  }
+  .atlas-signal-list__item h3,
+  .atlas-card h3,
+  .atlas-lang-card h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+  .atlas-signal-list__item p,
+  .atlas-card p {
+    color: rgb(64 64 64 / 0.92);
+  }
+  .atlas-section-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: 1.25rem;
+    align-items: end;
+    margin-bottom: 1.5rem;
+  }
+  .atlas-section-heading > div {
+    display: grid;
+    gap: 0.7rem;
+  }
+
+  .atlas-card-grid { display: grid; gap: 1rem; }
+  .atlas-card-grid--surfaces,
+  .atlas-card-grid--reliability {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .atlas-card-grid--languages {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-bottom: 1.25rem;
+  }
+  .atlas-card { padding: 1.15rem; display: grid; gap: 0.45rem; }
+
+  .atlas-lang-card {
+    padding: 1.15rem;
+    display: grid;
+    gap: 0.6rem;
+    align-content: start;
+  }
+  .atlas-install {
+    margin: 0;
+    padding: 0.6rem 0.8rem;
+    background: var(--color-smoke);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    overflow-x: auto;
+  }
+  .atlas-code {
+    margin: 0;
+    padding: 0.85rem 1rem;
+    background: #10151f;
+    color: #edf2fb;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.55;
+    overflow-x: auto;
+  }
+  .atlas-code code { background: transparent; padding: 0; color: inherit; }
+
+  .atlas-code-panel {
+    display: grid;
+    gap: 0.85rem;
+    padding: 1.1rem;
+    background: #10151f;
+    color: #edf2fb;
+    border: 1px solid rgb(10 22 54 / 0.6);
+    box-shadow: 0 24px 50px rgb(10 22 54 / 0.14);
+  }
+  .atlas-code-panel__header { display: grid; gap: 0.45rem; }
+  .atlas-code-panel .atlas-eyebrow { color: rgb(212 164 58 / 0.92); }
+  .atlas-code-panel__header p { color: rgb(237 242 251 / 0.82); }
+  .atlas-code-panel pre {
+    overflow: auto;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    line-height: 1.6;
+    margin: 0;
+  }
+  .atlas-code-panel code {
+    display: block;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+  }
+
+  .atlas-table-panel { padding: 0.5rem 0.6rem; overflow-x: auto; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.95rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid rgb(10 22 54 / 0.1);
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  th {
+    font-weight: 600;
+    color: var(--color-slate);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  td.score {
+    font-family: var(--font-mono);
+    color: var(--color-gold);
+    font-weight: 600;
+  }
+  td.dim { color: var(--color-slate); }
+
+  .atlas-open-source__panel {
+    max-width: 56rem;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+    text-align: center;
+    display: grid;
+    gap: 0.9rem;
+    justify-items: center;
+  }
+  .atlas-open-source__panel .atlas-actions { justify-content: center; }
+
+  @media (max-width: 980px) {
+    .atlas-hero__grid,
+    .atlas-local__grid,
+    .atlas-section-heading {
+      grid-template-columns: 1fr;
+    }
+    .atlas-card-grid--surfaces,
+    .atlas-card-grid--reliability,
+    .atlas-card-grid--languages {
+      grid-template-columns: 1fr;
+    }
+    .atlas-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  @media (max-width: 560px) {
+    .atlas-stats { grid-template-columns: 1fr; }
+    .atlas-actions .btn { justify-content: center; flex: 1 1 auto; }
+  }
+</style>

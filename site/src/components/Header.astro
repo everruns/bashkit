@@ -1,0 +1,214 @@
+---
+
+---
+
+<header class="header">
+  <div class="container header-inner">
+    <a href="/" class="logo-link">
+      <span class="logo-mark">$_</span>
+      <span class="logo-text">bashkit</span>
+    </a>
+    <button class="menu-toggle" aria-label="Open menu" aria-expanded="false">
+      <svg
+        class="icon-menu"
+        xmlns="http://www.w3.org/2000/svg"
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <line x1="3" y1="6" x2="21" y2="6"></line>
+        <line x1="3" y1="12" x2="21" y2="12"></line>
+        <line x1="3" y1="18" x2="21" y2="18"></line>
+      </svg>
+      <svg
+        class="icon-close"
+        xmlns="http://www.w3.org/2000/svg"
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    </button>
+    <nav class="nav">
+      <a href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a href="#security">Security</a>
+      <a
+        href="https://docs.rs/bashkit"
+        target="_blank"
+        rel="noopener noreferrer">Docs</a
+      >
+      <a
+        href="https://github.com/everruns/bashkit"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="social-link"
+        aria-label="View on GitHub"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+        >
+          <path
+            d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
+          ></path>
+        </svg>
+      </a>
+    </nav>
+  </div>
+</header>
+
+<style>
+  .header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    height: var(--header-height);
+    background: var(--color-white);
+    border-bottom: 1px solid transparent;
+    transition:
+      border-color 0.2s,
+      box-shadow 0.2s;
+  }
+  .header.scrolled {
+    border-color: var(--color-smoke);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  }
+  .header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 100%;
+  }
+  .logo-link {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    text-decoration: none;
+  }
+  .logo-link:hover {
+    text-decoration: none;
+  }
+  .logo-mark {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 1.15rem;
+    color: var(--color-gold);
+    background: var(--color-obsidian);
+    padding: 0.2rem 0.45rem;
+    line-height: 1;
+  }
+  .logo-text {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--color-obsidian);
+    letter-spacing: -0.01em;
+  }
+  .menu-toggle {
+    display: none;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: var(--space-xs);
+    color: var(--color-obsidian);
+  }
+  .menu-toggle .icon-close {
+    display: none;
+  }
+  .menu-toggle[aria-expanded="true"] .icon-menu {
+    display: none;
+  }
+  .menu-toggle[aria-expanded="true"] .icon-close {
+    display: block;
+  }
+  .nav {
+    display: flex;
+    gap: var(--space-lg);
+    align-items: center;
+  }
+  .nav a {
+    color: var(--color-slate);
+    font-weight: 500;
+    transition: color 0.2s;
+  }
+  .nav a:hover {
+    color: var(--color-obsidian);
+    text-decoration: none;
+  }
+  .social-link {
+    display: inline-flex;
+    align-items: center;
+  }
+  .social-link svg {
+    transition: transform 0.2s;
+  }
+  .social-link:hover svg {
+    transform: scale(1.1);
+  }
+  @media (max-width: 768px) {
+    .menu-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .nav {
+      display: none;
+      position: absolute;
+      top: var(--header-height);
+      left: 0;
+      right: 0;
+      flex-direction: column;
+      background: var(--color-white);
+      border-bottom: 1px solid var(--color-smoke);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+      padding: var(--space-md);
+      gap: 0;
+    }
+    .nav.open {
+      display: flex;
+    }
+    .nav a {
+      padding: var(--space-sm) var(--space-md);
+    }
+    .nav .social-link {
+      padding: var(--space-sm) var(--space-md);
+    }
+  }
+</style>
+
+<script>
+  const header = document.querySelector(".header");
+  if (header) {
+    window.addEventListener("scroll", () => {
+      if (window.scrollY > 10) {
+        header.classList.add("scrolled");
+      } else {
+        header.classList.remove("scrolled");
+      }
+    });
+  }
+  const toggle = document.querySelector(".menu-toggle");
+  const nav = document.querySelector(".nav");
+  if (toggle && nav) {
+    toggle.addEventListener("click", () => {
+      const expanded = toggle.getAttribute("aria-expanded") === "true";
+      toggle.setAttribute("aria-expanded", String(!expanded));
+      nav.classList.toggle("open");
+    });
+  }
+</script>
