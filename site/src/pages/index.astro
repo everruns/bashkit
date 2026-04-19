@@ -1,5 +1,12 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import { Code } from "astro:components";
+
+// Decision: keep quick-start samples in a single vertical rail and wrap code
+// lines inside highlighted blocks so the homepage never depends on horizontal
+// scrolling to stay readable.
+// Decision: bias the homepage toward product proof, source-backed claims, and
+// concrete next steps instead of generic positioning copy.
 
 const heroStats = [
   { label: "Built-in commands", value: "160" },
@@ -54,15 +61,26 @@ const surfaces = [
   {
     title: "Scripted tool orchestration",
     detail:
-      "Compose ToolDef + callback pairs into an OrchestratorTool driven by a bash script.",
+      "Compose ToolDef + callback pairs into a ScriptedTool driven by a bash script.",
   },
 ];
+
+const heroSnippet = `use bashkit::Bash;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut bash = Bash::new();
+    let out = bash.exec("printf 'ready\\n'").await?;
+    print!("{}", out.stdout);
+    Ok(())
+}`;
 
 const languages = [
   {
     eyebrow: "Rust",
     title: "The core crate",
     install: "cargo add bashkit",
+    lang: "rust" as const,
     code: `use bashkit::Bash;
 
 #[tokio::main]
@@ -75,26 +93,31 @@ async fn main() -> anyhow::Result<()> {
   },
   {
     eyebrow: "Python",
-    title: "PyO3 wheel + LangChain integration",
+    title: "PyO3 wheel with direct Bash API",
     install: "pip install bashkit",
-    code: `from bashkit import BashTool
+    lang: "python" as const,
+    code: `from bashkit import Bash
 
-tool = BashTool()
-result = await tool.execute("echo 'Hello, World!'")
-print(result.stdout)`,
+bash = Bash()
+result = bash.execute_sync("echo 'Hello, World!'")
+print(result.stdout)
+
+bash.execute_sync("export APP_ENV=dev")
+print(bash.execute_sync("echo $APP_ENV").stdout)`,
   },
   {
     eyebrow: "TypeScript",
-    title: "NAPI-RS for Node, Bun, Deno",
+    title: "NAPI-RS runtime for Node, Bun, Deno",
     install: "npm i @everruns/bashkit",
-    code: `import { BashTool } from "@everruns/bashkit";
+    lang: "ts" as const,
+    code: `import { Bash } from "@everruns/bashkit";
 
-const tool = new BashTool({
-  username: "agent",
-  hostname: "sandbox",
-});
-const { stdout } = await tool.execute("echo hi");
-console.log(stdout);`,
+const bash = new Bash();
+const result = bash.executeSync('echo "Hello, World!"');
+console.log(result.stdout);
+
+bash.executeSync("X=42");
+console.log(bash.executeSync("echo $X").stdout);`,
   },
 ];
 
@@ -138,20 +161,62 @@ const evals = [
   { model: "GPT-5.2", score: "77%", passed: "41/58" },
 ];
 
-const apiSnippet = `$ cargo add bashkit
-$ cat > demo.rs <<'RS'
-use bashkit::Bash;
+const evalSnapshot = {
+  date: "2026-02-28",
+  href: "https://github.com/everruns/bashkit/blob/main/crates/bashkit-eval/README.md",
+};
+
+const resources = [
+  {
+    title: "Rust API",
+    detail: "Core crate docs, builder options, limits, and shell semantics.",
+    href: "https://docs.rs/bashkit",
+    cta: "docs.rs",
+  },
+  {
+    title: "Python",
+    detail: "PyO3 package docs for direct Bash usage, snapshots, and builtins.",
+    href: "https://github.com/everruns/bashkit/blob/main/crates/bashkit-python/README.md",
+    cta: "Python docs",
+  },
+  {
+    title: "TypeScript",
+    detail: "Node, Bun, and Deno runtime docs for the NAPI bindings.",
+    href: "https://github.com/everruns/bashkit/blob/main/crates/bashkit-js/README.md",
+    cta: "TS docs",
+  },
+  {
+    title: "Threat model",
+    detail: "268 documented threat cases across parser, VFS, network, and runtimes.",
+    href: "https://github.com/everruns/bashkit/blob/main/specs/threat-model.md",
+    cta: "Security spec",
+  },
+  {
+    title: "MCP server",
+    detail: "Run bashkit as a Model Context Protocol server via `bashkit mcp`.",
+    href: "https://github.com/everruns/bashkit/blob/main/docs/cli.md",
+    cta: "CLI docs",
+  },
+  {
+    title: "Examples",
+    detail: "Reference programs for Rust, Python, JavaScript, and tool flows.",
+    href: "https://github.com/everruns/bashkit/tree/main/examples",
+    cta: "Browse examples",
+  },
+];
+
+const apiSnippet = `use bashkit::Bash;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let mut bash = Bash::new();
     bash.exec("mkdir -p /tmp/data").await?;
     bash.exec("echo 'hello' > /tmp/data/out.txt").await?;
+
     let r = bash.exec("cat /tmp/data/out.txt | tr a-z A-Z").await?;
-    println!("{}", r.stdout); // HELLO
+    print!("{}", r.stdout); // HELLO
     Ok(())
-}
-RS`;
+}`;
 ---
 
 <BaseLayout>
@@ -162,36 +227,40 @@ RS`;
         <h1>An awesomely fast virtual bash sandbox. Written in Rust.</h1>
         <p class="atlas-lede">
           Bashkit runs untrusted shell scripts from AI agents without spawning a
-          single OS process. 160 POSIX-compliant commands, a virtual filesystem,
-          resource limits, and streaming LLM tool calls — all in-memory, all
-          sandboxed.
+          single OS process. 160 reimplemented commands, substantial POSIX shell
+          language coverage, a virtual filesystem, resource limits, and tool
+          interfaces for agent frameworks — all in-memory, all sandboxed.
         </p>
 
         <div class="atlas-actions">
+          <a href="#install" class="btn btn-primary">Quick start</a>
           <a
             href="https://docs.rs/bashkit"
-            class="btn btn-primary"
+            class="btn btn-secondary"
             target="_blank"
             rel="noopener noreferrer">Read the docs</a
           >
           <a
-            href="https://github.com/everruns/bashkit"
+            href="https://github.com/everruns/bashkit/blob/main/specs/threat-model.md"
             class="btn btn-secondary"
             target="_blank"
-            rel="noopener noreferrer"
+            rel="noopener noreferrer">Threat model</a
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              ><path
-                d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
-              ></path></svg
-            >
-            View on GitHub
-          </a>
+        </div>
+
+        <div class="atlas-proof-strip">
+          <div class="atlas-proof-strip__item">
+            <span class="atlas-proof-strip__label">Install</span>
+            <code>cargo add bashkit</code>
+          </div>
+          <div class="atlas-proof-strip__item">
+            <span class="atlas-proof-strip__label">Run</span>
+            <code>let out = bash.exec("echo hi").await?;</code>
+          </div>
+          <div class="atlas-proof-strip__item">
+            <span class="atlas-proof-strip__label">Docs</span>
+            <a href="#install">Rust, Python, TypeScript</a>
+          </div>
         </div>
 
         <div class="atlas-stats">
@@ -208,13 +277,14 @@ RS`;
 
       <aside class="atlas-panel atlas-signal-panel">
         <div class="atlas-signal-panel__intro">
-          <span class="atlas-eyebrow">Why bashkit</span>
-          <h2>Bash you can hand to a model.</h2>
+          <span class="atlas-eyebrow">Proof</span>
+          <h2>A runnable sample before the fold.</h2>
           <p>
-            Every layer assumes the script is hostile. Isolation is the default,
-            not a flag.
+            The core API is just `Bash`, plus virtual FS and limits. No sidecar
+            process, no container bootstrap.
           </p>
         </div>
+        <Code code={heroSnippet} lang="rust" theme="github-dark" wrap={true} />
         <div class="atlas-signal-list">
           {
             signals.map((item) => (
@@ -264,19 +334,31 @@ RS`;
           <h2>Three languages, one runtime</h2>
         </div>
         <p>
-          Ship in Rust for the lowest overhead, or use the Python wheel and
-          npm package when you need to drop bashkit into an existing stack.
+          Start with the core Rust crate, or drop the same runtime into Python
+          and TypeScript when you need it inside an existing stack.
         </p>
       </div>
 
-      <div class="atlas-card-grid atlas-card-grid--languages">
+      <div class="atlas-language-list">
         {
           languages.map((lang) => (
-            <article class="atlas-panel atlas-lang-card">
-              <span class="atlas-eyebrow">{lang.eyebrow}</span>
-              <h3>{lang.title}</h3>
-              <pre class="atlas-install"><code>{lang.install}</code></pre>
-              <pre class="atlas-code"><code>{lang.code}</code></pre>
+            <article class="atlas-panel atlas-lang-row">
+              <div class="atlas-lang-row__meta">
+                <span class="atlas-eyebrow">{lang.eyebrow}</span>
+                <h3>{lang.title}</h3>
+                <div class="atlas-install-group">
+                  <span class="atlas-install-group__label">Install</span>
+                  <pre class="atlas-install"><code>{lang.install}</code></pre>
+                </div>
+              </div>
+              <div class="atlas-lang-row__code">
+                <Code
+                  code={lang.code}
+                  lang={lang.lang}
+                  theme="github-dark"
+                  wrap={true}
+                />
+              </div>
             </article>
           ))
         }
@@ -290,7 +372,7 @@ RS`;
             container, no subprocess — just a crate.
           </p>
         </div>
-        <pre><code>{apiSnippet}</code></pre>
+        <Code code={apiSnippet} lang="rust" theme="github-dark" wrap={true} />
       </article>
     </div>
   </section>
@@ -335,7 +417,11 @@ RS`;
         </div>
         <p>
           Bashkit ships with a 58-task eval harness across 15 agentic
-          categories. A snapshot of the latest run:
+          categories. Results below are from the
+          <a href={evalSnapshot.href} target="_blank" rel="noopener noreferrer">
+            {evalSnapshot.date}
+          </a>{" "}
+          run:
         </p>
       </div>
 
@@ -362,27 +448,32 @@ RS`;
 
   <section class="atlas-open-source section section-alt">
     <div class="container">
-      <div class="atlas-panel atlas-open-source__panel">
-        <span class="atlas-eyebrow">Open source</span>
-        <h2>Built for real agents. Open under MIT.</h2>
-        <p>
-          Drop it into your agent, your CLI, your editor, your eval harness.
-          Issues and PRs welcome.
-        </p>
-        <div class="atlas-actions">
-          <a
-            href="https://github.com/everruns/bashkit"
-            class="btn btn-primary"
-            target="_blank"
-            rel="noopener noreferrer">GitHub</a
-          >
-          <a
-            href="https://docs.rs/bashkit"
-            class="btn btn-secondary"
-            target="_blank"
-            rel="noopener noreferrer">docs.rs</a
-          >
+      <div class="atlas-section-heading">
+        <div>
+          <span class="atlas-eyebrow">Open source</span>
+          <h2>Pick a path and go deeper.</h2>
         </div>
+        <p>
+          The crate is MIT-licensed. These are the links that actually help you
+          evaluate, integrate, and operate it.
+        </p>
+      </div>
+
+      <div class="atlas-card-grid atlas-card-grid--resources">
+        {
+          resources.map((item) => (
+            <a
+              href={item.href}
+              class="atlas-panel atlas-card atlas-resource-card"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <span class="atlas-eyebrow">{item.cta}</span>
+              <h3>{item.title}</h3>
+              <p>{item.detail}</p>
+            </a>
+          ))
+        }
       </div>
     </div>
   </section>
@@ -469,6 +560,32 @@ RS`;
     gap: 0.85rem;
     padding-top: 0.2rem;
   }
+  .atlas-proof-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.8rem;
+  }
+  .atlas-proof-strip__item {
+    display: grid;
+    gap: 0.35rem;
+    padding: 0.85rem 1rem;
+    border: 1px solid rgb(10 22 54 / 0.12);
+    background: rgb(255 255 255 / 0.72);
+  }
+  .atlas-proof-strip__label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-slate);
+  }
+  .atlas-proof-strip code,
+  .atlas-proof-strip a {
+    font-size: 0.92rem;
+    background: transparent;
+    padding: 0;
+    overflow-wrap: anywhere;
+  }
   .atlas-stats {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -510,13 +627,13 @@ RS`;
     border-top: none;
   }
   .atlas-signal-list__item h3,
-  .atlas-card h3,
-  .atlas-lang-card h3 {
+  .atlas-card h3 {
     font-size: 1.25rem;
     font-weight: 600;
   }
   .atlas-signal-list__item p,
-  .atlas-card p {
+  .atlas-card p,
+  .atlas-resource-card {
     color: rgb(64 64 64 / 0.92);
   }
   .atlas-section-heading {
@@ -536,17 +653,39 @@ RS`;
   .atlas-card-grid--reliability {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-  .atlas-card-grid--languages {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    margin-bottom: 1.25rem;
-  }
+  .atlas-card-grid--resources { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .atlas-language-list { display: grid; gap: 1rem; margin-bottom: 1.25rem; }
   .atlas-card { padding: 1.15rem; display: grid; gap: 0.45rem; }
+  .atlas-resource-card {
+    text-decoration: none;
+    transition: transform 0.12s ease, border-color 0.12s ease;
+  }
+  .atlas-resource-card:hover {
+    text-decoration: none;
+    transform: translateY(-1px);
+    border-color: rgb(10 22 54 / 0.24);
+  }
 
-  .atlas-lang-card {
-    padding: 1.15rem;
+  .atlas-lang-row {
+    padding: 1.25rem;
     display: grid;
-    gap: 0.6rem;
+    grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
+    gap: 1rem;
     align-content: start;
+  }
+  .atlas-lang-row__meta,
+  .atlas-lang-row__code,
+  .atlas-install-group {
+    display: grid;
+  }
+  .atlas-lang-row__meta { gap: 0.75rem; align-content: start; }
+  .atlas-install-group { gap: 0.35rem; }
+  .atlas-install-group__label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-slate);
   }
   .atlas-install {
     margin: 0;
@@ -554,19 +693,29 @@ RS`;
     background: var(--color-smoke);
     font-family: var(--font-mono);
     font-size: 0.85rem;
-    overflow-x: auto;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
   }
-  .atlas-code {
+  .atlas-lang-row :global(.astro-code),
+  .atlas-code-panel :global(.astro-code) {
     margin: 0;
-    padding: 0.85rem 1rem;
-    background: #10151f;
-    color: #edf2fb;
+    padding: 1rem;
+    border: 1px solid rgb(255 255 255 / 0.08);
+    background: #10151f !important;
     font-family: var(--font-mono);
-    font-size: 0.82rem;
-    line-height: 1.55;
-    overflow-x: auto;
+    font-size: 0.84rem;
+    line-height: 1.65;
+    overflow: hidden;
   }
-  .atlas-code code { background: transparent; padding: 0; color: inherit; }
+  .atlas-lang-row :global(.astro-code code),
+  .atlas-code-panel :global(.astro-code code) {
+    display: block;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    background: transparent;
+    padding: 0;
+  }
 
   .atlas-code-panel {
     display: grid;
@@ -580,19 +729,6 @@ RS`;
   .atlas-code-panel__header { display: grid; gap: 0.45rem; }
   .atlas-code-panel .atlas-eyebrow { color: rgb(212 164 58 / 0.92); }
   .atlas-code-panel__header p { color: rgb(237 242 251 / 0.82); }
-  .atlas-code-panel pre {
-    overflow: auto;
-    font-family: var(--font-mono);
-    font-size: 0.88rem;
-    line-height: 1.6;
-    margin: 0;
-  }
-  .atlas-code-panel code {
-    display: block;
-    padding: 0;
-    background: transparent;
-    color: inherit;
-  }
 
   .atlas-table-panel { padding: 0.5rem 0.6rem; overflow-x: auto; }
   table {
@@ -620,17 +756,6 @@ RS`;
   }
   td.dim { color: var(--color-slate); }
 
-  .atlas-open-source__panel {
-    max-width: 56rem;
-    margin: 0 auto;
-    padding: 2rem 1.5rem;
-    text-align: center;
-    display: grid;
-    gap: 0.9rem;
-    justify-items: center;
-  }
-  .atlas-open-source__panel .atlas-actions { justify-content: center; }
-
   @media (max-width: 980px) {
     .atlas-hero__grid,
     .atlas-local__grid,
@@ -639,10 +764,12 @@ RS`;
     }
     .atlas-card-grid--surfaces,
     .atlas-card-grid--reliability,
-    .atlas-card-grid--languages {
+    .atlas-card-grid--resources {
       grid-template-columns: 1fr;
     }
+    .atlas-proof-strip { grid-template-columns: 1fr; }
     .atlas-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .atlas-lang-row { grid-template-columns: 1fr; }
   }
   @media (max-width: 560px) {
     .atlas-stats { grid-template-columns: 1fr; }
