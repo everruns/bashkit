@@ -175,3 +175,37 @@ greet
 ### expect
 hello world
 ### end
+
+### source_function_fd3_block_redirect_with_procsub_while_read
+# Issue #1343: sourced function using compound block `{...} 3>&1 >file` plus
+# `while read; done < <(cmd)` must execute the loop body and produce output.
+# Before #1341 the glob inside process substitution expanded to nothing, so the
+# while loop received no input and the block produced an empty file.
+mkdir -p /tmp/issue1343_dir
+touch /tmp/issue1343_dir/a.txt /tmp/issue1343_dir/b.txt
+cat > /tmp/issue1343_funcs.sh << 'SCRIPT'
+myfunc() {
+    outfile=/tmp/issue1343_result.txt
+    {
+        echo "header"
+        while IFS='' read -r i; do
+            echo "." 1>&3
+            echo "<li>$i</li>"
+        done < <(ls /tmp/issue1343_dir/*.txt)
+        echo "done" 1>&3
+    } 3>&1 >"$outfile"
+}
+SCRIPT
+source /tmp/issue1343_funcs.sh
+myfunc
+echo "---"
+cat /tmp/issue1343_result.txt
+### expect
+.
+.
+done
+---
+header
+<li>/tmp/issue1343_dir/a.txt</li>
+<li>/tmp/issue1343_dir/b.txt</li>
+### end
