@@ -8,7 +8,8 @@ Sandboxed bash interpreter for Python. Native bindings to the `bashkit` Rust cor
 
 - Sandboxed execution in-process, without containers or subprocess orchestration
 - Full bash syntax: variables, pipelines, redirects, loops, functions, and arrays
-- 160 built-in commands including `grep`, `sed`, `awk`, `jq`, `curl`, and `find`
+- 160 built-in commands including `grep`, `sed`, `awk`, `jq`, `curl`, `wget`, `http`, and `find`
+- Opt-in allowlisted outbound HTTP on `Bash` and `BashTool` via `network=...`
 - Persistent interpreter state across calls, including variables, cwd, and VFS contents
 - Direct virtual filesystem APIs, constructor mounts, and live host mounts
 - Snapshot and restore support on `Bash` and `BashTool`
@@ -79,6 +80,29 @@ bash = Bash(
     python=False,
 )
 ```
+
+### Network Access
+
+Outbound HTTP is disabled by default. Opt in with `network=` when you want
+`curl`, `wget`, or `http` to reach specific URLs:
+
+```python
+from bashkit import Bash
+
+bash = Bash(
+    network={
+        "allow": ["https://api.github.com", "http://127.0.0.1:8080"],
+        "block_private_ips": False,
+    }
+)
+
+result = bash.execute_sync("curl -s http://127.0.0.1:8080/health")
+print(result.stdout)
+```
+
+Omit `network` to keep HTTP disabled. Use `network={"allow": []}` when you
+want an explicit empty allowlist, or `network={"allow_all": True}` for trusted
+test environments.
 
 ### Live Output
 
@@ -366,9 +390,9 @@ restored.restore_snapshot(shell_only)
 ```
 
 `BashTool` exposes the same `snapshot()`, `restore_snapshot(...)`, and `from_snapshot(...)` APIs.
-Python callback builtins are host-side config, not serialized shell state, so
-pass `custom_builtins=` again when constructing a restored instance if you
-need them after snapshot restore.
+Python callback builtins and `network=` are host-side config, not serialized
+shell state, so pass `custom_builtins=` / `network=` again when constructing a
+restored instance if you need them after snapshot restore.
 
 ## Framework Integrations
 
@@ -405,6 +429,7 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 - `cancel()`
 - `clear_cancel()`
 - `reset()`
+- constructor kwarg: `network={...}`
 - constructor kwarg: `custom_builtins={name: callback}`
 - `snapshot() -> bytes`
 - `restore_snapshot(data: bytes)`
@@ -416,6 +441,7 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 ### BashTool
 
 - All execution, cancellation (`cancel()`, `clear_cancel()`), reset, snapshot, restore, mount, and direct VFS helpers from `Bash`
+- constructor kwarg: `network={...}`
 - constructor kwarg: `custom_builtins={name: callback}`
 - Tool metadata: `name`, `short_description`, `version`
 - `description() -> str`

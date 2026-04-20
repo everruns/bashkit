@@ -1,7 +1,7 @@
 """Type stubs for bashkit native module."""
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, TypedDict
 
 # Synchronous chunk callback for live stdout/stderr streaming.
 OutputHandler = Callable[[str, str], None]
@@ -24,6 +24,20 @@ class BuiltinContext:
     cwd: str
 
 BuiltinCallback = Callable[[BuiltinContext], str | Awaitable[str]]
+
+class AllowlistNetworkConfig(TypedDict, total=False):
+    """Allowlisted outbound HTTP config for ``Bash`` / ``BashTool``."""
+
+    allow: list[str]
+    block_private_ips: bool
+
+class AllowAllNetworkConfig(TypedDict, total=False):
+    """Allow-all outbound HTTP config for trusted/test environments."""
+
+    allow_all: Literal[True]
+    block_private_ips: bool
+
+NetworkConfig = AllowlistNetworkConfig | AllowAllNetworkConfig
 
 class FileSystem:
     """Direct access to BashKit's virtual filesystem or a standalone mountable FS.
@@ -359,6 +373,8 @@ class Bash:
         files: dict[str, str | Callable[[], str]] | None = None,
         mounts: list[dict[str, Any]] | None = None,
         custom_builtins: dict[str, BuiltinCallback] | None = None,
+        *,
+        network: NetworkConfig | None = None,
     ) -> None:
         """Create a new Bash interpreter.
 
@@ -377,6 +393,10 @@ class Bash:
                 ``execute()``; those re-entrant calls are rejected.
             files: Dict mapping VFS paths to file contents or lazy callables.
             mounts: List of real host directory mount configs.
+            network: Opt-in outbound HTTP config. Omit to keep network
+                disabled. Use ``{"allow": [...]}`` for an allowlist or
+                ``{"allow_all": True}`` for trusted/test environments.
+                Private IP blocking defaults to ``True``.
             custom_builtins: Constructor-time Python callbacks exposed as
                 bash builtins. Each callback receives a ``BuiltinContext``
                 with raw ``argv`` tokens and optional pipeline ``stdin``,
@@ -512,7 +532,7 @@ class Bash:
         """Reset interpreter to initial state.
 
         Clears all VFS contents, environment variables, and shell state.
-        Re-applies the original ``files``, ``mounts``, and
+        Re-applies the original ``files``, ``mounts``, ``network``, and
         ``custom_builtins`` configuration.
 
         Example::
@@ -557,6 +577,8 @@ class Bash:
         files: dict[str, str] | None = None,
         mounts: list[dict[str, Any]] | None = None,
         custom_builtins: dict[str, BuiltinCallback] | None = None,
+        *,
+        network: NetworkConfig | None = None,
     ) -> Bash:
         """Create a new ``Bash`` from snapshot bytes and optional constructor kwargs."""
         ...
@@ -732,6 +754,8 @@ class BashTool:
         files: dict[str, str | Callable[[], str]] | None = None,
         mounts: list[dict[str, Any]] | None = None,
         custom_builtins: dict[str, BuiltinCallback] | None = None,
+        *,
+        network: NetworkConfig | None = None,
     ) -> None:
         """Create a new BashTool.
 
@@ -744,6 +768,10 @@ class BashTool:
             timeout_seconds: Abort execution after this duration.
             files: Dict mapping VFS paths to file contents or lazy callables.
             mounts: List of real host directory mount configs.
+            network: Opt-in outbound HTTP config. Omit to keep network
+                disabled. Use ``{"allow": [...]}`` or
+                ``{"allow_all": True}``. Private IP blocking defaults
+                to ``True``.
             custom_builtins: Constructor-time Python callbacks exposed as
                 bash builtins. Each callback receives a ``BuiltinContext``
                 and must return a stdout string or await one. Async callbacks
@@ -930,7 +958,7 @@ class BashTool:
         """Reset the tool to initial state.
 
         Clears VFS, environment, and shell state while re-applying
-        constructor-time ``custom_builtins``.
+        constructor-time ``custom_builtins`` and ``network`` config.
 
         Example::
 
@@ -971,6 +999,8 @@ class BashTool:
         files: dict[str, str] | None = None,
         mounts: list[dict[str, Any]] | None = None,
         custom_builtins: dict[str, BuiltinCallback] | None = None,
+        *,
+        network: NetworkConfig | None = None,
     ) -> BashTool:
         """Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs."""
         ...

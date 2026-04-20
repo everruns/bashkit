@@ -26,6 +26,68 @@ def build_shell(factory, custom_builtins):
     return factory(custom_builtins=custom_builtins)
 
 
+def build_shell_positional(factory, custom_builtins):
+    # Decision: exercise the historical positional `custom_builtins` slot so
+    # constructor signature regressions fail at call time.
+    if factory is Bash:
+        return factory(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            False,
+            None,
+            None,
+            None,
+            None,
+            custom_builtins,
+        )
+    return factory(
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        custom_builtins,
+    )
+
+
+def restore_shell_positional(factory, snapshot, custom_builtins):
+    if factory is Bash:
+        return factory.from_snapshot(
+            snapshot,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            False,
+            None,
+            None,
+            None,
+            None,
+            custom_builtins,
+        )
+    return factory.from_snapshot(
+        snapshot,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        custom_builtins,
+    )
+
+
 @pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
 def test_custom_builtins_persist_vfs_across_calls(factory):
     shell = build_shell(
@@ -68,6 +130,16 @@ def test_custom_builtins_survive_reset(factory):
 
 
 @pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_constructor_accepts_positional_custom_builtins(factory):
+    shell = build_shell_positional(factory, {"ping": lambda ctx: "pong\n"})
+
+    result = shell.execute_sync("ping")
+
+    assert result.exit_code == 0
+    assert result.stdout == "pong\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
 def test_from_snapshot_accepts_custom_builtins(factory):
     snapshot = factory().snapshot()
 
@@ -75,6 +147,17 @@ def test_from_snapshot_accepts_custom_builtins(factory):
         snapshot,
         custom_builtins={"ping": lambda ctx: "pong\n"},
     )
+    result = restored.execute_sync("ping")
+
+    assert result.exit_code == 0
+    assert result.stdout == "pong\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_from_snapshot_accepts_positional_custom_builtins(factory):
+    snapshot = factory().snapshot()
+
+    restored = restore_shell_positional(factory, snapshot, {"ping": lambda ctx: "pong\n"})
     result = restored.execute_sync("ping")
 
     assert result.exit_code == 0

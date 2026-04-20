@@ -18,7 +18,7 @@ doc = false  # Python extension, no Rust docs needed
 [dependencies]
 # Bashkit core
 # realfs: always-on so Python callers can use mount_real_* APIs
-bashkit = { path = "../bashkit", features = ["scripted_tool", "python", "realfs", "jq"] }
+bashkit = { path = "../bashkit", features = ["scripted_tool", "python", "realfs", "jq", "http_client"] }
 
 # PyO3 native extension
 pyo3 = { workspace = true }

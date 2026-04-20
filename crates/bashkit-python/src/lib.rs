@@ -10,10 +10,10 @@ use bashkit::{
     Bash, BashTool as RustBashTool, Builtin, BuiltinContext, DirEntry as FsDirEntry, ExcType,
     ExecResult as RustExecResult, ExecutionExtensions, ExecutionLimits, ExtFunctionResult,
     FileSystem, FileSystemExt, FileType as FsFileType, InMemoryFs, Metadata as FsMetadata,
-    MontyException, MontyObject, OutputCallback as RustOutputCallback, OverlayFs, PosixFs,
-    PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool,
-    ShellStateView as RustShellStateView, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
-    ToolDef, ToolRequest, async_trait,
+    MontyException, MontyObject, NetworkAllowlist, OutputCallback as RustOutputCallback, OverlayFs,
+    PosixFs, PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode,
+    ScriptedTool as RustScriptedTool, ShellStateView as RustShellStateView,
+    SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
 };
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -137,6 +137,34 @@ struct RealMountConfig {
     writable: bool,
 }
 
+// Decision: `network=None` means "no HTTP client configured"; this preserves
+// the existing disabled-by-default behavior.
+// Decision: `network={"allow": []}` remains distinct from omitted network by
+// attaching an explicit empty allowlist to Rust.
+// Decision: `network` stays keyword-only on Python constructors so the
+// historical positional `custom_builtins` slot remains source-compatible.
+#[derive(Clone)]
+enum PyNetworkMode {
+    Allow(Vec<String>),
+    AllowAll,
+}
+
+#[derive(Clone)]
+struct PyNetworkConfig {
+    mode: PyNetworkMode,
+    block_private_ips: bool,
+}
+
+impl PyNetworkConfig {
+    fn to_allowlist(&self) -> NetworkAllowlist {
+        let allowlist = match &self.mode {
+            PyNetworkMode::Allow(patterns) => NetworkAllowlist::new().allow_many(patterns.clone()),
+            PyNetworkMode::AllowAll => NetworkAllowlist::allow_all(),
+        };
+        allowlist.block_private_ips(self.block_private_ips)
+    }
+}
+
 enum PyFileMount {
     Static { path: String, content: String },
     Lazy { path: String, provider: Py<PyAny> },
@@ -209,6 +237,61 @@ fn parse_files(files: Option<&Bound<'_, PyDict>>) -> PyResult<Vec<PyFileMount>> 
         )));
     }
     Ok(mounts)
+}
+
+fn parse_network(network: Option<&Bound<'_, PyDict>>) -> PyResult<Option<PyNetworkConfig>> {
+    let Some(dict) = network else {
+        return Ok(None);
+    };
+
+    for (key_obj, _) in dict.iter() {
+        let key: String = key_obj.extract()?;
+        if !matches!(key.as_str(), "allow" | "allow_all" | "block_private_ips") {
+            return Err(PyValueError::new_err(format!(
+                "network['{key}'] is not supported yet; supported keys: 'allow', 'allow_all', 'block_private_ips'"
+            )));
+        }
+    }
+
+    let allow = dict
+        .get_item("allow")?
+        .map(|value| value.extract::<Vec<String>>())
+        .transpose()?;
+    let allow_all = dict
+        .get_item("allow_all")?
+        .map(|value| value.extract::<bool>())
+        .transpose()?;
+    let block_private_ips = dict
+        .get_item("block_private_ips")?
+        .map(|value| value.extract::<bool>())
+        .transpose()?
+        .unwrap_or(true);
+
+    if allow.is_some() && allow_all.is_some() {
+        return Err(PyValueError::new_err(
+            "network cannot contain both 'allow' and 'allow_all'",
+        ));
+    }
+    if matches!(allow_all, Some(false)) {
+        return Err(PyValueError::new_err(
+            "network['allow_all'] must be True when provided",
+        ));
+    }
+
+    let mode = if let Some(patterns) = allow {
+        PyNetworkMode::Allow(patterns)
+    } else if allow_all == Some(true) {
+        PyNetworkMode::AllowAll
+    } else {
+        return Err(PyValueError::new_err(
+            "network must include 'allow' or 'allow_all=True'; omit network to keep HTTP disabled",
+        ));
+    };
+
+    Ok(Some(PyNetworkConfig {
+        mode,
+        block_private_ips,
+    }))
 }
 
 fn parse_custom_builtins(
@@ -2380,6 +2463,16 @@ fn apply_python_config(
     builder
 }
 
+fn apply_network_config(
+    mut builder: bashkit::BashBuilder,
+    network: Option<&PyNetworkConfig>,
+) -> bashkit::BashBuilder {
+    if let Some(network) = network {
+        builder = builder.network(network.to_allowlist());
+    }
+    builder
+}
+
 /// Core bash interpreter with virtual filesystem.
 ///
 /// State persists between calls — files created in one `execute()` are
@@ -2416,6 +2509,7 @@ pub struct PyBash {
     builtin_engine: Arc<PyCallbackEngine>,
     files: Vec<PyFileMount>,
     real_mounts: Vec<RealMountConfig>,
+    network: Option<PyNetworkConfig>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
     max_memory: Option<u64>,
@@ -2463,7 +2557,8 @@ impl PyBash {
             self.external_handler_reentry_depth.clone(),
         );
         let files = clone_file_mounts(py, &self.files);
-        let builder = apply_fs_config(builder, &files, &self.real_mounts)?;
+        let mut builder = apply_fs_config(builder, &files, &self.real_mounts)?;
+        builder = apply_network_config(builder, self.network.as_ref());
         Ok(apply_custom_builtins_to_builder(
             py,
             builder,
@@ -2488,6 +2583,8 @@ impl PyBash {
         files=None,
         mounts=None,
         custom_builtins=None,
+        *,
+        network=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -2504,6 +2601,7 @@ impl PyBash {
         files: Option<&Bound<'_, PyDict>>,
         mounts: Option<&Bound<'_, PyList>>,
         custom_builtins: Option<&Bound<'_, PyDict>>,
+        network: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let mut builder = Bash::builder();
 
@@ -2532,6 +2630,7 @@ impl PyBash {
 
         let files = parse_files(files)?;
         let real_mounts = parse_mounts(mounts)?;
+        let network = parse_network(network)?;
         let custom_builtins = parse_custom_builtins(py, custom_builtins)?;
 
         let fn_names = external_functions.clone().unwrap_or_default();
@@ -2569,6 +2668,7 @@ impl PyBash {
             external_handler_reentry_depth.clone(),
         );
         builder = apply_fs_config(builder, &files, &real_mounts)?;
+        builder = apply_network_config(builder, network.as_ref());
         let builtin_engine = PyCallbackEngine::new(py)?;
         builder = apply_custom_builtins_to_builder(py, builder, &custom_builtins);
 
@@ -2591,6 +2691,7 @@ impl PyBash {
             builtin_engine,
             files,
             real_mounts,
+            network,
             max_commands,
             max_loop_iterations,
             max_memory,
@@ -2814,6 +2915,8 @@ impl PyBash {
         files=None,
         mounts=None,
         custom_builtins=None,
+        *,
+        network=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_snapshot(
@@ -2831,6 +2934,7 @@ impl PyBash {
         files: Option<&Bound<'_, PyDict>>,
         mounts: Option<&Bound<'_, PyList>>,
         custom_builtins: Option<&Bound<'_, PyDict>>,
+        network: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let bash = Self::new(
             py,
@@ -2846,6 +2950,7 @@ impl PyBash {
             files,
             mounts,
             custom_builtins,
+            network,
         )?;
         bash.restore_snapshot(py, data)?;
         Ok(bash)
@@ -3035,6 +3140,7 @@ pub struct BashTool {
     builtin_engine: Arc<PyCallbackEngine>,
     files: Vec<PyFileMount>,
     real_mounts: Vec<RealMountConfig>,
+    network: Option<PyNetworkConfig>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
     max_memory: Option<u64>,
@@ -3070,7 +3176,8 @@ impl BashTool {
         }
 
         let files = clone_file_mounts(py, &self.files);
-        let builder = apply_fs_config(builder, &files, &self.real_mounts)?;
+        let mut builder = apply_fs_config(builder, &files, &self.real_mounts)?;
+        builder = apply_network_config(builder, self.network.as_ref());
         Ok(apply_custom_builtins_to_builder(
             py,
             builder,
@@ -3126,6 +3233,8 @@ impl BashTool {
         files=None,
         mounts=None,
         custom_builtins=None,
+        *,
+        network=None,
     ))]
     fn new(
         py: Python<'_>,
@@ -3138,6 +3247,7 @@ impl BashTool {
         files: Option<&Bound<'_, PyDict>>,
         mounts: Option<&Bound<'_, PyList>>,
         custom_builtins: Option<&Bound<'_, PyDict>>,
+        network: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let mut builder = Bash::builder();
 
@@ -3166,8 +3276,10 @@ impl BashTool {
 
         let files = parse_files(files)?;
         let real_mounts = parse_mounts(mounts)?;
+        let network = parse_network(network)?;
         let custom_builtins = parse_custom_builtins(py, custom_builtins)?;
         builder = apply_fs_config(builder, &files, &real_mounts)?;
+        builder = apply_network_config(builder, network.as_ref());
         let builtin_engine = PyCallbackEngine::new(py)?;
         builder = apply_custom_builtins_to_builder(py, builder, &custom_builtins);
 
@@ -3186,6 +3298,7 @@ impl BashTool {
             builtin_engine,
             files,
             real_mounts,
+            network,
             max_commands,
             max_loop_iterations,
             max_memory,
@@ -3379,6 +3492,8 @@ impl BashTool {
         files=None,
         mounts=None,
         custom_builtins=None,
+        *,
+        network=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_snapshot(
@@ -3393,6 +3508,7 @@ impl BashTool {
         files: Option<&Bound<'_, PyDict>>,
         mounts: Option<&Bound<'_, PyList>>,
         custom_builtins: Option<&Bound<'_, PyDict>>,
+        network: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let tool = Self::new(
             py,
@@ -3405,6 +3521,7 @@ impl BashTool {
             files,
             mounts,
             custom_builtins,
+            network,
         )?;
         tool.restore_snapshot(py, data)?;
         Ok(tool)
