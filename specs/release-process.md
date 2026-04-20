@@ -249,7 +249,7 @@ The build script updates `package.json` automatically when the Cargo version cha
 | macOS | aarch64 (Apple Silicon) | universal |
 | Windows | x86_64 | MSVC |
 
-Python versions: 3.9, 3.10, 3.11, 3.12, 3.13
+Python versions: 3.9, 3.10, 3.11, 3.12, 3.13, 3.14
 
 #### Version sync
 

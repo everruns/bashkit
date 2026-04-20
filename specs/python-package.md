@@ -49,7 +49,7 @@ The version chain: `Cargo.toml` (workspace) → `Cargo.toml` (bashkit-python, in
 
 ### Python Versions
 
-3.9, 3.10, 3.11, 3.12, 3.13
+3.9, 3.10, 3.11, 3.12, 3.13, 3.14
 
 ### Wheel Matrix
 
@@ -63,7 +63,7 @@ The version chain: `Cargo.toml` (workspace) → `Cargo.toml` (bashkit-python, in
 | macOS | aarch64 | — | macos-latest (native) |
 | Windows | x86_64 | MSVC | windows-latest |
 
-Total: ~35 wheels (7 platforms × 5 Python versions).
+Total: ~42 wheels (7 platforms × 6 Python versions).
 
 ## PyPI Publishing
 
@@ -74,7 +74,7 @@ File: `.github/workflows/publish-python.yml`
 ```
 GitHub Release published
     ├── build-sdist     (source distribution)
-    ├── build           (7 platform variants × 5 Python versions)
+    ├── build           (7 platform variants × 6 Python versions)
     ├── inspect         (twine check all artifacts)
     ├── test-builds     (smoke test on Linux/macOS/Windows)
     └── publish         (uv publish → PyPI via OIDC)
@@ -279,7 +279,7 @@ Runs on push to main and PRs (path-filtered to `crates/bashkit-python/`,
 ```
 PR / push to main
     ├── lint          (ruff check + ruff format --check)
-    ├── test          (maturin develop + pytest, Python 3.9/3.12/3.13)
+    ├── test          (maturin develop + pytest, Python 3.9/3.12/3.13/3.14)
     ├── examples      (build wheel + run crates/bashkit-python/examples/
     │                  + execute examples/*.ipynb via nbconvert)
     ├── build-wheel   (maturin build + twine check)

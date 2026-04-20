@@ -19,7 +19,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  PYTHON_VERSIONS: "3.9 3.10 3.11 3.12 3.13"
+  PYTHON_VERSIONS: "3.9 3.10 3.11 3.12 3.13 3.14"
 
 jobs:
   # Source distribution (platform-independent)
@@ -127,9 +127,9 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: uvx twine check dist/*
 
-  # Smoke-test wheels on each OS
+  # Smoke-test wheels on each OS, including the new cp314 artifacts
   test-builds:
-    name: Test wheel on ${{ matrix.os }}
+    name: Test wheel on ${{ matrix.os }} (Python ${{ matrix.python-version }})
     needs: [build]
     strategy:
       fail-fast: false
@@ -137,15 +137,27 @@ jobs:
         include:
           - os: linux
             runs-on: ubuntu-latest
+            python-version: "3.12"
+          - os: linux
+            runs-on: ubuntu-latest
+            python-version: "3.14"
           - os: macos
             runs-on: macos-latest
+            python-version: "3.12"
+          - os: macos
+            runs-on: macos-latest
+            python-version: "3.14"
           - os: windows
             runs-on: windows-latest
+            python-version: "3.12"
+          - os: windows
+            runs-on: windows-latest
+            python-version: "3.14"
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - uses: actions/download-artifact@v8
         with:
