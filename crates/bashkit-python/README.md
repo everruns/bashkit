@@ -467,7 +467,7 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 - Linux: `x86_64`, `aarch64` (glibc and musl wheels)
 - macOS: `x86_64`, `aarch64`
 - Windows: `x86_64`
-- Python: `3.9` through `3.13`
+- Python: `3.9` through `3.14`
 
 ## How It Works
 
