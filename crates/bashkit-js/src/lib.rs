@@ -589,11 +589,12 @@ fn build_async_output_callback(
         // shared callback runtime, then block until JS finishes so callback
         // errors abort execution immediately and chunk ordering stays stable.
         callback_runtime().spawn(async move {
-            let _reentry_scope = OnOutputReentryScope::enter(on_output_reentry_depth);
-            let result: Result<Option<String>, String> = tsfn
-                .call_async((stdout, stderr))
-                .await
-                .map_err(callback_error_reason);
+            let result: Result<Option<String>, String> = {
+                let _reentry_scope = OnOutputReentryScope::enter(on_output_reentry_depth);
+                tsfn.call_async((stdout, stderr))
+                    .await
+                    .map_err(callback_error_reason)
+            };
             let _ = tx.send(result);
         });
 

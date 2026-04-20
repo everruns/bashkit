@@ -108,6 +108,9 @@
     "typescript": "^5.7.0",
     "zod": "^3"
   },
+  "overrides": {
+    "langsmith": "0.5.20"
+  },
   "ava": {
     "extensions": {
       "ts": "module"
