@@ -17,7 +17,7 @@
     "zod": "^3"
   },
   "overrides": {
-    "langsmith": ">=0.4.6",
+    "langsmith": "0.5.20",
     "jsondiffpatch": ">=0.7.2"
   },
   "scripts": {
