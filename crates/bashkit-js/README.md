@@ -145,6 +145,10 @@ bash.mount("/workspace", imported);
 console.log(bash.executeSync("ls /workspace").stdout);
 ```
 
+`toExternal()` / `fromExternal()` exchange a versioned stable ABI handle inside
+the raw N-API external so separate addons do not depend on bashkit's internal
+Rust object layout.
+
 ### Pre-Initialized Files
 
 ```typescript
