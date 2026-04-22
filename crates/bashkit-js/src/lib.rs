@@ -351,11 +351,13 @@ impl JsFileSystem {
         Ok(Self::from_static(fs))
     }
 
-    /// Create a filesystem from an external handle exported by another addon.
-    #[napi(factory)]
-    pub fn from_external(external: Unknown<'_>) -> napi::Result<Self> {
+    /// Internal mutator used by the JS wrapper to avoid a second native class
+    /// factory path for addon interop imports.
+    #[napi(js_name = "__importExternal")]
+    pub fn import_external(&mut self, external: Unknown<'_>) -> napi::Result<()> {
         let fs = import_external_file_system(external)?;
-        Ok(Self::from_static(fs))
+        self.inner = FileSystemHandle::Static(fs);
+        Ok(())
     }
 
     /// Export this filesystem as an external handle for addon interop.
