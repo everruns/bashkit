@@ -24,7 +24,7 @@ use bashkit::{
 use bashkit_fs_interop::{
     BashkitFsAbiHandleV1, BashkitFsAbiOwnedHandleV1, export_filesystem, import_filesystem,
 };
-use napi::bindgen_prelude::{Buffer, JavaScriptClassExt, JsObjectValue, Object};
+use napi::bindgen_prelude::{Buffer, External, JsObjectValue, Object};
 use napi::{Env, JsValue, Unknown};
 use napi_derive::napi;
 use std::collections::HashMap;
@@ -250,14 +250,6 @@ pub struct JsFileSystem {
     inner: FileSystemHandle,
 }
 
-// Decision: exported Node interop values keep the owned ABI handle alive via a
-// normal napi class instance. This avoids raw external-pointer finalize paths
-// in the binding layer while preserving GC-driven lifetime management.
-#[napi(js_name = "__BashkitFileSystemOwner")]
-struct JsFileSystemOwner {
-    _handle: BashkitFsAbiOwnedHandleV1,
-}
-
 impl JsFileSystem {
     fn from_static(fs: Arc<dyn BashFileSystem>) -> Self {
         Self {
@@ -321,8 +313,10 @@ fn create_file_system_external(
     env: Env,
     handle: BashkitFsAbiOwnedHandleV1,
 ) -> napi::Result<Object<'static>> {
+    // Keep the export alive with napi's built-in External wrapper so the
+    // binding does not hand-roll raw external ownership.
     let bytes = encode_file_system_handle(handle.as_handle());
-    let owner = JsFileSystemOwner { _handle: handle }.into_instance(&env)?;
+    let owner = External::new(handle).into_unknown(&env)?;
     let mut external = Object::new(&env)?;
     external.set_named_property("bytes", Buffer::from(bytes))?;
     external.set_named_property("owner", owner)?;
