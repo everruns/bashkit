@@ -145,9 +145,9 @@ bash.mount("/workspace", imported);
 console.log(bash.executeSync("ls /workspace").stdout);
 ```
 
-`toExternal()` / `fromExternal()` exchange a versioned stable ABI handle inside
-the raw N-API external so separate addons do not depend on bashkit's internal
-Rust object layout.
+`toExternal()` / `fromExternal()` exchange an opaque JS value carrying versioned
+stable ABI handle bytes plus an owner token, so separate addons do not depend on
+bashkit's internal Rust object layout.
 
 ### Pre-Initialized Files
 
