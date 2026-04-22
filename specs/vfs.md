@@ -145,14 +145,24 @@ Symlinks are stored but intentionally not followed for security:
 
 ## Binding API Parity
 
-All language bindings must expose the same mount API:
+All language bindings must expose the same filesystem concepts:
 
 ```
 files:  { "/path": "content" }                # text files (writable, in-memory)
 mounts: [{ host_path, vfs_path?, writable? }] # real FS (read-only by default)
+FileSystem()                                  # standalone in-memory filesystem
+FileSystem.real(host_path, writable=false)    # standalone real filesystem
 ```
 
-Runtime methods: `mount(host_path, vfs_path, writable=false)`, `unmount(vfs_path)`.
+Runtime methods:
+- host-path mount: `mount(host_path, vfs_path, writable=false)`
+- filesystem mount: `mount(vfs_path, filesystem)`
+- `unmount(vfs_path)`
+
+Native-extension interop is binding-specific but must preserve bashkit-owned
+filesystem objects when crossing the language runtime boundary:
+- Python: `FileSystem.from_capsule(capsule)`, `FileSystem.to_capsule()`
+- Node.js: `FileSystem.fromExternal(external)`, `FileSystem.toExternal()`
 
 Safety: real mounts are **read-only by default**. Text files are writable (sandboxed).
 
