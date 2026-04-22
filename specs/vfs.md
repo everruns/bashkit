@@ -162,6 +162,12 @@ filesystem objects when crossing the language runtime boundary:
 - Python: `FileSystem.from_capsule(capsule)`, `FileSystem.to_capsule()`
 - Node.js: `FileSystem.fromExternal(external)`, `FileSystem.toExternal()`
 
+Interop contract:
+- The cross-addon payload must be a versioned `repr(C)` handle + vtable
+- Do not expose `Arc<dyn FileSystem>` or any addon-private Rust layout
+- Python capsules and Node externals carry the stable owned handle, then bashkit
+  reconstructs a binding-owned `FileSystem` wrapper on import
+
 Safety: real mounts are **read-only by default**. Text files are writable (sandboxed).
 
 ## Alternatives Considered
