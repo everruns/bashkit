@@ -165,8 +165,10 @@ filesystem objects when crossing the language runtime boundary:
 Interop contract:
 - The cross-addon payload must be a versioned `repr(C)` handle + vtable
 - Do not expose `Arc<dyn FileSystem>` or any addon-private Rust layout
-- Python capsules and Node externals carry the stable owned handle, then bashkit
-  reconstructs a binding-owned `FileSystem` wrapper on import
+- Python capsules carry the stable owned handle directly
+- Node interop values carry stable handle bytes plus an owner token
+- On import, bashkit reconstructs a binding-owned `FileSystem` wrapper from the
+  stable handle payload
 
 Safety: real mounts are **read-only by default**. Text files are writable (sandboxed).
 
