@@ -15,6 +15,7 @@ use bashkit::{
     ShellStateView as RustShellStateView, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
     ToolDef, ToolRequest, async_trait,
 };
+use bashkit_fs_interop::{BashkitFsAbiOwnedHandleV1, export_filesystem, import_owned_filesystem};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -40,7 +41,7 @@ use tokio::sync::{Mutex, oneshot};
 /// Convert serde_json::Value → Py<PyAny>
 const MAX_NESTING_DEPTH: usize = 64;
 const EXTERNAL_HANDLER_REENTRY_ERROR: &str = "external_handler cannot re-enter the same Bash instance; use handler inputs or another Bash instance for live access";
-const FILESYSTEM_CAPSULE_NAME: &std::ffi::CStr = c"bashkit.FileSystem";
+const FILESYSTEM_CAPSULE_NAME: &std::ffi::CStr = c"bashkit.FileSystem.v1";
 
 fn json_to_py(py: Python<'_>, val: &serde_json::Value) -> PyResult<Py<PyAny>> {
     json_to_py_inner(py, val, 0)
@@ -529,10 +530,6 @@ impl FileSystemHandle {
     }
 }
 
-struct ExportedFileSystem {
-    fs: Arc<dyn FileSystem>,
-}
-
 fn reject_external_handler_reentry_depth(
     external_handler_reentry_depth: Option<&Arc<AtomicUsize>>,
 ) -> PyResult<()> {
@@ -989,18 +986,17 @@ impl PyFileSystem {
             .cast::<PyCapsule>()
             .map_err(|_| PyTypeError::new_err("capsule must be a PyCapsule"))?;
         let ptr = capsule.pointer_checked(Some(FILESYSTEM_CAPSULE_NAME))?;
-        let exported = unsafe { &*ptr.as_ptr().cast::<ExportedFileSystem>() };
+        let exported = unsafe { &*ptr.as_ptr().cast::<BashkitFsAbiOwnedHandleV1>() };
+        let fs = import_owned_filesystem(exported)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         let rt = make_runtime()?;
-        Ok(Self::from_static(Arc::clone(&exported.fs), rt))
+        Ok(Self::from_static(fs, rt))
     }
 
     fn to_capsule<'py>(&self, py: Python<'py>) -> PyResult<Py<PyCapsule>> {
         let fs = self.export_fs(py)?;
-        let capsule = PyCapsule::new(
-            py,
-            ExportedFileSystem { fs },
-            Some(FILESYSTEM_CAPSULE_NAME.to_owned()),
-        )?;
+        let exported = export_filesystem(fs).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let capsule = PyCapsule::new(py, exported, Some(FILESYSTEM_CAPSULE_NAME.to_owned()))?;
         Ok(capsule.unbind())
     }
 

@@ -74,12 +74,12 @@ class FileSystem:
     def from_capsule(capsule: Any) -> FileSystem:
         """Create a filesystem from a ``PyCapsule`` exported by a native extension.
 
-        The capsule must wrap a ``bashkit.FileSystem`` handle.
+        The capsule must wrap a ``bashkit.FileSystem.v1`` stable ABI handle.
         """
         ...
 
     def to_capsule(self) -> Any:
-        """Export this filesystem as a ``PyCapsule`` for native extension interop."""
+        """Export this filesystem as a stable-ABI ``PyCapsule`` for native extension interop."""
         ...
 
     def read_file(self, path: str) -> bytes:

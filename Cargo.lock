@@ -394,10 +394,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bashkit-fs-interop"
+version = "0.1.20"
+dependencies = [
+ "bashkit",
+ "tokio",
+]
+
+[[package]]
 name = "bashkit-js"
 version = "0.1.20"
 dependencies = [
  "bashkit",
+ "bashkit-fs-interop",
  "napi",
  "napi-build",
  "napi-derive",
@@ -411,6 +420,7 @@ name = "bashkit-python"
 version = "0.1.20"
 dependencies = [
  "bashkit",
+ "bashkit-fs-interop",
  "num-bigint",
  "pyo3",
  "pyo3-async-runtimes",
