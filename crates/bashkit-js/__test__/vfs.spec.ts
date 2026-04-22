@@ -1,5 +1,5 @@
 import test from "ava";
-import { Bash } from "../wrapper.js";
+import { Bash, FileSystem } from "../wrapper.js";
 
 // ============================================================================
 // VFS — readFile / writeFile
@@ -142,4 +142,20 @@ test("reset clears VFS state", (t) => {
   t.true(bash.exists("/tmp/persist.txt"));
   bash.reset();
   t.false(bash.exists("/tmp/persist.txt"));
+});
+
+test("filesystem external roundtrip mounts into bash", (t) => {
+  const source = new FileSystem();
+  source.mkdir("/org/repo", true);
+  source.writeFile("/org/repo/README.md", "hello from external\n");
+
+  const external = source.toExternal();
+  const imported = FileSystem.fromExternal(external);
+
+  const bash = new Bash();
+  bash.mount("/workspace", imported);
+
+  const result = bash.executeSync("cat /workspace/org/repo/README.md");
+  t.is(result.exitCode, 0);
+  t.is(result.stdout, "hello from external\n");
 });
