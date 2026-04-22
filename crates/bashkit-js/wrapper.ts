@@ -358,7 +358,9 @@ export class FileSystem {
   }
 
   static fromExternal(external: unknown): FileSystem {
-    return FileSystem.fromNative(NativeFileSystem.fromExternal(external as any));
+    const nativeFs = new NativeFileSystem();
+    nativeFs.__importExternal(external as any);
+    return FileSystem.fromNative(nativeFs);
   }
 
   toExternal(): unknown {
