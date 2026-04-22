@@ -24,7 +24,7 @@ use bashkit::{
 use bashkit_fs_interop::{
     BashkitFsAbiHandleV1, BashkitFsAbiOwnedHandleV1, export_filesystem, import_filesystem,
 };
-use napi::bindgen_prelude::{Buffer, JsObjectValue, Object, sys};
+use napi::bindgen_prelude::{Buffer, JavaScriptClassExt, JsObjectValue, Object};
 use napi::{Env, JsValue, Unknown};
 use napi_derive::napi;
 use std::collections::HashMap;
@@ -250,6 +250,14 @@ pub struct JsFileSystem {
     inner: FileSystemHandle,
 }
 
+// Decision: exported Node interop values keep the owned ABI handle alive via a
+// normal napi class instance. This avoids raw external-pointer finalize paths
+// in the binding layer while preserving GC-driven lifetime management.
+#[napi(js_name = "__BashkitFileSystemOwner")]
+struct JsFileSystemOwner {
+    _handle: BashkitFsAbiOwnedHandleV1,
+}
+
 impl JsFileSystem {
     fn from_static(fs: Arc<dyn BashFileSystem>) -> Self {
         Self {
@@ -281,21 +289,6 @@ impl JsFileSystem {
     }
 }
 
-unsafe extern "C" fn finalize_file_system_external(
-    _env: sys::napi_env,
-    finalize_data: *mut std::ffi::c_void,
-    _hint: *mut std::ffi::c_void,
-) {
-    if finalize_data.is_null() {
-        return;
-    }
-    unsafe {
-        drop(Box::from_raw(
-            finalize_data.cast::<BashkitFsAbiOwnedHandleV1>(),
-        ));
-    }
-}
-
 fn encode_file_system_handle(handle: &BashkitFsAbiHandleV1) -> Vec<u8> {
     unsafe {
         slice::from_raw_parts(
@@ -324,38 +317,12 @@ fn decode_file_system_handle(bytes: &[u8]) -> napi::Result<BashkitFsAbiHandleV1>
     }
 }
 
-fn create_file_system_owner<'env>(
-    env: Env,
-    handle: BashkitFsAbiOwnedHandleV1,
-) -> napi::Result<Unknown<'env>> {
-    let raw_handle = Box::into_raw(Box::new(handle));
-    let mut raw_value = ptr::null_mut();
-    let status = unsafe {
-        sys::napi_create_external(
-            env.raw(),
-            raw_handle.cast(),
-            Some(finalize_file_system_external),
-            ptr::null_mut(),
-            &mut raw_value,
-        )
-    };
-    if status != sys::Status::napi_ok {
-        unsafe {
-            drop(Box::from_raw(raw_handle));
-        }
-        return Err(napi::Error::from_reason(
-            "failed to create filesystem external".to_string(),
-        ));
-    }
-    Ok(unsafe { Unknown::from_raw_unchecked(env.raw(), raw_value) })
-}
-
 fn create_file_system_external(
     env: Env,
     handle: BashkitFsAbiOwnedHandleV1,
 ) -> napi::Result<Object<'static>> {
     let bytes = encode_file_system_handle(handle.as_handle());
-    let owner = create_file_system_owner(env, handle)?;
+    let owner = JsFileSystemOwner { _handle: handle }.into_instance(&env)?;
     let mut external = Object::new(&env)?;
     external.set_named_property("bytes", Buffer::from(bytes))?;
     external.set_named_property("owner", owner)?;
