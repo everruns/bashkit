@@ -3749,19 +3749,25 @@ impl Interpreter {
                         }
                     }
 
-                    // Resolve nameref for array assignments
+                    // Resolve nameref for array assignments and apply
+                    // max_array_entries accounting over the whole replacement.
                     let arr_name = self.resolve_nameref(&assignment.name).to_string();
-                    let arr = self.arrays.entry(arr_name).or_default();
-                    let start_idx = if assignment.append {
-                        arr.keys().max().map(|k| k + 1).unwrap_or(0)
+                    let mut next_arr = if assignment.append {
+                        self.arrays.get(&arr_name).cloned().unwrap_or_default()
                     } else {
-                        arr.clear();
+                        HashMap::new()
+                    };
+                    let start_idx = if assignment.append {
+                        next_arr.keys().max().map(|k| k + 1).unwrap_or(0)
+                    } else {
                         0
                     };
 
                     for (idx, field) in (start_idx..).zip(all_fields) {
-                        arr.insert(idx, field);
+                        next_arr.insert(idx, field);
                     }
+
+                    let _ = self.insert_array_checked(arr_name, next_arr);
                 }
             }
         }
