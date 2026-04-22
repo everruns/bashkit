@@ -245,12 +245,18 @@ enum FileSystemHandle {
     Live(Arc<SharedState>),
 }
 
-#[napi(js_name = "FileSystem")]
-pub struct JsFileSystem {
+// Decision: keep filesystem handles as opaque `External<T>` values in Node.
+// The public JS `FileSystem` class lives in `wrapper.ts`; native bindings only
+// expose module functions over this hidden state.
+pub struct NativeFileSystemState {
     inner: FileSystemHandle,
 }
 
-impl JsFileSystem {
+impl NativeFileSystemState {
+    fn new() -> Self {
+        Self::from_static(Arc::new(InMemoryFs::new()))
+    }
+
     fn from_static(fs: Arc<dyn BashFileSystem>) -> Self {
         Self {
             inner: FileSystemHandle::Static(fs),
@@ -330,16 +336,8 @@ fn import_external_file_system(external: Unknown<'_>) -> napi::Result<Arc<dyn Ba
     import_filesystem(&handle).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
-#[napi]
-impl JsFileSystem {
-    #[napi(constructor)]
-    pub fn new() -> Self {
-        Self::from_static(Arc::new(InMemoryFs::new()))
-    }
-
-    /// Create a filesystem backed by a real host directory.
-    #[napi(factory)]
-    pub fn real(host_path: String, writable: Option<bool>) -> napi::Result<Self> {
+impl NativeFileSystemState {
+    fn real(host_path: String, writable: Option<bool>) -> napi::Result<Self> {
         let mode = if writable.unwrap_or(false) {
             RealFsMode::ReadWrite
         } else {
@@ -351,26 +349,18 @@ impl JsFileSystem {
         Ok(Self::from_static(fs))
     }
 
-    /// Internal mutator used by the JS wrapper to avoid a second native class
-    /// factory path for addon interop imports.
-    #[napi(js_name = "__importExternal")]
-    pub fn import_external(&mut self, external: Unknown<'_>) -> napi::Result<()> {
+    fn import_external(external: Unknown<'_>) -> napi::Result<Self> {
         let fs = import_external_file_system(external)?;
-        self.inner = FileSystemHandle::Static(fs);
-        Ok(())
+        Ok(Self::from_static(fs))
     }
 
-    /// Export this filesystem as an external handle for addon interop.
-    #[napi]
-    pub fn to_external(&self, env: Env) -> napi::Result<Object<'static>> {
+    fn to_external(&self, env: Env) -> napi::Result<Object<'static>> {
         let fs = self.export_fs()?;
         let handle = export_filesystem(fs).map_err(|e| napi::Error::from_reason(e.to_string()))?;
         create_file_system_external(env, handle)
     }
 
-    /// Read a file as UTF-8 string.
-    #[napi]
-    pub fn read_file(&self, path: String) -> napi::Result<String> {
+    fn read_file(&self, path: String) -> napi::Result<String> {
         self.with_fs(|fs| async move {
             let bytes = fs
                 .read_file(Path::new(&path))
@@ -381,9 +371,7 @@ impl JsFileSystem {
         })
     }
 
-    /// Write string content to a file (creates or replaces).
-    #[napi]
-    pub fn write_file(&self, path: String, content: String) -> napi::Result<()> {
+    fn write_file(&self, path: String, content: String) -> napi::Result<()> {
         self.with_fs(|fs| async move {
             fs.write_file(Path::new(&path), content.as_bytes())
                 .await
@@ -391,9 +379,7 @@ impl JsFileSystem {
         })
     }
 
-    /// Append string content to a file.
-    #[napi]
-    pub fn append_file(&self, path: String, content: String) -> napi::Result<()> {
+    fn append_file(&self, path: String, content: String) -> napi::Result<()> {
         self.with_fs(|fs| async move {
             fs.append_file(Path::new(&path), content.as_bytes())
                 .await
@@ -401,9 +387,7 @@ impl JsFileSystem {
         })
     }
 
-    /// Create a directory. If `recursive` is true, creates parent directories.
-    #[napi]
-    pub fn mkdir(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
+    fn mkdir(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
         self.with_fs(|fs| async move {
             fs.mkdir(Path::new(&path), recursive.unwrap_or(false))
                 .await
@@ -411,9 +395,7 @@ impl JsFileSystem {
         })
     }
 
-    /// Remove a file or directory. If `recursive` is true, removes contents.
-    #[napi]
-    pub fn remove(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
+    fn remove(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
         self.with_fs(|fs| async move {
             fs.remove(Path::new(&path), recursive.unwrap_or(false))
                 .await
@@ -421,9 +403,7 @@ impl JsFileSystem {
         })
     }
 
-    /// Get metadata for a path.
-    #[napi]
-    pub fn stat(&self, path: String) -> napi::Result<FileMetadata> {
+    fn stat(&self, path: String) -> napi::Result<FileMetadata> {
         self.with_fs(|fs| async move {
             let meta = fs
                 .stat(Path::new(&path))
@@ -433,9 +413,7 @@ impl JsFileSystem {
         })
     }
 
-    /// Check if a path exists.
-    #[napi]
-    pub fn exists(&self, path: String) -> napi::Result<bool> {
+    fn exists(&self, path: String) -> napi::Result<bool> {
         self.with_fs(|fs| async move {
             fs.exists(Path::new(&path))
                 .await
@@ -443,9 +421,7 @@ impl JsFileSystem {
         })
     }
 
-    /// List directory entries with metadata.
-    #[napi]
-    pub fn read_dir(&self, path: String) -> napi::Result<Vec<JsDirEntry>> {
+    fn read_dir(&self, path: String) -> napi::Result<Vec<JsDirEntry>> {
         self.with_fs(|fs| async move {
             let entries = fs
                 .read_dir(Path::new(&path))
@@ -461,9 +437,7 @@ impl JsFileSystem {
         })
     }
 
-    /// Create a symbolic link.
-    #[napi]
-    pub fn symlink(&self, target: String, link: String) -> napi::Result<()> {
+    fn symlink(&self, target: String, link: String) -> napi::Result<()> {
         self.with_fs(|fs| async move {
             fs.symlink(Path::new(&target), Path::new(&link))
                 .await
@@ -471,9 +445,7 @@ impl JsFileSystem {
         })
     }
 
-    /// Read the target of a symbolic link.
-    #[napi]
-    pub fn read_link(&self, path: String) -> napi::Result<String> {
+    fn read_link(&self, path: String) -> napi::Result<String> {
         self.with_fs(|fs| async move {
             let target = fs
                 .read_link(Path::new(&path))
@@ -483,9 +455,7 @@ impl JsFileSystem {
         })
     }
 
-    /// Change file permissions.
-    #[napi]
-    pub fn chmod(&self, path: String, mode: u32) -> napi::Result<()> {
+    fn chmod(&self, path: String, mode: u32) -> napi::Result<()> {
         self.with_fs(|fs| async move {
             fs.chmod(Path::new(&path), mode)
                 .await
@@ -493,9 +463,7 @@ impl JsFileSystem {
         })
     }
 
-    /// Rename/move a file or directory.
-    #[napi]
-    pub fn rename(&self, from_path: String, to_path: String) -> napi::Result<()> {
+    fn rename(&self, from_path: String, to_path: String) -> napi::Result<()> {
         self.with_fs(|fs| async move {
             fs.rename(Path::new(&from_path), Path::new(&to_path))
                 .await
@@ -503,9 +471,7 @@ impl JsFileSystem {
         })
     }
 
-    /// Copy a file.
-    #[napi]
-    pub fn copy(&self, from_path: String, to_path: String) -> napi::Result<()> {
+    fn copy(&self, from_path: String, to_path: String) -> napi::Result<()> {
         self.with_fs(|fs| async move {
             fs.copy(Path::new(&from_path), Path::new(&to_path))
                 .await
@@ -514,10 +480,152 @@ impl JsFileSystem {
     }
 }
 
-impl Default for JsFileSystem {
+impl Default for NativeFileSystemState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[napi(js_name = "__createFileSystem")]
+pub fn create_file_system() -> External<NativeFileSystemState> {
+    External::new(NativeFileSystemState::new())
+}
+
+#[napi(js_name = "__realFileSystem")]
+pub fn real_file_system(
+    host_path: String,
+    writable: Option<bool>,
+) -> napi::Result<External<NativeFileSystemState>> {
+    Ok(External::new(NativeFileSystemState::real(
+        host_path, writable,
+    )?))
+}
+
+#[napi(js_name = "__importFileSystem")]
+pub fn import_file_system(external: Unknown<'_>) -> napi::Result<External<NativeFileSystemState>> {
+    Ok(External::new(NativeFileSystemState::import_external(
+        external,
+    )?))
+}
+
+#[napi(js_name = "__fileSystemToExternal")]
+pub fn file_system_to_external(
+    fs: &External<NativeFileSystemState>,
+    env: Env,
+) -> napi::Result<Object<'static>> {
+    fs.to_external(env)
+}
+
+#[napi(js_name = "__fileSystemReadFile")]
+pub fn file_system_read_file(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+) -> napi::Result<String> {
+    fs.read_file(path)
+}
+
+#[napi(js_name = "__fileSystemWriteFile")]
+pub fn file_system_write_file(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+    content: String,
+) -> napi::Result<()> {
+    fs.write_file(path, content)
+}
+
+#[napi(js_name = "__fileSystemAppendFile")]
+pub fn file_system_append_file(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+    content: String,
+) -> napi::Result<()> {
+    fs.append_file(path, content)
+}
+
+#[napi(js_name = "__fileSystemMkdir")]
+pub fn file_system_mkdir(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+    recursive: Option<bool>,
+) -> napi::Result<()> {
+    fs.mkdir(path, recursive)
+}
+
+#[napi(js_name = "__fileSystemRemove")]
+pub fn file_system_remove(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+    recursive: Option<bool>,
+) -> napi::Result<()> {
+    fs.remove(path, recursive)
+}
+
+#[napi(js_name = "__fileSystemStat")]
+pub fn file_system_stat(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+) -> napi::Result<FileMetadata> {
+    fs.stat(path)
+}
+
+#[napi(js_name = "__fileSystemExists")]
+pub fn file_system_exists(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+) -> napi::Result<bool> {
+    fs.exists(path)
+}
+
+#[napi(js_name = "__fileSystemReadDir")]
+pub fn file_system_read_dir(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+) -> napi::Result<Vec<JsDirEntry>> {
+    fs.read_dir(path)
+}
+
+#[napi(js_name = "__fileSystemSymlink")]
+pub fn file_system_symlink(
+    fs: &External<NativeFileSystemState>,
+    target: String,
+    link: String,
+) -> napi::Result<()> {
+    fs.symlink(target, link)
+}
+
+#[napi(js_name = "__fileSystemReadLink")]
+pub fn file_system_read_link(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+) -> napi::Result<String> {
+    fs.read_link(path)
+}
+
+#[napi(js_name = "__fileSystemChmod")]
+pub fn file_system_chmod(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+    mode: u32,
+) -> napi::Result<()> {
+    fs.chmod(path, mode)
+}
+
+#[napi(js_name = "__fileSystemRename")]
+pub fn file_system_rename(
+    fs: &External<NativeFileSystemState>,
+    from_path: String,
+    to_path: String,
+) -> napi::Result<()> {
+    fs.rename(from_path, to_path)
+}
+
+#[napi(js_name = "__fileSystemCopy")]
+pub fn file_system_copy(
+    fs: &External<NativeFileSystemState>,
+    from_path: String,
+    to_path: String,
+) -> napi::Result<()> {
+    fs.copy(from_path, to_path)
 }
 
 // ============================================================================
@@ -1353,9 +1461,11 @@ impl Bash {
 
     /// Get a `JsFileSystem` handle for direct VFS operations.
     #[napi]
-    pub fn fs(&self) -> napi::Result<JsFileSystem> {
+    pub fn fs(&self) -> napi::Result<External<NativeFileSystemState>> {
         reject_on_output_reentry(&self.state)?;
-        Ok(JsFileSystem::from_live(self.state.clone()))
+        Ok(External::new(NativeFileSystemState::from_live(
+            self.state.clone(),
+        )))
     }
 }
 
@@ -1839,9 +1949,11 @@ impl BashTool {
 
     /// Get a `JsFileSystem` handle for direct VFS operations.
     #[napi]
-    pub fn fs(&self) -> napi::Result<JsFileSystem> {
+    pub fn fs(&self) -> napi::Result<External<NativeFileSystemState>> {
         reject_on_output_reentry(&self.state)?;
-        Ok(JsFileSystem::from_live(self.state.clone()))
+        Ok(External::new(NativeFileSystemState::from_live(
+            self.state.clone(),
+        )))
     }
 }
 
