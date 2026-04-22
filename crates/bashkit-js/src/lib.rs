@@ -21,14 +21,18 @@ use bashkit::{
     ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
     ToolDef, ToolRequest,
 };
-use bashkit_fs_interop::{BashkitFsAbiOwnedHandleV1, export_filesystem, import_owned_filesystem};
-use napi::bindgen_prelude::sys;
-use napi::{Env, JsExternal, JsValue, Unknown};
+use bashkit_fs_interop::{
+    BashkitFsAbiHandleV1, BashkitFsAbiOwnedHandleV1, export_filesystem, import_filesystem,
+};
+use napi::bindgen_prelude::{Buffer, JsObjectValue, Object, sys};
+use napi::{Env, JsValue, Unknown};
 use napi_derive::napi;
 use std::collections::HashMap;
+use std::mem::{MaybeUninit, size_of};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::ptr;
+use std::slice;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
@@ -292,7 +296,35 @@ unsafe extern "C" fn finalize_file_system_external(
     }
 }
 
-fn create_file_system_external<'env>(
+fn encode_file_system_handle(handle: &BashkitFsAbiHandleV1) -> Vec<u8> {
+    unsafe {
+        slice::from_raw_parts(
+            (handle as *const BashkitFsAbiHandleV1).cast::<u8>(),
+            size_of::<BashkitFsAbiHandleV1>(),
+        )
+        .to_vec()
+    }
+}
+
+fn decode_file_system_handle(bytes: &[u8]) -> napi::Result<BashkitFsAbiHandleV1> {
+    if bytes.len() != size_of::<BashkitFsAbiHandleV1>() {
+        return Err(napi::Error::from_reason(format!(
+            "filesystem handle must be {} bytes",
+            size_of::<BashkitFsAbiHandleV1>()
+        )));
+    }
+    let mut handle = MaybeUninit::<BashkitFsAbiHandleV1>::uninit();
+    unsafe {
+        ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            handle.as_mut_ptr().cast::<u8>(),
+            bytes.len(),
+        );
+        Ok(handle.assume_init())
+    }
+}
+
+fn create_file_system_owner<'env>(
     env: Env,
     handle: BashkitFsAbiOwnedHandleV1,
 ) -> napi::Result<Unknown<'env>> {
@@ -318,27 +350,23 @@ fn create_file_system_external<'env>(
     Ok(unsafe { Unknown::from_raw_unchecked(env.raw(), raw_value) })
 }
 
-fn handle_from_external(
-    external: JsExternal<'_>,
-) -> napi::Result<&'static BashkitFsAbiOwnedHandleV1> {
-    let value = external.value();
-    let mut raw_handle = ptr::null_mut();
-    napi::check_status!(
-        unsafe { sys::napi_get_value_external(value.env, value.value, &mut raw_handle) },
-        "Failed to get filesystem external value"
-    )?;
-    if raw_handle.is_null() {
-        return Err(napi::Error::from_reason(
-            "filesystem external handle is null".to_string(),
-        ));
-    }
-    Ok(unsafe { &*raw_handle.cast::<BashkitFsAbiOwnedHandleV1>() })
+fn create_file_system_external(
+    env: Env,
+    handle: BashkitFsAbiOwnedHandleV1,
+) -> napi::Result<Object<'static>> {
+    let bytes = encode_file_system_handle(handle.as_handle());
+    let owner = create_file_system_owner(env, handle)?;
+    let mut external = Object::new(&env)?;
+    external.set_named_property("bytes", Buffer::from(bytes))?;
+    external.set_named_property("owner", owner)?;
+    Ok(external)
 }
 
 fn import_external_file_system(external: Unknown<'_>) -> napi::Result<Arc<dyn BashFileSystem>> {
-    let external = unsafe { external.cast::<JsExternal<'_>>() }?;
-    let handle = handle_from_external(external)?;
-    import_owned_filesystem(handle).map_err(|e| napi::Error::from_reason(e.to_string()))
+    let external = unsafe { external.cast::<Object<'_>>() }?;
+    let bytes: Buffer = external.get_named_property("bytes")?;
+    let handle = decode_file_system_handle(bytes.as_ref())?;
+    import_filesystem(&handle).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi]
@@ -371,7 +399,7 @@ impl JsFileSystem {
 
     /// Export this filesystem as an external handle for addon interop.
     #[napi]
-    pub fn to_external<'env>(&self, env: Env) -> napi::Result<Unknown<'env>> {
+    pub fn to_external(&self, env: Env) -> napi::Result<Object<'static>> {
         let fs = self.export_fs()?;
         let handle = export_filesystem(fs).map_err(|e| napi::Error::from_reason(e.to_string()))?;
         create_file_system_external(env, handle)

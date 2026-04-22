@@ -728,7 +728,7 @@ fn bash_error_to_io(err: BashError) -> IoError {
     match err {
         BashError::Io(io) => io,
         BashError::Cancelled => IoError::new(ErrorKind::Interrupted, "execution cancelled"),
-        other => IoError::new(ErrorKind::Other, other.to_string()),
+        other => IoError::other(other.to_string()),
     }
 }
 
