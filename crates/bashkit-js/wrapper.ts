@@ -14,8 +14,79 @@ const native = require("./index.cjs");
 const NativeBash: typeof NativeBashType = native.Bash;
 const NativeBashTool: typeof NativeBashToolType = native.BashTool;
 const NativeScriptedTool: typeof NativeScriptedToolType = native.ScriptedTool;
-const NativeFileSystem: any = native.FileSystem ?? native.JsFileSystem;
 const nativeGetVersion: () => string = native.getVersion;
+const nativeCreateFileSystem: () => any = native.__createFileSystem;
+const nativeRealFileSystem: (
+  hostPath: string,
+  writable?: boolean,
+) => any = native.__realFileSystem;
+const nativeImportFileSystem: (external: unknown) => any =
+  native.__importFileSystem;
+const nativeFileSystemToExternal: (fs: any) => unknown =
+  native.__fileSystemToExternal;
+const nativeFileSystemReadFile: (fs: any, path: string) => string =
+  native.__fileSystemReadFile;
+const nativeFileSystemWriteFile: (
+  fs: any,
+  path: string,
+  content: string,
+) => void = native.__fileSystemWriteFile;
+const nativeFileSystemAppendFile: (
+  fs: any,
+  path: string,
+  content: string,
+) => void = native.__fileSystemAppendFile;
+const nativeFileSystemMkdir: (
+  fs: any,
+  path: string,
+  recursive?: boolean,
+) => void = native.__fileSystemMkdir;
+const nativeFileSystemRemove: (
+  fs: any,
+  path: string,
+  recursive?: boolean,
+) => void = native.__fileSystemRemove;
+const nativeFileSystemStat: (fs: any, path: string) => {
+  fileType: string;
+  size: number;
+  mode: number;
+  modified: number;
+  created: number;
+} = native.__fileSystemStat;
+const nativeFileSystemExists: (fs: any, path: string) => boolean =
+  native.__fileSystemExists;
+const nativeFileSystemReadDir: (fs: any, path: string) => Array<{
+  name: string;
+  metadata: {
+    fileType: string;
+    size: number;
+    mode: number;
+    modified: number;
+    created: number;
+  };
+}> = native.__fileSystemReadDir;
+const nativeFileSystemSymlink: (
+  fs: any,
+  target: string,
+  link: string,
+) => void = native.__fileSystemSymlink;
+const nativeFileSystemReadLink: (fs: any, path: string) => string =
+  native.__fileSystemReadLink;
+const nativeFileSystemChmod: (
+  fs: any,
+  path: string,
+  mode: number,
+) => void = native.__fileSystemChmod;
+const nativeFileSystemRename: (
+  fs: any,
+  fromPath: string,
+  toPath: string,
+) => void = native.__fileSystemRename;
+const nativeFileSystemCopy: (
+  fs: any,
+  fromPath: string,
+  toPath: string,
+) => void = native.__fileSystemCopy;
 
 export type { ExecResult };
 
@@ -354,7 +425,7 @@ export class FileSystem {
   private native: any;
 
   constructor() {
-    this.native = new NativeFileSystem();
+    this.native = nativeCreateFileSystem();
   }
 
   static fromNative(nativeFs: any): FileSystem {
@@ -364,37 +435,35 @@ export class FileSystem {
   }
 
   static real(hostPath: string, writable = false): FileSystem {
-    return FileSystem.fromNative(NativeFileSystem.real(hostPath, writable));
+    return FileSystem.fromNative(nativeRealFileSystem(hostPath, writable));
   }
 
   static fromExternal(external: unknown): FileSystem {
-    const nativeFs = new NativeFileSystem();
-    nativeFs.__importExternal(external as any);
-    return FileSystem.fromNative(nativeFs);
+    return FileSystem.fromNative(nativeImportFileSystem(external));
   }
 
   toExternal(): unknown {
-    return this.native.toExternal();
+    return nativeFileSystemToExternal(this.native);
   }
 
   readFile(path: string): string {
-    return this.native.readFile(path);
+    return nativeFileSystemReadFile(this.native, path);
   }
 
   writeFile(path: string, content: string): void {
-    this.native.writeFile(path, content);
+    nativeFileSystemWriteFile(this.native, path, content);
   }
 
   appendFile(path: string, content: string): void {
-    this.native.appendFile(path, content);
+    nativeFileSystemAppendFile(this.native, path, content);
   }
 
   mkdir(path: string, recursive?: boolean): void {
-    this.native.mkdir(path, recursive);
+    nativeFileSystemMkdir(this.native, path, recursive);
   }
 
   remove(path: string, recursive?: boolean): void {
-    this.native.remove(path, recursive);
+    nativeFileSystemRemove(this.native, path, recursive);
   }
 
   stat(path: string): {
@@ -404,11 +473,11 @@ export class FileSystem {
     modified: number;
     created: number;
   } {
-    return this.native.stat(path);
+    return nativeFileSystemStat(this.native, path);
   }
 
   exists(path: string): boolean {
-    return this.native.exists(path);
+    return nativeFileSystemExists(this.native, path);
   }
 
   readDir(path: string): Array<{
@@ -421,27 +490,27 @@ export class FileSystem {
       created: number;
     };
   }> {
-    return this.native.readDir(path);
+    return nativeFileSystemReadDir(this.native, path);
   }
 
   symlink(target: string, link: string): void {
-    this.native.symlink(target, link);
+    nativeFileSystemSymlink(this.native, target, link);
   }
 
   readLink(path: string): string {
-    return this.native.readLink(path);
+    return nativeFileSystemReadLink(this.native, path);
   }
 
   chmod(path: string, mode: number): void {
-    this.native.chmod(path, mode);
+    nativeFileSystemChmod(this.native, path, mode);
   }
 
   rename(fromPath: string, toPath: string): void {
-    this.native.rename(fromPath, toPath);
+    nativeFileSystemRename(this.native, fromPath, toPath);
   }
 
   copy(fromPath: string, toPath: string): void {
-    this.native.copy(fromPath, toPath);
+    nativeFileSystemCopy(this.native, fromPath, toPath);
   }
 }
 
