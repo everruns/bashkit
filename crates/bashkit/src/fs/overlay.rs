@@ -316,9 +316,14 @@ impl OverlayFs {
         if let Ok(entries) = self.lower.read_dir(dir).await {
             for entry in entries {
                 let child = dir.join(&entry.name);
+                if self.is_whiteout(&child) {
+                    continue;
+                }
                 if let Ok(meta) = self.lower.stat(&child).await {
                     match meta.file_type {
-                        FileType::File => self.hide_lower_file(meta.size),
+                        FileType::File if !self.upper.exists(&child).await.unwrap_or(false) => {
+                            self.hide_lower_file(meta.size);
+                        }
                         FileType::Directory => {
                             self.hide_lower_dir();
                             // Recurse into subdirectories
@@ -1440,6 +1445,43 @@ mod tests {
             after.file_count,
             before.file_count - 2,
             "should deduct all child file counts"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_recursive_delete_skips_already_hidden_children() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower.mkdir(Path::new("/dir"), true).await.unwrap();
+        lower
+            .write_file(Path::new("/dir/a"), &[b'a'; 10])
+            .await
+            .unwrap();
+        lower
+            .write_file(Path::new("/dir/b"), &[b'b'; 20])
+            .await
+            .unwrap();
+        lower
+            .write_file(Path::new("/keep"), &[b'k'; 50])
+            .await
+            .unwrap();
+
+        let probe = OverlayFs::new(lower.clone());
+        let base = probe.usage();
+        let limits = FsLimits::new()
+            .max_total_bytes(base.total_bytes - 25)
+            .max_file_count(base.file_count + 10)
+            .max_dir_count(base.dir_count + 10);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        // First remove a child, then recursively remove parent.
+        // Child must not be deducted twice from lower_hidden.
+        overlay.remove(Path::new("/dir/a"), false).await.unwrap();
+        overlay.remove(Path::new("/dir"), true).await.unwrap();
+
+        let result = overlay.write_file(Path::new("/new.txt"), &[b'n'; 10]).await;
+        assert!(
+            result.is_err(),
+            "write should fail: recursive delete must not undercount usage"
         );
     }
 
