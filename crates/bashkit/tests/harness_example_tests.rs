@@ -97,3 +97,40 @@ fn harness_example_fails_when_bashkit_prints_error_output() {
         String::from_utf8_lossy(&output.stdout)
     );
 }
+
+#[test]
+fn harness_example_skips_when_openai_quota_is_exhausted() {
+    let temp = tempfile::tempdir().unwrap();
+    let harness_dir = temp.path().join("harness");
+    let work_dir = temp.path().join("work");
+    let fake_bashkit = temp.path().join("fake-bashkit");
+
+    fs::create_dir_all(harness_dir.join("bin")).unwrap();
+    fs::create_dir_all(&work_dir).unwrap();
+
+    write_executable(
+        &fake_bashkit,
+        "#!/usr/bin/env bash\nset -euo pipefail\ncat <<'EOF'\nsession: /work/.harness/sessions/20260423-030213-1/~}\nerror: openai API error: You exceeded your current quota, please check your plan and billing details.\nprovider: openai\nmodel: gpt-4o\nEOF\nexit 0\n",
+    );
+
+    let output = Command::new("bash")
+        .arg(example_script())
+        .env("BASHKIT", &fake_bashkit)
+        .env("HARNESS_DIR", &harness_dir)
+        .env("WORK_DIR", &work_dir)
+        .env("OPENAI_API_KEY", "dummy")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Skipping example"),
+        "stdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
