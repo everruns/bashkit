@@ -9650,6 +9650,11 @@ impl Interpreter {
     }
 
     async fn run_err_trap(&mut self, stdout: &mut String, stderr: &mut String) {
+        // THREAT[TM-DOS-035]: Suppress ERR trap re-entrancy while executing trap
+        // handlers to prevent recursive ERR -> ERR amplification.
+        if self.in_trap {
+            return;
+        }
         if let Some(trap_cmd) = self.traps.get("ERR").cloned() {
             // THREAT[TM-DOS-030]: Propagate interpreter parser limits
             if let Ok(trap_script) = Parser::with_limits(
