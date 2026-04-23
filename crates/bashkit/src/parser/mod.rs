@@ -247,6 +247,12 @@ impl<'a> Parser<'a> {
     /// Parse a command list (commands connected by && or ||)
     fn parse_command_list(&mut self) -> Result<Option<Command>> {
         self.tick()?;
+        match self.current_token {
+            Some(tokens::Token::Pipe) => return Err(self.error("unexpected token: |")),
+            Some(tokens::Token::And) => return Err(self.error("unexpected token: &&")),
+            Some(tokens::Token::Or) => return Err(self.error("unexpected token: ||")),
+            _ => {}
+        }
         let start_span = self.current_span;
         let first = match self.parse_pipeline()? {
             Some(cmd) => cmd,
@@ -3702,6 +3708,24 @@ mod tests {
             parser.parse().is_err(),
             "unterminated double quote should be rejected"
         );
+    }
+
+    #[test]
+    fn test_leading_pipe_rejected() {
+        let parser = Parser::new("| cat");
+        assert!(parser.parse().is_err(), "leading | should be rejected");
+    }
+
+    #[test]
+    fn test_leading_and_rejected() {
+        let parser = Parser::new("&& echo hi");
+        assert!(parser.parse().is_err(), "leading && should be rejected");
+    }
+
+    #[test]
+    fn test_leading_or_rejected() {
+        let parser = Parser::new("|| echo hi");
+        assert!(parser.parse().is_err(), "leading || should be rejected");
     }
 
     #[test]
