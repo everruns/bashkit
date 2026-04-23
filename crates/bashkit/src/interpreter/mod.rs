@@ -4995,20 +4995,15 @@ impl Interpreter {
             }
         };
 
-        // THREAT[TM-DOS-030]: Propagate interpreter parser limits
-        let parser = Parser::with_limits(
-            &content,
-            self.limits.max_ast_depth,
-            self.limits.max_parser_operations,
-        );
-        let script = match parser.parse() {
-            Ok(s) => s,
-            Err(e) => {
+        let script = match self.parse_embedded_script(&content).await {
+            Ok(script) => script,
+            Err(crate::error::Error::Parse { message, .. }) => {
                 return Ok(ExecResult::err(
-                    format!("source: {}: parse error: {}", filename, e),
+                    format!("source: {}: parse error: {}", filename, message),
                     1,
                 ));
             }
+            Err(e) => return Err(e),
         };
 
         // Set positional parameters if extra arguments provided.
@@ -5085,17 +5080,15 @@ impl Interpreter {
         }
 
         let cmd = args.join(" ");
-        // THREAT[TM-DOS-030]: Propagate interpreter parser limits
-        let parser = Parser::with_limits(
-            &cmd,
-            self.limits.max_ast_depth,
-            self.limits.max_parser_operations,
-        );
-        let script = match parser.parse() {
-            Ok(s) => s,
-            Err(e) => {
-                return Ok(ExecResult::err(format!("eval: parse error: {}", e), 1));
+        let script = match self.parse_embedded_script(&cmd).await {
+            Ok(script) => script,
+            Err(crate::error::Error::Parse { message, .. }) => {
+                return Ok(ExecResult::err(
+                    format!("eval: parse error: {}", message),
+                    1,
+                ));
             }
+            Err(e) => return Err(e),
         };
 
         // Set up pipeline stdin if provided
@@ -5110,6 +5103,56 @@ impl Interpreter {
 
         result = self.apply_redirections(result, redirects).await?;
         Ok(result)
+    }
+
+    /// Parse embedded script text (`eval`, `source`) with full parser defenses.
+    async fn parse_embedded_script(&self, input: &str) -> Result<Script> {
+        if input.len() > self.limits.max_input_bytes {
+            return Err(crate::error::Error::ResourceLimit(
+                crate::limits::LimitExceeded::InputTooLarge(
+                    input.len(),
+                    self.limits.max_input_bytes,
+                ),
+            ));
+        }
+
+        #[cfg(target_family = "wasm")]
+        {
+            Parser::with_limits(
+                input,
+                self.limits.max_ast_depth,
+                self.limits.max_parser_operations,
+            )
+            .parse()
+        }
+
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let input_owned = input.to_owned();
+            let max_depth = self.limits.max_ast_depth;
+            let max_ops = self.limits.max_parser_operations;
+            let timeout = self.limits.parser_timeout;
+
+            let parse_result = tokio::time::timeout(timeout, async move {
+                tokio::task::spawn_blocking(move || {
+                    let parser = Parser::with_limits(&input_owned, max_depth, max_ops);
+                    parser.parse()
+                })
+                .await
+            })
+            .await;
+
+            match parse_result {
+                Ok(Ok(result)) => result,
+                Ok(Err(join_error)) => Err(crate::error::Error::parse(format!(
+                    "parser task failed: {}",
+                    join_error
+                ))),
+                Err(_) => Err(crate::error::Error::ResourceLimit(
+                    crate::limits::LimitExceeded::ParserTimeout(timeout),
+                )),
+            }
+        }
     }
 
     /// Check if expand_aliases is enabled via shopt.
@@ -11260,6 +11303,40 @@ mod tests {
         let result = interp.execute(&ast).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "sourced");
+    }
+
+    #[tokio::test]
+    async fn test_eval_respects_max_input_bytes() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.limits.max_input_bytes = 8;
+        let parser = Parser::new("eval 'echo 123456789'");
+        let ast = parser.parse().unwrap();
+        let err = interp.execute(&ast).await.unwrap_err();
+        assert!(
+            err.to_string().contains("input too large"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_source_respects_max_input_bytes() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        fs.write_file(
+            std::path::Path::new("/tmp/large-source.sh"),
+            b"echo 123456789",
+        )
+        .await
+        .unwrap();
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.limits.max_input_bytes = 8;
+        let parser = Parser::new("source /tmp/large-source.sh");
+        let ast = parser.parse().unwrap();
+        let err = interp.execute(&ast).await.unwrap_err();
+        assert!(
+            err.to_string().contains("input too large"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]
