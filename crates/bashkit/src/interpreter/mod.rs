@@ -5273,39 +5273,19 @@ impl Interpreter {
                             }
                         }
                         // Mark local
-                        self.call_stack
-                            .last_mut()
-                            .unwrap()
-                            .locals
-                            .insert(var_name.to_string(), String::new());
+                        self.insert_local_checked(var_name.to_string(), String::new());
                     } else if flags.nameref {
-                        self.call_stack
-                            .last_mut()
-                            .unwrap()
-                            .locals
-                            .insert(var_name.to_string(), String::new());
+                        self.insert_local_checked(var_name.to_string(), String::new());
                     } else if flags.integer {
                         let int_val = self.evaluate_arithmetic_with_assign(value);
-                        self.call_stack
-                            .last_mut()
-                            .unwrap()
-                            .locals
-                            .insert(var_name.to_string(), int_val.to_string());
+                        self.insert_local_checked(var_name.to_string(), int_val.to_string());
                         self.variables
                             .insert(format!("_INTEGER_{}", var_name), "1".to_string());
                     } else {
-                        self.call_stack
-                            .last_mut()
-                            .unwrap()
-                            .locals
-                            .insert(var_name.to_string(), value.to_string());
+                        self.insert_local_checked(var_name.to_string(), value.to_string());
                     }
                 } else if !is_internal_variable(arg) {
-                    self.call_stack
-                        .last_mut()
-                        .unwrap()
-                        .locals
-                        .insert(arg.to_string(), String::new());
+                    self.insert_local_checked(arg.to_string(), String::new());
                     if flags.assoc {
                         self.assoc_arrays.entry(arg.to_string()).or_default();
                     } else if flags.array {
@@ -5391,8 +5371,7 @@ impl Interpreter {
                         self.variables
                             .insert(format!("_NAMEREF_{}", var_name), value.to_string());
                     } else {
-                        self.variables
-                            .insert(var_name.to_string(), value.to_string());
+                        self.insert_variable_checked(var_name.to_string(), value.to_string());
                     }
                 } else if !is_internal_variable(arg) {
                     if flags.assoc {
@@ -9141,6 +9120,48 @@ impl Interpreter {
             );
         }
         self.variables.insert(key, value);
+    }
+
+    /// Insert a variable into the current local frame with memory budget checking.
+    /// Silently drops the insert if the budget would be exceeded.
+    fn insert_local_checked(&mut self, key: String, value: String) {
+        let Some(frame) = self.call_stack.last() else {
+            return;
+        };
+        let is_new = !frame.locals.contains_key(&key);
+        let old_value_len = frame.locals.get(&key).map_or(0, String::len);
+        let (old_key_len, old_value_len) = if is_new {
+            (0, 0)
+        } else {
+            (key.len(), old_value_len)
+        };
+
+        if self
+            .memory_budget
+            .check_variable_insert(
+                key.len(),
+                value.len(),
+                is_new,
+                old_key_len,
+                old_value_len,
+                &self.memory_limits,
+            )
+            .is_err()
+        {
+            return; // silently reject — budget exceeded
+        }
+
+        self.memory_budget.record_variable_insert(
+            key.len(),
+            value.len(),
+            is_new,
+            old_key_len,
+            old_value_len,
+        );
+
+        if let Some(frame) = self.call_stack.last_mut() {
+            frame.locals.insert(key, value);
+        }
     }
 
     /// Insert/update an environment variable with memory limit checks.
