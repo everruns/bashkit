@@ -425,6 +425,15 @@ def test_bash_direct_vfs_methods_track_shell_changes_and_reset():
     assert bash.exists("/workspace/from-shell.txt") is False
 
 
+def test_bash_direct_vfs_glob_limits_result_count():
+    bash = Bash()
+    bash.mkdir("/data", recursive=True)
+    for idx in range(10_200):
+        bash.write_file(f"/data/file_{idx}.txt", "x")
+    matches = bash.glob("/data/*.txt")
+    assert len(matches) == 10_000
+
+
 # -- Bash: FS / mount error cases ------------------------------------------
 
 

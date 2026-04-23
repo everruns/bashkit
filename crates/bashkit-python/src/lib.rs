@@ -761,29 +761,73 @@ fn normalize_find_path(path: &str) -> String {
     }
 }
 
+const GLOB_MAX_RESULTS: usize = 10_000;
+
+fn glob_search_root(pattern: &str) -> String {
+    let wildcard_idx = pattern.find(['*', '?', '[']);
+    let Some(idx) = wildcard_idx else {
+        return pattern.to_string();
+    };
+    let prefix = &pattern[..idx];
+    let Some(last_slash) = prefix.rfind('/') else {
+        return "/".to_string();
+    };
+    if last_slash == 0 {
+        "/".to_string()
+    } else {
+        prefix[..last_slash].to_string()
+    }
+}
+
 fn glob_via_bash(rt: &Arc<Runtime>, inner: &Arc<Mutex<Bash>>, pattern: String) -> Vec<String> {
     if !is_safe_glob_pattern(&pattern) {
         return Vec::new();
     }
 
-    let inner = inner.clone();
-    let command = "find / -type f 2>/dev/null".to_string();
-    let result = rt.block_on(async move {
-        let mut bash = inner.lock().await;
-        bash.exec(&command).await
-    });
+    with_live_fs(rt, inner, move |fs| async move {
+        let root = normalize_find_path(&glob_search_root(&pattern));
+        let root_path = Path::new(&root);
+        let mut matches = Vec::new();
+        let mut stack = vec![root.clone()];
 
-    match result {
-        Ok(exec) if exec.exit_code == 0 => exec
-            .stdout
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(normalize_find_path)
-            .filter(|line| glob_match_path(line, &pattern))
-            .collect(),
-        _ => Vec::new(),
-    }
+        if let Ok(metadata) = fs.stat(root_path).await {
+            if metadata.file_type == FsFileType::File && glob_match_path(&root, &pattern) {
+                matches.push(root);
+            }
+            return Ok(matches);
+        }
+
+        while let Some(dir) = stack.pop() {
+            let entries = match fs.read_dir(Path::new(&dir)).await {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            };
+
+            for entry in entries {
+                let child = if dir == "/" {
+                    format!("/{}", entry.name)
+                } else {
+                    format!("{}/{}", dir, entry.name)
+                };
+
+                match entry.metadata.file_type {
+                    FsFileType::Directory => stack.push(child),
+                    FsFileType::File => {
+                        if glob_match_path(&child, &pattern) {
+                            matches.push(child);
+                            if matches.len() >= GLOB_MAX_RESULTS {
+                                return Ok(matches);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(matches)
+    })
+    .unwrap_or_default()
 }
 
 // Decision: snapshot factories build with caller kwargs first, then restore

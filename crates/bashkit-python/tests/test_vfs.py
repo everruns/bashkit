@@ -22,6 +22,7 @@ _NAMES = (
     "test_bash_direct_vfs_methods_cover_core_ops",
     "test_bash_direct_vfs_methods_raise_on_missing_paths_and_non_utf8",
     "test_bash_direct_vfs_methods_track_shell_changes_and_reset",
+    "test_bash_direct_vfs_glob_limits_result_count",
     "test_bash_unmount_nonexistent_raises",
     "test_bash_mounts_missing_host_path_raises",
     "test_bash_mounts_invalid_entry_raises",
