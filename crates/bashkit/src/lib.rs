@@ -3061,6 +3061,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_case_bracket_wide_unicode_range() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("case z in [a-\u{10ffff}]) echo wide ;; esac")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "wide\n");
+    }
+
+    #[tokio::test]
     async fn test_case_bracket_negation() {
         let mut bash = Bash::new();
         // Test [!abc] negation
