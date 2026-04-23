@@ -5161,8 +5161,8 @@ impl Interpreter {
         let prev_pipeline_stdin = self.pipeline_stdin.take();
         self.pipeline_stdin = stdin;
 
-        // Execute function body
-        let mut result = self.execute_command(&func_def.body).await?;
+        // Execute function body. Always restore call state even on error.
+        let result = self.execute_command(&func_def.body).await;
 
         // Restore previous pipeline stdin
         self.pipeline_stdin = prev_pipeline_stdin;
@@ -5179,6 +5179,8 @@ impl Interpreter {
         } else if let Some(prev) = prev_funcname {
             self.arrays.insert("FUNCNAME".to_string(), prev);
         }
+
+        let mut result = result?;
 
         // Handle return - convert Return control flow to exit code
         if let ControlFlow::Return(code) = result.control_flow {
