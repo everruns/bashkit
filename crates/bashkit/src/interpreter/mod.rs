@@ -4848,6 +4848,7 @@ impl Interpreter {
         let saved_exit = self.last_exit_code;
         let saved_aliases = self.aliases.clone();
         let saved_coproc = self.coproc_buffers.clone();
+        let saved_env = self.env.clone();
         let saved_memory_budget = self.memory_budget.clone();
 
         // Child only sees exported variables (env), not all shell variables.
@@ -4893,6 +4894,7 @@ impl Interpreter {
         self.last_exit_code = saved_exit;
         self.aliases = saved_aliases;
         self.coproc_buffers = saved_coproc;
+        self.env = saved_env;
         self.memory_budget = saved_memory_budget;
         self.bash_source_stack = saved_source_stack;
         self.pipeline_stdin = prev_pipeline_stdin;
