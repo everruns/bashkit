@@ -19,6 +19,7 @@
 //!   unzip -o archive.zip           # overwrite existing
 
 use async_trait::async_trait;
+use std::path::{Component, Path, PathBuf};
 
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
@@ -32,6 +33,29 @@ pub struct Zip;
 
 /// unzip command - extract zip archives
 pub struct Unzip;
+
+fn validate_extract_entry_path(entry_path: &str) -> Option<PathBuf> {
+    let stripped = entry_path.strip_prefix('/').unwrap_or(entry_path);
+    let path = Path::new(stripped);
+
+    if stripped.is_empty() || path == Path::new(".") {
+        return None;
+    }
+
+    for component in path.components() {
+        match component {
+            Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_)
+            | Component::CurDir => {
+                return None;
+            }
+            Component::Normal(_) => {}
+        }
+    }
+
+    Some(path.to_path_buf())
+}
 
 struct ZipOptions {
     archive: String,
@@ -347,8 +371,15 @@ impl Builtin for Unzip {
         };
 
         for entry in &entries {
-            // Strip leading '/' so Path::join doesn't discard the extract base
-            let entry_path = entry.path.strip_prefix('/').unwrap_or(&entry.path);
+            let entry_path = match validate_extract_entry_path(&entry.path) {
+                Some(path) => path,
+                None => {
+                    return Ok(ExecResult::err(
+                        format!("unzip: invalid archive entry path: {}\n", entry.path),
+                        1,
+                    ));
+                }
+            };
             let target = extract_base.join(entry_path);
 
             // Check if file exists and overwrite not set
@@ -690,5 +721,25 @@ mod tests {
         let result = Unzip.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("missing archive"));
+    }
+
+    #[tokio::test]
+    async fn test_unzip_rejects_path_traversal_entries() {
+        let fs = Arc::new(InMemoryFs::new());
+        let fs_trait = fs.clone() as Arc<dyn FileSystem>;
+        let archive = encode_archive(&[ArchiveEntry {
+            path: "../escape.txt".to_string(),
+            data: b"owned".to_vec(),
+        }]);
+        fs_trait
+            .write_file(Path::new("/bad.zip"), &archive)
+            .await
+            .unwrap();
+
+        let result = run_unzip(&["-d", "/extract", "/bad.zip"], fs.clone()).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid archive entry path"));
+        assert!(!fs_trait.exists(Path::new("/escape.txt")).await.unwrap());
+        assert!(!fs_trait.exists(Path::new("/extract/escape.txt")).await.unwrap());
     }
 }
