@@ -145,6 +145,8 @@ jobs:
           bash examples/realfs_mount.sh
 
       - name: Run ticket CLI example
+        env:
+          TICKET_REF: 194b71a8bbc3771da1ce9f579395937c976bbddc
         run: bash examples/ticket-cli.sh
 
       # External API dependency — don't block CI on Anthropic outages
