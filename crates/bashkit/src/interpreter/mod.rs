@@ -8260,12 +8260,7 @@ impl Interpreter {
         format!("({})", expanded)
     }
 
-    /// Expand variables in arithmetic expression (no $ needed in $((...)))
-    fn expand_arithmetic_vars(&self, expr: &str) -> String {
-        self.expand_arithmetic_vars_depth(expr, 0)
-    }
-
-    /// Inner implementation with depth tracking for recursive expansion.
+    /// Expand variables in arithmetic expression (no $ needed in $((...))).
     /// THREAT[TM-DOS-026]: `depth` prevents stack overflow via recursive variable values.
     fn expand_arithmetic_vars_depth(&self, expr: &str, depth: usize) -> String {
         if depth >= Self::MAX_ARITHMETIC_DEPTH {
