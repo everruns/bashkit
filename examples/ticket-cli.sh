@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Security decision: pin wedow/ticket to immutable commit by default.
 # Run the wedow/ticket issue tracker inside bashkit with plugin support.
 #
 # Demonstrates: VFS mounts, PATH-based plugin discovery, complex bash scripts
@@ -23,11 +24,18 @@ fi
 
 TICKET_DIR="${TICKET_DIR:-/tmp/bashkit-ticket}"
 WORK_DIR="${WORK_DIR:-/tmp/bashkit-ticket-work}"
+TICKET_REPO="${TICKET_REPO:-https://github.com/wedow/ticket}"
+TICKET_REF="${TICKET_REF:-194b71a8bbc3771da1ce9f579395937c976bbddc}"
 
-if [[ ! -d "$TICKET_DIR" ]]; then
-  echo "Cloning wedow/ticket..."
-  git clone --depth 1 https://github.com/wedow/ticket "$TICKET_DIR"
+if [[ ! -d "$TICKET_DIR/.git" ]]; then
+  echo "Cloning wedow/ticket repo metadata..."
+  rm -rf "$TICKET_DIR"
+  git clone --no-checkout --filter=blob:none "$TICKET_REPO" "$TICKET_DIR"
 fi
+
+echo "Checking out pinned wedow/ticket commit: $TICKET_REF"
+git -C "$TICKET_DIR" fetch --depth 1 origin "$TICKET_REF"
+git -C "$TICKET_DIR" checkout --detach --force FETCH_HEAD
 
 mkdir -p "$WORK_DIR"
 

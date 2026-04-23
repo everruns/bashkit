@@ -21,6 +21,9 @@ cargo build -p bashkit-cli --features realfs
 bash examples/ticket-cli.sh
 ```
 
+`ticket-cli.sh` checks out a pinned `wedow/ticket` commit by default for
+reproducibility/supply-chain safety. Override with `TICKET_REF=<commit>`.
+
 ## Python
 
 Python examples use [PEP 723](https://peps.python.org/pep-0723/) inline script metadata.
