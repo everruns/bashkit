@@ -1335,7 +1335,7 @@ impl Interpreter {
         self.assoc_arrays = state.assoc_arrays.clone();
         self.cwd = state.cwd.clone();
         self.last_exit_code = state.last_exit_code;
-        // THREAT[TM-DOS-060]: Re-parse and budget-check restored functions so
+        // THREAT[TM-DOS-061]: Re-parse and budget-check restored functions so
         // snapshots cannot bypass parser/memory limits via serialized AST.
         let mut restored_functions = HashMap::new();
         let mut function_memory_budget = crate::limits::MemoryBudget::default();
