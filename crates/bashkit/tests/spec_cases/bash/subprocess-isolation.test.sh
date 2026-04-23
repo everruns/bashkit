@@ -141,3 +141,22 @@ PATH="/usr/local/bin:${PATH}" check-isolation
 visible=yes
 hidden=unset
 ### end
+
+
+### subprocess_child_export_does_not_leak_to_parent
+# Export inside child script must not persist in parent env
+unset CHILD_ONLY
+
+cat > /tmp/export-child.sh <<'SCRIPT'
+#!/usr/bin/env bash
+export CHILD_ONLY="from-child"
+echo "child: ${CHILD_ONLY}"
+SCRIPT
+chmod +x /tmp/export-child.sh
+
+/tmp/export-child.sh
+echo "parent: ${CHILD_ONLY:-unset}"
+### expect
+child: from-child
+parent: unset
+### end
