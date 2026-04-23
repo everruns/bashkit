@@ -38,6 +38,9 @@ const DEFAULT_MAX_ALLOCATIONS: usize = 1_000_000;
 const DEFAULT_MAX_DURATION: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_MEMORY: usize = 64 * 1024 * 1024; // 64 MB
 const DEFAULT_MAX_RECURSION: usize = 200;
+// Security hard-stop: catastrophic regex backtracking can bypass cooperative
+// interpreter budget checks, so disable regex stdlib module in untrusted code.
+const DISABLED_STDLIB_MODULES: &[&str] = &["re"];
 
 /// Resource limits for the embedded Python (Monty) interpreter.
 ///
@@ -206,12 +209,74 @@ impl Default for Python {
     }
 }
 
+fn is_disabled_import(code: &str) -> Option<&'static str> {
+    let is_disabled_module = |module: &str| {
+        DISABLED_STDLIB_MODULES.iter().any(|disabled| {
+            module == *disabled
+                || (module.starts_with(disabled)
+                    && module
+                        .as_bytes()
+                        .get(disabled.len())
+                        .is_some_and(|next| *next == b'.'))
+        })
+    };
+
+    for raw_line in code.lines() {
+        let line = raw_line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Some(imports) = line.strip_prefix("import ") {
+            for import in imports.split(',') {
+                let module = import
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .trim_matches(|c: char| c == '\'' || c == '"')
+                    .trim_end_matches(|c: char| {
+                        !(c.is_ascii_alphanumeric() || c == '_' || c == '.')
+                    })
+                    .to_string();
+                if is_disabled_module(&module) {
+                    return Some("re");
+                }
+            }
+        }
+
+        if let Some(from_stmt) = line.strip_prefix("from ") {
+            let module = from_stmt
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .trim_matches(|c: char| c == '\'' || c == '"')
+                .trim_end_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
+                .to_string();
+            if is_disabled_module(&module) {
+                return Some("re");
+            }
+        }
+
+        if line.contains("__import__('re'") || line.contains("__import__(\"re\"") {
+            return Some("re");
+        }
+        if line.contains("importlib.import_module('re'")
+            || line.contains("importlib.import_module(\"re\"")
+        {
+            return Some("re");
+        }
+    }
+    None
+}
+
 #[async_trait]
 impl Builtin for Python {
     fn llm_hint(&self) -> Option<&'static str> {
         Some(
             "python/python3: Embedded Python (Monty). \
-             Stdlib: math, re, pathlib, os.getenv, sys, typing. \
+             Stdlib: math, pathlib, os.getenv, sys, typing. \
              File I/O via pathlib.Path only (no open()). \
              No HTTP/network. No classes. No third-party imports.",
         )
@@ -314,6 +379,15 @@ impl Builtin for Python {
                 1,
             ));
         };
+
+        if let Some(module) = is_disabled_import(&code) {
+            return Ok(ExecResult::err(
+                format!(
+                    "python3: importing module '{module}' is disabled for security reasons (regex DoS risk)\n"
+                ),
+                1,
+            ));
+        }
 
         // Merge env and variables so exported vars (set via `export`) are visible
         // to Python's os.getenv(). Variables override env (bash semantics).
@@ -1444,7 +1518,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_re_module() {
+    async fn test_re_module_is_blocked() {
         let r = run(
             &[
                 "-c",
@@ -1453,8 +1527,15 @@ mod tests {
             None,
         )
         .await;
-        assert_eq!(r.exit_code, 0);
-        assert_eq!(r.stdout.trim(), "123");
+        assert_eq!(r.exit_code, 1);
+        assert!(r.stderr.contains("importing module 're' is disabled"));
+    }
+
+    #[tokio::test]
+    async fn test_re_module_dynamic_import_is_blocked() {
+        let r = run(&["-c", "m = __import__('re')"], None).await;
+        assert_eq!(r.exit_code, 1);
+        assert!(r.stderr.contains("importing module 're' is disabled"));
     }
 
     #[tokio::test]
