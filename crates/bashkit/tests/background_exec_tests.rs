@@ -100,3 +100,16 @@ async fn background_and_foreground() {
     assert_eq!(result.exit_code, 0);
     assert!(result.stdout.contains("fg"));
 }
+
+/// Completed background jobs should not accumulate across exec() calls.
+#[tokio::test]
+async fn background_jobs_do_not_leak_across_exec_calls() {
+    let mut bash = Bash::new();
+    for _ in 0..20 {
+        bash.exec("false &").await.unwrap();
+    }
+
+    let result = bash.exec("wait\necho $?").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout.trim(), "0");
+}
