@@ -105,5 +105,7 @@ napi-build = "2"
 [profile.release]
 lto = "thin"
 codegen-units = 1
-panic = "abort"
+# Security: interpreter relies on catch_unwind around builtins.
+# Keep release unwinding enabled so panic containment works.
+panic = "unwind"
 strip = "symbols"
