@@ -405,6 +405,63 @@ async fn mount_sensitive_path_blocked() {
     );
 }
 
+#[tokio::test]
+async fn mount_allowlist_blocks_dotdot_escape() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let allowed_root = sandbox.path().join("allowed");
+    let secret_root = sandbox.path().join("secret");
+    std::fs::create_dir_all(&allowed_root).unwrap();
+    std::fs::create_dir_all(&secret_root).unwrap();
+    std::fs::write(secret_root.join("data.txt"), "top-secret\n").unwrap();
+
+    let escaped_mount = allowed_root.join("../secret");
+    let mut bash = Bash::builder()
+        .allowed_mount_paths([&allowed_root])
+        .mount_real_readonly_at(&escaped_mount, "/mnt/data")
+        .build();
+
+    let r = bash
+        .exec("cat /mnt/data/data.txt 2>&1; echo $?")
+        .await
+        .unwrap();
+    assert!(
+        r.stdout.trim().ends_with('1') || r.stdout.contains("No such file"),
+        "Dot-dot allowlist escape should be blocked, got: {}",
+        r.stdout
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn mount_allowlist_blocks_symlink_escape() {
+    use std::os::unix::fs::symlink;
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let allowed_root = sandbox.path().join("allowed");
+    let secret_root = sandbox.path().join("secret");
+    std::fs::create_dir_all(&allowed_root).unwrap();
+    std::fs::create_dir_all(&secret_root).unwrap();
+    std::fs::write(secret_root.join("data.txt"), "top-secret\n").unwrap();
+
+    let link_path = allowed_root.join("escape_link");
+    symlink(&secret_root, &link_path).unwrap();
+
+    let mut bash = Bash::builder()
+        .allowed_mount_paths([&allowed_root])
+        .mount_real_readonly_at(&link_path, "/mnt/data")
+        .build();
+
+    let r = bash
+        .exec("cat /mnt/data/data.txt 2>&1; echo $?")
+        .await
+        .unwrap();
+    assert!(
+        r.stdout.trim().ends_with('1') || r.stdout.contains("No such file"),
+        "Symlink allowlist escape should be blocked, got: {}",
+        r.stdout
+    );
+}
+
 // --- Runtime mount/unmount (exercises Bash::mount / Bash::unmount) ---
 
 #[tokio::test]

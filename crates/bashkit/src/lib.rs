@@ -513,7 +513,7 @@ pub use logging::LogConfig;
 use interpreter::Interpreter;
 use parser::Parser;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Main entry point for Bashkit.
@@ -2371,6 +2371,22 @@ impl BashBuilder {
 
         let mut current_fs = base_fs;
         let mut mount_points: Vec<(PathBuf, Arc<dyn FileSystem>)> = Vec::new();
+        let canonical_allowlist: Option<Vec<PathBuf>> = mount_allowlist.map(|allowlist| {
+            allowlist
+                .iter()
+                .filter_map(|allowed| match std::fs::canonicalize(allowed) {
+                    Ok(path) => Some(path),
+                    Err(e) => {
+                        eprintln!(
+                            "bashkit: warning: failed to canonicalize allowlist path {}: {}",
+                            allowed.display(),
+                            e
+                        );
+                        None
+                    }
+                })
+                .collect()
+        });
 
         for m in real_mounts {
             // Warn on writable mounts
@@ -2381,11 +2397,22 @@ impl BashBuilder {
                 );
             }
 
+            let canonical_host = match std::fs::canonicalize(&m.host_path) {
+                Ok(path) => path,
+                Err(e) => {
+                    eprintln!(
+                        "bashkit: warning: failed to canonicalize mount path {}: {}",
+                        m.host_path.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
+
             // Block sensitive paths
-            let host_str = m.host_path.to_string_lossy();
             if Self::SENSITIVE_MOUNT_PATHS
                 .iter()
-                .any(|s| host_str.starts_with(s))
+                .any(|s| canonical_host.starts_with(Path::new(s)))
             {
                 eprintln!(
                     "bashkit: warning: refusing to mount sensitive path {}",
@@ -2395,10 +2422,10 @@ impl BashBuilder {
             }
 
             // Check allowlist if configured
-            if let Some(allowlist) = mount_allowlist
+            if let Some(allowlist) = &canonical_allowlist
                 && !allowlist
                     .iter()
-                    .any(|allowed| m.host_path.starts_with(allowed))
+                    .any(|allowed| canonical_host.starts_with(allowed))
             {
                 eprintln!(
                     "bashkit: warning: mount path {} not in allowlist, skipping",
@@ -2407,7 +2434,7 @@ impl BashBuilder {
                 continue;
             }
 
-            let real_backend = match fs::RealFs::new(&m.host_path, m.mode) {
+            let real_backend = match fs::RealFs::new(&canonical_host, m.mode) {
                 Ok(b) => b,
                 Err(e) => {
                     eprintln!(
