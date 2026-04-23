@@ -323,9 +323,9 @@ fn split_sed_commands(s: &str) -> Vec<&str> {
     let mut delim: Option<char> = None;
     let mut escaped = false;
     let mut brace_depth = 0;
-    let chars: Vec<char> = s.chars().collect();
+    let chars: Vec<(usize, char)> = s.char_indices().collect();
 
-    for (i, &c) in chars.iter().enumerate() {
+    for (idx, &(byte_pos, c)) in chars.iter().enumerate() {
         if escaped {
             escaped = false;
             continue;
@@ -336,10 +336,10 @@ fn split_sed_commands(s: &str) -> Vec<&str> {
             continue;
         }
 
-        if !in_subst && c == 's' && i + 1 < chars.len() {
+        if !in_subst && c == 's' && idx + 1 < chars.len() {
             // Start of substitution command
             in_subst = true;
-            delim = Some(chars[i + 1]);
+            delim = Some(chars[idx + 1].1);
             delim_count = 0;
         } else if in_subst {
             if Some(c) == delim {
@@ -354,8 +354,8 @@ fn split_sed_commands(s: &str) -> Vec<&str> {
         } else if c == '}' {
             brace_depth -= 1;
         } else if c == ';' && brace_depth == 0 {
-            result.push(&s[start..i]);
-            start = i + 1;
+            result.push(&s[start..byte_pos]);
+            start = byte_pos + c.len_utf8();
         }
     }
 
@@ -1219,6 +1219,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "hi there\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_multiple_commands_with_unicode_delimiter_split() {
+        let result = run_sed(&["s/café/coffee/; s/latte/milk/"], Some("café latte"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "coffee milk\n");
     }
 
     #[tokio::test]
