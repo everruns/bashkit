@@ -434,27 +434,28 @@ impl HttpClient {
         // Delegate to custom handler if set
         if let Some(handler) = &self.handler {
             let method_str = method.as_str();
-            let result = if signing_headers.is_empty() {
-                handler
-                    .request(method_str, url, body, headers)
-                    .await
-                    .map_err(Error::Network)
-            } else {
-                let mut all_headers: Vec<(String, String)> = headers.to_vec();
-                all_headers.extend(signing_headers);
-                handler
-                    .request(method_str, url, body, &all_headers)
-                    .await
-                    .map_err(Error::Network)
-            };
-            if let Ok(ref resp) = result {
-                self.fire_after_http(crate::hooks::HttpResponseEvent {
-                    url: url.to_string(),
-                    status: resp.status,
-                    headers: resp.headers.clone(),
-                });
+            let mut all_headers: Vec<(String, String)> = headers.to_vec();
+            all_headers.extend(signing_headers);
+            let response = tokio::time::timeout(
+                self.default_timeout,
+                handler.request(method_str, url, body, &all_headers),
+            )
+            .await
+            .map_err(|_| Error::Network("operation timed out".to_string()))?
+            .map_err(Error::Network)?;
+            if response.body.len() > self.max_response_bytes {
+                return Err(Error::Network(format!(
+                    "response too large: {} bytes (max: {} bytes)",
+                    response.body.len(),
+                    self.max_response_bytes
+                )));
             }
-            return result;
+            self.fire_after_http(crate::hooks::HttpResponseEvent {
+                url: url.to_string(),
+                status: response.status,
+                headers: response.headers.clone(),
+            });
+            return Ok(response);
         }
 
         // Build request
@@ -652,46 +653,47 @@ impl HttpClient {
         #[cfg(not(feature = "bot-auth"))]
         let signing_headers: Vec<(String, String)> = Vec::new();
 
-        // Delegate to custom handler if set (timeouts are the handler's responsibility)
+        // Clamp timeout values to safe range [MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS]
+        let clamp_timeout = |secs: u64| secs.clamp(MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS);
+        let request_timeout = timeout_secs.map_or(Duration::from_secs(DEFAULT_TIMEOUT_SECS), |s| {
+            Duration::from_secs(clamp_timeout(s))
+        });
+
+        // Delegate to custom handler if set
         if let Some(handler) = &self.handler {
             let method_str = method.as_str();
-            let result = if signing_headers.is_empty() {
-                handler
-                    .request(method_str, url, body, headers)
-                    .await
-                    .map_err(Error::Network)
-            } else {
-                let mut all_headers: Vec<(String, String)> = headers.to_vec();
-                all_headers.extend(signing_headers);
-                handler
-                    .request(method_str, url, body, &all_headers)
-                    .await
-                    .map_err(Error::Network)
-            };
-            if let Ok(ref resp) = result {
-                self.fire_after_http(crate::hooks::HttpResponseEvent {
-                    url: url.to_string(),
-                    status: resp.status,
-                    headers: resp.headers.clone(),
-                });
+            let mut all_headers: Vec<(String, String)> = headers.to_vec();
+            all_headers.extend(signing_headers);
+            let response = tokio::time::timeout(
+                request_timeout,
+                handler.request(method_str, url, body, &all_headers),
+            )
+            .await
+            .map_err(|_| Error::Network("operation timed out".to_string()))?
+            .map_err(Error::Network)?;
+            if response.body.len() > self.max_response_bytes {
+                return Err(Error::Network(format!(
+                    "response too large: {} bytes (max: {} bytes)",
+                    response.body.len(),
+                    self.max_response_bytes
+                )));
             }
-            return result;
+            self.fire_after_http(crate::hooks::HttpResponseEvent {
+                url: url.to_string(),
+                status: response.status,
+                headers: response.headers.clone(),
+            });
+            return Ok(response);
         }
 
         // Use the custom timeout client if any timeout is specified, otherwise use default client
         let client = if timeout_secs.is_some() || connect_timeout_secs.is_some() {
-            // Clamp timeout values to safe range [MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS]
-            let clamp_timeout = |secs: u64| secs.clamp(MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS);
-
-            let timeout = timeout_secs.map_or(Duration::from_secs(DEFAULT_TIMEOUT_SECS), |s| {
-                Duration::from_secs(clamp_timeout(s))
-            });
             // Connect timeout: use explicit connect_timeout, or derive from overall timeout, or use default 10s
             let connect_timeout = connect_timeout_secs.map_or_else(
-                || std::cmp::min(timeout, Duration::from_secs(10)),
+                || std::cmp::min(request_timeout, Duration::from_secs(10)),
                 |s| Duration::from_secs(clamp_timeout(s)),
             );
-            build_client(timeout, Some(connect_timeout))
+            build_client(request_timeout, Some(connect_timeout))
                 .map_err(|e| Error::network_sanitized("failed to create client", &e))?
         } else {
             self.client()?.clone()
@@ -787,6 +789,51 @@ fn build_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration as StdDuration;
+    use tokio::time::sleep;
+
+    struct StaticHandler {
+        response: Response,
+    }
+
+    #[async_trait::async_trait]
+    impl HttpHandler for StaticHandler {
+        async fn request(
+            &self,
+            _method: &str,
+            _url: &str,
+            _body: Option<&[u8]>,
+            _headers: &[(String, String)],
+        ) -> std::result::Result<Response, String> {
+            Ok(Response {
+                status: self.response.status,
+                headers: self.response.headers.clone(),
+                body: self.response.body.clone(),
+            })
+        }
+    }
+
+    struct SlowHandler {
+        delay: StdDuration,
+    }
+
+    #[async_trait::async_trait]
+    impl HttpHandler for SlowHandler {
+        async fn request(
+            &self,
+            _method: &str,
+            _url: &str,
+            _body: Option<&[u8]>,
+            _headers: &[(String, String)],
+        ) -> std::result::Result<Response, String> {
+            sleep(self.delay).await;
+            Ok(Response {
+                status: 200,
+                headers: vec![],
+                body: b"ok".to_vec(),
+            })
+        }
+    }
 
     #[tokio::test]
     async fn test_blocked_by_empty_allowlist() {
@@ -903,6 +950,46 @@ mod tests {
         // host HTTP_PROXY/HTTPS_PROXY env vars are ignored (TM-NET-015).
         let client = build_client(Duration::from_secs(30), None);
         assert!(client.is_ok(), "build_client should succeed with no_proxy");
+    }
+
+    #[tokio::test]
+    async fn test_custom_handler_enforces_max_response_bytes() {
+        let mut client =
+            HttpClient::with_config(NetworkAllowlist::allow_all(), Duration::from_secs(30), 4);
+        client.set_handler(Box::new(StaticHandler {
+            response: Response {
+                status: 200,
+                headers: vec![],
+                body: b"too-large".to_vec(),
+            },
+        }));
+
+        let result = client.get("https://example.com").await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("response too large")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_custom_handler_enforces_request_timeout() {
+        let mut client = HttpClient::with_config(
+            NetworkAllowlist::allow_all(),
+            Duration::from_secs(30),
+            DEFAULT_MAX_RESPONSE_BYTES,
+        );
+        client.set_handler(Box::new(SlowHandler {
+            delay: StdDuration::from_millis(1200),
+        }));
+
+        let result = client
+            .request_with_timeouts(Method::Get, "https://example.com", None, &[], Some(1), None)
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("operation timed out"));
     }
 
     // Note: Integration tests that actually make network requests
