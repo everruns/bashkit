@@ -71,8 +71,23 @@ pub struct DiscoverTool {
 const DISCOVER_ALLOWED_COMMANDS: &[&str] = &["discover", "help"];
 
 impl DiscoverTool {
+    fn has_forbidden_shell_syntax(input: &str) -> bool {
+        input.contains('\n')
+            || input.contains('\r')
+            || input.contains(';')
+            || input.contains('&')
+            || input.contains('|')
+            || input.contains('`')
+            || input.contains("$(")
+    }
+
     /// Reject commands that aren't `discover` or `help`.
     fn validate_commands(commands: &str) -> Result<(), String> {
+        if Self::has_forbidden_shell_syntax(commands) {
+            return Err(
+                "discover tool commands cannot contain shell control characters".to_string(),
+            );
+        }
         let first_word = commands.split_whitespace().next().unwrap_or("");
         if DISCOVER_ALLOWED_COMMANDS.contains(&first_word) {
             Ok(())
@@ -117,6 +132,9 @@ impl DiscoverTool {
 
         // Structured: query
         if let Some(query) = obj.get("query").and_then(|v| v.as_str()) {
+            if Self::has_forbidden_shell_syntax(query) {
+                return Err("query contains unsupported shell control characters".to_string());
+            }
             return Ok(ToolRequest {
                 commands: format!("discover --search {query}"),
                 timeout_ms,
@@ -975,6 +993,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_discover_structured_query_rejects_injection() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let args = serde_json::json!({ "query": "user; help get_user --json" });
+        match tools[1].execution(args) {
+            Err(e) => assert!(
+                e.to_string()
+                    .contains("query contains unsupported shell control characters"),
+                "unexpected error: {e}"
+            ),
+            Ok(_) => panic!("expected injection-like query to be rejected"),
+        }
+    }
+
+    #[tokio::test]
     async fn test_discover_backward_compat() {
         let toolset = make_tools().with_discovery().build();
         let tools = toolset.tools();
@@ -983,6 +1016,21 @@ mod tests {
         let output = exec.execute().await.expect("execution succeeds");
         let stdout = output.result["stdout"].as_str().unwrap_or("");
         assert!(stdout.contains("get_user"), "stdout: {stdout}");
+    }
+
+    #[tokio::test]
+    async fn test_discover_backward_compat_rejects_shell_separators() {
+        let toolset = make_tools().with_discovery().build();
+        let tools = toolset.tools();
+        let args = serde_json::json!({ "commands": "discover --search user; help get_user" });
+        match tools[1].execution(args) {
+            Err(e) => assert!(
+                e.to_string()
+                    .contains("discover tool commands cannot contain shell control characters"),
+                "unexpected error: {e}"
+            ),
+            Ok(_) => panic!("expected injection-like commands to be rejected"),
+        }
     }
 
     #[test]
