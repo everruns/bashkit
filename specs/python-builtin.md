@@ -122,7 +122,7 @@ Monty implements a subset of Python 3.12:
 - Exception handling: try/except/finally/raise
 - Property descriptors (`@property`) (since Monty 0.0.4)
 - Built-in functions: print, len, range, enumerate, zip, map, filter, sorted, reversed, sum, min, max, abs, round, int, float, str, bool, list, dict, tuple, set, type, isinstance, hasattr, getattr, id, repr, ord, chr, hex, oct, bin, all, any, input
-- Standard modules: sys, typing, math (~50 functions), re (regex), pathlib, os (getenv/environ), json, datetime
+- Standard modules: sys, typing, math (~50 functions), pathlib, os (getenv/environ), json, datetime
 - `datetime.date.today()`, `datetime.datetime.now()` with optional timezone (since Monty 0.0.11)
 - JSON: `json.dumps()`, `json.loads()` (since Monty 0.0.9)
 - Multi-module imports: `import a, b, c` (since Monty 0.0.10)
@@ -300,7 +300,10 @@ Relative paths are resolved against the shell's cwd. Path traversal via
 When Python is registered via `BashToolBuilder::python()`, the builtin contributes
 a hint to `help()` and `system_prompt()` documenting its limitations:
 
-> python/python3: Embedded Python (Monty). Stdlib: math, re, pathlib, os.getenv, sys, typing. File I/O via pathlib.Path only (no open()). No HTTP/network. No classes. No third-party imports.
+> python/python3: Embedded Python (Monty). Stdlib: math, pathlib, os.getenv, sys, typing. File I/O via pathlib.Path only (no open()). No HTTP/network. No classes. No third-party imports.
+
+Regex module `re` is intentionally disabled in BashKit due to catastrophic
+backtracking DoS risk in untrusted code execution.
 
 This uses the general `Builtin::llm_hint()` mechanism — any builtin can provide
 hints that are automatically deduplicated and included in LLM-facing documentation.
