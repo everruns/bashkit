@@ -4089,6 +4089,38 @@ echo ${#arr[@]}
         );
     }
 
+    /// TM-DOS-060: Unquoted expansion in array assignment must still respect
+    /// max_array_entries after IFS word splitting (arr=($x)).
+    #[tokio::test]
+    async fn array_assignment_word_split_respects_array_entry_limit() {
+        let mem = MemoryLimits::new().max_array_entries(100);
+        let limits = ExecutionLimits::new().max_commands(10_000);
+        let mut bash = Bash::builder()
+            .limits(limits)
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+parts=""
+i=0
+while [ $i -lt 200 ]; do
+    parts="$parts x"
+    i=$((i+1))
+done
+arr=($parts)
+echo ${#arr[@]}
+"#;
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let count: usize = result.stdout.trim().parse().unwrap_or(0);
+        assert!(
+            count <= 100,
+            "Word-split array assignment should be capped at max_array_entries, got {}",
+            count
+        );
+    }
+
     /// TM-DOS-041: Printf format repeat via brace expansion.
     /// `{1..999999999}` must be rejected by the brace expansion cap before
     /// printf ever runs. Without the cap, this would generate ~1B arguments.
