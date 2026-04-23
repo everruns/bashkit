@@ -2264,7 +2264,7 @@ impl BashBuilder {
         // Layer 2: If there are mounted text/lazy files, wrap in an OverlayFs
         let has_mounts = !self.mounted_files.is_empty() || !self.mounted_lazy_files.is_empty();
         let base_fs: Arc<dyn FileSystem> = if has_mounts {
-            let overlay = OverlayFs::new(base_fs);
+            let overlay = OverlayFs::with_limits(base_fs.clone(), base_fs.limits());
             for mf in &self.mounted_files {
                 overlay.upper().add_file(&mf.path, &mf.content, mf.mode);
             }
@@ -5471,6 +5471,26 @@ done"#,
 
         let result = bash.exec("cat /config.txt").await.unwrap();
         assert_eq!(result.stdout, "overwritten");
+    }
+
+    #[tokio::test]
+    async fn test_mount_preserves_custom_fs_limits() {
+        let limited_fs =
+            std::sync::Arc::new(InMemoryFs::with_limits(FsLimits::new().max_total_bytes(32)));
+
+        let bash = Bash::builder()
+            .fs(limited_fs)
+            .mount_text("/mounted.txt", "seed")
+            .build();
+
+        let write_err = bash
+            .fs()
+            .write_file(
+                std::path::Path::new("/too-big.txt"),
+                b"this payload should exceed thirty-two bytes",
+            )
+            .await;
+        assert!(write_err.is_err(), "custom fs limits should still apply");
     }
 
     // ============================================================
