@@ -1,6 +1,7 @@
 // Decision: RealFs is a FsBackend that delegates to the real host filesystem,
 // scoped to a root directory. It supports readonly and readwrite modes.
-// Security: path traversal is prevented by canonicalizing and checking the prefix.
+// Security: path traversal is prevented by canonicalizing the resolved path or
+// the nearest existing ancestor, then checking the root prefix before I/O.
 // This module is only available with the `realfs` feature flag.
 
 //! Real filesystem backend.
@@ -12,8 +13,9 @@
 //! # Security
 //!
 //! - All paths are resolved relative to a configured root directory.
-//! - Path traversal via `..` is blocked by canonicalizing and checking the
-//!   resolved path stays under the root.
+//! - Path traversal via `..` or symlink hops in missing path suffixes is
+//!   blocked by canonicalizing the resolved path or nearest existing ancestor
+//!   and checking it stays under the root.
 //! - Readonly mode rejects all write operations at the backend level.
 //!
 //! # Modes
@@ -128,8 +130,10 @@ impl RealFs {
     /// Resolve a virtual path to a real host path, ensuring it stays under root.
     ///
     /// Virtual paths are absolute (e.g. `/foo/bar`). We strip the leading `/`
-    /// and join onto the root. Then we canonicalize (for existing paths) or
-    /// check the parent (for new paths) to prevent traversal.
+    /// and join onto the root. Then we canonicalize the full path (for
+    /// existing paths) or the nearest existing ancestor (for new paths) to
+    /// prevent traversal and symlink escapes before attaching the missing
+    /// suffix.
     fn resolve(&self, vpath: &Path) -> std::io::Result<PathBuf> {
         let normalized = normalize_vpath(vpath);
         // Strip leading "/" to make it relative
@@ -154,9 +158,9 @@ impl RealFs {
             return Ok(canon);
         }
 
-        // Path doesn't exist yet. Find the nearest existing ancestor, then
-        // canonicalize that ancestor to catch symlink hops in any prefix.
-        // Reattach the non-existent suffix after canonicalization.
+        // THREAT[TM-ESC-003]: New host paths still need containment checks.
+        // Canonicalize the nearest existing ancestor first so symlink hops in
+        // any existing prefix cannot redirect creation outside the mount root.
         let mut nearest_existing = joined.as_path();
         while !nearest_existing.exists() {
             nearest_existing = nearest_existing.parent().ok_or_else(|| {
