@@ -304,6 +304,13 @@ trap 'echo ERR' ERR; true; echo ok
 ok
 ### end
 
+### trap_err_non_recursive
+# ERR trap failures must not recursively retrigger ERR
+trap 'false; false' ERR; false; echo after
+### expect
+after
+### end
+
 ### trap_multiple
 # Multiple traps can coexist
 trap 'echo BYE' EXIT; trap 'echo ERR' ERR; false; echo done
