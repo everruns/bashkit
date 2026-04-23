@@ -10,6 +10,12 @@
 # message while the surrounding bashkit invocation still exits 0, which hides
 # breakage in CI unless this script checks the output explicitly.
 #
+# Decision: pin harness to a reviewed commit. CI injects secrets for this example,
+# so never execute moving upstream HEAD.
+#
+# Decision: allow non-git HARNESS_DIR fixtures. Tests inject a minimal directory
+# tree instead of a cloned repo, so only repin when HARNESS_DIR is a git checkout.
+#
 # Prerequisites:
 #   - cargo build -p bashkit-cli --features realfs
 #   - OPENAI_API_KEY set in environment
@@ -32,10 +38,15 @@ fi
 HARNESS_DIR="${HARNESS_DIR:-/tmp/harness}"
 WORK_DIR="${WORK_DIR:-/tmp/harness-work}"
 HARNESS_HOME="${HARNESS_HOME:-${WORK_DIR}/.harness}"
+HARNESS_REF="${HARNESS_REF:-fcfc0687daa7f28e2355a3ccdb6bafee2a4e8ddb}"
 
 if [[ ! -d "${HARNESS_DIR}" ]]; then
-  echo "Cloning harness..."
-  git clone https://github.com/wedow/harness "${HARNESS_DIR}"
+  echo "Cloning harness at ${HARNESS_REF}..."
+  git clone --filter=blob:none https://github.com/wedow/harness "${HARNESS_DIR}"
+fi
+if [[ -d "${HARNESS_DIR}/.git" ]]; then
+  git -C "${HARNESS_DIR}" fetch --depth=1 origin "${HARNESS_REF}"
+  git -C "${HARNESS_DIR}" checkout --detach "${HARNESS_REF}"
 fi
 
 mkdir -p "${HARNESS_HOME}/sessions" "${HARNESS_HOME}/providers"
