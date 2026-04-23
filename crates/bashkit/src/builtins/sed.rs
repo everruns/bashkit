@@ -21,7 +21,7 @@
 use async_trait::async_trait;
 use regex::Regex;
 
-use super::search_common::{build_regex, build_regex_opts};
+use super::search_common::{REGEX_DFA_SIZE_LIMIT, REGEX_SIZE_LIMIT, build_regex, build_regex_opts};
 
 use super::{Builtin, Context, read_text_file};
 use crate::error::{Error, Result};
@@ -37,6 +37,28 @@ enum SedRegex {
 }
 
 impl SedRegex {
+    /// Backtracking step cap for fancy-regex fallback.
+    const FANCY_BACKTRACK_LIMIT: usize = 1_000_000;
+
+    fn build_fancy_with_limit(
+        pattern: &str,
+        case_insensitive: bool,
+        backtrack_limit: usize,
+    ) -> std::result::Result<Self, String> {
+        fancy_regex::RegexBuilder::new(pattern)
+            .case_insensitive(case_insensitive)
+            .delegate_size_limit(REGEX_SIZE_LIMIT)
+            .delegate_dfa_size_limit(REGEX_DFA_SIZE_LIMIT)
+            .backtrack_limit(backtrack_limit)
+            .build()
+            .map(SedRegex::Fancy)
+            .map_err(|e| e.to_string())
+    }
+
+    fn build_fancy(pattern: &str, case_insensitive: bool) -> std::result::Result<Self, String> {
+        Self::build_fancy_with_limit(pattern, case_insensitive, Self::FANCY_BACKTRACK_LIMIT)
+    }
+
     /// Build a regex, falling back to fancy-regex if backreferences are present.
     fn new(pattern: &str, case_insensitive: bool) -> std::result::Result<Self, String> {
         match build_regex_opts(pattern, case_insensitive) {
@@ -44,11 +66,7 @@ impl SedRegex {
             Err(e) => {
                 let err_msg = e.to_string();
                 if err_msg.contains("backreference") {
-                    fancy_regex::RegexBuilder::new(pattern)
-                        .case_insensitive(case_insensitive)
-                        .build()
-                        .map(SedRegex::Fancy)
-                        .map_err(|e| e.to_string())
+                    Self::build_fancy(pattern, case_insensitive)
                 } else {
                     Err(err_msg)
                 }
@@ -1130,6 +1148,18 @@ mod tests {
         // Backreference in search pattern: match repeated character
         let result = run_sed(&["s/\\(.\\)\\1/X/g"], Some("aabbc")).await.unwrap();
         assert_eq!(result.stdout, "XXc\n");
+    }
+
+    #[test]
+    fn test_sed_fancy_regex_backtrack_limit_enforced() {
+        let Ok(SedRegex::Fancy(re)) = SedRegex::build_fancy_with_limit(r"(a+)+\1b", false, 100)
+        else {
+            panic!("expected fancy-regex fallback");
+        };
+        let err = re
+            .is_match("a".repeat(5_000).as_str())
+            .expect_err("expected backtrack limit error");
+        assert!(!err.to_string().is_empty());
     }
 
     #[tokio::test]
