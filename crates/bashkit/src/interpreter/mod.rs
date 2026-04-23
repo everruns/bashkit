@@ -1526,7 +1526,11 @@ impl Interpreter {
             .check_session_limits(&self.session_limits)
             .map_err(|e| crate::error::Error::Execution(e.to_string()))?;
 
-        self.execute_script_body(script, true, true).await
+        let result = self.execute_script_body(script, true, true).await;
+        // Script boundary cleanup: background jobs are scoped to a single exec()
+        // call, so they cannot accumulate across long-lived sessions.
+        let _ = self.jobs.lock().await.wait_all_results().await;
+        result
     }
 
     /// Clean up process substitution temp files (`/dev/fd/proc_sub_*`).
