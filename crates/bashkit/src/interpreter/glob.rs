@@ -354,6 +354,11 @@ impl Interpreter {
             }
             b'+' => {
                 // +(a|b) — one or more of the alternatives
+                let split_points = value
+                    .char_indices()
+                    .map(|(i, _)| i)
+                    .skip(1)
+                    .chain(std::iter::once(value.len()));
                 for alt in alts {
                     let full = format!("{}{}", alt, rest);
                     if self.glob_match_impl(value, &full, nocase, depth + 1) {
@@ -361,7 +366,7 @@ impl Interpreter {
                     }
                     // Try alt followed by more +(a|b)rest
                     // We need to try consuming `alt` prefix then matching +(...)rest again
-                    for split in 1..=value.len() {
+                    for split in split_points.clone() {
                         let prefix = &value[..split];
                         let suffix = &value[split..];
                         if self.glob_match_impl(prefix, alt, nocase, depth + 1) {
@@ -382,13 +387,18 @@ impl Interpreter {
                 if self.glob_match_impl(value, rest, nocase, depth + 1) {
                     return true;
                 }
+                let split_points = value
+                    .char_indices()
+                    .map(|(i, _)| i)
+                    .skip(1)
+                    .chain(std::iter::once(value.len()));
                 // Try one or more (same as +(...))
                 for alt in alts {
                     let full = format!("{}{}", alt, rest);
                     if self.glob_match_impl(value, &full, nocase, depth + 1) {
                         return true;
                     }
-                    for split in 1..=value.len() {
+                    for split in split_points.clone() {
                         let prefix = &value[..split];
                         let suffix = &value[split..];
                         if self.glob_match_impl(prefix, alt, nocase, depth + 1) {
@@ -412,7 +422,12 @@ impl Interpreter {
                     && self.glob_match_impl(value, rest, nocase, depth + 1)
                     || {
                         // !(pat) can also consume characters — try each split
-                        for split in 1..=value.len() {
+                        for split in value
+                            .char_indices()
+                            .map(|(i, _)| i)
+                            .skip(1)
+                            .chain(std::iter::once(value.len()))
+                        {
                             let prefix = &value[..split];
                             let suffix = &value[split..];
                             // prefix must not match any alt
