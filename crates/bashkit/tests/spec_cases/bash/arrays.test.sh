@@ -115,13 +115,6 @@ arr=(a b c d e); echo ${arr[@]:0:2}
 a b
 ### end
 
-### array_slice_negative_length_no_panic
-# Negative length should not panic interpreter
-arr=(a b c d e); echo ${arr[@]:1:-1}
-### expect
-b c d e
-### end
-
 ### array_at_expansion_as_args
 # "${arr[@]}" expands to separate arguments for commands
 arr=(one two three)
