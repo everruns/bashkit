@@ -723,6 +723,17 @@ pub struct Interpreter {
 }
 
 impl Interpreter {
+    fn utf8_prefix_at_most(s: &str, max_bytes: usize) -> &str {
+        if s.len() <= max_bytes {
+            return s;
+        }
+        let mut end = max_bytes;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        &s[..end]
+    }
+
     const MAX_GLOB_DEPTH: usize = 50;
 
     /// Create a new interpreter with the given filesystem.
@@ -1577,7 +1588,7 @@ impl Interpreter {
                 } else if result.stdout.len() <= remaining {
                     stdout.push_str(&result.stdout);
                 } else {
-                    stdout.push_str(&result.stdout[..remaining]);
+                    stdout.push_str(Self::utf8_prefix_at_most(&result.stdout, remaining));
                     stdout_truncated = true;
                 }
             }
@@ -1592,7 +1603,7 @@ impl Interpreter {
                 } else if result.stderr.len() <= remaining {
                     stderr.push_str(&result.stderr);
                 } else {
-                    stderr.push_str(&result.stderr[..remaining]);
+                    stderr.push_str(Self::utf8_prefix_at_most(&result.stderr, remaining));
                     stderr_truncated = true;
                 }
             }
