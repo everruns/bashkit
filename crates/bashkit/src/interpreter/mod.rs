@@ -8247,14 +8247,23 @@ impl Interpreter {
 
     /// Evaluate a simple arithmetic expression
     fn evaluate_arithmetic(&self, expr: &str) -> i64 {
+        self.evaluate_arithmetic_depth(expr, 0)
+    }
+
+    /// Evaluate arithmetic while carrying recursion depth from caller contexts.
+    /// THREAT[TM-DOS-026]: Preserves the recursion guard across nested array index eval.
+    fn evaluate_arithmetic_depth(&self, expr: &str, depth: usize) -> i64 {
+        if depth >= Self::MAX_ARITHMETIC_DEPTH {
+            return 0;
+        }
         // Simple arithmetic evaluation - handles basic operations
         let expr = expr.trim();
 
         // First expand any variables in the expression
-        let expanded = self.expand_arithmetic_vars(expr);
+        let expanded = self.expand_arithmetic_vars_depth(expr, depth + 1);
 
         // Parse and evaluate with depth tracking (TM-DOS-026)
-        self.parse_arithmetic_impl(&expanded, 0)
+        self.parse_arithmetic_impl(&expanded, depth + 1)
     }
 
     /// Recursively resolve a variable value in arithmetic context.
@@ -8285,12 +8294,7 @@ impl Interpreter {
         format!("({})", expanded)
     }
 
-    /// Expand variables in arithmetic expression (no $ needed in $((...)))
-    fn expand_arithmetic_vars(&self, expr: &str) -> String {
-        self.expand_arithmetic_vars_depth(expr, 0)
-    }
-
-    /// Inner implementation with depth tracking for recursive expansion.
+    /// Expand variables in arithmetic expression (no $ needed in $((...))).
     /// THREAT[TM-DOS-026]: `depth` prevents stack overflow via recursive variable values.
     fn expand_arithmetic_vars_depth(&self, expr: &str, depth: usize) -> String {
         if depth >= Self::MAX_ARITHMETIC_DEPTH {
@@ -8419,7 +8423,7 @@ impl Interpreter {
                         }
                     }
                     // Evaluate the index expression as arithmetic
-                    let idx = self.evaluate_arithmetic(&index_expr);
+                    let idx = self.evaluate_arithmetic_depth(&index_expr, depth + 1);
                     // Look up array element
                     if let Some(arr) = self.arrays.get(&name) {
                         let idx_usize: usize = idx.try_into().unwrap_or(0);
@@ -11141,6 +11145,18 @@ mod tests {
         // Invalid char for base — should return 0
         let result = run_script("echo $(( 37#! ))").await;
         assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_nested_array_index_depth_guard() {
+        let mut expr = "1".to_string();
+        for _ in 0..(Interpreter::MAX_ARITHMETIC_DEPTH + 10) {
+            expr = format!("arr[{expr}]");
+        }
+        let script = format!("arr[0]=0; arr[1]=1; echo $(({expr}))");
+        let result = run_script(&script).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "0");
     }
 
     #[tokio::test]
