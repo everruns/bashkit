@@ -15,9 +15,9 @@
 //!
 //! - **Writes never reach the host filesystem.** All mutations go to in-memory
 //!   storage regardless of what the lower layer is.
-//! - **Limit enforcement is centralized.** `OverlayFs` checks `FsLimits` before
-//!   every write; the upper `InMemoryFs` uses `FsLimits::unlimited()` so that
-//!   the overlay layer is the single enforcement point.
+//! - **Limit enforcement is defense in depth.** `OverlayFs` checks `FsLimits`
+//!   before writes, and the upper `InMemoryFs` mirrors those limits so
+//!   pre-populated files cannot bypass quotas.
 //! - **Lower-layer usage is advisory.** `compute_usage()` combines upper + lower
 //!   usage. When the lower layer is `RealFs`, its `usage()` returns zeros
 //!   (walking the host tree is expensive and not useful for limit accounting).
@@ -166,8 +166,8 @@ pub struct OverlayFs {
     lower: Arc<dyn FileSystem>,
     /// Upper (writable) filesystem — typed as InMemoryFs (not dyn FileSystem)
     /// to guarantee writes never escape to the host filesystem.
-    /// Uses FsLimits::unlimited() because limit enforcement happens at the
-    /// OverlayFs level via check_write_limits() / check_dir_limits().
+    /// Mirrors overlay limits for defense-in-depth and to enforce quotas on
+    /// pre-populated files.
     upper: InMemoryFs,
     /// Paths that have been deleted (whiteouts)
     whiteouts: RwLock<HashSet<PathBuf>>,
@@ -240,10 +240,10 @@ impl OverlayFs {
     /// # }
     /// ```
     pub fn with_limits(lower: Arc<dyn FileSystem>, limits: FsLimits) -> Self {
-        // Upper layer uses unlimited limits - we enforce limits at the OverlayFs level
+        // Mirror limits on upper layer so pre-populated files cannot bypass quotas.
         Self {
             lower,
-            upper: InMemoryFs::with_limits(FsLimits::unlimited()),
+            upper: InMemoryFs::with_limits(limits.clone()),
             whiteouts: RwLock::new(HashSet::new()),
             limits,
             lower_hidden: RwLock::new(FsUsage::default()),

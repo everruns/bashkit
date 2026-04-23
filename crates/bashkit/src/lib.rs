@@ -5494,6 +5494,25 @@ done"#,
         assert!(write_err.is_err(), "custom fs limits should still apply");
     }
 
+    #[tokio::test]
+    async fn test_mount_text_respects_filesystem_limits() {
+        let limited_fs = std::sync::Arc::new(InMemoryFs::with_limits(
+            FsLimits::new().max_total_bytes(5).max_file_size(5),
+        ));
+
+        let bash = Bash::builder()
+            .fs(limited_fs)
+            .mount_text("/too-large.txt", "123456")
+            .build();
+
+        let exists = bash
+            .fs()
+            .exists(std::path::Path::new("/too-large.txt"))
+            .await
+            .unwrap();
+        assert!(!exists, "mount_text should not bypass configured FsLimits");
+    }
+
     // ============================================================
     // Parser Error Location Tests
     // ============================================================
