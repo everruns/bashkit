@@ -6221,11 +6221,11 @@ impl Interpreter {
                 };
 
                 let inner_cmd = Command::Simple(SimpleCommand {
-                    name: Word::literal(command.name),
+                    name: Word::quoted_literal(command.name),
                     args: command
                         .args
                         .iter()
-                        .map(|s| Word::literal(s.clone()))
+                        .map(|s| Word::quoted_literal(s.clone()))
                         .collect(),
                     redirects: inner_redirects,
                     assignments: Vec::new(),
@@ -6265,8 +6265,12 @@ impl Interpreter {
                     };
 
                     let inner_cmd = Command::Simple(SimpleCommand {
-                        name: Word::literal(cmd.name),
-                        args: cmd.args.iter().map(|s| Word::literal(s.clone())).collect(),
+                        name: Word::quoted_literal(cmd.name),
+                        args: cmd
+                            .args
+                            .iter()
+                            .map(|s| Word::quoted_literal(s.clone()))
+                            .collect(),
                         redirects: cmd_redirects,
                         assignments: Vec::new(),
                         span: Span::new(),
@@ -10776,6 +10780,31 @@ mod tests {
 
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "Hello!");
+    }
+
+    #[tokio::test]
+    async fn test_xargs_treats_stdin_as_literal_args() {
+        // xargs should not glob-expand stdin-derived arguments.
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/workspace"), true)
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/workspace/a.txt"), b"A")
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/workspace/b.txt"), b"B")
+            .await
+            .unwrap();
+
+        let mut interp = Interpreter::new(fs.clone());
+        interp.set_cwd(std::path::PathBuf::from("/workspace"));
+
+        let parser = Parser::new("printf '*\\n' | xargs -I {} echo {}");
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "*");
     }
 
     // ==================== find -exec tests ====================
