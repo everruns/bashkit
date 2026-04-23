@@ -36,6 +36,7 @@ export interface BashOptions {
   hostname?: string;
   maxCommands?: number;
   maxLoopIterations?: number;
+  maxTotalLoopIterations?: number;
   /**
    * Maximum interpreter memory in bytes (variables, arrays, functions).
    *
@@ -292,6 +293,7 @@ function toNativeOptions(
     hostname: options?.hostname,
     maxCommands: options?.maxCommands,
     maxLoopIterations: options?.maxLoopIterations,
+    maxTotalLoopIterations: options?.maxTotalLoopIterations,
     maxMemory: options?.maxMemory,
     timeoutMs: options?.timeoutMs,
     files: resolvedFiles,

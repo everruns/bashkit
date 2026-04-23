@@ -79,7 +79,10 @@ test("WB: loop limit — while true capped (TM-DOS-017)", (t) => {
 });
 
 test("WB: nested loop multiplication attack (TM-DOS-018)", (t) => {
-  const bash = new Bash({ maxLoopIterations: 10 });
+  // TM-DOS-018 is enforced via maxTotalLoopIterations (aggregate cap across
+  // nested loops). maxLoopIterations is per-loop and does not by itself stop
+  // the multiplication attack.
+  const bash = new Bash({ maxTotalLoopIterations: 10 });
   // Outer × inner = potential 100 iterations
   const r = bash.executeSync(
     "for i in 1 2 3 4 5 6 7 8 9 10; do for j in 1 2 3 4 5 6 7 8 9 10; do echo $i$j; done; done",
