@@ -1,7 +1,7 @@
 // Decision: Snapshot format uses serde_json for Phase 1 (debuggable, human-readable).
 // Phase 2 can add bincode/postcard for compactness.
 // VFS contents are included by default; SnapshotOptions can opt out for shell-only restores.
-// Session limit budgets are transferred (not reset) to preserve resource accounting.
+// Session counters are serialized for observability; restore paths do not trust them.
 
 //! Snapshot/resume — serialize interpreter state between `exec()` calls.
 //!
@@ -302,7 +302,7 @@ impl crate::Bash {
     pub fn from_snapshot(data: &[u8]) -> crate::Result<Self> {
         let snap = Snapshot::from_bytes(data)?;
         let mut bash = Self::new();
-        bash.restore_snapshot_inner(&snap);
+        bash.restore_snapshot_inner(&snap)?;
         Ok(bash)
     }
 
@@ -316,17 +316,17 @@ impl crate::Bash {
     /// Returns an error if deserialization fails.
     pub fn restore_snapshot(&mut self, data: &[u8]) -> crate::Result<()> {
         let snap = Snapshot::from_bytes(data)?;
-        self.restore_snapshot_inner(&snap);
-        Ok(())
+        self.restore_snapshot_inner(&snap)
     }
 
-    fn restore_snapshot_inner(&mut self, snap: &Snapshot) {
+    fn restore_snapshot_inner(&mut self, snap: &Snapshot) -> crate::Result<()> {
+        self.interpreter
+            .validate_shell_state_restore_limits(&snap.shell)?;
         self.interpreter.restore_shell_state(&snap.shell);
         if let Some(ref vfs) = snap.vfs {
             self.fs.vfs_restore(vfs);
         }
-        self.interpreter
-            .restore_session_counters(snap.session_commands, snap.session_exec_calls);
+        Ok(())
     }
 
     /// Capture snapshot and serialize with HMAC-SHA256 using a secret key.
@@ -352,14 +352,13 @@ impl crate::Bash {
     pub fn from_snapshot_keyed(data: &[u8], key: &[u8]) -> crate::Result<Self> {
         let snap = Snapshot::from_bytes_keyed(data, key)?;
         let mut bash = Self::new();
-        bash.restore_snapshot_inner(&snap);
+        bash.restore_snapshot_inner(&snap)?;
         Ok(bash)
     }
 
     /// Restore state from a keyed snapshot into this Bash instance.
     pub fn restore_snapshot_keyed(&mut self, data: &[u8], key: &[u8]) -> crate::Result<()> {
         let snap = Snapshot::from_bytes_keyed(data, key)?;
-        self.restore_snapshot_inner(&snap);
-        Ok(())
+        self.restore_snapshot_inner(&snap)
     }
 }
