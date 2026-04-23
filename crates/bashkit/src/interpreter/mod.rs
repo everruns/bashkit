@@ -7129,7 +7129,7 @@ impl Interpreter {
 
                         let sliced = if let Some(len_expr) = length {
                             let len_val = self.evaluate_arithmetic(len_expr) as usize;
-                            let end = (start + len_val).min(values.len());
+                            let end = start.saturating_add(len_val).min(values.len());
                             &values[start..end]
                         } else {
                             &values[start..]
