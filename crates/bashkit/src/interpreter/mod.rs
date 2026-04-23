@@ -6215,11 +6215,17 @@ impl Interpreter {
                     span: Span::new(),
                 });
 
+                let baseline_call_stack_len = self.call_stack.len();
+                let baseline_bash_source_len = self.bash_source_stack.len();
                 let exec_future = self.execute_command(&inner_cmd);
                 match timeout(duration, exec_future).await {
                     Ok(Ok(result)) => result,
                     Ok(Err(e)) => return Err(e),
                     Err(_) => {
+                        self.reconcile_cancelled_execution_state(
+                            baseline_call_stack_len,
+                            baseline_bash_source_len,
+                        );
                         // Timeout expired.
                         // --preserve-status: in real bash, returns the signal+128 status
                         // of the killed child.  We can't capture that from tokio::timeout,
@@ -6276,6 +6282,47 @@ impl Interpreter {
         };
 
         self.apply_redirections(result, redirects).await
+    }
+
+    /// Restore interpreter stacks/counters after an in-flight command future is cancelled.
+    fn reconcile_cancelled_execution_state(
+        &mut self,
+        baseline_call_stack_len: usize,
+        baseline_bash_source_len: usize,
+    ) {
+        let leaked_call_frames = self
+            .call_stack
+            .len()
+            .saturating_sub(baseline_call_stack_len);
+        let leaked_bash_source_entries = self
+            .bash_source_stack
+            .len()
+            .saturating_sub(baseline_bash_source_len);
+
+        if leaked_call_frames > 0 {
+            self.call_stack.truncate(baseline_call_stack_len);
+        }
+        if leaked_bash_source_entries > 0 {
+            self.bash_source_stack.truncate(baseline_bash_source_len);
+            self.update_bash_source();
+        }
+
+        for _ in 0..leaked_call_frames.max(leaked_bash_source_entries) {
+            self.counters.pop_function();
+        }
+
+        if self.call_stack.is_empty() {
+            self.arrays.remove("FUNCNAME");
+        } else {
+            let funcname_arr: HashMap<usize, String> = self
+                .call_stack
+                .iter()
+                .rev()
+                .enumerate()
+                .map(|(i, f)| (i, f.name.clone()))
+                .collect();
+            self.arrays.insert("FUNCNAME".to_string(), funcname_arr);
+        }
     }
 
     /// Process structured side effects from builtin execution.
@@ -9898,6 +9945,17 @@ mod tests {
             "124",
             "Expected exit code 124 for zero timeout"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_timeout_does_not_leak_function_locals() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        let parser =
+            Parser::new("f(){ local secret=shh; sleep 10; }\ntimeout 0.001 f\necho \"<$secret>\"");
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+        assert_eq!(result.stdout.trim(), "<>");
     }
 
     /// Test that parse_duration preserves subsecond precision
