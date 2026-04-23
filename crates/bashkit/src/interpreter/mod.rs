@@ -2027,29 +2027,32 @@ impl Interpreter {
                 .unwrap_or_default()
         };
 
-        // Reset loop counter for this loop
-        self.counters.reset_loop();
+        self.counters.enter_loop();
+        let result = async {
+            for value in values {
+                // Check loop iteration limit
+                self.counters.tick_loop(&self.limits)?;
 
-        for value in values {
-            // Check loop iteration limit
-            self.counters.tick_loop(&self.limits)?;
+                // Set loop variable (respects nameref)
+                self.set_variable(for_cmd.variable.clone(), value.clone());
 
-            // Set loop variable (respects nameref)
-            self.set_variable(for_cmd.variable.clone(), value.clone());
-
-            // Execute body
-            let emit_before = self.output_emit_count;
-            let result = self.execute_command_sequence(&for_cmd.body).await?;
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-            match acc.accumulate(result) {
-                state::LoopAction::None => {}
-                state::LoopAction::Break => break,
-                state::LoopAction::Continue => continue,
-                state::LoopAction::Exit(r) => return Ok(r),
+                // Execute body
+                let emit_before = self.output_emit_count;
+                let result = self.execute_command_sequence(&for_cmd.body).await?;
+                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+                match acc.accumulate(result) {
+                    state::LoopAction::None => {}
+                    state::LoopAction::Break => break,
+                    state::LoopAction::Continue => continue,
+                    state::LoopAction::Exit(r) => return Ok(r),
+                }
             }
-        }
 
-        Ok(acc.finish())
+            Ok(acc.finish())
+        }
+        .await;
+        self.counters.exit_loop();
+        result
     }
 
     /// Execute a select loop: select var in list; do body; done
@@ -2112,125 +2115,128 @@ impl Interpreter {
             .cloned()
             .unwrap_or_else(|| "#? ".to_string());
 
-        // Reset loop counter
-        self.counters.reset_loop();
+        self.counters.enter_loop();
+        let result = async {
+            loop {
+                self.counters.tick_loop(&self.limits)?;
 
-        loop {
-            self.counters.tick_loop(&self.limits)?;
+                // Output menu to stderr
+                stderr.push_str(&menu);
+                stderr.push('\n');
+                stderr.push_str(&ps3);
 
-            // Output menu to stderr
-            stderr.push_str(&menu);
-            stderr.push('\n');
-            stderr.push_str(&ps3);
-
-            // Read a line from pipeline_stdin
-            let line = if let Some(ref ps) = self.pipeline_stdin {
-                if ps.is_empty() {
-                    // EOF: bash prints newline and exits with code 1
+                // Read a line from pipeline_stdin
+                let line = if let Some(ref ps) = self.pipeline_stdin {
+                    if ps.is_empty() {
+                        // EOF: bash prints newline and exits with code 1
+                        stdout.push('\n');
+                        exit_code = 1;
+                        break;
+                    }
+                    let data = ps.clone();
+                    if let Some(newline_pos) = data.find('\n') {
+                        let line = data[..newline_pos].to_string();
+                        self.pipeline_stdin = Some(data[newline_pos + 1..].to_string());
+                        line
+                    } else {
+                        self.pipeline_stdin = Some(String::new());
+                        data
+                    }
+                } else {
+                    // No stdin: bash prints newline and exits with code 1
                     stdout.push('\n');
                     exit_code = 1;
                     break;
-                }
-                let data = ps.clone();
-                if let Some(newline_pos) = data.find('\n') {
-                    let line = data[..newline_pos].to_string();
-                    self.pipeline_stdin = Some(data[newline_pos + 1..].to_string());
-                    line
-                } else {
-                    self.pipeline_stdin = Some(String::new());
-                    data
-                }
-            } else {
-                // No stdin: bash prints newline and exits with code 1
-                stdout.push('\n');
-                exit_code = 1;
-                break;
-            };
+                };
 
-            // Set REPLY to raw input
-            self.insert_variable_checked("REPLY".to_string(), line.clone());
+                // Set REPLY to raw input
+                self.insert_variable_checked("REPLY".to_string(), line.clone());
 
-            // Parse selection number
-            let selected = line
-                .trim()
-                .parse::<usize>()
-                .ok()
-                .and_then(|n| {
-                    if n >= 1 && n <= values.len() {
-                        Some(values[n - 1].clone())
-                    } else {
-                        None
+                // Parse selection number
+                let selected = line
+                    .trim()
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|n| {
+                        if n >= 1 && n <= values.len() {
+                            Some(values[n - 1].clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
+
+                self.insert_variable_checked(select_cmd.variable.clone(), selected);
+
+                // Execute body
+                let emit_before = self.output_emit_count;
+                let result = self.execute_command_sequence(&select_cmd.body).await?;
+                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+                stdout.push_str(&result.stdout);
+                stderr.push_str(&result.stderr);
+                exit_code = result.exit_code;
+
+                // Check for break/continue
+                match result.control_flow {
+                    ControlFlow::Break(n) => {
+                        if n <= 1 {
+                            break;
+                        } else {
+                            return Ok(ExecResult {
+                                stdout,
+                                stderr,
+                                exit_code,
+                                control_flow: ControlFlow::Break(n - 1),
+                                ..Default::default()
+                            });
+                        }
                     }
-                })
-                .unwrap_or_default();
-
-            self.insert_variable_checked(select_cmd.variable.clone(), selected);
-
-            // Execute body
-            let emit_before = self.output_emit_count;
-            let result = self.execute_command_sequence(&select_cmd.body).await?;
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-            stdout.push_str(&result.stdout);
-            stderr.push_str(&result.stderr);
-            exit_code = result.exit_code;
-
-            // Check for break/continue
-            match result.control_flow {
-                ControlFlow::Break(n) => {
-                    if n <= 1 {
-                        break;
-                    } else {
+                    ControlFlow::Continue(n) => {
+                        if n <= 1 {
+                            continue;
+                        } else {
+                            return Ok(ExecResult {
+                                stdout,
+                                stderr,
+                                exit_code,
+                                control_flow: ControlFlow::Continue(n - 1),
+                                ..Default::default()
+                            });
+                        }
+                    }
+                    ControlFlow::Return(code) => {
                         return Ok(ExecResult {
                             stdout,
                             stderr,
-                            exit_code,
-                            control_flow: ControlFlow::Break(n - 1),
+                            exit_code: code,
+                            control_flow: ControlFlow::Return(code),
                             ..Default::default()
                         });
                     }
-                }
-                ControlFlow::Continue(n) => {
-                    if n <= 1 {
-                        continue;
-                    } else {
+                    ControlFlow::Exit(code) => {
                         return Ok(ExecResult {
                             stdout,
                             stderr,
-                            exit_code,
-                            control_flow: ControlFlow::Continue(n - 1),
+                            exit_code: code,
+                            control_flow: ControlFlow::Exit(code),
                             ..Default::default()
                         });
                     }
+                    ControlFlow::None => {}
                 }
-                ControlFlow::Return(code) => {
-                    return Ok(ExecResult {
-                        stdout,
-                        stderr,
-                        exit_code: code,
-                        control_flow: ControlFlow::Return(code),
-                        ..Default::default()
-                    });
-                }
-                ControlFlow::Exit(code) => {
-                    return Ok(ExecResult {
-                        stdout,
-                        stderr,
-                        exit_code: code,
-                        control_flow: ControlFlow::Exit(code),
-                        ..Default::default()
-                    });
-                }
-                ControlFlow::None => {}
             }
-        }
 
-        Ok(ExecResult {
-            stdout,
-            stderr,
-            exit_code,
-            control_flow: ControlFlow::None,
-            ..Default::default()
-        })
+            Ok(ExecResult {
+                stdout,
+                stderr,
+                exit_code,
+                control_flow: ControlFlow::None,
+                ..Default::default()
+            })
+        }
+        .await;
+        self.counters.exit_loop();
+        result
     }
 
     /// Execute a C-style arithmetic for loop: for ((init; cond; step))
@@ -2245,38 +2251,41 @@ impl Interpreter {
             self.execute_arithmetic_with_side_effects(&arith_for.init);
         }
 
-        // Reset loop counter for this loop
-        self.counters.reset_loop();
+        self.counters.enter_loop();
+        let result = async {
+            loop {
+                // Check loop iteration limit
+                self.counters.tick_loop(&self.limits)?;
 
-        loop {
-            // Check loop iteration limit
-            self.counters.tick_loop(&self.limits)?;
+                // Check condition (if empty, always true)
+                if !arith_for.condition.is_empty() {
+                    let cond_result = self.evaluate_arithmetic(&arith_for.condition);
+                    if cond_result == 0 {
+                        break;
+                    }
+                }
 
-            // Check condition (if empty, always true)
-            if !arith_for.condition.is_empty() {
-                let cond_result = self.evaluate_arithmetic(&arith_for.condition);
-                if cond_result == 0 {
-                    break;
+                // Execute body
+                let emit_before = self.output_emit_count;
+                let result = self.execute_command_sequence(&arith_for.body).await?;
+                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+                match acc.accumulate(result) {
+                    state::LoopAction::None | state::LoopAction::Continue => {}
+                    state::LoopAction::Break => break,
+                    state::LoopAction::Exit(r) => return Ok(r),
+                }
+
+                // Execute step
+                if !arith_for.step.is_empty() {
+                    self.execute_arithmetic_with_side_effects(&arith_for.step);
                 }
             }
 
-            // Execute body
-            let emit_before = self.output_emit_count;
-            let result = self.execute_command_sequence(&arith_for.body).await?;
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-            match acc.accumulate(result) {
-                state::LoopAction::None | state::LoopAction::Continue => {}
-                state::LoopAction::Break => break,
-                state::LoopAction::Exit(r) => return Ok(r),
-            }
-
-            // Execute step
-            if !arith_for.step.is_empty() {
-                self.execute_arithmetic_with_side_effects(&arith_for.step);
-            }
+            Ok(acc.finish())
         }
-
-        Ok(acc.finish())
+        .await;
+        self.counters.exit_loop();
+        result
     }
 
     /// Execute an arithmetic command ((expression))
@@ -2728,46 +2737,49 @@ impl Interpreter {
     ) -> Result<ExecResult> {
         let mut acc = state::LoopAccumulator::new();
 
-        // Reset loop counter for this loop
-        self.counters.reset_loop();
+        self.counters.enter_loop();
+        let result = async {
+            loop {
+                // Check loop iteration limit
+                self.counters.tick_loop(&self.limits)?;
 
-        loop {
-            // Check loop iteration limit
-            self.counters.tick_loop(&self.limits)?;
+                // Check condition (no errexit - conditions are expected to fail)
+                let emit_before_cond = self.output_emit_count;
+                let condition_result = self.execute_condition_sequence(condition).await?;
+                // Condition commands produce visible output (e.g., `while cat <<EOF; do ... done`)
+                self.maybe_emit_output(
+                    &condition_result.stdout,
+                    &condition_result.stderr,
+                    emit_before_cond,
+                );
+                acc.stdout.push_str(&condition_result.stdout);
+                acc.stderr.push_str(&condition_result.stderr);
+                let should_break = if break_on_zero {
+                    condition_result.exit_code == 0
+                } else {
+                    condition_result.exit_code != 0
+                };
+                if should_break {
+                    break;
+                }
 
-            // Check condition (no errexit - conditions are expected to fail)
-            let emit_before_cond = self.output_emit_count;
-            let condition_result = self.execute_condition_sequence(condition).await?;
-            // Condition commands produce visible output (e.g., `while cat <<EOF; do ... done`)
-            self.maybe_emit_output(
-                &condition_result.stdout,
-                &condition_result.stderr,
-                emit_before_cond,
-            );
-            acc.stdout.push_str(&condition_result.stdout);
-            acc.stderr.push_str(&condition_result.stderr);
-            let should_break = if break_on_zero {
-                condition_result.exit_code == 0
-            } else {
-                condition_result.exit_code != 0
-            };
-            if should_break {
-                break;
+                // Execute body
+                let emit_before = self.output_emit_count;
+                let result = self.execute_command_sequence(body).await?;
+                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+                match acc.accumulate(result) {
+                    state::LoopAction::None => {}
+                    state::LoopAction::Break => break,
+                    state::LoopAction::Continue => continue,
+                    state::LoopAction::Exit(r) => return Ok(r),
+                }
             }
 
-            // Execute body
-            let emit_before = self.output_emit_count;
-            let result = self.execute_command_sequence(body).await?;
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-            match acc.accumulate(result) {
-                state::LoopAction::None => {}
-                state::LoopAction::Break => break,
-                state::LoopAction::Continue => continue,
-                state::LoopAction::Exit(r) => return Ok(r),
-            }
+            Ok(acc.finish())
         }
-
-        Ok(acc.finish())
+        .await;
+        self.counters.exit_loop();
+        result
     }
 
     /// Execute a case statement
@@ -3453,6 +3465,7 @@ impl Interpreter {
 
             let result = match command {
                 Command::Simple(simple) => {
+                    self.counters.tick_command(&self.limits)?;
                     self.execute_simple_command(simple, stdin_data.take())
                         .await?
                 }
@@ -10060,6 +10073,38 @@ mod tests {
         let result = run_script_with_limits(&script, limits, memory_limits).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "4");
+    }
+
+    #[tokio::test]
+    async fn test_nested_loops_enforce_outer_loop_limit() {
+        let limits = ExecutionLimits::new()
+            .max_loop_iterations(2)
+            .max_total_loop_iterations(100);
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.set_limits(limits);
+        let parser = Parser::new("for i in 1 2 3; do for j in 1; do :; done; done; echo done");
+        let ast = parser.parse().unwrap();
+        let err = interp.execute(&ast).await.unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::Error::ResourceLimit(crate::limits::LimitExceeded::MaxLoopIterations(2))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_counts_each_stage_toward_command_limit() {
+        let limits = ExecutionLimits::new().max_commands(2);
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.set_limits(limits);
+        let parser = Parser::new("echo a | cat | cat");
+        let ast = parser.parse().unwrap();
+        let err = interp.execute(&ast).await.unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::Error::ResourceLimit(crate::limits::LimitExceeded::MaxCommands(2))
+        ));
     }
 
     #[tokio::test]
