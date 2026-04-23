@@ -21,6 +21,10 @@ use crate::interpreter::ExecResult;
 ///   -v           Verbose mode (show detailed retry info)
 pub struct Retry;
 
+// Security bound: prevent untrusted scripts from requesting effectively
+// unbounded verbose output/work inside a single builtin invocation.
+const MAX_RETRY_ATTEMPTS: u32 = 10_000;
+
 struct RetryConfig {
     max_attempts: u32,
     delay_secs: f64,
@@ -47,6 +51,9 @@ fn parse_retry_args(args: &[String]) -> std::result::Result<RetryConfig, String>
                 .map_err(|_| format!("retry: invalid number '{}'", val))?;
             if max_attempts == 0 {
                 return Err("retry: -n must be at least 1".to_string());
+            }
+            if max_attempts > MAX_RETRY_ATTEMPTS {
+                return Err(format!("retry: -n must be at most {MAX_RETRY_ATTEMPTS}"));
             }
         } else if let Some(val) = p.flag_value("-d", "retry")? {
             delay_secs = val
@@ -217,6 +224,13 @@ mod tests {
         let result = run_retry(&["-n", "0", "--", "cmd"]).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("must be at least 1"));
+    }
+
+    #[tokio::test]
+    async fn test_attempts_upper_bound() {
+        let result = run_retry(&["-n", "10001", "--", "cmd"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("must be at most 10000"));
     }
 
     #[tokio::test]
