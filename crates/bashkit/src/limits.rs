@@ -432,12 +432,16 @@ impl ExecutionCounters {
             match action.as_deref() {
                 Some("skip_check") => {
                     // Simulate limit check being bypassed
-                    self.loop_iterations += 1;
+                    if let Some(current) = self.loop_iterations.last_mut() {
+                        *current += 1;
+                    }
                     return Ok(());
                 }
                 Some("reset_counter") => {
                     // Simulate counter being reset (infinite loop potential)
-                    self.loop_iterations = 0;
+                    if let Some(current) = self.loop_iterations.last_mut() {
+                        *current = 0;
+                    }
                     return Ok(());
                 }
                 _ => {}
