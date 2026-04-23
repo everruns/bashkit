@@ -331,6 +331,15 @@ fn should_include_file(filename: &str, include: &[String], exclude: &[String]) -
     true
 }
 
+fn process_content(content: Vec<u8>, binary_as_text: bool) -> String {
+    if binary_as_text {
+        let filtered: Vec<u8> = content.into_iter().filter(|&b| b != 0).collect();
+        String::from_utf8_lossy(&filtered).into_owned()
+    } else {
+        String::from_utf8_lossy(&content).into_owned()
+    }
+}
+
 /// Convert a BRE (Basic Regular Expression) pattern to ERE for the regex crate.
 /// In BRE: ( ) { } are literal; \( \) \{ \} \+ \? \| are metacharacters.
 /// In ERE/regex crate: ( ) { } + ? | are metacharacters.
@@ -423,17 +432,6 @@ impl Builtin for Grep {
         } else {
             ""
         };
-        // Helper to process content (filter null bytes if binary_as_text)
-        let process_content = |content: Vec<u8>, binary_as_text: bool| -> String {
-            if binary_as_text {
-                // Filter out null bytes for proper regex matching
-                let filtered: Vec<u8> = content.into_iter().filter(|&b| b != 0).collect();
-                String::from_utf8_lossy(&filtered).into_owned()
-            } else {
-                String::from_utf8_lossy(&content).into_owned()
-            }
-        };
-
         let inputs: Vec<(String, String)> = if opts.files.is_empty() {
             // Read from stdin
             let mut stdin_content = ctx.stdin.unwrap_or("").to_string();
@@ -444,7 +442,7 @@ impl Builtin for Grep {
             vec![(stdin_name.to_string(), stdin_content)]
         } else if opts.recursive {
             // Try indexed search via SearchCapable if available
-            let search_result = try_indexed_search(&*ctx.fs, &opts, ctx.cwd);
+            let search_result = try_indexed_search(&*ctx.fs, &opts, ctx.cwd).await;
 
             if let Some(indexed_inputs) = search_result {
                 indexed_inputs
@@ -801,13 +799,13 @@ impl Builtin for Grep {
 ///
 /// Returns `Some(inputs)` if a `SearchCapable` provider handled the search,
 /// `None` to fall back to linear scan.
-fn try_indexed_search(
+async fn try_indexed_search(
     fs: &dyn crate::fs::FileSystem,
     opts: &GrepOptions,
     cwd: &std::path::Path,
 ) -> Option<Vec<(String, String)>> {
     let sc = fs.as_search_capable()?;
-    let root = if let Some(first) = opts.files.first() {
+    let root = crate::fs::normalize_path(&if let Some(first) = opts.files.first() {
         if first.starts_with('/') {
             std::path::PathBuf::from(first)
         } else {
@@ -815,7 +813,7 @@ fn try_indexed_search(
         }
     } else {
         cwd.to_path_buf()
-    };
+    });
     let provider = sc.search_provider(&root)?;
     let caps = provider.capabilities();
     if !caps.content_search {
@@ -828,38 +826,51 @@ fn try_indexed_search(
         pattern,
         is_regex: !opts.fixed_strings && caps.regex,
         case_insensitive: opts.ignore_case,
-        root,
+        root: root.clone(),
         glob_filter: opts.include_patterns.first().cloned(),
         max_results: opts.max_count,
     };
 
     let results = provider.search(&query).ok()?;
+    let mut seen_paths = std::collections::HashSet::new();
+    let mut inputs = Vec::new();
 
-    // Group matches by file path to build (filename, content) pairs
-    let mut file_map: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
     for m in &results.matches {
-        let key = m.path.to_string_lossy().into_owned();
-        file_map
-            .entry(key)
-            .or_default()
-            .push(m.line_content.clone());
+        let candidate = if m.path.is_absolute() {
+            crate::fs::normalize_path(&m.path)
+        } else {
+            crate::fs::normalize_path(&root.join(&m.path))
+        };
+
+        if !candidate.starts_with(&root) || !seen_paths.insert(candidate.clone()) {
+            continue;
+        }
+
+        let Some(name) = candidate.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !should_include_file(name, &opts.include_patterns, &opts.exclude_patterns) {
+            continue;
+        }
+
+        if let Ok(content) = fs.read_file(&candidate).await {
+            let text = process_content(content, opts.binary_as_text);
+            inputs.push((candidate.to_string_lossy().into_owned(), text));
+        }
     }
 
-    Some(
-        file_map
-            .into_iter()
-            .map(|(path, lines)| (path, lines.join("\n")))
-            .collect(),
-    )
+    Some(inputs)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::{FileSystem, InMemoryFs, OverlayFs};
+    use crate::fs::{
+        FileSystem, FileSystemExt, InMemoryFs, OverlayFs, SearchCapabilities, SearchCapable,
+        SearchMatch, SearchProvider, SearchQuery, SearchResults,
+    };
     use std::collections::HashMap;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
     async fn run_grep(args: &[&str], stdin: Option<&str>) -> Result<ExecResult> {
@@ -886,6 +897,90 @@ mod tests {
         };
 
         grep.execute(ctx).await
+    }
+
+    struct IndexedTestFs {
+        inner: InMemoryFs,
+        matches: Vec<SearchMatch>,
+    }
+
+    #[async_trait::async_trait]
+    impl FileSystemExt for IndexedTestFs {}
+
+    #[async_trait::async_trait]
+    impl FileSystem for IndexedTestFs {
+        async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+            self.inner.read_file(path).await
+        }
+        async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+            self.inner.write_file(path, content).await
+        }
+        async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+            self.inner.append_file(path, content).await
+        }
+        async fn mkdir(&self, path: &Path, recursive: bool) -> Result<()> {
+            self.inner.mkdir(path, recursive).await
+        }
+        async fn remove(&self, path: &Path, recursive: bool) -> Result<()> {
+            self.inner.remove(path, recursive).await
+        }
+        async fn stat(&self, path: &Path) -> Result<crate::fs::Metadata> {
+            self.inner.stat(path).await
+        }
+        async fn read_dir(&self, path: &Path) -> Result<Vec<crate::fs::DirEntry>> {
+            self.inner.read_dir(path).await
+        }
+        async fn exists(&self, path: &Path) -> Result<bool> {
+            self.inner.exists(path).await
+        }
+        async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+            self.inner.rename(from, to).await
+        }
+        async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
+            self.inner.copy(from, to).await
+        }
+        async fn symlink(&self, target: &Path, link: &Path) -> Result<()> {
+            self.inner.symlink(target, link).await
+        }
+        async fn read_link(&self, path: &Path) -> Result<PathBuf> {
+            self.inner.read_link(path).await
+        }
+        async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
+            self.inner.chmod(path, mode).await
+        }
+        fn as_search_capable(&self) -> Option<&dyn SearchCapable> {
+            Some(self)
+        }
+    }
+
+    struct IndexedProvider {
+        matches: Vec<SearchMatch>,
+    }
+
+    impl SearchProvider for IndexedProvider {
+        fn search(&self, _query: &SearchQuery) -> Result<SearchResults> {
+            Ok(SearchResults {
+                matches: self.matches.clone(),
+                truncated: false,
+            })
+        }
+
+        fn capabilities(&self) -> SearchCapabilities {
+            SearchCapabilities {
+                regex: true,
+                glob_filter: true,
+                content_search: true,
+                filename_search: false,
+            }
+        }
+    }
+
+    impl SearchCapable for IndexedTestFs {
+        fn search_provider(&self, _path: &Path) -> Option<Box<dyn SearchProvider>> {
+            Some(Box::new(IndexedProvider {
+                matches: self.matches.clone(),
+            }))
+        }
     }
 
     #[tokio::test]
@@ -1194,6 +1289,57 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("/dir/a.txt:hello"));
         assert!(!result.stdout.contains("b.log"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_recursive_indexed_search_ignores_outside_root_match_paths() {
+        let grep = Grep;
+        let inner = InMemoryFs::new();
+        inner.mkdir(Path::new("/safe"), true).await.unwrap();
+        inner
+            .write_file(Path::new("/safe/a.txt"), b"safe text\n")
+            .await
+            .unwrap();
+        inner
+            .write_file(Path::new("/leak.txt"), b"secret\n")
+            .await
+            .unwrap();
+
+        let fs: Arc<dyn FileSystem> = Arc::new(IndexedTestFs {
+            inner,
+            matches: vec![SearchMatch {
+                path: PathBuf::from("/leak.txt"),
+                line_number: 1,
+                line_content: "secret".to_string(),
+            }],
+        });
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["-r", "secret", "/safe"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stdout, "");
     }
 
     // -L (--files-without-match) tests
