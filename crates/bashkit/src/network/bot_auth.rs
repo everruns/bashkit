@@ -1,5 +1,5 @@
 // Decision: Implement draft-meunier-web-bot-auth-architecture using Ed25519 signatures
-// over RFC 9421 HTTP Message Signatures. Sign @authority as the primary covered component.
+// over RFC 9421 HTTP Message Signatures. Bind signatures to request method + target URI.
 // Feature-gated behind `bot-auth` to avoid pulling crypto deps by default.
 // Non-blocking: signing failures log a warning and send the request unsigned.
 
@@ -101,10 +101,14 @@ impl BotAuthConfig {
         jwk_thumbprint_ed25519(&signing_key.verifying_key())
     }
 
-    /// Sign a request targeting the given authority and return headers to attach.
+    /// Sign a request and return headers to attach.
     ///
     /// Returns `Err` on clock errors; callers should log and send unsigned.
-    pub(crate) fn sign_request(&self, authority: &str) -> Result<BotAuthHeaders, BotAuthError> {
+    pub(crate) fn sign_request(
+        &self,
+        method: &str,
+        target_uri: &str,
+    ) -> Result<BotAuthHeaders, BotAuthError> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| BotAuthError::Clock)?
@@ -114,7 +118,7 @@ impl BotAuthConfig {
         let nonce = generate_nonce();
 
         // Build covered components list
-        let mut covered = String::from("\"@authority\"");
+        let mut covered = String::from("\"@method\" \"@target-uri\"");
         if self.agent_fqdn.is_some() {
             covered.push_str(" \"signature-agent\"");
         }
@@ -127,7 +131,7 @@ impl BotAuthConfig {
         );
 
         // Build signature base per RFC 9421 Section 2.5
-        let mut sig_base = format!("\"@authority\": {authority}\n");
+        let mut sig_base = format!("\"@method\": {method}\n\"@target-uri\": {target_uri}\n");
         if let Some(ref fqdn) = self.agent_fqdn {
             sig_base.push_str(&format!("\"signature-agent\": {fqdn}\n"));
         }
@@ -248,7 +252,7 @@ mod tests {
     #[test]
     fn sign_request_produces_valid_headers() {
         let config = BotAuthConfig::from_seed([3u8; 32]);
-        let headers = config.sign_request("example.com").unwrap();
+        let headers = config.sign_request("GET", "https://example.com").unwrap();
 
         assert!(headers.signature.starts_with("sig=:"));
         assert!(headers.signature.ends_with(':'));
@@ -263,7 +267,7 @@ mod tests {
     #[test]
     fn sign_request_with_agent_fqdn() {
         let config = BotAuthConfig::from_seed([4u8; 32]).with_agent_fqdn("bot.example.com");
-        let headers = config.sign_request("example.com").unwrap();
+        let headers = config.sign_request("GET", "https://example.com").unwrap();
 
         assert_eq!(headers.signature_agent.as_deref(), Some("bot.example.com"));
         assert!(headers.signature_input.contains("\"signature-agent\""));
@@ -276,12 +280,15 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&seed);
         let verifying_key = signing_key.verifying_key();
 
-        let headers = config.sign_request("verify.example.com").unwrap();
+        let headers = config
+            .sign_request("POST", "https://verify.example.com/v1/items?q=1")
+            .unwrap();
 
         // Reconstruct signature base
         let sig_params = headers.signature_input.strip_prefix("sig=").unwrap();
-        let sig_base =
-            format!("\"@authority\": verify.example.com\n\"@signature-params\": {sig_params}");
+        let sig_base = format!(
+            "\"@method\": POST\n\"@target-uri\": https://verify.example.com/v1/items?q=1\n\"@signature-params\": {sig_params}"
+        );
 
         // Extract raw signature bytes
         let sig_b64 = headers
@@ -301,6 +308,45 @@ mod tests {
     }
 
     #[test]
+    fn signature_rejects_method_or_target_tampering() {
+        let seed = [15u8; 32];
+        let config = BotAuthConfig::from_seed(seed);
+        let signing_key = SigningKey::from_bytes(&seed);
+        let verifying_key = signing_key.verifying_key();
+
+        let headers = config
+            .sign_request("POST", "https://verify.example.com/v1/items?q=1")
+            .unwrap();
+        let sig_params = headers.signature_input.strip_prefix("sig=").unwrap();
+        let sig_b64 = headers
+            .signature
+            .strip_prefix("sig=:")
+            .unwrap()
+            .strip_suffix(':')
+            .unwrap();
+        let sig_bytes = URL_SAFE_NO_PAD.decode(sig_b64).unwrap();
+        let signature = ed25519_dalek::Signature::from_slice(&sig_bytes).unwrap();
+
+        let tampered_method = format!(
+            "\"@method\": GET\n\"@target-uri\": https://verify.example.com/v1/items?q=1\n\"@signature-params\": {sig_params}"
+        );
+        let tampered_target = format!(
+            "\"@method\": POST\n\"@target-uri\": https://verify.example.com/admin/delete\n\"@signature-params\": {sig_params}"
+        );
+
+        assert!(
+            verifying_key
+                .verify(tampered_method.as_bytes(), &signature)
+                .is_err()
+        );
+        assert!(
+            verifying_key
+                .verify(tampered_target.as_bytes(), &signature)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn jwk_thumbprint_deterministic() {
         let key = SigningKey::from_bytes(&[6u8; 32]).verifying_key();
         let t1 = jwk_thumbprint_ed25519(&key);
@@ -312,7 +358,7 @@ mod tests {
     #[test]
     fn validity_secs_respected() {
         let config = BotAuthConfig::from_seed([7u8; 32]).with_validity_secs(600);
-        let headers = config.sign_request("example.com").unwrap();
+        let headers = config.sign_request("GET", "https://example.com").unwrap();
         let input = &headers.signature_input;
         let created: u64 = input
             .split("created=")
