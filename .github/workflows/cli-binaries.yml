@@ -166,9 +166,23 @@ jobs:
 
           # Fetch the GitHub PAT from Doppler (has push access to homebrew-tap)
           GH_PAT=$(doppler secrets get GITHUB_TOKEN --plain)
+          echo "::add-mask::$GH_PAT"
+
+          # Use askpass to avoid embedding token in clone/push URLs or logs
+          cat > /tmp/git-askpass.sh <<'EOF'
+          #!/usr/bin/env sh
+          case "$1" in
+            *Username*) echo "x-access-token" ;;
+            *Password*) echo "$GH_PAT" ;;
+          esac
+          EOF
+          chmod 700 /tmp/git-askpass.sh
+          export GIT_ASKPASS=/tmp/git-askpass.sh
+          export GIT_TERMINAL_PROMPT=0
+          trap 'rm -f /tmp/git-askpass.sh' EXIT
 
           # Clone the tap repo
-          git clone "https://x-access-token:${GH_PAT}@github.com/everruns/homebrew-tap.git" tap
+          git clone "https://github.com/everruns/homebrew-tap.git" tap
           cp bashkit.rb tap/Formula/bashkit.rb
 
           cd tap
