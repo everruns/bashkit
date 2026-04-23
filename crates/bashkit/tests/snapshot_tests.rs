@@ -1,6 +1,6 @@
 //! Tests for VFS snapshot/restore and shell state snapshot/restore
 
-use bashkit::{Bash, FileSystem, InMemoryFs, Snapshot, SnapshotOptions};
+use bashkit::{Bash, FileSystem, InMemoryFs, MemoryLimits, Snapshot, SnapshotOptions};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -373,6 +373,23 @@ async fn snapshot_without_functions_skips_function_restore() {
         .await
         .unwrap();
     assert_eq!(result.stdout, "42\n1\n");
+}
+
+#[tokio::test]
+async fn snapshot_restore_enforces_function_limits() {
+    let mut src = Bash::new();
+    src.exec("a() { echo a; }; b() { echo b; }").await.unwrap();
+    let bytes = src.snapshot().unwrap();
+
+    let limits = MemoryLimits::new().max_function_count(1);
+    let mut restored = Bash::builder().memory_limits(limits).build();
+    restored.restore_snapshot(&bytes).unwrap();
+
+    let result = restored
+        .exec("type a >/dev/null 2>&1; echo $?; type b >/dev/null 2>&1; echo $?")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "0\n1\n");
 }
 
 #[tokio::test]

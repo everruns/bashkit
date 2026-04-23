@@ -572,11 +572,13 @@ where
         .collect()
 }
 
-fn deserialize_function_from_source(
+fn deserialize_function_from_source_with_limits(
     name: &str,
     source: &str,
+    max_ast_depth: usize,
+    max_parser_operations: usize,
 ) -> std::result::Result<FunctionDef, String> {
-    let script = Parser::new(source)
+    let script = Parser::with_limits(source, max_ast_depth, max_parser_operations)
         .parse()
         .map_err(|err| format!("failed to parse function '{name}' from source: {err}"))?;
     let mut commands = script.commands.into_iter();
@@ -597,6 +599,13 @@ fn deserialize_function_from_source(
             "failed to parse function '{name}' from source: expected function definition, got {other:?}"
         )),
     }
+}
+
+fn deserialize_function_from_source(
+    name: &str,
+    source: &str,
+) -> std::result::Result<FunctionDef, String> {
+    deserialize_function_from_source_with_limits(name, source, 100, 100_000)
 }
 
 /// Interpreter state.
@@ -1326,7 +1335,42 @@ impl Interpreter {
         self.assoc_arrays = state.assoc_arrays.clone();
         self.cwd = state.cwd.clone();
         self.last_exit_code = state.last_exit_code;
-        self.functions = state.functions.clone();
+        // THREAT[TM-DOS-060]: Re-parse and budget-check restored functions so
+        // snapshots cannot bypass parser/memory limits via serialized AST.
+        let mut restored_functions = HashMap::new();
+        let mut function_memory_budget = crate::limits::MemoryBudget::default();
+        let mut function_names = state.functions.keys().cloned().collect::<Vec<_>>();
+        function_names.sort_unstable();
+        for name in function_names {
+            let Some(snapshot_func) = state.functions.get(&name) else {
+                continue;
+            };
+            let Some(source) = snapshot_func.source.as_deref() else {
+                continue;
+            };
+            let Ok(parsed_func) = deserialize_function_from_source_with_limits(
+                &name,
+                source,
+                self.limits.max_ast_depth,
+                self.limits.max_parser_operations,
+            ) else {
+                continue;
+            };
+            let body_bytes = parsed_func
+                .span
+                .end
+                .offset
+                .saturating_sub(parsed_func.span.start.offset);
+            if function_memory_budget
+                .check_function_insert(body_bytes, true, 0, &self.memory_limits)
+                .is_err()
+            {
+                continue;
+            }
+            function_memory_budget.record_function_insert(body_bytes, true, 0);
+            restored_functions.insert(name, parsed_func);
+        }
+        self.functions = restored_functions;
         self.aliases = state.aliases.clone();
         self.traps = state.traps.clone();
         // Recompute memory budget from restored state to prevent desync
@@ -1334,7 +1378,7 @@ impl Interpreter {
         let func_bytes: usize = self
             .functions
             .values()
-            .map(|f| format!("{:?}", f.body).len())
+            .map(|f| f.span.end.offset.saturating_sub(f.span.start.offset))
             .sum();
         self.memory_budget = crate::limits::MemoryBudget::recompute_from_state(
             &self.variables,
