@@ -455,7 +455,10 @@ impl Interpreter {
         value_char: char,
         nocase: bool,
     ) -> Option<bool> {
-        let mut chars_in_class = Vec::new();
+        // Security: stream range/class checks; avoid unbounded range materialization.
+        let mut matched = false;
+        let mut saw_class_char = false;
+        let mut prev_char: Option<char> = None;
         let mut negate = false;
 
         // Check for negation
@@ -467,10 +470,16 @@ impl Interpreter {
         // Collect all characters in the bracket expression
         loop {
             match pattern_chars.next() {
-                Some(']') if !chars_in_class.is_empty() => break,
-                Some(']') if chars_in_class.is_empty() => {
+                Some(']') if saw_class_char => break,
+                Some(']') if !saw_class_char => {
                     // ] as first char is literal
-                    chars_in_class.push(']');
+                    saw_class_char = true;
+                    prev_char = Some(']');
+                    matched |= if nocase {
+                        ']'.eq_ignore_ascii_case(&value_char)
+                    } else {
+                        value_char == ']'
+                    };
                 }
                 Some('[') if matches!(pattern_chars.peek(), Some(':')) => {
                     // POSIX character class [:name:]
@@ -486,38 +495,71 @@ impl Interpreter {
                             None => return None,
                         }
                     }
-                    expand_posix_class(&class_name, &mut chars_in_class);
+                    let mut class_chars = Vec::new();
+                    expand_posix_class(&class_name, &mut class_chars);
+                    if !class_chars.is_empty() {
+                        saw_class_char = true;
+                        prev_char = class_chars.last().copied();
+                    }
+                    matched |= if nocase {
+                        let lc = value_char.to_ascii_lowercase();
+                        class_chars.iter().any(|c| c.to_ascii_lowercase() == lc)
+                    } else {
+                        class_chars.contains(&value_char)
+                    };
                 }
-                Some('-') if !chars_in_class.is_empty() => {
+                Some('-') if saw_class_char => {
                     // Could be a range
                     if let Some(&next) = pattern_chars.peek() {
                         if next == ']' {
                             // - at end is literal
-                            chars_in_class.push('-');
+                            saw_class_char = true;
+                            prev_char = Some('-');
+                            matched |= if nocase {
+                                '-'.eq_ignore_ascii_case(&value_char)
+                            } else {
+                                value_char == '-'
+                            };
                         } else {
                             // Range: prev-next
                             pattern_chars.next();
-                            if let Some(&prev) = chars_in_class.last() {
-                                for c in prev..=next {
-                                    chars_in_class.push(c);
-                                }
+                            if let Some(prev) = prev_char {
+                                let (start, end) = if prev <= next {
+                                    (prev, next)
+                                } else {
+                                    (next, prev)
+                                };
+                                let probe = if nocase {
+                                    value_char.to_ascii_lowercase()
+                                } else {
+                                    value_char
+                                };
+                                let (start_cmp, end_cmp) = if nocase {
+                                    (start.to_ascii_lowercase(), end.to_ascii_lowercase())
+                                } else {
+                                    (start, end)
+                                };
+                                matched |= probe >= start_cmp && probe <= end_cmp;
+                                saw_class_char = true;
+                                prev_char = Some(next);
                             }
                         }
                     } else {
                         return None; // Unclosed bracket
                     }
                 }
-                Some(c) => chars_in_class.push(c),
+                Some(c) => {
+                    saw_class_char = true;
+                    prev_char = Some(c);
+                    matched |= if nocase {
+                        c.eq_ignore_ascii_case(&value_char)
+                    } else {
+                        c == value_char
+                    };
+                }
                 None => return None, // Unclosed bracket
             }
         }
-
-        let matched = if nocase {
-            let lc = value_char.to_ascii_lowercase();
-            chars_in_class.iter().any(|&c| c.to_ascii_lowercase() == lc)
-        } else {
-            chars_in_class.contains(&value_char)
-        };
         Some(if negate { !matched } else { matched })
     }
 
